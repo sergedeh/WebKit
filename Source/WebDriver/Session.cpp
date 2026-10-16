@@ -40,6 +40,7 @@
 #include <wtf/NeverDestroyed.h>
 #include <wtf/UUID.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/text/TextStream.h>
 
 #if ENABLE(WEBDRIVER_BIDI)
 #include "WebSocketServer.h"
@@ -1086,13 +1087,13 @@ String Session::extractElementID(const JSON::Value& value)
     return elementID;
 }
 
-Expected<Ref<JSON::Value>, CommandResult> Session::replaceReferences(Ref<JSON::Value>&& value)
+std::expected<Ref<JSON::Value>, CommandResult> Session::replaceReferences(Ref<JSON::Value>&& value)
 {
     HashSet<Ref<JSON::Value>> seen;
     return replaceReferences(WTF::move(value), seen);
 }
 
-Expected<Ref<JSON::Value>, CommandResult> Session::replaceReferences(Ref<JSON::Value>&& value, HashSet<Ref<JSON::Value>>& seen)
+std::expected<Ref<JSON::Value>, CommandResult> Session::replaceReferences(Ref<JSON::Value>&& value, HashSet<Ref<JSON::Value>>& seen)
 {
     if (seen.contains(value))
         return makeUnexpected(CommandResult::fail(CommandResult::ErrorCode::JavascriptError, "Cyclic object reference found while resolving references"_s));
@@ -1636,6 +1637,39 @@ void Session::getComputedRole(const String& elementID, Function<void(CommandResu
     });
 }
 
+void Session::consumeUserActivation(Function<void(CommandResult&&)>&& completionHandler)
+{
+    if (!m_currentBrowsingContext) {
+        completionHandler(CommandResult::fail(CommandResult::ErrorCode::NoSuchWindow));
+        return;
+    }
+
+    handleUserPrompts([this, protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler)](CommandResult&& result) mutable {
+        if (result.isError()) {
+            completionHandler(WTF::move(result));
+            return;
+        }
+        auto parameters = JSON::Object::create();
+        parameters->setString("browsingContextHandle"_s, uncheckedTopLevelBrowsingContext());
+        parameters->setString("frameHandle"_s, m_currentBrowsingContext.value_or(emptyString()));
+        m_host->sendCommandToBackend("consumeUserActivation"_s, WTF::move(parameters), [protectedThis, completionHandler = WTF::move(completionHandler)](SessionHost::CommandResponse&& response) {
+            if (response.isError || !response.responseObject) {
+                completionHandler(CommandResult::fail(WTF::move(response.responseObject)));
+                return;
+            }
+
+            auto consume = response.responseObject->getBoolean("consume"_s);
+            if (!consume) {
+                completionHandler(CommandResult::fail(CommandResult::ErrorCode::UnknownError, "Could not retrieve user activation consumption result from browsing context"_s));
+                return;
+            }
+
+            auto resultValue = JSON::Value::create(consume.value());
+            completionHandler(CommandResult::success(WTF::move(resultValue)));
+        });
+    });
+}
+
 void Session::getComputedLabel(const String& elementID, Function<void(CommandResult&&)>&& completionHandler)
 {
     if (!m_currentBrowsingContext) {
@@ -1847,6 +1881,22 @@ void Session::getElementCSSValue(const String& elementID, const String& cssPrope
     });
 }
 
+bool Session::clearBrowsingContextsOnError(const CommandResult& result)
+{
+    switch (result.errorCode()) {
+    case CommandResult::ErrorCode::NoSuchWindow:
+        m_toplevelBrowsingContext = std::nullopt;
+        m_currentBrowsingContext = std::nullopt;
+        m_currentParentBrowsingContext = std::nullopt;
+        return true;
+    case CommandResult::ErrorCode::NoSuchFrame:
+        m_currentBrowsingContext = std::nullopt;
+        return true;
+    default:
+        return false;
+    }
+}
+
 void Session::waitForNavigationToComplete(Function<void(CommandResult&&)>&& completionHandler)
 {
     if (!m_currentBrowsingContext) {
@@ -1854,33 +1904,37 @@ void Session::waitForNavigationToComplete(Function<void(CommandResult&&)>&& comp
         return;
     }
 
-    auto parameters = JSON::Object::create();
-    parameters->setString("browsingContextHandle"_s, uncheckedTopLevelBrowsingContext());
-    if (m_currentBrowsingContext)
-        parameters->setString("frameHandle"_s, m_currentBrowsingContext.value());
-    parameters->setDouble("pageLoadTimeout"_s, m_pageLoadTimeout);
-    if (auto pageLoadStrategy = pageLoadStrategyString())
-        parameters->setString("pageLoadStrategy"_s, pageLoadStrategy.value());
-    m_host->sendCommandToBackend("waitForNavigationToComplete"_s, WTF::move(parameters), [this, protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler)](SessionHost::CommandResponse&& response) {
+    auto resolveParameters = JSON::Object::create();
+    resolveParameters->setString("browsingContextHandle"_s, uncheckedTopLevelBrowsingContext());
+    resolveParameters->setString("frameHandle"_s, m_currentBrowsingContext.value());
+    m_host->sendCommandToBackend("resolveBrowsingContext"_s, WTF::move(resolveParameters), [this, protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler)](SessionHost::CommandResponse&& response) mutable {
         if (response.isError) {
             auto result = CommandResult::fail(WTF::move(response.responseObject));
-            switch (result.errorCode()) {
-            case CommandResult::ErrorCode::NoSuchWindow:
-                // Window was closed, reset the top level browsing context and ignore the error.
-                m_toplevelBrowsingContext = std::nullopt;
-                m_currentBrowsingContext = std::nullopt;
-                m_currentParentBrowsingContext = std::nullopt;
-                break;
-            case CommandResult::ErrorCode::NoSuchFrame:
-                // Navigation destroyed the current frame, reset the current browsing context and ignore the error.
-                m_currentBrowsingContext = std::nullopt;
-                break;
-            default:
+            if (!clearBrowsingContextsOnError(result)) {
                 completionHandler(WTF::move(result));
                 return;
             }
+            completionHandler(CommandResult::success());
+            return;
         }
-        completionHandler(CommandResult::success());
+
+        auto parameters = JSON::Object::create();
+        parameters->setString("browsingContextHandle"_s, uncheckedTopLevelBrowsingContext());
+        if (m_currentBrowsingContext)
+            parameters->setString("frameHandle"_s, m_currentBrowsingContext.value());
+        parameters->setDouble("pageLoadTimeout"_s, m_pageLoadTimeout);
+        if (auto pageLoadStrategy = pageLoadStrategyString())
+            parameters->setString("pageLoadStrategy"_s, pageLoadStrategy.value());
+        m_host->sendCommandToBackend("waitForNavigationToComplete"_s, WTF::move(parameters), [this, protectedThis, completionHandler = WTF::move(completionHandler)](SessionHost::CommandResponse&& response) {
+            if (response.isError) {
+                auto result = CommandResult::fail(WTF::move(response.responseObject));
+                if (!clearBrowsingContextsOnError(result)) {
+                    completionHandler(WTF::move(result));
+                    return;
+                }
+            }
+            completionHandler(CommandResult::success());
+        });
     });
 }
 
@@ -2704,7 +2758,7 @@ static Ref<JSON::Object> builtAutomationCookie(const Session::Cookie& cookie)
     cookieObject->setBoolean("httpOnly"_s, cookie.httpOnly.value_or(false));
     cookieObject->setBoolean("session"_s, !cookie.expiry);
     cookieObject->setDouble("expires"_s, cookie.expiry.value_or(0));
-    cookieObject->setString("sameSite"_s, cookie.sameSite.value_or("None"_s));
+    cookieObject->setString("sameSite"_s, cookie.sameSite.value_or("Lax"_s));
     return cookieObject;
 }
 
@@ -3009,7 +3063,7 @@ void Session::performActions(Vector<Vector<Action>>&& actionsByTick, Function<vo
                         if (!virtualKey.isNull())
                             currentState.pressedVirtualKeys.remove(virtualKey);
                         else
-                            currentState.pressedKey = std::nullopt;
+                            currentState.pressedKeys.remove(action.key.value());
                         break;
                     }
                     case Action::Subtype::KeyDown: {
@@ -3018,7 +3072,7 @@ void Session::performActions(Vector<Vector<Action>>&& actionsByTick, Function<vo
                         if (!virtualKey.isNull())
                             currentState.pressedVirtualKeys.add(virtualKey);
                         else
-                            currentState.pressedKey = action.key.value();
+                            currentState.pressedKeys.add(action.key.value());
                         break;
                     }
                     case Action::Subtype::Pause:
@@ -3032,8 +3086,16 @@ void Session::performActions(Vector<Vector<Action>>&& actionsByTick, Function<vo
                     case Action::Subtype::Scroll:
                         ASSERT_NOT_REACHED();
                     }
-                    if (currentState.pressedKey)
-                        state->setString("pressedCharKey"_s, currentState.pressedKey.value());
+                    if (!currentState.pressedKeys.isEmpty()) {
+                        // 'pressedCharKey' is deprecated and conveys only one key. It is also sent so
+                        // that backends without 'pressedCharKeys' support receive the most recently
+                        // pressed key.
+                        state->setString("pressedCharKey"_s, currentState.pressedKeys.last());
+                        Ref<JSON::Array> charKeys = JSON::Array::create();
+                        for (const auto& charKey : currentState.pressedKeys)
+                            charKeys->pushString(charKey);
+                        state->setArray("pressedCharKeys"_s, WTF::move(charKeys));
+                    }
                     if (!currentState.pressedVirtualKeys.isEmpty()) {
                         // FIXME: support parsing and tracking multiple virtual keys.
                         Ref<JSON::Array> virtualKeys = JSON::Array::create();
@@ -3280,7 +3342,7 @@ void Session::dispatchBidiMessage(RefPtr<JSON::Object>&& message)
         return;
     }
 
-    LOG(WebDriverBiDi, "Session::dispatchBidiMessage: received bidi message %s", bidiMessageValue->toJSONString().utf8().data());
+    LOG_WITH_STREAM(WebDriverBiDi, stream << "Session::dispatchBidiMessage: received bidi message "_s << bidiMessageValue->toJSONString());
     auto bidiMessage = bidiMessageValue->asObject();
     if (!bidiMessage) {
         RELEASE_LOG(WebDriverBiDi, "Session::dispatchBidiMessage: Bidi message is not an object.");
@@ -3288,19 +3350,21 @@ void Session::dispatchBidiMessage(RefPtr<JSON::Object>&& message)
         return;
     }
 
-    // FIXME: Move event subscription into the browser, so we can just forward the events to the client
-    // https://bugs.webkit.org/show_bug.cgi?id=295497
     if (bidiMessage->getString("type"_s) == "event"_s) {
         if (bidiMessage->size() < 3 || (bidiMessage->find("method"_s) == bidiMessage->end()) || (bidiMessage->find("params"_s) == bidiMessage->end())) {
-            RELEASE_LOG(WebDriverBiDi, "Session::dispatchBidiMessage: Malformed bidi event: %s", bidiMessageValue->toJSONString().utf8().data());
+            RELEASE_LOG(WebDriverBiDi, "Session::dispatchBidiMessage: Malformed bidi event: %s", bidiMessageValue->toJSONString().utf8());
             return;
         }
 
         auto bidiMethod = bidiMessage->getString("method"_s);
-        if (!eventIsEnabled(bidiMethod, { })) {
-            RELEASE_LOG(WebDriverBiDi, "Message %s is an unknown event or not enabled, ignoring.", bidiMethod.utf8().data());
-            return;
+
+        // Keep the public script.realmDestroyed payload aligned with current client expectations,
+        // while still using context internally for subscription matching.
+        if (bidiMethod == "script.realmDestroyed"_s) {
+            if (auto eventParameters = bidiMessage->getObject("params"_s))
+                eventParameters->remove("context"_s);
         }
+
         if (bidiMethod == "log.entryAdded"_s)
             bidiMessage = processLogEntryAdded(WTF::move(bidiMessage));
 
@@ -3383,125 +3447,6 @@ RefPtr<JSON::Object> Session::processLogEntryAdded(RefPtr<JSON::Object>&& messag
     // https://bugs.webkit.org/show_bug.cgi?id=282980
 
     return body;
-}
-
-bool Session::eventIsEnabled(const String& eventName, const Vector<String>&)
-{
-    // https://w3c.github.io/webdriver-bidi/#event-is-enabled
-
-    AtomString atomEventName { eventName };
-
-    if (!m_eventSubscriptionCounts.contains(atomEventName))
-        return false;
-
-    for (const auto& subscription : m_eventSubscriptions) {
-        // FIXME: Add support to subscribe to specific browsing contexts
-        // https://bugs.webkit.org/show_bug.cgi?id=282981
-        if (!subscription.value.isGlobal())
-            continue;
-
-        if (subscription.value.events.contains(atomEventName))
-            return true;
-    }
-
-    return false;
-}
-
-void Session::subscribeForEvents(const Vector<String>& events, Vector<String>&& browsingContextIDs, Vector<String>&& userContextIDs, Function<void(CommandResult&&)>&& completionHandler)
-{
-    // FIXME: Process/validate list of event names (e.g. expanding if given only the module name)
-    // https://bugs.webkit.org/show_bug.cgi?id=291371
-    auto subscriptionID = WTF::createVersion4UUIDString();
-
-    for (const auto& event : events) {
-        auto addResult = m_eventSubscriptionCounts.add(AtomString { event }, 1);
-        if (!addResult.isNewEntry)
-            addResult.iterator->value++;
-    }
-
-    Vector<AtomString> atomEventNames;
-    for (const auto& event : events)
-        atomEventNames.append(AtomString { event });
-
-    m_eventSubscriptions.add(subscriptionID, EventSubscription { subscriptionID, WTF::move(atomEventNames), WTF::move(browsingContextIDs), WTF::move(userContextIDs) });
-    completionHandler(CommandResult::success(JSON::Value::create(subscriptionID)));
-}
-
-void Session::unsubscribeByIDs(const Vector<EventSubscriptionID>& subscriptionIDs, Function<void(CommandResult&&)>&& completionHandler)
-{
-    for (const auto& id : subscriptionIDs) {
-        if (!m_eventSubscriptions.contains(id)) {
-            completionHandler(CommandResult::fail(CommandResult::ErrorCode::InvalidArgument, "At least one subscription id is unknown"_s));
-            return;
-        }
-    }
-
-    for (const auto& id : subscriptionIDs) {
-        const auto& subscription = m_eventSubscriptions.get(id);
-
-        for (const auto& event : subscription.events) {
-            auto removeResult = m_eventSubscriptionCounts.find(event);
-            if (removeResult != m_eventSubscriptionCounts.end()) {
-                if (!(--removeResult->value))
-                    m_eventSubscriptionCounts.remove(event);
-            }
-        }
-        m_eventSubscriptions.remove(id);
-    }
-    completionHandler(CommandResult::success());
-}
-
-void Session::unsubscribeByEventName(const Vector<String>& eventNames, Function<void(CommandResult&&)>&& completionHandler)
-
-{
-    HashMap<String, EventSubscription> subscriptionsToKeep;
-    HashSet<String> matchedEvents;
-    // FIXME: Process/validate list of event names (e.g. expanding if given only the module name)
-    // https://bugs.webkit.org/show_bug.cgi?id=291371
-    for (const auto& eventName : eventNames) {
-        auto atomEventName = AtomString { eventName };
-        for (const auto& subscription : m_eventSubscriptions) {
-            if (!subscription.value.events.contains(atomEventName)) {
-                subscriptionsToKeep.add(subscription.value.id, subscription.value);
-                continue;
-            }
-
-            // FIXME: Add support to subscribe to specific browsing contexts
-            // https://bugs.webkit.org/show_bug.cgi?id=282981
-            // In this case, only process them if we were given the "contexts" parameter
-            if (!subscription.value.isGlobal()) {
-                subscriptionsToKeep.add(subscription.value.id, subscription.value);
-                continue;
-            }
-
-            auto currentSubscriptionEventNames = subscription.value.events;
-            currentSubscriptionEventNames.removeAll(atomEventName);
-            matchedEvents.add(eventName);
-            if (!currentSubscriptionEventNames.isEmpty()) {
-                auto clonedSubscription = subscription.value;
-                clonedSubscription.events = currentSubscriptionEventNames;
-                subscriptionsToKeep.add(clonedSubscription.id, WTF::move(clonedSubscription));
-            }
-        }
-    }
-
-    if (matchedEvents.size() != eventNames.size()) {
-        completionHandler(CommandResult::fail(CommandResult::ErrorCode::InvalidArgument));
-        return;
-    }
-
-    // Only modify the actual subscriptions after we validated all requested events.
-    m_eventSubscriptions = WTF::move(subscriptionsToKeep);
-    m_eventSubscriptionCounts.clear();
-    for (const auto& subscription : m_eventSubscriptions.values()) {
-        for (const auto& event : subscription.events) {
-            auto addResult = m_eventSubscriptionCounts.add(event, 1);
-            if (!addResult.isNewEntry)
-                addResult.iterator->value++;
-        }
-    }
-
-    completionHandler(CommandResult::success());
 }
 
 void Session::relayBidiCommand(const String& message, unsigned commandId, Function<void(WebSocketMessageHandler::Message&&)>&& completionHandler)

@@ -30,13 +30,14 @@
 #include "FEColorMatrix.h"
 #include "FilterOperation.h"
 #include "StylePrimitiveNumericTypes+Conversions.h"
+#include "StylePrimitiveNumericTypes+Evaluation.h"
 
 namespace WebCore {
 namespace Style {
 
 HueRotate HueRotate::passthroughForInterpolation()
 {
-    return { .value = CSSFilterFunctionDescriptor<CSSValueHueRotate>::initialValueForInterpolation };
+    return { .value = CSSFilterFunctionDescriptor<CSSValueID::HueRotate>::initialValueForInterpolation };
 }
 
 bool HueRotate::transformColor(SRGBA<float>& color) const
@@ -47,7 +48,7 @@ bool HueRotate::transformColor(SRGBA<float>& color) const
 
 // MARK: - Conversion
 
-auto ToCSS<HueRotate>::operator()(const HueRotate& value, const RenderStyle& style) -> CSS::HueRotate
+auto ToCSS<HueRotate>::operator()(const HueRotate& value, const Style::ComputedStyle& style) -> CSS::HueRotate
 {
     return { .value = toCSS(value.value, style) };
 }
@@ -56,7 +57,7 @@ auto ToStyle<CSS::HueRotate>::operator()(const CSS::HueRotate& value, const Buil
 {
     if (auto parameter = value.value)
         return { .value = toStyle(*parameter, state) };
-    return { .value = CSSFilterFunctionDescriptor<CSSValueHueRotate>::defaultValue };
+    return { .value = CSSFilterFunctionDescriptor<CSSValueID::HueRotate>::defaultValue };
 }
 
 // MARK: - Evaluation

@@ -29,6 +29,7 @@
 #if ENABLE(ATTACHMENT_ELEMENT)
 
 #include "WebPageProxy.h"
+#include "WebProcessProxy.h"
 #include <WebCore/SharedBuffer.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/text/WTFString.h>
@@ -46,8 +47,16 @@ Attachment::Attachment(const WTF::String& identifier, WebKit::WebPageProxy& webP
 {
 }
 
-Attachment::~Attachment()
+Attachment::~Attachment() = default;
+
+RefPtr<WebKit::WebProcessProxy> Attachment::owningProcess() const
 {
+    return m_owningProcess;
+}
+
+void Attachment::setOwningProcess(WebKit::WebProcessProxy& process)
+{
+    m_owningProcess = process;
 }
 
 void Attachment::updateAttributes(CompletionHandler<void()>&& callback)

@@ -25,6 +25,7 @@
 #include "config.h"
 #include "StyleTextEmphasisPosition.h"
 
+#include "CSSKeywordValue.h"
 #include "StyleBuilderChecking.h"
 
 namespace WebCore {
@@ -32,11 +33,11 @@ namespace Style {
 
 auto CSSValueConversion<TextEmphasisPosition>::operator()(BuilderState& state, const CSSValue& value) -> TextEmphasisPosition
 {
-    if (RefPtr primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value)) {
-        switch (primitiveValue->valueID()) {
-        case CSSValueOver:
+    if (auto* keywordValue = dynamicDowncast<CSSKeywordValue>(value)) {
+        switch (keywordValue->valueID()) {
+        case CSSValueID::Over:
             return { TextEmphasisPositionValue::Over, TextEmphasisPositionValue::Right };
-        case CSSValueUnder:
+        case CSSValueID::Under:
             return { TextEmphasisPositionValue::Under, TextEmphasisPositionValue::Right };
         default:
             state.setCurrentPropertyInvalidAtComputedValueTime();
@@ -44,35 +45,35 @@ auto CSSValueConversion<TextEmphasisPosition>::operator()(BuilderState& state, c
         }
     }
 
-    auto list = requiredListDowncast<CSSValueList, CSSPrimitiveValue>(state, value);
+    auto list = requiredListDowncast<CSSValueList, CSSKeywordValue>(state, value);
     if (!list)
         return { TextEmphasisPositionValue::Over, TextEmphasisPositionValue::Right };
 
     TextEmphasisPositionValueEnumSet result;
     for (Ref item : *list) {
         switch (item->valueID()) {
-        case CSSValueOver:
+        case CSSValueID::Over:
             if (result.contains(TextEmphasisPositionValue::Under)) {
                 state.setCurrentPropertyInvalidAtComputedValueTime();
                 return { TextEmphasisPositionValue::Over, TextEmphasisPositionValue::Right };
             }
             result.value.add(TextEmphasisPositionValue::Over);
             break;
-        case CSSValueUnder:
+        case CSSValueID::Under:
             if (result.contains(TextEmphasisPositionValue::Over)) {
                 state.setCurrentPropertyInvalidAtComputedValueTime();
                 return { TextEmphasisPositionValue::Over, TextEmphasisPositionValue::Right };
             }
             result.value.add(TextEmphasisPositionValue::Under);
             break;
-        case CSSValueLeft:
+        case CSSValueID::Left:
             if (result.contains(TextEmphasisPositionValue::Right)) {
                 state.setCurrentPropertyInvalidAtComputedValueTime();
                 return { TextEmphasisPositionValue::Over, TextEmphasisPositionValue::Right };
             }
             result.value.add(TextEmphasisPositionValue::Left);
             break;
-        case CSSValueRight:
+        case CSSValueID::Right:
             if (result.contains(TextEmphasisPositionValue::Left)) {
                 state.setCurrentPropertyInvalidAtComputedValueTime();
                 return { TextEmphasisPositionValue::Over, TextEmphasisPositionValue::Right };

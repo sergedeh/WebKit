@@ -108,7 +108,7 @@ WebDataListSuggestionsDropdownIOS::WebDataListSuggestionsDropdownIOS(WebPageProx
 {
 }
 
-void WebDataListSuggestionsDropdownIOS::show(WebCore::DataListSuggestionInformation&& information)
+void WebDataListSuggestionsDropdownIOS::platformShow(WebCore::DataListSuggestionInformation&& information)
 {
     if (m_suggestionsControl) {
         [m_suggestionsControl updateWithInformation:WTF::move(information)];
@@ -117,16 +117,17 @@ void WebDataListSuggestionsDropdownIOS::show(WebCore::DataListSuggestionInformat
 
     WebCore::DataListSuggestionActivationType type = information.activationType;
 
-    if (m_contentView._shouldUseContextMenusForFormControls) {
-        m_suggestionsControl = adoptNS([[WKDataListSuggestionsDropdown alloc] initWithInformation:WTF::move(information) inView:m_contentView]);
+    RetainPtr contentView = m_contentView.get();
+    if ([contentView _shouldUseContextMenusForFormControls]) {
+        m_suggestionsControl = adoptNS([[WKDataListSuggestionsDropdown alloc] initWithInformation:WTF::move(information) inView:contentView.get()]);
         [m_suggestionsControl showSuggestionsDropdown:*this activationType:type];
         return;
     }
 
     if (PAL::currentUserInterfaceIdiomIsSmallScreen())
-        m_suggestionsControl = adoptNS([[WKDataListSuggestionsPicker alloc] initWithInformation:WTF::move(information) inView:m_contentView]);
+        m_suggestionsControl = adoptNS([[WKDataListSuggestionsPicker alloc] initWithInformation:WTF::move(information) inView:contentView.get()]);
     else
-        m_suggestionsControl = adoptNS([[WKDataListSuggestionsPopover alloc] initWithInformation:WTF::move(information) inView:m_contentView]);
+        m_suggestionsControl = adoptNS([[WKDataListSuggestionsPopover alloc] initWithInformation:WTF::move(information) inView:contentView.get()]);
 
     [m_suggestionsControl showSuggestionsDropdown:*this activationType:type];
 }
@@ -147,7 +148,7 @@ void WebDataListSuggestionsDropdownIOS::didSelectOption(const String& selectedOp
     if (!m_page)
         return;
 
-    m_page->didSelectOption(selectedOption);
+    protect(m_page)->didSelectOption(selectedOption, m_targetFrameID);
     close();
 }
 
@@ -168,7 +169,7 @@ void WebDataListSuggestionsDropdownIOS::didSelectOption(const String& selectedOp
     _view = view;
     _suggestions = WTF::move(information.suggestions);
 
-    [_view _setDataListSuggestionsControl:self];
+    [protect(_view) _setDataListSuggestionsControl:self];
 
     return self;
 }
@@ -185,7 +186,7 @@ void WebDataListSuggestionsDropdownIOS::didSelectOption(const String& selectedOp
 
 - (void)didSelectOptionAtIndex:(NSInteger)index
 {
-    _dropdown->didSelectOption(_suggestions[index].value);
+    protect(*_dropdown)->didSelectOption(_suggestions[index].value);
 }
 
 - (void)invalidate
@@ -222,7 +223,7 @@ void WebDataListSuggestionsDropdownIOS::didSelectOption(const String& selectedOp
 
 - (NSTextAlignment)textAlignment
 {
-    return _view.focusedElementInformation.isRTL ? NSTextAlignmentRight : NSTextAlignmentLeft;
+    return [protect(_view) focusedElementInformation].isRTL ? NSTextAlignmentRight : NSTextAlignmentLeft;
 }
 
 @end
@@ -253,8 +254,11 @@ void WebDataListSuggestionsDropdownIOS::didSelectOption(const String& selectedOp
 
 - (void)updateWithInformation:(WebCore::DataListSuggestionInformation&&)information
 {
+    auto activationType = information.activationType;
+
     [super updateWithInformation:WTF::move(information)];
-    if (information.activationType != WebCore::DataListSuggestionActivationType::IndicatorClicked) {
+
+    if (activationType != WebCore::DataListSuggestionActivationType::IndicatorClicked) {
         self.view.dataListTextSuggestionsInputView = nil;
         self.view.dataListTextSuggestions = self.textSuggestions;
         return;
@@ -497,7 +501,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     [self _updateSuggestionsMenuElements];
 
     if (!_suggestionsContextMenuPresenter) {
-        _suggestionsContextMenuPresenter = makeUnique<WebKit::CompactContextMenuPresenter>(self.view, self);
+        _suggestionsContextMenuPresenter = makeUnique<WebKit::CompactContextMenuPresenter>(self.view, self, WebKit::CompactContextMenuPresenter::ShowsMenuFromSource::No);
         [self.view doAfterEditorStateUpdateAfterFocusingElement:[weakSelf = WeakObjCPtr<WKDataListSuggestionsDropdown>(self)] {
             auto strongSelf = weakSelf.get();
             if (!strongSelf)
@@ -537,16 +541,16 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     NSMutableArray *suggestions = [NSMutableArray arrayWithCapacity:self.suggestionsCount];
 
     for (NSInteger index = 0; index < self.suggestionsCount; index++) {
-        UIAction *suggestionAction = [UIAction actionWithTitle:[self suggestionAtIndex:index].createNSString().get() image:nil identifier:nil handler:[weakSelf = WeakObjCPtr<WKDataListSuggestionsDropdown>(self), index] (UIAction *) {
+        RetainPtr suggestionAction = [UIAction actionWithTitle:[self suggestionAtIndex:index].createNSString().get() image:nil identifier:nil handler:[weakSelf = WeakObjCPtr<WKDataListSuggestionsDropdown>(self), index] (UIAction *) {
             auto strongSelf = weakSelf.get();
             if (!strongSelf)
                 return;
 
             [strongSelf didSelectOptionAtIndex:index];
         }];
-        suggestionAction.subtitle = [self suggestionLabelAtIndex:index].createNSString().get();
+        suggestionAction.get().subtitle = [self suggestionLabelAtIndex:index].createNSString().get();
 
-        [suggestions addObject:suggestionAction];
+        [suggestions addObject:suggestionAction.get()];
     }
 
     _suggestionsMenuElements = adoptNS([suggestions copy]);
@@ -597,7 +601,12 @@ ALLOW_DEPRECATED_DECLARATIONS_END
         return [UIMenu menuWithTitle:@"" children:strongSelf->_suggestionsMenuElements.get()];
     };
 
-    return [UIContextMenuConfiguration configurationWithIdentifier:nil previewProvider:nil actionProvider:actionMenuProvider];
+    RetainPtr configuration = [UIContextMenuConfiguration configurationWithIdentifier:nil previewProvider:nil actionProvider:actionMenuProvider];
+#if HAVE(UICONTEXTMENUCONFIGURATION_ALLOWTYPESELECT_SUPPORT)
+    if ([configuration respondsToSelector:@selector(setAllowsTypeSelect:)])
+        [configuration setAllowsTypeSelect:NO];
+#endif
+    return configuration.autorelease();
 }
 
 - (void)contextMenuInteraction:(UIContextMenuInteraction *)interaction willDisplayMenuForConfiguration:(UIContextMenuConfiguration *)configuration animator:(id <UIContextMenuInteractionAnimating>)animator

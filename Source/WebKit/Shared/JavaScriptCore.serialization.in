@@ -22,6 +22,7 @@
 
 header: <JavaScriptCore/ConsoleTypes.h>
 enum class JSC::MessageSource : uint8_t {
+    Accessibility,
     XML,
     JS,
     Network,
@@ -67,7 +68,7 @@ enum class JSC::MessageLevel : uint8_t {
     Info,
 };
 
-header: <JavaScriptCore/SourceTaintedOrigin.h>
+header: <JavaScriptCore/SourceTaintedness.h>
 enum class JSC::SourceTaintedOrigin : uint8_t {
     Untainted,
     IndirectlyTaintedByHistory,
@@ -83,4 +84,5 @@ enum class Inspector::InspectorTargetType : uint8_t {
     Page,
     DedicatedWorker,
     ServiceWorker,
+    Frame,
 };

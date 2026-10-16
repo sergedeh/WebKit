@@ -30,7 +30,7 @@
 
 #include "config.h"
 
-#include "Test.h"
+#include "Helpers/Test.h"
 #include <wtf/Vector.h>
 #include <wtf/text/StringCommon.h>
 
@@ -100,6 +100,88 @@ TEST(WTF_StringCommon, Find16NonASCII)
 }
 #endif
 
+TEST(WTF_StringCommon, FindNaN)
+{
+    auto bitsToDouble = [](uint64_t bits) {
+        return std::bit_cast<double>(bits);
+    };
+
+    // IEEE 754 NaN: exponent all-ones, mantissa non-zero. Cover multiple
+    // bit patterns to exercise the self-compare SIMD path.
+    const double nanSamples[] = {
+        bitsToDouble(0x7ff8000000000000ULL), // PNaN (quiet_NaN on most platforms)
+        bitsToDouble(0xfff8000000000000ULL), // -PNaN (e.g. sin(-inf))
+        bitsToDouble(0x7ff0000000000001ULL), // Signaling NaN, min payload
+        bitsToDouble(0x7fffffffffffffffULL), // Max payload
+        bitsToDouble(0xffff000000000000ULL), // ImpureNaN in JSC terminology
+        bitsToDouble(0xfffffffffffffffeULL),
+    };
+
+    // Non-NaN values that share bit patterns close to NaN boundaries.
+    const double nonNaNSamples[] = {
+        0.0,
+        -0.0,
+        1.5,
+        -42.25,
+        bitsToDouble(0x7ff0000000000000ULL), // +Infinity
+        bitsToDouble(0xfff0000000000000ULL), // -Infinity
+        bitsToDouble(0x7fefffffffffffffULL), // DBL_MAX
+        bitsToDouble(0x0000000000000001ULL), // Smallest subnormal
+    };
+
+    // Empty and short inputs (scalar path).
+    {
+        EXPECT_FALSE(WTF::findNaN(nullptr, 0));
+
+        double a[] = { 1.5 };
+        EXPECT_FALSE(WTF::findNaN(a, 1));
+
+        double b[] = { 1.5, 2.5, 3.5 };
+        EXPECT_FALSE(WTF::findNaN(b, 3));
+
+        double c[] = { 1.5, 2.5, nanSamples[0], 4.5 };
+        EXPECT_EQ(WTF::findNaN(c, 4), c + 2);
+
+        double d[] = { nanSamples[1], 2.5, 3.5, 4.5 };
+        EXPECT_EQ(WTF::findNaN(d, 4), d);
+    }
+
+    // SIMD path: fill with non-NaN values (including Infinities) and verify no false positive.
+    {
+        Vector<double> v(64);
+        for (unsigned i = 0; i < v.size(); ++i)
+            v[i] = nonNaNSamples[i % std::size(nonNaNSamples)];
+        EXPECT_FALSE(WTF::findNaN(v.span().data(), v.size()));
+    }
+
+    // SIMD path: place each NaN bit pattern at every position in 0..31 and
+    // verify the returned pointer, covering scalar runway, unrolled body and
+    // overlapping tail load.
+    for (double nan : nanSamples) {
+        for (unsigned len : { 5u, 8u, 11u, 12u, 16u, 17u, 31u, 32u }) {
+            Vector<double> v(len);
+            for (unsigned i = 0; i < len; ++i)
+                v[i] = static_cast<double>(i) + 0.5;
+            for (unsigned pos = 0; pos < len; ++pos) {
+                v[pos] = nan;
+                EXPECT_EQ(WTF::findNaN(v.span().data(), len), v.span().data() + pos)
+                    << "len=" << len << " pos=" << pos;
+                v[pos] = static_cast<double>(pos) + 0.5;
+            }
+        }
+    }
+
+    // Returns the first NaN when multiple are present.
+    {
+        Vector<double> v(32);
+        for (unsigned i = 0; i < v.size(); ++i)
+            v[i] = static_cast<double>(i) + 0.5;
+        v[9] = nanSamples[2];
+        v[20] = nanSamples[0];
+        EXPECT_EQ(WTF::findNaN(v.span().data(), v.size()), v.span().data() + 9);
+    }
+}
+
 TEST(WTF_StringCommon, FindIgnoringASCIICaseWithoutLengthIdentical)
 {
     EXPECT_EQ(WTF::findIgnoringASCIICaseWithoutLength("needle", "needle"), 0UL);
@@ -140,6 +222,51 @@ TEST(WTF_StringCommon, EqualIgnoringASCIICase)
     EXPECT_FALSE(WTF::equalIgnoringASCIICase(u8"🍉Watermelon🍉"_span, std::span<const char8_t>()));
     EXPECT_FALSE(WTF::equalIgnoringASCIICase(u8"🍉Watermelon🍉"_span, u8""_span));
     // EXPECT_TRUE(WTF::equalIgnoringASCIICase(u8"test"_span, "test"_span8)); // This should not compile.
+}
+
+template<typename UnsignedType, typename FindFunction>
+static void testFindBoundaryLengths(FindFunction findFunction)
+{
+    // Boundary lengths around the new intermediate SIMD tier find16()/find32() gained for
+    // the [stride, threshold) gap (stride 8 for uint16_t / 4 for uint32_t on 128-bit SIMD;
+    // threshold is 32), and around the lengths where find8() changes how it searches (16 and 64).
+    // Place the target character at every position for each length.
+    constexpr auto target = static_cast<UnsignedType>(0xBEEF);
+    for (size_t length : { 1, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 79, 80, 81, 128 }) {
+        Vector<UnsignedType> buffer(length, [](size_t i) {
+            return static_cast<UnsignedType>(0x1000 + (i % 100));
+        });
+
+        EXPECT_EQ(findFunction(buffer.span().data(), target, length), nullptr) << "length=" << length;
+
+        for (size_t position = 0; position < length; ++position) {
+            auto withTarget = buffer;
+            withTarget[position] = target;
+            EXPECT_EQ(findFunction(withTarget.span().data(), target, length), withTarget.span().data() + position)
+                << "length=" << length << " position=" << position;
+        }
+    }
+}
+
+TEST(WTF_StringCommon, Find8BoundaryLengths)
+{
+    testFindBoundaryLengths<uint8_t>([](const uint8_t* pointer, uint8_t character, size_t length) {
+        return WTF::find8(pointer, character, length);
+    });
+}
+
+TEST(WTF_StringCommon, Find16BoundaryLengths)
+{
+    testFindBoundaryLengths<uint16_t>([](const uint16_t* pointer, uint16_t character, size_t length) {
+        return WTF::find16(pointer, character, length);
+    });
+}
+
+TEST(WTF_StringCommon, Find32BoundaryLengths)
+{
+    testFindBoundaryLengths<uint32_t>([](const uint32_t* pointer, uint32_t character, size_t length) {
+        return WTF::find32(pointer, character, length);
+    });
 }
 
 TEST(WTF_StringCommon, StartsWith)
@@ -322,6 +449,60 @@ TEST(WTF_StringCommon, CharactersAreAllASCII)
     EXPECT_FALSE(WTF::charactersAreAllASCII(u8"🍉"_span));
     EXPECT_TRUE(WTF::charactersAreAllASCII(std::span<const char8_t>()));
     EXPECT_TRUE(WTF::charactersAreAllASCII(u8""_span));
+}
+
+TEST(WTF_StringCommon, CharactersAreAllLatin1)
+{
+    // Latin1Character overload — always true.
+    EXPECT_TRUE(WTF::charactersAreAllLatin1(std::span<const Latin1Character>()));
+    {
+        std::array<Latin1Character, 3> buf { 0x00, 0x80, 0xFF };
+        EXPECT_TRUE(WTF::charactersAreAllLatin1(std::span<const Latin1Character> { buf }));
+    }
+
+    // char16_t overload — cover every size regime of the SIMD scan:
+    //   - empty (no iters, no tail)
+    //   - size < 8 (only scalar tail)
+    //   - size == 8 (one SIMD iter, empty tail)
+    //   - size 9..15 (one SIMD iter + scalar tail)
+    //   - size 16, 64, 128 (many SIMD iters + varying tail)
+    // In each regime, verify both the all-Latin1 and has-non-Latin1 cases, and
+    // that a single non-Latin1 char is detected at the start, middle, and end.
+
+    EXPECT_TRUE(WTF::charactersAreAllLatin1(std::span<const char16_t>()));
+
+    auto checkSize = [](size_t size) {
+        Vector<char16_t> buf(size, [](size_t i) {
+            // Full Latin1 range including 0x80..0xFF (which differentiate Latin1 from ASCII).
+            return static_cast<char16_t>(i & 0xFF);
+        });
+
+        // All-Latin1.
+        EXPECT_TRUE(WTF::charactersAreAllLatin1(buf.span())) << "size=" << size;
+
+        if (!size)
+            return;
+
+        // Non-Latin1 at every single position — covers SIMD first/last iter,
+        // chunk tail, scalar tail, depending on size.
+        for (size_t poison : { size_t { 0 }, size / 2, size - 1 }) {
+            auto corrupted = buf;
+            corrupted[poison] = static_cast<char16_t>(0x0100); // first non-Latin1 code point
+            EXPECT_FALSE(WTF::charactersAreAllLatin1(corrupted.span()))
+                << "size=" << size << " poison=" << poison;
+
+            corrupted[poison] = static_cast<char16_t>(0x4E2D); // CJK — tests upper bits too
+            EXPECT_FALSE(WTF::charactersAreAllLatin1(corrupted.span()))
+                << "size=" << size << " poison=" << poison << " (CJK)";
+
+            corrupted[poison] = static_cast<char16_t>(0xFFFF); // highest code unit
+            EXPECT_FALSE(WTF::charactersAreAllLatin1(corrupted.span()))
+                << "size=" << size << " poison=" << poison << " (0xFFFF)";
+        }
+    };
+
+    for (size_t size : { 1, 3, 7, 8, 9, 15, 16, 17, 31, 32, 63, 64, 65, 127, 128, 129 })
+        checkSize(size);
 }
 
 TEST(WTF_StringCommon, CopyElements64To8)

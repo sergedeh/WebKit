@@ -26,7 +26,6 @@
 #pragma once
 
 #include <JavaScriptCore/AbstractSlotVisitor.h>
-#include <JavaScriptCore/HandleTypes.h>
 #include <wtf/Forward.h>
 #include <wtf/IterationStatus.h>
 #include <wtf/MonotonicTime.h>
@@ -34,6 +33,7 @@
 
 namespace JSC {
 
+class Collector;
 class GCThreadSharedData;
 class HeapCell;
 class HeapAnalyzer;
@@ -42,7 +42,11 @@ class MarkingConstraintSolver;
 
 typedef uint32_t HeapVersion;
 
-class SlotVisitor final : public AbstractSlotVisitor {
+// Visitors should not share cachelines: each marking thread writes its own visitor for every
+// cell it visits. 128 satisfies 64-byte lines too.
+static constexpr size_t slotVisitorAlignment = 128;
+
+class alignas(slotVisitorAlignment) SlotVisitor final : public AbstractSlotVisitor {
     WTF_MAKE_NONCOPYABLE(SlotVisitor);
     WTF_MAKE_TZONE_ALLOCATED(SlotVisitor);
 
@@ -86,7 +90,7 @@ public:
 #endif
     };
 
-    SlotVisitor(Heap&, CString codeName);
+    SlotVisitor(Collector&, ASCIICString codeName);
     ~SlotVisitor();
 
     void append(const ConservativeRoots&) final;
@@ -125,11 +129,13 @@ public:
     bool isMarked(MarkedBlock&, HeapCell*) const final;
     bool isMarked(PreciseAllocation&, HeapCell*) const final;
 
-    void didStartMarking();
-    void reset();
+    void LEGACY_NODELETE didStartMarking(CollectionScope, HeapVersion markingVersion, bool isAnalyzingHeap);
+    void LEGACY_NODELETE reset();
     void clearMarkStacks();
 
-    size_t bytesVisited() const { return m_bytesVisited; }
+    size_t bytesMarked() const { return m_flushedBytesMarked + m_bytesMarkedInHeap; }
+    void flushBytesMarked();
+    JS_EXPORT_PRIVATE void flushExtraMemoryVisited();
 
     void donate();
     void drain(MonotonicTime timeout = MonotonicTime::infinity());
@@ -141,8 +147,6 @@ public:
 
     SharedDrainResult drainInParallel(MonotonicTime timeout = MonotonicTime::infinity());
     SharedDrainResult drainInParallelPassively(MonotonicTime timeout = MonotonicTime::infinity());
-    
-    SharedDrainResult waitForTermination(MonotonicTime timeout = MonotonicTime::infinity());
 
     // Attempts to perform an increment of draining that involves only walking `bytes` worth of data. This
     // is likely to accidentally walk more or less than that. It will usually mark more than bytes. It may
@@ -163,20 +167,17 @@ public:
 
     HeapVersion markingVersion() const { return m_markingVersion; }
 
-    bool mutatorIsStopped() const final { return m_mutatorIsStopped; }
+    bool mutatorsAreStopped() const final { return m_mutatorsAreStopped; }
+
+    // While set, visits assume the mutators of the heaps being collected are stopped. Change it only between drains.
+    void setMutatorsAreStopped(bool areStopped)
+    {
+        ASSERT(!m_isInParallelMode); // Verify this visitor is not draining.
+        m_mutatorsAreStopped = areStopped;
+    }
     
-    Lock& rightToRun() WTF_RETURNS_LOCK(m_rightToRun) { return m_rightToRun; }
-    
-    void updateMutatorIsStopped(const AbstractLocker&);
-    void updateMutatorIsStopped();
-    
-    bool hasAcknowledgedThatTheMutatorIsResumed() const;
-    bool mutatorIsStoppedIsUpToDate() const;
-    
-    void optimizeForStoppedMutator();
-    
-    void didRace(const VisitRaceKey&) final;
-    void didRace(JSCell* cell, const char* reason) { didRace(VisitRaceKey(cell, reason)); }
+    JS_EXPORT_PRIVATE void didRace(const VisitRaceKey&) final;
+    inline void didRace(JSCell* cell, const char* reason); // Defined in SlotVisitorInlines.h
     
     void visitAsConstraint(const JSCell*) final;
     
@@ -210,36 +211,40 @@ private:
     void visitChildren(const JSCell*);
 
     void propagateExternalMemoryVisitedIfNecessary();
+    ALWAYS_INLINE void noteBytesMarked(JSC::Heap&, size_t);
     
     void donateKnownParallel();
     void donateKnownParallel(MarkStackArray& from, MarkStackArray& to);
 
     void donateAll(const AbstractLocker&);
 
-    bool hasWork(const AbstractLocker&);
+    bool LEGACY_NODELETE hasWork(const AbstractLocker&);
     bool didReachTermination(const AbstractLocker&);
 
     template<typename Func>
-    IterationStatus forEachMarkStack(const Func&);
+    IterationStatus forEachMarkStack(NOESCAPE const Func&);
 
-    MarkStackArray& correspondingGlobalStack(MarkStackArray&);
+    MarkStackArray& LEGACY_NODELETE correspondingGlobalStack(MarkStackArray&);
 
     HeapVersion m_markingVersion;
 
-    size_t m_bytesVisited { 0 };
-    size_t m_nonCellVisitCount { 0 }; // Used for incremental draining, ignored otherwise.
-    CheckedSize m_extraMemorySize { 0 };
+    // Bytes of m_bytesMarkedHeap's cells this visitor marked and has not yet added to that heap's count. Marking a
+    // cell of another heap flushes it, which is rare since a heap's cells mostly reference their own heap's cells.
+    size_t m_bytesMarkedInHeap { 0 };
+    SUPPRESS_FORWARD_DECL_MEMBER JSC::Heap* m_bytesMarkedHeap { nullptr }; // Heap is not refcounted.
+    size_t m_flushedBytesMarked { 0 }; // What this visitor has added to the heaps' counts, for bytesMarked().
 
-    HeapAnalyzer* m_heapAnalyzer { nullptr };
+    size_t m_nonCellVisitCount { 0 }; // Used for incremental draining, ignored otherwise.
+
+    // Bytes of extra memory reported by cells of m_extraMemoryHeap and not yet added to that heap's count.
+    CheckedSize m_extraMemoryInHeap { 0 };
+    SUPPRESS_FORWARD_DECL_MEMBER JSC::Heap* m_extraMemoryHeap { nullptr }; // Heap is not refcounted.
+
     JSCell* m_currentCell { nullptr };
     bool m_isFirstVisit { false };
-    bool m_mutatorIsStopped { false };
-    bool m_canOptimizeForStoppedMutator { false };
+    bool m_mutatorsAreStopped { false };
     bool m_isInParallelMode { false };
-    Lock m_rightToRun;
-    
-    // Put padding here to mitigate false sharing between multiple SlotVisitors.
-    char padding[64];
+
 #if ASSERT_ENABLED
     bool m_isCheckingForDefaultMarkViolation { false };
 #endif

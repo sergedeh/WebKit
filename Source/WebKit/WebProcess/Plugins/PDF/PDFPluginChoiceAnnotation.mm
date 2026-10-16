@@ -30,9 +30,12 @@
 
 #import "PDFAnnotationTypeHelpers.h"
 #import "PDFKitSPI.h"
+#import "PDFPluginBase.h"
 #import <WebCore/CSSPrimitiveValue.h>
 #import <WebCore/CSSPropertyNames.h>
+#import <WebCore/ColorCocoa.h>
 #import <WebCore/ColorSerialization.h>
+#import <WebCore/Document.h>
 #import <WebCore/HTMLElement.h>
 #import <WebCore/HTMLNames.h>
 #import <WebCore/HTMLOptionElement.h>
@@ -45,7 +48,7 @@ using namespace HTMLNames;
 
 Ref<PDFPluginChoiceAnnotation> PDFPluginChoiceAnnotation::create(PDFAnnotation *annotation, PDFPluginBase* plugin)
 {
-    ASSERT(PDFAnnotationTypeHelpers::annotationIsWidgetOfType(annotation, WidgetType::Choice));
+    ASSERT(PDFAnnotationTypeHelpers::annotationIsWidgetOfType(annotation, PDFAnnotationTypeHelpers::WidgetType::Choice));
     return adoptRef(*new PDFPluginChoiceAnnotation(annotation, plugin));
 }
 
@@ -54,12 +57,12 @@ void PDFPluginChoiceAnnotation::updateGeometry()
     PDFPluginAnnotation::updateGeometry();
 
     Ref styledElement = downcast<StyledElement>(*element());
-    styledElement->setInlineStyleProperty(CSSPropertyFontSize, protectedAnnotation().get().font.pointSize * plugin()->contentScaleFactor(), CSSUnitType::CSS_PX);
+    styledElement->setInlineStyleProperty(CSSPropertyID::FontSize, protect(annotation()).get().font.pointSize * plugin()->contentScaleFactor(), CSSUnitType::Px);
 }
 
 void PDFPluginChoiceAnnotation::commit()
 {
-    protectedAnnotation().get().widgetStringValue = downcast<HTMLSelectElement>(protectedElement())->value().createNSString().get();
+    protect(annotation()).get().widgetStringValue = downcast<HTMLSelectElement>(protect(element()))->value().createNSString().get();
 
     PDFPluginAnnotation::commit();
 }
@@ -72,18 +75,19 @@ Ref<Element> PDFPluginChoiceAnnotation::createAnnotationElement()
     Ref element = downcast<StyledElement>(document->createElement(selectTag, false));
 
     // FIXME: Match font weight and style as well?
-    element->setInlineStyleProperty(CSSPropertyColor, serializationForHTML(colorFromCocoaColor([choiceAnnotation fontColor])));
-    element->setInlineStyleProperty(CSSPropertyFontFamily, [[choiceAnnotation font] familyName]);
+    element->setInlineStyleProperty(CSSPropertyID::Color, serializationForHTML(colorFromCocoaColor([choiceAnnotation fontColor])));
+    element->setInlineStyleProperty(CSSPropertyID::FontFamily, [[choiceAnnotation font] familyName]);
 
     RetainPtr<NSArray> choices = [choiceAnnotation choices];
     RetainPtr<NSString> selectedChoice = [choiceAnnotation widgetStringValue];
 
-    for (NSString *choice in choices.get()) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSString *choice in choices.get()) {
         auto choiceOption = document->createElement(optionTag, false);
         choiceOption->setAttributeWithoutSynchronization(valueAttr, choice);
         choiceOption->setTextContent(choice);
 
-        if (choice == selectedChoice)
+        if ([choice isEqualToString:selectedChoice])
             choiceOption->setAttributeWithoutSynchronization(selectedAttr, "selected"_s);
 
         element->appendChild(choiceOption);

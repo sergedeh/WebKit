@@ -29,7 +29,7 @@
 #include "APIObject.h"
 #include <ranges>
 #include <wtf/Forward.h>
-#include <wtf/RetainReleaseSwift.h>
+#include <wtf/SwiftBridging.h>
 #include <wtf/Vector.h>
 
 namespace API {
@@ -51,12 +51,10 @@ public:
     }
 
     Object* at(size_t i) const { return m_elements[i].get(); }
-    RefPtr<Object> protectedAt(size_t i) const { return m_elements[i]; }
-
     size_t size() const { return m_elements.size(); }
 
-    const Vector<RefPtr<Object>>& elements() const { return m_elements; }
-    Vector<RefPtr<Object>>& elements() { return m_elements; }
+    const Vector<RefPtr<Object>>& elements() const LIFETIME_BOUND { return m_elements; }
+    Vector<RefPtr<Object>>& elements() LIFETIME_BOUND { return m_elements; }
 
     template<typename T>
     decltype(auto) elementsOfType() const
@@ -67,7 +65,7 @@ public:
     }
 
     template<typename MatchFunction>
-    unsigned removeAllMatching(const MatchFunction& matchFunction)
+    unsigned removeAllMatching(NOESCAPE const MatchFunction& matchFunction)
     {
         return m_elements.removeAllMatching(matchFunction);
     }
@@ -90,18 +88,22 @@ private:
     }
 
     Vector<RefPtr<Object>> m_elements;
-} SWIFT_SHARED_REFERENCE(refArray, derefArray);
+} DERIVED_CLASS_SWIFT_SHARED_REFERENCE(refArray, derefArray);
+
+using RefAPIArray = Ref<Array>;
 
 } // namespace API
 
+#if !ENABLE(SWIFT_BASE_CLASS_ANNOTATIONS)
 inline void refArray(API::Array* WTF_NONNULL obj)
 {
-    WTF::ref(obj);
+    obj->ref();
 }
 
 inline void derefArray(API::Array* WTF_NONNULL obj)
 {
-    WTF::deref(obj);
+    obj->deref();
 }
+#endif
 
 SPECIALIZE_TYPE_TRAITS_API_OBJECT(Array);

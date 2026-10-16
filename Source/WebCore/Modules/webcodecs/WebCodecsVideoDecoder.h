@@ -69,11 +69,11 @@ public:
 
 private:
     WebCodecsVideoDecoder(ScriptExecutionContext&, Init&&);
-    size_t maximumCodecOperationsEnqueued() const final { return 4; }
+    size_t maximumCodecOperationsEnqueued() const final { return 16; }
 
     // ActiveDOMObject.
     void stop() final;
-    void suspend(ReasonForSuspension) final;
+    void LEGACY_NODELETE suspend(ReasonForSuspension) final;
 
     // EventTarget.
     enum EventTargetInterfaceType eventTargetInterface() const final { return EventTargetInterfaceType::WebCodecsVideoDecoder; }

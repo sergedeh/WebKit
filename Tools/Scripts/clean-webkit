@@ -35,9 +35,6 @@ from webkitpy.common.checkout.scm.detection import SCMDetector
 from webkitpy.common.host import Host
 from webkitpy.common.system.filesystem import FileSystem
 
-def usesFlatpak():
-    return not os.environ.get('WEBKIT_JHBUILD') or os.environ.get('WEBKIT_JHBUILD') == '0'
-
 def listWebKitBuildFiles(fs):
     ret = []
     if fs.isdir("WebKitBuild"):
@@ -63,8 +60,7 @@ def removeDerivedSources(fs):
             if dirname == 'DerivedSources':
                 derived_sources.append(os.path.join(root, dirname))
         for filename in files:
-            # Don't remove build.ninja file for COG
-            if filename.endswith(".ninja") and root.find("cog") == -1:
+            if filename.endswith(".ninja"):
                 path = os.path.join(root, filename)
                 ninja_files.append(path)
     for each in derived_sources:
@@ -73,6 +69,12 @@ def removeDerivedSources(fs):
     for each in ninja_files:
         if fs.isfile(each):
             fs.remove(each)
+
+def getKeepDirs():
+    if os.environ.get('WEBKIT_JHBUILD') == '1':
+        return ["DependenciesGTK", "DependenciesWPE"]
+    return []
+
 
 def main(args):
     fs = FileSystem()
@@ -92,7 +94,7 @@ def main(args):
         scm.discard_untracked_files(discard_ignored_files=True, keep_webkitbuild_directory=True)
         if fs.isdir("WebKitBuild"):
             files = listWebKitBuildFiles(fs)
-            keepDirs = usesFlatpak() and ["Toolchains", "UserFlatpak"] or ["DependenciesGTK", "DependenciesWPE"]
+            keepDirs = getKeepDirs()
             files = [path for path in files if path[len("WebKitBuild/"):] not in keepDirs]
             removeFiles(fs, files)
     else:

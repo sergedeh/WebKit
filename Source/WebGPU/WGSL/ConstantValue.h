@@ -30,10 +30,15 @@
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/FixedVector.h>
 #include <wtf/HashMap.h>
+#include <wtf/StringPrintStream.h>
+#include <wtf/Variant.h>
 #include <wtf/text/StringHash.h>
 #include <wtf/text/WTFString.h>
 
 namespace WGSL {
+
+struct SourceSpan;
+struct Type;
 
 #if HAVE(FP16_HALF_SUPPORT)
 using half = __fp16;
@@ -92,8 +97,8 @@ struct ConstantArray {
     {
     }
 
-    size_t upperBound() { return elements.size(); }
-    ConstantValue operator[](unsigned);
+    size_t upperBound() const { return elements.size(); }
+    ConstantValue operator[](unsigned) const;
 
     FixedVector<ConstantValue> elements;
 };
@@ -109,8 +114,8 @@ struct ConstantVector {
     {
     }
 
-    size_t upperBound() { return elements.size(); }
-    ConstantValue operator[](unsigned);
+    size_t upperBound() const { return elements.size(); }
+    ConstantValue operator[](unsigned) const;
 
     FixedVector<ConstantValue> elements;
 };
@@ -131,8 +136,8 @@ struct ConstantMatrix {
         RELEASE_ASSERT(elements.size() == columns * rows);
     }
 
-    size_t upperBound() { return columns; }
-    ConstantVector operator[](unsigned);
+    size_t upperBound() const { return columns; }
+    ConstantVector operator[](unsigned) const;
 
     uint32_t columns;
     uint32_t rows;
@@ -181,6 +186,28 @@ struct ConstantValue : BaseValue {
     {
         return std::get<ConstantVector>(*this);
     }
+
+    size_t upperBound() const
+    {
+        if (auto* array = std::get_if<ConstantArray>(this))
+            return array->upperBound();
+        if (auto* vector = std::get_if<ConstantVector>(this))
+            return vector->upperBound();
+        if (auto* matrix = std::get_if<ConstantMatrix>(this))
+            return matrix->upperBound();
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    ConstantValue operator[](unsigned index) const
+    {
+        if (auto* array = std::get_if<ConstantArray>(this))
+            return (*array)[index];
+        if (auto* vector = std::get_if<ConstantVector>(this))
+            return (*vector)[index];
+        if (auto* matrix = std::get_if<ConstantMatrix>(this))
+            return (*matrix)[index];
+        RELEASE_ASSERT_NOT_REACHED();
+    }
 };
 
 template<typename To, typename From>
@@ -217,4 +244,32 @@ std::optional<To> convertFloat(From value)
     return { value };
 }
 
+bool convertValueImpl(const SourceSpan&, const Type*, ConstantValue&);
+
 } // namespace WGSL
+
+namespace WTF {
+
+template<> class StringTypeAdapter<WGSL::ConstantValue> {
+public:
+    StringTypeAdapter(const WGSL::ConstantValue& value)
+    {
+        StringPrintStream valueString;
+        value.dump(valueString);
+        m_string = valueString.toString();
+    }
+
+    unsigned length() const { return m_string.length(); }
+    bool is8Bit() const { return m_string.is8Bit(); }
+    template<typename CharacterType>
+    void writeTo(std::span<CharacterType> destination) const
+    {
+        StringView { m_string }.getCharacters(destination);
+        WTF_STRINGTYPEADAPTER_COPIED_WTF_STRING();
+    }
+
+private:
+    String m_string;
+};
+
+} // namespace WTF

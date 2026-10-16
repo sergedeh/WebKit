@@ -30,12 +30,12 @@
 #include "CommonAtomStrings.h"
 #include "ContentSecurityPolicy.h"
 #include "DocumentFragment.h"
+#include "DocumentView.h"
 #include "FrameLoader.h"
 #include "LocalFrame.h"
 #include "LocalFrameInlines.h"
 #include "LocalFrameView.h"
 #include "NodeDocument.h"
-#include "NodeInlines.h"
 #include "SecurityOrigin.h"
 #include "SecurityOriginPolicy.h"
 #include "Text.h"
@@ -92,6 +92,9 @@ Ref<Document> XSLTProcessor::createDocumentFromSource(const String& sourceString
             result->setTransformSourceDocument(oldDocument.get());
             result->takeDOMWindowFrom(*oldDocument);
             result->setSecurityOriginPolicy(oldDocument->securityOriginPolicy());
+            result->setIsOriginKeyed(oldDocument->isOriginKeyed());
+            result->setDocumentIsolationPolicy(oldDocument->documentIsolationPolicy());
+            result->setAgentClusterIdentifier(oldDocument->agentClusterIdentifier());
             result->setCookieURL(oldDocument->cookieURL());
             result->setFirstPartyForCookies(oldDocument->firstPartyForCookies());
             result->setSiteForCookies(oldDocument->siteForCookies());
@@ -113,8 +116,10 @@ Ref<Document> XSLTProcessor::createDocumentFromSource(const String& sourceString
     return result.releaseNonNull();
 }
 
-RefPtr<Document> XSLTProcessor::transformToDocument(Node& sourceNode)
+RefPtr<Document> XSLTProcessor::transformToDocument(Document& callerDocument, Node& sourceNode)
 {
+    callerDocument.logXSLTDeprecationWarningIfNeeded();
+
     String resultMIMEType;
     String resultString;
     String resultEncoding;
@@ -123,8 +128,10 @@ RefPtr<Document> XSLTProcessor::transformToDocument(Node& sourceNode)
     return createDocumentFromSource(resultString, resultEncoding, resultMIMEType, &sourceNode, nullptr);
 }
 
-RefPtr<DocumentFragment> XSLTProcessor::transformToFragment(Node& sourceNode, Document& outputDocument)
+RefPtr<DocumentFragment> XSLTProcessor::transformToFragment(Document& callerDocument, Node& sourceNode, Document& outputDocument)
 {
+    callerDocument.logXSLTDeprecationWarningIfNeeded();
+
     String resultMIMEType;
     String resultString;
     String resultEncoding;

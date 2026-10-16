@@ -27,7 +27,7 @@
 #include "LayoutElementBox.h"
 
 #include "RenderElement.h"
-#include "RenderStyle+GettersInlines.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -35,20 +35,20 @@ namespace Layout {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ElementBox);
 
-ElementBox::ElementBox(ElementAttributes&& attributes, RenderStyle&& style, std::unique_ptr<RenderStyle>&& firstLineStyle, EnumSet<BaseTypeFlag> baseTypeFlags)
+ElementBox::ElementBox(ElementAttributes&& attributes, Style::ComputedStyle&& style, std::unique_ptr<Style::ComputedStyle>&& firstLineStyle, EnumSet<BaseTypeFlag> baseTypeFlags)
     : Box(WTF::move(attributes), WTF::move(style), WTF::move(firstLineStyle), baseTypeFlags | ElementBoxFlag)
 {
 }
 
-ElementBox::ElementBox(ElementAttributes&& attributes, EnumSet<ListMarkerAttribute> listMarkerAttributes, RenderStyle&& style, std::unique_ptr<RenderStyle>&& firstLineStyle)
+ElementBox::ElementBox(ElementAttributes&& attributes, IsListMarkerImage isListMarkerImage, Style::ComputedStyle&& style, std::unique_ptr<Style::ComputedStyle>&& firstLineStyle)
     : Box(WTF::move(attributes), WTF::move(style), WTF::move(firstLineStyle), ElementBoxFlag)
     , m_replacedData(makeUnique<ReplacedData>())
 {
     ASSERT(isListMarkerBox());
-    m_replacedData->listMarkerAttributes = listMarkerAttributes;
+    m_replacedData->isListMarkerImage = isListMarkerImage == IsListMarkerImage::Yes;
 }
 
-ElementBox::ElementBox(ElementAttributes&& attributes, ReplacedAttributes&& replacedAttributes, RenderStyle&& style, std::unique_ptr<RenderStyle>&& firstLineStyle)
+ElementBox::ElementBox(ElementAttributes&& attributes, ReplacedAttributes&& replacedAttributes, Style::ComputedStyle&& style, std::unique_ptr<Style::ComputedStyle>&& firstLineStyle)
     : Box(WTF::move(attributes), WTF::move(style), WTF::move(firstLineStyle), ElementBoxFlag)
     , m_replacedData(makeUnique<ReplacedData>())
 {
@@ -162,7 +162,7 @@ void ElementBox::insertChild(UniqueRef<Box> childRef, Box* beforeChild)
     }
 
     ASSERT(&beforeChild->parent() == this);
-    auto* nextSibling = beforeChild->m_nextSibling.get();
+    CheckedPtr nextSibling = beforeChild->m_nextSibling.get();
     ASSERT(nextSibling);
     childBox->m_previousSibling = beforeChild;
     childBox->m_nextSibling = WTF::move(beforeChild->m_nextSibling);
@@ -199,6 +199,28 @@ bool ElementBox::hasIntrinsicRatio() const
     if (!hasAspectRatio())
         return false;
     return m_replacedData && (m_replacedData->intrinsicSize || m_replacedData->intrinsicRatio);
+}
+
+bool ElementBox::hasNaturalWidth() const
+{
+    return m_replacedData && m_replacedData->intrinsicSize;
+}
+
+bool ElementBox::hasNaturalHeight() const
+{
+    return m_replacedData && m_replacedData->intrinsicSize;
+}
+
+LayoutUnit ElementBox::naturalWidth() const
+{
+    ASSERT(hasNaturalWidth());
+    return m_replacedData->intrinsicSize->width();
+}
+
+LayoutUnit ElementBox::naturalHeight() const
+{
+    ASSERT(hasNaturalHeight());
+    return m_replacedData->intrinsicSize->height();
 }
 
 LayoutUnit ElementBox::intrinsicWidth() const

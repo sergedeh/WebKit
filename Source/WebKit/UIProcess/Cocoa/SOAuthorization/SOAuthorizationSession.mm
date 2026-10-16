@@ -49,6 +49,7 @@
 #import <wtf/BlockPtr.h>
 #import <wtf/Vector.h>
 #import <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 
 #import <pal/cocoa/AppSSOSoftLink.h>
 
@@ -64,7 +65,7 @@ static constexpr auto Redirect = "Redirect"_s;
 static constexpr auto PopUp = "PopUp"_s;
 static constexpr auto SubFrame = "SubFrame"_s;
 
-static ASCIILiteral toString(const SOAuthorizationSession::InitiatingAction& action)
+static ASCIILiteral LEGACY_NODELETE toString(const SOAuthorizationSession::InitiatingAction& action)
 {
     switch (action) {
     case SOAuthorizationSession::InitiatingAction::Redirect:
@@ -191,7 +192,8 @@ void SOAuthorizationSession::start()
         AUTHORIZATIONSESSION_RELEASE_LOG_WITH_THIS(protectedThis, "start: Receive SOAuthorizationHints (error=%ld)", error ? error.code : 0);
 
         if (error || !authorizationHints) {
-            AUTHORIZATIONSESSION_RELEASE_LOG_WITH_THIS(protectedThis, "start (getAuthorizationHintsWithURL completion handler): Returning early due to error or lack of hints.");
+            AUTHORIZATIONSESSION_RELEASE_LOG_WITH_THIS(protectedThis, "start (getAuthorizationHintsWithURL completion handler): Falling back to web path due to error or lack of hints.");
+            protectedThis->fallBackToWebPath();
             return;
         }
 
@@ -202,7 +204,7 @@ void SOAuthorizationSession::start()
 
 void SOAuthorizationSession::continueStartAfterGetAuthorizationHints(const String& hints)
 {
-    AUTHORIZATIONSESSION_RELEASE_LOG("continueStartAfterGetAuthorizationHints: (hints=%s)", hints.utf8().data());
+    AUTHORIZATIONSESSION_RELEASE_LOG("continueStartAfterGetAuthorizationHints: (hints=%s)", hints.utf8());
 
     ASSERT(m_state == State::Active);
     RefPtr page = m_page.get();
@@ -227,20 +229,24 @@ void SOAuthorizationSession::continueStartAfterDecidePolicy(const SOAuthorizatio
     }
 
     AUTHORIZATIONSESSION_RELEASE_LOG("continueStartAfterDecidePolicy: Receive SOAuthorizationLoadPolicy::Allow");
+    beginAuthorizationIfReady();
+}
 
+void SOAuthorizationSession::beginAuthorizationIfReady()
+{
     if (!m_soAuthorization || !m_page || !m_navigationAction) {
-        AUTHORIZATIONSESSION_RELEASE_LOG("continueStartAfterGetAuthorizationHints: Early return m_soAuthorization=%d, m_page=%p, navigationAction=%p.", !!m_soAuthorization, page(), navigationAction());
+        AUTHORIZATIONSESSION_RELEASE_LOG("beginAuthorizationIfReady: Early return m_soAuthorization=%d, m_page=%p, navigationAction=%p.", !!m_soAuthorization, page(), navigationAction());
         return;
     }
 
     auto initiatorOrigin = emptyString();
-    if (RefPtr sourceOrigin = m_navigationAction->sourceFrame() ? m_navigationAction->sourceFrame()->securityOrigin().securityOrigin().ptr() : nullptr; sourceOrigin && !sourceOrigin->isOpaque())
-        initiatorOrigin = sourceOrigin->toString();
     String initiatingPath = emptyString();
-    if (m_page->mainFrame()) {
-        if (m_action == InitiatingAction::SubFrame)
-            initiatorOrigin = WebCore::SecurityOrigin::create(m_page->mainFrame()->url())->toString();
-        initiatingPath = m_page->mainFrame()->url().path().toString();
+    RefPtr page = m_page.get();
+    if (RefPtr mainFrame = page ? page->mainFrame() : nullptr) {
+        Ref mainFrameOrigin = WebCore::SecurityOrigin::create(mainFrame->url());
+        if (m_action == InitiatingAction::SubFrame || !mainFrameOrigin->isOpaque())
+            initiatorOrigin = mainFrameOrigin->toString();
+        initiatingPath = mainFrame->url().path().toString();
     }
 
     RetainPtr<NSDictionary> authorizationOptions = @{
@@ -250,7 +256,7 @@ void SOAuthorizationSession::continueStartAfterDecidePolicy(const SOAuthorizatio
         kSOAuthorizationOptionInitiatingPath: initiatingPath.createNSString().get()
     };
 #if PLATFORM(IOS_FAMILY)
-    RetainPtr<WKWebView> webView = m_page->cocoaView();
+    RetainPtr<WKWebView> webView = protect(m_page)->cocoaView();
     id webViewUIDelegate = [webView UIDelegate];
     if ([webViewUIDelegate respondsToSelector:@selector(_hostSceneIdentifierForWebView:)]) {
         NSString *callerSceneID = [webViewUIDelegate _hostSceneIdentifierForWebView:webView.get()];
@@ -267,10 +273,12 @@ void SOAuthorizationSession::continueStartAfterDecidePolicy(const SOAuthorizatio
     // rdar://130904577 - Investigate supporting embedded authorization view controller on visionOS.
     if (![[m_page->cocoaView() UIDelegate] respondsToSelector:@selector(_presentingViewControllerForWebView:)] || WTF::IOSApplication::isSafariViewService())
         [m_soAuthorization setEnableEmbeddedAuthorizationViewController:NO];
+
+    m_page->dispatchWillPresentModalUI();
 #endif
 
     RetainPtr nsRequest = m_navigationAction->request().nsURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody);
-    AUTHORIZATIONSESSION_RELEASE_LOG("continueStartAfterGetAuthorizationHints: Beginning authorization with AppSSO.");
+    AUTHORIZATIONSESSION_RELEASE_LOG("beginAuthorizationIfReady: Beginning authorization with AppSSO.");
     [m_soAuthorization beginAuthorizationWithURL:retainPtr(nsRequest.get().URL).get() httpHeaders:retainPtr(nsRequest.get().allHTTPHeaderFields).get() httpBody:retainPtr(nsRequest.get().HTTPBody).get()];
 }
 
@@ -363,7 +371,7 @@ void SOAuthorizationSession::complete(NSHTTPURLResponse *httpResponse, NSData *d
         AUTHORIZATIONSESSION_RELEASE_LOG("complete: Setting %zu cookies with total header size ~%zu bytes in data store %p", cookies.size(), totalHeaderSize, protect(page->websiteDataStore()).ptr());
     }
 
-    protect(page->websiteDataStore())->protectedCookieStore()->setCookies(WTF::move(cookies), [weakThis = ThreadSafeWeakPtr { *this }, response = WTF::move(response), data = adoptNS([[NSData alloc] initWithData:data])] () mutable {
+    protect(protect(page->websiteDataStore())->cookieStore())->setCookies(WTF::move(cookies), [weakThis = ThreadSafeWeakPtr { *this }, response = WTF::move(response), data = adoptNS([[NSData alloc] initWithData:data])] () mutable {
         auto protectedThis = weakThis.get();
         if (!protectedThis)
             return;
@@ -397,7 +405,7 @@ void SOAuthorizationSession::presentViewController(SOAuthorizationViewController
 
     dismissModalSheetIfNecessary();
 
-    m_sheetWindow = [NSWindow windowWithContentViewController:m_viewController.get()];
+    m_sheetWindow = [NSWindow windowWithContentViewController:checked_objc_cast<NSViewController>(m_viewController.get())];
 
     m_sheetWindowWillCloseObserver = [[NSNotificationCenter defaultCenter] addObserverForName:NSWindowWillCloseNotification object:m_sheetWindow.get() queue:nil usingBlock:[weakThis = ThreadSafeWeakPtr { *this }] (NSNotification *) {
         auto protectedThis = weakThis.get();
@@ -421,8 +429,10 @@ void SOAuthorizationSession::presentViewController(SOAuthorizationViewController
     // FIXME: When in element fullscreen, UIClient::presentingViewController() may not return the
     // WKFullScreenViewController even though that is the presenting view controller of the WKWebView.
     // We should call PageClientImpl::presentingViewController() instead.
-    UIViewController *presentingViewController = page->uiClient().presentingViewController();
-#if !PLATFORM(VISION)
+    RetainPtr presentingViewController = page->uiClient().presentingViewController();
+#if PLATFORM(VISION)
+    page->dispatchWillPresentModalUI();
+#else
     if (!presentingViewController)
         presentingViewController = [page->cocoaView() _wk_viewControllerForFullScreenPresentation];
 #endif

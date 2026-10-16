@@ -31,6 +31,7 @@
 #include "Logging.h"
 #include <WebCore/FidoConstants.h>
 #include <wtf/Assertions.h>
+#include <wtf/Borrow.h>
 #include <wtf/RunLoop.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -67,9 +68,8 @@ void CtapHidDriverWorker::transact(fido::FidoHidMessage&& requestMessage, Messag
     m_connection->invalidateCache();
     m_connection->send(m_requestMessage->popNextPacket(), [weakThis = WeakPtr { *this }](HidConnection::DataSent sent) mutable {
         ASSERT(RunLoop::isMain());
-        if (!weakThis)
-            return;
-        weakThis->write(sent);
+        if (RefPtr protectedThis = weakThis)
+            protectedThis->write(sent);
     });
 }
 
@@ -87,18 +87,16 @@ void CtapHidDriverWorker::write(HidConnection::DataSent sent)
         m_state = State::Read;
         m_connection->registerDataReceivedCallback([weakThis = WeakPtr { *this }](Vector<uint8_t>&& data) mutable {
             ASSERT(RunLoop::isMain());
-            if (!weakThis)
-                return;
-            weakThis->read(data);
+            if (RefPtr protectedThis = weakThis)
+                protectedThis->read(data);
         });
         return;
     }
 
     m_connection->send(m_requestMessage->popNextPacket(), [weakThis = WeakPtr { *this }](HidConnection::DataSent sent) mutable {
         ASSERT(RunLoop::isMain());
-        if (!weakThis)
-            return;
-        weakThis->write(sent);
+        if (RefPtr protectedThis = weakThis)
+            protectedThis->write(sent);
     });
 }
 
@@ -199,9 +197,8 @@ void CtapHidDriver::transact(Vector<uint8_t>&& data, ResponseCallback&& callback
     ASSERT(initCommand);
     m_worker->transact(WTF::move(*initCommand), [weakThis = WeakPtr { *this }](std::optional<FidoHidMessage>&& response) mutable {
         ASSERT(RunLoop::isMain());
-        if (!weakThis)
-            return;
-        weakThis->continueAfterChannelAllocated(WTF::move(response));
+        if (RefPtr protectedThis = weakThis)
+            protectedThis->continueAfterChannelAllocated(WTF::move(response));
     });
 }
 
@@ -215,15 +212,12 @@ void CtapHidDriver::continueAfterChannelAllocated(std::optional<FidoHidMessage>&
     }
     ASSERT(message->channelId() == m_channelId);
 
-    auto payload = message->getMessagePayload();
-    ASSERT(payload.size() == kHidInitResponseSize);
-    // Restart the transaction in the next run loop when nonce mismatches.
-    if (!spanHasPrefix(payload.span(), m_nonce.span())) {
+    const Vector payload = message->getMessagePayload();
+    if (payload.size() < kHidInitResponseSize || !spanHasPrefix(payload.span(), borrow(m_nonce)->span())) {
         m_state = State::Idle;
         RunLoop::mainSingleton().dispatch([weakThis = WeakPtr { *this }, data = WTF::move(m_requestData), callback = WTF::move(m_responseCallback)]() mutable {
-            if (!weakThis)
-                return;
-            weakThis->transact(WTF::move(data), WTF::move(callback));
+            if (RefPtr protectedThis = weakThis)
+                protectedThis->transact(WTF::move(data), WTF::move(callback));
         });
         return;
     }
@@ -239,9 +233,8 @@ void CtapHidDriver::continueAfterChannelAllocated(std::optional<FidoHidMessage>&
     ASSERT(cmd);
     m_worker->transact(WTF::move(*cmd), [weakThis = WeakPtr { *this }](std::optional<FidoHidMessage>&& response) mutable {
         ASSERT(RunLoop::isMain());
-        if (!weakThis)
-            return;
-        weakThis->continueAfterResponseReceived(WTF::move(response));
+        if (RefPtr protectedThis = weakThis)
+            protectedThis->continueAfterResponseReceived(WTF::move(response));
     });
 }
 

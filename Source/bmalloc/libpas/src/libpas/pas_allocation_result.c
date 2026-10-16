@@ -32,16 +32,13 @@
 #include "pas_page_malloc.h"
 #include "pas_zero_memory.h"
 
-pas_allocation_result pas_allocation_result_zero_large_slow(pas_allocation_result result, size_t size)
+pas_allocation_result pas_allocation_result_zero_large_slow(pas_allocation_result result, size_t size, pas_memory_flavor flavor)
 {
     size_t page_size;
     uintptr_t begin;
     uintptr_t end;
     uintptr_t page_aligned_begin;
     uintptr_t page_aligned_end;
-
-    PAS_PROFILE(ZERO_ALLOCATION_RESULT, result.begin);
-    PAS_MTE_HANDLE(ZERO_ALLOCATION_RESULT, result.begin);
 
     page_size = pas_page_malloc_alignment();
     begin = result.begin;
@@ -53,7 +50,7 @@ pas_allocation_result pas_allocation_result_zero_large_slow(pas_allocation_resul
     if (page_aligned_end > page_aligned_begin) {
         if (begin != page_aligned_begin)
             pas_zero_memory((void*)begin, page_aligned_begin - begin);
-        pas_page_malloc_zero_fill((void*)page_aligned_begin, page_aligned_end - page_aligned_begin);
+        pas_page_malloc_zero_fill((void*)page_aligned_begin, page_aligned_end - page_aligned_begin, flavor);
         if (end != page_aligned_end)
             pas_zero_memory((void*)page_aligned_end, end - page_aligned_end);
     } else

@@ -57,12 +57,13 @@ void AudioNodeOutput::setNumberOfChannels(unsigned numberOfChannels)
 
     m_desiredNumberOfChannels = numberOfChannels;
 
-    if (context().isAudioThread()) {
+    Ref context = this->context();
+    if (context->isAudioThread()) {
         // If we're in the audio thread then we can take care of it right away (we should be at the very start or end of a rendering quantum).
         updateNumberOfChannels();
     } else {
         // Let the context take care of it in the audio thread in the pre and post render tasks.
-        context().markAudioNodeOutputDirty(this);
+        context->markAudioNodeOutputDirty(this);
     }
 }
 
@@ -102,7 +103,7 @@ void AudioNodeOutput::propagateChannelCount()
     if (isChannelCountKnown()) {
         // Announce to any nodes we're connected to that we changed our channel count for its input.
         for (auto& input : m_inputs.keys())
-            input->checkedNode()->checkNumberOfChannelsForInput(input);
+            protect(input->node())->checkNumberOfChannelsForInput(input);
     }
 }
 
@@ -121,7 +122,7 @@ AudioBus& AudioNodeOutput::pull(AudioBus* inPlaceBus, size_t framesToProcess)
 
     m_inPlaceBus = isInPlace ? inPlaceBus : nullptr;
 
-    checkedNode()->processIfNecessary(framesToProcess);
+    protect(node())->processIfNecessary(framesToProcess);
     return bus();
 }
 
@@ -141,16 +142,6 @@ unsigned AudioNodeOutput::paramFanOutCount()
 {
     ASSERT(context().isGraphOwner());
     return m_params.size();
-}
-
-unsigned AudioNodeOutput::renderingFanOutCount() const
-{
-    return m_renderingFanOutCount;
-}
-
-unsigned AudioNodeOutput::renderingParamFanOutCount() const
-{
-    return m_renderingParamFanOutCount;
 }
 
 void AudioNodeOutput::addInput(AudioNodeInput* input)
@@ -175,7 +166,7 @@ void AudioNodeOutput::removeInput(AudioNodeInput* input)
     m_inputs.remove(input);
 }
 
-void AudioNodeOutput::forEachInputNode(Function<void(AudioNode&)>&& callback) const
+void AudioNodeOutput::forEachInputNode(NOESCAPE const Function<void(AudioNode&)>& callback) const
 {
     for (auto& node : m_inputs.values()) {
         if (node)

@@ -40,7 +40,7 @@ JSC_DEFINE_HOST_FUNCTION(uint8ArrayConstructorFromBase64, (JSGlobalObject* globa
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSString* jsString = jsDynamicCast<JSString*>(callFrame->argument(0));
+    JSString* jsString = dynamicDowncast<JSString>(callFrame->argument(0));
     if (!jsString) [[unlikely]]
         return throwVMTypeError(globalObject, scope, "Uint8Array.fromBase64 requires a string"_s);
 
@@ -49,14 +49,14 @@ JSC_DEFINE_HOST_FUNCTION(uint8ArrayConstructorFromBase64, (JSGlobalObject* globa
 
     JSValue optionsValue = callFrame->argument(1);
     if (!optionsValue.isUndefined()) {
-        JSObject* optionsObject = jsDynamicCast<JSObject*>(optionsValue);
+        JSObject* optionsObject = dynamicDowncast<JSObject>(optionsValue);
         if (!optionsValue.isObject()) [[unlikely]]
             return throwVMTypeError(globalObject, scope, "Uint8Array.fromBase64 requires that options be an object"_s);
 
         JSValue alphabetValue = optionsObject->get(globalObject, vm.propertyNames->alphabet);
         RETURN_IF_EXCEPTION(scope, { });
         if (!alphabetValue.isUndefined()) {
-            JSString* alphabetString = jsDynamicCast<JSString*>(alphabetValue);
+            JSString* alphabetString = dynamicDowncast<JSString>(alphabetValue);
             if (!alphabetString) [[unlikely]]
                 return throwVMTypeError(globalObject, scope, "Uint8Array.fromBase64 requires that alphabet be \"base64\" or \"base64url\""_s);
 
@@ -71,7 +71,7 @@ JSC_DEFINE_HOST_FUNCTION(uint8ArrayConstructorFromBase64, (JSGlobalObject* globa
         JSValue lastChunkHandlingValue = optionsObject->get(globalObject, vm.propertyNames->lastChunkHandling);
         RETURN_IF_EXCEPTION(scope, { });
         if (!lastChunkHandlingValue.isUndefined()) {
-            JSString* lastChunkHandlingString = jsDynamicCast<JSString*>(lastChunkHandlingValue);
+            JSString* lastChunkHandlingString = dynamicDowncast<JSString>(lastChunkHandlingValue);
             if (!lastChunkHandlingString) [[unlikely]]
                 return throwVMTypeError(globalObject, scope, "Uint8Array.fromBase64 requires that lastChunkHandling be \"loose\", \"strict\", or \"stop-before-partial\""_s);
 
@@ -92,7 +92,7 @@ JSC_DEFINE_HOST_FUNCTION(uint8ArrayConstructorFromBase64, (JSGlobalObject* globa
 
     Vector<uint8_t, 128> output;
     output.grow(maxLengthFromBase64(view));
-    auto [shouldThrowError, readLength, writeLength] = fromBase64(view, output.mutableSpan(), alphabet, lastChunkHandling);
+    auto [shouldThrowError, readLength, writeLength] = fromBase64(view, output.mutableSpan(), alphabet, lastChunkHandling, WTF::OutputSizeIsMaxLength::No);
     if (shouldThrowError == WTF::FromBase64ShouldThrowError::Yes) [[unlikely]]
         return JSValue::encode(throwSyntaxError(globalObject, scope, "Uint8Array.fromBase64 requires a valid base64 string"_s));
 
@@ -143,11 +143,11 @@ template<typename CharacterType>
     };
 
     const auto* begin = span.data();
-    const auto* end = span.data() + span.size();
+    const auto* end = std::to_address(span.end());
     const auto* cursor = begin;
 
     auto* output = result.data();
-    auto* outputEnd = result.data() + result.size();
+    auto* outputEnd = std::to_address(result.end());
 
     constexpr size_t stride = 16;
     constexpr size_t halfStride = stride / 2;
@@ -215,7 +215,7 @@ JSC_DEFINE_HOST_FUNCTION(uint8ArrayConstructorFromHex, (JSGlobalObject* globalOb
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSString* jsString = jsDynamicCast<JSString*>(callFrame->argument(0));
+    JSString* jsString = dynamicDowncast<JSString>(callFrame->argument(0));
     if (!jsString) [[unlikely]]
         return throwVMTypeError(globalObject, scope, "Uint8Array.fromHex requires a string"_s);
     if (jsString->length() % 2) [[unlikely]]

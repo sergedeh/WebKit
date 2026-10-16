@@ -52,7 +52,7 @@ struct FontVariantAlternates {
     {
     }
 
-    const Platform& platform() const { return m_platform; }
+    const Platform& platform() const LIFETIME_BOUND { return m_platform; }
     Platform takePlatform() { return WTF::move(m_platform); }
 
     bool isNormal() const { return m_platform.isNormal(); }
@@ -66,11 +66,11 @@ private:
 // MARK: - Conversion
 
 template<> struct CSSValueConversion<FontVariantAlternates> { auto operator()(BuilderState&, const CSSValue&) -> FontVariantAlternates; };
-template<> struct CSSValueCreation<FontVariantAlternates> { Ref<CSSValue> operator()(CSSValuePool&, const RenderStyle&, const FontVariantAlternates&); };
+template<> struct CSSValueCreation<FontVariantAlternates> { Ref<CSSValue> operator()(CSSValuePool&, const Style::ComputedStyle&, const FontVariantAlternates&); };
 
 // MARK: - Serialization
 
-template<> struct Serialize<FontVariantAlternates> { void operator()(StringBuilder&, const CSS::SerializationContext&, const RenderStyle&, const FontVariantAlternates&); };
+template<> struct Serialize<FontVariantAlternates> { void operator()(StringBuilder&, const CSS::SerializationContext&, const Style::ComputedStyle&, const FontVariantAlternates&); };
 
 // MARK: - Logging
 

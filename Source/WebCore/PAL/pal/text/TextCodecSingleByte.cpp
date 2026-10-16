@@ -179,7 +179,7 @@ static constexpr SingleByteDecodeTable ibm866 {
 template<const SingleByteDecodeTable& decodeTable> SingleByteEncodeTable tableForEncoding()
 {
     // Allocate this at runtime because building it at compile time would make the binary much larger and this is often not used.
-    static constexpr auto size = std::size(decodeTable) - std::count(std::begin(decodeTable), std::end(decodeTable), replacementCharacter);
+    static constexpr auto size = std::size(decodeTable) - std::ranges::count(decodeTable, replacementCharacter);
     static const NeverDestroyed<std::unique_ptr<std::array<SingleByteEncodeTableEntry, size>>> entries = [] {
         auto mutableEntries = std::make_unique<std::array<SingleByteEncodeTableEntry, size>>(); // NOLINT.
         size_t j = 0;
@@ -223,7 +223,7 @@ static SingleByteEncodeTable tableForEncoding(TextCodecSingleByte::Encoding enco
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static const SingleByteDecodeTable& tableForDecoding(TextCodecSingleByte::Encoding encoding)
+static const SingleByteDecodeTable& LEGACY_NODELETE tableForDecoding(TextCodecSingleByte::Encoding encoding)
 {
     switch (encoding) {
     case TextCodecSingleByte::Encoding::ISO_8859_3:
@@ -251,7 +251,7 @@ static const SingleByteDecodeTable& tableForDecoding(TextCodecSingleByte::Encodi
 }
 
 // https://encoding.spec.whatwg.org/#single-byte-encoder
-static Vector<uint8_t> encode(const SingleByteEncodeTable& table, StringView string, Function<void(char32_t, Vector<uint8_t>&)>&& unencodableHandler)
+static Vector<uint8_t> encode(const SingleByteEncodeTable& table, StringView string, NOESCAPE const Function<void(char32_t, Vector<uint8_t>&)>& unencodableHandler)
 {
     // FIXME: Consider adding an ASCII fast path like the one in TextCodecLatin1::decode.
     Vector<uint8_t> result;
@@ -278,7 +278,7 @@ static String decode(const SingleByteDecodeTable& table, std::span<const uint8_t
     result.reserveCapacity(bytes.size());
     auto parseByte = [&] (uint8_t byte) {
         if (isASCII(byte)) {
-            result.append(byte);
+            result.append(byteCast<Latin1Character>(byte));
             return;
         }
         char16_t codePoint = table[byte - 0x80];

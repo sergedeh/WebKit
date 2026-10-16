@@ -43,13 +43,13 @@ class WEBCORE_EXPORT PlatformColorResolutionDelegate {
 public:
     virtual ~PlatformColorResolutionDelegate();
 
-    // Colors to use that usually get resolved dynamically using Document & RenderStyle.
-    virtual WebCore::Color currentColor() const;              // For CSSValueCurrentcolor
-    virtual WebCore::Color internalDocumentTextColor() const; // For CSSValueInternalDocumentTextColor
-    virtual WebCore::Color webkitLink() const;                // For CSSValueWebkitLink [Style::ForVisitedLink::No]
-    virtual WebCore::Color webkitLinkVisited() const;         // For CSSValueWebkitLink [Style::ForVisitedLink::Yes]
-    virtual WebCore::Color webkitActiveLink() const;          // For CSSValueWebkitActivelink
-    virtual WebCore::Color webkitFocusRingColor() const;      // For CSSValueWebkitFocusRingColor
+    // Colors to use that usually get resolved dynamically using Document & StyleComputedStyle.
+    virtual WebCore::Color currentColor() const;              // For CSSValueID::Currentcolor
+    virtual WebCore::Color internalDocumentTextColor() const; // For CSSValueID::InternalDocumentTextColor
+    virtual WebCore::Color webkitLink() const;                // For CSSValueID::WebkitLink [Style::ForVisitedLink::No]
+    virtual WebCore::Color webkitLinkVisited() const;         // For CSSValueID::WebkitLink [Style::ForVisitedLink::Yes]
+    virtual WebCore::Color webkitActiveLink() const;          // For CSSValueID::WebkitActivelink
+    virtual WebCore::Color webkitFocusRingColor() const;      // For CSSValueID::WebkitFocusRingColor
 };
 
 struct PlatformColorResolutionState {

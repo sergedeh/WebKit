@@ -27,6 +27,7 @@
 #include "config.h"
 #include "IntlPluralRulesPrototype.h"
 
+#include "IntlNumberFormatInlines.h"
 #include "IntlPluralRules.h"
 #include "JSCInlines.h"
 
@@ -84,15 +85,19 @@ JSC_DEFINE_HOST_FUNCTION(intlPluralRulesPrototypeFuncSelect, (JSGlobalObject* gl
 
     // 13.4.3 Intl.PluralRules.prototype.select (value)
     // https://tc39.github.io/ecma402/#sec-intl.pluralrules.prototype.select
-    IntlPluralRules* pluralRules = jsDynamicCast<IntlPluralRules*>(callFrame->thisValue());
+    IntlPluralRules* pluralRules = dynamicDowncast<IntlPluralRules>(callFrame->thisValue());
 
     if (!pluralRules) [[unlikely]]
         return JSValue::encode(throwTypeError(globalObject, scope, "Intl.PluralRules.prototype.select called on value that's not a PluralRules"_s));
 
-    double value = callFrame->argument(0).toNumber(globalObject);
-    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    auto value = toIntlMathematicalValue(globalObject, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, { });
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(pluralRules->select(globalObject, value)));
+    auto number = value.tryGetDouble();
+    if (!number) [[unlikely]]
+        RELEASE_AND_RETURN(scope, JSValue::encode(pluralRules->select(globalObject, WTF::move(value))));
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(pluralRules->select(globalObject, number.value())));
 }
 
 JSC_DEFINE_HOST_FUNCTION(intlPluralRulesPrototypeFuncSelectRange, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -101,7 +106,7 @@ JSC_DEFINE_HOST_FUNCTION(intlPluralRulesPrototypeFuncSelectRange, (JSGlobalObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // https://tc39.es/proposal-intl-numberformat-v3/out/pluralrules/diff.html#sec-intl.pluralrules.prototype.selectrange
-    IntlPluralRules* pluralRules = jsDynamicCast<IntlPluralRules*>(callFrame->thisValue());
+    IntlPluralRules* pluralRules = dynamicDowncast<IntlPluralRules>(callFrame->thisValue());
     if (!pluralRules) [[unlikely]]
         return JSValue::encode(throwTypeError(globalObject, scope, "Intl.PluralRules.prototype.selectRange called on value that's not a PluralRules"_s));
 
@@ -111,13 +116,19 @@ JSC_DEFINE_HOST_FUNCTION(intlPluralRulesPrototypeFuncSelectRange, (JSGlobalObjec
     if (startValue.isUndefined() || endValue.isUndefined())
         return throwVMTypeError(globalObject, scope, "start or end is undefined"_s);
 
-    double start = startValue.toNumber(globalObject);
+    auto start = toIntlMathematicalValue(globalObject, startValue);
     RETURN_IF_EXCEPTION(scope, { });
 
-    double end = endValue.toNumber(globalObject);
+    auto end = toIntlMathematicalValue(globalObject, endValue);
     RETURN_IF_EXCEPTION(scope, { });
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(pluralRules->selectRange(globalObject, start, end)));
+    auto startNumber = start.tryGetDouble();
+    auto endNumber = end.tryGetDouble();
+
+    if (!startNumber || !endNumber) [[unlikely]]
+        RELEASE_AND_RETURN(scope, JSValue::encode(pluralRules->selectRange(globalObject, WTF::move(start), WTF::move(end))));
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(pluralRules->selectRange(globalObject, startNumber.value(), endNumber.value())));
 }
 
 JSC_DEFINE_HOST_FUNCTION(intlPluralRulesPrototypeFuncResolvedOptions, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -127,7 +138,7 @@ JSC_DEFINE_HOST_FUNCTION(intlPluralRulesPrototypeFuncResolvedOptions, (JSGlobalO
 
     // 13.4.4 Intl.PluralRules.prototype.resolvedOptions ()
     // https://tc39.github.io/ecma402/#sec-intl.pluralrules.prototype.resolvedoptions
-    IntlPluralRules* pluralRules = jsDynamicCast<IntlPluralRules*>(callFrame->thisValue());
+    IntlPluralRules* pluralRules = dynamicDowncast<IntlPluralRules>(callFrame->thisValue());
 
     if (!pluralRules) [[unlikely]]
         return JSValue::encode(throwTypeError(globalObject, scope, "Intl.PluralRules.prototype.resolvedOptions called on value that's not a PluralRules"_s));

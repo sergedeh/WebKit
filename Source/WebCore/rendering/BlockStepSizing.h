@@ -29,18 +29,21 @@ namespace WebCore {
 
 class LayoutUnit;
 class RenderBox;
-class RenderStyle;
 class WritingMode;
+
+namespace Style {
+class ComputedStyle;
+}
 
 namespace BlockStepSizing {
 
-bool childHasSupportedStyle(const RenderStyle& childStyle);
+bool LEGACY_NODELETE childHasSupportedStyle(const Style::ComputedStyle& childStyle);
 
-LayoutUnit computeExtraSpace(LayoutUnit stepSize, LayoutUnit boxOuterSize);
+LayoutUnit LEGACY_NODELETE computeExtraSpace(LayoutUnit stepSize, LayoutUnit boxOuterSize);
 
 void distributeExtraSpaceToChildMargins(RenderBox& child, LayoutUnit extraSpace, WritingMode containingBlockWritingMode);
-void distributeExtraSpaceToChildPadding(RenderBox& /* child */, LayoutUnit /* extraSpace */, WritingMode /* containingBlockWritingMode */);
-void distributeExtraSpaceToChildContentArea(RenderBox& /* child */, LayoutUnit /* extraSpace */, WritingMode /* containingBlockWritingMode */);
+void LEGACY_NODELETE distributeExtraSpaceToChildPadding(RenderBox& /* child */, LayoutUnit /* extraSpace */, WritingMode /* containingBlockWritingMode */);
+void LEGACY_NODELETE distributeExtraSpaceToChildContentArea(RenderBox& /* child */, LayoutUnit /* extraSpace */, WritingMode /* containingBlockWritingMode */);
 
 } // namespace BlockStepSizing
 

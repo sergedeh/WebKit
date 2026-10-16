@@ -36,7 +36,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ImageBufferContextSwitcher);
 
-ImageBufferContextSwitcher::ImageBufferContextSwitcher(GraphicsContext& destinationContext, const FloatRect& sourceImageRect, const DestinationColorSpace& colorSpace, RefPtr<Filter>&& filter, FilterResults* results)
+ImageBufferContextSwitcher::ImageBufferContextSwitcher(GraphicsContext& destinationContext, const FloatRect& sourceImageRect, const ColorSpace& colorSpace, RefPtr<Filter>&& filter, FilterResults* results)
     : GraphicsContextSwitcher(WTF::move(filter))
     , m_sourceImageRect(sourceImageRect)
     , m_results(results)
@@ -44,15 +44,18 @@ ImageBufferContextSwitcher::ImageBufferContextSwitcher(GraphicsContext& destinat
     if (sourceImageRect.isEmpty())
         return;
 
+    RefPtr<ImageBuffer> sourceImage;
     if (m_filter)
-        m_sourceImage = destinationContext.createScaledImageBuffer(m_sourceImageRect, m_filter->filterScale(), colorSpace, m_filter->renderingMode());
+        sourceImage = destinationContext.createScaledImageBuffer(m_sourceImageRect, m_filter->filterScale(), colorSpace, m_filter->renderingMode());
     else
-        m_sourceImage = destinationContext.createAlignedImageBuffer(m_sourceImageRect, colorSpace);
+        sourceImage = destinationContext.createAlignedImageBuffer(m_sourceImageRect, colorSpace);
 
-    if (!m_sourceImage) {
+    if (!sourceImage) {
         m_filter = nullptr;
         return;
     }
+
+    lazyInitialize(m_sourceImage, sourceImage.releaseNonNull());
 
     auto state = destinationContext.state();
     m_sourceImage->context().mergeAllChanges(state);
@@ -63,7 +66,7 @@ GraphicsContext* ImageBufferContextSwitcher::drawingContext(GraphicsContext& con
     return m_sourceImage ? &m_sourceImage->context() : &context;
 }
 
-void ImageBufferContextSwitcher::beginClipAndDrawSourceImage(GraphicsContext& destinationContext, const FloatRect& repaintRect, const FloatRect&)
+void ImageBufferContextSwitcher::beginClipAndDrawSourceImage(GraphicsContext& destinationContext, const FloatRect& repaintRect, const FloatRect&, NOESCAPE const Function<void(GraphicsContext&)>&)
 {
     if (auto* context = drawingContext(destinationContext)) {
         context->save();
@@ -72,7 +75,7 @@ void ImageBufferContextSwitcher::beginClipAndDrawSourceImage(GraphicsContext& de
     }
 }
 
-void ImageBufferContextSwitcher::endClipAndDrawSourceImage(GraphicsContext& destinationContext, const DestinationColorSpace& colorSpace)
+void ImageBufferContextSwitcher::endClipAndDrawSourceImage(GraphicsContext& destinationContext, const ColorSpace& colorSpace)
 {
     if (auto* context = drawingContext(destinationContext))
         context->restore();
@@ -80,7 +83,7 @@ void ImageBufferContextSwitcher::endClipAndDrawSourceImage(GraphicsContext& dest
     endDrawSourceImage(destinationContext, colorSpace);
 }
 
-void ImageBufferContextSwitcher::endDrawSourceImage(GraphicsContext& destinationContext, const DestinationColorSpace& colorSpace)
+void ImageBufferContextSwitcher::endDrawSourceImage(GraphicsContext& destinationContext, const ColorSpace& colorSpace)
 {
     if (!m_filter) {
         if (m_sourceImage)

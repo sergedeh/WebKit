@@ -12,7 +12,7 @@ if (ENABLE_LAYOUT_TESTS)
         add_subdirectory(ImageDiff)
     endif ()
 
-    if (ENABLE_WEBKIT_LEGACY)
+    if (ENABLE_WEBKIT_LEGACY AND NOT WEBKIT_SDK_IS_IOS_FAMILY)
         add_subdirectory(DumpRenderTree)
     endif ()
 

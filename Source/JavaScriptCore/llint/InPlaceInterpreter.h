@@ -29,12 +29,16 @@
 
 #if ENABLE(WEBASSEMBLY)
 
+#include <JavaScriptCore/LLIntCommon.h>
 #include <JavaScriptCore/WasmCallee.h>
 
 extern "C" void SYSV_ABI ipint_entry();
 
 #define IPINT_VALIDATE_DEFINE_FUNCTION(opcode, name) \
     extern "C" void SYSV_ABI ipint_ ## name ## _validate() REFERENCED_FROM_ASM WTF_INTERNAL NO_REORDER;
+
+#define IPINT_ATOMIC_VALIDATE_DEFINE_FUNCTION(opcode, name) \
+    extern "C" void SYSV_ABI ipint_ ## name ## _atomic_validate() REFERENCED_FROM_ASM WTF_INTERNAL NO_REORDER;
 
 #define FOR_EACH_IPINT_OPCODE(m) \
     m(0x00, unreachable) \
@@ -707,11 +711,6 @@ extern "C" void SYSV_ABI ipint_entry();
     m(0x11, argumINT_stack_vector) \
     m(0x12, argumINT_end) \
 
-#define FOR_EACH_IPINT_SLOW_PATH(m) \
-    m(0x00, local_get_slow_path) \
-    m(0x01, local_set_slow_path) \
-    m(0x02, local_tee_slow_path) \
-
 #define FOR_EACH_IPINT_MINT_CALL_OPCODE(m) \
     m(0x00, mint_a0) \
     m(0x01, mint_a1) \
@@ -784,14 +783,13 @@ extern "C" void SYSV_ABI ipint_entry();
     m(0x11, uint_stack_vector) \
     m(0x12, uint_ret) \
 
-#if !ENABLE(C_LOOP) && (CPU(ADDRESS64) && (CPU(ARM64) || CPU(X86_64)) || (CPU(ADDRESS32) && CPU(ARM_THUMB2)))
+#if !ENABLE(C_LOOP) && (CPU(ADDRESS64) && (CPU(ARM64) || CPU(X86_64)))
 FOR_EACH_IPINT_OPCODE(IPINT_VALIDATE_DEFINE_FUNCTION);
 FOR_EACH_IPINT_GC_OPCODE(IPINT_VALIDATE_DEFINE_FUNCTION);
 FOR_EACH_IPINT_CONVERSION_OPCODE(IPINT_VALIDATE_DEFINE_FUNCTION);
 FOR_EACH_IPINT_SIMD_OPCODE(IPINT_VALIDATE_DEFINE_FUNCTION);
-FOR_EACH_IPINT_ATOMIC_OPCODE(IPINT_VALIDATE_DEFINE_FUNCTION);
+FOR_EACH_IPINT_ATOMIC_OPCODE(IPINT_ATOMIC_VALIDATE_DEFINE_FUNCTION);
 FOR_EACH_IPINT_ARGUMINT_OPCODE(IPINT_VALIDATE_DEFINE_FUNCTION);
-FOR_EACH_IPINT_SLOW_PATH(IPINT_VALIDATE_DEFINE_FUNCTION);
 FOR_EACH_IPINT_MINT_CALL_OPCODE(IPINT_VALIDATE_DEFINE_FUNCTION);
 FOR_EACH_IPINT_MINT_RETURN_OPCODE(IPINT_VALIDATE_DEFINE_FUNCTION);
 FOR_EACH_IPINT_UINT_OPCODE(IPINT_VALIDATE_DEFINE_FUNCTION);
@@ -799,14 +797,27 @@ FOR_EACH_IPINT_UINT_OPCODE(IPINT_VALIDATE_DEFINE_FUNCTION);
 
 namespace JSC { namespace IPInt {
 
+// IPInt dispatches by scaling the opcode by the slot size, so every handler has to fit in one
+// slot and anything that does not is kept out of line. x86_64 encodings are longer than ARM64's,
+// and LLINT_TRACING injects a prologue into every handler, so both need a bigger slot.
+//
+// Note that this number is very sensitive: increasing this makes IPInt hot loop bigger and
+// hurts IPInt performance. If your opcode becomes bigger, consider defining out-of-line code and
+// jump to that.
+#if LLINT_TRACING
+constexpr uint64_t alignIPInt = 512;
+#elif CPU(ARM64)
+constexpr uint64_t alignIPInt = 128;
+#else
 constexpr uint64_t alignIPInt = 256;
+#endif
 constexpr uint64_t alignArgumInt = 64;
 constexpr uint64_t alignUInt = 64;
 constexpr uint64_t alignMInt = 64;
 
 
 void initialize();
-void verifyInitialization();
+void LEGACY_NODELETE verifyInitialization();
 
 } }
 

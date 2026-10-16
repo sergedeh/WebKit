@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <WebCore/EventTargetInlines.h>
 #include <WebCore/Node.h>
 #include <wtf/HashCountedSet.h>
 #include <wtf/RawPtrTraits.h>
@@ -49,7 +50,7 @@ public:
     }
 
 private:
-    WEBCORE_EXPORT static HashCountedSet<EventTarget*>& map();
+    WEBCORE_EXPORT static HashCountedSet<EventTarget*>& LEGACY_NODELETE map();
 };
 
 template <typename T>
@@ -61,13 +62,13 @@ public:
     GCReachableRef(T& object)
         : m_ptr(&object)
     {
-        GCReachableRefMap::add(*m_ptr);
+        GCReachableRefMap::add(object);
     }
 
     ~GCReachableRef()
     {
-        if (m_ptr)
-            GCReachableRefMap::remove(*m_ptr);
+        if (RefPtr<EventTarget> target = WTF::move(m_ptr))
+            GCReachableRefMap::remove(*target);
     }
 
     GCReachableRef(GCReachableRef&& other)
@@ -130,11 +131,11 @@ template<typename P> struct HashTraits<WebCore::GCReachableRef<P>> : SimpleClass
     }
 
     typedef P* PeekType;
-    static PeekType peek(const Ref<P>& value) { return const_cast<PeekType>(value.ptrAllowingHashTableEmptyValue()); }
+    static PeekType peek(const WebCore::GCReachableRef<P>& value) { return const_cast<PeekType>(value.ptrAllowingHashTableEmptyValue()); }
     static PeekType peek(P* value) { return value; }
 
-    typedef std::optional<Ref<P>> TakeType;
-    static TakeType take(Ref<P>&& value) { return isEmptyValue(value) ? std::nullopt : std::optional<Ref<P>>(WTF::move(value)); }
+    typedef std::optional<WebCore::GCReachableRef<P>> TakeType;
+    static TakeType take(WebCore::GCReachableRef<P>&& value) { return isEmptyValue(value) ? std::nullopt : std::optional<WebCore::GCReachableRef<P>>(WTF::move(value)); }
 };
 
 template <typename T>

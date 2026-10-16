@@ -67,7 +67,7 @@ String CSSPropertyRule::initialValue() const
     if (!m_propertyRule->descriptor().initialValue)
         return nullString();
 
-    return m_propertyRule->descriptor().initialValue->serialize();
+    return protect(m_propertyRule->descriptor().initialValue)->serialize();
 }
 
 String CSSPropertyRule::cssText() const
@@ -77,12 +77,12 @@ String CSSPropertyRule::cssText() const
     auto& descriptor = m_propertyRule->descriptor();
 
     builder.append("@property "_s);
-    serializeIdentifier(descriptor.name, builder);
+    serializeIdentifier(builder, descriptor.name);
     builder.append(" { "_s);
 
     if (!descriptor.syntax.isNull()) {
         builder.append("syntax: "_s);
-        serializeString(syntax(), builder);
+        serializeString(builder, syntax());
         builder.append("; "_s);
     }
 

@@ -62,6 +62,7 @@ public:
     virtual void clearForRegistrableDomain(RegistrableDomain&&, CompletionHandler<void()>&&) = 0;
     virtual void migratePrivateClickMeasurementFromLegacyStorage(PrivateClickMeasurement&&, PrivateClickMeasurementAttributionType) = 0;
     virtual void setDebugModeIsEnabled(bool) = 0;
+    virtual void setPrivateRelayEnforcementIsEnabled(bool) = 0;
 
     virtual void toStringForTesting(CompletionHandler<void(String)>&&) const = 0;
     virtual void setOverrideTimerForTesting(bool value) = 0;
@@ -75,6 +76,7 @@ public:
     virtual void setPrivateClickMeasurementAppBundleIDForTesting(ApplicationBundleIdentifier&&) = 0;
     virtual void destroyStoreForTesting(CompletionHandler<void()>&&) = 0;
     virtual void allowTLSCertificateChainForLocalPCMTesting(const WebCore::CertificateInfo&) = 0;
+    virtual void fetchRegistrableDomains(CompletionHandler<void(Vector<WebCore::RegistrableDomain>&&)>&&) = 0;
 };
 
 constexpr auto protocolVersionKey { "version"_s };
@@ -102,7 +104,9 @@ enum class MessageType : uint8_t {
     StartTimerImmediatelyForTesting,
     SetPrivateClickMeasurementAppBundleIDForTesting,
     DestroyStoreForTesting,
-    AllowTLSCertificateChainForLocalPCMTesting
+    AllowTLSCertificateChainForLocalPCMTesting,
+    FetchRegistrableDomains,
+    SetPrivateRelayEnforcementIsEnabled
 };
 
 constexpr auto protocolEncodedMessageKey { "encoded message"_s };
@@ -110,9 +114,9 @@ using EncodedMessage = Vector<uint8_t>;
 
 void decodeMessageAndSendToManager(const Daemon::Connection&, MessageType, std::span<const uint8_t> encodedMessage, CompletionHandler<void(Vector<uint8_t>&&)>&&);
 void doDailyActivityInManager();
-bool messageTypeSendsReply(MessageType);
+bool LEGACY_NODELETE messageTypeSendsReply(MessageType);
 
-void initializePCMStorageInDirectory(const String&);
+void initializePCMStorageInDirectory(const String& storageDirectory, const String& applicationBundleIdentifier, const String& secondaryApplicationBundleIdentifier);
 
 } // namespace PCM
 

@@ -45,14 +45,13 @@ public:
         bool hasUAVisualTransition { false };
     };
 
-    static Ref<PopStateEvent> create(const AtomString&, const Init&, IsTrusted = IsTrusted::No);
+    static Ref<PopStateEvent> create(JSC::JSGlobalObject&, const AtomString&, const Init&, IsTrusted = IsTrusted::No);
     static Ref<PopStateEvent> createForBindings();
 
-    const JSValueInWrappedObject& state() const { return m_state; }
+    const JSValueInWrappedObject& state() const LIFETIME_BOUND { return m_state; }
+    JSValueInWrappedObject& cachedState() LIFETIME_BOUND { return m_cachedState; }
     SerializedScriptValue* serializedState() const { return m_serializedState.get(); }
 
-    RefPtr<SerializedScriptValue> trySerializeState(JSC::JSGlobalObject&);
-    
     History* history() const { return m_history.get(); }
 
     bool hasUAVisualTransition() const { return m_hasUAVisualTransition; }
@@ -60,14 +59,14 @@ public:
 
 private:
     PopStateEvent();
-    PopStateEvent(const AtomString&, const Init&, IsTrusted);
+    PopStateEvent(JSC::JSGlobalObject&, const AtomString&, const Init&, IsTrusted);
     PopStateEvent(RefPtr<SerializedScriptValue>&&, History*);
 
     JSValueInWrappedObject m_state;
-    RefPtr<SerializedScriptValue> m_serializedState;
-    bool m_triedToSerialize { false };
+    JSValueInWrappedObject m_cachedState;
+    const RefPtr<SerializedScriptValue> m_serializedState;
     bool m_hasUAVisualTransition { false };
-    RefPtr<History> m_history;
+    const RefPtr<History> m_history;
 };
 
 } // namespace WebCore

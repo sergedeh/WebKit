@@ -49,14 +49,14 @@ class Disassembler {
 public:
     Disassembler() = default;
 
-    void startEntrypoint(CCallHelpers&);
-    void endEntrypoint(CCallHelpers&);
-    void startLatePath(CCallHelpers&);
-    void endLatePath(CCallHelpers&);
+    void LEGACY_NODELETE startEntrypoint(CCallHelpers&);
+    void LEGACY_NODELETE endEntrypoint(CCallHelpers&);
+    void LEGACY_NODELETE startLatePath(CCallHelpers&);
+    void LEGACY_NODELETE endLatePath(CCallHelpers&);
     void startBlock(BasicBlock*, CCallHelpers&);
     void addInst(Inst*, MacroAssembler::Label, MacroAssembler::Label);
 
-    void dump(Code&, PrintStream&, LinkBuffer&, const char* airPrefix, const char* asmPrefix, const WTF::ScopedLambda<void(Inst&)>& doToEachInst);
+    void dump(Code&, PrintStream&, LinkBuffer&, const char* airPrefix, const char* asmPrefix, NOESCAPE const WTF::ScopedLambda<void(Inst&)>& doToEachInst);
 
 private:
     UncheckedKeyHashMap<Inst*, std::pair<MacroAssembler::Label, MacroAssembler::Label>> m_instToRange;

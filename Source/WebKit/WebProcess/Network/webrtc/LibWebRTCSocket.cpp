@@ -75,7 +75,7 @@ void LibWebRTCSocket::signalAddressReady(const webrtc::SocketAddress& address)
 {
     m_localAddress = address;
     m_state = (m_type == Type::ClientTCP) ? STATE_CONNECTED : STATE_BOUND;
-    SignalAddressReady(this, m_localAddress);
+    NotifyAddressReady(this, m_localAddress);
 }
 
 void LibWebRTCSocket::signalReadPacket(std::span<const uint8_t> data, webrtc::SocketAddress&& address, int64_t timestamp, webrtc::EcnMarking ecn)
@@ -87,24 +87,24 @@ void LibWebRTCSocket::signalReadPacket(std::span<const uint8_t> data, webrtc::So
     std::optional<webrtc::Timestamp> packetTimestamp;
     if (timestamp)
         packetTimestamp = webrtc::Timestamp::Micros(timestamp);
-    NotifyPacketReceived({ { data.data(), data.size() }, m_remoteAddress, packetTimestamp, ecn });
+    NotifyPacketReceived({ data, m_remoteAddress, packetTimestamp, ecn });
 }
 
 void LibWebRTCSocket::signalSentPacket(int64_t rtcPacketID, int64_t sendTimeMs)
 {
-    SignalSentPacket(this, webrtc::SentPacketInfo(rtcPacketID, sendTimeMs));
+    NotifySentPacket(this, webrtc::SentPacketInfo(rtcPacketID, sendTimeMs));
 }
 
 void LibWebRTCSocket::signalConnect()
 {
     m_state = STATE_CONNECTED;
-    SignalConnect(this);
+    NotifyConnect(this);
 }
 
 void LibWebRTCSocket::signalClose(int error)
 {
     m_state = STATE_CLOSED;
-    SignalClose(this, error);
+    NotifyClosed(error);
 }
 
 void LibWebRTCSocket::signalUsedInterface(String&& name)

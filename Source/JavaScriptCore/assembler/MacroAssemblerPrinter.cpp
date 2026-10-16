@@ -41,7 +41,7 @@ using CPUState = Probe::CPUState;
 using RegisterID = MacroAssembler::RegisterID;
 using FPRegisterID = MacroAssembler::FPRegisterID;
 
-template<typename T> T nextID(T id) { return static_cast<T>(id + 1); }
+template<typename T> T LEGACY_NODELETE nextID(T id) { return static_cast<T>(id + 1); }
 
 void printAllRegisters(PrintStream& out, Context& context)
 {
@@ -56,11 +56,7 @@ void printAllRegisters(PrintStream& out, Context& context)
 
     INDENT; out.print("cpu: {\n");
 
-#if USE(JSVALUE32_64)
-    #define INTPTR_HEX_VALUE_FORMAT "0x%08" PRIxPTR
-#else
     #define INTPTR_HEX_VALUE_FORMAT "0x%016" PRIxPTR
-#endif
 
     for (auto id = MacroAssembler::firstRegister(); id <= MacroAssembler::lastRegister(); id = nextID(id)) {
         intptr_t value = static_cast<intptr_t>(cpu.gpr(id));

@@ -59,7 +59,6 @@ MACRO_INSTRUCTIONS =
      "rrotateq",
      "subi",
      "xori",
-     "load2ia",
      "loadi",
      "loadis",
      "loadb",
@@ -68,7 +67,6 @@ MACRO_INSTRUCTIONS =
      "loadh",
      "loadhsi",
      "loadhsq",
-     "store2ia",
      "storei",
      "storeh",
      "storeb",
@@ -116,8 +114,6 @@ MACRO_INSTRUCTIONS =
      "cq2ds",
      "cd2f",
      "cf2d",
-     "fii2d", # usage: fii2d <gpr with least significant bits>, <gpr with most significant bits>, <fpr>
-     "fd2ii", # usage: fd2ii <fpr>, <gpr with least significant bits>, <gpr with most significant bits>
      "fq2d",
      "fd2q",
      "bdeq",
@@ -310,6 +306,7 @@ MACRO_INSTRUCTIONS =
      "bs",
      "bz",
      "bnz",
+     "bc",      # Branch if the carry flag is set, i.e. the preceding add wrapped around.
      "leai",
      "leap",
      "memfence",
@@ -383,30 +380,14 @@ X86_INSTRUCTIONS =
      "atomicloadi",
      "atomicloadq",
      "fence",
+     "adcq",
+     "sbcq",
+     "umulhq",
+     "smulhq",
     ]
 
 X86_SIMD_INSTRUCTIONS =
     [
-    ]
-
-ARM_INSTRUCTIONS =
-    [
-     "adci",
-     "bcs",
-     "clrbp",
-     "mvlbl",
-     "globaladdr",
-     "sbci",
-     "moveii",
-     "loadlinkb",
-     "loadlinkh",
-     "loadlinki",
-     "loadlink2i",
-     "storecondb",
-     "storecondh",
-     "storecondi",
-     "storecond2i",
-     "writefence",
     ]
 
 ARM64_INSTRUCTIONS =
@@ -416,6 +397,8 @@ ARM64_INSTRUCTIONS =
      "globaladdr",
      "notq",
      "loadqinc",
+     "loadbinc", # Post-indexed byte load: <address> <dest reg> <increment>. Loads from the base register, then adds the increment to it.
+     "loadbpreinc", # Pre-indexed byte load: <address with immediate offset> <dest reg>. Adds the offset into the base register, then loads from it.
      "loadlinkacqb",
      "loadlinkacqh",
      "loadlinkacqi",
@@ -464,7 +447,14 @@ ARM64_INSTRUCTIONS =
      "storepaird",
      "loadpairv",
      "storepairv",
-     "addlshiftp"
+     "addlshiftp",
+     "orlshifti", # Or with a left-shifted operand: <src1> <src2> <shift immediate> <dest reg>.
+     "addqs",
+     "subqs",
+     "adcq",
+     "sbcq",
+     "smulhq",
+     "umulhq"
     ]
 
 ARM64_SIMD_INSTRUCTIONS =
@@ -523,7 +513,7 @@ CXX_INSTRUCTIONS =
      "cloopDo",              # no operands
     ]
 
-INSTRUCTIONS = MACRO_INSTRUCTIONS + X86_INSTRUCTIONS + X86_SIMD_INSTRUCTIONS + ARM_INSTRUCTIONS + ARM64_INSTRUCTIONS + ARM64_SIMD_INSTRUCTIONS + RISC_INSTRUCTIONS + MIPS_INSTRUCTIONS + CXX_INSTRUCTIONS
+INSTRUCTIONS = MACRO_INSTRUCTIONS + X86_INSTRUCTIONS + X86_SIMD_INSTRUCTIONS + ARM64_INSTRUCTIONS + ARM64_SIMD_INSTRUCTIONS + RISC_INSTRUCTIONS + MIPS_INSTRUCTIONS + CXX_INSTRUCTIONS
 
 INSTRUCTION_SET = INSTRUCTIONS.to_set
 

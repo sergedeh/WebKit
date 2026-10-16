@@ -20,10 +20,13 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 # SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import asyncio
 import contextlib
 import errno
 import os
+import selectors
 import shutil
+import signal
 import sys
 import tempfile
 
@@ -107,10 +110,13 @@ class SubtestResultRecorder(object):
             self.record_skip(report)
 
     def _was_timeout(self, report):
-        return hasattr(report.longrepr, 'reprcrash') and report.longrepr.reprcrash.message.startswith('Failed: Timeout >')
+        return hasattr(report.longrepr, 'reprcrash') and report.longrepr.reprcrash.message.startswith('Failed: Timeout')
 
     def record_pass(self, report):
-        if hasattr(report, 'wasxfail'):
+        expected = dict(report.user_properties).get("expectations", [])
+        # Avoid expected flaky passes from being reported as XPASS, distracting from
+        # true XPASS tests.
+        if hasattr(report, 'wasxfail') and 'PASS' not in expected:
             if report.wasxfail == 'Timeout':
                 self.record(report.nodeid, 'XPASS_TIMEOUT')
             else:
@@ -131,8 +137,11 @@ class SubtestResultRecorder(object):
         self.record(report.nodeid, 'ERROR', message, report.longrepr)
 
     def record_skip(self, report):
+        expected = dict(report.user_properties).get("expectations", [])
         if hasattr(report, 'wasxfail'):
-            if self._was_timeout(report) and report.wasxfail != 'Timeout':
+            # Avoid expected flaky fail/timeouts from being reported as unexpected TIMEOUT,
+            # distracting from true TIMEOUT regressions.
+            if self._was_timeout(report) and report.wasxfail != 'Timeout' and 'TIMEOUT' not in expected:
                 self.record(report.nodeid, 'TIMEOUT', stack=report.longrepr)
             else:
                 self.record(report.nodeid, 'XFAIL')
@@ -160,13 +169,57 @@ class TestExpectationsMarker(object):
             item_name = get_item_name(item, self._ignore_param)
             if self._expectations.is_slow(test, item_name):
                 item.add_marker(pytest.mark.timeout(self._timeout * 5))
-            expected = self._expectations.get_expectation(test, item_name)[0]
-            if expected == 'FAIL':
+            expected = self._expectations.get_expectation(test, item_name)
+            if 'FAIL' in expected:
+                # Adding a "flaky" reason would overwrite the actual reason the test failed,
+                # making it harder to identify the actual reason
                 item.add_marker(pytest.mark.xfail)
-            elif expected == 'TIMEOUT':
+            elif 'TIMEOUT' in expected:
                 item.add_marker(pytest.mark.xfail(reason="Timeout"))
-            elif expected == 'SKIP':
+            elif 'SKIP' in expected:
                 item.add_marker(pytest.mark.skip)
+
+            item.user_properties.append(("expectations", expected))
+
+
+class TimeoutSignalHandler(object):
+    """Keep pytest-timeout's SIGALRM from firing inside asyncio's scheduler.
+
+    pytest-timeout raises from the signal handler wherever the alarm lands. Inside the
+    event loop's own scheduling code (e.g. while Future.set_result() is queueing the
+    wake-up of the awaiting task) that leaves the future done but the task never resumed,
+    and the loop runs forever. Defer the alarm until the loop is idle in the selector, from
+    where the exception propagates cleanly out of run_until_complete().
+    """
+
+    RETRY_INTERVAL = 0.005
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_timeout_set_timer(self, item, settings):
+        result = yield
+        if settings.method != 'signal':
+            return result
+        handler = signal.getsignal(signal.SIGALRM)
+        if callable(handler):
+            def deferring_handler(signum, frame):
+                __tracebackhide__ = True
+                if self._should_defer_timeout(frame):
+                    signal.setitimer(signal.ITIMER_REAL, self.RETRY_INTERVAL)
+                else:
+                    handler(signum, frame)
+            signal.signal(signal.SIGALRM, deferring_handler)
+        return result
+
+    @staticmethod
+    def _should_defer_timeout(frame):
+        # Raising timeout exceptions while the loop is running outside selector wait might
+        # corrupt internal state updates, leaving tasks hanging.
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return False
+        code = frame.f_code
+        return not (code.co_filename == selectors.__file__ and code.co_name == 'select')
 
 
 def collect(directory, args, ignore_param=None):
@@ -182,7 +235,7 @@ def collect(directory, args, ignore_param=None):
     return collect_recorder.tests
 
 
-def run(path, args, timeout, env, expectations, ignore_param=None):
+def run(path, args, timeout, env, expectations, ignore_param=None, extra_plugins=None):
     harness_recorder = HarnessResultRecorder()
     subtests_recorder = SubtestResultRecorder()
     expectations_marker = TestExpectationsMarker(expectations, timeout, ignore_param)
@@ -200,7 +253,7 @@ def run(path, args, timeout, env, expectations, ignore_param=None):
                    '-p', 'no:cacheprovider']
             cmd.extend(args)
             cmd.append(path)
-            result = pytest.main(cmd, plugins=[harness_recorder, subtests_recorder, expectations_marker])
+            result = pytest.main(cmd, plugins=[harness_recorder, subtests_recorder, expectations_marker, TimeoutSignalHandler(), *(extra_plugins or [])])
 
             if result == ExitCode.INTERNAL_ERROR:
                 harness_recorder.outcome = ('ERROR', None)

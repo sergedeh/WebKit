@@ -29,6 +29,7 @@
 #if ENABLE(MEMORY_SAMPLER)
 
 #include <stdio.h>
+#include <wtf/Borrow.h>
 #include <wtf/ProcessID.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/MakeString.h>
@@ -119,11 +120,6 @@ void WebMemorySampler::stop()
     if (RefPtr extension = std::exchange(m_sampleLogSandboxExtension, nullptr))
         extension->revoke();
 }
-
-bool WebMemorySampler::isRunning() const
-{
-    return m_isRunning;
-}
     
 void WebMemorySampler::initializeTempLogFile()
 {
@@ -170,16 +166,18 @@ void WebMemorySampler::appendCurrentMemoryUsageToFile()
     WebMemoryStatistics memoryStats = sampleWebKit();
 
     if (!memoryStats.values.isEmpty()) {
+        Borrow borrowedKeys = memoryStats.keys;
+        Borrow borrowedValues = memoryStats.values;
         statString.append(separator);
-        for (size_t i = 0; i < memoryStats.values.size(); ++i) {
-            statString.append('\n', separator, memoryStats.keys[i]);
-            appendSpaces(statString, 35 - memoryStats.keys[i].length());
-            statString.append(memoryStats.values[i]);
+        for (size_t i = 0; i < borrowedValues->size(); ++i) {
+            statString.append('\n', separator, borrowedKeys[i]);
+            appendSpaces(statString, 35 - borrowedKeys[i].length());
+            statString.append(borrowedValues[i]);
         }
     }
     statString.append('\n');
 
-    CString utf8String = statString.toString().utf8();
+    auto utf8String = statString.toString().utf8();
     m_sampleLogFile.write(byteCast<uint8_t>(utf8String.span()));
 }
 

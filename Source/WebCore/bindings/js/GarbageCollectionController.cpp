@@ -30,7 +30,10 @@
 #include "JSHTMLDocument.h"
 #include "Location.h"
 #include "WorkerGlobalScope.h"
+#include <JavaScriptCore/DeferGCInlines.h>
 #include <JavaScriptCore/Heap.h>
+#include <JavaScriptCore/HeapInlines.h>
+#include <JavaScriptCore/HeapProfiler.h>
 #include <JavaScriptCore/HeapSnapshotBuilder.h>
 #include <JavaScriptCore/JSLock.h>
 #include <JavaScriptCore/VM.h>
@@ -43,12 +46,6 @@
 
 namespace WebCore {
 using namespace JSC;
-
-static void collect()
-{
-    JSLockHolder lock(commonVM());
-    commonVM().heap.collectNow(Async, CollectionScope::Full);
-}
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(GarbageCollectionController);
 
@@ -83,7 +80,8 @@ void GarbageCollectionController::garbageCollectOnNextRunLoop()
 
 void GarbageCollectionController::gcTimerFired()
 {
-    collect();
+    JSLockHolder lock(commonVM());
+    commonVM().heap.collectNow(Async, CollectionScope::Full);
 }
 
 void GarbageCollectionController::garbageCollectNow()
@@ -100,18 +98,6 @@ void GarbageCollectionController::garbageCollectNowIfNotDoneRecently()
     JSLockHolder lock(commonVM());
     if (!commonVM().heap.currentThreadIsDoingGCWork())
         commonVM().heap.collectNowFullIfNotDoneRecently(Async);
-}
-
-void GarbageCollectionController::garbageCollectOnAlternateThreadForDebugging(bool waitUntilDone)
-{
-    auto thread = Thread::create("WebCore: GarbageCollectionController"_s, &collect, ThreadType::GarbageCollection);
-
-    if (waitUntilDone) {
-        thread->waitForCompletion();
-        return;
-    }
-
-    thread->detach();
 }
 
 void GarbageCollectionController::setJavaScriptGarbageCollectorTimerEnabled(bool enable)
@@ -152,10 +138,10 @@ void GarbageCollectionController::dumpHeapForVM(VM& vm)
         jsonData = snapshotBuilder.json();
     }
 
-    CString utf8String = jsonData.utf8();
+    auto utf8String = jsonData.utf8();
 
     fileHandle.write(byteCast<uint8_t>(utf8String.span()));
-    WTFLogAlways("Dumped GC heap to %s%s", tempFilePath.utf8().data(), isMainThread() ? "" : " for Worker");
+    SAFE_WTFLOGALWAYS("Dumped GC heap to %s%s", tempFilePath.utf8(), isMainThread() ? ""_s : " for Worker"_s);
 }
 
 void GarbageCollectionController::dumpHeap()

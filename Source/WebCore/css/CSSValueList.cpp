@@ -21,7 +21,8 @@
 #include "config.h"
 #include "CSSValueList.h"
 
-#include "CSSPrimitiveValue.h"
+#include "CSSKeywordValueInlines.h"
+#include "DeprecatedCSSOMValueList.h"
 #include <wtf/Hasher.h>
 #include <wtf/text/StringBuilder.h>
 
@@ -123,57 +124,57 @@ CSSValueList::CSSValueList(ValueSeparator separator, Ref<CSSValue> value1, Ref<C
 
 Ref<CSSValueList> CSSValueList::createCommaSeparated(CSSValueListBuilder values)
 {
-    return adoptRef(*new CSSValueList(CommaSeparator, WTF::move(values)));
+    return adoptRef(*new CSSValueList(ValueSeparator::Comma, WTF::move(values)));
 }
 
 Ref<CSSValueList> CSSValueList::createCommaSeparated(Ref<CSSValue> value)
 {
-    return adoptRef(*new CSSValueList(CommaSeparator, WTF::move(value)));
+    return adoptRef(*new CSSValueList(ValueSeparator::Comma, WTF::move(value)));
 }
 
 Ref<CSSValueList> CSSValueList::createSlashSeparated(CSSValueListBuilder values)
 {
-    return adoptRef(*new CSSValueList(SlashSeparator, WTF::move(values)));
+    return adoptRef(*new CSSValueList(ValueSeparator::Slash, WTF::move(values)));
 }
 
 Ref<CSSValueList> CSSValueList::createSlashSeparated(Ref<CSSValue> value)
 {
-    return adoptRef(*new CSSValueList(SlashSeparator, WTF::move(value)));
+    return adoptRef(*new CSSValueList(ValueSeparator::Slash, WTF::move(value)));
 }
 
 Ref<CSSValueList> CSSValueList::createSlashSeparated(Ref<CSSValue> value1, Ref<CSSValue> value2)
 {
-    return adoptRef(*new CSSValueList(SlashSeparator, WTF::move(value1), WTF::move(value2)));
+    return adoptRef(*new CSSValueList(ValueSeparator::Slash, WTF::move(value1), WTF::move(value2)));
 }
 
 Ref<CSSValueList> CSSValueList::createSpaceSeparated()
 {
-    return adoptRef(*new CSSValueList(SpaceSeparator));
+    return adoptRef(*new CSSValueList(ValueSeparator::Space));
 }
 
 Ref<CSSValueList> CSSValueList::createSpaceSeparated(CSSValueListBuilder values)
 {
-    return adoptRef(*new CSSValueList(SpaceSeparator, WTF::move(values)));
+    return adoptRef(*new CSSValueList(ValueSeparator::Space, WTF::move(values)));
 }
 
 Ref<CSSValueList> CSSValueList::createSpaceSeparated(Ref<CSSValue> value)
 {
-    return adoptRef(*new CSSValueList(SpaceSeparator, WTF::move(value)));
+    return adoptRef(*new CSSValueList(ValueSeparator::Space, WTF::move(value)));
 }
 
 Ref<CSSValueList> CSSValueList::createSpaceSeparated(Ref<CSSValue> value1, Ref<CSSValue> value2)
 {
-    return adoptRef(*new CSSValueList(SpaceSeparator, WTF::move(value1), WTF::move(value2)));
+    return adoptRef(*new CSSValueList(ValueSeparator::Space, WTF::move(value1), WTF::move(value2)));
 }
 
 Ref<CSSValueList> CSSValueList::createSpaceSeparated(Ref<CSSValue> value1, Ref<CSSValue> value2, Ref<CSSValue> value3)
 {
-    return adoptRef(*new CSSValueList(SpaceSeparator, WTF::move(value1), WTF::move(value2), WTF::move(value3)));
+    return adoptRef(*new CSSValueList(ValueSeparator::Space, WTF::move(value1), WTF::move(value2), WTF::move(value3)));
 }
 
 Ref<CSSValueList> CSSValueList::createSpaceSeparated(Ref<CSSValue> value1, Ref<CSSValue> value2, Ref<CSSValue> value3, Ref<CSSValue> value4)
 {
-    return adoptRef(*new CSSValueList(SpaceSeparator, WTF::move(value1), WTF::move(value2), WTF::move(value3), WTF::move(value4)));
+    return adoptRef(*new CSSValueList(ValueSeparator::Space, WTF::move(value1), WTF::move(value2), WTF::move(value3), WTF::move(value4)));
 }
 
 Ref<CSSValueList> CSSValueList::create(char16_t separator, CSSValueListBuilder builder)
@@ -202,8 +203,8 @@ bool CSSValueContainingVector::hasValue(CSSValue& otherValue) const
 
 bool CSSValueContainingVector::hasValue(CSSValueID otherValue) const
 {
-    for (Ref value : *this) {
-        if (WebCore::isValueID(value.get(), otherValue))
+    for (auto& value : *this) {
+        if (WebCore::isValueID(value, otherValue))
             return true;
     }
     return false;
@@ -233,13 +234,18 @@ String CSSValueList::customCSSText(const CSS::SerializationContext& context) con
     return serializeItems(context);
 }
 
+Ref<DeprecatedCSSOMValue> CSSValueList::customCreateDeprecatedCSSOMWrapper(CSSStyleDeclaration& owner) const
+{
+    return DeprecatedCSSOMValueList::create(*this, owner);
+}
+
 bool CSSValueContainingVector::itemsEqual(const CSSValueContainingVector& other) const
 {
     unsigned size = this->size();
     if (size != other.size())
         return false;
     for (unsigned i = 0; i < size; ++i) {
-        if (!(*this)[i].equals(other[i]))
+        if (!protect((*this)[i])->equals(protect(other[i])))
             return false;
     }
     return true;
@@ -252,7 +258,7 @@ bool CSSValueList::equals(const CSSValueList& other) const
 
 bool CSSValueContainingVector::containsSingleEqualItem(const CSSValue& other) const
 {
-    return size() == 1 && (*this)[0].equals(other);
+    return size() == 1 && protect((*this)[0])->equals(other);
 }
 
 bool CSSValueContainingVector::addDerivedHash(Hasher& hasher) const

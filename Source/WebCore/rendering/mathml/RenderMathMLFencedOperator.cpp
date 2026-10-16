@@ -32,7 +32,7 @@
 #include "MathMLOperatorElement.h"
 #include "RenderBoxInlines.h"
 #include "RenderBoxModelObjectInlines.h"
-#include "RenderStyle+GettersInlines.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -41,7 +41,7 @@ using namespace MathMLOperatorDictionary;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderMathMLFencedOperator);
 
-RenderMathMLFencedOperator::RenderMathMLFencedOperator(Document& document, RenderStyle&& style, const String& operatorString, MathMLOperatorDictionary::Form form, unsigned short flags)
+RenderMathMLFencedOperator::RenderMathMLFencedOperator(Document& document, Style::ComputedStyle&& style, const String& operatorString, MathMLOperatorDictionary::Form form, unsigned short flags)
     : RenderMathMLOperator(Type::MathMLFencedOperator, document, WTF::move(style))
     , m_operatorForm(form)
     , m_operatorFlags(flags)
@@ -71,12 +71,18 @@ void RenderMathMLFencedOperator::updateOperatorContent(const String& operatorStr
     updateMathOperator();
 }
 
+// minsize always has the default value "1em".
+LayoutUnit RenderMathMLFencedOperator::minSize() const
+{
+    return LayoutUnit(style().fontCascade().size());
+}
+
 LayoutUnit RenderMathMLFencedOperator::leadingSpace() const
 {
     MathMLElement::Length leadingSpace;
     leadingSpace.type = MathMLElement::LengthType::MathUnit;
     leadingSpace.value = static_cast<float>(m_leadingSpaceInMathUnit);
-    return toUserUnits(leadingSpace, style(), 0);
+    return toUserUnits(leadingSpace, protect(style()), 0);
 }
 
 LayoutUnit RenderMathMLFencedOperator::trailingSpace() const
@@ -84,7 +90,7 @@ LayoutUnit RenderMathMLFencedOperator::trailingSpace() const
     MathMLElement::Length trailingSpace;
     trailingSpace.type = MathMLElement::LengthType::MathUnit;
     trailingSpace.value = static_cast<float>(m_trailingSpaceInMathUnit);
-    return toUserUnits(trailingSpace, style(), 0);
+    return toUserUnits(trailingSpace, protect(style()), 0);
 }
 
 }

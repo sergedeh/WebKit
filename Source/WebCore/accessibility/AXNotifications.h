@@ -67,6 +67,7 @@ namespace WebCore {
     macro(FrameLoadComplete) \
     macro(GrabbedStateChanged) \
     macro(HasPopupChanged) \
+    macro(HeadingLevelChanged) \
     macro(HiddenStateChanged) \
     macro(IdAttributeChanged) \
     macro(ImageOverlayChanged) \
@@ -87,6 +88,7 @@ namespace WebCore {
     macro(PointerEventsChanged) \
     macro(PopoverTargetChanged) \
     macro(PositionInSetChanged) \
+    macro(PossibleFormValidationError) \
     macro(RoleChanged) \
     macro(RowIndexChanged) \
     macro(RowSpanChanged) \

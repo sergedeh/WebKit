@@ -124,7 +124,8 @@ angle::Result IOSurfaceSurfaceVkMac::initializeImpl(DisplayVk *displayVk)
                                           mState.hasProtectedContent()));
 
     mColorRenderTarget.init(&mColorAttachment.image, &mColorAttachment.imageViews, nullptr, nullptr,
-                            {}, gl::LevelIndex(0), 0, 1, RenderTargetTransience::Default);
+                            gl::OwnerLevel(0), gl::OwnerLayer(0), 1,
+                            RenderTargetTransience::Default);
 
     return angle::Result::Continue;
 }
@@ -134,7 +135,7 @@ egl::Error IOSurfaceSurfaceVkMac::unMakeCurrent(const gl::Context *context)
     ASSERT(context != nullptr);
     ContextVk *contextVk = vk::GetImpl(context);
     angle::Result result =
-        contextVk->flushAndSubmitCommands(nullptr, nullptr, RenderPassClosureReason::ContextChange);
+        contextVk->flushAndSubmitCommands(nullptr, nullptr, QueueSubmitReason::ContextChange);
     return angle::ToEGL(result, EGL_BAD_SURFACE);
 }
 
@@ -173,6 +174,9 @@ egl::Error IOSurfaceSurfaceVkMac::bindTexImage(const gl::Context *context,
     pixelUnpack.rowLength   = static_cast<GLint>(rowLengthInPixels);
     pixelUnpack.imageHeight = static_cast<GLint>(height);
 
+    const gl::Offset offset{};
+    const gl::Extents extents(static_cast<int>(width), pixelUnpack.imageHeight, 1);
+
     void *source = IOSurfaceGetBaseAddressOfPlane(mIOSurface, mPlane);
 
     const gl::InternalFormat &internalFormatInfo =
@@ -180,13 +184,25 @@ egl::Error IOSurfaceSurfaceVkMac::bindTexImage(const gl::Context *context,
     const vk::Format &format =
         renderer->getFormat(kIOSurfaceFormats[mFormatIndex].nativeSizedInternalFormat);
 
+    GLuint inputRowPitch   = 0;
+    GLuint inputDepthPitch = 0;
+    GLuint inputSkipBytes  = 0;
+    angle::Result result   = mColorAttachment.image.calculateBufferInfo(
+        contextVk, extents, internalFormatInfo, pixelUnpack, kIOSurfaceFormats[mFormatIndex].type,
+        false, &inputRowPitch, &inputDepthPitch, &inputSkipBytes);
+
+    if (result != angle::Result::Continue)
+    {
+        return angle::ToEGL(result, EGL_BAD_SURFACE);
+    }
+
     bool updateAppliedImmediately = false;
-    angle::Result result          = mColorAttachment.image.stageSubresourceUpdate(
-        contextVk, gl::ImageIndex::Make2D(0),
-        gl::Extents(static_cast<int>(width), pixelUnpack.imageHeight, 1), gl::Offset(),
-        internalFormatInfo, pixelUnpack, kIOSurfaceFormats[mFormatIndex].type,
+    result                        = mColorAttachment.image.stageSubresourceUpdate(
+        contextVk, gl::OwnerImageIndex::Make2D(gl::OwnerLevel(0)), extents, offset,
+        internalFormatInfo, kIOSurfaceFormats[mFormatIndex].type,
         reinterpret_cast<uint8_t *>(source), format, vk::ImageFormatSupport::Renderable,
-        vk::ApplyImageUpdate::Defer, &updateAppliedImmediately);
+        inputRowPitch, inputDepthPitch, inputSkipBytes, vk::ApplyImageUpdate::Defer,
+        &updateAppliedImmediately);
 
     IOSurfaceUnlock(mIOSurface, 0, nullptr);
 
@@ -218,7 +234,7 @@ egl::Error IOSurfaceSurfaceVkMac::releaseTexImage(const gl::Context *context, EG
                             contextVk->isViewportFlipEnabledForDrawFBO(), nullptr, 0);
 
     result = mColorAttachment.image.readPixels(contextVk, bounds, params, VK_IMAGE_ASPECT_COLOR_BIT,
-                                               gl::LevelIndex(0), 0,
+                                               gl::OwnerLevel(0), gl::OwnerLayer(0),
                                                IOSurfaceGetBaseAddressOfPlane(mIOSurface, mPlane));
 
     IOSurfaceUnlock(mIOSurface, 0, nullptr);

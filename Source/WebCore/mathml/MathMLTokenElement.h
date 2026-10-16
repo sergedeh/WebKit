@@ -44,15 +44,24 @@ protected:
     void childrenChanged(const ChildChange&) override;
 
 private:
-    RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) override;
+    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) override;
     bool childShouldCreateRenderer(const Node&) const final;
 
     void didAttachRenderers() final;
 
     bool isMathMLToken() const final { return true; }
-    bool acceptsMathVariantAttribute() final { return true; }
+    bool acceptsLegacyMathVariantAttribute() final;
 };
 
 }
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::MathMLTokenElement)
+    static bool isType(const WebCore::MathMLElement& element) { return element.isMathMLToken(); }
+    static bool isType(const WebCore::Node& node)
+    {
+        auto* mathMLElement = dynamicDowncast<WebCore::MathMLElement>(node);
+        return mathMLElement && isType(*mathMLElement);
+    }
+SPECIALIZE_TYPE_TRAITS_END()
 
 #endif // ENABLE(MATHML)

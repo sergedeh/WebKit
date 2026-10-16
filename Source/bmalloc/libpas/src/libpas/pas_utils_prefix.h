@@ -25,7 +25,6 @@
 
 #pragma once
 
-#include "pas_platform.h"
 
 #ifdef __cplusplus
 #define __PAS_BEGIN_EXTERN_C extern "C" { struct __pas_require_semicolon
@@ -56,6 +55,25 @@ __PAS_BEGIN_EXTERN_C;
 
 #define __PAS_NEVER_INLINE __attribute__((__noinline__))
 #define __PAS_NO_RETURN __attribute((__noreturn__))
+
+/* Shrinks the register set a caller must spill around a call.
+   See: https://clang.llvm.org/docs/AttributeReference.html#preserve-most
+
+   Requires LTO, so the build defines HAVE_PRESERVE_MOST only when LTO is on. Without LTO,
+   LLVM's hot/cold splitting extracts cold regions into separate functions that get the default
+   calling convention, and the preserve_most parent then has to save X9-X15 for them in its
+   entry block -- on the hot path, which costs more than the attribute saves.
+   See rdar://183555125. */
+#if defined(HAVE_PRESERVE_MOST) && HAVE_PRESERVE_MOST && defined(__aarch64__)
+#define __PAS_PRESERVE_MOST __attribute__((preserve_most))
+#else
+#define __PAS_PRESERVE_MOST
+#endif
+
+// build.sh defines this for freestanding builds
+#if !defined(PAS_BMALLOC_HIDDEN)
+#define PAS_BMALLOC_HIDDEN 1
+#endif
 
 #if defined(PAS_LIBMALLOC) && PAS_LIBMALLOC || defined(PAS_BMALLOC_HIDDEN) && PAS_BMALLOC_HIDDEN
 #define __PAS_API __attribute__((visibility("hidden")))

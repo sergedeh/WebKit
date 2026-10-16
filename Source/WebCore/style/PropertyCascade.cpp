@@ -27,13 +27,16 @@
 #include "PropertyCascade.h"
 
 #include "CSSCustomPropertyValue.h"
+#include "CSSKeywordValueInlines.h"
 #include "CSSPaintImageValue.h"
-#include "CSSPrimitiveValueMappings.h"
+#include "CSSShorthandSubstitutionValue.h"
+#include "CSSSubstitutionValue.h"
 #include "CSSValuePool.h"
 #include "ComputedStyleDependencies.h"
 #include "PaintWorkletGlobalScope.h"
 #include "PropertyAllowlist.h"
 #include "StyleBuilderGenerated.h"
+#include "StyleKeyword+Mappings.h"
 #include "StylePropertyShorthand.h"
 #include <ranges>
 #include <wtf/TZoneMallocInlines.h>
@@ -43,7 +46,7 @@ namespace Style {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(PropertyCascade);
 
-PropertyCascade::PropertyCascade(const MatchResult& matchResult, IncludedProperties&& includedProperties, const HashSet<AnimatableCSSProperty>* animatedProperties, const StyleProperties* positionTryFallbackProperties)
+PropertyCascade::PropertyCascade(const MatchResult& matchResult, IncludedProperties&& includedProperties, const HashMap<AnimatableCSSProperty, EnumSet<AnimationSource>>* animatedProperties, const StyleProperties* positionTryFallbackProperties)
     : m_matchResult(matchResult)
     , m_includedProperties(WTF::move(includedProperties))
     , m_maximumOrigin(positionTryFallbackProperties ? PropertyCascade::Origin::PositionFallback : PropertyCascade::Origin::Author)
@@ -57,9 +60,19 @@ PropertyCascade::PropertyCascade(const MatchResult& matchResult, IncludedPropert
     buildCascade();
 }
 
+PropertyCascade::IncludedProperties PropertyCascade::rollbackProperties(const PropertyCascade& parent)
+{
+    auto types = normalPropertyTypes();
+    // Preserve starting-style resolution so that a revert inside @starting-style can roll back to
+    // @starting-style declarations from lower priority layers or origins.
+    if (parent.m_includedProperties.types.contains(PropertyType::StartingStyle))
+        types.add(PropertyType::StartingStyle);
+    return { types };
+}
+
 PropertyCascade::PropertyCascade(const PropertyCascade& parent, Origin maximumOrigin, std::optional<ScopeOrdinal> rollbackScope, std::optional<CascadeLayerPriority> maximumCascadeLayerPriorityForRollback)
     : m_matchResult(parent.m_matchResult)
-    , m_includedProperties(normalProperties()) // Include all properties to the rollback cascade, lower prority layers may not get included otherwise.
+    , m_includedProperties(rollbackProperties(parent)) // Include all properties to the rollback cascade, lower prority layers may not get included otherwise.
     , m_maximumOrigin(maximumOrigin)
     , m_rollbackScope(rollbackScope)
     , m_maximumCascadeLayerPriorityForRollback(maximumCascadeLayerPriorityForRollback)
@@ -69,17 +82,34 @@ PropertyCascade::PropertyCascade(const PropertyCascade& parent, Origin maximumOr
     buildCascade();
 }
 
+// Constructs a cascade where all properties in the parent cascade have been reverted.
+PropertyCascade::PropertyCascade(const PropertyCascade& parent, RevertRuleTag)
+    : m_matchResult(parent.m_matchResult)
+    , m_includedProperties(rollbackProperties(parent))
+    , m_maximumOrigin(parent.m_maximumOrigin)
+    , m_rollbackScope(parent.m_rollbackScope)
+    , m_maximumCascadeLayerPriorityForRollback(parent.m_maximumCascadeLayerPriorityForRollback)
+    , m_ruleRollbackDepth(parent.m_ruleRollbackDepth + 1) // Increment rollback depth.
+    , m_animationLayer(parent.m_animationLayer)
+    , m_positionTryFallbackProperties(parent.m_positionTryFallbackProperties)
+{
+    buildCascade();
+}
+
 PropertyCascade::~PropertyCascade() = default;
 
-PropertyCascade::AnimationLayer::AnimationLayer(const HashSet<AnimatableCSSProperty>& properties)
+PropertyCascade::AnimationLayer::AnimationLayer(const HashMap<AnimatableCSSProperty, EnumSet<AnimationSource>>& properties)
     : properties(properties)
 {
-    hasCustomProperties = std::ranges::find_if(properties, [](auto& property) {
-        return std::holds_alternative<AtomString>(property);
-    }) != properties.end();
+    for (auto& key : properties.keys()) {
+        if (std::holds_alternative<AtomString>(key)) {
+            hasCustomProperties = true;
+            break;
+        }
+    }
 
-    hasFontSize = properties.contains(CSSPropertyFontSize);
-    hasLineHeight = properties.contains(CSSPropertyLineHeight);
+    hasFontSize = properties.contains(CSSPropertyID::FontSize);
+    hasLineHeight = properties.contains(CSSPropertyID::LineHeight);
 }
 
 void PropertyCascade::buildCascade()
@@ -91,19 +121,21 @@ void PropertyCascade::buildCascade()
             break;
         bool hasImportant = addNormalMatches(origin);
         if (hasImportant)
-            originsWithImportant[enumToUnderlyingType(origin)] = true;
+            originsWithImportant[std::to_underlying(origin)] = true;
     }
 
     if (m_positionTryFallbackProperties)
         addPositionTryFallbackProperties();
 
     for (auto origin : { Origin::Author, Origin::User, Origin::UserAgent }) {
-        if (!originsWithImportant[enumToUnderlyingType(origin)])
+        if (!originsWithImportant[std::to_underlying(origin)])
             continue;
         addImportantMatches(origin);
     }
 
     sortLogicalGroupPropertyIDs();
+
+    m_delayedRollbackProperties.clear();
 }
 
 void PropertyCascade::setPropertyInternal(Property& property, CSSPropertyID id, CSSValue& cssValue, const MatchedProperties& matchedProperties, Origin origin)
@@ -132,12 +164,14 @@ void PropertyCascade::setPropertyInternal(Property& property, CSSPropertyID id, 
 
 void PropertyCascade::set(CSSPropertyID id, CSSValue& cssValue, const MatchedProperties& matchedProperties, Origin origin)
 {
-    ASSERT(!CSSProperty::isInLogicalPropertyGroup(id));
-    ASSERT(id < firstLogicalGroupProperty);
+    if (id >= firstLogicalGroupProperty) {
+        setLogicalGroupProperty(id, cssValue, matchedProperties, origin);
+        return;
+    }
 
-    ASSERT(id < m_propertyIsPresent.size());
-    if (id == CSSPropertyCustom) {
-        m_propertyIsPresent.set(id);
+    ASSERT(std::to_underlying(id) < m_propertyIsPresent.size());
+    if (id == CSSPropertyID::Custom) {
+        m_propertyIsPresent.set(std::to_underlying(id));
         const auto& customValue = downcast<CSSCustomPropertyValue>(cssValue);
         auto result = m_customProperties.ensure(customValue.name(), [&]() {
             Property property;
@@ -150,8 +184,8 @@ void PropertyCascade::set(CSSPropertyID id, CSSValue& cssValue, const MatchedPro
         return;
     }
 
-    auto& property = m_properties[id];
-    if (!m_propertyIsPresent.testAndSet(id))
+    auto& property = m_properties[std::to_underlying(id)];
+    if (!m_propertyIsPresent.testAndSet(std::to_underlying(id)))
         property.cssValue = { };
     setPropertyInternal(property, id, cssValue, matchedProperties, origin);
 }
@@ -161,7 +195,7 @@ void PropertyCascade::setLogicalGroupProperty(CSSPropertyID id, CSSValue& cssVal
     ASSERT(id >= firstLogicalGroupProperty);
     ASSERT(id <= lastLogicalGroupProperty);
 
-    auto& property = m_properties[id];
+    auto& property = m_properties[std::to_underlying(id)];
     if (!hasLogicalGroupProperty(id)) {
         property.cssValue = { };
         m_lowestSeenLogicalGroupProperty = std::min(m_lowestSeenLogicalGroupProperty, id);
@@ -171,16 +205,39 @@ void PropertyCascade::setLogicalGroupProperty(CSSPropertyID id, CSSValue& cssVal
     setPropertyInternal(property, id, cssValue, matchedProperties, origin);
 }
 
+void PropertyCascade::setDelayingForRuleRollback(CSSPropertyID propertyID, CSSValue& cssValue, const MatchedProperties& matchedProperties, Origin origin)
+{
+    ASSERT(m_ruleRollbackDepth);
+
+    auto key = [&] -> std::pair<unsigned, AtomString>  {
+        if (propertyID == CSSPropertyID::Custom)
+            return { std::to_underlying(propertyID), downcast<CSSCustomPropertyValue>(cssValue).name() };
+        return { std::to_underlying(propertyID), emptyAtom() };
+    }();
+    auto& delayedValues = m_delayedRollbackProperties.ensure(key, [&] {
+        return Deque<DelayedRollbackProperty>();
+    }).iterator->value;
+
+    delayedValues.prepend(DelayedRollbackProperty { cssValue, matchedProperties, origin });
+
+    // Ignore the last m_ruleRollbackDepth values for each property.
+    if (delayedValues.size() <= m_ruleRollbackDepth)
+        return;
+
+    auto last = delayedValues.takeLast();
+    SUPPRESS_UNCOUNTED_ARG set(propertyID, last.value, last.properties, last.origin);
+}
+
 bool PropertyCascade::hasProperty(CSSPropertyID propertyID, const CSSValue& value)
 {
-    if (propertyID == CSSPropertyCustom)
+    if (propertyID == CSSPropertyID::Custom)
         return hasCustomProperty(downcast<CSSCustomPropertyValue>(value).name());
     return propertyID < firstLogicalGroupProperty ? hasNormalProperty(propertyID) : hasLogicalGroupProperty(propertyID);
 }
 
 bool PropertyCascade::mayOverrideExistingProperty(CSSPropertyID propertyID, const CSSValue& value)
 {
-    if (propertyID == CSSPropertyCustom)
+    if (propertyID == CSSPropertyID::Custom)
         return hasCustomProperty(downcast<CSSCustomPropertyValue>(value).name());
     if (propertyID < firstLogicalGroupProperty)
         return hasNormalProperty(propertyID);
@@ -188,6 +245,12 @@ bool PropertyCascade::mayOverrideExistingProperty(CSSPropertyID propertyID, cons
     // Apply all logical group properties if we have applied any. They may override the ones we already applied.
     // FIXME: This could check if any existing properties are actually in the same group.
     return !!m_lastIndexForLogicalGroup;
+}
+
+const PropertyCascade::Property& PropertyCascade::functionResultProperty() const
+{
+    ASSERT(hasNormalProperty(CSSPropertyID::Result));
+    return normalProperty(CSSPropertyID::Result);
 }
 
 const PropertyCascade::Property* PropertyCascade::lastPropertyResolvingLogicalPropertyPair(CSSPropertyID propertyID, WritingMode writingMode) const
@@ -199,7 +262,7 @@ const PropertyCascade::Property* PropertyCascade::lastPropertyResolvingLogicalPr
             return CSSProperty::resolveDirectionAwareProperty(propertyID, writingMode);
         return CSSProperty::unresolvePhysicalProperty(propertyID, writingMode);
     }();
-    ASSERT(pairID != CSSPropertyInvalid);
+    ASSERT(pairID != CSSPropertyID::Invalid);
 
     auto indexForPropertyID = logicalGroupPropertyIndex(propertyID);
     auto indexForPairID = logicalGroupPropertyIndex(pairID);
@@ -210,6 +273,28 @@ const PropertyCascade::Property* PropertyCascade::lastPropertyResolvingLogicalPr
     ASSERT(!hasLogicalGroupProperty(propertyID));
     ASSERT(!hasLogicalGroupProperty(pairID));
     return nullptr;
+}
+
+// inherit() reads a value from the parent that may be a custom property which does not itself
+// inherit, so like the inherit keyword it has to be re-applied when the parent's non-inherited
+// style changes. https://drafts.csswg.org/css-values-5/#funcdef-inherit
+static bool explicitlyInheritsFromParent(const CSSValue& value)
+{
+    if (isValueID(value, CSSValueID::Inherit))
+        return true;
+    if (RefPtr shorthandValue = dynamicDowncast<CSSShorthandSubstitutionValue>(value))
+        return shorthandValue->shorthandValue().containsInheritFunction();
+    if (RefPtr substitutionValue = dynamicDowncast<CSSSubstitutionValue>(value))
+        return substitutionValue->containsInheritFunction();
+    if (RefPtr customPropertyValue = dynamicDowncast<CSSCustomPropertyValue>(value)) {
+        return WTF::switchOn(customPropertyValue->value(),
+            [](const Ref<CSSSubstitutionValue>& substitution) { return substitution->containsInheritFunction(); },
+            [](const Ref<CSSVariableData>&) { return false; },
+            [](CSSWideKeyword keyword) {
+                return keyword == CSSWideKeyword::Inherit;
+            });
+    }
+    return false;
 }
 
 bool PropertyCascade::addMatch(const MatchedProperties& matchedProperties, Origin origin, IsImportant important)
@@ -251,6 +336,8 @@ bool PropertyCascade::addMatch(const MatchedProperties& matchedProperties, Origi
 #endif
             if (propertyAllowlist == PropertyAllowlist::Marker && !isValidMarkerStyleProperty(propertyID))
                 return false;
+            if (propertyAllowlist == PropertyAllowlist::Highlight && !isValidHighlightStyleProperty(propertyID))
+                return false;
 
             if (m_includedProperties.types.containsAll(normalPropertyTypes()))
                 return true;
@@ -265,7 +352,7 @@ bool PropertyCascade::addMatch(const MatchedProperties& matchedProperties, Origi
             if (mayOverrideExistingProperty(propertyID, *current.value()))
                 return true;
 
-            if (m_includedProperties.types.containsAny({ PropertyType::AfterAnimation, PropertyType::AfterTransition })) {
+            if (m_includedProperties.types.contains(PropertyType::AfterAnimation)) {
                 if (shouldApplyAfterAnimation(current)) {
                     m_animationLayer->overriddenProperties.add(propertyID);
                     return true;
@@ -276,8 +363,11 @@ bool PropertyCascade::addMatch(const MatchedProperties& matchedProperties, Origi
             bool currentIsInherited = CSSProperty::isInheritedProperty(current.id());
             if (m_includedProperties.types.contains(PropertyType::Inherited) && currentIsInherited)
                 return true;
-            if (m_includedProperties.types.contains(PropertyType::ExplicitlyInherited) && isValueID(*current.value(), CSSValueInherit))
-                return true;
+            if (m_includedProperties.types.contains(PropertyType::ExplicitlyInherited)) {
+                RefPtr value = current.value();
+                if (explicitlyInheritsFromParent(*value))
+                    return true;
+            }
             if (m_includedProperties.types.contains(PropertyType::NonInherited) && !currentIsInherited)
                 return true;
 
@@ -287,10 +377,12 @@ bool PropertyCascade::addMatch(const MatchedProperties& matchedProperties, Origi
         if (!shouldIncludeProperty)
             continue;
 
-        if (propertyID < firstLogicalGroupProperty)
-            set(propertyID, *current.value(), matchedProperties, origin);
-        else
-            setLogicalGroupProperty(propertyID, *current.value(), matchedProperties, origin);
+        if (m_ruleRollbackDepth) {
+            setDelayingForRuleRollback(propertyID, protect(*current.value()), matchedProperties, origin);
+            continue;
+        }
+
+        SUPPRESS_UNCOUNTED_ARG set(propertyID, *current.value(), matchedProperties, origin);
     }
 
     return hasImportantProperties;
@@ -303,16 +395,13 @@ bool PropertyCascade::shouldApplyAfterAnimation(const StyleProperties::PropertyR
     auto id = property.id();
     RefPtr customProperty = dynamicDowncast<CSSCustomPropertyValue>(*property.value());
 
-    auto isAnimatedProperty = [&] {
-        if (customProperty)
-            return m_animationLayer->properties.contains(customProperty->name());
-        return m_animationLayer->properties.contains(id);
-    }();
-
-    if (isAnimatedProperty) {
+    auto animationSource = m_animationLayer->properties.getOptional(customProperty ? AnimatableCSSProperty { customProperty->name() } : id);
+    if (animationSource) {
         // "Important declarations from all origins take precedence over animations."
         // https://drafts.csswg.org/css-cascade-5/#importance
-        return m_includedProperties.types.contains(PropertyType::AfterAnimation) && property.isImportant();
+        // But transitions take precedence over !important, so only allow the
+        // override for properties not animated by a transition.
+        return !animationSource->contains(AnimationSource::CSSTransition) && property.isImportant();
     }
 
     // If we are animating custom properties they may affect other properties so we need to re-resolve them.
@@ -320,16 +409,16 @@ bool PropertyCascade::shouldApplyAfterAnimation(const StyleProperties::PropertyR
         // We could check if the we are actually animating the referenced variable. Indirect cases would need to be taken into account.
         if (customProperty && customProperty->isVariableReference())
             return true;
-        if (property.value()->hasVariableReferences())
+        if (property.value()->hasSubstitutionFunctions())
             return true;
     }
 
     // Check for 'em' units and similar property dependencies.
     if (m_animationLayer->hasFontSize || m_animationLayer->hasLineHeight) {
-        auto dependencies = property.value()->computedStyleDependencies();
-        if (m_animationLayer->hasFontSize && dependencies.properties.contains(CSSPropertyFontSize))
+        auto dependencies = protect(property.value())->computedStyleDependencies();
+        if (m_animationLayer->hasFontSize && dependencies.properties.contains(CSSPropertyID::FontSize))
             return true;
-        if (m_animationLayer->hasLineHeight && dependencies.properties.contains(CSSPropertyLineHeight))
+        if (m_animationLayer->hasLineHeight && dependencies.properties.contains(CSSPropertyID::LineHeight))
             return true;
     }
 
@@ -349,7 +438,7 @@ void PropertyCascade::addPositionTryFallbackProperties()
     addMatch(*m_positionTryFallbackProperties, Origin::PositionFallback, IsImportant::No);
 }
 
-static auto& declarationsForOrigin(const MatchResult& matchResult, PropertyCascade::Origin origin)
+static auto& LEGACY_NODELETE declarationsForOrigin(const MatchResult& matchResult, PropertyCascade::Origin origin)
 {
     switch (origin) {
     case PropertyCascade::Origin::UserAgent: return matchResult.userAgentDeclarations;
@@ -427,7 +516,7 @@ void PropertyCascade::addImportantMatches(Origin origin)
 void PropertyCascade::sortLogicalGroupPropertyIDs()
 {
     size_t endIndex = 0;
-    for (uint16_t id = m_lowestSeenLogicalGroupProperty; id <= m_highestSeenLogicalGroupProperty; ++id) {
+    for (uint16_t id = std::to_underlying(m_lowestSeenLogicalGroupProperty); id <= std::to_underlying(m_highestSeenLogicalGroupProperty); ++id) {
         auto propertyID = static_cast<CSSPropertyID>(id);
         if (hasLogicalGroupProperty(propertyID))
             m_logicalGroupPropertyIDs[endIndex++] = propertyID;
@@ -439,7 +528,7 @@ void PropertyCascade::sortLogicalGroupPropertyIDs()
     });
 }
 
-const HashSet<AnimatableCSSProperty> PropertyCascade::overriddenAnimatedProperties() const
+ValueOrReference<HashSet<AnimatableCSSProperty>> PropertyCascade::overriddenAnimatedProperties() const
 {
     if (m_animationLayer)
         return m_animationLayer->overriddenProperties;

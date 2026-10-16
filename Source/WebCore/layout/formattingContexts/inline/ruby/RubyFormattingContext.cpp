@@ -26,21 +26,31 @@
 #include "config.h"
 #include "RubyFormattingContext.h"
 
+#include "FontCascade.h"
 #include "InlineContentAligner.h"
 #include "InlineFormattingContext.h"
 #include "InlineLine.h"
-#include "RenderStyle+GettersInlines.h"
+#include "LayoutInlineTextBox.h"
+#include "StyleComputedStyle+GettersInlines.h"
+#include "TextSpacing.h"
+#include "TextUtil.h"
 #include <ranges>
 
 namespace WebCore {
 namespace Layout {
 
-static inline InlineLayoutUnit halfOfAFullWidthCharacter(const Box& annotationBox)
+static inline InlineLayoutUnit LEGACY_NODELETE fullWidthAdvance(const Box& box)
 {
-    return annotationBox.style().computedFontSize() / 2.f;
+    // A fullwidth character (including fullwidth punctuation) advances one em.
+    return box.style().usedFontSize();
 }
 
-static inline size_t baseContentIndex(size_t rubyBaseStart, const InlineDisplay::Boxes& boxes)
+static inline InlineLayoutUnit LEGACY_NODELETE halfOfAFullWidthCharacter(const Box& annotationBox)
+{
+    return fullWidthAdvance(annotationBox) / 2.f;
+}
+
+static inline size_t LEGACY_NODELETE baseContentIndex(size_t rubyBaseStart, std::span<InlineDisplay::Box> boxes)
 {
     auto baseContentIndex = rubyBaseStart + 1;
     if (boxes[baseContentIndex].layoutBox().isRubyAnnotationBox())
@@ -48,7 +58,7 @@ static inline size_t baseContentIndex(size_t rubyBaseStart, const InlineDisplay:
     return baseContentIndex;
 }
 
-static RubyPosition rubyPosition(const Box& rubyBaseLayoutBox)
+static RubyPosition LEGACY_NODELETE rubyPosition(const Box& rubyBaseLayoutBox)
 {
     ASSERT(rubyBaseLayoutBox.isRubyBase());
     auto computedRubyPosition = rubyBaseLayoutBox.style().rubyPosition();
@@ -74,7 +84,7 @@ static inline InlineRect annotationMarginBoxVisualRect(const Box& annotationBox,
 static InlineLayoutUnit baseLogicalWidthFromRubyBaseEnd(const Box& rubyBaseLayoutBox, const Line::RunList& lineRuns, const InlineContentBreaker::ContinuousContent::RunList& candidateRuns)
 {
     ASSERT(rubyBaseLayoutBox.isRubyBase());
-    // Canidate content is supposed to hold the base content and in case of soft wrap opportunities, line may have some base content too.
+    // Candidate content is supposed to hold the base content and in case of soft wrap opportunities, line may have some base content too.
     auto baseLogicalWidth = InlineLayoutUnit { 0.f };
     auto hasSeenRubyBaseStart = false;
     for (auto& candidateRun : candidateRuns | std::views::reverse) {
@@ -106,17 +116,82 @@ static bool annotationOverlapCheck(const InlineDisplay::Box& adjacentDisplayBox,
 
     if (adjacentDisplayBox.inkOverflow().intersects(overhangingRect))
         return true;
-    auto& adjacentLayoutBox = adjacentDisplayBox.layoutBox();
+    CheckedRef adjacentLayoutBox = adjacentDisplayBox.layoutBox();
     // Adjacent ruby may have overlapping annotation.
-    if (adjacentLayoutBox.isRubyBase() && adjacentLayoutBox.associatedRubyAnnotationBox())
-        return annotationMarginBoxVisualRect(*adjacentLayoutBox.associatedRubyAnnotationBox(), lineLogicalHeight, inlineFormattingContext).intersects(overhangingRect);
+    if (adjacentLayoutBox->isRubyBase() && adjacentLayoutBox->associatedRubyAnnotationBox())
+        return annotationMarginBoxVisualRect(*protect(adjacentLayoutBox->associatedRubyAnnotationBox()), lineLogicalHeight, inlineFormattingContext).intersects(overhangingRect);
     return false;
+}
+
+enum class AdjacentEdge : bool { Leading, Trailing };
+static InlineLayoutUnit overhangableSpaceAdvance(const InlineDisplay::Box& adjacentDisplayBox, AdjacentEdge edge)
+{
+    // https://drafts.csswg.org/css-ruby-1/#propdef-ruby-overhang
+    // For 'ruby-overhang: spaces' the annotation may overhang adjacent content only over "spaces":
+    // preserved white space, no-break space and other space separators, half of the advance of a
+    // fullwidth opening (inline-start) or closing (inline-end) punctuation, and a quarter of the
+    // advance of a fullwidth middle dot punctuation (either side). This returns that advance at the
+    // given edge of the adjacent display box.
+    // FIXME: Reduce the fullwidth punctuation advance when it has been trimmed by 'text-spacing-trim'.
+    if (!adjacentDisplayBox.isText())
+        return { };
+
+    CheckedPtr adjacentTextBox = dynamicDowncast<InlineTextBox>(adjacentDisplayBox.layoutBox());
+    if (!adjacentTextBox)
+        return { };
+
+    auto& displayText = adjacentDisplayBox.text();
+    if (displayText.start() >= displayText.end())
+        return { };
+
+    auto content = StringView { adjacentTextBox->content() };
+    auto edgeCharacter = edge == AdjacentEdge::Trailing ? content[displayText.end() - 1] : content[displayText.start()];
+
+    auto punctuationAdvance = [&]() -> InlineLayoutUnit {
+        // A fullwidth punctuation exposes a fixed fraction of one fullwidth advance (one em): half of an
+        // opening punctuation on its inline-start side, half of a closing punctuation on its inline-end
+        // side, and a quarter of a middle dot punctuation on either side.
+        auto fullWidth = fullWidthAdvance(*adjacentTextBox);
+        switch (TextSpacing::characterClass(edgeCharacter)) {
+        case TextSpacing::CharacterClass::FullWidthOpeningPunctuation:
+            return edge == AdjacentEdge::Leading ? fullWidth / 2.f : InlineLayoutUnit { };
+        case TextSpacing::CharacterClass::FullWidthClosingPunctuation:
+            return edge == AdjacentEdge::Trailing ? fullWidth / 2.f : InlineLayoutUnit { };
+        case TextSpacing::CharacterClass::FullWidthMiddleDotPunctuation:
+            return fullWidth / 4.f;
+        default:
+            return { };
+        }
+    };
+    if (auto advance = punctuationAdvance())
+        return advance;
+
+    // Otherwise the edge character may be a space. Preserved white space, no-break space and other space
+    // separators are overhangable up to their full advance. Spaces are not laid out in their own display box
+    // (they share a box with the adjacent glyphs, e.g. "X " or " X"), and the box ink overflow does not
+    // isolate them either, so measure the contiguous run of white space at the given edge from the font.
+    if (!isUnicodeWhitespace(edgeCharacter))
+        return { };
+
+    auto [whitespaceStart, whitespaceEnd] = [&]() -> std::pair<size_t, size_t> {
+        if (edge == AdjacentEdge::Trailing) {
+            auto start = displayText.end();
+            while (start > displayText.start() && isUnicodeWhitespace(content[start - 1]))
+                --start;
+            return { start, displayText.end() };
+        }
+        auto end = displayText.start();
+        while (end < displayText.end() && isUnicodeWhitespace(content[end]))
+            ++end;
+        return { displayText.start(), end };
+    }();
+    return TextUtil::width(*adjacentTextBox, protect(adjacentDisplayBox.style().fontCascade()), whitespaceStart, whitespaceEnd, { }, TextUtil::UseTrailingWhitespaceMeasuringOptimization::No);
 }
 
 InlineLayoutUnit RubyFormattingContext::annotationBoxLogicalWidth(const Box& rubyBaseLayoutBox, InlineFormattingContext& inlineFormattingContext)
 {
     ASSERT(rubyBaseLayoutBox.isRubyBase());
-    auto* annotationBox = rubyBaseLayoutBox.associatedRubyAnnotationBox();
+    CheckedPtr annotationBox = rubyBaseLayoutBox.associatedRubyAnnotationBox();
     if (!annotationBox)
         return { };
 
@@ -125,7 +200,7 @@ InlineLayoutUnit RubyFormattingContext::annotationBoxLogicalWidth(const Box& rub
     return inlineFormattingContext.geometryForBox(*annotationBox).marginBoxWidth();
 }
 
-InlineLayoutUnit RubyFormattingContext::baseEndAdditionalLogicalWidth(const Box& rubyBaseLayoutBox, const Line::RunList& lineRuns, const InlineContentBreaker::ContinuousContent::RunList& candidateRuns, InlineFormattingContext& inlineFormattingContext)
+InlineLayoutUnit RubyFormattingContext::baseEndAdditionalLogicalWidth(const Box& rubyBaseLayoutBox, const LineRunList& lineRuns, const InlineContentBreaker::ContinuousContent::RunList& candidateRuns, InlineFormattingContext& inlineFormattingContext)
 {
     ASSERT(rubyBaseLayoutBox.isRubyBase());
     if (hasInterlinearAnnotation(rubyBaseLayoutBox)) {
@@ -146,9 +221,9 @@ size_t RubyFormattingContext::applyRubyAlignOnBaseContent(size_t rubyBaseStart, 
         ASSERT_NOT_REACHED();
         return rubyBaseStart;
     }
-    auto& rubyBaseLayoutBox = runs[rubyBaseStart].layoutBox();
+    CheckedRef rubyBaseLayoutBox = runs[rubyBaseStart].layoutBox();
     auto rubyBaseEnd = [&]() -> std::optional<size_t> {
-        auto& rubyBox = rubyBaseLayoutBox.parent();
+        auto& rubyBox = rubyBaseLayoutBox->parent();
         for (auto index = rubyBaseStart + 1; index < runs.size(); ++index) {
             if (&runs[index].layoutBox().parent() == &rubyBox)
                 return index;
@@ -160,7 +235,7 @@ size_t RubyFormattingContext::applyRubyAlignOnBaseContent(size_t rubyBaseStart, 
         // Blank base needs no alignment.
         return *rubyBaseEnd;
     }
-    auto* annotationBox = rubyBaseLayoutBox.associatedRubyAnnotationBox();
+    CheckedPtr annotationBox = rubyBaseLayoutBox->associatedRubyAnnotationBox();
     if (!annotationBox)
         return rubyBaseStart + 1;
 
@@ -172,7 +247,8 @@ size_t RubyFormattingContext::applyRubyAlignOnBaseContent(size_t rubyBaseStart, 
         return rubyBaseStart + 1;
 
     auto spaceToDistribute = annotationBoxLogicalWidth - baseContentLogicalWidth;
-    auto alignmentOffset = InlineContentAligner::applyRubyAlign(rubyBaseLayoutBox.style().rubyAlign(), line.runs(), { rubyBaseStart, rubyBaseEnd ? *rubyBaseEnd + 1 : runs.size() }, spaceToDistribute);
+    auto rangeSize = (rubyBaseEnd ? *rubyBaseEnd + 1 : runs.size()) - rubyBaseStart;
+    auto alignmentOffset = InlineContentAligner::applyRubyAlign(rubyBaseLayoutBox->style().rubyAlign(), runs.mutableSubspan(rubyBaseStart, rangeSize), spaceToDistribute);
     if (rubyBaseEnd) {
         // Reset the spacing we added at LineBuilder.
         auto& rubyBaseEndRun = runs[*rubyBaseEnd];
@@ -180,8 +256,8 @@ size_t RubyFormattingContext::applyRubyAlignOnBaseContent(size_t rubyBaseStart, 
         rubyBaseEndRun.moveHorizontally(2 * alignmentOffset);
     }
 
-    ASSERT(!alignmentOffsetList.contains(&rubyBaseLayoutBox));
-    alignmentOffsetList.add(&rubyBaseLayoutBox, alignmentOffset);
+    ASSERT(!alignmentOffsetList.contains(rubyBaseLayoutBox.ptr()));
+    alignmentOffsetList.add(rubyBaseLayoutBox.ptr(), alignmentOffset);
     return rubyBaseEnd.value_or(runs.size());
 }
 
@@ -202,21 +278,21 @@ HashMap<const Box*, InlineLayoutUnit> RubyFormattingContext::applyRubyAlign(Line
 
 InlineLayoutUnit RubyFormattingContext::applyRubyAlignOnAnnotationBox(Line& line, InlineLayoutUnit spaceToDistribute, InlineFormattingContext& inlineFormattingContext)
 {
-    return InlineContentAligner::applyRubyAlign(inlineFormattingContext.root().style().rubyAlign(), line.runs(), { 0, line.runs().size() }, spaceToDistribute);
+    return InlineContentAligner::applyRubyAlign(inlineFormattingContext.root().style().rubyAlign(), line.runs().mutableSpan(), spaceToDistribute);
 }
 
-void RubyFormattingContext::applyAlignmentOffsetList(InlineDisplay::Boxes& displayBoxes, const HashMap<const Box*, InlineLayoutUnit>& alignmentOffsetList, RubyBasesMayNeedResizing rubyBasesMayNeedResizing, InlineFormattingContext& inlineFormattingContext)
+void RubyFormattingContext::adjustRubyBaseContentWithAlignmentOffset(std::span<InlineDisplay::Box> displayBoxes, const HashMap<const Box*, InlineLayoutUnit>& alignmentOffsetList, InlineFormattingContext& inlineFormattingContext)
 {
     if (alignmentOffsetList.isEmpty())
         return;
-    InlineContentAligner::applyRubyBaseAlignmentOffset(displayBoxes, alignmentOffsetList, rubyBasesMayNeedResizing == RubyBasesMayNeedResizing::No ? InlineContentAligner::AdjustContentOnlyInsideRubyBase::Yes : InlineContentAligner::AdjustContentOnlyInsideRubyBase::No, inlineFormattingContext);
+    InlineContentAligner::adjustRubyBaseContentWithAlignmentOffset(displayBoxes, alignmentOffsetList, inlineFormattingContext);
 }
 
-void RubyFormattingContext::applyAnnotationAlignmentOffset(InlineDisplay::Boxes& displayBoxes, InlineLayoutUnit alignmentOffset, InlineFormattingContext& inlineFormattingContext)
+void RubyFormattingContext::adjustAnnotationContentWithAlignmentOffset(std::span<InlineDisplay::Box> displayBoxes, InlineLayoutUnit alignmentOffset, InlineFormattingContext& inlineFormattingContext)
 {
     if (!alignmentOffset)
         return;
-    InlineContentAligner::applyRubyAnnotationAlignmentOffset(displayBoxes, alignmentOffset, inlineFormattingContext);
+    InlineContentAligner::adjustAnnotationContentWithAlignmentOffset(displayBoxes, alignmentOffset, inlineFormattingContext);
 }
 
 InlineLayoutUnit RubyFormattingContext::baseEndAdditionalLogicalWidth(const Box& rubyBaseLayoutBox, const InlineDisplay::Box&, InlineLayoutUnit baseContentWidth, InlineFormattingContext& inlineFormattingContext)
@@ -225,7 +301,7 @@ InlineLayoutUnit RubyFormattingContext::baseEndAdditionalLogicalWidth(const Box&
         // FIXME: We may want to include interlinear annotations here too so that applyAlignmentOffsetList would not need to initiate resizing (only moving base content).
         if (baseContentWidth)
             return { };
-        auto* annotationBox = rubyBaseLayoutBox.associatedRubyAnnotationBox();
+        CheckedPtr annotationBox = rubyBaseLayoutBox.associatedRubyAnnotationBox();
         if (!annotationBox)
             return { };
         auto& annotationBoxLogicalGeometry = inlineFormattingContext.geometryForBox(*annotationBox);
@@ -238,7 +314,7 @@ InlineLayoutUnit RubyFormattingContext::baseEndAdditionalLogicalWidth(const Box&
 InlineLayoutPoint RubyFormattingContext::placeAnnotationBox(const Box& rubyBaseLayoutBox, const Rect& rubyBaseMarginBoxLogicalRect, InlineFormattingContext& inlineFormattingContext)
 {
     ASSERT(rubyBaseLayoutBox.isRubyBase());
-    auto* annotationBox = rubyBaseLayoutBox.associatedRubyAnnotationBox();
+    CheckedPtr annotationBox = rubyBaseLayoutBox.associatedRubyAnnotationBox();
     if (!annotationBox) {
         ASSERT_NOT_REACHED();
         return { };
@@ -266,7 +342,7 @@ InlineLayoutSize RubyFormattingContext::sizeAnnotationBox(const Box& rubyBaseLay
 {
     // FIXME: This is where we should take advantage of the ruby-column setup.
     ASSERT(rubyBaseLayoutBox.isRubyBase());
-    auto* annotationBox = rubyBaseLayoutBox.associatedRubyAnnotationBox();
+    CheckedPtr annotationBox = rubyBaseLayoutBox.associatedRubyAnnotationBox();
     if (!annotationBox) {
         ASSERT_NOT_REACHED();
         return { };
@@ -286,12 +362,12 @@ InlineLayoutSize RubyFormattingContext::sizeAnnotationBox(const Box& rubyBaseLay
 
 void RubyFormattingContext::adjustLayoutBoundsAndStretchAncestorRubyBase(LineBox& lineBox, InlineLevelBox& rubyBaseInlineBox, MaximumLayoutBoundsStretchMap& descendantRubySet, const InlineFormattingContext& inlineFormattingContext)
 {
-    auto& rubyBaseLayoutBox = rubyBaseInlineBox.layoutBox();
-    ASSERT(rubyBaseLayoutBox.isRubyBase());
+    CheckedRef rubyBaseLayoutBox = rubyBaseInlineBox.layoutBox();
+    ASSERT(rubyBaseLayoutBox->isRubyBase());
 
     auto stretchAncestorRubyBaseIfApplicable = [&](auto layoutBounds) {
-        auto& rootBox = inlineFormattingContext.root();
-        for (auto* ancestor = &rubyBaseLayoutBox.parent(); ancestor != &rootBox; ancestor = &ancestor->parent()) {
+        CheckedRef rootBox = inlineFormattingContext.root();
+        for (CheckedPtr ancestor = &rubyBaseLayoutBox->parent(); ancestor != rootBox.ptr(); ancestor = &ancestor->parent()) {
             if (ancestor->isRubyBase()) {
                 auto* ancestorInlineBox = lineBox.inlineLevelBoxFor(*ancestor);
                 if (!ancestorInlineBox) {
@@ -306,7 +382,7 @@ void RubyFormattingContext::adjustLayoutBoundsAndStretchAncestorRubyBase(LineBox
     };
 
     auto layoutBounds = rubyBaseInlineBox.layoutBounds();
-    auto* annotationBox = rubyBaseLayoutBox.associatedRubyAnnotationBox();
+    CheckedPtr annotationBox = rubyBaseLayoutBox->associatedRubyAnnotationBox();
     if (!annotationBox || !hasInterlinearAnnotation(rubyBaseLayoutBox)) {
         // Make sure descendant rubies with annotations are propagated.
         stretchAncestorRubyBaseIfApplicable(layoutBounds);
@@ -333,7 +409,7 @@ void RubyFormattingContext::adjustLayoutBoundsAndStretchAncestorRubyBase(LineBox
         auto extraSpaceForAnnotation = InlineLayoutUnit { };
         if (!isFirstFormattedLine) {
             // Note that annotation may leak into the half leading space (gap between lines).
-            auto lineGap = InlineFormattingUtils::snapToInt(rubyBaseLayoutBox.style().metricsOfPrimaryFont().lineSpacing(), rubyBaseLayoutBox);
+            auto lineGap = protect(rubyBaseLayoutBox->style())->metricsOfPrimaryFont().lineSpacing();
             extraSpaceForAnnotation = std::max(0.f, (lineGap - (ascent + descent)) / 2);
         }
         auto ascentWithAnnotation = (ascent + over) - extraSpaceForAnnotation;
@@ -384,11 +460,11 @@ void RubyFormattingContext::applyAnnotationContributionToLayoutBounds(LineBox& l
     }
 }
 
-InlineLayoutUnit RubyFormattingContext::overhangForAnnotationBefore(const Box& rubyBaseLayoutBox, size_t rubyBaseStart, const InlineDisplay::Boxes& boxes, InlineLayoutUnit lineLogicalHeight, InlineFormattingContext& inlineFormattingContext)
+InlineLayoutUnit RubyFormattingContext::overhangForAnnotationBefore(const Box& rubyBaseLayoutBox, size_t rubyBaseStart, std::span<InlineDisplay::Box> boxes, InlineLayoutUnit lineLogicalHeight, InlineFormattingContext& inlineFormattingContext)
 {
     // [root inline box][ruby container][ruby base][ruby annotation]
     ASSERT(rubyBaseStart >= 2);
-    auto* annotationBox = rubyBaseLayoutBox.associatedRubyAnnotationBox();
+    CheckedPtr annotationBox = rubyBaseLayoutBox.associatedRubyAnnotationBox();
     if (!annotationBox || !hasInterlinearAnnotation(rubyBaseLayoutBox) || rubyBaseStart <= 2)
         return { };
     if (rubyBaseStart + 1 >= boxes.size()) {
@@ -411,6 +487,12 @@ InlineLayoutUnit RubyFormattingContext::overhangForAnnotationBefore(const Box& r
         return std::max(0.f, contentVisualRect.y() - baseVisualRect.y());
     };
     auto overhangValue = std::min(halfOfAFullWidthCharacter(*annotationBox), gapBetweenBaseAndContent());
+    if (rubyBaseLayoutBox.style().rubyOverhang() == RubyOverhang::Spaces) {
+        // The annotation may only overhang adjacent spaces (the immediately preceding content's trailing edge).
+        overhangValue = std::min(overhangValue, overhangableSpaceAdvance(boxes[rubyBaseStart - 2], AdjacentEdge::Trailing));
+        if (!overhangValue)
+            return { };
+    }
     auto wouldAnnotationOrBaseOverlapAdjacentContent = [&] {
         // Check of adjacent (previous) content for overlapping.
         auto overhangingAnnotationVisualRect = annotationMarginBoxVisualRect(*annotationBox, lineLogicalHeight, inlineFormattingContext);
@@ -432,9 +514,9 @@ InlineLayoutUnit RubyFormattingContext::overhangForAnnotationBefore(const Box& r
     return wouldAnnotationOrBaseOverlapAdjacentContent() ? 0.f : overhangValue;
 }
 
-InlineLayoutUnit RubyFormattingContext::overhangForAnnotationAfter(const Box& rubyBaseLayoutBox, WTF::Range<size_t> rubyBaseRange, const InlineDisplay::Boxes& boxes, InlineLayoutUnit lineLogicalHeight, InlineFormattingContext& inlineFormattingContext)
+InlineLayoutUnit RubyFormattingContext::overhangForAnnotationAfter(const Box& rubyBaseLayoutBox, WTF::Range<size_t> rubyBaseRange, std::span<InlineDisplay::Box> boxes, InlineLayoutUnit lineLogicalHeight, InlineFormattingContext& inlineFormattingContext)
 {
-    auto* annotationBox = rubyBaseLayoutBox.associatedRubyAnnotationBox();
+    CheckedPtr annotationBox = rubyBaseLayoutBox.associatedRubyAnnotationBox();
     if (!annotationBox || !hasInterlinearAnnotation(rubyBaseLayoutBox))
         return { };
 
@@ -453,6 +535,12 @@ InlineLayoutUnit RubyFormattingContext::overhangForAnnotationAfter(const Box& ru
         return std::max(0.f, baseStartVisualRect.maxY() - baseContentEndVisualRect.maxY());
     };
     auto overhangValue = std::min(halfOfAFullWidthCharacter(*annotationBox), gapBetweenBaseEndAndContent());
+    if (rubyBaseLayoutBox.style().rubyOverhang() == RubyOverhang::Spaces) {
+        // The annotation may only overhang adjacent spaces (the immediately following content's leading edge).
+        overhangValue = std::min(overhangValue, overhangableSpaceAdvance(boxes[rubyBaseRange.end()], AdjacentEdge::Leading));
+        if (!overhangValue)
+            return { };
+    }
     auto wouldAnnotationOrBaseOverlapLineContent = [&] {
         // Check of adjacent (next) content for overlapping.
         auto overhangingAnnotationVisualRect = annotationMarginBoxVisualRect(*annotationBox, lineLogicalHeight, inlineFormattingContext);
@@ -493,7 +581,7 @@ bool RubyFormattingContext::hasInterCharacterAnnotation(const Box& rubyBaseLayou
     return false;
 }
 
-void RubyFormattingContext::applyRubyOverhang(InlineFormattingContext& parentFormattingContext, InlineLayoutUnit lineLogicalHeight, InlineDisplay::Boxes& displayBoxes, const Vector<WTF::Range<size_t>>& interlinearRubyColumnRangeList)
+void RubyFormattingContext::applyRubyOverhang(InlineFormattingContext& parentFormattingContext, InlineLayoutUnit lineLogicalHeight, std::span<InlineDisplay::Box> displayBoxes, const Vector<WTF::Range<size_t>>& interlinearRubyColumnRangeList)
 {
     // FIXME: We are only supposed to apply overhang when annotation box is wider than base, but at this point we can't tell (this needs to be addressed together with annotation box sizing).
     if (interlinearRubyColumnRangeList.isEmpty())
@@ -506,12 +594,12 @@ void RubyFormattingContext::applyRubyOverhang(InlineFormattingContext& parentFor
             continue;
 
         auto rubyBaseStart = startEndPair.begin();
-        auto& rubyBaseLayoutBox = displayBoxes[rubyBaseStart].layoutBox();
-        ASSERT(rubyBaseLayoutBox.isRubyBase());
+        CheckedRef rubyBaseLayoutBox = displayBoxes[rubyBaseStart].layoutBox();
+        ASSERT(rubyBaseLayoutBox->isRubyBase());
         ASSERT(hasInterlinearAnnotation(rubyBaseLayoutBox));
-        if (rubyBaseLayoutBox.style().rubyOverhang() == RubyOverhang::None)
-            continue;
 
+        // Both 'auto' and 'spaces' allow overhang; overhangForAnnotationBefore/After restrict
+        // the 'spaces' case to the advance of adjacent spaces.
         auto beforeOverhang = overhangForAnnotationBefore(rubyBaseLayoutBox, rubyBaseStart, displayBoxes, lineLogicalHeight, parentFormattingContext);
         auto afterOverhang = overhangForAnnotationAfter(rubyBaseLayoutBox, { rubyBaseStart, startEndPair.end() }, displayBoxes, lineLogicalHeight, parentFormattingContext);
 
@@ -522,12 +610,12 @@ void RubyFormattingContext::applyRubyOverhang(InlineFormattingContext& parentFor
                 auto& displayBox = displayBoxes[index];
                 isHorizontalWritingMode ? displayBox.moveHorizontally(-shiftValue) : displayBox.moveVertically(-shiftValue);
 
-                auto& layoutBox = displayBox.layoutBox();
+                CheckedRef layoutBox = displayBox.layoutBox();
                 if (displayBox.isInlineLevelBox() && !displayBox.isRootInlineBox())
                     parentFormattingContext.geometryForBox(layoutBox).moveHorizontally(LayoutUnit { -shiftValue });
 
-                if (layoutBox.isRubyBase() && layoutBox.associatedRubyAnnotationBox())
-                    parentFormattingContext.geometryForBox(*layoutBox.associatedRubyAnnotationBox()).moveHorizontally(LayoutUnit { -shiftValue });
+                if (layoutBox->isRubyBase() && layoutBox->associatedRubyAnnotationBox())
+                    parentFormattingContext.geometryForBox(*layoutBox->associatedRubyAnnotationBox()).moveHorizontally(LayoutUnit { -shiftValue });
             }
         };
         auto hasJustifiedAdjacentAfterContent = [&] {

@@ -30,7 +30,6 @@
 
 #include "AudioUtilities.h"
 #include "WaveShaperProcessor.h"
-#include <JavaScriptCore/Float32Array.h>
 #include <algorithm>
 #include <wtf/MainThread.h>
 #include <wtf/StdLibExtras.h>
@@ -54,12 +53,12 @@ void WaveShaperDSPKernel::lazyInitializeOversampling()
     ASSERT(isMainThread());
 
     if (!m_tempBuffer) {
-        m_tempBuffer = makeUnique<AudioFloatArray>(AudioUtilities::renderQuantumSize * 2);
-        m_tempBuffer2 = makeUnique<AudioFloatArray>(AudioUtilities::renderQuantumSize * 4);
-        m_upSampler = makeUnique<UpSampler>(AudioUtilities::renderQuantumSize);
-        m_downSampler = makeUnique<DownSampler>(AudioUtilities::renderQuantumSize * 2);
-        m_upSampler2 = makeUnique<UpSampler>(AudioUtilities::renderQuantumSize * 2);
-        m_downSampler2 = makeUnique<DownSampler>(AudioUtilities::renderQuantumSize * 4);
+        lazyInitialize(m_tempBuffer, makeUnique<AudioFloatArray>(AudioUtilities::renderQuantumSize * 2));
+        lazyInitialize(m_tempBuffer2, makeUnique<AudioFloatArray>(AudioUtilities::renderQuantumSize * 4));
+        lazyInitialize(m_upSampler, makeUnique<UpSampler>(AudioUtilities::renderQuantumSize));
+        lazyInitialize(m_downSampler, makeUnique<DownSampler>(AudioUtilities::renderQuantumSize * 2));
+        lazyInitialize(m_upSampler2, makeUnique<UpSampler>(AudioUtilities::renderQuantumSize * 2));
+        lazyInitialize(m_downSampler2, makeUnique<DownSampler>(AudioUtilities::renderQuantumSize * 4));
     }
 }
 
@@ -85,9 +84,7 @@ void WaveShaperDSPKernel::process(std::span<const float> source, std::span<float
 void WaveShaperDSPKernel::processCurve(std::span<const float> source, std::span<float> destination)
 {
     assertIsHeld(waveShaperProcessor()->processLock());
-    RefPtr curve = waveShaperProcessor()->curve();
-    auto curveData = curve ? curve->typedMutableSpan() : std::span<float> { };
-    processCurveWithData(source, destination, curveData);
+    processCurveWithData(source, destination, waveShaperProcessor()->curve().span());
 }
 
 void WaveShaperDSPKernel::processCurveWithData(std::span<const float> source, std::span<float> destination, std::span<const float> curveData)

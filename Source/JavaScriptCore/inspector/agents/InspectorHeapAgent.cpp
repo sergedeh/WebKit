@@ -32,6 +32,8 @@
 #include "InjectedScriptManager.h"
 #include "InspectorEnvironment.h"
 #include "JSBigInt.h"
+#include "JSCJSValueInlines.h"
+#include "JSFunction.h"
 #include "VM.h"
 #include <wtf/Stopwatch.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -46,7 +48,7 @@ InspectorHeapAgent::InspectorHeapAgent(AgentContext& context)
     : InspectorAgentBase("Heap"_s)
     , m_injectedScriptManager(context.injectedScriptManager)
     , m_frontendDispatcher(makeUniqueRef<HeapFrontendDispatcher>(context.frontendRouter))
-    , m_backendDispatcher(HeapBackendDispatcher::create(context.backendDispatcher, this))
+    , m_backendDispatcher(HeapBackendDispatcher::create(protect(context.backendDispatcher), this))
     , m_environment(context.environment)
 {
 }
@@ -69,7 +71,7 @@ Protocol::ErrorStringOr<void> InspectorHeapAgent::enable()
 
     m_enabled = true;
 
-    checkedEnvironment()->vm().heap.addObserver(this);
+    protect(m_environment)->vm().heap.addObserver(this);
 
     return { };
 }
@@ -82,7 +84,7 @@ Protocol::ErrorStringOr<void> InspectorHeapAgent::disable()
     m_enabled = false;
     m_tracking = false;
 
-    checkedEnvironment()->vm().heap.removeObserver(this);
+    protect(m_environment)->vm().heap.removeObserver(this);
 
     clearHeapSnapshots();
 
@@ -91,7 +93,7 @@ Protocol::ErrorStringOr<void> InspectorHeapAgent::disable()
 
 Protocol::ErrorStringOr<void> InspectorHeapAgent::gc()
 {
-    VM& vm = checkedEnvironment()->vm();
+    VM& vm = protect(m_environment)->vm();
     JSLockHolder lock(vm);
     sanitizeStackForVM(vm);
     vm.heap.collectNow(Sync, CollectionScope::Full);
@@ -101,7 +103,7 @@ Protocol::ErrorStringOr<void> InspectorHeapAgent::gc()
 
 Protocol::ErrorStringOr<std::tuple<double, Protocol::Heap::HeapSnapshotData>> InspectorHeapAgent::snapshot()
 {
-    VM& vm = checkedEnvironment()->vm();
+    VM& vm = protect(m_environment)->vm();
     JSLockHolder lock(vm);
 
     HeapSnapshotBuilder snapshotBuilder(vm.ensureHeapProfiler());
@@ -109,7 +111,7 @@ Protocol::ErrorStringOr<std::tuple<double, Protocol::Heap::HeapSnapshotData>> In
 
     snapshotBuilder.buildSnapshot();
 
-    auto timestamp = checkedEnvironment()->executionStopwatch().elapsedTime().seconds();
+    auto timestamp = protect(m_environment)->executionStopwatch().elapsedTime().seconds();
     auto snapshotData = snapshotBuilder.json();
     return { { timestamp, snapshotData } };
 }
@@ -150,7 +152,7 @@ Protocol::ErrorStringOr<void> InspectorHeapAgent::stopTracking()
 
 std::optional<HeapSnapshotNode> InspectorHeapAgent::nodeForHeapObjectIdentifier(Protocol::ErrorString& errorString, unsigned heapObjectIdentifier)
 {
-    HeapProfiler* heapProfiler = checkedEnvironment()->vm().heapProfiler();
+    HeapProfiler* heapProfiler = protect(m_environment)->vm().heapProfiler();
     if (!heapProfiler) {
         errorString = "No heap snapshot"_s;
         return std::nullopt;
@@ -176,7 +178,7 @@ Protocol::ErrorStringOr<std::tuple<String, RefPtr<Protocol::Debugger::FunctionDe
     Protocol::ErrorString errorString;
 
     // Prevent the cell from getting collected as we look it up.
-    VM& vm = checkedEnvironment()->vm();
+    VM& vm = protect(m_environment)->vm();
     JSLockHolder lock(vm);
     DeferGC deferGC(vm);
 
@@ -200,11 +202,11 @@ Protocol::ErrorStringOr<std::tuple<String, RefPtr<Protocol::Debugger::FunctionDe
     if (!structure)
         return makeUnexpected("Unable to get object details - Structure"_s);
 
-    JSGlobalObject* globalObject = structure->globalObject();
+    JSGlobalObject* globalObject = structure->realm();
     if (!globalObject)
         return makeUnexpected("Unable to get object details - GlobalObject"_s);
 
-    InjectedScript injectedScript = m_injectedScriptManager.injectedScriptFor(globalObject);
+    auto injectedScript = m_injectedScriptManager->injectedScriptFor(globalObject);
     if (injectedScript.hasNoValue())
         return makeUnexpected("Unable to get object details - InjectedScript"_s);
 
@@ -226,7 +228,7 @@ Protocol::ErrorStringOr<Ref<Protocol::Runtime::RemoteObject>> InspectorHeapAgent
     Protocol::ErrorString errorString;
 
     // Prevent the cell from getting collected as we look it up.
-    VM& vm = checkedEnvironment()->vm();
+    VM& vm = protect(m_environment)->vm();
     JSLockHolder lock(vm);
     DeferGC deferGC(vm);
 
@@ -240,11 +242,11 @@ Protocol::ErrorStringOr<Ref<Protocol::Runtime::RemoteObject>> InspectorHeapAgent
     if (!structure)
         return makeUnexpected("Unable to get object details - Structure"_s);
 
-    JSGlobalObject* globalObject = structure->globalObject();
+    JSGlobalObject* globalObject = structure->realm();
     if (!globalObject)
         return makeUnexpected("Unable to get object details - GlobalObject"_s);
 
-    InjectedScript injectedScript = m_injectedScriptManager.injectedScriptFor(globalObject);
+    auto injectedScript = m_injectedScriptManager->injectedScriptFor(globalObject);
     if (injectedScript.hasNoValue())
         return makeUnexpected("Unable to get object details - InjectedScript"_s);
 
@@ -255,7 +257,7 @@ Protocol::ErrorStringOr<Ref<Protocol::Runtime::RemoteObject>> InspectorHeapAgent
     return object.releaseNonNull();
 }
 
-static Protocol::Heap::GarbageCollection::Type protocolTypeForHeapOperation(CollectionScope scope)
+static Protocol::Heap::GarbageCollection::Type LEGACY_NODELETE protocolTypeForHeapOperation(CollectionScope scope)
 {
     switch (scope) {
     case CollectionScope::Full:
@@ -272,7 +274,7 @@ void InspectorHeapAgent::willGarbageCollect()
     if (!m_enabled)
         return;
 
-    m_gcStartTime = checkedEnvironment()->executionStopwatch().elapsedTime();
+    m_gcStartTime = protect(m_environment)->executionStopwatch().elapsedTime();
 }
 
 void InspectorHeapAgent::didGarbageCollect(CollectionScope scope)
@@ -289,7 +291,7 @@ void InspectorHeapAgent::didGarbageCollect(CollectionScope scope)
 
     // FIXME: Include number of bytes freed by collection.
 
-    Seconds endTime = checkedEnvironment()->executionStopwatch().elapsedTime();
+    Seconds endTime = protect(m_environment)->executionStopwatch().elapsedTime();
     dispatchGarbageCollectedEvent(protocolTypeForHeapOperation(scope), m_gcStartTime, endTime);
 
     m_gcStartTime = Seconds::nan();
@@ -298,8 +300,8 @@ void InspectorHeapAgent::didGarbageCollect(CollectionScope scope)
 bool InspectorHeapAgent::heapSnapshotBuilderIgnoreNode(const HeapSnapshotBuilder&, JSC::JSCell* cell)
 {
     if (const Structure* structure = cell->structure()) {
-        if (JSGlobalObject* globalObject = structure->globalObject()) {
-            if (!checkedEnvironment()->canAccessInspectedScriptState(globalObject))
+        if (JSGlobalObject* globalObject = structure->realm()) {
+            if (!protect(m_environment)->canAccessInspectedScriptState(globalObject))
                 return true;
         }
     }
@@ -308,7 +310,7 @@ bool InspectorHeapAgent::heapSnapshotBuilderIgnoreNode(const HeapSnapshotBuilder
 
 void InspectorHeapAgent::clearHeapSnapshots()
 {
-    VM& vm = checkedEnvironment()->vm();
+    VM& vm = protect(m_environment)->vm();
     JSLockHolder lock(vm);
 
     if (HeapProfiler* heapProfiler = vm.heapProfiler()) {

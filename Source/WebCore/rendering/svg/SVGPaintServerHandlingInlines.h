@@ -1,6 +1,7 @@
 /*
  * Copyright (C) 2023, 2024 Igalia S.L.
  * Copyright (C) 2025 Samuel Weinig <sam@webkit.org>
+ * Copyright (C) 2026 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -21,29 +22,36 @@
 #pragma once
 
 #include "RenderSVGResourceGradient.h"
-#include "RenderStyle+GettersInlines.h"
+#include "LocalFrameView.h"
+#include "LocalFrameViewInlines.h"
 #include "RenderView.h"
 #include "SVGPaintServerHandling.h"
 #include "SVGRenderSupport.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "StyleComputedStyle+InitialInlines.h"
+#include "StylePrimitiveNumericTypes+Evaluation.h"
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+#include <WebKitAdditions/AXCustomColorModeController.h>
+#endif
 
 namespace WebCore {
 
 template<SVGPaintServerHandling::Operation op>
-bool SVGPaintServerHandling::preparePaintOperation(const RenderLayerModelObject& renderer, const RenderStyle& style) const
+bool SVGPaintServerHandling::preparePaintOperation(const RenderLayerModelObject& renderer, const Style::ComputedStyle& style) const
 {
     auto paintServerResult = requestPaintServer<op>(renderer, style);
     if (std::holds_alternative<std::monostate>(paintServerResult))
         return false;
 
     if (std::holds_alternative<RenderSVGResourcePaintServer*>(paintServerResult)) {
-        auto& paintServer = *std::get<RenderSVGResourcePaintServer*>(paintServerResult);
+        CheckedRef paintServer = *std::get<RenderSVGResourcePaintServer*>(paintServerResult);
 
         if constexpr (op == Operation::Fill) {
-            if (paintServer.prepareFillOperation(m_context, renderer, style))
+            if (paintServer->prepareFillOperation(m_context, renderer, style))
                 return true;
         } else if constexpr (op == Operation::Stroke) {
-            if (paintServer.prepareStrokeOperation(m_context, renderer, style))
+            if (paintServer->prepareStrokeOperation(m_context, renderer, style))
                 return true;
         }
 
@@ -65,7 +73,7 @@ bool SVGPaintServerHandling::preparePaintOperation(const RenderLayerModelObject&
 }
 
 template<SVGPaintServerHandling::Operation op, SVGPaintServerHandling::URIResolving allowPaintServerURIResolving>
-SVGPaintServerOrColor SVGPaintServerHandling::requestPaintServer(const RenderLayerModelObject& targetRenderer, const RenderStyle& style)
+SVGPaintServerOrColor SVGPaintServerHandling::requestPaintServer(const RenderLayerModelObject& targetRenderer, const Style::ComputedStyle& style)
 {
     // When rendering the mask for a RenderSVGResourceClipper, always use the initial fill paint server.
     if (targetRenderer.view().frameView().paintBehavior().contains(PaintBehavior::RenderingSVGClipOrMask)) {
@@ -103,7 +111,7 @@ SVGPaintServerOrColor SVGPaintServerHandling::requestPaintServer(const RenderLay
             };
 
             // Try resolving URI first.
-            if (auto* paintServer = paintServerForOperation())
+            if (CheckedPtr paintServer = paintServerForOperation())
                 return paintServer;
 
             // If we found no paint server, and no fallback is desired, stop here.
@@ -119,31 +127,39 @@ SVGPaintServerOrColor SVGPaintServerHandling::requestPaintServer(const RenderLay
     return { };
 }
 
-inline void SVGPaintServerHandling::prepareFillOperation(const RenderLayerModelObject& renderer, const RenderStyle& style, const Color& fillColor) const
+inline void SVGPaintServerHandling::prepareFillOperation(const RenderLayerModelObject& renderer, const Style::ComputedStyle& style, const Color& fillColor) const
 {
     if (renderer.view().frameView().paintBehavior().contains(PaintBehavior::RenderingSVGClipOrMask)) {
         m_context.setAlpha(1);
         m_context.setFillRule(style.clipRule());
     } else {
-        m_context.setAlpha(style.fillOpacity().value.value);
+        m_context.setAlpha(Style::evaluate<float>(style.fillOpacity()));
         m_context.setFillRule(style.fillRule());
     }
 
     Style::ColorResolver colorResolver { style };
-    m_context.setFillColor(colorResolver.colorApplyingColorFilter(fillColor));
+    auto paintColor = colorResolver.colorApplyingColorFilter(fillColor);
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    paintColor = AXCustomColorModeController::adjustedSVGPaintColor(renderer, style, AXCustomColorModeController::SVGPaintTarget::Fill, paintColor, fillColor);
+#endif
+    m_context.setFillColor(paintColor);
 }
 
-inline void SVGPaintServerHandling::prepareStrokeOperation(const RenderLayerModelObject& renderer, const RenderStyle& style, const Color& strokeColor) const
+inline void SVGPaintServerHandling::prepareStrokeOperation(const RenderLayerModelObject& renderer, const Style::ComputedStyle& style, const Color& strokeColor) const
 {
-    m_context.setAlpha(style.strokeOpacity().value.value);
+    m_context.setAlpha(Style::evaluate<float>(style.strokeOpacity()));
 
     Style::ColorResolver colorResolver { style };
-    m_context.setStrokeColor(colorResolver.colorApplyingColorFilter(strokeColor));
+    auto paintColor = colorResolver.colorApplyingColorFilter(strokeColor);
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    paintColor = AXCustomColorModeController::adjustedSVGPaintColor(renderer, style, AXCustomColorModeController::SVGPaintTarget::Stroke, paintColor, strokeColor);
+#endif
+    m_context.setStrokeColor(paintColor);
     SVGRenderSupport::applyStrokeStyleToContext(m_context, style, renderer);
 }
 
 template<SVGPaintServerHandling::Operation op>
-Color SVGPaintServerHandling::resolveColorFromStyle(const RenderStyle& style)
+Color SVGPaintServerHandling::resolveColorFromStyle(const Style::ComputedStyle& style)
 {
     if constexpr (op == Operation::Fill)
         return resolveColorFromStyle(style, style.fill(), style.visitedLinkFill());
@@ -151,7 +167,7 @@ Color SVGPaintServerHandling::resolveColorFromStyle(const RenderStyle& style)
         return resolveColorFromStyle(style, style.stroke(), style.visitedLinkStroke());
 }
 
-inline Color SVGPaintServerHandling::resolveColorFromStyle(const RenderStyle& style, const Style::SVGPaint& paint, const Style::SVGPaint& visitedLinkPaint)
+inline Color SVGPaintServerHandling::resolveColorFromStyle(const Style::ComputedStyle& style, const Style::SVGPaint& paint, const Style::SVGPaint& visitedLinkPaint)
 {
     // All paint types except `none` / `url` / `url none` handle solid colors.
     ASSERT(!paint.isNone());
@@ -163,9 +179,10 @@ inline Color SVGPaintServerHandling::resolveColorFromStyle(const RenderStyle& st
     auto color = colorResolver.colorResolvingCurrentColor(paint.colorDisregardingType());
     if (style.insideLink() == InsideLink::InsideVisited) {
         // FIXME: This code doesn't support the uri component of the visited link paint, https://bugs.webkit.org/show_bug.cgi?id=70006
-        // FIXME: This code is resolving the visit link paint color with RenderStyle::color(), rather than the more commonly used RenderStyle::visitedLinkColor(). If this is intentional, we should document that, otherwise, we should use RenderStyle::visitedLinkColor().
         if (auto visitedLinkPaintColor = visitedLinkPaint.tryColor()) {
-            if (auto visitedColor = colorResolver.colorResolvingCurrentColor(*visitedLinkPaintColor); visitedColor.isValid())
+            if (visitedLinkPaintColor->isCurrentColor())
+                color = style.visitedLinkColor();
+            else if (auto visitedColor = colorResolver.colorResolvingCurrentColor(*visitedLinkPaintColor); visitedColor.isValid())
                 color = visitedColor.colorWithAlpha(color.alphaAsFloat());
         }
     }
@@ -184,12 +201,12 @@ bool SVGPaintServerHandling::inheritColorFromParentStyleIfNeeded(const RenderLay
     // FIXME: If this is intentionally using the `renderer` currentColor to resolve colors from `renderer.parent()`, we should document that, otherwise, this should probably use the corresponding style's current color.
 
     Style::ColorResolver colorResolver { renderer.style() };
-    auto& parentStyle = renderer.parent()->style();
+    CheckedRef parentStyle = renderer.parent()->style();
 
     if constexpr (op == Operation::Fill)
-        color = colorResolver.colorResolvingCurrentColor(parentStyle.fill().colorDisregardingType());
+        color = colorResolver.colorResolvingCurrentColor(parentStyle->fill().colorDisregardingType());
     else
-        color = colorResolver.colorResolvingCurrentColor(parentStyle.stroke().colorDisregardingType());
+        color = colorResolver.colorResolvingCurrentColor(parentStyle->stroke().colorDisregardingType());
 
     return true;
 }

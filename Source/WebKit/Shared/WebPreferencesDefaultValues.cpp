@@ -26,10 +26,12 @@
 #include "config.h"
 #include "WebPreferencesDefaultValues.h"
 
+#include <WebCore/SettingsBase.h>
 #include <wtf/text/WTFString.h>
 
 #if PLATFORM(COCOA)
 #include "DefaultWebBrowserChecks.h"
+#include "NetworkSoftLink.h"
 #include <wtf/NumberOfCores.h>
 #include <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 #if PLATFORM(IOS_FAMILY)
@@ -75,7 +77,7 @@ bool defaultShouldPrintBackgrounds()
 
 #if ENABLE(FULLSCREEN_API)
 
-bool defaultVideoFullscreenRequiresElementFullscreen()
+SUPPRESS_NODELETE bool defaultVideoFullscreenRequiresElementFullscreen()
 {
 #if USE(APPLE_INTERNAL_SDK)
     if (videoFullscreenRequiresElementFullscreenFromAdditions())
@@ -123,7 +125,7 @@ bool defaultCaptureAudioInGPUProcessEnabled()
 #endif
 }
 
-bool defaultManageCaptureStatusBarInGPUProcessEnabled()
+SUPPRESS_NODELETE bool defaultManageCaptureStatusBarInGPUProcessEnabled()
 {
 #if PLATFORM(IOS_FAMILY)
     // FIXME: Enable by default for all applications.
@@ -133,7 +135,7 @@ bool defaultManageCaptureStatusBarInGPUProcessEnabled()
 #endif
 }
 
-double defaultInactiveMediaCaptureStreamRepromptWithoutUserGestureIntervalInMinutes()
+SUPPRESS_NODELETE double defaultInactiveMediaCaptureStreamRepromptWithoutUserGestureIntervalInMinutes()
 {
     constexpr double inactiveMediaCaptureStreamRepromptIntervalForDesktop = 10;
 
@@ -243,7 +245,7 @@ bool defaultShowModalDialogEnabled()
 #if ENABLE(GAMEPAD)
 bool defaultGamepadVibrationActuatorEnabled()
 {
-#if HAVE(WIDE_GAMECONTROLLER_SUPPORT)
+#if HAVE(WIDE_GAMECONTROLLER_SUPPORT) || ENABLE(WPE_PLATFORM) || PLATFORM(GTK)
     return true;
 #else
     return false;
@@ -252,7 +254,7 @@ bool defaultGamepadVibrationActuatorEnabled()
 #endif
 
 #if ENABLE(WEB_AUTHN)
-bool defaultDigitalCredentialsEnabled()
+SUPPRESS_NODELETE bool defaultDigitalCredentialsEnabled()
 {
 #if HAVE(DIGITAL_CREDENTIALS_UI)
     static bool enabled = [] {
@@ -270,7 +272,7 @@ bool defaultDigitalCredentialsEnabled()
 }
 #endif
 
-bool defaultShouldEnableScreenOrientationAPI()
+SUPPRESS_NODELETE bool defaultShouldEnableScreenOrientationAPI()
 {
 #if PLATFORM(MAC)
     return true;
@@ -280,6 +282,16 @@ bool defaultShouldEnableScreenOrientationAPI()
 #else
     return false;
 #endif
+}
+
+SUPPRESS_NODELETE unsigned defaultMaximumNestedInlineFormattingContextCount()
+{
+#if PLATFORM(IOS)
+    // Mail renders messages from clients that nest markup pathologically, in processes with small stacks.
+    if (WTF::IOSApplication::isMaild() || WTF::IOSApplication::isMobileMail())
+        return 100;
+#endif
+    return WebCore::SettingsBase::defaultMaximumRenderTreeDepth;
 }
 
 #if USE(LIBWEBRTC)
@@ -312,12 +324,7 @@ bool defaultPopoverAttributeEnabled()
 bool defaultUseGPUProcessForDOMRenderingEnabled()
 {
 #if ENABLE(GPU_PROCESS_BY_DEFAULT) && ENABLE(GPU_PROCESS_DOM_RENDERING_BY_DEFAULT)
-#if PLATFORM(MAC)
-    static bool haveSufficientCores = WTF::numberOfPhysicalProcessorCores() >= 4;
-    return haveSufficientCores;
-#else
     return true;
-#endif
 #endif
 
 #if USE(GRAPHICS_LAYER_WC)
@@ -327,23 +334,8 @@ bool defaultUseGPUProcessForDOMRenderingEnabled()
     return false;
 }
 
-#if ENABLE(WEB_PUSH_NOTIFICATIONS)
-bool defaultBuiltInNotificationsEnabled()
-{
-#if defined(DEPRECATED_GLOBAL_SETTINGS_BUILT_IN_NOTIFICATIONS_ENABLED_ADDITIONS)
-    DEPRECATED_GLOBAL_SETTINGS_BUILT_IN_NOTIFICATIONS_ENABLED_ADDITIONS;
-#endif
-
-#if defined(WEB_PREFERENCES_BUILT_IN_NOTIFICATIONS_ENABLED_ADDITIONS)
-    WEB_PREFERENCES_BUILT_IN_NOTIFICATIONS_ENABLED_ADDITIONS;
-#endif
-
-    return false;
-}
-#endif
-
 #if ENABLE(DEVICE_ORIENTATION)
-bool defaultDeviceOrientationPermissionAPIEnabled()
+SUPPRESS_NODELETE bool defaultDeviceOrientationPermissionAPIEnabled()
 {
 #if PLATFORM(IOS_FAMILY)
     return linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::SupportsDeviceOrientationAndMotionPermissionAPI);
@@ -365,6 +357,11 @@ bool defaultRequiresPageVisibilityForVideoToBeNowPlaying()
 }
 #endif
 
+bool defaultRequiresUserGestureToStartAudiblePlaybackWhenHidden()
+{
+    return true;
+}
+
 bool defaultCookieStoreAPIEnabled()
 {
 #if ENABLE(COOKIE_STORE_API_BY_DEFAULT)
@@ -384,6 +381,17 @@ bool defaultIFrameResourceMonitoringEnabled()
 #endif
 }
 #endif
+
+bool defaultSearchInputResultsAttributeEnabled()
+{
+#if PLATFORM(COCOA)
+    static bool result = !isFullWebBrowserOrRunningTest()
+        && !linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::DisableNonStandardSearchInputResultsAttribute);
+    return result;
+#else
+    return false;
+#endif
+}
 
 #if HAVE(SPATIAL_AUDIO_EXPERIENCE)
 bool defaultPreferSpatialAudioExperience()
@@ -419,7 +427,7 @@ static bool isSafariOrWebApp()
 bool defaultMutationEventsEnabled()
 {
 #if PLATFORM(COCOA)
-    return (WTF::CocoaApplication::isAppleApplication() && !isSafariOrWebApp()) || !linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::MutationEventsDisabledByDefault);
+    return (WTF::CocoaApplication::isAppleApplication() && !isSafariOrWebApp() && !isRunningTest(applicationBundleIdentifier())) || !linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::MutationEventsDisabledByDefault);
 #else
     return false;
 #endif
@@ -434,7 +442,7 @@ bool defaultTrustedTypesEnabled()
 #endif
 }
 
-bool defaultGetBoundingClientRectZoomedEnabled()
+SUPPRESS_NODELETE bool defaultGetBoundingClientRectZoomedEnabled()
 {
 #if PLATFORM(IOS_FAMILY)
     return linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::GetBoundingClientRectZoomed);
@@ -443,7 +451,7 @@ bool defaultGetBoundingClientRectZoomedEnabled()
 #endif
 }
 
-bool defaultFacebookLiveRecordingQuirkEnabled()
+SUPPRESS_NODELETE bool defaultFacebookLiveRecordingQuirkEnabled()
 {
 #if PLATFORM(MAC)
     return true;
@@ -487,7 +495,7 @@ bool defaultIOSurfaceLosslessCompressionEnabled()
 
 bool defaultScrollbarColorEnabled()
 {
-#if HAVE(APPKIT_SCROLLBAR_COLOR_SPI) || HAVE(UIKIT_SCROLLBAR_COLOR_SPI)
+#if HAVE(APPKIT_SCROLLBAR_COLOR_SPI) || HAVE(UIKIT_SCROLLBAR_COLOR_SPI) || PLATFORM(WPE) || PLATFORM(GTK)
     return true;
 #else
     return false;
@@ -509,5 +517,60 @@ bool defaultCaptionDisplaySettingsEnabled()
     return false;
 }
 #endif
+
+#if ENABLE(MEDIA_STREAM)
+bool defaultShouldEnableScreenCapture()
+{
+#if USE(APPLE_INTERNAL_SDK)
+    return defaultShouldEnableScreenCaptureFromAdditions();
+#endif
+
+#if USE(GSTREAMER) || PLATFORM(MAC)
+    return true;
+#endif
+
+    return false;
+}
+#endif
+
+bool defaultWebTransportEnabled()
+{
+#if HAVE(WEBTRANSPORT_WITHOUT_SOFT_LINKING)
+    return true;
+#elif HAVE(WEBTRANSPORT)
+    // WebTransport implementations before the availability of all these
+    // functions were experimental and so incomplete that we shouldn't expose
+    // them to the web. This makes it so TahoeE+ has WebTransport, even if a
+    // TahoeA SDK was used to build WebKit.
+    static bool hasEverythingNeeded =
+        canLoad_Network_nw_parameters_create_webtransport_http()
+        && canLoad_Network_nw_protocol_copy_webtransport_definition()
+        && canLoad_Network_nw_webtransport_create_options()
+        && canLoad_Network_nw_webtransport_options_set_is_unidirectional()
+        && canLoad_Network_nw_webtransport_options_set_is_datagram()
+        && canLoad_Network_nw_webtransport_options_add_connect_request_header()
+        && canLoad_Network_nw_webtransport_options_set_allow_joining_before_ready()
+        && canLoad_Network_nw_webtransport_options_set_initial_max_streams_uni()
+        && canLoad_Network_nw_webtransport_options_set_initial_max_streams_bidi()
+        && canLoad_Network_nw_webtransport_metadata_get_is_peer_initiated()
+        && canLoad_Network_nw_webtransport_metadata_get_is_unidirectional()
+        && canLoad_Network_nw_webtransport_metadata_get_session_error_code()
+        && canLoad_Network_nw_webtransport_metadata_set_session_error_code()
+        && canLoad_Network_nw_webtransport_metadata_get_session_error_message()
+        && canLoad_Network_nw_webtransport_metadata_set_session_error_message()
+        && canLoad_Network_nw_webtransport_metadata_get_session_closed()
+        && canLoad_Network_nw_webtransport_metadata_set_remote_drain_handler()
+        && canLoad_Network_nw_webtransport_metadata_copy_connect_response()
+        && canLoad_Network_nw_webtransport_metadata_get_transport_mode()
+        && canLoad_Network_nw_webtransport_metadata_set_remote_receive_error_handler()
+        && canLoad_Network_nw_webtransport_metadata_set_remote_send_error_handler()
+        && canLoad_Network_nw_connection_abort_reads()
+        && canLoad_Network_nw_connection_abort_writes()
+        && canLoad_Network_nw_http_fields_access_value_by_name();
+    return hasEverythingNeeded;
+#else
+    return false;
+#endif
+}
 
 } // namespace WebKit

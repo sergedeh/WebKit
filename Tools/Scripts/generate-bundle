@@ -37,11 +37,14 @@ import tempfile
 import zipfile
 
 top_level_directory = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..'))
-sys.path.insert(0, os.path.join(top_level_directory, 'Tools', 'flatpak'))
 sys.path.insert(0, os.path.join(top_level_directory, 'Tools', 'jhbuild'))
 sys.path.insert(0, os.path.join(top_level_directory, 'Tools', 'Scripts', 'webkitpy'))
+
+from webkitpy.port.linux_container_sdk_utils import maybe_enter_webkit_container_sdk, maybe_use_container_sdk_root_dir
+maybe_enter_webkit_container_sdk()
+maybe_use_container_sdk_root_dir()
+
 import jhbuildutils
-import flatpakutils
 from binary_bundling.ldd import SharedObjectResolver
 from binary_bundling.bundle import BinaryBundler
 
@@ -255,7 +258,7 @@ class BundleCreator(object):
             readme_handle.write('  - Please report bugs at https://bugs.webkit.org (Product: WebKit and Component: WebKitGTK or WPEWebKit).\n')
         return True
 
-    def _generate_wrapper(self, interpreter, binary_to_wrap):
+    def _generate_wrapper(self, interpreter, binary_to_wrap, skip_wrapper_if_missing_binary=False):
         variables = dict()
         mydir = self._bundler.VAR_MYDIR
         lib_dir = os.path.join(self._bundler.destination_dir(), 'lib')
@@ -263,6 +266,12 @@ class BundleCreator(object):
         bin_dir = os.path.join(self._bundler.destination_dir(), 'bin')
         share_dir = os.path.join(self._bundler.destination_dir(), 'share')
         sys_share_dir = os.path.join(self._bundler.destination_dir(), 'sys/share')
+        binary_to_wrap_path = os.path.join(bin_dir, binary_to_wrap)
+
+        if not (os.path.isfile(binary_to_wrap_path) and os.access(binary_to_wrap_path, os.X_OK)):
+            if skip_wrapper_if_missing_binary:
+                return
+            raise RuntimeError('Unable to find binary to wrap for %s' % binary_to_wrap)
 
         if os.path.isdir(os.path.join(sys_lib_dir, 'gio')):
             gio_var = 'GIO_MODULE_DIR' if self._syslibs == 'bundle-all' else 'GIO_EXTRA_MODULES'
@@ -460,7 +469,7 @@ class BundleCreator(object):
         gtk_binary_version = self._get_pkg_config_var('gtk4', 'gtk_binary_version')
         gtk_module_dir = os.path.join(gtk_lib_dir, 'gtk-4.0', gtk_binary_version, subdir)
         if not os.path.isdir(gtk_module_dir):
-            raise RuntimeError('Can not find the the gtk module dir %s' % gtk_module_dir)
+            return []  # gtk4 ships now the modules statically linked in the lib: https://gitlab.gnome.org/GNOME/gtk/-/merge_requests/8522
         return self._list_files_directory(gtk_module_dir, filter_suffix='.so')
 
     def _get_gstreamer_modules(self):
@@ -519,21 +528,18 @@ class BundleCreator(object):
         mesa_library_names = ['libglapi', 'libEGL', 'libGL', 'libGLESv2', 'libGLX', 'libdrm', 'libgbm', 'libMesaOpenCL']
         mesa_libraries = []
         try:
-            lib_dir_dri = self._get_pkg_config_var('dri', 'libdir')
+            lib_dir = self._get_pkg_config_var('dri', 'libdir')
         except RuntimeError:
-            lib_dir_dri = os.path.dirname(self._get_pkg_config_var('dri', 'dridriverdir'))
+            lib_dir = os.path.dirname(self._get_pkg_config_var('dri', 'dridriverdir'))
 
-        # Some versions of the flatpak SDK ship the Mesa libraries into a non-standard path.
-        candidate_lib_dirs = [ lib_dir_dri, os.path.join(lib_dir_dri, 'GL/default/lib') ]
-        for lib_dir in candidate_lib_dirs:
-            if os.path.isdir(lib_dir):
-                for entry in os.listdir(lib_dir):
-                    if '.so.' in entry:
-                        entry_libname = entry.split('.so.', 1)[0]
-                        # Mesa libraries are either named as "libNAME.so.1" or have a suffix like "libNAME_mesa.so.0" or "libNAME_indirect.so.0"
-                        # Hypothetical future suffixes are unknown so we match any library named "libNAME" or any library that starts with "libNAME_"
-                        if any((entry_libname == l or entry_libname.startswith(l+'_')) for l in mesa_library_names):
-                            mesa_libraries.append(os.path.join(lib_dir, entry))
+        if os.path.isdir(lib_dir):
+            for entry in os.listdir(lib_dir):
+                if '.so.' in entry:
+                    entry_libname = entry.split('.so.', 1)[0]
+                    # Mesa libraries are either named as "libNAME.so.1" or have a suffix like "libNAME_mesa.so.0" or "libNAME_indirect.so.0"
+                    # Hypothetical future suffixes are unknown so we match any library named "libNAME" or any library that starts with "libNAME_"
+                    if any((entry_libname == l or entry_libname.startswith(l+'_')) for l in mesa_library_names):
+                        mesa_libraries.append(os.path.join(lib_dir, entry))
         _log.debug('Found the following mesa libraries: %s' % ', '.join(mesa_libraries))
         for required_mesa_library_prefix in ['libGL', 'libGLESv2']:
             if not any(os.path.basename(l).startswith(required_mesa_library_prefix+'.so.') for l in mesa_libraries):
@@ -635,15 +641,10 @@ class BundleCreator(object):
         egl_icd_library_name = json_data['ICD']['library_path']
         if os.path.isabs(egl_icd_library_name):
             raise NotImplementedError('Path rewritting needs to be implemented to handle ICD config files with abspath')
-        # Some versions of the flatpak SDK ships the EGL ICD library into a non-standard path.
+
         egl_libdir = self._get_pkg_config_var('egl', 'libdir')
-        egl_icd_library_found = False
-        egl_icd_library_paths = [os.path.join(egl_libdir, egl_icd_library_name), os.path.join(egl_libdir, 'GL/default/lib', egl_icd_library_name)]
-        for egl_icd_library_path in egl_icd_library_paths:
-            if os.path.isfile(egl_icd_library_path):
-                egl_icd_library_found = True
-                break
-        if not egl_icd_library_found:
+        egl_icd_library_path = os.path.join(egl_libdir, egl_icd_library_name)
+        if not os.path.isfile(egl_icd_library_path):
             raise RuntimeError('Unable to find the EGL ICD library %s' % egl_icd_library_path)
         return egl_icd_library_path
 
@@ -663,7 +664,11 @@ class BundleCreator(object):
 
     def _generate_tls_cafile(self, data_directory):
         cafile_path = os.path.join(data_directory, 'bundle-ca-certificates.pem')
-        retcode, stdout, stderr = self._run_cmd_and_get_output(['trust', 'extract', '--format=pem-bundle', cafile_path])
+        if shutil.which('trust'):
+            retcode, stdout, stderr = self._run_cmd_and_get_output(['trust', 'extract', '--format=pem-bundle', cafile_path])
+        else:
+            _log.warning('trust: command not found, please install p11-kit.')
+            retcode = 127
         # trust fails inside flatpak due to https://gitlab.com/freedesktop-sdk/freedesktop-sdk/-/issues/904
         # fall-back to trying to manually copy the bundle
         if (retcode != 0) or (not os.path.isfile(cafile_path)) or (os.path.getsize(cafile_path) < 100):
@@ -848,9 +853,6 @@ class BundleCreator(object):
             if not (os.path.isdir(system_font_config_dir) and os.path.isdir(system_font_data_dir)):
                 raise NotImplementedError("Can't find the fontconfig files at the standard location in this system")
             shutil.copytree(system_font_config_dir, os.path.join(target_font_config_dir, os.path.basename(system_font_config_dir)))
-            flatpak_host_fontconfigfile = os.path.join(target_font_config_dir, os.path.basename(system_font_config_dir), '50-flatpak.conf')
-            if os.path.isfile(flatpak_host_fontconfigfile):
-                os.unlink(flatpak_host_fontconfigfile)
             self._generate_font_conf(target_font_config_dir)
             _log.info('Copy fonts')
             # We copy every font, so this may copy lot of data if you have lot of fonts installed.
@@ -886,13 +888,18 @@ class BundleCreator(object):
                 _log.info('Copy basic GTK icons.')
                 icons_target_dir = os.path.join(target_sys_share_dir, 'icons')
                 os.makedirs(icons_target_dir)
-                gtk_icon_basedir = '/run/host/share/icons' if flatpakutils.is_sandboxed() else '/usr/share/icons'
+                gtk_icon_basedir = '/usr/share/icons'
                 gtk_target_icon_dir = os.path.join(icons_target_dir, 'hicolor')
+                gtk_icon_dirs_copied = 0
                 for gtk_icon_theme in ['Adwaita', 'hicolor', 'gnome']:
                     gtk_source_icon_dir = os.path.join(gtk_icon_basedir, gtk_icon_theme)
-                    if not os.path.isdir(gtk_source_icon_dir):
-                        raise NotImplementedError('Can not find the GTK icon theme at path "%s" in this system' % gtk_source_icon_dir)
-                    shutil.copytree(gtk_source_icon_dir, gtk_target_icon_dir, ignore_dangling_symlinks=True, dirs_exist_ok=True)
+                    if os.path.isdir(gtk_source_icon_dir):
+                        gtk_icon_dirs_copied += 1
+                        shutil.copytree(gtk_source_icon_dir, gtk_target_icon_dir, ignore_dangling_symlinks=True, dirs_exist_ok=True)
+                    else:
+                        _log.warning(f"Can't find the GTK icon theme at path '{gtk_source_icon_dir}' in this system. Skipping it. This may cause missing icons in MiniBrowser.")
+                if not gtk_icon_dirs_copied:
+                       raise NotImplementedError('No GTK icon theme dirs were found in this system.')
                 retcode, stdout, stderr = self._run_cmd_and_get_output(['gtk4-update-icon-cache', '-f', '-t', gtk_target_icon_dir])
                 if retcode != 0:
                     raise RuntimeError("The command to update gtk icons cache returned non-zero status: %d.\n\tstdout: %s\n\tstderr: %s" %(retcode, stdout, stderr))
@@ -900,7 +907,8 @@ class BundleCreator(object):
         # Finally generate the wrappers.
         self._generate_wrapper(interpreter, bundle_binary)
         if bundle_binary == 'MiniBrowser':
-            self._generate_wrapper(interpreter, self._port_binary_preffix + 'WebDriver')
+            # Generate the wrapper for WebDriver only if it was built (-DENABLE_WEBDRIVER=ON)
+            self._generate_wrapper(interpreter, self._port_binary_preffix + 'WebDriver', skip_wrapper_if_missing_binary=True)
         self._generate_install_deps_script(system_packages_needed)
         # Clean remaining stuff
         if bundle_binary == 'MiniBrowser' and self._syslibs == 'bundle-all':
@@ -959,9 +967,7 @@ def main():
     parser.add_argument('--builder-name', action='store', dest='builder_name')
     options = parser.parse_args()
 
-    flatpakutils.run_in_sandbox_if_available([sys.argv[0], '--flatpak-' + options.platform] + sys.argv[1:])
-    if not flatpakutils.is_sandboxed():
-        jhbuildutils.enter_jhbuild_environment_if_available(options.platform)
+    jhbuildutils.enter_jhbuild_environment_if_available(options.platform)
 
     configure_logging(options.log_level)
     bundle_creator = BundleCreator(options.configuration, options.platform, options.bundle_binary, options.syslibs, options.ldd,

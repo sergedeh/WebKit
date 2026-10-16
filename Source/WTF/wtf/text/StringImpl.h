@@ -31,7 +31,6 @@
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/CompactPtr.h>
 #include <wtf/DebugHeap.h>
-#include <wtf/Expected.h>
 #include <wtf/FlipBytes.h>
 #include <wtf/MathExtras.h>
 #include <wtf/NoVirtualDestructorBase.h>
@@ -87,7 +86,7 @@ template<typename> struct HashAndCharactersTranslator;
 // Define STRING_STATS to 1 turn on runtime statistics of string sizes and memory usage.
 #define STRING_STATS 0
 
-template<bool isSpecialCharacter(char16_t), typename CharacterType, std::size_t Extent = std::dynamic_extent> bool containsOnly(std::span<const CharacterType, Extent>);
+template<bool isSpecialCharacter(char16_t), typename CharacterType, std::size_t Extent = std::dynamic_extent> bool LEGACY_NODELETE containsOnly(std::span<const CharacterType, Extent>);
 
 #if STRING_STATS
 
@@ -156,7 +155,7 @@ protected:
     StringImplShape(uint32_t refCount, std::span<const char16_t>, unsigned hashAndFlags);
 
     enum ConstructWithConstExprTag { ConstructWithConstExpr };
-    template<unsigned characterCount> constexpr StringImplShape(uint32_t refCount, unsigned length, const char (&characters)[characterCount], unsigned hashAndFlags, ConstructWithConstExprTag);
+    constexpr StringImplShape(uint32_t refCount, ASCIILiteral, unsigned hashAndFlags, ConstructWithConstExprTag);
     template<unsigned characterCount> constexpr StringImplShape(uint32_t refCount, unsigned length, const char16_t (&characters)[characterCount], unsigned hashAndFlags, ConstructWithConstExprTag);
 
     std::atomic<uint32_t> m_refCount;
@@ -228,12 +227,14 @@ private:
     static constexpr const unsigned s_hashFlag8BitBuffer = 1u << 2;
     static constexpr const unsigned s_hashMaskBufferOwnership = (1u << 0) | (1u << 1);
 
+public:
     enum StringKind {
         StringNormal = 0u, // non-symbol, non-atomic
         StringAtom = s_hashFlagStringKindIsAtom, // non-symbol, atomic
         StringSymbol = s_hashFlagStringKindIsSymbol, // symbol, non-atomic
     };
 
+private:
     // Create a normal 8-bit string with internal storage (BufferInternal).
     enum Force8Bit { Force8BitConstructor };
     StringImpl(unsigned length, Force8Bit);
@@ -275,7 +276,7 @@ public:
     WTF_EXPORT_PRIVATE static Ref<StringImpl> createUninitialized(size_t length, std::span<Latin1Character>&);
     WTF_EXPORT_PRIVATE static Ref<StringImpl> createUninitialized(size_t length, std::span<char16_t>&);
 
-    template<typename CharacterType> static RefPtr<StringImpl> tryCreateUninitialized(size_t length, std::span<CharacterType>&);
+    template<IsStringStorageCharacter CharacterType> static RefPtr<StringImpl> tryCreateUninitialized(size_t length, std::span<CharacterType>&);
 
     static Ref<StringImpl> createByReplacingInCharacters(std::span<const Latin1Character>, char16_t target, char16_t replacement, size_t indexOfFirstTargetCharacter);
     static Ref<StringImpl> createByReplacingInCharacters(std::span<const char16_t>, char16_t target, char16_t replacement, size_t indexOfFirstTargetCharacter);
@@ -293,8 +294,8 @@ public:
     // the originalString can't be used after this function.
     static Ref<StringImpl> reallocate(Ref<StringImpl>&& originalString, unsigned length, Latin1Character*& data);
     static Ref<StringImpl> reallocate(Ref<StringImpl>&& originalString, unsigned length, char16_t*& data);
-    static Expected<Ref<StringImpl>, UTF8ConversionError> tryReallocate(Ref<StringImpl>&& originalString, unsigned length, Latin1Character*& data);
-    static Expected<Ref<StringImpl>, UTF8ConversionError> tryReallocate(Ref<StringImpl>&& originalString, unsigned length, char16_t*& data);
+    static std::expected<Ref<StringImpl>, UTF8ConversionError> tryReallocate(Ref<StringImpl>&& originalString, unsigned length, Latin1Character*& data);
+    static std::expected<Ref<StringImpl>, UTF8ConversionError> tryReallocate(Ref<StringImpl>&& originalString, unsigned length, char16_t*& data);
 
     static constexpr unsigned flagsOffset() { return OBJECT_OFFSETOF(StringImpl, m_hashAndFlags); }
     static constexpr unsigned flagIs8Bit() { return s_hashFlag8BitBuffer; }
@@ -303,7 +304,7 @@ public:
     static constexpr unsigned maskStringKind() { return s_hashMaskStringKind; }
     static constexpr unsigned dataOffset() { return OBJECT_OFFSETOF(StringImpl, m_data8); }
 
-    template<typename CharacterType, size_t inlineCapacity, typename OverflowHandler, size_t minCapacity, typename Malloc>
+    template<IsStringStorageCharacter CharacterType, size_t inlineCapacity, typename OverflowHandler, size_t minCapacity, typename Malloc>
     static Ref<StringImpl> adopt(Vector<CharacterType, inlineCapacity, OverflowHandler, minCapacity, Malloc>&&);
 
     WTF_EXPORT_PRIVATE static Ref<StringImpl> adopt(StringBuffer<char16_t>&&);
@@ -317,12 +318,12 @@ public:
     ALWAYS_INLINE std::span<const Latin1Character> span8() const LIFETIME_BOUND { ASSERT(is8Bit()); return unsafeMakeSpan(m_data8, length()); }
     ALWAYS_INLINE std::span<const char16_t> span16() const LIFETIME_BOUND { ASSERT(!is8Bit() || isEmpty()); return unsafeMakeSpan(m_data16, length()); }
 
-    template<typename CharacterType> std::span<const CharacterType> span() const LIFETIME_BOUND;
+    template<IsStringStorageCharacter CharacterType> std::span<const CharacterType> span() const LIFETIME_BOUND;
 
     size_t cost() const;
     size_t costDuringGC();
 
-    WTF_EXPORT_PRIVATE size_t sizeInBytes() const;
+    WTF_EXPORT_PRIVATE size_t LEGACY_NODELETE sizeInBytes() const;
 
     bool isSymbol() const { return m_hashAndFlags & s_hashFlagStringKindIsSymbol; }
     bool isAtom() const { return m_hashAndFlags & s_hashFlagStringKindIsAtom; }
@@ -332,21 +333,24 @@ public:
 
     bool isSubString() const { return bufferOwnership() == BufferSubstring; }
 
-    static WTF_EXPORT_PRIVATE Expected<CString, UTF8ConversionError> utf8ForCharacters(std::span<const Latin1Character> characters);
-    static WTF_EXPORT_PRIVATE Expected<CString, UTF8ConversionError> utf8ForCharacters(std::span<const char16_t> characters, ConversionMode = LenientConversion);
-    static WTF_EXPORT_PRIVATE Expected<size_t, UTF8ConversionError> utf8ForCharactersIntoBuffer(std::span<const char16_t> characters, ConversionMode, Vector<char8_t, 1024>&);
+    static WTF_EXPORT_PRIVATE ASCIICString asciiForCharacters(std::span<const Latin1Character> characters);
+    static WTF_EXPORT_PRIVATE ASCIICString asciiForCharacters(std::span<const char16_t> characters);
+
+    static WTF_EXPORT_PRIVATE std::expected<UTF8CString, UTF8ConversionError> utf8ForCharacters(std::span<const Latin1Character> characters);
+    static WTF_EXPORT_PRIVATE std::expected<UTF8CString, UTF8ConversionError> utf8ForCharacters(std::span<const char16_t> characters, ConversionMode = LenientConversion);
+    static WTF_EXPORT_PRIVATE std::expected<size_t, UTF8ConversionError> utf8ForCharactersIntoBuffer(std::span<const char16_t> characters, ConversionMode, Vector<char8_t, 1024>&);
     static WTF_EXPORT_PRIVATE size_t utf8LengthFromUTF16(std::span<const char16_t> characters);
     static WTF_EXPORT_PRIVATE size_t tryConvertUTF16ToUTF8(std::span<const char16_t> source, std::span<char8_t> destination);
 
     template<typename Func>
-    static Expected<std::invoke_result_t<Func, std::span<const char8_t>>, UTF8ConversionError> tryGetUTF8ForCharacters(NOESCAPE const Func&, std::span<const Latin1Character> characters);
+    static std::expected<std::invoke_result_t<Func, std::span<const char8_t>>, UTF8ConversionError> tryGetUTF8ForCharacters(NOESCAPE const Func&, std::span<const Latin1Character> characters);
     template<typename Func>
-    static Expected<std::invoke_result_t<Func, std::span<const char8_t>>, UTF8ConversionError> tryGetUTF8ForCharacters(NOESCAPE const Func&, std::span<const char16_t> characters, ConversionMode = LenientConversion);
+    static std::expected<std::invoke_result_t<Func, std::span<const char8_t>>, UTF8ConversionError> tryGetUTF8ForCharacters(NOESCAPE const Func&, std::span<const char16_t> characters, ConversionMode = LenientConversion);
 
     template<typename Func>
-    Expected<std::invoke_result_t<Func, std::span<const char8_t>>, UTF8ConversionError> tryGetUTF8(NOESCAPE const Func&, ConversionMode = LenientConversion) const;
-    WTF_EXPORT_PRIVATE Expected<CString, UTF8ConversionError> tryGetUTF8(ConversionMode = LenientConversion) const;
-    WTF_EXPORT_PRIVATE CString utf8(ConversionMode = LenientConversion) const;
+    std::expected<std::invoke_result_t<Func, std::span<const char8_t>>, UTF8ConversionError> tryGetUTF8(NOESCAPE const Func&, ConversionMode = LenientConversion) const;
+    WTF_EXPORT_PRIVATE std::expected<UTF8CString, UTF8ConversionError> tryGetUTF8(ConversionMode = LenientConversion) const;
+    WTF_EXPORT_PRIVATE UTF8CString utf8(ConversionMode = LenientConversion) const;
 
 private:
     // The high bits of 'hash' are always empty, but we prefer to store our flags
@@ -406,10 +410,11 @@ public:
         //       StringImpl::hash() only sets a new hash iff !hasHash().
         //       Additionally, StringImpl::setHash() asserts hasHash() and !isStatic().
 
-        template<unsigned characterCount> explicit constexpr StaticStringImpl(const char (&characters)[characterCount], StringKind = StringNormal);
+        explicit constexpr StaticStringImpl(ASCIILiteral, StringKind = StringNormal);
         template<unsigned characterCount> explicit constexpr StaticStringImpl(const char16_t (&characters)[characterCount], StringKind = StringNormal);
         operator StringImpl&();
         operator const StringImpl&() const;
+        ASCIILiteral literal() const { return ASCIILiteral::fromLiteralUnsafe(m_data8Char); }
     };
 
     WTF_EXPORT_PRIVATE static StaticStringImpl s_emptyAtomString;
@@ -426,7 +431,7 @@ public:
     {
         static_assert(sizeof(char16_t) == sizeof(uint16_t));
         static_assert(sizeof(Latin1Character) == sizeof(uint8_t));
-        return copyElements(spanReinterpretCast<uint16_t>(destination), source);
+        return copyElements(spanReinterpretCast<uint16_t>(destination), spanReinterpretCast<const uint8_t>(source));
     }
 
     ALWAYS_INLINE static void copyCharacters(std::span<Latin1Character> destination, std::span<const char16_t> source)
@@ -437,7 +442,7 @@ public:
         for (auto character : source)
             ASSERT(isLatin1(character));
 #endif
-        return copyElements(destination, spanReinterpretCast<const uint16_t>(source));
+        return copyElements(spanReinterpretCast<uint8_t>(destination), spanReinterpretCast<const uint16_t>(source));
     }
 
     // Some string features, like reference counting and the atomicity flag, are not
@@ -449,7 +454,7 @@ public:
 
     char16_t at(unsigned) const;
     char16_t operator[](unsigned i) const { return at(i); }
-    WTF_EXPORT_PRIVATE char32_t characterStartingAt(unsigned);
+    WTF_EXPORT_PRIVATE char32_t LEGACY_NODELETE codePointAt(unsigned);
 
     // FIXME: Like the strict functions above, these give false for "ok" when there is trailing garbage.
     // Like the non-strict functions above, these return the value when there is trailing garbage.
@@ -461,7 +466,10 @@ public:
     WTF_EXPORT_PRIVATE Ref<StringImpl> convertToASCIIUppercase();
     WTF_EXPORT_PRIVATE Ref<StringImpl> convertToLowercaseWithoutLocale();
     WTF_EXPORT_PRIVATE Ref<StringImpl> convertToLowercaseWithoutLocaleStartingAtFailingIndex8Bit(unsigned);
+    WTF_EXPORT_PRIVATE Ref<StringImpl> convertToLowercaseWithoutLocaleStartingAtFailingIndex16Bit(unsigned);
     WTF_EXPORT_PRIVATE Ref<StringImpl> convertToUppercaseWithoutLocale();
+    WTF_EXPORT_PRIVATE Ref<StringImpl> convertToUppercaseWithoutLocaleStartingAtFailingIndex8Bit(unsigned);
+    WTF_EXPORT_PRIVATE Ref<StringImpl> convertToUppercaseWithoutLocaleStartingAtFailingIndex16Bit(unsigned);
     WTF_EXPORT_PRIVATE Ref<StringImpl> convertToLowercaseWithLocale(const AtomString& localeIdentifier);
     WTF_EXPORT_PRIVATE Ref<StringImpl> convertToUppercaseWithLocale(const AtomString& localeIdentifier);
 
@@ -470,39 +478,39 @@ public:
     WTF_EXPORT_PRIVATE Ref<StringImpl> simplifyWhiteSpace(CodeUnitMatchFunction);
 
     WTF_EXPORT_PRIVATE Ref<StringImpl> trim(CodeUnitMatchFunction);
-    template<typename Predicate> Ref<StringImpl> removeCharacters(const Predicate&);
+    template<typename Predicate> Ref<StringImpl> removeCharacters(NOESCAPE const Predicate&);
 
     bool containsOnlyASCII() const;
     bool containsOnlyLatin1() const;
-    template<bool isSpecialCharacter(char16_t)> bool containsOnly() const;
+    template<bool isSpecialCharacter(char16_t)> bool LEGACY_NODELETE containsOnly() const;
 
-    size_t find(Latin1Character, size_t start = 0);
-    size_t find(char, size_t start = 0);
-    size_t find(char16_t, size_t start = 0);
+    size_t LEGACY_NODELETE find(Latin1Character, size_t start = 0);
+    size_t LEGACY_NODELETE find(char, size_t start = 0);
+    size_t LEGACY_NODELETE find(char16_t, size_t start = 0);
     template<typename CodeUnitMatchFunction>
         requires (std::is_invocable_r_v<bool, CodeUnitMatchFunction, char16_t>)
-    size_t find(CodeUnitMatchFunction, size_t start = 0);
+    size_t LEGACY_NODELETE find(CodeUnitMatchFunction, size_t start = 0);
     ALWAYS_INLINE size_t find(ASCIILiteral literal, size_t start = 0) { return find(literal.span8(), start); }
-    WTF_EXPORT_PRIVATE size_t find(StringView);
-    WTF_EXPORT_PRIVATE size_t find(StringView, size_t start);
-    WTF_EXPORT_PRIVATE size_t findIgnoringASCIICase(StringView) const;
-    WTF_EXPORT_PRIVATE size_t findIgnoringASCIICase(StringView, size_t start) const;
+    WTF_EXPORT_PRIVATE size_t LEGACY_NODELETE find(StringView);
+    WTF_EXPORT_PRIVATE size_t LEGACY_NODELETE find(StringView, size_t start);
+    WTF_EXPORT_PRIVATE size_t LEGACY_NODELETE findIgnoringASCIICase(StringView) const;
+    WTF_EXPORT_PRIVATE size_t LEGACY_NODELETE findIgnoringASCIICase(StringView, size_t start) const;
 
-    WTF_EXPORT_PRIVATE size_t reverseFind(char16_t, size_t start = MaxLength);
-    WTF_EXPORT_PRIVATE size_t reverseFind(StringView, size_t start = MaxLength);
+    WTF_EXPORT_PRIVATE size_t LEGACY_NODELETE reverseFind(char16_t, size_t start = MaxLength);
+    WTF_EXPORT_PRIVATE size_t LEGACY_NODELETE reverseFind(StringView, size_t start = MaxLength);
     ALWAYS_INLINE size_t reverseFind(ASCIILiteral literal, size_t start = MaxLength) { return reverseFind(literal.span8(), start); }
 
-    WTF_EXPORT_PRIVATE bool startsWith(StringView) const;
-    WTF_EXPORT_PRIVATE bool startsWithIgnoringASCIICase(StringView) const;
-    WTF_EXPORT_PRIVATE bool startsWith(char16_t) const;
-    WTF_EXPORT_PRIVATE bool startsWith(std::span<const char>) const;
-    WTF_EXPORT_PRIVATE bool hasInfixStartingAt(StringView, size_t start) const;
+    WTF_EXPORT_PRIVATE bool LEGACY_NODELETE startsWith(StringView) const;
+    WTF_EXPORT_PRIVATE bool LEGACY_NODELETE startsWithIgnoringASCIICase(StringView) const;
+    WTF_EXPORT_PRIVATE bool LEGACY_NODELETE startsWith(char16_t) const;
+    WTF_EXPORT_PRIVATE bool LEGACY_NODELETE startsWith(std::span<const char>) const;
+    WTF_EXPORT_PRIVATE bool LEGACY_NODELETE hasInfixStartingAt(StringView, size_t start) const;
 
-    WTF_EXPORT_PRIVATE bool endsWith(StringView);
-    WTF_EXPORT_PRIVATE bool endsWithIgnoringASCIICase(StringView) const;
-    WTF_EXPORT_PRIVATE bool endsWith(char16_t) const;
-    WTF_EXPORT_PRIVATE bool endsWith(std::span<const char>) const;
-    WTF_EXPORT_PRIVATE bool hasInfixEndingAt(StringView, size_t end) const;
+    WTF_EXPORT_PRIVATE bool LEGACY_NODELETE endsWith(StringView);
+    WTF_EXPORT_PRIVATE bool LEGACY_NODELETE endsWithIgnoringASCIICase(StringView) const;
+    WTF_EXPORT_PRIVATE bool LEGACY_NODELETE endsWith(char16_t) const;
+    WTF_EXPORT_PRIVATE bool LEGACY_NODELETE endsWith(std::span<const char>) const;
+    WTF_EXPORT_PRIVATE bool LEGACY_NODELETE hasInfixEndingAt(StringView, size_t end) const;
 
     WTF_EXPORT_PRIVATE Ref<StringImpl> replace(char16_t, char16_t);
     WTF_EXPORT_PRIVATE Ref<StringImpl> replace(char16_t, StringView);
@@ -546,8 +554,8 @@ private:
     template<typename> static size_t allocationSize(Checked<size_t> tailElementCount);
     template<typename> static constexpr size_t tailOffset();
 
-    WTF_EXPORT_PRIVATE size_t find(std::span<const Latin1Character>, size_t start);
-    WTF_EXPORT_PRIVATE size_t reverseFind(std::span<const Latin1Character>, size_t start);
+    WTF_EXPORT_PRIVATE size_t LEGACY_NODELETE find(std::span<const Latin1Character>, size_t start);
+    WTF_EXPORT_PRIVATE size_t LEGACY_NODELETE reverseFind(std::span<const Latin1Character>, size_t start);
 
     bool requiresCopy() const;
     template<typename T> const T* tailPointer() const;
@@ -562,17 +570,17 @@ private:
     WTF_EXPORT_PRIVATE static Ref<StringImpl> createWithoutCopyingNonEmpty(std::span<const char16_t>);
 
     template<typename CharacterType, class CodeUnitPredicate> Ref<StringImpl> trimMatchedCharacters(CodeUnitPredicate);
-    template<typename CharacterType, typename Predicate> ALWAYS_INLINE Ref<StringImpl> removeCharactersImpl(std::span<const CharacterType> characters, const Predicate&);
+    template<typename CharacterType, typename Predicate> ALWAYS_INLINE Ref<StringImpl> removeCharactersImpl(std::span<const CharacterType> characters, NOESCAPE const Predicate&);
     template<typename CharacterType, class CodeUnitPredicate> Ref<StringImpl> simplifyMatchedCharactersToSpace(CodeUnitPredicate);
     template<typename CharacterType, typename Malloc> static ALWAYS_INLINE MallocSpan<CharacterType, StringImplMalloc> toStringImplMallocSpan(MallocSpan<CharacterType, Malloc>);
     template<typename CharacterType> static Ref<StringImpl> constructInternal(StringImpl&, unsigned);
     template<typename CharacterType> static Ref<StringImpl> createUninitializedInternal(size_t, std::span<CharacterType>&);
     template<typename CharacterType> static Ref<StringImpl> createUninitializedInternalNonEmpty(size_t, std::span<CharacterType>&);
-    template<typename CharacterType> static Expected<Ref<StringImpl>, UTF8ConversionError> reallocateInternal(Ref<StringImpl>&&, unsigned, CharacterType*&);
+    template<typename CharacterType> static std::expected<Ref<StringImpl>, UTF8ConversionError> reallocateInternal(Ref<StringImpl>&&, unsigned, CharacterType*&);
     template<typename CharacterType> static Ref<StringImpl> createInternal(std::span<const CharacterType>);
     WTF_EXPORT_PRIVATE NEVER_INLINE unsigned hashSlowCase() const;
-    Ref<StringImpl> convertToUppercaseWithoutLocaleStartingAtFailingIndex8Bit(unsigned);
     Ref<StringImpl> convertToUppercaseWithoutLocaleUpconvert();
+    Ref<StringImpl> convertToUppercaseWithoutLocale16Bit(std::span<const char16_t> source, unsigned failingIndex);
 
     // The bottom bit in the ref count indicates a static (immortal) string.
     static constexpr uint32_t s_refCountFlagIsStaticString = 0x1;
@@ -619,51 +627,50 @@ template<> struct ValueCheck<StringImpl*> {
 
 #endif // ASSERT_ENABLED
 
-WTF_EXPORT_PRIVATE bool equal(const StringImpl*, const StringImpl*);
-WTF_EXPORT_PRIVATE bool equal(const StringImpl*, std::span<const Latin1Character>);
-inline bool equal(const StringImpl* a, const char* b) { return equal(a, byteCast<Latin1Character>(unsafeSpan(b))); }
-WTF_EXPORT_PRIVATE bool equal(const StringImpl*, std::span<const char16_t>);
-ALWAYS_INLINE bool equal(const StringImpl* a, ASCIILiteral b) { return equal(a, b.span8()); }
-inline bool equal(const StringImpl* a, std::span<const char> b) { return equal(a, byteCast<Latin1Character>(b)); }
-inline bool equal(const char* a, StringImpl* b) { return equal(b, byteCast<Latin1Character>(unsafeSpan(a))); }
-WTF_EXPORT_PRIVATE bool equal(const StringImpl& a, const StringImpl& b);
+WTF_EXPORT_PRIVATE bool LEGACY_NODELETE equal(const StringImpl*, const StringImpl*);
+WTF_EXPORT_PRIVATE bool LEGACY_NODELETE equal(const StringImpl*, std::span<const Latin1Character>);
+SUPPRESS_NODELETE inline bool LEGACY_NODELETE equal(const StringImpl* a, const char* b) { return equal(a, byteCast<Latin1Character>(unsafeSpan(b))); }
+WTF_EXPORT_PRIVATE bool LEGACY_NODELETE equal(const StringImpl*, std::span<const char16_t>);
+ALWAYS_INLINE bool LEGACY_NODELETE equal(const StringImpl* a, ASCIILiteral b) { return equal(a, b.span8()); }
+inline bool LEGACY_NODELETE equal(const StringImpl* a, std::span<const char> b) { return equal(a, byteCast<Latin1Character>(b)); }
+SUPPRESS_NODELETE inline bool LEGACY_NODELETE equal(const char* a, StringImpl* b) { return equal(b, byteCast<Latin1Character>(unsafeSpan(a))); }
+WTF_EXPORT_PRIVATE bool LEGACY_NODELETE equal(const StringImpl& a, const StringImpl& b);
 
-WTF_EXPORT_PRIVATE bool equalIgnoringNullity(StringImpl*, StringImpl*);
-WTF_EXPORT_PRIVATE bool equalIgnoringNullity(std::span<const char16_t>, StringImpl*);
+WTF_EXPORT_PRIVATE bool LEGACY_NODELETE equalIgnoringNullity(StringImpl*, StringImpl*);
+WTF_EXPORT_PRIVATE bool LEGACY_NODELETE equalIgnoringNullity(std::span<const char16_t>, StringImpl*);
 
-bool equalIgnoringASCIICase(const StringImpl&, const StringImpl&);
-WTF_EXPORT_PRIVATE bool equalIgnoringASCIICase(const StringImpl*, const StringImpl*);
-bool equalIgnoringASCIICase(const StringImpl&, ASCIILiteral);
-bool equalIgnoringASCIICase(const StringImpl*, ASCIILiteral);
+bool LEGACY_NODELETE equalIgnoringASCIICase(const StringImpl&, const StringImpl&);
+WTF_EXPORT_PRIVATE bool LEGACY_NODELETE equalIgnoringASCIICase(const StringImpl*, const StringImpl*);
+bool LEGACY_NODELETE equalIgnoringASCIICase(const StringImpl&, ASCIILiteral);
+bool LEGACY_NODELETE equalIgnoringASCIICase(const StringImpl*, ASCIILiteral);
 
-WTF_EXPORT_PRIVATE bool equalIgnoringASCIICaseNonNull(const StringImpl*, const StringImpl*);
+WTF_EXPORT_PRIVATE bool LEGACY_NODELETE equalIgnoringASCIICaseNonNull(const StringImpl*, const StringImpl*);
 
-bool equalLettersIgnoringASCIICase(const StringImpl&, ASCIILiteral);
-bool equalLettersIgnoringASCIICase(const StringImpl*, ASCIILiteral);
+bool LEGACY_NODELETE equalLettersIgnoringASCIICase(const StringImpl&, ASCIILiteral);
+bool LEGACY_NODELETE equalLettersIgnoringASCIICase(const StringImpl*, ASCIILiteral);
 
 template<typename CodeUnit, typename CodeUnitMatchFunction>
     requires (std::is_invocable_r_v<bool, CodeUnitMatchFunction, CodeUnit>)
-size_t find(std::span<const CodeUnit>, CodeUnitMatchFunction&&, size_t start = 0);
+size_t LEGACY_NODELETE find(std::span<const CodeUnit>, NOESCAPE const CodeUnitMatchFunction&, size_t start = 0);
 
-template<typename CharacterType> size_t reverseFindLineTerminator(std::span<const CharacterType>, size_t start = StringImpl::MaxLength);
-template<typename CharacterType> size_t reverseFind(std::span<const CharacterType>, CharacterType matchCharacter, size_t start = StringImpl::MaxLength);
-size_t reverseFind(std::span<const char16_t>, Latin1Character matchCharacter, size_t start = StringImpl::MaxLength);
-size_t reverseFind(std::span<const Latin1Character>, char16_t matchCharacter, size_t start = StringImpl::MaxLength);
+template<typename CharacterType> size_t LEGACY_NODELETE reverseFindLineTerminator(std::span<const CharacterType>, size_t start = StringImpl::MaxLength);
+template<typename CharacterType> size_t LEGACY_NODELETE reverseFind(std::span<const CharacterType>, CharacterType matchCharacter, size_t start = StringImpl::MaxLength);
+size_t LEGACY_NODELETE reverseFind(std::span<const char16_t>, Latin1Character matchCharacter, size_t start = StringImpl::MaxLength);
+size_t LEGACY_NODELETE reverseFind(std::span<const Latin1Character>, char16_t matchCharacter, size_t start = StringImpl::MaxLength);
 
-template<size_t inlineCapacity> bool equalIgnoringNullity(const Vector<char16_t, inlineCapacity>&, StringImpl*);
+template<size_t inlineCapacity> bool LEGACY_NODELETE equalIgnoringNullity(const Vector<char16_t, inlineCapacity>&, StringImpl*);
 
 template<typename CharacterType1, typename CharacterType2>
-std::strong_ordering codePointCompare(std::span<const CharacterType1> characters1, std::span<const CharacterType2> characters2);
-std::strong_ordering codePointCompare(const StringImpl* string1, const StringImpl* string2);
+SUPPRESS_NODELETE std::strong_ordering LEGACY_NODELETE codePointCompare(std::span<const CharacterType1> characters1, std::span<const CharacterType2> characters2);
 
-bool isUnicodeWhitespace(char16_t);
+bool LEGACY_NODELETE isUnicodeWhitespace(char16_t);
 
 // Deprecated as this excludes U+0085 and U+00A0 which are part of Unicode's White_Space definition:
 // https://www.unicode.org/Public/UCD/latest/ucd/PropList.txt
-bool deprecatedIsSpaceOrNewline(char16_t);
+bool LEGACY_NODELETE deprecatedIsSpaceOrNewline(char16_t);
 
 // Inverse of deprecatedIsSpaceOrNewline for predicates
-bool deprecatedIsNotSpaceOrNewline(char16_t);
+bool LEGACY_NODELETE deprecatedIsNotSpaceOrNewline(char16_t);
 
 // StringHash is the default hash for StringImpl* and RefPtr<StringImpl>
 template<typename> struct DefaultHash;
@@ -699,10 +706,11 @@ template<> ALWAYS_INLINE std::span<const char16_t> StringImpl::span<char16_t>() 
 
 template<typename CodeUnit, typename CodeUnitMatchFunction>
     requires (std::is_invocable_r_v<bool, CodeUnitMatchFunction, CodeUnit>)
-inline size_t find(std::span<const CodeUnit> characters, CodeUnitMatchFunction&& matchFunction, size_t start)
+inline size_t find(std::span<const CodeUnit> characters, NOESCAPE const CodeUnitMatchFunction& matchFunction, size_t start)
 {
     while (start < characters.size()) {
-        if (matchFunction(characters[start]))
+        // FIXME: support LEGACY_NODELETE predicates (rdar://178355573).
+        SUPPRESS_NODELETE if (matchFunction(characters[start]))
             return start;
         ++start;
     }
@@ -730,11 +738,17 @@ template<typename CharacterType> inline size_t reverseFind(std::span<const Chara
         return notFound;
     if (start >= characters.size())
         start = characters.size() - 1;
-    while (characters[start] != matchCharacter) {
-        if (!start--)
-            return notFound;
-    }
-    return start;
+    size_t searchLength = start + 1;
+    const CharacterType* result;
+    if constexpr (sizeof(CharacterType) == 1)
+        result = std::bit_cast<const CharacterType*>(reverseFind8(std::bit_cast<const uint8_t*>(characters.data()), static_cast<uint8_t>(matchCharacter), searchLength));
+    else if constexpr (sizeof(CharacterType) == 2)
+        result = std::bit_cast<const CharacterType*>(reverseFind16(std::bit_cast<const uint16_t*>(characters.data()), static_cast<uint16_t>(matchCharacter), searchLength));
+    else
+        result = std::bit_cast<const CharacterType*>(reverseFind32(std::bit_cast<const uint32_t*>(characters.data()), static_cast<uint32_t>(matchCharacter), searchLength));
+    if (!result)
+        return notFound;
+    return result - characters.data();
 }
 
 ALWAYS_INLINE size_t reverseFind(std::span<const char16_t> characters, Latin1Character matchCharacter, size_t start)
@@ -783,7 +797,8 @@ template<size_t inlineCapacity> inline bool equalIgnoringNullity(const Vector<ch
 }
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-template<typename CharacterType1, typename CharacterType2> inline std::strong_ordering codePointCompare(std::span<const CharacterType1> characters1, std::span<const CharacterType2> characters2)
+template<typename CharacterType1, typename CharacterType2>
+inline std::strong_ordering codePointCompare(std::span<const CharacterType1> characters1, std::span<const CharacterType2> characters2)
 {
     size_t commonLength = std::min(characters1.size(), characters2.size());
 
@@ -791,13 +806,17 @@ template<typename CharacterType1, typename CharacterType2> inline std::strong_or
     auto* characters2Ptr = characters2.data();
     size_t position = 0;
 
-#if CPU(REGISTER64) && !CPU(NEEDS_ALIGNED_ACCESS) && CPU(LITTLE_ENDIAN)
+#if CPU(REGISTER64)
     if constexpr (sizeof(CharacterType1) == sizeof(CharacterType2) && (sizeof(CharacterType1) == 1 || sizeof(CharacterType1) == 2)) {
         using ChunkType = std::conditional_t<sizeof(CharacterType1) == 1, uint32_t, uint64_t>;
         constexpr size_t stride = sizeof(ChunkType) / sizeof(CharacterType1);
         for (; position + (stride - 1) < commonLength;) {
-            auto lhs = *std::bit_cast<const ChunkType*>(characters1Ptr);
-            auto rhs = *std::bit_cast<const ChunkType*>(characters2Ptr);
+            // Even though CPU does not need aligned access, we cannot
+            // simply dereference ChunkType* or the compiler may perform
+            // optimizations based on the assumption that all ChunkType
+            // objects are naturally aligned.
+            auto lhs = unalignedLoad<ChunkType>(characters1Ptr);
+            auto rhs = unalignedLoad<ChunkType>(characters2Ptr);
             if (lhs != rhs) {
                 if constexpr (sizeof(CharacterType1) == 1)
                     return (flipBytes(lhs) > flipBytes(rhs)) ? std::strong_ordering::greater : std::strong_ordering::less;
@@ -838,40 +857,20 @@ template<typename CharacterType1, typename CharacterType2> inline std::strong_or
 }
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
-inline std::strong_ordering codePointCompare(const StringImpl* string1, const StringImpl* string2)
-{
-    // FIXME: Should null strings compare as less than empty strings rather than equal to them?
-    if (!string1)
-        return (string2 && string2->length()) ? std::strong_ordering::less : std::strong_ordering::equal;
-    if (!string2)
-        return string1->length() ? std::strong_ordering::greater : std::strong_ordering::equal;
-
-    bool string1Is8Bit = string1->is8Bit();
-    bool string2Is8Bit = string2->is8Bit();
-    if (string1Is8Bit) {
-        if (string2Is8Bit)
-            return codePointCompare(string1->span8(), string2->span8());
-        return codePointCompare(string1->span8(), string2->span16());
-    }
-    if (string2Is8Bit)
-        return codePointCompare(string1->span16(), string2->span8());
-    return codePointCompare(string1->span16(), string2->span16());
-}
-
 // FIXME: For Latin1Character, isUnicodeCompatibleASCIIWhitespace(character) || character == 0x0085 || character == noBreakSpace would be enough
-inline bool isUnicodeWhitespace(char16_t character)
+SUPPRESS_NODELETE inline bool isUnicodeWhitespace(char16_t character)
 {
     return isASCII(character) ? isUnicodeCompatibleASCIIWhitespace(character) : u_isUWhiteSpace(character);
 }
 
-inline bool deprecatedIsSpaceOrNewline(char16_t character)
+SUPPRESS_NODELETE inline bool deprecatedIsSpaceOrNewline(char16_t character)
 {
     // Use isUnicodeCompatibleASCIIWhitespace() for all Latin-1 characters, which is incorrect as it
     // excludes U+0085 and U+00A0.
     return isLatin1(character) ? isUnicodeCompatibleASCIIWhitespace(character) : u_charDirection(character) == U_WHITE_SPACE_NEUTRAL;
 }
 
-inline bool deprecatedIsNotSpaceOrNewline(char16_t character)
+SUPPRESS_NODELETE inline bool deprecatedIsNotSpaceOrNewline(char16_t character)
 {
     return !deprecatedIsSpaceOrNewline(character);
 }
@@ -894,13 +893,13 @@ inline StringImplShape::StringImplShape(uint32_t refCount, std::span<const char1
     RELEASE_ASSERT(data.size() <= MaxLength);
 }
 
-template<unsigned characterCount> constexpr StringImplShape::StringImplShape(uint32_t refCount, unsigned length, const char (&characters)[characterCount], unsigned hashAndFlags, ConstructWithConstExprTag)
+constexpr StringImplShape::StringImplShape(uint32_t refCount, ASCIILiteral literal, unsigned hashAndFlags, ConstructWithConstExprTag)
     : m_refCount(refCount)
-    , m_length(length)
-    , m_data8Char(characters)
+    , m_length(literal.length())
+    , m_data8Char(literal.characters())
     , m_hashAndFlags(hashAndFlags)
 {
-    RELEASE_ASSERT(length <= MaxLength);
+    RELEASE_ASSERT(m_length <= MaxLength);
 }
 
 template<unsigned characterCount> constexpr StringImplShape::StringImplShape(uint32_t refCount, unsigned length, const char16_t (&characters)[characterCount], unsigned hashAndFlags, ConstructWithConstExprTag)
@@ -936,11 +935,7 @@ inline bool StringImpl::containsOnlyLatin1() const
 {
     if (is8Bit())
         return true;
-    auto characters = span16();
-    char16_t mergedCharacterBits = 0;
-    for (auto character : characters)
-        mergedCharacterBits |= character;
-    return isLatin1(mergedCharacterBits);
+    return charactersAreAllLatin1(span16());
 }
 
 template<bool isSpecialCharacter(char16_t), typename CharacterType, std::size_t Extent> inline bool containsOnly(std::span<const CharacterType, Extent> characters)
@@ -1083,7 +1078,7 @@ ALWAYS_INLINE Ref<StringImpl> StringImpl::createSubstringSharingImpl(StringImpl&
     return adoptRef(*new (NotNull, stringImpl) StringImpl(rep.span16().subspan(offset, length), *ownerRep));
 }
 
-template<typename CharacterType> ALWAYS_INLINE RefPtr<StringImpl> StringImpl::tryCreateUninitialized(size_t length, std::span<CharacterType>& output)
+template<IsStringStorageCharacter CharacterType> ALWAYS_INLINE RefPtr<StringImpl> StringImpl::tryCreateUninitialized(size_t length, std::span<CharacterType>& output)
 {
     if (!length) {
         output = { };
@@ -1104,7 +1099,7 @@ template<typename CharacterType> ALWAYS_INLINE RefPtr<StringImpl> StringImpl::tr
     return constructInternal<CharacterType>(*result, length);
 }
 
-template<typename CharacterType, size_t inlineCapacity, typename OverflowHandler, size_t minCapacity, typename Malloc>
+template<IsStringStorageCharacter CharacterType, size_t inlineCapacity, typename OverflowHandler, size_t minCapacity, typename Malloc>
 inline Ref<StringImpl> StringImpl::adopt(Vector<CharacterType, inlineCapacity, OverflowHandler, minCapacity, Malloc>&& vector)
 {
     if constexpr (std::is_same_v<Malloc, StringImplMalloc>) {
@@ -1208,7 +1203,7 @@ inline void StringImpl::deref()
 
 inline char16_t StringImpl::at(unsigned i) const
 {
-    return is8Bit() ? span8()[i] : span16()[i];
+    return is8Bit() ? char16_t { span8()[i] } : span16()[i];
 }
 
 inline StringImpl::StringImpl(CreateSymbolTag, std::span<const Latin1Character> characters)
@@ -1275,6 +1270,21 @@ template<typename T> inline T* StringImpl::tailPointer()
 }
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
+template<typename CharacterType> inline Ref<StringImpl> StringImpl::createUninitializedInternalNonEmpty(size_t length, std::span<CharacterType>& data)
+{
+    ASSERT(length);
+
+    // Allocate a single buffer large enough to contain the StringImpl
+    // struct as well as the data which it contains. This removes one
+    // heap allocation from this call.
+    if (!isValidLength<CharacterType>(length))
+        CRASH();
+
+    SUPPRESS_UNCOUNTED_LOCAL StringImpl* string = static_cast<StringImpl*>(StringImplMalloc::malloc(allocationSize<CharacterType>(length)));
+    data = unsafeMakeSpan(string->tailPointer<CharacterType>(), length);
+    return constructInternal<CharacterType>(*string, length);
+}
+
 inline StringImpl* const& StringImpl::substringBuffer() const
 {
     ASSERT(bufferOwnership() == BufferSubstring);
@@ -1294,9 +1304,9 @@ inline void StringImpl::assertHashIsCorrect() const
     ASSERT(existingHash() == StringHasher::computeHashAndMaskTop8Bits(span8()));
 }
 
-template<unsigned characterCount> constexpr StringImpl::StaticStringImpl::StaticStringImpl(const char (&characters)[characterCount], StringKind stringKind)
-    : StringImplShape(s_refCountFlagIsStaticString, characterCount - 1, characters,
-        s_hashFlag8BitBuffer | s_hashFlagDidReportCost | stringKind | BufferInternal | (StringHasher::computeLiteralHashAndMaskTop8Bits(characters) << s_flagCount), ConstructWithConstExpr)
+constexpr StringImpl::StaticStringImpl::StaticStringImpl(ASCIILiteral literal, StringKind stringKind)
+    : StringImplShape(s_refCountFlagIsStaticString, literal,
+        s_hashFlag8BitBuffer | s_hashFlagDidReportCost | stringKind | BufferInternal | (StringHasher::computeLiteralHashAndMaskTop8Bits(literal) << s_flagCount), ConstructWithConstExpr)
 {
 }
 
@@ -1351,7 +1361,7 @@ inline bool equalLettersIgnoringASCIICase(const StringImpl* string, ASCIILiteral
     return string && equalLettersIgnoringASCIICase(*string, literal);
 }
 
-template<typename CharacterType, typename Predicate> ALWAYS_INLINE Ref<StringImpl> StringImpl::removeCharactersImpl(std::span<const CharacterType> characters, const Predicate& findMatch)
+template<typename CharacterType, typename Predicate> ALWAYS_INLINE Ref<StringImpl> StringImpl::removeCharactersImpl(std::span<const CharacterType> characters, NOESCAPE const Predicate& findMatch)
 {
     auto from = characters;
 
@@ -1380,7 +1390,7 @@ template<typename CharacterType, typename Predicate> ALWAYS_INLINE Ref<StringImp
 }
 
 template<typename Predicate>
-inline Ref<StringImpl> StringImpl::removeCharacters(const Predicate& findMatch)
+inline Ref<StringImpl> StringImpl::removeCharacters(NOESCAPE const Predicate& findMatch)
 {
     static_assert(!std::is_function_v<Predicate>, "Passing a lambda instead of a function pointer helps the compiler with inlining");
     if (is8Bit())
@@ -1408,7 +1418,7 @@ inline Ref<StringImpl> StringImpl::createByReplacingInCharacters(std::span<const
     auto newImpl = createUninitializedInternalNonEmpty(characters.size(), data);
     size_t i = 0;
     for (auto character : characters)
-        data[i++] = character == target ? replacement : character;
+        data[i++] = character == target ? replacement : char16_t { character };
     return newImpl;
 }
 
@@ -1426,7 +1436,7 @@ inline Ref<StringImpl> StringImpl::createByReplacingInCharacters(std::span<const
 }
 
 template<typename Func>
-inline Expected<std::invoke_result_t<Func, std::span<const char8_t>>, UTF8ConversionError> StringImpl::tryGetUTF8(NOESCAPE const Func& function, ConversionMode mode) const
+inline std::expected<std::invoke_result_t<Func, std::span<const char8_t>>, UTF8ConversionError> StringImpl::tryGetUTF8(NOESCAPE const Func& function, ConversionMode mode) const
 {
     if (is8Bit())
         return tryGetUTF8ForCharacters(function, span8());
@@ -1440,7 +1450,7 @@ static inline std::span<const char8_t> nonNullEmptyUTF8Span()
 }
 
 template<typename Func>
-inline Expected<std::invoke_result_t<Func, std::span<const char8_t>>, UTF8ConversionError> StringImpl::tryGetUTF8ForCharacters(NOESCAPE const Func& function, std::span<const Latin1Character> characters)
+inline std::expected<std::invoke_result_t<Func, std::span<const char8_t>>, UTF8ConversionError> StringImpl::tryGetUTF8ForCharacters(NOESCAPE const Func& function, std::span<const Latin1Character> characters)
 {
     if (characters.empty())
         return function(nonNullEmptyUTF8Span());
@@ -1479,7 +1489,7 @@ inline Expected<std::invoke_result_t<Func, std::span<const char8_t>>, UTF8Conver
 }
 
 template<typename Func>
-inline Expected<std::invoke_result_t<Func, std::span<const char8_t>>, UTF8ConversionError> StringImpl::tryGetUTF8ForCharacters(NOESCAPE const Func& function, std::span<const char16_t> characters, ConversionMode mode)
+inline std::expected<std::invoke_result_t<Func, std::span<const char8_t>>, UTF8ConversionError> StringImpl::tryGetUTF8ForCharacters(NOESCAPE const Func& function, std::span<const char16_t> characters, ConversionMode mode)
 {
     if (characters.empty())
         return function(nonNullEmptyUTF8Span());
@@ -1497,7 +1507,7 @@ inline Expected<std::invoke_result_t<Func, std::span<const char8_t>>, UTF8Conver
         return makeUnexpected(UTF8ConversionError::OutOfMemory);
 
     size_t bufferSize = characters.size() * 3;
-    bufferVector.grow(bufferSize);
+    bufferVector.resize(bufferSize);
     auto convertedSize = utf8ForCharactersIntoBuffer(characters, mode, bufferVector);
     if (!convertedSize)
         return makeUnexpected(convertedSize.error());

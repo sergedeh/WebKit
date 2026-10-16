@@ -90,15 +90,15 @@ public:
 
     void didProvideContentKeyRequestIdentifierForTrackID(Ref<SharedBuffer>&&, TrackID);
 
-    bool hasSelectedVideo() const;
+    bool LEGACY_NODELETE hasSelectedVideo() const;
 
     void videoTrackDidChangeSelected(TrackID, bool selected);
     void audioTrackDidChangeEnabled(TrackID, bool enabled);
 
-    FloatSize naturalSize();
+    FloatSize LEGACY_NODELETE naturalSize();
     void flushAndReenqueueVideo();
 
-    bool needsVideoLayer() const;
+    bool LEGACY_NODELETE needsVideoLayer() const;
 
 #if (ENABLE(ENCRYPTED_MEDIA) && HAVE(AVCONTENTKEYSESSION)) || ENABLE(LEGACY_ENCRYPTED_MEDIA)
     bool waitingForKey() const final { return m_waitingForKey; }
@@ -108,7 +108,7 @@ public:
     void flush();
 
     using TrackIdentifier = TracksRendererManager::TrackIdentifier;
-    std::optional<TrackIdentifier> trackIdentifierFor(TrackID) const;
+    std::optional<TrackIdentifier> LEGACY_NODELETE trackIdentifierFor(TrackID) const;
 
     void setVideoRenderer(bool);
 
@@ -139,7 +139,6 @@ private:
     void flush(TrackID) final;
     void enqueueSample(Ref<MediaSample>&&, TrackID) final;
     bool isReadyForMoreSamples(TrackID) final;
-    MediaTime timeFudgeFactor() const final;
     void notifyClientWhenReadyForMoreSamples(TrackID) final;
     bool canSetMinimumUpcomingPresentationTime(TrackID) const override;
     void setMinimumUpcomingPresentationTime(TrackID, const MediaTime&) override;
@@ -157,14 +156,14 @@ private:
     void appendCompleted(bool);
     void destroyRendererTracks();
 
-    bool isEnabledVideoTrackID(TrackID) const;
-    bool isTextTrack(TrackID) const;
+    bool LEGACY_NODELETE isEnabledVideoTrackID(TrackID) const;
+    bool LEGACY_NODELETE isTextTrack(TrackID) const;
 
-    bool hasTrackIdentifierFor(TrackID) const;
+    bool LEGACY_NODELETE hasTrackIdentifierFor(TrackID) const;
     void removeTrackID(TrackID);
 
     RefPtr<MediaPlayerPrivateMediaSourceAVFObjC> player() const;
-    bool canEnqueueSample(TrackID, const MediaSampleAVFObjC&);
+    bool LEGACY_NODELETE canEnqueueSample(TrackID, const MediaSampleAVFObjC&);
     bool trackIsBlocked(TrackID) const;
 
 #if ENABLE(ENCRYPTED_MEDIA) && HAVE(AVCONTENTKEYSESSION)
@@ -175,9 +174,13 @@ private:
 
     void maybeUpdateNeedsVideoLayer();
 
-    RefPtr<AudioVideoRenderer> protectedRenderer() const;
+#if (ENABLE(ENCRYPTED_MEDIA) && HAVE(AVCONTENTKEYSESSION)) || ENABLE(LEGACY_ENCRYPTED_MEDIA)
+    void setWaitingForKey(bool);
+#endif
+
     void ensureWeakOnDispatcher(Function<void(SourceBufferPrivateAVFObjC&)>&&);
     void callOnMainThreadWithPlayer(Function<void(MediaPlayerPrivateMediaSourceAVFObjC&)>&&);
+    AudioVideoRenderer& LEGACY_NODELETE renderer() const;
 
     StdUnorderedMap<TrackID, RefPtr<VideoTrackPrivate>> m_videoTracks WTF_GUARDED_BY_CAPABILITY(m_dispatcher.get());
     StdUnorderedMap<TrackID, RefPtr<AudioTrackPrivate>> m_audioTracks WTF_GUARDED_BY_CAPABILITY(m_dispatcher.get());
@@ -195,8 +198,7 @@ private:
     const MediaSourceConfiguration m_configuration;
 
     std::optional<FloatSize> m_cachedSize WTF_GUARDED_BY_CAPABILITY(m_dispatcher.get());
-    FloatSize m_currentSize WTF_GUARDED_BY_CAPABILITY(m_dispatcher.get());
-    std::atomic<bool> m_waitingForKey { true };
+    std::atomic<bool> m_waitingForKey { false };
     std::optional<TrackID> m_enabledVideoTrackID WTF_GUARDED_BY_CAPABILITY(m_dispatcher.get());
     std::optional<TrackID> m_protectedTrackID WTF_GUARDED_BY_CAPABILITY(m_dispatcher.get());
     RefPtr<AudioVideoRenderer> m_renderer WTF_GUARDED_BY_CAPABILITY(m_dispatcher.get()); // Never null except when detached.

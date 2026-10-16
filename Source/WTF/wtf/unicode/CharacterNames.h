@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2007-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -57,10 +57,12 @@ constexpr char16_t bullet = 0x2022;
 constexpr char16_t bullseye = 0x25CE;
 constexpr char16_t byteOrderMark = 0xFEFF;
 constexpr char16_t carriageReturn = 0x000D;
+constexpr char16_t checkMarkCharacter = 0x2713;
 constexpr char16_t cjkWater = 0x6C34;
 constexpr char16_t combiningEnclosingKeycap = 0x20E3;
 constexpr char16_t deleteCharacter = 0x007F;
 constexpr char16_t digitZeroCharacter = 0x0030;
+constexpr char16_t downArrowhead = 0x2304;
 constexpr char16_t doubleHighReversed9QuotationMark = 0x201F;
 constexpr char16_t doubleLowReversed9QuotationMark = 0x2E42;
 constexpr char16_t doublePrimeQuotationMark = 0x301E;
@@ -130,6 +132,7 @@ constexpr char16_t paragraphSeparator = 0x2029;
 constexpr char16_t partAlternationMark = 0x303D;
 constexpr char16_t perMilleSign = 0x2030;
 constexpr char16_t perTenThousandSign = 0x2031;
+constexpr char32_t phoenicianWordSeparator = 0x1091F;
 constexpr char16_t pilcrowSign = 0x00B6;
 constexpr char16_t popDirectionalFormatting = 0x202C;
 constexpr char16_t popDirectionalIsolate = 0x2069;
@@ -195,6 +198,7 @@ using WTF::Unicode::aegeanWordSeparatorLine;
 using WTF::Unicode::arabicIndicPerMilleSign;
 using WTF::Unicode::arabicIndicPerTenThousandSign;
 using WTF::Unicode::arabicPercentSign;
+using WTF::Unicode::apostrophe;
 using WTF::Unicode::blackCircle;
 using WTF::Unicode::blackDownPointingSmallTriangle;
 using WTF::Unicode::blackDownPointingTriangle;
@@ -209,10 +213,12 @@ using WTF::Unicode::bullet;
 using WTF::Unicode::bullseye;
 using WTF::Unicode::byteOrderMark;
 using WTF::Unicode::carriageReturn;
+using WTF::Unicode::checkMarkCharacter;
 using WTF::Unicode::cjkWater;
 using WTF::Unicode::combiningEnclosingKeycap;
 using WTF::Unicode::deleteCharacter;
 using WTF::Unicode::digitZeroCharacter;
+using WTF::Unicode::downArrowhead;
 using WTF::Unicode::doubleHighReversed9QuotationMark;
 using WTF::Unicode::doubleLowReversed9QuotationMark;
 using WTF::Unicode::doublePrimeQuotationMark;
@@ -281,6 +287,7 @@ using WTF::Unicode::paragraphSeparator;
 using WTF::Unicode::partAlternationMark;
 using WTF::Unicode::perMilleSign;
 using WTF::Unicode::perTenThousandSign;
+using WTF::Unicode::phoenicianWordSeparator;
 using WTF::Unicode::pilcrowSign;
 using WTF::Unicode::popDirectionalFormatting;
 using WTF::Unicode::popDirectionalIsolate;

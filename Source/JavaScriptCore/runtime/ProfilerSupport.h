@@ -57,10 +57,10 @@ public:
     static constexpr unsigned numberOfCategories = 0 JSC_PROFILER_SUPPORT_CATEGORY(JSC_COUNT_CATEGORY);
 #undef JSC_COUNT_CATEGORY
 
-    JS_EXPORT_PRIVATE static void markStart(const void*, Category, CString&&);
-    JS_EXPORT_PRIVATE static void markEnd(const void*, Category, CString&&);
-    JS_EXPORT_PRIVATE static void mark(const void*, Category, CString&&);
-    JS_EXPORT_PRIVATE static void markInterval(const void*, Category, MonotonicTime, MonotonicTime, CString&&);
+    JS_EXPORT_PRIVATE static void markStart(const void*, Category, UTF8CString&&);
+    JS_EXPORT_PRIVATE static void markEnd(const void*, Category, UTF8CString&&);
+    JS_EXPORT_PRIVATE static void mark(const void*, Category, UTF8CString&&);
+    JS_EXPORT_PRIVATE static void markInterval(const void*, Category, MonotonicTime, MonotonicTime, UTF8CString&&);
 
     WorkQueue& queue() { return m_queue.get(); }
 
@@ -68,18 +68,20 @@ public:
 
     static ProfilerSupport& singleton();
 
-    static void dumpIonGraphFunction(const String& functionName, Ref<JSON::Object>&&);
+    static void dumpIonGraphFunction(const String& functionName, ASCIILiteral tier, bool osr, Ref<JSON::Object>&&);
+
+    static void barrierSync();
 
     static uint32_t getCurrentThreadID();
 
 private:
     ProfilerSupport();
 
-    void write(const AbstractLocker&, uint64_t start, uint64_t end, const CString& message) WTF_REQUIRES_LOCK(m_lock);
+    void write(const AbstractLocker&, uint64_t start, uint64_t end, const UTF8CString& message) WTF_REQUIRES_LOCK(m_lock);
 
     const Ref<WorkQueue> m_queue;
-    std::array<HashMap<const void*, uint64_t>, numberOfCategories> m_markers;
-    WTF::FileSystemImpl::FileHandle m_file { };
+    std::array<HashMap<const void*, uint64_t>, numberOfCategories> m_markers WTF_GUARDED_BY_LOCK(m_tableLock);
+    WTF::FileSystemImpl::FileHandle m_file WTF_GUARDED_BY_LOCK(m_lock) { };
     Lock m_tableLock;
     Lock m_lock;
 };

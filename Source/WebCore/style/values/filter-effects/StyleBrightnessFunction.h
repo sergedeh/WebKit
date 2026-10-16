@@ -46,7 +46,7 @@ struct Brightness {
 
     Parameter value;
 
-    static Brightness passthroughForInterpolation();
+    static Brightness LEGACY_NODELETE passthroughForInterpolation();
 
     constexpr bool requiresRepaintForCurrentColorChange() const { return false; }
     constexpr bool affectsOpacity() const { return false; }
@@ -59,12 +59,12 @@ struct Brightness {
 
     bool operator==(const Brightness&) const = default;
 };
-using BrightnessFunction = FunctionNotation<CSSValueBrightness, Brightness>;
+using BrightnessFunction = FunctionNotation<CSSValueID::Brightness, Brightness>;
 DEFINE_TYPE_WRAPPER_GET(Brightness, value);
 
 // MARK: - Conversion
 
-template<> struct ToCSS<Brightness> { auto operator()(const Brightness&, const RenderStyle&) -> CSS::Brightness; };
+template<> struct ToCSS<Brightness> { auto operator()(const Brightness&, const Style::ComputedStyle&) -> CSS::Brightness; };
 template<> struct ToStyle<CSS::Brightness> { auto operator()(const CSS::Brightness&, const BuilderState&) -> Brightness; };
 
 // MARK: - Blending

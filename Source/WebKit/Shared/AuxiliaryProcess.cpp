@@ -51,10 +51,6 @@
 #endif
 #endif
 
-#if PLATFORM(COCOA)
-#include "CoreIPCSecureCoding.h"
-#endif
-
 namespace WebKit {
 using namespace WebCore;
 
@@ -72,8 +68,8 @@ AuxiliaryProcess::~AuxiliaryProcess()
 
 void AuxiliaryProcess::didClose(IPC::Connection&)
 {
-// Stop the run loop for GTK and WPE to ensure a normal exit, since we need
-// atexit handlers to be called to cleanup resources like EGL displays.
+// Stop the run loop for GTK and WPE to ensure a normal exit, since stopRunLoop()
+// releases resources like EGL displays before the process exits.
 #if PLATFORM(GTK) || PLATFORM(WPE)
     stopRunLoop();
 #else
@@ -85,7 +81,7 @@ void AuxiliaryProcess::initialize(AuxiliaryProcessInitializationParameters&& par
 {
     TraceScope traceScope(ProcessInitializeStart, ProcessInitializeEnd);
 
-    WTF::RefCountDebugger::enableThreadingChecksGlobally();
+    WTF::RefCountDebuggerBase::enableThreadingChecksGlobally();
 
 #if PLATFORM(COCOA)
     // On Cocoa platforms, setAuxiliaryProcessType() is called in XPCServiceInitializer().
@@ -116,8 +112,8 @@ void AuxiliaryProcess::initialize(AuxiliaryProcessInitializationParameters&& par
     PAL::SessionID::enableGenerationProtection();
     WebPageProxyIdentifier::enableGenerationProtection();
 
-    Ref connection = IPC::Connection::createClientConnection(WTF::move(parameters.connectionIdentifier));
-    m_connection = connection.ptr();
+    Ref connection = IPC::Connection::createClientConnection(WTF::move(parameters.connectionIdentifier), connectionReceiveQueueQOS());
+    lazyInitialize(m_connection, connection.copyRef());
     initializeConnection(connection.ptr());
     connection->open(*this);
 }
@@ -239,7 +235,7 @@ void AuxiliaryProcess::platformStopRunLoop()
 
 void AuxiliaryProcess::terminate()
 {
-    protectedParentProcessConnection()->invalidate();
+    protect(parentProcessConnection())->invalidate();
 
     stopRunLoop();
 }
@@ -256,9 +252,6 @@ void AuxiliaryProcess::applyProcessCreationParameters(AuxiliaryProcessCreationPa
     WTF::logChannels().initializeLogChannelsIfNecessary(parameters.wtfLoggingChannels);
     WebCore::logChannels().initializeLogChannelsIfNecessary(parameters.webCoreLoggingChannels);
     WebKit::logChannels().initializeLogChannelsIfNecessary(parameters.webKitLoggingChannels);
-#endif
-#if PLATFORM(COCOA)
-    SecureCoding::applyProcessCreationParameters(WTF::move(parameters));
 #endif
 #if ENABLE(CORE_IPC_SIGNPOSTS)
     if (parameters.shouldEnableIPCSignposts)
@@ -292,11 +285,11 @@ void AuxiliaryProcess::initializeSandbox(const AuxiliaryProcessInitializationPar
 
 void AuxiliaryProcess::didReceiveInvalidMessage(IPC::Connection&, IPC::MessageName messageName, const Vector<uint32_t>&)
 {
-    WTFLogAlways("Received invalid message: '%s'", description(messageName).characters());
+    SAFE_WTFLOGALWAYS("Received invalid message: '%s'", description(messageName));
     CRASH();
 }
 
-#if OS(LINUX)
+#if OS(LINUX) && !OS(ANDROID)
 void AuxiliaryProcess::didReceiveMemoryPressureEvent(bool isCritical)
 {
     MemoryPressureHandler::singleton().triggerMemoryPressureEvent(isCritical);

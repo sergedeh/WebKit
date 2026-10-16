@@ -76,14 +76,15 @@ SOFT_LINK_FUNCTION_FOR_SOURCE(WebCore, CompositorServices, cp_rasterization_rate
 #endif
 
 
-namespace WebGPU {
+namespace WebGPU::Metal {
 
-XRProjectionLayer::XRProjectionLayer(WGPUTextureFormat colorFormat, WGPUTextureFormat* optionalDepthStencilFormat, WGPUTextureUsageFlags flags, double scale, Device& device)
+// The layer keeps the C API formats, which the XR sub-image textures are created with.
+XRProjectionLayer::XRProjectionLayer(const WebGPU::XRProjectionLayerDescriptor& descriptor, Device& device)
     : m_sharedEvent(std::make_pair(nil, 0))
-    , m_colorFormat(colorFormat)
-    , m_optionalDepthStencilFormat(optionalDepthStencilFormat ? *optionalDepthStencilFormat : std::optional<WGPUTextureFormat> { std::nullopt })
-    , m_flags(flags)
-    , m_scale(scale)
+    , m_colorFormat(toAPI(descriptor.colorFormat))
+    , m_optionalDepthStencilFormat(descriptor.depthStencilFormat ? std::optional { toAPI(*descriptor.depthStencilFormat) } : std::nullopt)
+    , m_flags(descriptor.textureUsage)
+    , m_scale(descriptor.scaleFactor)
     , m_device(device)
 {
     m_colorTextures = [NSMutableDictionary dictionary];
@@ -191,26 +192,26 @@ void XRProjectionLayer::startFrame(size_t frameIndex, WTF::MachSendRight&& color
 #endif
 }
 
-Ref<XRProjectionLayer> XRBinding::createXRProjectionLayer(WGPUTextureFormat colorFormat, WGPUTextureFormat* optionalDepthStencilFormat, WGPUTextureUsageFlags flags, double scale)
+Ref<XRProjectionLayer> XRBinding::createProjectionLayer(const WebGPU::XRProjectionLayerDescriptor& descriptor)
 {
-    return XRProjectionLayer::create(colorFormat, optionalDepthStencilFormat, flags, scale, m_device);
+    return XRProjectionLayer::create(descriptor, m_device);
 }
 
-} // namespace WebGPU
+} // namespace WebGPU::Metal
 
 #pragma mark WGPU Stubs
 
-void wgpuXRProjectionLayerReference(WGPUXRProjectionLayer projectionLayer)
+void LEGACY_NODELETE wgpuXRProjectionLayerAddRef(WGPUXRProjectionLayer projectionLayer)
 {
-    WebGPU::fromAPI(projectionLayer).ref();
+    WebGPU::Metal::fromAPI(projectionLayer).ref();
 }
 
 void wgpuXRProjectionLayerRelease(WGPUXRProjectionLayer projectionLayer)
 {
-    WebGPU::fromAPI(projectionLayer).deref();
+    WebGPU::Metal::fromAPI(projectionLayer).deref();
 }
 
 void wgpuXRProjectionLayerStartFrame(WGPUXRProjectionLayer layer, size_t frameIndex, WTF::MachSendRight&& colorBuffer, WTF::MachSendRight&& depthBuffer, WTF::MachSendRight&& completionSyncEvent, size_t reusableTextureIndex, unsigned screenWidth, unsigned screenHeight, Vector<float>&& horizontalSamplesLeft, Vector<float>&& horizontalSamplesRight, Vector<float>&& verticalSamples)
 {
-    WebGPU::protectedFromAPI(layer)->startFrame(frameIndex, WTF::move(colorBuffer), WTF::move(depthBuffer), WTF::move(completionSyncEvent), reusableTextureIndex, screenWidth, screenHeight, WTF::move(horizontalSamplesLeft), WTF::move(horizontalSamplesRight), WTF::move(verticalSamples));
+    WebGPU::Metal::fromAPI(layer).startFrame(frameIndex, WTF::move(colorBuffer), WTF::move(depthBuffer), WTF::move(completionSyncEvent), reusableTextureIndex, screenWidth, screenHeight, WTF::move(horizontalSamplesLeft), WTF::move(horizontalSamplesRight), WTF::move(verticalSamples));
 }

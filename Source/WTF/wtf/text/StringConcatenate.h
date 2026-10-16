@@ -31,6 +31,7 @@
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/AtomString.h>
+#include <wtf/text/CString.h>
 #include <wtf/text/StringView.h>
 
 #if defined(NDEBUG)
@@ -159,14 +160,6 @@ private:
     std::span<const CharacterType> m_characters;
 };
 
-template<> class StringTypeAdapter<CString> : public StringTypeAdapter<std::span<const char>> {
-public:
-    StringTypeAdapter(const CString& string)
-        : StringTypeAdapter<std::span<const char>> { spanReinterpretCast<const char>(string.span()) }
-    {
-    }
-};
-
 template<> class StringTypeAdapter<ASCIILiteral> : public StringTypeAdapter<std::span<const Latin1Character>> {
 public:
     StringTypeAdapter(ASCIILiteral characters)
@@ -175,12 +168,33 @@ public:
     }
 };
 
-template<typename CharacterType, size_t InlineCapacity> class StringTypeAdapter<Vector<CharacterType, InlineCapacity>> : public StringTypeAdapter<std::span<const CharacterType>> {
+template<typename ClassType>
+using SpanMemberFunctionReturnTypeElementType = typename decltype(std::declval<ClassType>().span())::element_type;
+
+template<typename ClassType> concept HasAdaptableSpanMemberFunction = requires {
+    requires StringTypeAdaptable<SpanMemberFunctionReturnTypeElementType<ClassType>>;
+};
+
+template<typename ClassType>
+    requires HasAdaptableSpanMemberFunction<ClassType>
+class StringTypeAdapter<ClassType> : public StringTypeAdapter<std::span<SpanMemberFunctionReturnTypeElementType<ClassType>>> {
 public:
-    StringTypeAdapter(const Vector<CharacterType, InlineCapacity>& vector)
-        : StringTypeAdapter<std::span<const CharacterType>> { vector.span() }
+    StringTypeAdapter(const ClassType& characters)
+        : StringTypeAdapter<std::span<SpanMemberFunctionReturnTypeElementType<ClassType>>> { characters.span() }
     {
     }
+};
+
+// A CStringBase does not know its encoding, so there is no right way to decode it. The adapter above
+// would take its span<const char> and reinterpret the bytes as Latin-1, which silently mojibakes any
+// non-ASCII UTF-8 content. Use one of the CString aliases instead, or take the span and
+// say which encoding it holds. This matches printInternal() in PrintStream.h.
+// This opts out CStringBase and nothing else: an explicit specialization matches the exact type, so
+// CString keeps using the adapter above, where span() carries the encoding in its
+// element type.
+template<> class StringTypeAdapter<CStringBase> {
+public:
+    StringTypeAdapter(const CStringBase&) = delete;
 };
 
 template<> class StringTypeAdapter<StringImpl*> {
@@ -285,9 +299,10 @@ template<typename... StringTypes> class StringTypeAdapter<std::tuple<StringTypes
 public:
     StringTypeAdapter(const std::tuple<StringTypes...>& tuple)
         : m_tuple { tuple }
-        , m_length { std::apply(computeLength, tuple) }
-        , m_is8Bit { std::apply(computeIs8Bit, tuple) }
     {
+        std::apply([&](const StringTypes&... strings) {
+            (..., accumulateProperties(strings));
+        }, tuple);
     }
 
     unsigned length() const { return m_length; }
@@ -296,26 +311,30 @@ public:
     {
         std::apply([&](const StringTypes&... strings) {
             unsigned offset = 0;
-            (..., (
-                StringTypeAdapter<StringTypes>(strings).writeTo(destination.subspan(offset)),
-                offset += StringTypeAdapter<StringTypes>(strings).length()
-            ));
+            (..., (offset += writeOne(destination.subspan(offset), strings)));
         }, m_tuple);
     }
 
 private:
-    static unsigned computeLength(const StringTypes&... strings)
+    template<typename StringType>
+    void accumulateProperties(const StringType& string)
     {
-        return (... + StringTypeAdapter<StringTypes>(strings).length());
+        StringTypeAdapter<StringType> adapter(string);
+        m_length += adapter.length();
+        m_is8Bit = m_is8Bit && adapter.is8Bit();
     }
 
-    static bool computeIs8Bit(const StringTypes&... strings)
+    template<typename CharacterType, typename StringType>
+    static unsigned writeOne(std::span<CharacterType> destination, const StringType& string)
     {
-        return (... && StringTypeAdapter<StringTypes>(strings).is8Bit());
+        StringTypeAdapter<StringType> adapter(string);
+        adapter.writeTo(destination);
+        return adapter.length();
     }
+
     const std::tuple<StringTypes...>& m_tuple;
-    unsigned m_length;
-    bool m_is8Bit;
+    unsigned m_length { 0 };
+    bool m_is8Bit { true };
 };
 
 template<typename UnderlyingElementType> struct PaddingSpecification {
@@ -345,8 +364,7 @@ public:
         unsigned count = 0;
         if (underlyingLength < m_padding.length) {
             count = m_padding.length - underlyingLength;
-            for (unsigned i = 0; i < count; ++i)
-                destination[i] = m_padding.character;
+            std::ranges::fill(destination.first(count), m_padding.character);
         }
         m_underlyingAdapter.writeTo(destination.subspan(count));
     }
@@ -399,7 +417,7 @@ public:
 
     template<typename CharacterType> void writeTo(std::span<CharacterType> destination) const
     {
-        std::fill_n(destination.data(), m_indentation.value * N, ' ');
+        std::ranges::fill(destination.first(m_indentation.value * N), ' ');
     }
 
 private:
@@ -615,7 +633,7 @@ inline void stringTypeAdapterAccumulator(std::span<ResultType> result, StringTyp
 }
 
 template<typename Func, StringTypeAdaptable... StringTypes>
-auto handleWithAdapters(Func&& func, StringTypes&& ...strings) -> decltype(auto)
+auto handleWithAdapters(NOESCAPE const Func& func, StringTypes&& ...strings) -> decltype(auto)
 {
     return func(StringTypeAdapter<StringTypes>(std::forward<StringTypes>(strings))...);
 }

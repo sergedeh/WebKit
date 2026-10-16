@@ -38,6 +38,7 @@
 #include "ExceptionCode.h"
 #include "FileReaderLoaderClient.h"
 #include "HTTPHeaderNames.h"
+#include "HTTPParsers.h"
 #include "HTTPStatusCodes.h"
 #include "ResourceError.h"
 #include "ResourceRequest.h"
@@ -118,6 +119,7 @@ void FileReaderLoader::start(ScriptExecutionContext* scriptExecutionContext, con
     options.credentials = FetchOptions::Credentials::Include;
     options.mode = FetchOptions::Mode::SameOrigin;
     options.contentSecurityPolicyEnforcement = ContentSecurityPolicyEnforcement::DoNotEnforce;
+    options.cachingPolicy = CachingPolicy::DisallowCaching;
 
     if (m_client) {
         auto loader = ThreadableLoader::create(*scriptExecutionContext, *this, WTF::move(request), options);
@@ -235,7 +237,7 @@ void FileReaderLoader::didReceiveData(const SharedBuffer& buffer)
                 failed(ExceptionCode::NotReadableError);
                 return;
             }
-            memcpySpan(newData->mutableSpan(), protectedRawData()->span().first(m_bytesLoaded));
+            memcpySpan(newData->mutableSpan(), protect(m_rawData)->span().first(m_bytesLoaded));
 
             m_rawData = newData;
             m_totalBytes = static_cast<unsigned>(newLength);
@@ -248,7 +250,7 @@ void FileReaderLoader::didReceiveData(const SharedBuffer& buffer)
     if (length <= 0)
         return;
 
-    memcpySpan(protectedRawData()->mutableSpan().subspan(m_bytesLoaded), buffer.span().first(length));
+    memcpySpan(protect(m_rawData)->mutableSpan().subspan(m_bytesLoaded), buffer.span().first(length));
     m_bytesLoaded += length;
 
     m_isRawDataConverted = false;
@@ -260,7 +262,7 @@ void FileReaderLoader::didReceiveData(const SharedBuffer& buffer)
 void FileReaderLoader::didFinishLoading(ScriptExecutionContextIdentifier, std::optional<ResourceLoaderIdentifier>, const NetworkLoadMetrics&)
 {
     if (m_variableLength && m_totalBytes > m_bytesLoaded) {
-        m_rawData = protectedRawData()->slice(0, m_bytesLoaded);
+        m_rawData = protect(m_rawData)->slice(0, m_bytesLoaded);
         m_totalBytes = m_bytesLoaded;
     }
     cleanup();
@@ -318,7 +320,7 @@ RefPtr<ArrayBuffer> FileReaderLoader::arrayBufferResult() const
         return m_rawData;
 
     // Otherwise, return a copy.
-    return ArrayBuffer::create(*protectedRawData());
+    return ArrayBuffer::create(*protect(m_rawData));
 }
 
 String FileReaderLoader::stringResult()
@@ -338,7 +340,7 @@ String FileReaderLoader::stringResult()
         // No conversion is needed.
         break;
     case ReadAsBinaryString:
-        m_stringResult = byteCast<Latin1Character>(protectedRawData()->span().first(m_bytesLoaded));
+        m_stringResult = byteCast<Latin1Character>(protect(m_rawData)->span().first(m_bytesLoaded));
         break;
     case ReadAsText:
         convertToText();
@@ -362,23 +364,29 @@ void FileReaderLoader::convertToText()
         return;
 
     // Decode the data.
-    // The File API spec says that we should use the supplied encoding if it is valid. However, we choose to ignore this
-    // requirement in order to be consistent with how WebKit decodes the web content: always has the BOM override the
-    // provided encoding.     
+    // Per the File API "read as text" algorithm, the encoding is determined in order: the explicit
+    // encoding argument if it is a supported encoding; otherwise the charset parameter of the Blob's
+    // type, if any; otherwise UTF-8.
+    // We intentionally deviate from the spec in one respect, for consistency with how WebKit decodes
+    // web content: a BOM in the data always overrides the selected encoding (handled by
+    // TextResourceDecoder), whereas the spec gives precedence to the explicitly supplied encoding.
     // FIXME: consider supporting incremental decoding to improve the perf.
-    if (!m_decoder)
-        m_decoder = TextResourceDecoder::create("text/plain"_s, m_encoding.isValid() ? m_encoding : PAL::UTF8Encoding());
-    Ref decoder = *m_decoder;
+    if (!m_decoder) {
+        auto encoding = m_encoding;
+        if (!encoding.isValid())
+            encoding = extractCharsetFromMediaType(m_dataType);
+        lazyInitialize(m_decoder, TextResourceDecoder::create("text/plain"_s, encoding.isValid() ? encoding : PAL::UTF8Encoding()));
+    }
     Ref rawData = *m_rawData;
     if (isCompleted())
-        m_stringResult = decoder->decodeAndFlush(rawData->span().first(m_bytesLoaded));
+        m_stringResult = m_decoder->decodeAndFlush(rawData->span().first(m_bytesLoaded));
     else
-        m_stringResult = decoder->decode(rawData->span().first(m_bytesLoaded));
+        m_stringResult = m_decoder->decode(rawData->span().first(m_bytesLoaded));
 }
 
 void FileReaderLoader::convertToDataURL()
 {
-    m_stringResult = makeString("data:"_s, m_dataType.isEmpty() ? "application/octet-stream"_s : m_dataType, ";base64,"_s, base64Encoded(m_rawData ? protectedRawData()->span().first(m_bytesLoaded) : std::span<const uint8_t>()));
+    m_stringResult = makeString("data:"_s, m_dataType.isEmpty() ? "application/octet-stream"_s : m_dataType, ";base64,"_s, base64Encoded(m_rawData ? protect(m_rawData)->span().first(m_bytesLoaded) : std::span<const uint8_t>()));
 }
 
 bool FileReaderLoader::isCompleted() const

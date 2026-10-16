@@ -25,9 +25,10 @@
 
 
 #import <WebKitLegacy/DOMMediaList.h>
+#import <wtf/Compiler.h>
 
 namespace WebCore {
 class MediaList;
 }
 
-DOMMediaList *kit(WebCore::MediaList*);
+DOMMediaList * LEGACY_NODELETE kit(WebCore::MediaList*);

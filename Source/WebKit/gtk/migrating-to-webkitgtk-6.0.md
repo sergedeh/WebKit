@@ -16,7 +16,7 @@ webkit2gtk-5.0, which was an earlier unstable API version for GTK 4.
 libsoup 2 and libsoup 3 cannot be linked together. If your application currently
 uses webkit2gtk-4.0, you must first port to webkit2gtk-4.1 by eliminating use
 of libsoup 2. See [Migrating from libsoup 2](https://gnome.pages.gitlab.gnome.org/libsoup/libsoup-3.0/migrating-from-libsoup-2.html)
-for guidance on this. After first migrating to webkit2gtk-4.1, then it is
+for guidance on this. After first migrating to webkit2gtk-4.1, it is
 time to start looking into webkitgtk-6.0.
 
 ## Stop Using Deprecated APIs
@@ -38,7 +38,7 @@ notice use of deprecated signals and properties.
 ## Upgrade to GTK 4
 
 After successfully building your webkit2gtk-4.1 application without deprecation
-warnings, then it is time to attempt to upgrade to GTK 4 and webkitgtk-6.0.
+warnings, it is time to attempt to upgrade to GTK 4 and webkitgtk-6.0.
 This is easier said than done, but [the GTK 4 migration guide](https://docs.gtk.org/gtk4/migrating-3to4.html)
 will help. Good luck.
 
@@ -46,7 +46,7 @@ will help. Good luck.
 
 Only two types are now derivable:
 
-- [type@WebView] has been often subclassed to customize its behavior for an
+- [type@WebView] has been often subclassed to customize its behavior for a
   specific application. This possibility has been kept, as it has proved
   useful in the past.
 - [type@InputMethodContext] is specifically designed in a way that subclassing
@@ -162,4 +162,4 @@ or `webkit_web_process_extension_initialize_with_user_data()`.
 
 Beware that as of WebKitGTK 2.40, the entire web process API may unfortunately
 be removed in the future. For more information on why, see
-[this mailing list thread](https://lists.webkit.org/pipermail/webkit-dev/2022-August/032329.html).
+[this mailing list thread](https://lists.webkit.org/archives/list/webkit-dev@lists.webkit.org/thread/SDXWZE54IUJZTD2245RXXTFSWJ4TZZSR/).

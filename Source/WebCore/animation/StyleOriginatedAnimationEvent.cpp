@@ -28,7 +28,6 @@
 
 #include "Node.h"
 #include "NodeDocument.h"
-#include "NodeInlines.h"
 #include "WebAnimationUtilities.h"
 
 #include <wtf/TZoneMallocInlines.h>
@@ -44,13 +43,13 @@ StyleOriginatedAnimationEvent::StyleOriginatedAnimationEvent(enum EventInterface
 {
 }
 
-StyleOriginatedAnimationEvent::StyleOriginatedAnimationEvent(enum EventInterfaceType eventInterface, const AtomString& type, const EventInit& init, IsTrusted isTrusted, double elapsedTime, const String& pseudoElement)
-    : AnimationEventBase(eventInterface, type, init, isTrusted)
+StyleOriginatedAnimationEvent::StyleOriginatedAnimationEvent(enum EventInterfaceType eventInterface, const AtomString& type, EventInit&& init, IsTrusted isTrusted, double elapsedTime, String&& pseudoElement, RefPtr<WebAnimation>&& animation)
+    : AnimationEventBase(eventInterface, type, WTF::move(init), isTrusted, WTF::move(animation))
     , m_elapsedTime(elapsedTime)
-    , m_pseudoElement(pseudoElement)
+    , m_pseudoElement(WTF::move(pseudoElement))
 {
     RefPtr node = dynamicDowncast<Node>(target());
-    auto [parsed, pseudoElementIdentifier] = pseudoElementIdentifierFromString(m_pseudoElement, node ? &node->document() : nullptr);
+    auto [parsed, pseudoElementIdentifier] = pseudoElementIdentifierFromString(m_pseudoElement, node ? protect(node->document()).ptr() : nullptr);
     m_pseudoElementIdentifier = parsed ? pseudoElementIdentifier : std::nullopt;
 }
 

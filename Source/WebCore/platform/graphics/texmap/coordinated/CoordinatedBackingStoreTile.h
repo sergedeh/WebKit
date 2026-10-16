@@ -20,7 +20,7 @@
 
 #pragma once
 
-#if USE(COORDINATED_GRAPHICS)
+#if USE(COORDINATED_GRAPHICS) && USE(TEXTURE_MAPPER)
 #include "FloatRect.h"
 #include "IntRect.h"
 #include <wtf/Vector.h>
@@ -28,7 +28,6 @@
 namespace WebCore {
 class BitmapTexture;
 class CoordinatedTileBuffer;
-class TextureMapper;
 
 class CoordinatedBackingStoreTile {
 public:
@@ -37,7 +36,7 @@ public:
 
     BitmapTexture& texture() const { ASSERT(canBePainted()); return *m_texture; }
     float scale() const { return m_scale; }
-    const FloatRect& rect() const { return m_rect; }
+    const FloatRect& rect() const LIFETIME_BOUND { return m_rect; }
 
     struct Update {
         Ref<CoordinatedTileBuffer> buffer;
@@ -47,11 +46,13 @@ public:
     };
     void addUpdate(Update&&);
 
-    void processPendingUpdates(TextureMapper&);
+    void processPendingUpdates();
 
     bool canBePainted() const { return !!m_texture; }
 
 private:
+    void ensureTexture(const IntSize&, CoordinatedTileBuffer&);
+
     RefPtr<BitmapTexture> m_texture;
     Vector<Update> m_updates;
     float m_scale { 1. };
@@ -60,4 +61,4 @@ private:
 
 } // namespace WebCore
 
-#endif // USE(COORDINATED_GRAPHICS)
+#endif // USE(COORDINATED_GRAPHICS) && USE(TEXTURE_MAPPER)

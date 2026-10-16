@@ -45,7 +45,7 @@ struct Invert {
 
     Parameter value;
 
-    static Invert passthroughForInterpolation();
+    static Invert LEGACY_NODELETE passthroughForInterpolation();
 
     constexpr bool requiresRepaintForCurrentColorChange() const { return false; }
     constexpr bool affectsOpacity() const { return false; }
@@ -58,12 +58,12 @@ struct Invert {
 
     bool operator==(const Invert&) const = default;
 };
-using InvertFunction = FunctionNotation<CSSValueInvert, Invert>;
+using InvertFunction = FunctionNotation<CSSValueID::Invert, Invert>;
 DEFINE_TYPE_WRAPPER_GET(Invert, value);
 
 // MARK: - Conversion
 
-template<> struct ToCSS<Invert> { auto operator()(const Invert&, const RenderStyle&) -> CSS::Invert; };
+template<> struct ToCSS<Invert> { auto operator()(const Invert&, const Style::ComputedStyle&) -> CSS::Invert; };
 template<> struct ToStyle<CSS::Invert> { auto operator()(const CSS::Invert&, const BuilderState&) -> Invert; };
 
 // MARK: - Evaluation

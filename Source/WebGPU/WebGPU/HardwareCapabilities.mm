@@ -34,7 +34,7 @@
 #import <wtf/PageBlock.h>
 #import <wtf/StdLibExtras.h>
 
-namespace WebGPU {
+namespace WebGPU::Metal {
 
 // FIXME: these two limits should be 30 and 30, but they fail the tests
 // due to https://github.com/gpuweb/cts/issues/3376
@@ -45,7 +45,7 @@ static constexpr auto tier2LimitForBuffersAndTextures = 4;
 static constexpr auto tier2LimitForSamplers = 2;
 static constexpr uint64_t defaultMaxBufferSize = 268435456;
 
-static constexpr auto multipleOf4(auto input)
+static constexpr auto LEGACY_NODELETE multipleOf4(auto input)
 {
     return input & (~3);
 }
@@ -60,12 +60,12 @@ static uint64_t maxBufferSize(id<MTLDevice> device)
     return multipleOf4(result);
 }
 
-static constexpr uint32_t largeReasonableLimit()
+static constexpr uint32_t LEGACY_NODELETE largeReasonableLimit()
 {
     return USHRT_MAX;
 }
 
-static constexpr auto workaroundCTSBindGroupLimit(auto valueToClamp)
+static constexpr auto LEGACY_NODELETE workaroundCTSBindGroupLimit(auto valueToClamp)
 {
     return valueToClamp > 1000 ? 1000 : valueToClamp;
 }
@@ -119,6 +119,7 @@ static Vector<WGPUFeatureName> baseFeatures(id<MTLDevice> device, const Hardware
     features.append(WGPUFeatureName_Float32Renderable);
     features.append(WGPUFeatureName_Float32Blendable);
 
+    features.append(WGPUFeatureName_ClipDistances);
     features.append(WGPUFeatureName_DepthClipControl);
     features.append(WGPUFeatureName_Depth32FloatStencil8);
 
@@ -141,7 +142,16 @@ static Vector<WGPUFeatureName> baseFeatures(id<MTLDevice> device, const Hardware
     features.append(WGPUFeatureName_BGRA8UnormStorage);
 #if CPU(ARM64)
     features.append(WGPUFeatureName_TextureFormatsTier1);
+    features.append(WGPUFeatureName_TextureFormatsTier2);
 #endif
+    if (device.supportsShaderBarycentricCoordinates)
+        features.append(WGPUFeatureName_PrimitiveIndex);
+
+    // Subgroup (SIMD-group) built-in functions are guaranteed across GPU vendors by the
+    // Metal 3 feature set, which provides the full reduction, prefix-scan, shuffle, ballot,
+    // and quad operation set that the WGSL 'subgroups' extension requires.
+    if ([device supportsFamily:MTLGPUFamilyMetal3])
+        features.append(WGPUFeatureName_Subgroups);
 
 #if !PLATFORM(WATCHOS)
     if (device.supports32BitFloatFiltering)
@@ -248,13 +258,13 @@ bool isWebGPUSwiftEnabled()
 
 static HardwareCapabilities apple4(id<MTLDevice> device)
 {
-    auto baseCapabilities = WebGPU::baseCapabilities(device);
+    auto baseCapabilities = WebGPU::Metal::baseCapabilities(device);
 
     baseCapabilities.supportsNonPrivateDepthStencilTextures = true;
     baseCapabilities.canPresentRGB10A2PixelFormats = false;
     baseCapabilities.memoryBarrierLimit = isShaderValidationEnabled(device) ? 0u : std::numeric_limits<decltype(baseCapabilities.memoryBarrierLimit)>::max();
 
-    auto features = WebGPU::baseFeatures(device, baseCapabilities);
+    auto features = WebGPU::Metal::baseFeatures(device, baseCapabilities);
 
     features.append(WGPUFeatureName_TextureCompressionETC2);
     features.append(WGPUFeatureName_TextureCompressionASTC);
@@ -271,12 +281,12 @@ static HardwareCapabilities apple4(id<MTLDevice> device)
 
 static HardwareCapabilities apple5(id<MTLDevice> device)
 {
-    auto baseCapabilities = WebGPU::baseCapabilities(device);
+    auto baseCapabilities = WebGPU::Metal::baseCapabilities(device);
 
     baseCapabilities.supportsNonPrivateDepthStencilTextures = true;
     baseCapabilities.canPresentRGB10A2PixelFormats = false;
 
-    auto features = WebGPU::baseFeatures(device, baseCapabilities);
+    auto features = WebGPU::Metal::baseFeatures(device, baseCapabilities);
 
     features.append(WGPUFeatureName_TextureCompressionETC2);
     features.append(WGPUFeatureName_TextureCompressionASTC);
@@ -294,13 +304,13 @@ static HardwareCapabilities apple5(id<MTLDevice> device)
 #if !PLATFORM(WATCHOS) && !PLATFORM(APPLETV)
 static HardwareCapabilities apple6(id<MTLDevice> device)
 {
-    auto baseCapabilities = WebGPU::baseCapabilities(device);
+    auto baseCapabilities = WebGPU::Metal::baseCapabilities(device);
 
     baseCapabilities.supportsNonPrivateDepthStencilTextures = true;
     baseCapabilities.canPresentRGB10A2PixelFormats = false;
     baseCapabilities.supportsResidencySets = false;
 
-    auto features = WebGPU::baseFeatures(device, baseCapabilities);
+    auto features = WebGPU::Metal::baseFeatures(device, baseCapabilities);
 
     features.append(WGPUFeatureName_TextureCompressionETC2);
     features.append(WGPUFeatureName_TextureCompressionASTC);
@@ -317,7 +327,9 @@ static HardwareCapabilities apple6(id<MTLDevice> device)
             .maxBindGroups =    maxBindGroups,
             .maxBindGroupsPlusVertexBuffers = 30,
             .maxBindingsPerBindGroup =    largeReasonableLimit(),
-            .maxDynamicUniformBuffersPerPipelineLayout =    largeReasonableLimit(),
+            // A dynamic uniform buffer is still a uniform buffer binding, so advertising more of them
+            // than a single stage can hold would let the two limits contradict each other.
+            .maxDynamicUniformBuffersPerPipelineLayout =    maxBindGroups * tier2LimitForBuffersAndTextures,
             .maxDynamicStorageBuffersPerPipelineLayout =    largeReasonableLimit(),
             .maxSampledTexturesPerShaderStage =    maxBindGroups * tier2LimitForBuffersAndTextures,
             .maxSamplersPerShaderStage =    maxBindGroups * tier2LimitForSamplers,
@@ -332,8 +344,7 @@ static HardwareCapabilities apple6(id<MTLDevice> device)
             .maxBufferSize = maxBufferSize(device),
             .maxVertexAttributes =    30,
             .maxVertexBufferArrayStride =    multipleOf4(largeReasonableLimit()),
-            .maxInterStageShaderComponents =    124,
-            .maxInterStageShaderVariables = 124,
+            .maxInterStageShaderVariables = 31,
             .maxColorAttachments = 8,
             .maxColorAttachmentBytesPerSample = 64,
             .maxComputeWorkgroupStorageSize =    32 * KB,
@@ -354,13 +365,13 @@ static HardwareCapabilities apple6(id<MTLDevice> device)
 
 static HardwareCapabilities apple7(id<MTLDevice> device)
 {
-    auto baseCapabilities = WebGPU::baseCapabilities(device);
+    auto baseCapabilities = WebGPU::Metal::baseCapabilities(device);
 
     baseCapabilities.supportsNonPrivateDepthStencilTextures = true;
     baseCapabilities.canPresentRGB10A2PixelFormats = false;
     baseCapabilities.supportsResidencySets = false;
 
-    auto features = WebGPU::baseFeatures(device, baseCapabilities);
+    auto features = WebGPU::Metal::baseFeatures(device, baseCapabilities);
 
     features.append(WGPUFeatureName_TextureCompressionETC2);
     features.append(WGPUFeatureName_TextureCompressionASTC);
@@ -377,7 +388,9 @@ static HardwareCapabilities apple7(id<MTLDevice> device)
             .maxBindGroups =    maxBindGroups,
             .maxBindGroupsPlusVertexBuffers = 30,
             .maxBindingsPerBindGroup =    largeReasonableLimit(),
-            .maxDynamicUniformBuffersPerPipelineLayout =    largeReasonableLimit(),
+            // A dynamic uniform buffer is still a uniform buffer binding, so advertising more of them
+            // than a single stage can hold would let the two limits contradict each other.
+            .maxDynamicUniformBuffersPerPipelineLayout =    maxBindGroups * tier2LimitForBuffersAndTextures,
             .maxDynamicStorageBuffersPerPipelineLayout =    largeReasonableLimit(),
             .maxSampledTexturesPerShaderStage =    maxBindGroups * tier2LimitForBuffersAndTextures,
             .maxSamplersPerShaderStage =    maxBindGroups * tier2LimitForSamplers,
@@ -392,8 +405,7 @@ static HardwareCapabilities apple7(id<MTLDevice> device)
             .maxBufferSize = maxBufferSize(device),
             .maxVertexAttributes =    30,
             .maxVertexBufferArrayStride =    multipleOf4(largeReasonableLimit()),
-            .maxInterStageShaderComponents =    124,
-            .maxInterStageShaderVariables =    124,
+            .maxInterStageShaderVariables =    31,
             .maxColorAttachments = 8,
             .maxColorAttachmentBytesPerSample = 64,
             .maxComputeWorkgroupStorageSize =    32 * KB,
@@ -415,7 +427,7 @@ static HardwareCapabilities apple7(id<MTLDevice> device)
 
 static HardwareCapabilities mac2(id<MTLDevice> device)
 {
-    auto baseCapabilities = WebGPU::baseCapabilities(device);
+    auto baseCapabilities = WebGPU::Metal::baseCapabilities(device);
 
     baseCapabilities.supportsNonPrivateDepthStencilTextures = false;
     baseCapabilities.canPresentRGB10A2PixelFormats = true;
@@ -424,7 +436,7 @@ static HardwareCapabilities mac2(id<MTLDevice> device)
     else if (![device supportsFamily:MTLGPUFamilyApple8])
         baseCapabilities.memoryBarrierLimit = 512;
 
-    auto features = WebGPU::baseFeatures(device, baseCapabilities);
+    auto features = WebGPU::Metal::baseFeatures(device, baseCapabilities);
 
     std::ranges::sort(features);
 
@@ -437,7 +449,9 @@ static HardwareCapabilities mac2(id<MTLDevice> device)
             .maxBindGroups =    maxBindGroups,
             .maxBindGroupsPlusVertexBuffers = 30,
             .maxBindingsPerBindGroup =  1000,
-            .maxDynamicUniformBuffersPerPipelineLayout =    largeReasonableLimit(),
+            // A dynamic uniform buffer is still a uniform buffer binding, so advertising more of them
+            // than a single stage can hold would let the two limits contradict each other.
+            .maxDynamicUniformBuffersPerPipelineLayout =    maxBindGroups * tier2LimitForBuffersAndTextures,
             .maxDynamicStorageBuffersPerPipelineLayout =    largeReasonableLimit(),
             .maxSampledTexturesPerShaderStage =    maxBindGroups * tier2LimitForBuffersAndTextures,
             .maxSamplersPerShaderStage =    maxBindGroups * tier2LimitForSamplers,
@@ -452,8 +466,7 @@ static HardwareCapabilities mac2(id<MTLDevice> device)
             .maxBufferSize =    maxBufferSize(device),
             .maxVertexAttributes =    30,
             .maxVertexBufferArrayStride =    multipleOf4(largeReasonableLimit()),
-            .maxInterStageShaderComponents =    64,
-            .maxInterStageShaderVariables =    32,
+            .maxInterStageShaderVariables =    31,
             .maxColorAttachments =    8,
             .maxColorAttachmentBytesPerSample = 64,
             .maxComputeWorkgroupStorageSize =    32 * KB,
@@ -486,7 +499,7 @@ static T mergeAlignment(T previous, T next)
     return std::min(roundUpToPowerOfTwo(previous), roundUpToPowerOfTwo(next));
 };
 
-static WGPULimits mergeLimits(const WGPULimits& previous, const WGPULimits& next)
+static Limits mergeLimits(const Limits& previous, const Limits& next)
 {
     return {
         .maxTextureDimension1D = mergeMaximum(previous.maxTextureDimension1D, next.maxTextureDimension1D),
@@ -511,7 +524,6 @@ static WGPULimits mergeLimits(const WGPULimits& previous, const WGPULimits& next
         .maxBufferSize = mergeMaximum(previous.maxBufferSize, next.maxBufferSize),
         .maxVertexAttributes = mergeMaximum(previous.maxVertexAttributes, next.maxVertexAttributes),
         .maxVertexBufferArrayStride = mergeMaximum(previous.maxVertexBufferArrayStride, next.maxVertexBufferArrayStride),
-        .maxInterStageShaderComponents = mergeMaximum(previous.maxInterStageShaderComponents, next.maxInterStageShaderComponents),
         .maxInterStageShaderVariables = mergeMaximum(previous.maxInterStageShaderVariables, next.maxInterStageShaderVariables),
         .maxColorAttachments = mergeMaximum(previous.maxColorAttachments, next.maxColorAttachments),
         .maxColorAttachmentBytesPerSample = mergeMaximum(previous.maxColorAttachmentBytesPerSample, next.maxColorAttachmentBytesPerSample),
@@ -563,8 +575,13 @@ static bool isPhysicalHardware()
     static bool result = [] {
         uint32_t isVM = 0;
         size_t size = sizeof(isVM);
-        if (!sysctlbyname("kern.hv_vmm_present", &isVM, &size, NULL, 0))
-            return isVM ? static_cast<bool>([[NSUserDefaults standardUserDefaults] boolForKey:@"WebKitAllowWebGPUOnVMs"]) : true;
+        if (!sysctlbyname("kern.hv_vmm_present", &isVM, &size, NULL, 0)) {
+            if (isVM) {
+                id value = [[NSUserDefaults standardUserDefaults] objectForKey:@"WebKitAllowWebGPUOnVMs"];
+                return value ? static_cast<bool>([value boolValue]) : true;
+            }
+            return true;
+        }
         return true;
     }();
     return result;
@@ -600,9 +617,10 @@ static std::optional<HardwareCapabilities> rawHardwareCapabilities(id<MTLDevice>
         merge(apple7(device));
 #endif
     // MTLGPUFamilyMac1 is not supported (yet?).
+ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     if ([device supportsFamily:MTLGPUFamilyMac2])
         merge(mac2(device));
-
+ALLOW_DEPRECATED_DECLARATIONS_END
     if (result) {
         auto maxBufferLength = maxBufferSize(device);
         result->limits.maxUniformBufferBindingSize = maxBufferLength;
@@ -612,7 +630,7 @@ static std::optional<HardwareCapabilities> rawHardwareCapabilities(id<MTLDevice>
     return result;
 }
 
-bool anyLimitIsBetterThan(const WGPULimits& target, const WGPULimits& reference)
+bool anyLimitIsBetterThan(const Limits& target, const Limits& reference)
 {
     if (target.maxTextureDimension1D > reference.maxTextureDimension1D)
         return true;
@@ -656,8 +674,6 @@ bool anyLimitIsBetterThan(const WGPULimits& target, const WGPULimits& reference)
         return true;
     if (target.maxVertexBufferArrayStride > reference.maxVertexBufferArrayStride)
         return true;
-    if (target.maxInterStageShaderComponents > reference.maxInterStageShaderComponents)
-        return true;
     if (target.maxInterStageShaderVariables > reference.maxInterStageShaderVariables)
         return true;
     if (target.maxColorAttachments > reference.maxColorAttachments)
@@ -698,7 +714,7 @@ bool includesUnsupportedFeatures(const Vector<WGPUFeatureName>& target, const Ve
     return false;
 }
 
-WGPULimits defaultLimits()
+Limits defaultLimits()
 {
     // https://gpuweb.github.io/gpuweb/#limit-default
 
@@ -725,7 +741,6 @@ WGPULimits defaultLimits()
         .maxBufferSize = defaultMaxBufferSize,
         .maxVertexAttributes =    16,
         .maxVertexBufferArrayStride =    2048,
-        .maxInterStageShaderComponents =    64,
         .maxInterStageShaderVariables = 16,
         .maxColorAttachments = 8,
         .maxColorAttachmentBytesPerSample = 32,
@@ -755,14 +770,14 @@ std::optional<HardwareCapabilities> hardwareCapabilities(id<MTLDevice> device)
     return result;
 }
 
-bool isValid(const WGPULimits& limits)
+bool isValid(const Limits& limits)
 {
     return isPowerOfTwo(limits.minUniformBufferOffsetAlignment) && isPowerOfTwo(limits.minStorageBufferOffsetAlignment);
 }
 
-} // namespace WebGPU
+} // namespace WebGPU::Metal
 
-WGPULimits wgpuDefaultLimits()
+WGPULimits LEGACY_NODELETE wgpuDefaultLimits()
 {
-    return WebGPU::defaultLimits();
+    return WebGPU::Metal::toAPI(WebGPU::Metal::defaultLimits());
 }

@@ -27,7 +27,6 @@
 
 #include <JavaScriptCore/JSExportMacros.h>
 #include <JavaScriptCore/JSType.h>
-#include <wtf/Float16.h>
 #include <wtf/PrintStream.h>
 
 namespace JSC {
@@ -178,17 +177,17 @@ inline constexpr unsigned logElementSize(JSType type)
     return logElementSize(typedArrayType(type));
 }
 
-inline size_t elementSize(TypedArrayType type)
+inline constexpr size_t elementSize(TypedArrayType type)
 {
     return static_cast<size_t>(1) << logElementSize(type);
 }
 
-inline size_t elementSize(JSType type)
+inline constexpr size_t elementSize(JSType type)
 {
     return elementSize(typedArrayType(type));
 }
 
-const ClassInfo* constructorClassInfoForType(TypedArrayType);
+const ClassInfo* LEGACY_NODELETE constructorClassInfoForType(TypedArrayType);
 
 inline TypedArrayType typedArrayTypeForType(JSType type)
 {

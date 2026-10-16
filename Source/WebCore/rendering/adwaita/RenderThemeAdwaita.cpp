@@ -41,9 +41,9 @@
 #include "RenderBox.h"
 #include "RenderObjectInlines.h"
 #include "RenderProgress.h"
-#include "RenderStyle+GettersInlines.h"
-#include "RenderStyle+SettersInlines.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "StyleComputedStyle+InitialInlines.h"
+#include "StyleComputedStyle+SettersInlines.h"
 #include "StylePadding.h"
 #include "ThemeAdwaita.h"
 #include "TimeRanges.h"
@@ -119,7 +119,7 @@ bool RenderThemeAdwaita::canCreateControlPartForDecorations(const RenderElement&
     return renderer.style().usedAppearance() == StyleAppearance::MenulistButton;
 }
 
-bool RenderThemeAdwaita::supportsFocusRing(const RenderElement&, const RenderStyle& style) const
+bool RenderThemeAdwaita::supportsFocusRing(const RenderElement&, const Style::ComputedStyle& style) const
 {
     switch (style.usedAppearance()) {
     case StyleAppearance::PushButton:
@@ -193,6 +193,11 @@ Color RenderThemeAdwaita::platformFocusRingColor(OptionSet<StyleColorOptions>) c
     return systemFocusRingColor();
 }
 
+float RenderThemeAdwaita::platformFocusRingWidth() const
+{
+    return Adwaita::focusLineWidth;
+}
+
 void RenderThemeAdwaita::platformColorsDidChange()
 {
     static_cast<ThemeAdwaita&>(Theme::singleton()).platformColorsDidChange();
@@ -222,7 +227,7 @@ RefPtr<FragmentedSharedBuffer> RenderThemeAdwaita::mediaControlsImageDataForIcon
 {
 #if USE(GLIB)
     auto path = makeString("/org/webkit/media-controls/"_s, iconName, '.', iconType);
-    auto data = adoptGRef(g_resources_lookup_data(path.latin1().data(), G_RESOURCE_LOOKUP_FLAGS_NONE, nullptr));
+    GRefPtr data = adoptGRef(g_resources_lookup_data(path.utf8().legacyCStringPointer(), G_RESOURCE_LOOKUP_FLAGS_NONE, nullptr));
     if (!data)
         return nullptr;
     return SharedBuffer::create(span(data));
@@ -241,7 +246,7 @@ String RenderThemeAdwaita::mediaControlsBase64StringForIconNameAndType(const Str
 {
 #if USE(GLIB)
     auto path = makeString("/org/webkit/media-controls/"_s, iconName, '.', iconType);
-    auto data = adoptGRef(g_resources_lookup_data(path.latin1().data(), G_RESOURCE_LOOKUP_FLAGS_NONE, nullptr));
+    GRefPtr data = adoptGRef(g_resources_lookup_data(path.utf8().legacyCStringPointer(), G_RESOURCE_LOOKUP_FLAGS_NONE, nullptr));
     if (!data)
         return emptyString();
     return base64EncodeToString(span(data));
@@ -268,42 +273,41 @@ Color RenderThemeAdwaita::systemColor(CSSValueID cssValueID, OptionSet<StyleColo
     const bool useDarkAppearance = options.contains(StyleColorOptions::UseDarkAppearance);
 
     switch (cssValueID) {
-    case CSSValueActivebuttontext:
-    case CSSValueButtontext:
+    case CSSValueID::Activebuttontext:
+    case CSSValueID::Buttontext:
         if (useDarkAppearance)
             return { buttonTextColorDark, Color::Flags::Semantic };
         return { buttonTextColorLight, Color::Flags::Semantic };
 
-    case CSSValueGraytext:
+    case CSSValueID::Graytext:
         if (useDarkAppearance)
             return { buttonTextDisabledColorDark, Color::Flags::Semantic };
         return { buttonTextDisabledColorLight, Color::Flags::Semantic };
 
-    case CSSValueCanvas:
+    case CSSValueID::Canvas:
         if (useDarkAppearance)
             return { SRGBA<uint8_t> { 30, 30, 30 }, Color::Flags::Semantic };
         return { Color::white, Color::Flags::Semantic };
 
-    case CSSValueField:
+    case CSSValueID::Field:
 #if PLATFORM(COCOA)
-    case CSSValueWebkitControlBackground:
+    case CSSValueID::WebkitControlBackground:
 #endif
         if (useDarkAppearance)
             return { textFieldBackgroundColorDark, Color::Flags::Semantic };
         return { textFieldBackgroundColorLight, Color::Flags::Semantic };
 
-    case CSSValueCanvastext:
-    case CSSValueFieldtext:
-    case CSSValueText:
+    case CSSValueID::Canvastext:
+    case CSSValueID::Fieldtext:
         if (useDarkAppearance)
             return { Color::white, Color::Flags::Semantic };
         return { Color::black, Color::Flags::Semantic };
 
-    case CSSValueHighlight:
+    case CSSValueID::Highlight:
         // Hardcoded to avoid exposing a user appearance preference to the web for fingerprinting.
         return { SRGBA<uint8_t> { 52, 132, 228 }, Color::Flags::Semantic };
 
-    case CSSValueHighlighttext:
+    case CSSValueID::Highlighttext:
         return { Color::white, Color::Flags::Semantic };
 
     default:
@@ -311,7 +315,7 @@ Color RenderThemeAdwaita::systemColor(CSSValueID cssValueID, OptionSet<StyleColo
     }
 }
 
-bool RenderThemeAdwaita::isControlStyled(const RenderStyle& style) const
+bool RenderThemeAdwaita::isControlStyled(const Style::ComputedStyle& style) const
 {
     auto appearance = style.usedAppearance();
     if (appearance == StyleAppearance::TextField || appearance == StyleAppearance::TextArea || appearance == StyleAppearance::SearchField || appearance == StyleAppearance::Listbox)
@@ -320,47 +324,46 @@ bool RenderThemeAdwaita::isControlStyled(const RenderStyle& style) const
     return RenderTheme::isControlStyled(style);
 }
 
-void RenderThemeAdwaita::adjustTextFieldStyle(RenderStyle& style, const Element*) const
+void RenderThemeAdwaita::adjustTextFieldStyle(Style::ComputedStyle& style, const Element*) const
 {
     if (!style.hasExplicitlySetBorderRadius())
         style.setBorderRadius({ 5_css_px, 5_css_px });
 }
 
-void RenderThemeAdwaita::adjustTextAreaStyle(RenderStyle& style, const Element* element) const
+void RenderThemeAdwaita::adjustTextAreaStyle(Style::ComputedStyle& style, const Element* element) const
 {
     adjustTextFieldStyle(style, element);
 }
 
-void RenderThemeAdwaita::adjustSearchFieldStyle(RenderStyle& style, const Element* element) const
+void RenderThemeAdwaita::adjustSearchFieldStyle(Style::ComputedStyle& style, const Element* element) const
 {
     adjustTextFieldStyle(style, element);
 }
 
-void RenderThemeAdwaita::adjustMenuListStyle(RenderStyle& style, const Element* element) const
+void RenderThemeAdwaita::adjustMenuListStyle(Style::ComputedStyle& style, const Element* element) const
 {
     RenderTheme::adjustMenuListStyle(style, element);
     style.setLineHeight(Style::ComputedStyle::initialLineHeight());
+    style.setTextAutosizingAdjustedLineHeight(Style::ComputedStyle::initialLineHeight());
 }
 
-void RenderThemeAdwaita::adjustMenuListButtonStyle(RenderStyle& style, const Element* element) const
+void RenderThemeAdwaita::adjustMenuListButtonStyle(Style::ComputedStyle& style, const Element* element) const
 {
     adjustMenuListStyle(style, element);
 }
 
-Style::PaddingBox RenderThemeAdwaita::popupInternalPaddingBox(const RenderStyle& style) const
+Style::PaddingBox RenderThemeAdwaita::platformPopupInternalPaddingBox(const Style::ComputedStyle& style) const
 {
-    if (style.usedAppearance() == StyleAppearance::None)
+    if (style.usedAppearance() == StyleAppearance::None || style.usedAppearance() == StyleAppearance::Base)
         return { 0_css_px };
 
     auto zoomedArrowSize = menuListButtonArrowSize * style.usedZoom();
-    int leftPadding = menuListButtonPadding + (style.writingMode().isBidiRTL() ? zoomedArrowSize : 0);
-    int rightPadding = menuListButtonPadding + (style.writingMode().isBidiLTR() ? zoomedArrowSize : 0);
 
     return {
         Style::PaddingEdge::Fixed { static_cast<float>(menuListButtonPadding) },
-        Style::PaddingEdge::Fixed { static_cast<float>(rightPadding) },
+        Style::PaddingEdge::Fixed { static_cast<float>(menuListButtonPadding + zoomedArrowSize) },
         Style::PaddingEdge::Fixed { static_cast<float>(menuListButtonPadding) },
-        Style::PaddingEdge::Fixed { static_cast<float>(leftPadding) },
+        Style::PaddingEdge::Fixed { static_cast<float>(menuListButtonPadding) },
     };
 }
 
@@ -375,7 +378,7 @@ IntRect RenderThemeAdwaita::progressBarRectForBounds(const RenderProgress& rende
     return { bounds.x(), bounds.y(), isHorizontal ? bounds.width() : progressBarSize, isHorizontal ? progressBarSize : bounds.height() };
 }
 
-void RenderThemeAdwaita::adjustSliderThumbSize(RenderStyle& style, const Element*) const
+void RenderThemeAdwaita::adjustSliderThumbSize(Style::ComputedStyle& style, const Element*) const
 {
     auto appearance = style.usedAppearance();
     if (appearance != StyleAppearance::SliderThumbHorizontal && appearance != StyleAppearance::SliderThumbVertical)
@@ -395,19 +398,16 @@ int RenderThemeAdwaita::sliderTickOffsetFromTrackCenter() const
     return -16;
 }
 
-void RenderThemeAdwaita::adjustListButtonStyle(RenderStyle& style, const Element*) const
+void RenderThemeAdwaita::adjustListButtonStyle(Style::ComputedStyle& style, const Element*) const
 {
     style.setLogicalWidth(16_css_px);
     // Add a margin to place the button at end of the input field.
-    if (style.isLeftToRightDirection())
-        style.setMarginRight(-2_css_px);
-    else
-        style.setMarginLeft(-2_css_px);
+    style.setMarginEnd(-2_css_px);
 }
 
 Style::PreferredSizePair RenderThemeAdwaita::controlSize(StyleAppearance appearance, const FontCascade& fontCascade, const Style::PreferredSizePair& zoomedSize, float zoomFactor) const
 {
-    if (!zoomedSize.width().isIntrinsicOrLegacyIntrinsicOrAuto() && !zoomedSize.height().isIntrinsicOrLegacyIntrinsicOrAuto())
+    if (!zoomedSize.width().isSizingKeywordOrAuto() && !zoomedSize.height().isSizingKeywordOrAuto())
         return RenderTheme::controlSize(appearance, fontCascade, zoomedSize, zoomFactor);
 
     switch (appearance) {
@@ -415,18 +415,18 @@ Style::PreferredSizePair RenderThemeAdwaita::controlSize(StyleAppearance appeara
     case StyleAppearance::Radio: {
         auto buttonSizeWidth = zoomedSize.width();
         auto buttonSizeHeight = zoomedSize.height();
-        if (buttonSizeWidth.isIntrinsicOrLegacyIntrinsicOrAuto())
+        if (buttonSizeWidth.isSizingKeywordOrAuto())
             buttonSizeWidth = 12_css_px * zoomFactor;
-        if (buttonSizeHeight.isIntrinsicOrLegacyIntrinsicOrAuto())
+        if (buttonSizeHeight.isSizingKeywordOrAuto())
             buttonSizeHeight = 12_css_px * zoomFactor;
         return { WTF::move(buttonSizeWidth), WTF::move(buttonSizeHeight) };
     }
     case StyleAppearance::InnerSpinButton: {
         auto spinButtonSizeWidth = zoomedSize.width();
         auto spinButtonSizeHeight = zoomedSize.height();
-        if (spinButtonSizeWidth.isIntrinsicOrLegacyIntrinsicOrAuto())
+        if (spinButtonSizeWidth.isSizingKeywordOrAuto())
             spinButtonSizeWidth = Style::PreferredSize::Fixed { static_cast<float>(static_cast<int>(arrowSize * zoomFactor)) };
-        if (spinButtonSizeHeight.isIntrinsicOrLegacyIntrinsicOrAuto() || fontCascade.size() > arrowSize)
+        if (spinButtonSizeHeight.isSizingKeywordOrAuto() || fontCascade.size() > arrowSize)
             spinButtonSizeHeight = Style::PreferredSize::Fixed { fontCascade.size() };
         return { WTF::move(spinButtonSizeWidth), WTF::move(spinButtonSizeHeight) };
     }
@@ -439,15 +439,15 @@ Style::PreferredSizePair RenderThemeAdwaita::controlSize(StyleAppearance appeara
 
 Style::MinimumSizePair RenderThemeAdwaita::minimumControlSize(StyleAppearance, const FontCascade&, const Style::MinimumSizePair& zoomedSize, float) const
 {
-    if (!zoomedSize.width().isIntrinsicOrLegacyIntrinsicOrAuto() && !zoomedSize.height().isIntrinsicOrLegacyIntrinsicOrAuto())
+    if (!zoomedSize.width().isSizingKeywordOrAuto() && !zoomedSize.height().isSizingKeywordOrAuto())
         return zoomedSize;
 
     auto resultWidth = zoomedSize.width();
     auto resultHeight = zoomedSize.height();
 
-    if (resultWidth.isIntrinsicOrLegacyIntrinsicOrAuto())
+    if (resultWidth.isSizingKeywordOrAuto())
         resultWidth = 0_css_px;
-    if (resultHeight.isIntrinsicOrLegacyIntrinsicOrAuto())
+    if (resultHeight.isSizingKeywordOrAuto())
         resultHeight = 0_css_px;
 
     return { WTF::move(resultWidth), WTF::move(resultHeight) };

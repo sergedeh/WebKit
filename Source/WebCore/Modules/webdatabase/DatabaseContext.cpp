@@ -181,7 +181,7 @@ bool DatabaseContext::allowDatabaseAccess() const
 {
     RefPtr context = scriptExecutionContext();
     if (RefPtr document = dynamicDowncast<Document>(*context)) {
-        if (!document->page() || (document->page()->usesEphemeralSession() && !LegacySchemeRegistry::allowsDatabaseAccessInPrivateBrowsing(document->protectedSecurityOrigin()->protocol())))
+        if (!document->page() || (document->page()->usesEphemeralSession() && !LegacySchemeRegistry::allowsDatabaseAccessInPrivateBrowsing(protect(document->securityOrigin())->protocol())))
             return false;
         return true;
     }
@@ -195,7 +195,7 @@ void DatabaseContext::databaseExceededQuota(const String& name, DatabaseDetails 
     RefPtr context = scriptExecutionContext();
     if (RefPtr document = dynamicDowncast<Document>(*context)) {
         if (RefPtr page = document->page())
-            page->chrome().client().exceededDatabaseQuota(*document->protectedFrame(), name, details);
+            page->chrome().client().exceededDatabaseQuota(*protect(document->frame()), name, details);
         return;
     }
     ASSERT(context->isWorkerGlobalScope());
@@ -213,7 +213,7 @@ const SecurityOriginData& DatabaseContext::securityOrigin() const
 
 bool DatabaseContext::isContextThread() const
 {
-    return protectedScriptExecutionContext()->isContextThread();
+    return protect(scriptExecutionContext())->isContextThread();
 }
 
 } // namespace WebCore

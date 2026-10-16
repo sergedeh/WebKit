@@ -8,10 +8,9 @@
 //   MEC will have to capture everything, and we can test with capture/replay
 //   whether this is done correctly. In this case the focus is on external images
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
+#include <array>
 
+#include "common/unsafe_buffers.h"
 #include "test_utils/ANGLETest.h"
 #include "test_utils/gl_raii.h"
 #include "util/EGLWindow.h"
@@ -42,7 +41,7 @@ class EGLImageMECFriendlyTest : public ANGLETest<>
         }
 
         constexpr GLsizei texSize = 32;
-        GLubyte data[texSize * texSize * 4];
+        std::array<GLubyte, texSize * texSize * 4> data;
 
         for (int y = 0; y < texSize; y++)
         {
@@ -61,7 +60,7 @@ class EGLImageMECFriendlyTest : public ANGLETest<>
         glGenTextures(1, &mSourceTexture);
         glBindTexture(GL_TEXTURE_2D, mSourceTexture);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, texSize, texSize, 0, GL_RGBA, GL_UNSIGNED_BYTE,
-                     data);
+                     data.data());
         glBindTexture(GL_TEXTURE_2D, 0);
         glGenTextures(1, &mExternalTexture);
 

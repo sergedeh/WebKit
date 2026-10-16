@@ -66,14 +66,13 @@ class StyleRulePositionTry;
 class StyleRuleSupports;
 class StyleRuleViewport;
 class StyleRuleViewTransition;
+#if ENABLE(SPATIAL_PORTAL)
+class StyleRuleEnvironmentMap;
+#endif
 class StyleSheetContents;
 class ImmutableStyleProperties;
 class Element;
 class MutableStyleProperties;
-
-namespace Style {
-struct Color;
-}
 
 enum CSSAtRuleID : uint8_t;
 
@@ -85,9 +84,6 @@ public:
         Unchanged,
         Error
     };
-
-    CSSParser(const CSSParserContext&, const String&, StyleSheetContents* = nullptr, CSSParserObserverWrapper* = nullptr, CSSParserEnum::NestedContext = { });
-    ~CSSParser();
 
     enum class AllowedRules : uint8_t {
         // As per css-syntax, css-cascade and css-namespaces, @charset rules
@@ -106,29 +102,33 @@ public:
         NoRules, // For parsing at-rules inside declaration lists (without nesting support)
     };
 
-    static ParseResult parseValue(MutableStyleProperties&, CSSPropertyID, const String&, IsImportant, const CSSParserContext&);
-    static ParseResult parseCustomPropertyValue(MutableStyleProperties&, const AtomString& propertyName, const String&, IsImportant, const CSSParserContext&);
-    static Ref<ImmutableStyleProperties> parseInlineStyleDeclaration(const String&, const Element&);
-    WEBCORE_EXPORT static bool parseDeclarationList(MutableStyleProperties&, const String&, const CSSParserContext&);
-    static RefPtr<StyleRuleBase> parseRule(const String&, const CSSParserContext&, StyleSheetContents*, AllowedRules, CSSParserEnum::NestedContext = { });
-    static RefPtr<StyleRuleKeyframe> parseKeyframeRule(const String&, const CSSParserContext&);
-    static void parseStyleSheet(const String&, const CSSParserContext&, StyleSheetContents&);
+    CSSParser(const CSSParserContext&, StringView string LIFETIME_BOUND, StyleSheetContents* = nullptr, CSSParserObserverWrapper* = nullptr, CSSParserEnum::NestedContext = { });
+    ~CSSParser();
+
+    static ParseResult parseValue(MutableStyleProperties&, CSSPropertyID, StringView, IsImportant, const CSSParserContext&);
+    static ParseResult parseCustomPropertyValue(MutableStyleProperties&, const AtomString& propertyName, StringView, IsImportant, const CSSParserContext&);
+    WEBCORE_EXPORT static bool parseDeclarationList(MutableStyleProperties&, StringView, const CSSParserContext&);
+
+    static Ref<ImmutableStyleProperties> parseInlineStyleDeclaration(StringView, const Element&);
+    static RefPtr<StyleRuleBase> parseRule(StringView, const CSSParserContext&, StyleSheetContents*, AllowedRules, CSSParserEnum::NestedContext = { });
+    static RefPtr<StyleRuleKeyframe> parseKeyframeRule(StringView, const CSSParserContext&);
+    static RefPtr<StyleRuleNestedDeclarations> parseNestedDeclarations(StringView, const CSSParserContext&);
+
+    static void parseStyleSheet(StringView, const CSSParserContext&, StyleSheetContents&);
     static CSSSelectorList parsePageSelector(CSSParserTokenRange, StyleSheetContents*);
 
     bool supportsDeclaration(CSSParserTokenRange&);
-    const CSSParserContext& context() const { return m_context; }
 
     // This function updates the range it's given.
     RefPtr<StyleRuleBase> consumeAtRule(CSSParserTokenRange&, AllowedRules);
 
-    static void parseDeclarationListForInspector(const String&, const CSSParserContext&, CSSParserObserver&);
-    static void parseStyleSheetForInspector(const String&, const CSSParserContext&, StyleSheetContents&, CSSParserObserver&);
+    static void parseDeclarationListForInspector(StringView, const CSSParserContext&, CSSParserObserver&);
+    static void parseStyleSheetForInspector(StringView, const CSSParserContext&, StyleSheetContents&, CSSParserObserver&);
 
     static IsImportant consumeTrailingImportantAndWhitespace(CSSParserTokenRange&);
 
-    static RefPtr<StyleRuleNestedDeclarations> parseNestedDeclarations(const CSSParserContext&, const String&);
-
-    CSSTokenizer* tokenizer() const { return m_tokenizer.get(); }
+    const CSSParserContext& context() const LIFETIME_BOUND { return m_context; }
+    const CSSTokenizer* tokenizer() const LIFETIME_BOUND { return m_tokenizer.get(); }
 
 private:
     struct NestingContext {
@@ -179,6 +179,9 @@ private:
     RefPtr<StyleRuleViewTransition> consumeViewTransitionRule(CSSParserTokenRange prelude, CSSParserTokenRange block);
     RefPtr<StyleRulePositionTry> consumePositionTryRule(CSSParserTokenRange prelude, CSSParserTokenRange block);
     RefPtr<StyleRuleFunction> consumeFunctionRule(CSSParserTokenRange prelude, CSSParserTokenRange block);
+#if ENABLE(SPATIAL_PORTAL)
+    RefPtr<StyleRuleEnvironmentMap> consumeEnvironmentMapRule(CSSParserTokenRange prelude, CSSParserTokenRange block);
+#endif
 
     RefPtr<StyleRuleKeyframe> consumeKeyframeStyleRule(CSSParserTokenRange prelude, CSSParserTokenRange block);
     RefPtr<StyleRuleBase> consumeStyleRule(CSSParserTokenRange prelude, CSSParserTokenRange block);
@@ -198,10 +201,10 @@ private:
     void consumeDeclarationValue(CSSParserTokenRange, CSSPropertyID, IsImportant, StyleRuleType);
     void consumeCustomPropertyValue(CSSParserTokenRange, const AtomString& propertyName, IsImportant);
 
-    RefPtr<StyleSheetContents> protectedStyleSheet() const;
+    StyleSheetContents* styleSheet() const { return m_styleSheet.get(); }
 
     Ref<StyleRuleBase> createNestedDeclarationsRule();
-    void runInNewNestingContext(auto&& run);
+    void runInNewNestingContext(NOESCAPE const auto&);
     NestingContext& topContext()
     {
         ASSERT(!m_nestingContextStack.isEmpty());
@@ -227,7 +230,7 @@ private:
     // https://bugs.webkit.org/show_bug.cgi?id=265566
     unsigned m_ruleListNestingLevel { 0 };
     Vector<CSSParserEnum::NestedContextType, 16> m_ancestorRuleTypeStack;
-    Vector<NestingContext, 16> m_nestingContextStack { NestingContext { } };
+    Vector<NestingContext, 16> m_nestingContextStack { 1 };
 
     std::optional<CSSParserEnum::NestedContextType> lastAncestorRuleType() const
     {
@@ -238,8 +241,8 @@ private:
 
     const CSSParserContext& m_context;
 
-    RefPtr<StyleSheetContents> m_styleSheet;
-    std::unique_ptr<CSSTokenizer> m_tokenizer;
+    const RefPtr<StyleSheetContents> m_styleSheet;
+    const std::unique_ptr<CSSTokenizer> m_tokenizer;
 
     // For the inspector
     WeakPtr<CSSParserObserverWrapper> m_observerWrapper;

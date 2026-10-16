@@ -46,6 +46,7 @@ public:
     unsigned rowSpan() const;
 
     virtual bool isMathMLToken() const { return false; }
+    virtual bool isMathMLRowElement() const { return false; }
     virtual bool isSemanticAnnotation() const { return false; }
     virtual bool isPresentationMathML() const { return false; }
 
@@ -82,8 +83,11 @@ private:
     bool canStartSelection() const final;
     bool isKeyboardFocusable(const FocusEventData&) const final;
     bool isMouseFocusable() const final;
-    bool isURLAttribute(const Attribute&) const final;
+    bool LEGACY_NODELETE isURLAttribute(const Attribute&) const final;
+    bool LEGACY_NODELETE allowsHref() const;
     bool supportsFocus() const final;
+    int defaultTabIndex() const final;
+    Node::NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode& parentOfInsertedTree) final;
 };
 
 inline bool Node::hasTagName(const MathMLQualifiedName& name) const

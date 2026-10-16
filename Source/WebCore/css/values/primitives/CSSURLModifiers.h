@@ -24,9 +24,10 @@
 
 #pragma once
 
+#include <WebCore/CSSLinkParameter.h>
+#include <WebCore/CSSString.h>
 #include <WebCore/CSSValueTypes.h>
 #include <WebCore/LoadedFromOpaqueSource.h>
-#include <wtf/text/WTFString.h>
 
 namespace WebCore {
 
@@ -40,12 +41,12 @@ using URLCrossOriginParameters = Variant<
     Keyword::Anonymous,
     Keyword::UseCredentials
 >;
-using URLCrossOriginFunction = FunctionNotation<CSSValueCrossOrigin, URLCrossOriginParameters>;
+using URLCrossOriginFunction = FunctionNotation<CSSValueID::CrossOrigin, URLCrossOriginParameters>;
 
 // <integrity-modifier> = integrity( <string> )
 // https://drafts.csswg.org/css-values-5/#typedef-request-url-modifier-integrity-modifier
 using URLIntegrityParameters = String;
-using URLIntegrityFunction = FunctionNotation<CSSValueIntegrity, URLIntegrityParameters>;
+using URLIntegrityFunction = FunctionNotation<CSSValueID::Integrity, URLIntegrityParameters>;
 
 // <referrer-policy-modifier> = referrer-policy( no-referrer | no-referrer-when-downgrade | same-origin | origin | strict-origin | origin-when-cross-origin | strict-origin-when-cross-origin | unsafe-url )
 // https://drafts.csswg.org/css-values-5/#typedef-request-url-modifier-referrer-policy-modifier
@@ -59,14 +60,25 @@ using URLReferrerPolicyParameters = Variant<
     Keyword::StrictOriginWhenCrossOrigin,
     Keyword::UnsafeUrl
 >;
-using URLReferrerPolicyFunction = FunctionNotation<CSSValueReferrerPolicy, URLReferrerPolicyParameters>;
+using URLReferrerPolicyFunction = FunctionNotation<CSSValueID::ReferrerPolicy, URLReferrerPolicyParameters>;
 
-// https://drafts.csswg.org/css-values-5/#typedef-request-url-modifier
+using URLLinkParameterList = SpaceSeparatedVector<ParamFunction>;
+
+// <url-modifier> = <request-url-modifier> | <param()>
+// https://drafts.csswg.org/css-values-4/#url-modifiers
+//
+// <url-modifier> has its definition spread out in multiple specs. Currently supported modifiers are:
+//
 // <request-url-modifier> = <cross-origin-modifier> | <integrity-modifier> | <referrer-policy-modifier>
+// https://drafts.csswg.org/css-values-5/#typedef-request-url-modifier
+//
+// <param()> = param( <param-spec> , <declaration-value>? )
+// https://drafts.csswg.org/css-link-params/#funcdef-param
 struct URLModifiers {
     std::optional<URLCrossOriginFunction> crossOrigin { };
     std::optional<URLIntegrityFunction> integrity { };
     std::optional<URLReferrerPolicyFunction> referrerPolicy { };
+    URLLinkParameterList linkParameters { };
 
     // This is not a parsed value, but is implicit from context the modifiers were parsed with.
     LoadedFromOpaqueSource loadedFromOpaqueSource { LoadedFromOpaqueSource::No };
@@ -82,6 +94,8 @@ template<size_t I> const auto& get(const URLModifiers& value)
         return value.integrity;
     else if constexpr (I == 2)
         return value.referrerPolicy;
+    else if constexpr (I == 3)
+        return value.linkParameters;
 }
 
 // Applies `URLModifiers` to `ResourceLoaderOptions`.
@@ -90,4 +104,4 @@ void applyModifiersToLoaderOptions(const URLModifiers&, ResourceLoaderOptions&);
 } // namespace CSS
 } // namespace WebCore
 
-DEFINE_SPACE_SEPARATED_TUPLE_LIKE_CONFORMANCE(WebCore::CSS::URLModifiers, 3)
+DEFINE_SPACE_SEPARATED_TUPLE_LIKE_CONFORMANCE(WebCore::CSS::URLModifiers, 4)

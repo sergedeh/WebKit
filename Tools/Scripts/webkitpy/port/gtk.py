@@ -37,7 +37,6 @@ import webkitpy
 from webkitpy.common.system import path
 from webkitpy.common.memoized import memoized
 from webkitpy.common.system.executive import ScriptError
-from webkitpy.layout_tests.models.test_configuration import TestConfiguration
 from webkitpy.port.glib import GLibPort
 from webkitpy.port.xvfbdriver import XvfbDriver
 from webkitpy.port.westondriver import WestonDriver
@@ -94,14 +93,19 @@ class GtkPort(GLibPort):
                 environment['LIBGL_DRIVERS_PATH'] = dri_libgl_path
             else:
                 _log.warning("Can't find Gallium llvmpipe driver. Try to run update-webkitgtk-libs")
+        elif self._gl_rendering_backend == "cpu":
+            environment['LIBGL_ALWAYS_SOFTWARE'] = '1'
+
+        if self._skia_rendering_backend == "cpu":
+            if 'WEBKIT_SKIA_ENABLE_CPU_RENDERING' in environment:
+                _log.warning('Ignoring "WEBKIT_SKIA_ENABLE_CPU_RENDERING" variable from environment. Defaulting to value "1".')
+            environment['WEBKIT_SKIA_ENABLE_CPU_RENDERING'] = '1'
+        elif self._skia_rendering_backend == "gpu":
+            if 'WEBKIT_SKIA_ENABLE_CPU_RENDERING' in environment:
+                _log.warning('Ignoring "WEBKIT_SKIA_ENABLE_CPU_RENDERING" variable from environment. Defaulting to value "0".')
+            environment['WEBKIT_SKIA_ENABLE_CPU_RENDERING'] = '0'
 
         return environment
-
-    def _generate_all_test_configurations(self):
-        configurations = []
-        for build_type in self.ALL_BUILD_TYPES:
-            configurations.append(TestConfiguration(version=self.version_name(), architecture='x86', build_type=build_type))
-        return configurations
 
     def _path_to_driver(self):
         return self._built_executables_path(self.driver_name())

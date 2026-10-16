@@ -28,6 +28,8 @@
 #include "HitTestRequest.h"
 #include "HitTestResult.h"
 #include "LayoutRepainter.h"
+#include "LocalFrameView.h"
+#include "RenderElementInlines.h"
 #include "RenderIterator.h"
 #include "RenderObjectInlines.h"
 #include "RenderTreeBuilder.h"
@@ -63,7 +65,7 @@ static bool shouldSuspendRepaintForChildren(const LegacyRenderSVGContainer& cont
     return numberOfChildren >= minimumRequiredChildren;
 }
 
-LegacyRenderSVGContainer::LegacyRenderSVGContainer(Type type, SVGElement& element, RenderStyle&& style, OptionSet<SVGModelObjectFlag> svgFlags)
+LegacyRenderSVGContainer::LegacyRenderSVGContainer(Type type, SVGElement& element, Style::ComputedStyle&& style, OptionSet<SVGModelObjectFlag> svgFlags)
     : LegacyRenderSVGModelObject(type, element, WTF::move(style), svgFlags | SVGModelObjectFlag::IsContainer | SVGModelObjectFlag::UsesBoundaryCaching)
 {
 }
@@ -88,6 +90,8 @@ void LegacyRenderSVGContainer::layout()
 
     // Allow LegacyRenderSVGTransformableContainer to update its transform.
     bool updatedTransform = calculateLocalTransform();
+
+    setHasScalingAncestor(SVGRenderSupport::computeHasScalingAncestor(*this));
 
     // LegacyRenderSVGViewportContainer needs to set the 'layout size changed' flag.
     determineIfLayoutSizeChanged();
@@ -169,13 +173,13 @@ void LegacyRenderSVGContainer::paint(PaintInfo& paintInfo, const LayoutPoint&)
     // outline rect into parent coords before drawing.
     // FIXME: This means our focus ring won't share our rotation like it should.
     // We should instead disable our clip during PaintPhase::Outline
-    if (paintInfo.phase == PaintPhase::SelfOutline && style().usedOutlineWidth() && style().usedVisibility() == Visibility::Visible) {
+    if (paintInfo.phase == PaintPhase::SelfOutline && style().hasOutline() && usedStyle().visibility() == UsedVisibility::Visible) {
         IntRect paintRectInParent = enclosingIntRect(localToParentTransform().mapRect(repaintRect));
         paintOutline(paintInfo, paintRectInParent);
     }
 }
 
-// addFocusRingRects is called from paintOutline and needs to be in the same coordinates as the paintOuline call
+// addFocusRingRects is called from paintOutline and needs to be in the same coordinates as the paintOutline call
 void LegacyRenderSVGContainer::addFocusRingRects(Vector<LayoutRect>& rects, const LayoutPoint&, const RenderLayerModelObject*) const
 {
     LayoutRect paintRectInParent = LayoutRect(localToParentTransform().mapRect(repaintRectInLocalCoordinates()));
@@ -208,6 +212,16 @@ FloatRect LegacyRenderSVGContainer::strokeBoundingBox() const
 
 FloatRect LegacyRenderSVGContainer::repaintRectInLocalCoordinates(RepaintRectCalculation repaintRectCalculation) const
 {
+    if (hasNonScalingStrokeDescendant()) {
+        if (!hasScalingAncestor() && localToParentTransform().isIdentityOrTranslation())
+            return m_repaintBoundingBox;
+
+        auto boundingBoxes = SVGRenderSupport::computeContainerBoundingBoxes(*this, repaintRectCalculation);
+        FloatRect repaintBoundingBox = boundingBoxes.repaintBoundingBox;
+        SVGRenderSupport::intersectRepaintRectWithResources(*this, repaintBoundingBox, repaintRectCalculation);
+        return repaintBoundingBox;
+    }
+
     if (repaintRectCalculation == RepaintRectCalculation::Fast)
         return m_repaintBoundingBox;
 
@@ -247,7 +261,7 @@ bool LegacyRenderSVGContainer::nodeAtFloatPoint(const HitTestRequest& request, H
     for (RenderObject* child = lastChild(); child; child = child->previousSibling()) {
         if (child->nodeAtFloatPoint(request, result, localPoint, hitTestAction)) {
             updateHitTestResult(result, LayoutPoint(localPoint));
-            if (result.addNodeToListBasedTestResult(child->protectedNode().get(), request, flooredLayoutPoint(localPoint)) == HitTestProgress::Stop)
+            if (result.addNodeToListBasedTestResult(protect(child->node()).get(), request, flooredLayoutPoint(localPoint)) == HitTestProgress::Stop)
                 return true;
         }
     }
@@ -255,7 +269,7 @@ bool LegacyRenderSVGContainer::nodeAtFloatPoint(const HitTestRequest& request, H
     // Accessibility wants to return SVG containers, if appropriate.
     if (request.type() & HitTestRequest::Type::AccessibilityHitTest && objectBoundingBox().contains(localPoint)) {
         updateHitTestResult(result, LayoutPoint(localPoint));
-        if (result.addNodeToListBasedTestResult(protectedNodeForHitTest().get(), request, flooredLayoutPoint(localPoint)) == HitTestProgress::Stop)
+        if (result.addNodeToListBasedTestResult(protect(nodeForHitTest()).get(), request, flooredLayoutPoint(localPoint)) == HitTestProgress::Stop)
             return true;
     }
     

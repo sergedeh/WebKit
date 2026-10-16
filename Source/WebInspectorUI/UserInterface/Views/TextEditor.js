@@ -512,7 +512,7 @@ WI.TextEditor = class TextEditor extends WI.View
         // Otherwise the line highlight doesn't work properly.
         if (this._formatted && forceUnformatted) {
             this.updateFormattedState(false).then(() => {
-                setTimeout(this.revealPosition.bind(this), 0, position, textRangeToSelect);
+                setTimeout(this.revealPosition.bind(this), 0, position, options);
             });
             return;
         }
@@ -715,8 +715,8 @@ WI.TextEditor = class TextEditor extends WI.View
 
     visibleRangeOffsets()
     {
-        var startOffset = null;
-        var endOffset = null;
+        let startOffset;
+        let endOffset;
         var visibleRange = this._codeMirror.getViewport();
 
         if (this._formatterSourceMap) {
@@ -761,7 +761,7 @@ WI.TextEditor = class TextEditor extends WI.View
 
     originalOffsetToCurrentPosition(offset)
     {
-        var position = null;
+        let position;
         if (this._formatterSourceMap) {
             var location = this._formatterSourceMap.originalPositionToFormatted(offset);
             position = {line: location.lineNumber, ch: location.columnNumber};
@@ -779,7 +779,7 @@ WI.TextEditor = class TextEditor extends WI.View
 
     currentPositionToOriginalOffset(position)
     {
-        let offset = null;
+        let offset;
 
         if (this._formatterSourceMap)
             offset = this._formatterSourceMap.formattedToOriginalOffset(position.line, position.ch);

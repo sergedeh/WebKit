@@ -26,6 +26,7 @@
 #include "JSCInlines.h"
 #include "NumberPrototype.h"
 #include "ParseInt.h"
+#include "RegExpConstructorInlines.h"
 #include "RegExpGlobalDataInlines.h"
 #include "RegExpPrototype.h"
 #include "YarrFlags.h"
@@ -93,7 +94,7 @@ void RegExpConstructor::finishCreation(VM& vm, RegExpPrototype* regExpPrototype)
 
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, regExpPrototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 
-    JSGlobalObject* globalObject = regExpPrototype->globalObject();
+    JSGlobalObject* globalObject = regExpPrototype->realm();
 
     JSC_NATIVE_FUNCTION_WITHOUT_TRANSITION("escape"_s, regExpConstructorEscape, static_cast<unsigned>(PropertyAttribute::DontEnum), 1, ImplementationVisibility::Public);
 
@@ -110,19 +111,19 @@ JSC_DEFINE_HOST_FUNCTION(regExpConstructorEscape, (JSGlobalObject* globalObject,
     if (!value.isString()) [[unlikely]]
         return throwVMTypeError(globalObject, scope, "RegExp.escape requires a string"_s);
 
-    auto string = asString(value)->value(globalObject);
+    auto view = asString(value)->view(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
 
     StringBuilder builder(OverflowPolicy::RecordOverflow);
-    builder.reserveCapacity(string->length());
+    builder.reserveCapacity(view->length());
 
-    for (unsigned i = 0; i < string->length() && !builder.hasOverflowed();) {
+    for (unsigned i = 0; i < view->length() && !builder.hasOverflowed();) {
         char32_t codePoint;
-        if (string->is8Bit())
-            codePoint = string->span8()[i++];
+        if (view->is8Bit())
+            codePoint = view->span8()[i++];
         else {
-            auto characters = string->span16();
-            U16_NEXT(characters, i, string->length(), codePoint);
+            auto characters = view->span16();
+            U16_NEXT(characters, i, view->length(), codePoint);
         }
 
         if (builder.isEmpty() && isASCIIAlphanumeric(codePoint)) {
@@ -130,8 +131,10 @@ JSC_DEFINE_HOST_FUNCTION(regExpConstructorEscape, (JSGlobalObject* globalObject,
             continue;
         }
 
-        if (StringView("^$\\.*+?()[]{}|/"_s).contains(codePoint)) {
-            builder.append('\\', codePoint);
+        bool isASCIICodePoint = isASCII(codePoint);
+
+        if (isASCIICodePoint && StringView("^$\\.*+?()[]{}|/"_s).contains(static_cast<char16_t>(codePoint))) {
+            builder.append('\\', static_cast<char16_t>(codePoint));
             continue;
         }
 
@@ -155,15 +158,12 @@ JSC_DEFINE_HOST_FUNCTION(regExpConstructorEscape, (JSGlobalObject* globalObject,
             break;
         }
 
-        if (StringView(",-=<>#&!%:;@~'`\""_s).contains(codePoint) || isStrWhiteSpace(codePoint) || U16_IS_SURROGATE(codePoint)) {
+        if ((isASCIICodePoint && StringView(",-=<>#&!%:;@~'`\""_s).contains(static_cast<char16_t>(codePoint)))
+            || (U_IS_BMP(codePoint) && (isStrWhiteSpace(static_cast<char16_t>(codePoint)) || U16_IS_SURROGATE(codePoint)))) {
             if (isLatin1(codePoint))
                 builder.append('\\', 'x', pad('0', 2, toStringWithRadix(codePoint, 16)));
-            else if (U_IS_BMP(codePoint))
+            else
                 builder.append('\\', 'u', pad('0', 4, toStringWithRadix(codePoint, 16)));
-            else {
-                builder.append('\\', 'u', pad('0', 4, toStringWithRadix(U16_LEAD(codePoint), 16)));
-                builder.append('\\', 'u', pad('0', 4, toStringWithRadix(U16_TRAIL(codePoint), 16)));
-            }
             continue;
         }
 
@@ -275,7 +275,7 @@ JSC_DEFINE_CUSTOM_SETTER(setRegExpConstructorMultiline, (JSGlobalObject* globalO
     return true;
 }
 
-static inline bool areLegacyFeaturesEnabled(JSGlobalObject* globalObject, JSValue newTarget)
+static inline bool LEGACY_NODELETE areLegacyFeaturesEnabled(JSGlobalObject* globalObject, JSValue newTarget)
 {
     if (!newTarget)
         return true;
@@ -308,16 +308,10 @@ inline OptionSet<Yarr::Flags> toFlags(JSGlobalObject* globalObject, JSValue flag
     return result.value();
 }
 
-static JSObject* regExpCreate(JSGlobalObject* globalObject, JSValue newTarget, JSValue patternArg, JSValue flagsArg)
+RegExpObject* regExpCreate(JSGlobalObject* globalObject, JSValue newTarget, const String& pattern, OptionSet<Yarr::Flags> flags)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-    String pattern = patternArg.isUndefined() ? emptyString() : patternArg.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-
-    auto flags = toFlags(globalObject, flagsArg);
-    RETURN_IF_EXCEPTION(scope, nullptr);
 
     RegExp* regExp = RegExp::create(vm, pattern, flags);
     if (!regExp->isValid()) [[unlikely]] {
@@ -328,6 +322,19 @@ static JSObject* regExpCreate(JSGlobalObject* globalObject, JSValue newTarget, J
     Structure* structure = getRegExpStructure(globalObject, newTarget);
     RETURN_IF_EXCEPTION(scope, nullptr);
     return RegExpObject::create(vm, structure, regExp, areLegacyFeaturesEnabled(globalObject, newTarget));
+}
+
+RegExpObject* regExpCreate(JSGlobalObject* globalObject, JSValue newTarget, JSValue patternArg, JSValue flagsArg)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    String pattern = patternArg.isUndefined() ? emptyString() : patternArg.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    auto flags = toFlags(globalObject, flagsArg);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    RELEASE_AND_RETURN(scope, regExpCreate(globalObject, newTarget, pattern, flags));
 }
 
 JSObject* constructRegExp(JSGlobalObject* globalObject, const ArgList& args,  JSObject* callee, JSValue newTarget)
@@ -351,7 +358,7 @@ JSObject* constructRegExp(JSGlobalObject* globalObject, const ArgList& args,  JS
     }
 
     if (isPatternRegExp) {
-        RegExp* regExp = jsCast<RegExpObject*>(patternArg)->regExp();
+        RegExp* regExp = uncheckedDowncast<RegExpObject>(patternArg)->regExp();
         Structure* structure = getRegExpStructure(globalObject, newTarget);
         RETURN_IF_EXCEPTION(scope, nullptr);
 

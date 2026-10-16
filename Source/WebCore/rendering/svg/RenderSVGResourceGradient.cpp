@@ -20,24 +20,26 @@
 #include "config.h"
 #include "RenderSVGResourceGradient.h"
 
+#include "RenderObjectNode.h"
 #include "RenderSVGModelObjectInlines.h"
 #include "RenderSVGResourceGradientInlines.h"
 #include "RenderSVGShape.h"
-#include "RenderStyle+GettersInlines.h"
+#include "StyleComputedStyle+GettersInlines.h"
+#include "StylePrimitiveNumericTypes+Evaluation.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderSVGResourceGradient);
 
-RenderSVGResourceGradient::RenderSVGResourceGradient(Type type, SVGElement& element, RenderStyle&& style)
+RenderSVGResourceGradient::RenderSVGResourceGradient(Type type, SVGElement& element, Style::ComputedStyle&& style)
     : RenderSVGResourcePaintServer(type, element, WTF::move(style))
 {
 }
 
 RenderSVGResourceGradient::~RenderSVGResourceGradient() = default;
 
-GradientColorStops RenderSVGResourceGradient::stopsByApplyingColorFilter(const GradientColorStops& stops, const RenderStyle& style) const
+GradientColorStops RenderSVGResourceGradient::stopsByApplyingColorFilter(const GradientColorStops& stops, const Style::ComputedStyle& style) const
 {
     if (style.appleColorFilter().isNone())
         return stops;
@@ -78,7 +80,16 @@ ColorInterpolationMethod RenderSVGResourceGradient::gradientColorInterpolationMe
     return { ColorInterpolationMethod::SRGB { }, AlphaPremultiplication::Unpremultiplied };
 }
 
-bool RenderSVGResourceGradient::buildGradientIfNeeded(const RenderLayerModelObject& targetRenderer, const RenderStyle& style, AffineTransform& userspaceTransform)
+void RenderSVGResourceGradient::invalidateGradientOnLayoutSizeChange()
+{
+    if (gradientUnits() == SVGUnitTypes::SVG_UNIT_TYPE_OBJECTBOUNDINGBOX) {
+        repaintAllClients();
+        return;
+    }
+    invalidateGradient();
+}
+
+bool RenderSVGResourceGradient::buildGradientIfNeeded(const RenderLayerModelObject& targetRenderer, const Style::ComputedStyle& style, AffineTransform& userspaceTransform)
 {
     if (!m_gradient) {
         collectGradientAttributesIfNeeded();
@@ -98,25 +109,28 @@ bool RenderSVGResourceGradient::buildGradientIfNeeded(const RenderLayerModelObje
         userspaceTransform.scale(objectBoundingBox.size());
     }
 
-    if (auto gradientTransform = this->gradientTransform(); !gradientTransform.isIdentity())
+    auto gradientTransform = this->gradientTransform();
+    if (!gradientTransform.isInvertible())
+        return false;
+    if (!gradientTransform.isIdentity())
         userspaceTransform.multiply(gradientTransform);
 
     return true;
 }
 
-bool RenderSVGResourceGradient::prepareFillOperation(GraphicsContext& context, const RenderLayerModelObject& targetRenderer, const RenderStyle& style)
+bool RenderSVGResourceGradient::prepareFillOperation(GraphicsContext& context, const RenderLayerModelObject& targetRenderer, const Style::ComputedStyle& style)
 {
     AffineTransform userspaceTransform;
     if (!buildGradientIfNeeded(targetRenderer, style, userspaceTransform))
         return false;
 
-    context.setAlpha(style.fillOpacity().value.value);
+    context.setAlpha(Style::evaluate<float>(style.fillOpacity()));
     context.setFillRule(style.fillRule());
     context.setFillGradient(m_gradient.copyRef().releaseNonNull(), userspaceTransform);
     return true;
 }
 
-bool RenderSVGResourceGradient::prepareStrokeOperation(GraphicsContext& context, const RenderLayerModelObject& targetRenderer, const RenderStyle& style)
+bool RenderSVGResourceGradient::prepareStrokeOperation(GraphicsContext& context, const RenderLayerModelObject& targetRenderer, const Style::ComputedStyle& style)
 {
     AffineTransform userspaceTransform;
     if (!buildGradientIfNeeded(targetRenderer, style, userspaceTransform))
@@ -127,7 +141,7 @@ bool RenderSVGResourceGradient::prepareStrokeOperation(GraphicsContext& context,
             userspaceTransform = shape->nonScalingStrokeTransform() * userspaceTransform;
     }
 
-    context.setAlpha(style.strokeOpacity().value.value);
+    context.setAlpha(Style::evaluate<float>(style.strokeOpacity()));
     SVGRenderSupport::applyStrokeStyleToContext(context, style, targetRenderer);
     context.setStrokeGradient(m_gradient.copyRef().releaseNonNull(), userspaceTransform);
     return true;

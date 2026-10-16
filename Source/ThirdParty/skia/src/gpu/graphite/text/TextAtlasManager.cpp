@@ -11,14 +11,14 @@
 #include "include/core/SkImageInfo.h"
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkSize.h"
+#include "include/core/SkSpan.h"
 #include "include/gpu/GpuTypes.h"
 #include "include/gpu/graphite/Recorder.h"
 #include "include/gpu/graphite/TextureInfo.h"
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkMalloc.h"
-#include "include/private/base/SkSpan_impl.h"
-#include "include/private/base/SkTLogic.h"
-#include "src/base/SkAutoMalloc.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkMalloc.h"
+#include "include/private/SkTLogic.h"
+#include "src/core/SkAutoMalloc.h"
 #include "src/core/SkDistanceFieldGen.h"
 #include "src/core/SkGlyph.h"
 #include "src/core/SkMask.h"
@@ -29,18 +29,73 @@
 #include "src/gpu/graphite/DrawAtlas.h"
 #include "src/gpu/graphite/RecorderPriv.h"
 #include "src/gpu/graphite/TextureProxy.h"  // IWYU pragma: keep
+#include "src/gpu/graphite/text/GlyphData.h"
 #include "src/sksl/SkSLUtil.h"
-#include "src/text/gpu/Glyph.h"
-#include "src/text/gpu/GlyphVector.h"
+#include "src/text/gpu/GlyphUtils.h"
 #include "src/text/gpu/StrikeCache.h"
 
 #include <cstring>
 #include <new>
 #include <tuple>
 
-using Glyph = sktext::gpu::Glyph;
+using Glyph = skgpu::graphite::Glyph;
 
 namespace skgpu::graphite {
+
+using AtlasConfig = TextAtlasManager::AtlasConfig;
+
+AtlasConfig::AtlasConfig(int maxTextureSize, size_t maxBytes) {
+    static const SkISize kARGBDimensions[] = {
+            {256, 256},    // maxBytes < 2^19
+            {512, 256},    // 2^19 <= maxBytes < 2^20
+            {512, 512},    // 2^20 <= maxBytes < 2^21
+            {1024, 512},   // 2^21 <= maxBytes < 2^22
+            {1024, 1024},  // 2^22 <= maxBytes < 2^23
+            {2048, 1024},  // 2^23 <= maxBytes
+    };
+
+    // Index 0 corresponds to maxBytes of 2^18, so start by dividing it by that
+    maxBytes >>= 18;
+    // Take the floor of the log to get the index
+    int index = maxBytes > 0
+        ? SkTPin<int>(SkPrevLog2(maxBytes), 0, std::size(kARGBDimensions) - 1)
+        : 0;
+
+    SkASSERT(kARGBDimensions[index].width() <= kMaxAtlasDim);
+    SkASSERT(kARGBDimensions[index].height() <= kMaxAtlasDim);
+    fARGBDimensions.set(std::min<int>(kARGBDimensions[index].width(), maxTextureSize),
+                        std::min<int>(kARGBDimensions[index].height(), maxTextureSize));
+    fMaxTextureSize = std::min<int>(maxTextureSize, kMaxAtlasDim);
+}
+
+SkISize AtlasConfig::atlasDimensions(MaskFormat type) const {
+    if (MaskFormat::kA8 == type) {
+        // A8 is always 2x the ARGB dimensions, clamped to the max allowed texture size
+        return {std::min<int>(2 * fARGBDimensions.width(), fMaxTextureSize),
+                std::min<int>(2 * fARGBDimensions.height(), fMaxTextureSize)};
+    } else {
+        return fARGBDimensions;
+    }
+}
+
+SkISize AtlasConfig::plotDimensions(MaskFormat type) const {
+    if (MaskFormat::kA8 == type) {
+        SkISize atlasDimensions = this->atlasDimensions(type);
+        // For A8 we want to grow the plots at larger texture sizes to accept more of the
+        // larger SDF glyphs. Since the largest SDF glyph can be 170x170 with padding, this
+        // allows us to pack 3 in a 512x256 plot, or 9 in a 512x512 plot.
+
+        // This will give us 512x256 plots for 2048x1024, 512x512 plots for 2048x2048,
+        // and 256x256 plots otherwise.
+        int plotWidth = atlasDimensions.width() >= 2048 ? 512 : 256;
+        int plotHeight = atlasDimensions.height() >= 2048 ? 512 : 256;
+
+        return {plotWidth, plotHeight};
+    } else {
+        // ARGB and LCD always use 256x256 plots -- this has been shown to be faster
+        return {256, 256};
+    }
+}
 
 TextAtlasManager::TextAtlasManager(Recorder* recorder)
         : fRecorder(recorder)
@@ -68,9 +123,8 @@ void TextAtlasManager::freeGpuResources() {
     }
 }
 
-bool TextAtlasManager::hasGlyph(MaskFormat format, Glyph* glyph) {
-    SkASSERT(glyph);
-    return this->getAtlas(format)->hasID(glyph->fAtlasLocator.plotLocator());
+bool TextAtlasManager::hasGlyph(const GlyphEntry& glyph) {
+    return this->getAtlas(glyph.fKey.maskFormat())->hasID(glyph.fAtlasLocator.plotLocator());
 }
 
 template <typename INT_TYPE>
@@ -102,7 +156,7 @@ static void get_packed_glyph_image(
     const void* src = glyph.image();
     SkASSERT(src != nullptr);
 
-    MaskFormat maskFormat = Glyph::FormatFromSkGlyph(glyph.maskFormat());
+    MaskFormat maskFormat = sktext::gpu::FormatFromSkGlyph(glyph.maskFormat());
     if (maskFormat == expectedMaskFormat) {
         int srcRB = glyph.rowBytes();
         // Notice this comparison is with the glyphs raw mask format, and not its MaskFormat.
@@ -193,34 +247,35 @@ MaskFormat TextAtlasManager::resolveMaskFormat(MaskFormat format) const {
 
 // Returns kSucceeded if glyph successfully added to texture atlas, kTryAgain if a RenderPassTask
 // needs to be snapped before adding the glyph, and kError if it can't be added at all.
-DrawAtlas::ErrorCode TextAtlasManager::addGlyphToAtlas(const SkGlyph& skGlyph,
-                                                       Glyph* glyph,
-                                                       int srcPadding) {
-#if !defined(SK_DISABLE_SDF_TEXT)
-    SkASSERT(0 <= srcPadding && srcPadding <= SK_DistanceFieldInset);
-#else
-    SkASSERT(0 <= srcPadding);
-#endif
-
+DrawAtlas::ErrorCode TextAtlasManager::addGlyphToAtlas(const SkGlyph& skGlyph, GlyphEntry* glyph) {
     if (skGlyph.image() == nullptr) {
         return DrawAtlas::ErrorCode::kError;
     }
     SkASSERT(glyph != nullptr);
 
-    MaskFormat glyphFormat = Glyph::FormatFromSkGlyph(skGlyph.maskFormat());
-    MaskFormat expectedMaskFormat = this->resolveMaskFormat(glyphFormat);
+    const int srcPadding = glyph->fKey.padding();
+
+#if !defined(SK_DISABLE_SDF_TEXT)
+    SkDEBUGCODE(const bool skGlyphIsSDF = skGlyph.maskFormat() == SkMask::Format::kSDF_Format;)
+    SkASSERT(0 <= srcPadding && srcPadding <= SK_DistanceFieldInset);
+    SkASSERT(skGlyphIsSDF == glyph->fKey.isSDF());
+#else
+    SkASSERT(0 <= srcPadding);
+    SkASSERT(!glyph->fKey.isSDF());
+#endif
+
+    const MaskFormat expectedMaskFormat = glyph->fKey.maskFormat();
+    SkASSERT(expectedMaskFormat == this->resolveMaskFormat(glyph->fKey.maskFormat()));
+
     int bytesPerPixel = MaskFormatBytesPerPixel(expectedMaskFormat);
 
     int padding;
     switch (srcPadding) {
         case 0:
-            // The direct mask/image case.
+            // The direct mask/image case; lifting to 1px padding should have happened earlier when
+            // the glyph key was created.
+            SkASSERT(!fSupportBilerpAtlas);
             padding = 0;
-            if (fSupportBilerpAtlas) {
-                // Force direct masks (glyph with no padding) to have padding.
-                padding = 1;
-                srcPadding = 1;
-            }
             break;
         case 1:
             // The transformed mask/image case.
@@ -229,6 +284,7 @@ DrawAtlas::ErrorCode TextAtlasManager::addGlyphToAtlas(const SkGlyph& skGlyph,
 #if !defined(SK_DISABLE_SDF_TEXT)
         case SK_DistanceFieldInset:
             // The SDFT case.
+            SkASSERT(glyph->fKey.isSDF());
             // If the srcPadding == SK_DistanceFieldInset (SDFT case) then the padding is built
             // into the image on the glyph; no extra padding needed.
             // TODO: can the SDFT glyph image in the cache be reduced by the padding?
@@ -242,6 +298,14 @@ DrawAtlas::ErrorCode TextAtlasManager::addGlyphToAtlas(const SkGlyph& skGlyph,
 
     const int width = skGlyph.width() + 2*padding;
     const int height = skGlyph.height() + 2*padding;
+
+    // Verify that the glyph data (received from potentially untrusted source) actually has room
+    // for the padding. Under normal flow, this should always be the case, but if a glyph was
+    // corrupted or manipulated it has no bearing on the code that *should* have produced the glyph.
+    // It's strict comparison since equality would imply the original glyph was empty, which should
+    // have been dropped.
+    SkASSERT_RELEASE(width > 2*srcPadding && height > 2*srcPadding);
+
     int rowBytes = width * bytesPerPixel;
     size_t size = height * rowBytes;
 
@@ -280,13 +344,11 @@ bool TextAtlasManager::recordUploads(DrawContext* dc) {
     return true;
 }
 
-void TextAtlasManager::addGlyphToBulkAndSetUseToken(BulkUsePlotUpdater* updater,
-                                                    MaskFormat format,
-                                                    Glyph* glyph,
+void TextAtlasManager::addGlyphToBulkAndSetUseToken(DrawAtlas::BulkUsePlotUpdater* updater,
+                                                    const GlyphEntry& glyph,
                                                     Token token) {
-    SkASSERT(glyph);
-    if (updater->add(glyph->fAtlasLocator)) {
-        this->getAtlas(format)->setLastUseToken(glyph->fAtlasLocator, token);
+    if (updater->add(glyph.fAtlasLocator)) {
+        this->getAtlas(glyph.fKey.maskFormat())->setLastUseToken(glyph.fAtlasLocator, token);
     }
 }
 
@@ -298,17 +360,17 @@ void TextAtlasManager::setAtlasDimensionsToMinimum_ForTesting() {
     }
 
     // Set all the atlas sizes to 1x1 plot each.
-    new (&fAtlasConfig) DrawAtlasConfig{2048, 0};
+    new (&fAtlasConfig) AtlasConfig{2048, 0};
 }
 
-bool TextAtlasManager::initAtlas(MaskFormat format) {
-    int index = MaskFormatToAtlasIndex(format);
+bool TextAtlasManager::initAtlas(MaskFormat resolvedMaskFormat) {
+    SkASSERT(resolvedMaskFormat == this->resolveMaskFormat(resolvedMaskFormat));
+
+    int index = MaskFormatToAtlasIndex(resolvedMaskFormat);
     if (fAtlases[index] == nullptr) {
-        SkColorType colorType = MaskFormatToColorType(format);
-        SkISize atlasDimensions = fAtlasConfig.atlasDimensions(format);
-        SkISize plotDimensions = fAtlasConfig.plotDimensions(format);
-        fAtlases[index] = DrawAtlas::Make(colorType,
-                                          SkColorTypeBytesPerPixel(colorType),
+        SkISize atlasDimensions = fAtlasConfig.atlasDimensions(resolvedMaskFormat);
+        SkISize plotDimensions = fAtlasConfig.plotDimensions(resolvedMaskFormat);
+        fAtlases[index] = DrawAtlas::Make(resolvedMaskFormat,
                                           atlasDimensions.width(), atlasDimensions.height(),
                                           plotDimensions.width(), plotDimensions.height(),
                                           /*generationCounter=*/this,
@@ -333,82 +395,3 @@ void TextAtlasManager::compact() {
 }
 
 }  // namespace skgpu::graphite
-
-////////////////////////////////////////////////////////////////////////////////////////////////
-
-namespace sktext::gpu {
-
-using DrawAtlas = skgpu::graphite::DrawAtlas;
-
-std::tuple<bool, int> GlyphVector::regenerateAtlasForGraphite(int begin,
-                                                              int end,
-                                                              skgpu::MaskFormat maskFormat,
-                                                              int srcPadding,
-                                                              skgpu::graphite::Recorder* recorder) {
-    auto atlasManager = recorder->priv().atlasProvider()->textAtlasManager();
-    auto tokenTracker = recorder->priv().tokenTracker();
-
-    // TODO: this is not a great place for this -- need a better way to init atlases when needed
-    unsigned int numActiveProxies;
-    const sk_sp<skgpu::graphite::TextureProxy>* proxies =
-            atlasManager->getProxies(maskFormat, &numActiveProxies);
-    if (!proxies) {
-        SkDebugf("Could not allocate backing texture for atlas\n");
-        return {false, 0};
-    }
-
-    uint64_t currentAtlasGen = atlasManager->atlasGeneration(maskFormat);
-
-    this->packedGlyphIDToGlyph(recorder->priv().strikeCache());
-
-    if (fAtlasGeneration != currentAtlasGen) {
-        // Calculate the texture coordinates for the vertexes during first use (fAtlasGeneration
-        // is set to kInvalidAtlasGeneration) or the atlas has changed in subsequent calls..
-        fBulkUseUpdater.reset();
-
-        SkBulkGlyphMetricsAndImages metricsAndImages{fTextStrike->strikeSpec()};
-
-        // Update the atlas information in the GrStrike.
-        auto glyphs = fGlyphs.subspan(begin, end - begin);
-        int glyphsPlacedInAtlas = 0;
-        bool success = true;
-        for (const Variant& variant : glyphs) {
-            Glyph* gpuGlyph = variant.glyph;
-            SkASSERT(gpuGlyph != nullptr);
-
-            if (!atlasManager->hasGlyph(maskFormat, gpuGlyph)) {
-                const SkGlyph& skGlyph = *metricsAndImages.glyph(gpuGlyph->fPackedID);
-                auto code = atlasManager->addGlyphToAtlas(skGlyph, gpuGlyph, srcPadding);
-                if (code != DrawAtlas::ErrorCode::kSucceeded) {
-                    success = code != DrawAtlas::ErrorCode::kError;
-                    break;
-                }
-            }
-            atlasManager->addGlyphToBulkAndSetUseToken(
-                    &fBulkUseUpdater, maskFormat, gpuGlyph,
-                    tokenTracker->nextFlushToken());
-            glyphsPlacedInAtlas++;
-        }
-
-        // Update atlas generation if there are no more glyphs to put in the atlas.
-        if (success && begin + glyphsPlacedInAtlas == SkCount(fGlyphs)) {
-            // Need to get the freshest value of the atlas' generation because
-            // updateTextureCoordinates may have changed it.
-            fAtlasGeneration = atlasManager->atlasGeneration(maskFormat);
-        }
-
-        return {success, glyphsPlacedInAtlas};
-    } else {
-        // The atlas hasn't changed, so our texture coordinates are still valid.
-        if (end == SkCount(fGlyphs)) {
-            // The atlas hasn't changed and the texture coordinates are all still valid. Update
-            // all the plots used to the new use token.
-            atlasManager->setUseTokenBulk(fBulkUseUpdater,
-                                          tokenTracker->nextFlushToken(),
-                                          maskFormat);
-        }
-        return {true, end - begin};
-    }
-}
-
-}  // namespace sktext::gpu

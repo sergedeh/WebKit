@@ -32,6 +32,7 @@
 #include "APIError.h"
 #include "Logging.h"
 #include "WebExtensionSQLiteHelpers.h"
+#include <WebCore/SQLiteExtras.h>
 #include <sqlite3.h>
 #include <wtf/FileSystem.h>
 #include <wtf/RefPtr.h>
@@ -63,7 +64,7 @@ int WebExtensionSQLiteDatabase::close()
 
     int result = sqlite3_close_v2(m_db);
     if (result != SQLITE_OK) {
-        RELEASE_LOG_ERROR(Extensions, "Failed to close database: %s (%d)", m_lastErrorMessage.data(), result);
+        RELEASE_LOG_ERROR(Extensions, "Failed to close database: %s (%d)", m_lastErrorMessage, result);
         return result;
     }
 
@@ -77,7 +78,7 @@ void WebExtensionSQLiteDatabase::reportErrorWithCode(int errorCode, const String
     ASSERT(errorCode != SQLITE_OK);
 
     if (!query.isEmpty())
-        RELEASE_LOG_ERROR(Extensions, "SQLite error (%d) occurred with query: %" PRIVATE_LOG_STRING, errorCode, query.utf8().data());
+        RELEASE_LOG_ERROR(Extensions, "SQLite error (%d) occurred with query: %" PRIVATE_LOG_STRING, errorCode, query.utf8());
     else
         RELEASE_LOG_ERROR(Extensions, "SQLite error (%d) occurred", errorCode);
 
@@ -165,13 +166,14 @@ bool WebExtensionSQLiteDatabase::openWithAccessType(AccessType accessType, RefPt
 
         auto directory = m_url.truncatedForUseAsBase().fileSystemPath();
         if (!FileSystem::makeAllDirectories(directory) || FileSystem::fileType(directory) != FileSystem::FileType::Directory) {
-            RELEASE_LOG_ERROR(Extensions, "Unable to create parent folder for database at path: %s", m_url.fileSystemPath().utf8().data());
+            RELEASE_LOG_ERROR(Extensions, "Unable to create parent folder for database at path: %s", m_url.fileSystemPath().utf8());
             outError = errorWithSQLiteErrorCode(SQLITE_CANTOPEN);
             return false;
         }
     }
 
-    int result = sqlite3_open_v2(FileSystem::fileSystemRepresentation(databasePath).data(), &m_db, flags, vfs.isEmpty() ? nullptr : vfs.utf8().data());
+    auto vfsUTF8 = vfs.isEmpty() ? UTF8CString { } : vfs.utf8();
+    int result = WebCore::sqliteOpen(FileSystem::fileSystemRepresentation(databasePath), &m_db, flags, vfsUTF8);
     if (result == SQLITE_OK)
         return true;
 

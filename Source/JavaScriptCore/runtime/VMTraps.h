@@ -27,10 +27,8 @@
 
 #include <JavaScriptCore/JSExportMacros.h>
 #include <JavaScriptCore/StackManager.h>
-#include <wtf/AutomaticThread.h>
 #include <wtf/Box.h>
-#include <wtf/Expected.h>
-#include <wtf/HashSet.h>
+#include <wtf/Condition.h>
 #include <wtf/Lock.h>
 #include <wtf/Locker.h>
 #include <wtf/RefPtr.h>
@@ -208,7 +206,7 @@ public:
     }
     // Designed to be a fast check to rule out if we might need handling, and we need to ensure needHandling on the slow path.
     ALWAYS_INLINE bool maybeNeedHandling() const { return m_trapBits.loadRelaxed(); }
-    void* trapBitsAddress() { return &m_trapBits; }
+    void* trapBitsAddress() LIFETIME_BOUND { return &m_trapBits; }
     static constexpr ptrdiff_t offsetOfTrapsBits() { return OBJECT_OFFSETOF(VMTraps, m_trapBits); }
 
     enum class DeferAction {
@@ -220,11 +218,7 @@ public:
     inline void deferTermination(DeferAction);
     inline void undoDeferTermination(DeferAction);
 
-    void notifyGrabAllLocks()
-    {
-        if (needHandling(AsyncEvents))
-            invalidateCodeBlocksOnStack();
-    }
+    inline void notifyGrabAllLocks();
 
     bool hasTrapBit(Event event)
     {
@@ -235,13 +229,17 @@ public:
         BitField maskedBits = event & mask;
         return m_trapBits.loadRelaxed() & maskedBits;
     }
-    ALWAYS_INLINE CONCURRENT_SAFE void clearTrap(Event event)
+
+    bool isInBlockingScope() const { return m_isInBlockingScope; }
+
+    ALWAYS_INLINE CONCURRENT_SAFE bool clearTrap(Event event)
     {
         ASSERT(!(event & ~AllEvents));
-        clearTrapWithoutCancellingThreadStop(event);
+        auto oldBits = clearTrapWithoutCancellingThreadStop(event);
         // Trap bit must be cleared before we update the thread stop request.
         if (isAsyncEvent(event))
             updateThreadStopRequestIfNeeded();
+        return oldBits & event;
     }
     ALWAYS_INLINE CONCURRENT_SAFE void fireTrap(Event event)
     {
@@ -271,7 +269,7 @@ public:
 #endif
 
     ALWAYS_INLINE void* softStackLimit() const { return m_stack.softStackLimit(); };
-    ALWAYS_INLINE void setStackSoftLimit(void* newLimit) { m_stack.setStackSoftLimit(newLimit); }
+    inline void setStackSoftLimit(void*);
 
     ALWAYS_INLINE void** addressOfSoftStackLimit() { return m_stack.addressOfSoftStackLimit(); }
 
@@ -282,18 +280,18 @@ public:
     }
 
     using Mirror = StackManager::Mirror;
-    ALWAYS_INLINE void registerMirror(Mirror& mirror) { m_stack.registerMirror(mirror); }
-    ALWAYS_INLINE void unregisterMirror(Mirror& mirror) { m_stack.unregisterMirror(mirror); }
+    inline void registerMirror(Mirror&);
+    inline void unregisterMirror(Mirror&);
 
     VM& vm() const;
 
-    void requestStop() { m_stack.requestStop(); }
-    void cancelStop() { m_stack.cancelStop(); }
+    inline void requestStop();
+    inline void cancelStop();
 
 private:
-    ALWAYS_INLINE void clearTrapWithoutCancellingThreadStop(Event event)
+    ALWAYS_INLINE BitField clearTrapWithoutCancellingThreadStop(Event event)
     {
-        m_trapBits.exchangeAnd(~event);
+        return m_trapBits.exchangeAnd(~event);
     }
 
     CONCURRENT_SAFE void cancelThreadStopIfNeeded() WTF_REQUIRES_LOCK(m_trapSignalingLock);
@@ -330,6 +328,11 @@ private:
     // Protects against a race between VMManager::requestResumeAll() and VMManager::notifyVMActivation()
     // to increment their m_numberOfActiveVMs.
     bool m_hasBeenCountedAsActive { false };
+
+    bool m_isInBlockingScope { false };
+
+    // Prevents dispatching multiple idle stop handlers for a single stop cycle.
+    Atomic<bool> m_hasDispatchedIdleStopHandler { false };
 
     Box<Lock> m_trapSignalingLock;
     Box<Condition> m_condition;

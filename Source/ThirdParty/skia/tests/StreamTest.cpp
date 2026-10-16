@@ -10,12 +10,12 @@
 #include "include/core/SkStream.h"
 #include "include/core/SkString.h"
 #include "include/core/SkTypes.h"
-#include "include/private/base/SkTemplates.h"
-#include "include/private/base/SkTo.h"
-#include "src/base/SkAutoMalloc.h"
-#include "src/base/SkBuffer.h"
-#include "src/base/SkRandom.h"
+#include "include/private/SkTemplates.h"
+#include "include/private/SkTo.h"
+#include "src/core/SkAutoMalloc.h"
+#include "src/core/SkBuffer.h"
 #include "src/core/SkOSFile.h"
+#include "src/core/SkRandom.h"
 #include "src/core/SkStreamPriv.h"
 #include "src/utils/SkOSPath.h"
 #include "tests/Test.h"
@@ -40,8 +40,6 @@ using namespace skia_private;
 #ifndef SK_BUILD_FOR_WIN
 #include <fcntl.h>
 #endif
-
-#define MAX_SIZE    (256 * 1024)
 
 static void test_loop_stream(skiatest::Reporter* reporter, SkStream* stream,
                              const void* src, size_t len, int repeat) {

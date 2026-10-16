@@ -57,7 +57,7 @@ bool checkSandboxRequirementForType(MediaPermissionType type)
 
         int result = sandbox_check(getpid(), operation, static_cast<enum sandbox_filter_type>(SANDBOX_CHECK_NO_REPORT | SANDBOX_FILTER_NONE));
         if (result == -1)
-            WTFLogAlways("Error checking '%s' sandbox access, errno=%ld", operation.characters(), (long)errno);
+            SAFE_WTFLOGALWAYS("Error checking '%s' sandbox access, errno=%ld", operation, (long)errno);
         return !result;
     };
 
@@ -98,7 +98,7 @@ bool checkUsageDescriptionStringForSpeechRecognition()
 
 static RetainPtr<NSString> visibleDomain(const String& host)
 {
-    auto domain = WTF::URLHelpers::userVisibleURL(host.utf8());
+    auto domain = WTF::URLHelpers::userVisibleURL(host.utf8().span());
     return startsWithLettersIgnoringASCIICase(domain, "www."_s) ? StringView(domain).substring(4).createNSString() : domain.createNSString();
 }
 
@@ -113,9 +113,9 @@ RetainPtr<NSString> applicationVisibleNameFromOrigin(const WebCore::SecurityOrig
 RetainPtr<NSString> applicationVisibleName()
 {
     RetainPtr appBundle = [NSBundle mainBundle];
-    if (RetainPtr<NSString> displayName = appBundle.get().infoDictionary[bridge_cast(_kCFBundleDisplayNameKey)])
+    if (RetainPtr displayName = dynamic_objc_cast<NSString>(appBundle.get().infoDictionary[bridge_cast(_kCFBundleDisplayNameKey)]))
         return displayName;
-    return appBundle.get().infoDictionary[bridge_cast(kCFBundleNameKey)];
+    return dynamic_objc_cast<NSString>(appBundle.get().infoDictionary[bridge_cast(kCFBundleNameKey)]);
 }
 
 static RetainPtr<NSString> alertMessageText(MediaPermissionReason reason, const WebCore::SecurityOriginData& origin)
@@ -218,17 +218,20 @@ void alertForPermission(WebPageProxy& page, MediaPermissionReason reason, const 
     }];
 #else
     auto alert = WebKit::createUIAlertController(alertTitle.get(), nil);
-    UIAlertAction* allowAction = [UIAlertAction actionWithTitle:allowButtonString.get() style:UIAlertActionStyleDefault handler:[completionBlock](UIAlertAction *action) {
+    RetainPtr allowAction = [UIAlertAction actionWithTitle:allowButtonString.get() style:UIAlertActionStyleDefault handler:[completionBlock](UIAlertAction *action) {
         completionBlock(true);
     }];
 
-    UIAlertAction* doNotAllowAction = [UIAlertAction actionWithTitle:doNotAllowButtonString.get() style:UIAlertActionStyleCancel handler:[completionBlock](UIAlertAction *action) {
+    RetainPtr doNotAllowAction = [UIAlertAction actionWithTitle:doNotAllowButtonString.get() style:UIAlertActionStyleCancel handler:[completionBlock](UIAlertAction *action) {
         completionBlock(false);
     }];
 
-    [alert addAction:doNotAllowAction];
-    [alert addAction:allowAction];
+    [alert addAction:doNotAllowAction.get()];
+    [alert addAction:allowAction.get()];
 
+#if PLATFORM(VISION)
+    page.dispatchWillPresentModalUI();
+#endif
     [[webView _wk_viewControllerForFullScreenPresentation] presentViewController:alert.get() animated:YES completion:nil];
 #endif
 }

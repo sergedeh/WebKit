@@ -28,18 +28,23 @@
 
 #include "AutomationBackendDispatchers.h"
 #include <optional>
+#include <wtf/text/TextStream.h>
 
 #if ENABLE(WEBDRIVER_BIDI)
 
 #include "BidiBrowserAgent.h"
 #include "BidiBrowsingContextAgent.h"
+#include "BidiDigitalCredentialsAgent.h"
+#include "BidiInputAgent.h"
 #include "BidiPermissionsAgent.h"
 #include "BidiScriptAgent.h"
+#include "BidiSessionAgent.h"
 #include "BidiStorageAgent.h"
 #include "Logging.h"
 #include "WebAutomationSession.h"
 #include <JavaScriptCore/InspectorBackendDispatcher.h>
 #include <JavaScriptCore/InspectorFrontendRouter.h>
+#include <JavaScriptCore/MathCommon.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
@@ -54,12 +59,17 @@ WebDriverBidiProcessor::WebDriverBidiProcessor(WebAutomationSession& session)
     , m_frontendRouter(FrontendRouter::create())
     , m_backendDispatcher(BackendDispatcher::create(m_frontendRouter.copyRef()))
     , m_browserAgent(makeUniqueRef<BidiBrowserAgent>(session, m_backendDispatcher))
-    , m_browsingContextAgent(makeUniqueRef<BidiBrowsingContextAgent>(session, m_backendDispatcher))
+    , m_browsingContextAgent(BidiBrowsingContextAgent::create(session, m_backendDispatcher))
+    , m_digitalCredentialsAgent(makeUniqueRef<BidiDigitalCredentialsAgent>(session, m_backendDispatcher))
+    , m_inputAgent(makeUniqueRef<BidiInputAgent>(session, m_backendDispatcher))
     , m_permissionsAgent(makeUniqueRef<BidiPermissionsAgent>(session, m_backendDispatcher))
     , m_scriptAgent(makeUniqueRef<BidiScriptAgent>(session, m_backendDispatcher))
+    , m_sessionAgent(makeUniqueRef<BidiSessionAgent>(session, m_backendDispatcher))
     , m_storageAgent(makeUniqueRef<BidiStorageAgent>(session, m_backendDispatcher))
     , m_browsingContextDomainNotifier(makeUniqueRef<BidiBrowsingContextFrontendDispatcher>(m_frontendRouter))
+    , m_inputDomainNotifier(makeUniqueRef<BidiInputFrontendDispatcher>(m_frontendRouter))
     , m_logDomainNotifier(makeUniqueRef<BidiLogFrontendDispatcher>(m_frontendRouter))
+    , m_scriptDomainNotifier(makeUniqueRef<BidiScriptFrontendDispatcher>(m_frontendRouter))
 {
     m_frontendRouter->connectFrontend(*this);
 }
@@ -77,10 +87,41 @@ void WebDriverBidiProcessor::processBidiMessage(const String& message)
         return;
     }
 
-    LOG(Automation, "[s:%s] processBidiMessage of length %d", session->sessionIdentifier().utf8().data(), message.length());
-    LOG(Automation, "%s", message.utf8().data());
+    LOG_WITH_STREAM(Automation, stream << "[s:"_s << session->sessionIdentifier() << "] processBidiMessage of length "_s << message.length());
+    LOG_WITH_STREAM(Automation, stream << message);
 
     m_backendDispatcher->dispatch(message);
+}
+
+Inspector::CommandResult<void> WebDriverBidiProcessor::validateSerializationOptions(const JSON::Object& serializationOptions)
+{
+    RefPtr<JSON::Value> maxDomDepthValue;
+    if (serializationOptions.getValue("maxDomDepth"_s, maxDomDepthValue)) {
+        if (auto maxDomDepth = maxDomDepthValue->asDouble()) {
+            if (*maxDomDepth < 0)
+                return makeUnexpected("serializationOptions.maxDomDepth must be non-negative"_s);
+            if (std::floor(*maxDomDepth) != *maxDomDepth)
+                return makeUnexpected("serializationOptions.maxDomDepth must be an integer"_s);
+            if (*maxDomDepth > JSC::maxSafeInteger())
+                return makeUnexpected("serializationOptions.maxDomDepth exceeds maximum safe integer"_s);
+        }
+    }
+
+    RefPtr<JSON::Value> maxObjectDepthValue;
+    if (serializationOptions.getValue("maxObjectDepth"_s, maxObjectDepthValue)) {
+        if (auto maxObjectDepth = maxObjectDepthValue->asDouble()) {
+            if (*maxObjectDepth < 0)
+                return makeUnexpected("serializationOptions.maxObjectDepth must be non-negative"_s);
+            if (std::floor(*maxObjectDepth) != *maxObjectDepth)
+                return makeUnexpected("serializationOptions.maxObjectDepth must be an integer"_s);
+            if (*maxObjectDepth > JSC::maxSafeInteger())
+                return makeUnexpected("serializationOptions.maxObjectDepth exceeds maximum safe integer"_s);
+        }
+    }
+
+    // Note: includeShadowTree validation is handled by the protocol enum definition in BidiScript.json
+
+    return { };
 }
 
 // Translate internal error messages that come from the inspector protocol payload.
@@ -115,11 +156,11 @@ static String toBidiErrorCode(int errorCode, const String& inspectorInternalMsg)
     case Inspector::Protocol::Automation::ErrorMessage::JavaScriptTimeout:
         return "script timeout"_s;
     case Inspector::Protocol::Automation::ErrorMessage::WindowNotFound:
-        return "no such window"_s;
+        return "no such browsing context"_s;
     case Inspector::Protocol::Automation::ErrorMessage::FrameNotFound:
         return "no such frame"_s;
     case Inspector::Protocol::Automation::ErrorMessage::NodeNotFound:
-        return "stale element reference"_s;
+        return "no such node"_s;
     case Inspector::Protocol::Automation::ErrorMessage::InvalidNodeIdentifier:
         return "no such element"_s;
     case Inspector::Protocol::Automation::ErrorMessage::InvalidElementState:
@@ -149,6 +190,10 @@ static String toBidiErrorCode(int errorCode, const String& inspectorInternalMsg)
         return "unable to unload extension"_s;
     case Inspector::Protocol::Automation::ErrorMessage::NoSuchExtension:
         return "no such web extension"_s;
+    case Inspector::Protocol::Automation::ErrorMessage::NoSuchUserContext:
+        return "no such user context"_s;
+    case Inspector::Protocol::Automation::ErrorMessage::NoSuchScript:
+        return "no such script"_s;
     default:
         return "unknown error"_s;
     }
@@ -162,23 +207,23 @@ void WebDriverBidiProcessor::sendBidiMessage(const String& message)
         return;
     }
 
-    LOG(Automation, "[s:%s] sendBidiMessage of length %d", session->sessionIdentifier().utf8().data(), message.length());
-    LOG(Automation, "%s", message.utf8().data());
+    LOG_WITH_STREAM(Automation, stream << "[s:"_s << session->sessionIdentifier() << "] sendBidiMessage of length "_s << message.length());
+    LOG_WITH_STREAM(Automation, stream << message);
 
     auto msgValue = JSON::Object::parseJSON(message);
     if (!msgValue) {
-        RELEASE_LOG_ERROR(Automation, "[s:%s] sendBidiMessage failed to parse message as JSON: %s", session->sessionIdentifier().utf8().data(), message.utf8().data());
+        RELEASE_LOG_ERROR(Automation, "[s:%s] sendBidiMessage failed to parse message as JSON: %s", session->sessionIdentifier().utf8(), message.utf8());
         return;
     }
     auto msgObj = msgValue->asObject();
     if (!msgObj) {
-        RELEASE_LOG_ERROR(Automation, "[s:%s] sendBidiMessage failed to parse message as JSON object: %s", session->sessionIdentifier().utf8().data(), message.utf8().data());
+        RELEASE_LOG_ERROR(Automation, "[s:%s] sendBidiMessage failed to parse message as JSON object: %s", session->sessionIdentifier().utf8(), message.utf8());
         return;
     }
 
     if (auto internalErrorObj = msgObj->getObject("error"_s)) {
         if (auto codeField = internalErrorObj->getInteger("code"_s)) {
-            RELEASE_LOG(Automation, "[s:%s] sendBidiMessage converting internal error into BiDi error: %s", session->sessionIdentifier().utf8().data(), message.utf8().data());
+            RELEASE_LOG(Automation, "[s:%s] sendBidiMessage converting internal error into BiDi error: %s", session->sessionIdentifier().utf8(), message.utf8());
 
             auto bidiErrorObj = JSON::Object::create();
             bidiErrorObj->setString("type"_s, "error"_s);
@@ -202,7 +247,7 @@ void WebDriverBidiProcessor::sendBidiMessage(const String& message)
             return;
         }
         // FIXME should we forward some unknown error?
-        RELEASE_LOG_ERROR(Automation, "[s:%s] sendBidiMessage failed to parse error code: %s", session->sessionIdentifier().utf8().data(), message.utf8().data());
+        RELEASE_LOG_ERROR(Automation, "[s:%s] sendBidiMessage failed to parse error code: %s", session->sessionIdentifier().utf8(), message.utf8());
     } else if (msgObj->getInteger("id"_s))
         msgObj->setString("type"_s, "success"_s);
     else
@@ -211,6 +256,16 @@ void WebDriverBidiProcessor::sendBidiMessage(const String& message)
     session->sendBidiMessage(msgObj->toJSONString());
 }
 
+bool WebDriverBidiProcessor::eventIsEnabled(const String& eventName, const HashSet<String>& contexts)
+{
+    return m_sessionAgent->eventIsEnabled(eventName, contexts);
+}
+
+void WebDriverBidiProcessor::emitEventIfEnabled(const String& eventName, const HashSet<String>& browsingContexts, NOESCAPE const Function<void()>& callback)
+{
+    if (m_sessionAgent->eventIsEnabled(eventName, browsingContexts)) [[unlikely]]
+        callback();
+}
 
 // MARK: Inspector::FrontendChannel methods.
 

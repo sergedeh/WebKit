@@ -30,7 +30,7 @@
 
 #include "TZoneHeapManager.h"
 #include "bmalloc.h"
-#include "bmalloc_heap_internal.h"
+#include "bmalloc_heap_iso_internal.h"
 #include "bmalloc_heap_ref.h"
 
 #if !BUSE(LIBPAS)
@@ -53,7 +53,8 @@ void* tzoneAllocateNonCompactSlow(size_t requestedSize, const TZoneSpecification
             return tzoneAllocateNonCompactSlow(requestedSize, spec);
         }
 
-        RELEASE_BASSERT(tzoneMallocFallback == TZoneMallocFallback::ForceDebugMalloc);
+        RELEASE_BASSERT(tzoneMallocFallback == TZoneMallocFallback::ForceDebugMalloc
+            || tzoneMallocFallback == TZoneMallocFallback::ForceFastMalloc);
         return api::malloc(requestedSize, CompactAllocationMode::NonCompact);
     }
 
@@ -65,7 +66,7 @@ void* tzoneAllocateNonCompactSlow(size_t requestedSize, const TZoneSpecification
         heapRef = tzoneHeapManager->heapRefForTZoneType(spec);
         *spec.addressOfHeapRef = heapRef;
     }
-    return bmalloc_iso_allocate_inline(TO_PAS_HEAPREF(heapRef), pas_non_compact_allocation_mode);
+    return bmalloc_iso_allocate_inline(TO_PAS_HEAPREF(heapRef));
 }
 
 void* tzoneAllocateCompactSlow(size_t requestedSize, const TZoneSpecification& spec)
@@ -77,7 +78,8 @@ void* tzoneAllocateCompactSlow(size_t requestedSize, const TZoneSpecification& s
             return tzoneAllocateCompactSlow(requestedSize, spec);
         }
 
-        RELEASE_BASSERT(tzoneMallocFallback == TZoneMallocFallback::ForceDebugMalloc);
+        RELEASE_BASSERT(tzoneMallocFallback == TZoneMallocFallback::ForceDebugMalloc
+            || tzoneMallocFallback == TZoneMallocFallback::ForceFastMalloc);
         return api::malloc(requestedSize, CompactAllocationMode::Compact);
     }
 
@@ -89,22 +91,27 @@ void* tzoneAllocateCompactSlow(size_t requestedSize, const TZoneSpecification& s
         heapRef = tzoneHeapManager->heapRefForTZoneType(spec);
         *spec.addressOfHeapRef = heapRef;
     }
-    return bmalloc_iso_allocate_inline(TO_PAS_HEAPREF(heapRef), pas_always_compact_allocation_mode);
+    return bmalloc_iso_allocate_inline(TO_PAS_HEAPREF(heapRef));
 }
 
 void* tzoneAllocateCompact(HeapRef heapRef)
 {
-    return bmalloc_iso_allocate_inline(TO_PAS_HEAPREF(heapRef), pas_always_compact_allocation_mode);
+    return bmalloc_iso_allocate_inline(TO_PAS_HEAPREF(heapRef));
 }
 
 void* tzoneAllocateNonCompact(HeapRef heapRef)
 {
-    return bmalloc_iso_allocate_inline(TO_PAS_HEAPREF(heapRef), pas_non_compact_allocation_mode);
+    return bmalloc_iso_allocate_inline(TO_PAS_HEAPREF(heapRef));
 }
 
 void tzoneFree(void* p)
 {
-    bmalloc_deallocate_inline(p);
+    // Route through the tagged-aware free path (which tries the untagged bmalloc
+    // heap, then the tagged heap) rather than bmalloc_deallocate_inline, which only
+    // consults the untagged config. Under MTE, TZone falls back to api::malloc,
+    // which allocates from the tagged heap; those objects must be freed via the
+    // tagged path. This also correctly frees iso-heaped and non-MTE fallback objects.
+    api::free(p);
 }
 
 #undef TO_PAS_HEAPREF

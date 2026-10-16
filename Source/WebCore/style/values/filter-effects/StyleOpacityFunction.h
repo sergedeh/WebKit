@@ -45,7 +45,7 @@ struct OpacityParameters {
 
     Parameter value;
 
-    static OpacityParameters passthroughForInterpolation();
+    static OpacityParameters LEGACY_NODELETE passthroughForInterpolation();
 
     constexpr bool requiresRepaintForCurrentColorChange() const { return false; }
     constexpr bool affectsOpacity() const { return true; }
@@ -58,12 +58,12 @@ struct OpacityParameters {
 
     bool operator==(const OpacityParameters&) const = default;
 };
-using OpacityFunction = FunctionNotation<CSSValueOpacity, OpacityParameters>;
+using OpacityFunction = FunctionNotation<CSSValueID::Opacity, OpacityParameters>;
 DEFINE_TYPE_WRAPPER_GET(OpacityParameters, value);
 
 // MARK: - Conversion
 
-template<> struct ToCSS<OpacityParameters> { auto operator()(const OpacityParameters&, const RenderStyle&) -> CSS::Opacity; };
+template<> struct ToCSS<OpacityParameters> { auto operator()(const OpacityParameters&, const Style::ComputedStyle&) -> CSS::Opacity; };
 template<> struct ToStyle<CSS::Opacity> { auto operator()(const CSS::Opacity&, const BuilderState&) -> OpacityParameters; };
 
 // MARK: - Blending

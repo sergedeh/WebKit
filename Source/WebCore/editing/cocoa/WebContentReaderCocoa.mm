@@ -74,6 +74,9 @@
 #import <wtf/FileSystem.h>
 #import <wtf/SoftLinking.h>
 #import <wtf/URLParser.h>
+#import <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
+#import <wtf/text/Base64.h>
+#import <wtf/unicode/CharacterNames.h>
 
 #if PLATFORM(MAC)
 #import "LocalDefaultSystemAppearance.h"
@@ -90,6 +93,12 @@ SOFT_LINK(WebKitLegacy, _WebCreateFragment, void, (WebCore::Document& document, 
 #endif
 
 namespace WebCore {
+
+static String dataURLForImageData(std::span<const uint8_t> data, const String& type)
+{
+    auto mimeType = isDeclaredUTI(type) ? MIMETypeFromUTI(type) : type;
+    return makeString("data:"_s, mimeType, ";base64,"_s, base64Encoded(data));
+}
 
 #if PLATFORM(MACCATALYST)
 
@@ -144,11 +153,11 @@ static FragmentAndResources createFragmentInternal(LocalFrame& frame, NSAttribut
 
 #if PLATFORM(MAC)
     RefPtr view = frame.view();
-    LocalDefaultSystemAppearance localAppearance(view ? view->useDarkAppearance() : false);
+    LocalDefaultSystemAppearance localAppearance(view && view->useDarkAppearance());
 #endif
 
     NSArray *subresources = nil;
-    RetainPtr<NSString> fragmentString = [string _htmlDocumentFragmentString:NSMakeRange(0, [string length]) documentAttributes:attributesForAttributedStringConversion(!fragmentCreationOptions.contains(FragmentCreationOptions::NoInterchangeNewlines)) subresources:&subresources];
+    RetainPtr<NSString> fragmentString = [string _htmlDocumentFragmentString:NSMakeRange(0, [string length]) documentAttributes:protect(attributesForAttributedStringConversion(!fragmentCreationOptions.contains(FragmentCreationOptions::NoInterchangeNewlines))) subresources:&subresources];
 
     Ref fragment = DocumentFragment::create(document.get());
     Ref dummyBodyToForceInBodyInsertionMode = HTMLBodyElement::create(document.get());
@@ -156,8 +165,9 @@ static FragmentAndResources createFragmentInternal(LocalFrame& frame, NSAttribut
     fragment->parseHTML(markup, dummyBodyToForceInBodyInsertionMode, { });
 
     result.fragment = WTF::move(fragment);
-    for (WebArchiveResourceFromNSAttributedString *resource in subresources)
-        result.resources.append(*resource->resource);
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL WebArchiveResourceFromNSAttributedString *resource in subresources)
+        result.resources.append(protect(*resource->resource));
 
     return result;
 }
@@ -178,10 +188,10 @@ class DeferredLoadingScope {
 public:
     DeferredLoadingScope(LocalFrame& frame)
         : m_frame(frame)
-        , m_cachedResourceLoader(frame.document()->cachedResourceLoader())
+        , m_cachedResourceLoader(protect(frame.document())->cachedResourceLoader())
     {
         if (!frame.page()->defersLoading()) {
-            frame.page()->setDefersLoading(true);
+            protect(frame.page())->setDefersLoading(true);
             m_didEnabledDeferredLoading = true;
         }
 
@@ -197,7 +207,7 @@ public:
             m_cachedResourceLoader->setImagesEnabled(true);
         if (m_didEnabledDeferredLoading) {
             if (RefPtr frame = m_frame.get())
-                frame->page()->setDefersLoading(false);
+                protect(frame->page())->setDefersLoading(false);
         }
     }
 
@@ -213,7 +223,7 @@ static bool shouldReplaceSubresourceURLWithBlobDuringSanitization(const URL& url
     return !url.protocolIsData() && !url.protocolIsInHTTPFamily();
 }
 
-static bool shouldReplaceRichContentWithAttachments()
+static bool LEGACY_NODELETE shouldReplaceRichContentWithAttachments()
 {
 #if ENABLE(ATTACHMENT_ELEMENT)
     return DeprecatedGlobalSettings::attachmentElementEnabled();
@@ -243,7 +253,7 @@ static bool contentTypeIsSuitableForInlineImageRepresentation(const String& cont
 
 static bool supportsClientSideAttachmentData(const LocalFrame& frame)
 {
-    if (auto* client = frame.editor().client())
+    if (CheckedPtr client = frame.editor().client())
         return client->supportsClientSideAttachmentData();
 
     return false;
@@ -260,7 +270,7 @@ static Ref<DocumentFragment> createFragmentForImageAttachment(LocalFrame& frame,
 
     auto fragment = document.createDocumentFragment();
     if (supportsClientSideAttachmentData(frame)) {
-        frame.editor().registerAttachmentIdentifier(attachment->ensureUniqueIdentifier(), contentType, defaultImageAttachmentName, buffer.copyRef());
+        protect(frame.editor())->registerAttachmentIdentifier(attachment->ensureUniqueIdentifier(), contentType, defaultImageAttachmentName, buffer.copyRef());
         if (contentTypeIsSuitableForInlineImageRepresentation(contentType)) {
             auto image = HTMLImageElement::create(document);
             image->setAttributeWithoutSynchronization(HTMLNames::srcAttr, AtomString { DOMURL::createObjectURL(document, Blob::create(&document, buffer->extractData(), contentType)) });
@@ -295,6 +305,8 @@ static void replaceRichContentWithAttachments(LocalFrame& frame, DocumentFragmen
         Ref<Element> originalElement;
     };
 
+    Ref editor = protect(frame)->editor();
+
     ASSERT(DeprecatedGlobalSettings::attachmentElementEnabled());
     if (subresources.isEmpty())
         return;
@@ -315,11 +327,11 @@ static void replaceRichContentWithAttachments(LocalFrame& frame, DocumentFragmen
             continue;
 
         auto& resource = resourceEntry->value;
-        serializedAttachmentData.append({ attachment->uniqueIdentifier(), resource->mimeType(), resource->data().makeContiguous() });
+        serializedAttachmentData.append({ attachment->uniqueIdentifier(), resource->mimeType(), protect(resource->data())->makeContiguous() });
     }
 
     if (!serializedAttachmentData.isEmpty())
-        frame.editor().registerAttachments(WTF::move(serializedAttachmentData));
+        editor->registerAttachments(WTF::move(serializedAttachmentData));
 
     Vector<Ref<Element>> elementsToRemove;
     Vector<AttachmentInsertionInfo> attachmentInsertionInfo;
@@ -338,7 +350,7 @@ static void replaceRichContentWithAttachments(LocalFrame& frame, DocumentFragmen
         if (name.isEmpty())
             name = "media"_s;
 
-        attachmentInsertionInfo.append({ WTF::move(name), resource->value->mimeType(), resource->value->data().makeContiguous(), image.get() });
+        attachmentInsertionInfo.append({ WTF::move(name), resource->value->mimeType(), protect(protect(resource->value)->data())->makeContiguous(), image.get() });
     }
 
     for (Ref object : descendantsOfType<HTMLObjectElement>(fragment)) {
@@ -356,7 +368,7 @@ static void replaceRichContentWithAttachments(LocalFrame& frame, DocumentFragmen
         if (name.isEmpty())
             name = "file"_s;
 
-        attachmentInsertionInfo.append({ WTF::move(name), resource->value->mimeType(), resource->value->data().makeContiguous(), object });
+        attachmentInsertionInfo.append({ WTF::move(name), resource->value->mimeType(), protect(protect(resource->value)->data())->makeContiguous(), object });
     }
 
     for (Ref source : descendantsOfType<HTMLSourceElement>(fragment)) {
@@ -374,7 +386,7 @@ static void replaceRichContentWithAttachments(LocalFrame& frame, DocumentFragmen
         if (name.isEmpty())
             name = "media"_s;
 
-        attachmentInsertionInfo.append({ WTF::move(name), resource->value->mimeType(), resource->value->data().makeContiguous(), source });
+        attachmentInsertionInfo.append({ WTF::move(name), resource->value->mimeType(), protect(protect(resource->value)->data())->makeContiguous(), source });
     }
 
     for (auto& info : attachmentInsertionInfo) {
@@ -387,13 +399,13 @@ static void replaceRichContentWithAttachments(LocalFrame& frame, DocumentFragmen
         // See `HTMLConverter.mm` for more details.
         if (info.fileName.startsWith(WebContentReader::placeholderAttachmentFilenamePrefix)) {
             RefPtr document = frame.document();
-            if (RefPtr existingAttachment = document->attachmentForIdentifier({ byteCast<Latin1Character>(info.data->span()) })) {
+            if (RefPtr existingAttachment = document->attachmentForIdentifier({ byteCast<Latin1Character>(protect(info.data)->span()) })) {
                 parent->replaceChild(*existingAttachment.get(), WTF::move(originalElement));
                 continue;
             }
         }
 
-        auto attachment = HTMLAttachmentElement::create(HTMLNames::attachmentTag, fragment.document());
+        auto attachment = HTMLAttachmentElement::create(HTMLNames::attachmentTag, protect(fragment.document()));
         if (supportsClientSideAttachmentData(frame)) {
             if (RefPtr image = dynamicDowncast<HTMLImageElement>(originalElement); image && contentTypeIsSuitableForInlineImageRepresentation(info.contentType)) {
                 RefPtr document = frame.document();
@@ -409,7 +421,7 @@ static void replaceRichContentWithAttachments(LocalFrame& frame, DocumentFragmen
                 attachment->updateAttributes(info.data->size(), AtomString { info.contentType }, AtomString { info.fileName });
                 parent->replaceChild(attachment, WTF::move(originalElement));
             }
-            frame.editor().registerAttachmentIdentifier(attachment->ensureUniqueIdentifier(), WTF::move(info.contentType), WTF::move(info.fileName), WTF::move(info.data));
+            editor->registerAttachmentIdentifier(attachment->ensureUniqueIdentifier(), WTF::move(info.contentType), WTF::move(info.fileName), WTF::move(info.data));
         } else {
             RefPtr document = frame.document();
             Ref data = info.data;
@@ -449,9 +461,9 @@ static void simplifyFragmentForSingleTextAttachment(NSAttributedString *string, 
         return;
 
     RefPtr pictureOrImage = [&] -> RefPtr<HTMLElement> {
-        for (Ref element : descendantsOfType<HTMLElement>(fragment)) {
-            if (is<HTMLPictureElement>(element) || is<HTMLImageElement>(element))
-                return WTF::move(element);
+        for (auto& element : descendantsOfType<HTMLElement>(fragment)) {
+            if (isAnyOf<HTMLPictureElement, HTMLImageElement>(element))
+                return &element;
         }
         return { };
     }();
@@ -492,7 +504,7 @@ RefPtr<DocumentFragment> createFragment(LocalFrame& frame, NSAttributedString *s
     }
 
     if (shouldReplaceRichContentWithAttachments()) {
-        replaceRichContentWithAttachments(frame, *fragmentAndResources.fragment, fragmentAndResources.resources);
+        replaceRichContentWithAttachments(frame, protect(*fragmentAndResources.fragment), fragmentAndResources.resources);
         return WTF::move(fragmentAndResources.fragment);
     }
 
@@ -505,7 +517,7 @@ RefPtr<DocumentFragment> createFragment(LocalFrame& frame, NSAttributedString *s
     }
 
     replaceSubresourceURLs(*fragmentAndResources.fragment, WTF::move(blobURLMap));
-    simplifyFragmentForSingleTextAttachment(string, *fragmentAndResources.fragment);
+    simplifyFragmentForSingleTextAttachment(string, protect(*fragmentAndResources.fragment));
     return WTF::move(fragmentAndResources.fragment);
 }
 
@@ -515,7 +527,7 @@ struct MarkupAndArchive {
     Ref<Archive> archive;
 };
 
-static std::optional<MarkupAndArchive> extractMarkupAndArchive(SharedBuffer& buffer, const std::function<bool(const String)>& canShowMIMETypeAsHTML)
+static std::optional<MarkupAndArchive> extractMarkupAndArchive(SharedBuffer& buffer, NOESCAPE const std::function<bool(const String)>& canShowMIMETypeAsHTML)
 {
     auto archive = LegacyWebArchive::create(URL(), buffer);
     if (!archive)
@@ -529,10 +541,10 @@ static std::optional<MarkupAndArchive> extractMarkupAndArchive(SharedBuffer& buf
     if (!canShowMIMETypeAsHTML(type))
         return std::nullopt;
 
-    return MarkupAndArchive { String::fromUTF8(mainResource->data().makeContiguous()->span()), mainResource.releaseNonNull(), archive.releaseNonNull() };
+    return MarkupAndArchive { String::fromUTF8(protect(protect(mainResource)->data())->makeContiguous()->span()), mainResource.releaseNonNull(), archive.releaseNonNull() };
 }
 
-static String sanitizeMarkupWithArchive(LocalFrame& frame, Document& destinationDocument, MarkupAndArchive& markupAndArchive, MSOListQuirks msoListQuirks, const std::function<bool(const String)>& canShowMIMETypeAsHTML)
+static String sanitizeMarkupWithArchive(LocalFrame& frame, Document& destinationDocument, MarkupAndArchive& markupAndArchive, MSOListQuirks msoListQuirks, NOESCAPE const std::function<bool(const String)>& canShowMIMETypeAsHTML)
 {
     Ref page = createPageForSanitizingWebContent(&destinationDocument);
     RefPtr stagingDocument = page->localTopDocument();
@@ -546,15 +558,21 @@ static String sanitizeMarkupWithArchive(LocalFrame& frame, Document& destination
         return sanitizedMarkupForFragmentInDocument(WTF::move(fragment), *stagingDocument, msoListQuirks, markupAndArchive.markup);
     }
 
-    HashMap<AtomString, AtomString> blobURLMap;
+    HashMap<AtomString, AtomString> blobOrDataURLMap;
+    bool useDataURLs = linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::DataURLForPastedImages);
     for (const Ref<ArchiveResource>& subresource : markupAndArchive.archive->subresources()) {
         auto& subresourceURL = subresource->url();
         if (!shouldReplaceSubresourceURLWithBlobDuringSanitization(subresourceURL))
             continue;
-        Ref data = subresource->data();
-        auto blob = Blob::create(&destinationDocument, data->copyData(), subresource->mimeType());
-        String blobURL = DOMURL::createObjectURL(destinationDocument, blob);
-        blobURLMap.set(AtomString { subresourceURL.string() }, AtomString { blobURL });
+        String replacementURL;
+        if (useDataURLs && MIMETypeRegistry::isSupportedImageMIMEType(subresource->mimeType()))
+            replacementURL = dataURLForImageData(protect(subresource->data())->makeContiguous()->span(), subresource->mimeType());
+        else {
+            Ref data = subresource->data();
+            auto blob = Blob::create(&destinationDocument, data->copyData(), subresource->mimeType());
+            replacementURL = DOMURL::createObjectURL(destinationDocument, blob);
+        }
+        blobOrDataURLMap.set(AtomString { subresourceURL.string() }, AtomString { replacementURL });
     }
 
     auto contentOrigin = SecurityOrigin::create(markupAndArchive.mainResource->url());
@@ -571,17 +589,17 @@ static String sanitizeMarkupWithArchive(LocalFrame& frame, Document& destination
         if (!shouldReplaceSubresourceURLWithBlobDuringSanitization(subframeURL))
             continue;
 
-        MarkupAndArchive subframeContent = { String::fromUTF8(subframeMainResource->data().makeContiguous()->span()),
+        MarkupAndArchive subframeContent = { String::fromUTF8(protect(protect(subframeMainResource)->data())->makeContiguous()->span()),
             subframeMainResource.releaseNonNull(), subframeArchive.copyRef() };
         auto subframeMarkup = sanitizeMarkupWithArchive(frame, destinationDocument, subframeContent, MSOListQuirks::Disabled, canShowMIMETypeAsHTML);
 
         auto blob = Blob::create(&destinationDocument, Vector(byteCast<uint8_t>(subframeMarkup.utf8().span())), type);
 
         String subframeBlobURL = DOMURL::createObjectURL(destinationDocument, blob);
-        blobURLMap.set(AtomString { subframeURL.string() }, AtomString { subframeBlobURL });
+        blobOrDataURLMap.set(AtomString { subframeURL.string() }, AtomString { subframeBlobURL });
     }
 
-    replaceSubresourceURLs(fragment.get(), WTF::move(blobURLMap));
+    replaceSubresourceURLs(fragment.get(), WTF::move(blobOrDataURLMap));
 
     return sanitizedMarkupForFragmentInDocument(WTF::move(fragment), *stagingDocument, msoListQuirks, markupAndArchive.markup);
 }
@@ -637,7 +655,7 @@ bool WebContentMarkupReader::readWebArchive(SharedBuffer& buffer)
         return true;
     }
 
-    m_markup = sanitizeMarkupWithArchive(frame, *frame->protectedDocument(), *result, msoListQuirksForMarkup(), [&] (const String& type) {
+    m_markup = sanitizeMarkupWithArchive(frame, *protect(frame->document()), *result, msoListQuirksForMarkup(), [&] (const String& type) {
         return frame->loader().client().canShowMIMETypeAsHTML(type);
     });
 
@@ -690,7 +708,7 @@ bool WebContentMarkupReader::readHTML(const String& string)
 
     String rawHTML = stripMicrosoftPrefix(string);
     if (shouldSanitize()) {
-        m_markup = sanitizeMarkup(rawHTML, frame().document(), msoListQuirksForMarkup(), WTF::Function<void (DocumentFragment&)> { [] (DocumentFragment& fragment) {
+        m_markup = sanitizeMarkup(rawHTML, protect(frame().document()).get(), msoListQuirksForMarkup(), WTF::Function<void (DocumentFragment&)> { [] (DocumentFragment& fragment) {
             removeSubresourceURLAttributes(fragment, [](auto& url) {
                 return url.protocolIsFile();
             });
@@ -780,8 +798,14 @@ bool WebContentReader::readImage(Ref<FragmentedSharedBuffer>&& buffer, const Str
     Ref document = *frame->document();
     if (shouldReplaceRichContentWithAttachments())
         addFragment(createFragmentForImageAttachment(frame, document, WTF::move(buffer), type, preferredPresentationSize));
-    else
-        addFragment(createFragmentForImageAndURL(document, DOMURL::createObjectURL(document, Blob::create(document.ptr(), buffer->extractData(), type)), preferredPresentationSize));
+    else {
+        String imageURL;
+        if (linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::DataURLForPastedImages))
+            imageURL = dataURLForImageData(buffer->makeContiguous()->span(), type);
+        else
+            imageURL = DOMURL::createObjectURL(document, Blob::create(document.ptr(), buffer->extractData(), type));
+        addFragment(createFragmentForImageAndURL(document, imageURL, preferredPresentationSize));
+    }
 
     return m_fragment;
 }
@@ -823,7 +847,7 @@ static Ref<HTMLElement> attachmentForFilePath(LocalFrame& frame, const String& p
     if (fileType && !isDirectory)
         fileSizeForDisplay = FileSystem::fileSize(path).value_or(0);
 
-    frame.editor().registerAttachmentIdentifier(attachment->ensureUniqueIdentifier(), contentType, path);
+    protect(protect(frame)->editor())->registerAttachmentIdentifier(attachment->ensureUniqueIdentifier(), contentType, path);
 
     if (!fileType)
         attachment->setAttributeWithoutSynchronization(HTMLNames::progressAttr, AtomString::number(0));
@@ -862,7 +886,7 @@ static Ref<HTMLElement> attachmentForData(LocalFrame& frame, FragmentedSharedBuf
         return attachment;
     }
 
-    frame.editor().registerAttachmentIdentifier(attachment->ensureUniqueIdentifier(), attachmentType, fileName, buffer);
+    protect(protect(frame)->editor())->registerAttachmentIdentifier(attachment->ensureUniqueIdentifier(), attachmentType, fileName, buffer);
 
     if (contentTypeIsSuitableForInlineImageRepresentation(attachmentType)) {
         auto image = HTMLImageElement::create(document);
@@ -893,7 +917,7 @@ bool WebContentReader::readFilePath(const String& path, PresentationSize preferr
 
 #if ENABLE(ATTACHMENT_ELEMENT)
     if (DeprecatedGlobalSettings::attachmentElementEnabled())
-        m_fragment->appendChild(attachmentForFilePath(frame, path, preferredPresentationSize, contentType));
+        protect(fragment())->appendChild(attachmentForFilePath(frame, path, preferredPresentationSize, contentType));
 #endif
 
     return true;
@@ -907,7 +931,7 @@ bool WebContentReader::readURL(const URL& url, const String& title)
     Ref frame = this->frame();
 #if PLATFORM(IOS_FAMILY)
     // FIXME: This code shouldn't be accessing selection and changing the behavior.
-    if (!frame->editor().client()->hasRichlyEditableSelection()) {
+    if (!protect(frame->editor().client())->hasRichlyEditableSelection()) {
         if (readPlainText([url.createNSURL() absoluteString]))
             return true;
     }
@@ -954,7 +978,7 @@ bool WebContentReader::readDataBuffer(SharedBuffer& buffer, const String& type, 
         m_fragment = document->createDocumentFragment();
 
 #if ENABLE(ATTACHMENT_ELEMENT)
-    protectedFragment()->appendChild(attachmentForData(frame, buffer, type, name, preferredPresentationSize));
+    protect(fragment())->appendChild(attachmentForData(frame, buffer, type, name, preferredPresentationSize));
 #else
     UNUSED_PARAM(type);
     UNUSED_PARAM(name);

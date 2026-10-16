@@ -26,6 +26,7 @@
 #include "config.h"
 #include "StyleJustifyContent.h"
 
+#include "CSSKeywordValue.h"
 #include "StyleBuilderChecking.h"
 #include "StylePrimitiveNumericTypes+CSSValueConversion.h"
 
@@ -79,34 +80,34 @@ StyleContentAlignmentData JustifyContent::resolve(std::optional<StyleContentAlig
 
 auto CSSValueConversion<JustifyContent>::operator()(BuilderState& state, const CSSValue& value) -> JustifyContent
 {
-    if (RefPtr primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value)) {
-        switch (primitiveValue->valueID()) {
+    if (RefPtr keywordValue = dynamicDowncast<CSSKeywordValue>(value)) {
+        switch (keywordValue->valueID()) {
         // <normal>
-        case CSSValueNormal:
+        case CSSValueID::Normal:
             return CSS::Keyword::Normal { };
         // <content-distribution>
-        case CSSValueSpaceBetween:
+        case CSSValueID::SpaceBetween:
             return CSS::Keyword::SpaceBetween { };
-        case CSSValueSpaceAround:
+        case CSSValueID::SpaceAround:
             return CSS::Keyword::SpaceAround { };
-        case CSSValueSpaceEvenly:
+        case CSSValueID::SpaceEvenly:
             return CSS::Keyword::SpaceEvenly { };
-        case CSSValueStretch:
+        case CSSValueID::Stretch:
             return CSS::Keyword::Stretch { };
         // <overflow-position>? [ <content-position> | left | right ]
-        case CSSValueCenter:
+        case CSSValueID::Center:
             return CSS::Keyword::Center { };
-        case CSSValueStart:
+        case CSSValueID::Start:
             return CSS::Keyword::Start { };
-        case CSSValueEnd:
+        case CSSValueID::End:
             return CSS::Keyword::End { };
-        case CSSValueFlexStart:
+        case CSSValueID::FlexStart:
             return CSS::Keyword::FlexStart { };
-        case CSSValueFlexEnd:
+        case CSSValueID::FlexEnd:
             return CSS::Keyword::FlexEnd { };
-        case CSSValueLeft:
+        case CSSValueID::Left:
             return CSS::Keyword::Left { };
-        case CSSValueRight:
+        case CSSValueID::Right:
             return CSS::Keyword::Right { };
         default:
             state.setCurrentPropertyInvalidAtComputedValueTime();
@@ -114,25 +115,25 @@ auto CSSValueConversion<JustifyContent>::operator()(BuilderState& state, const C
         }
     }
 
-    auto pair = requiredPairDowncast<CSSPrimitiveValue>(state, value);
+    auto pair = requiredPairDowncast<CSSKeywordValue>(state, value);
     if (!pair)
         return CSS::Keyword::Normal { };
 
     auto consumeAfterOverflowPosition = [&](auto overflowPosition, auto secondValueID) -> JustifyContent {
         switch (secondValueID) {
-        case CSSValueCenter:
+        case CSSValueID::Center:
             return { CSS::Keyword::Center { }, overflowPosition };
-        case CSSValueStart:
+        case CSSValueID::Start:
             return { CSS::Keyword::Start { }, overflowPosition };
-        case CSSValueEnd:
+        case CSSValueID::End:
             return { CSS::Keyword::End { }, overflowPosition };
-        case CSSValueFlexStart:
+        case CSSValueID::FlexStart:
             return { CSS::Keyword::FlexStart { }, overflowPosition };
-        case CSSValueFlexEnd:
+        case CSSValueID::FlexEnd:
             return { CSS::Keyword::FlexEnd { }, overflowPosition };
-        case CSSValueLeft:
+        case CSSValueID::Left:
             return { CSS::Keyword::Left { }, overflowPosition };
-        case CSSValueRight:
+        case CSSValueID::Right:
             return { CSS::Keyword::Right { }, overflowPosition };
         default:
             state.setCurrentPropertyInvalidAtComputedValueTime();
@@ -141,9 +142,9 @@ auto CSSValueConversion<JustifyContent>::operator()(BuilderState& state, const C
     };
 
     switch (pair->first->valueID()) {
-    case CSSValueUnsafe:
+    case CSSValueID::Unsafe:
         return consumeAfterOverflowPosition(CSS::Keyword::Unsafe { }, pair->second->valueID());
-    case CSSValueSafe:
+    case CSSValueID::Safe:
         return consumeAfterOverflowPosition(CSS::Keyword::Safe { }, pair->second->valueID());
     default:
         state.setCurrentPropertyInvalidAtComputedValueTime();

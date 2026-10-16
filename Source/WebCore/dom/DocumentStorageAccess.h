@@ -41,7 +41,7 @@ enum class StorageAccessWasGranted : uint8_t { No, Yes, YesWithException };
 
 enum class StorageAccessPromptWasShown : bool { No, Yes };
 
-enum class HasOrShouldIgnoreUserGesture : bool { No, Yes };
+enum class HasUserGestureOrNoUserGestureRequired : bool { No, Yes };
 
 enum class StorageAccessScope : bool {
     PerFrame,
@@ -69,7 +69,7 @@ public:
     explicit DocumentStorageAccess(Document&);
     ~DocumentStorageAccess();
 
-    void ref() const;
+    void LEGACY_NODELETE ref() const;
     void deref() const;
 
     static void hasStorageAccess(Document&, Ref<DeferredPromise>&&);
@@ -99,7 +99,6 @@ private:
     void enableTemporaryTimeUserGesture();
     void consumeTemporaryTimeUserGesture();
 
-    Ref<Document> protectedDocument() const;
 
     std::unique_ptr<UserGestureIndicator> m_temporaryUserGesture;
     

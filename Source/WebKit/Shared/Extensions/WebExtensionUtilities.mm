@@ -41,6 +41,7 @@
 #import <WebCore/Document.h>
 #import <WebCore/LocalFrameInlines.h>
 #import <objc/runtime.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 
 #if PLATFORM(IOS_FAMILY)
 #import <UIKit/UIKit.h>
@@ -220,7 +221,7 @@ static bool validateSet(NSString *key, NSObject *value, NSOrderedSet *validClass
         arrayIsValid = true;
 
         addExpectedValueString(NSArray.class, [classOrArray firstObject]);
-        if (validateArray(key, value, classOrArray, nullptr))
+        if (validateArray(key, value, checked_objc_cast<NSArray>(classOrArray), nullptr))
             return true;
     }
 
@@ -315,11 +316,16 @@ bool validateObject(NSObject *object, NSString *sourceKey, id expectedValueType,
     return !errorString;
 }
 
-JSObjectRef toJSRejectedPromise(JSContextRef context, NSString *callingAPIName, NSString *sourceKey, NSString *underlyingErrorString)
+static JSObjectRef toJSRejectedPromise(JSContextRef context, NSString *callingAPIName, NSString *sourceKey, NSString *underlyingErrorString)
 {
     auto *error = toJSValue(context, toJSError(context, callingAPIName, sourceKey, underlyingErrorString));
     auto *promise = [JSValue valueWithNewPromiseRejectedWithReason:error inContext:toJSContext(context)];
     return JSValueToObject(context, promise.JSValueRef, nullptr);
+}
+
+JSObjectRef toJSRejectedPromise(JSContextRef context, const String& callingAPIName, const String& sourceKey, const String& underlyingErrorString)
+{
+    return toJSRejectedPromise(context, callingAPIName.createNSString().get(), sourceKey.createNSString().get(), underlyingErrorString.createNSString().get());
 }
 
 NSString *toWebAPI(NSLocale *locale)
@@ -377,8 +383,8 @@ bool anyItemsExceedQuota(NSDictionary *items, size_t quota, NSString **outKeyWit
 
 Markable<WTF::UUID> toDocumentIdentifier(WebFrame& frame)
 {
-    RefPtr coreFrame = frame.coreLocalFrame();
-    RefPtr document = coreFrame ? coreFrame->document() : nullptr;
+    auto* coreFrame = frame.coreLocalFrame();
+    auto* document = coreFrame ? coreFrame->document() : nullptr;
     if (!document)
         return { };
     return document->identifier().object();

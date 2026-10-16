@@ -28,7 +28,7 @@
 #include <wtf/Compiler.h>
 #include <wtf/Platform.h>
 
-#if ENABLE(WEBASSEMBLY)
+#if ENABLE(WEBASSEMBLY_DEBUGGER)
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -77,13 +77,6 @@ class DebugServer {
     WTF_MAKE_TZONE_ALLOCATED(DebugServer);
 
 public:
-    enum class State : uint8_t {
-        Stopped, // Initial state, server is not running
-        Starting, // Transitional state during startup
-        Running, // Server is fully operational and accepting connections
-        Stopping, // Transitional state during shutdown
-    };
-
     JS_EXPORT_PRIVATE static DebugServer& singleton();
 
 #if OS(WINDOWS)
@@ -100,24 +93,44 @@ public:
     ~DebugServer() = default;
 
     JS_EXPORT_PRIVATE bool start();
-    JS_EXPORT_PRIVATE void stop();
 
 #if ENABLE(REMOTE_INSPECTOR)
     // DebugServer supports two modes:
     // 1. Direct TCP socket mode (JSC shell debugging)
     // 2. Remote Web Inspector integration mode (WebKit debugging)
     bool isRWIMode() const { return !!m_rwiResponseHandler; }
-    JS_EXPORT_PRIVATE bool startRWI(Function<bool(const String&)>&& rwiResponseHandler);
+    JS_EXPORT_PRIVATE void startRWI(Function<bool(const String&)>&& rwiResponseHandler);
 #endif
 
     void trackInstance(JSWebAssemblyInstance*);
-    void trackModule(Module&);
-    void untrackModule(Module&);
 
     void setPort(uint64_t port) { m_port = port; }
-    bool needToHandleBreakpoints() const;
 
-    JS_EXPORT_PRIVATE bool isConnected() const;
+    // Session lifecycle. Each stage implies the one before it:
+    //
+    //          start()/startRWI()                accept()                library list
+    //   (off) --------------------> isInService ----------> isConnected --------------> hasSentLibraryList
+    //
+    // reset() on disconnect drops back to inService; in RWI mode isConnected survives, since its
+    // handler is never unregistered. hasContinued() is test-only and outside the lattice.
+
+    // The reply channel is open: an accepted TCP socket, or a registered RWI handler. TCP: reset()
+    // closes the socket and this goes false. RWI: the handler is never unregistered, so it stays
+    // true with or without LLDB attached.
+    JS_EXPORT_PRIVATE bool LEGACY_NODELETE isConnected() const;
+
+    // Set only by QueryHandler, on the final ('l') chunk of any qXfer:libraries:read -- including
+    // the re-queries a new instance triggers, so not a once-per-session bit. Cleared by reset().
+    bool hasSentLibraryList() const
+    {
+        bool sent = m_hasSentLibraryList.load(std::memory_order_acquire);
+        RELEASE_ASSERT(!sent || isConnected());
+        return sent;
+    }
+
+    // Test-only: backs $vm.hasDebuggerContinued(), which JSTests spin on to delay a dynamic module
+    // load until LLDB has attached and resumed. Set on the first 'c'/'C', cleared by reset().
+    bool hasContinued() const { return m_hasContinued.load(std::memory_order_acquire); }
 
     JS_EXPORT_PRIVATE void handlePacket(StringView packet);
 
@@ -127,22 +140,18 @@ public:
         return *m_executionHandler;
     }
 
-    JS_EXPORT_PRIVATE ModuleManager& moduleManager() const
-    {
-        RELEASE_ASSERT(m_moduleManager);
-        return *m_moduleManager;
-    }
+    JS_EXPORT_PRIVATE ModuleManager& moduleManager() const;
+
+    JS_EXPORT_PRIVATE void reset();
 
 private:
-    void reset();
 
-    void setState(State);
-    JS_EXPORT_PRIVATE bool isState(State) const;
+    bool isInService() const { return m_isInService.load(std::memory_order_acquire); }
+    void setIsInService() { m_isInService.store(true, std::memory_order_release); }
 
     bool createAndBindServerSocket();
     void startAcceptThread();
     void acceptClientConnections();
-    void resetAll();
     void closeSocket(SocketType&);
 
     void handleClient();
@@ -168,7 +177,10 @@ private:
     friend class RegisterHandler;
     friend class ExecutionHandler;
 
-    std::atomic<State> m_state { State::Stopped };
+    // Set once on start()/startRWI() and never cleared — DebugServer is a process-lifetime singleton.
+    std::atomic<bool> m_isInService { false };
+    std::atomic<bool> m_hasContinued { false };
+    std::atomic<bool> m_hasSentLibraryList { false };
     uint16_t m_port { defaultPort };
     SocketType m_serverSocket { invalidSocketValue };
     SocketType m_clientSocket { invalidSocketValue };
@@ -193,4 +205,4 @@ private:
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
-#endif // ENABLE(WEBASSEMBLY)
+#endif // ENABLE(WEBASSEMBLY_DEBUGGER)

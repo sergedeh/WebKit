@@ -25,12 +25,12 @@
 
 #pragma once
 
-#include <WebCore/StyleLengthWrapper.h>
+#include <WebCore/StylePrimitiveNumericOrKeyword.h>
 
 namespace WebCore {
 namespace Style {
 
-struct BackgroundSizeLength : LengthWrapperBase<LengthPercentage<CSS::Nonnegative>, CSS::Keyword::Auto> {
+struct BackgroundSizeLength : PrimitiveNumericOrKeyword<LengthPercentage<CSS::Nonnegative>, CSS::Keyword::Auto> {
     using Base::Base;
 
     ALWAYS_INLINE bool isAuto() const { return holdsAlternative<CSS::Keyword::Auto>(); }
@@ -95,7 +95,7 @@ struct BackgroundSize {
         return { };
     }
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         return WTF::switchOn(m_value, std::forward<F>(f)...);
     }
@@ -133,11 +133,11 @@ private:
 // MARK: - Conversion
 
 template<> struct CSSValueConversion<BackgroundSize> { auto operator()(BuilderState&, const CSSValue&) -> BackgroundSize; };
-template<> struct CSSValueCreation<BackgroundSize> { auto operator()(CSSValuePool&, const RenderStyle&, const BackgroundSize&) -> Ref<CSSValue>; };
+template<> struct CSSValueCreation<BackgroundSize> { auto operator()(CSSValuePool&, const Style::ComputedStyle&, const BackgroundSize&) -> Ref<CSSValue>; };
 
 // MARK: - Serialization
 
-template<> struct Serialize<BackgroundSize> { void operator()(StringBuilder&, const CSS::SerializationContext&, const RenderStyle&, const BackgroundSize&); };
+template<> struct Serialize<BackgroundSize> { void operator()(StringBuilder&, const CSS::SerializationContext&, const Style::ComputedStyle&, const BackgroundSize&); };
 
 // MARK: - Blending
 

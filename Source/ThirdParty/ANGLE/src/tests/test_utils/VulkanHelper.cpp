@@ -6,11 +6,8 @@
 
 // VulkanHelper.cpp : Helper for allocating & managing vulkan external objects.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #include "test_utils/VulkanHelper.h"
+#include "common/unsafe_buffers.h"
 
 #include <vector>
 
@@ -69,8 +66,10 @@ bool HasExtension(const std::vector<VkExtensionProperties> instanceExtensions,
 {
     for (const auto &extensionProperties : instanceExtensions)
     {
-        if (!strcmp(extensionProperties.extensionName, extensionName))
+        if (!ANGLE_UNSAFE_TODO(strcmp(extensionProperties.extensionName, extensionName)))
+        {
             return true;
+        }
     }
 
     return false;
@@ -80,8 +79,10 @@ bool HasExtension(const std::vector<const char *> enabledExtensions, const char 
 {
     for (const char *enabledExtension : enabledExtensions)
     {
-        if (!strcmp(enabledExtension, extensionName))
+        if (!ANGLE_UNSAFE_TODO(strcmp(enabledExtension, extensionName)))
+        {
             return true;
+        }
     }
 
     return false;
@@ -90,10 +91,12 @@ bool HasExtension(const std::vector<const char *> enabledExtensions, const char 
 bool HasExtension(const char *const *enabledExtensions, const char *extensionName)
 {
     size_t i = 0;
-    while (enabledExtensions[i])
+    while (ANGLE_UNSAFE_TODO(enabledExtensions[i]))
     {
-        if (!strcmp(enabledExtensions[i], extensionName))
+        if (!ANGLE_UNSAFE_TODO(strcmp(enabledExtensions[i], extensionName)))
+        {
             return true;
+        }
         i++;
     }
     return false;
@@ -107,7 +110,7 @@ uint32_t FindMemoryType(const VkPhysicalDeviceMemoryProperties &memoryProperties
     {
         ASSERT(memoryIndex < memoryProperties.memoryTypeCount);
 
-        if ((memoryProperties.memoryTypes[memoryIndex].propertyFlags &
+        if ((ANGLE_UNSAFE_TODO(memoryProperties.memoryTypes[memoryIndex]).propertyFlags &
              requiredMemoryPropertyFlags) == requiredMemoryPropertyFlags)
         {
             return static_cast<uint32_t>(memoryIndex);
@@ -488,9 +491,9 @@ void VulkanHelper::initializeFromANGLE()
         ASSERT(name != nullptr);
         ASSERT(status != nullptr);
 
-        if (strcmp(name, "supportsUnifiedImageLayouts") == 0)
+        if (ANGLE_UNSAFE_TODO(strcmp(name, "supportsUnifiedImageLayouts")) == 0)
         {
-            mHasUnifiedImageLayouts = strcmp(status, "enabled") == 0;
+            mHasUnifiedImageLayouts = ANGLE_UNSAFE_TODO(strcmp(status, "enabled")) == 0;
             break;
         }
     }
@@ -623,6 +626,7 @@ bool VulkanHelper::canCreateImageExternal(VkFormat format,
 }
 
 VkResult VulkanHelper::createImage2DExternal(VkFormat format,
+                                             VkImageTiling tiling,
                                              VkImageCreateFlags createFlags,
                                              VkImageUsageFlags usageFlags,
                                              const void *imageCreateInfoPNext,
@@ -648,7 +652,7 @@ VkResult VulkanHelper::createImage2DExternal(VkFormat format,
         /* .mipLevels = */ 1,
         /* .arrayLayers = */ 1,
         /* .samples = */ VK_SAMPLE_COUNT_1_BIT,
-        /* .tiling = */ VK_IMAGE_TILING_OPTIMAL,
+        /* .tiling = */ tiling,
         /* .usage = */ usageFlags,
         /* .sharingMode = */ VK_SHARING_MODE_EXCLUSIVE,
         /* .queueFamilyIndexCount = */ 0,
@@ -728,6 +732,7 @@ bool VulkanHelper::canCreateImageOpaqueFd(VkFormat format,
 }
 
 VkResult VulkanHelper::createImage2DOpaqueFd(VkFormat format,
+                                             VkImageTiling tiling,
                                              VkImageCreateFlags createFlags,
                                              VkImageUsageFlags usageFlags,
                                              const void *imageCreateInfoPNext,
@@ -736,8 +741,8 @@ VkResult VulkanHelper::createImage2DOpaqueFd(VkFormat format,
                                              VkDeviceMemory *deviceMemoryOut,
                                              VkDeviceSize *deviceMemorySizeOut)
 {
-    return createImage2DExternal(format, createFlags, usageFlags, imageCreateInfoPNext, extent,
-                                 VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT, imageOut,
+    return createImage2DExternal(format, tiling, createFlags, usageFlags, imageCreateInfoPNext,
+                                 extent, VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT, imageOut,
                                  deviceMemoryOut, deviceMemorySizeOut);
 }
 
@@ -769,6 +774,7 @@ bool VulkanHelper::canCreateImageZirconVmo(VkFormat format,
 }
 
 VkResult VulkanHelper::createImage2DZirconVmo(VkFormat format,
+                                              VkImageTiling tiling,
                                               VkImageCreateFlags createFlags,
                                               VkImageUsageFlags usageFlags,
                                               const void *imageCreateInfoPNext,
@@ -777,9 +783,9 @@ VkResult VulkanHelper::createImage2DZirconVmo(VkFormat format,
                                               VkDeviceMemory *deviceMemoryOut,
                                               VkDeviceSize *deviceMemorySizeOut)
 {
-    return createImage2DExternal(format, createFlags, usageFlags, imageCreateInfoPNext, extent,
-                                 VK_EXTERNAL_MEMORY_HANDLE_TYPE_ZIRCON_VMO_BIT_FUCHSIA, imageOut,
-                                 deviceMemoryOut, deviceMemorySizeOut);
+    return createImage2DExternal(format, tiling, createFlags, usageFlags, imageCreateInfoPNext,
+                                 extent, VK_EXTERNAL_MEMORY_HANDLE_TYPE_ZIRCON_VMO_BIT_FUCHSIA,
+                                 imageOut, deviceMemoryOut, deviceMemorySizeOut);
 }
 
 VkResult VulkanHelper::exportMemoryZirconVmo(VkDeviceMemory deviceMemory, zx_handle_t *vmo)
@@ -1258,7 +1264,7 @@ void VulkanHelper::readPixels(VkImage srcImage,
     result = vkInvalidateMappedMemoryRanges(mDevice, memoryRangeCount, memoryRanges);
     ASSERT(result == VK_SUCCESS);
 
-    memcpy(pixels, stagingMemory, pixelsSize);
+    ANGLE_UNSAFE_TODO(memcpy(pixels, stagingMemory, pixelsSize));
 
     vkDestroyBuffer(mDevice, stagingBuffer, nullptr);
 
@@ -1274,9 +1280,12 @@ void VulkanHelper::writePixels(VkImage dstImage,
                                const void *pixels,
                                size_t pixelsSize)
 {
-    ASSERT(imageFormat == VK_FORMAT_B8G8R8A8_UNORM || imageFormat == VK_FORMAT_R8G8B8A8_UNORM);
+    ASSERT(imageFormat == VK_FORMAT_B8G8R8A8_UNORM || imageFormat == VK_FORMAT_R8G8B8A8_UNORM ||
+           imageFormat == VK_FORMAT_R4G4B4A4_UNORM_PACK16);
     ASSERT(imageExtent.depth == 1);
-    ASSERT(pixelsSize == 4 * imageExtent.width * imageExtent.height);
+
+    uint32_t pixelSize = imageFormat == VK_FORMAT_R4G4B4A4_UNORM_PACK16 ? 2 : 4;
+    ASSERT(pixelsSize == pixelSize * imageExtent.width * imageExtent.height);
 
     VkBufferCreateInfo bufferCreateInfo = {
         /* .sType = */ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
@@ -1339,7 +1348,7 @@ void VulkanHelper::writePixels(VkImage dstImage,
     result = vkInvalidateMappedMemoryRanges(mDevice, memoryRangeCount, memoryRanges);
     ASSERT(result == VK_SUCCESS);
 
-    memcpy(stagingMemory, pixels, pixelsSize);
+    ANGLE_UNSAFE_TODO(memcpy(stagingMemory, pixels, pixelsSize));
 
     vkUnmapMemory(mDevice, deviceMemory);
 

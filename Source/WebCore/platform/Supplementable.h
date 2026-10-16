@@ -27,13 +27,10 @@
 #define Supplementable_h
 
 #include <wtf/Assertions.h>
+#include <wtf/CurrentThread.h>
 #include <wtf/HashMap.h>
 #include <wtf/MainThread.h>
 #include <wtf/text/ASCIILiteral.h>
-
-#if ASSERT_ENABLED
-#include <wtf/Threading.h>
-#endif
 
 namespace WebCore {
 
@@ -101,8 +98,8 @@ public:
     virtual bool isNavigatorBeacon() const { return false; }
     virtual bool isNavigatorClipboard() const { return false; }
     virtual bool isNavigatorContacts() const { return false; }
-    virtual bool isNavigatorCookieConsent() const { return false; }
     virtual bool isNavigatorCredentials() const { return false; }
+    virtual bool isNavigatorDevicePosture() const { return false; }
     virtual bool isNavigatorGamepad() const { return false; }
     virtual bool isNavigatorGeolocation() const { return false; }
     virtual bool isNavigatorLoginStatus() const { return false; }
@@ -112,7 +109,6 @@ public:
     virtual bool isNavigatorPermissions() const { return false; }
     virtual bool isNavigatorScreenWakeLock() const { return false; }
     virtual bool isNavigatorUserActivation() const { return false; }
-    virtual bool isNavigatorWebDriver() const { return false; }
     virtual bool isNotificationController() const { return false; }
     virtual bool isServiceWorkerRegistrationBackgroundFetchAPI() const { return false; }
     virtual bool isServiceWorkerRegistrationPushAPI() const { return false; }
@@ -150,14 +146,14 @@ class Supplementable {
 public:
     void provideSupplement(ASCIILiteral key, std::unique_ptr<Supplement<T>> supplement)
     {
-        ASSERT(canCurrentThreadAccessThreadLocalData(m_thread));
+        ASSERT(canCurrentThreadIDAccessThreadLocalData(m_creationThreadID));
         ASSERT(!m_supplements.get(key));
         m_supplements.add(key, WTF::move(supplement));
     }
 
     Supplement<T>* requireSupplement(ASCIILiteral key)
     {
-        ASSERT(canCurrentThreadAccessThreadLocalData(m_thread));
+        ASSERT(canCurrentThreadIDAccessThreadLocalData(m_creationThreadID));
         return m_supplements.get(key);
     }
 
@@ -170,7 +166,7 @@ private:
     using SupplementMap = HashMap<ASCIILiteral, std::unique_ptr<Supplement<T>>>;
     SupplementMap m_supplements;
 #if ASSERT_ENABLED
-    const Ref<Thread> m_thread { Thread::currentSingleton() };
+    const uint32_t m_creationThreadID { currentThreadID() };
 #endif
 };
 

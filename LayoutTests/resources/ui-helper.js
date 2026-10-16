@@ -190,20 +190,31 @@ window.UIHelper = class UIHelper {
         await UIHelper.delayFor(0);
     }
 
-    static async waitForCondition(conditionFunc)
+    static async renderingComplete()
     {
-        while (!conditionFunc()) {
-            await UIHelper.animationFrame();
-        }
+        // Wait for the platform layer tree to be updated
+        await UIHelper.animationFrame();
+        await UIHelper.animationFrame();
     }
 
-    static async waitForConditionAsync(conditionFunc)
+    static async waitForCondition(conditionFunc, maximumFrames = Infinity)
     {
-        var condition = await conditionFunc();
-        while (!condition) {
+        for (let frames = 0; !conditionFunc(); ++frames) {
+            if (frames >= maximumFrames)
+                return false;
             await UIHelper.animationFrame();
-            condition = await conditionFunc();
         }
+        return true;
+    }
+
+    static async waitForConditionAsync(conditionFunc, maximumFrames = Infinity)
+    {
+        for (let frames = 0; !(await conditionFunc()); ++frames) {
+            if (frames >= maximumFrames)
+                return false;
+            await UIHelper.animationFrame();
+        }
+        return true;
     }
 
     static sendEventStream(eventStream)
@@ -369,13 +380,13 @@ window.UIHelper = class UIHelper {
         });
     }
 
-    static activateAt(x, y, modifiers=[])
+    static async activateAt(x, y, modifiers=[])
     {
         if (!this.isWebKit2() || !this.isIOSFamily()) {
-            eventSender.mouseMoveTo(x, y);
-            eventSender.mouseDown(0, modifiers);
-            eventSender.mouseUp(0, modifiers);
-            return Promise.resolve();
+            await eventSender.asyncMouseMoveTo(x, y);
+            await eventSender.asyncMouseDown(0, modifiers);
+            await eventSender.asyncMouseUp(0, modifiers);
+            return;
         }
 
         return new Promise((resolve) => {
@@ -523,6 +534,19 @@ window.UIHelper = class UIHelper {
         return new Promise(resolve => {
             testRunner.runUIScript(`
                 uiController.doAfterNextStablePresentationUpdate(function() {
+                    uiController.uiScriptComplete();
+                });`, resolve);
+        });
+    }
+
+    static ensureVisibleContentRectAndStablePresentationUpdate()
+    {
+        if (!this.isWebKit2() || !this.isIOSFamily())
+            return UIHelper.renderingUpdate();
+
+        return new Promise(resolve => {
+            testRunner.runUIScript(`
+                uiController.doAfterNextVisibleContentRectAndStablePresentationUpdate(function() {
                     uiController.uiScriptComplete();
                 });`, resolve);
         });
@@ -707,6 +731,40 @@ window.UIHelper = class UIHelper {
         });
     }
 
+    static async activateAndWaitForInputSessionStartAt(x, y)
+    {
+        if (!this.isWebKit2() || !this.isIOSFamily())
+            return this.activateAt(x, y);
+
+        if (testRunner.isKeyboardImmediatelyAvailable) {
+            await new Promise(resolve => {
+                testRunner.runUIScript(`
+                    (function() {
+                        uiController.singleTapAtPoint(${x}, ${y}, function() { });
+                        uiController.uiScriptComplete();
+                    })()`, resolve);
+            });
+            await this.ensureStablePresentationUpdate();
+            return;
+        }
+
+        return new Promise(resolve => {
+            testRunner.runUIScript(`
+                (function() {
+                    function clearCallbacksAndScriptComplete() {
+                        uiController.didShowContextMenuCallback = null;
+                        uiController.didStartInputSessionCallback = null;
+                        uiController.willPresentPopoverCallback = null;
+                        uiController.uiScriptComplete();
+                    }
+                    uiController.didShowContextMenuCallback = clearCallbacksAndScriptComplete;
+                    uiController.didStartInputSessionCallback = clearCallbacksAndScriptComplete;
+                    uiController.willPresentPopoverCallback = clearCallbacksAndScriptComplete;
+                    uiController.singleTapAtPoint(${x}, ${y}, function() { });
+                })()`, resolve);
+        });
+    }
+
     static waitForInputSessionToDismiss()
     {
         if (!this.isWebKit2() || !this.isIOSFamily())
@@ -736,8 +794,10 @@ window.UIHelper = class UIHelper {
 
     static resizeWindowTo(width, height)
     {
-        if (!this.isWebKit2())
-            return Promise.resolve();
+        if (!this.isWebKit2()) {
+            window.resizeTo(width, height);
+            return new Promise(resolve => requestAnimationFrame(resolve));
+        }
 
         return new Promise(resolve => testRunner.runUIScript(`uiController.resizeWindowTo(${width}, ${height})`, resolve));
     }
@@ -749,6 +809,13 @@ window.UIHelper = class UIHelper {
         return this.activateAndWaitForInputSessionAt(x, y);
     }
 
+    static activateElementAndWaitForInputSessionStart(element)
+    {
+        const x = element.offsetLeft + element.offsetWidth / 2;
+        const y = element.offsetTop + element.offsetHeight / 2;
+        return this.activateAndWaitForInputSessionStartAt(x, y);
+    }
+
     static activateFormControl(element)
     {
         if (!this.isWebKit2() || !this.isIOSFamily())
@@ -756,6 +823,14 @@ window.UIHelper = class UIHelper {
 
         const x = element.offsetLeft + element.offsetWidth / 2;
         const y = element.offsetTop + element.offsetHeight / 2;
+
+        return this.activateFormControlAtPoint(x, y);
+    }
+
+    static activateFormControlAtPoint(x, y)
+    {
+        if (!this.isWebKit2() || !this.isIOSFamily())
+            return this.activateAt(x, y);
 
         return new Promise(resolve => {
             testRunner.runUIScript(`
@@ -915,6 +990,13 @@ window.UIHelper = class UIHelper {
                     else
                         uiController.uiScriptComplete();
                 })()`, resolve);
+        });
+    }
+
+    static isShowingContextMenu()
+    {
+        return new Promise(resolve => {
+            testRunner.runUIScript(`uiController.isShowingContextMenu`, result => resolve(result === "true"));
         });
     }
 
@@ -1292,6 +1374,40 @@ window.UIHelper = class UIHelper {
         return new Promise(resolve => testRunner.runUIScript(selectColorScript, resolve));
     }
 
+    static isShowingColorPicker()
+    {
+        return new Promise(resolve => {
+            testRunner.runUIScript(`(() => {
+                uiController.uiScriptComplete(uiController.isShowingColorPicker);
+            })()`, result => resolve(result === "true"));
+        });
+    }
+
+    static waitForColorPickerToPresent()
+    {
+        if (!this.isWebKit2())
+            return Promise.resolve();
+
+        if (this.isIOSFamily()) {
+            return new Promise(resolve => {
+                testRunner.runUIScript(`
+                    (function() {
+                        if (uiController.isShowingColorPicker)
+                            uiController.uiScriptComplete();
+                        else
+                            uiController.willPresentPopoverCallback = () => uiController.uiScriptComplete();
+                    })()`, resolve);
+            });
+        }
+
+        // macOS: poll for color picker in subview hierarchy.
+        return new Promise(async resolve => {
+            while (!await this.isShowingColorPicker())
+                continue;
+            resolve();
+        });
+    }
+
     static enterText(text)
     {
         const escapedText = text.replace(/`/g, "\\`");
@@ -1367,6 +1483,15 @@ window.UIHelper = class UIHelper {
         return new Promise(resolve => testRunner.runUIScript(script, resolve));
     }
 
+    static insertAutofillSuggestion(username, password) {
+        const escapedUsername = JSON.stringify(String(username));
+        const escapedPassword = JSON.stringify(String(password));
+        const script = `uiController.insertAutofillSuggestion(${escapedUsername}, ${escapedPassword}, () => {
+            uiController.uiScriptComplete("");
+        });`;
+        return new Promise(resolve => testRunner.runUIScript(script, resolve));
+    }
+
     static isShowingDataListSuggestions()
     {
         return new Promise(resolve => {
@@ -1391,6 +1516,13 @@ window.UIHelper = class UIHelper {
             testRunner.runUIScript(`(() => {
                 uiController.uiScriptComplete(uiController.isShowingDateTimePicker);
             })()`, result => resolve(result === "true"));
+        });
+    }
+
+    static dateTimePickerRect()
+    {
+        return new Promise(resolve => {
+            testRunner.runUIScript("JSON.stringify(uiController.dateTimePickerRect)", result => resolve(JSON.parse(result)));
         });
     }
 
@@ -1433,6 +1565,81 @@ window.UIHelper = class UIHelper {
         const uiScript = `uiController.immediateZoomToScale(${scale})`;
         return new Promise(resolve => testRunner.runUIScript(uiScript, resolve));
     }
+
+    // Waits for the UI-process scale to stop changing. A magnification gesture round-trips through the web process,
+    // so a single presentation update isn't enough.
+    static async waitForZoomScaleToSettle()
+    {
+        const zoomScale = () => new Promise(resolve => testRunner.runUIScript('uiController.uiScriptComplete(uiController.zoomScale)', resolve));
+
+        let lastScale = await zoomScale();
+        let stableCount = 0;
+        for (let i = 0; i < 60 && stableCount < 3; ++i) {
+            await UIHelper.ensurePresentationUpdate();
+            const scale = await zoomScale();
+            stableCount = (scale === lastScale) ? stableCount + 1 : 0;
+            lastScale = scale;
+        }
+        return parseFloat(lastScale);
+    }
+
+    // Zooms with a synthetic magnification gesture, so it goes through ViewGestureController and the drawing area
+    // instead of setting the page scale in the web process. With delegated scaling the UI process owns the scale,
+    // so this is the only way to get a zoom the page can see. magnificationDelta is relative and compounds per
+    // event like NSEvent.magnification, so it isn't a target scale.
+    static async magnifyGestureAt(x, y, magnificationDelta)
+    {
+        if (!this.isWebKit2() || !this.isMac()) {
+            console.log('Magnification gesture testing is currently only supported on macOS');
+            return;
+        }
+
+        await UIHelper.setWebViewAllowsMagnification(true);
+
+        eventSender.mouseMoveTo(x, y);
+        eventSender.scaleGestureStart(0);
+        eventSender.scaleGestureChange(magnificationDelta);
+        eventSender.scaleGestureEnd(0);
+
+        return UIHelper.waitForZoomScaleToSettle();
+    }
+
+    // Starts a magnification gesture and leaves it in flight, so the transient zoom state stays live for
+    // inspection. Pair with endMagnifyGesture().
+    static async beginMagnifyGestureAt(x, y, magnificationDelta)
+    {
+        if (!this.isWebKit2() || !this.isMac()) {
+            console.log('Magnification gesture testing is currently only supported on macOS');
+            return;
+        }
+
+        await UIHelper.setWebViewAllowsMagnification(true);
+
+        eventSender.mouseMoveTo(x, y);
+        eventSender.scaleGestureStart(0);
+        eventSender.scaleGestureChange(magnificationDelta);
+
+        return UIHelper.waitForZoomScaleToSettle();
+    }
+
+    static async continueMagnifyGesture(magnificationDelta)
+    {
+        if (!this.isWebKit2() || !this.isMac())
+            return;
+
+        eventSender.scaleGestureChange(magnificationDelta);
+        return UIHelper.waitForZoomScaleToSettle();
+    }
+
+    static async endMagnifyGesture()
+    {
+        if (!this.isWebKit2() || !this.isMac())
+            return;
+
+        eventSender.scaleGestureEnd(0);
+        return UIHelper.waitForZoomScaleToSettle();
+    }
+
 
     static async smartMagnifyAt(x, y)
     {
@@ -1490,6 +1697,20 @@ window.UIHelper = class UIHelper {
                 uiController.uiScriptComplete(JSON.stringify(uiController.inputViewBounds));
             })()`, jsonString => {
                 resolve(JSON.parse(jsonString));
+            });
+        });
+    }
+
+    static inputViewBoundsInWebView()
+    {
+        if (!this.isWebKit2() || !this.isIOSFamily())
+            return Promise.resolve();
+
+        return new Promise(resolve => {
+            testRunner.runUIScript(`(() => {
+                uiController.uiScriptComplete(JSON.stringify(uiController.inputViewBoundsInWebView));
+                })()`, jsonString => {
+                    resolve(JSON.parse(jsonString));
             });
         });
     }
@@ -1565,6 +1786,18 @@ window.UIHelper = class UIHelper {
         return new Promise(resolve => testRunner.runUIScript(`uiController.dismissFindNavigator()`, resolve));
     }
 
+    static findStringMatchesUsingFindInteraction(searchString) {
+        if (!this.isWebKit2() || !this.isIOSFamily())
+            return Promise.resolve(0);
+
+        return new Promise(resolve => {
+            testRunner.runUIScript(`
+                uiController.findStringMatchesUsingFindInteraction(${JSON.stringify(searchString)}, function(matchCount) {
+                    uiController.uiScriptComplete(matchCount);
+                });`, result => resolve(parseInt(result)));
+        });
+    }
+
     static resignFirstResponder()
     {
         if (!this.isWebKit2()) {
@@ -1618,6 +1851,16 @@ window.UIHelper = class UIHelper {
             testRunner.runUIScript(`(() => {
                 uiController.uiScriptComplete(uiController.minimumZoomScale);
             })()`, scaleAsString => resolve(parseFloat(scaleAsString)))
+        });
+    }
+
+    static enhancedWindowingEnabled()
+    {
+        if (!this.isWebKit2() || !this.isIOSFamily())
+            return Promise.resolve(false);
+
+        return new Promise(resolve => {
+            testRunner.runUIScript("uiController.enhancedWindowingEnabled", result => resolve(result === "true"));
         });
     }
 
@@ -1791,6 +2034,11 @@ window.UIHelper = class UIHelper {
         return new Promise(resolve => testRunner.runUIScript(`uiController.setHardwareKeyboardAttached(${attached ? "true" : "false"})`, resolve));
     }
 
+    static setShowKeyboardAfterElementFocusDelay(delay)
+    {
+        return new Promise(resolve => testRunner.runUIScript(`uiController.setShowKeyboardAfterElementFocusDelay(${delay})`, resolve));
+    }
+
     static setWebViewEditable(editable)
     {
         return new Promise(resolve => testRunner.runUIScript(`uiController.setWebViewEditable(${editable ? "true" : "false"})`, resolve));
@@ -1826,6 +2074,13 @@ window.UIHelper = class UIHelper {
                 })();
             `, resolve);
         });
+    }
+
+    static async chooseLanguageInMediaContextMenu(language)
+    {
+        if (this.isIOSFamily())
+            await this.chooseMenuAction("Languages");
+        await this.chooseMenuAction(language);
     }
 
     static waitForEvent(target, eventName)
@@ -2027,6 +2282,21 @@ window.UIHelper = class UIHelper {
         });
     }
 
+    // The zoom override a magnification gesture has installed on the scrolled-contents layer, or '' when there is
+    // none. It only exists between the first change of a gesture and the web process catching up with the scale
+    // the gesture committed, so this has to be read while the override is still live.
+    static delegatedZoomOverrideAsText()
+    {
+        if (!this.isWebKit2() || !this.isMac()) {
+            console.log('The transient zoom override is currently only supported on macOS');
+            return Promise.resolve('');
+        }
+
+        return new Promise(resolve => {
+            testRunner.runUIScript('uiController.uiScriptComplete(uiController.delegatedZoomOverrideAsText)', resolve);
+        });
+    }
+
     static getCALayerTreeForCompositedElement(element)
     {
         if (!this.isWebKit2())
@@ -2071,6 +2341,15 @@ window.UIHelper = class UIHelper {
             if (timeline.identifier == identifier)
                 return timeline;
         }
+    }
+
+    static async displayLinkWantsHighFrameRate()
+    {
+        if (!this.isWebKit2() || !this.isIOSFamily())
+            return Promise.resolve(false);
+
+        const script = `uiController.displayLinkWantsHighFrameRate()`;
+        return new Promise(resolve => testRunner.runUIScript(script, result => resolve(result === "true")));
     }
 
     static dragFromPointToPoint(fromX, fromY, toX, toY, duration)
@@ -2586,7 +2865,8 @@ window.UIHelper = class UIHelper {
                     debugText = debugText
                         .replace(/uid=((\d+_)+)?(\d+)/g, "uid=…")
                         .replace(/"uid":\"((\d+_)+)?(\d+)\"/g, "\"uid\":\"…\"")
-                        .replace(/\[\d+,\d+;\d+x\d+\]/g, "[…]")
+                        .replace(/contentSize=\[\d+×\d+\]/g, "contentSize=[…]")
+                        .replace(/\[\d+,\d+;\d+×\d+\]/g, "[…]")
                         .replace(/\t/g, "    ");
                 }
                 resolve(debugText);
@@ -2609,14 +2889,20 @@ window.UIHelper = class UIHelper {
 
     static async performTextExtractionInteraction(action, options)
     {
+        const result = await UIHelper.performTextExtractionInteractionResult(action, options);
+        return result.error;
+    }
+
+    static async performTextExtractionInteractionResult(action, options)
+    {
         if (!this.isWebKit2())
-            return Promise.resolve(false);
+            return Promise.resolve({ error: "", summary: "" });
 
         return new Promise(resolve => {
             const scriptToRun = `uiController.performTextExtractionInteraction("${action}", ${JSON.stringify(options)}, result => {
                 uiController.uiScriptComplete(result)
             })`;
-            testRunner.runUIScript(scriptToRun, resolve);
+            testRunner.runUIScript(scriptToRun, raw => resolve(JSON.parse(raw)));
         });
     }
 }

@@ -1,6 +1,7 @@
 /*
  * (C) 1999-2003 Lars Knoll (knoll@kde.org)
  * Copyright (C) 2004-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2026 Samuel Weinig <sam@webkit.org>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -21,10 +22,9 @@
 #include "config.h"
 #include "CSSImageValue.h"
 
-#include "CSSMarkup.h"
-#include "CSSPrimitiveValue.h"
-#include "CSSURLValue.h"
 #include "CSSValueKeywords.h"
+#include "CSSValuePool.h"
+#include "CSSValueTypes+DeprecatedCSSOMValueCreation.h"
 #include "CachedImage.h"
 #include "CachedResourceLoader.h"
 #include "CachedResourceRequest.h"
@@ -50,6 +50,14 @@ CSSImageValue::CSSImageValue(CSS::URL&& location, AtomString&& initiatorType)
 {
 }
 
+CSSImageValue::CSSImageValue(CachedImage& cachedImage)
+    : CSSValue(ClassType::Image)
+    , m_location(CSS::URL { .specified = cachedImage.url().string(), .resolved = cachedImage.url(), .modifiers = { } })
+    , m_initiatorType(cachedImage.initiatorType())
+    , m_cachedImage(cachedImage)
+{
+}
+
 Ref<CSSImageValue> CSSImageValue::create()
 {
     return adoptRef(*new CSSImageValue);
@@ -65,6 +73,11 @@ Ref<CSSImageValue> CSSImageValue::create(WTF::URL imageURL, AtomString initiator
     return create(CSS::URL { .specified = imageURL.string(), .resolved = WTF::move(imageURL), .modifiers = { } }, WTF::move(initiatorType));
 }
 
+Ref<CSSImageValue> CSSImageValue::create(CachedImage& cachedImage)
+{
+    return adoptRef(*new CSSImageValue(cachedImage));
+}
+
 CSSImageValue::~CSSImageValue() = default;
 
 Ref<CSSImageValue> CSSImageValue::copyForComputedStyle(const CSS::URL& resolvedURL) const
@@ -75,7 +88,7 @@ Ref<CSSImageValue> CSSImageValue::copyForComputedStyle(const CSS::URL& resolvedU
     auto result = create(resolvedURL);
     result->m_cachedImage = m_cachedImage;
     result->m_initiatorType = m_initiatorType;
-    result->m_unresolvedValue = const_cast<CSSImageValue*>(this);
+    lazyInitialize(result->m_unresolvedValue, Ref { const_cast<CSSImageValue&>(*this) });
     return result;
 }
 
@@ -89,11 +102,11 @@ bool CSSImageValue::isPending() const
     return !m_cachedImage;
 }
 
-RefPtr<StyleImage> CSSImageValue::createStyleImage(const Style::BuilderState& state) const
+RefPtr<Style::Image> CSSImageValue::createStyleImage(const Style::BuilderState& state) const
 {
     auto styleLocation = Style::toStyle(m_location, state);
     if (styleLocation.resolved == m_location.resolved)
-        return StyleCachedImage::create(WTF::move(styleLocation), const_cast<CSSImageValue&>(*this));
+        return Style::CachedImage::create(WTF::move(styleLocation), const_cast<CSSImageValue&>(*this));
 
     // FIXME: This case can only happen when a element from a document with no baseURL has an inline style with a relative image URL in it and has been moved to a document with a non-null baseURL. Instead of re-resolving in this case, moved elements with this kind of inline style should have their inline style re-parsed.
 
@@ -102,8 +115,8 @@ RefPtr<StyleImage> CSSImageValue::createStyleImage(const Style::BuilderState& st
     auto result = create(WTF::move(newLocation));
     result->m_cachedImage = m_cachedImage;
     result->m_initiatorType = m_initiatorType;
-    result->m_unresolvedValue = const_cast<CSSImageValue*>(this);
-    return StyleCachedImage::create(WTF::move(styleLocation), WTF::move(result));
+    lazyInitialize(result->m_unresolvedValue, Ref { const_cast<CSSImageValue&>(*this) });
+    return Style::CachedImage::create(WTF::move(styleLocation), WTF::move(result));
 }
 
 CachedImage* CSSImageValue::loadImage(CachedResourceLoader& loader, const ResourceLoaderOptions& options)
@@ -120,7 +133,7 @@ CachedImage* CSSImageValue::loadImage(CachedResourceLoader& loader, const Resour
         else
             request.setInitiatorType(m_initiatorType);
         if (options.mode == FetchOptions::Mode::Cors)
-            request.updateForAccessControl(*loader.document());
+            request.updateForAccessControl(*protect(loader.document()));
         m_cachedImage = loader.requestImage(WTF::move(request)).value_or(nullptr);
         for (RefPtr<CSSImageValue> imageValue = this; (imageValue = imageValue->m_unresolvedValue.get()); )
             imageValue->m_cachedImage = m_cachedImage;
@@ -130,7 +143,10 @@ CachedImage* CSSImageValue::loadImage(CachedResourceLoader& loader, const Resour
 
 bool CSSImageValue::customTraverseSubresources(NOESCAPE const Function<bool(const CachedResource&)>& handler) const
 {
-    return m_cachedImage && *m_cachedImage && handler(**m_cachedImage);
+    if (!m_cachedImage)
+        return false;
+    RefPtr cachedImage = m_cachedImage->get();
+    return cachedImage && handler(*cachedImage);
 }
 
 bool CSSImageValue::customMayDependOnBaseURL() const
@@ -151,15 +167,10 @@ String CSSImageValue::customCSSText(const CSS::SerializationContext& context) co
     return CSS::serializationForCSS(context, m_location);
 }
 
-Ref<DeprecatedCSSOMValue> CSSImageValue::createDeprecatedCSSOMWrapper(CSSStyleDeclaration& styleDeclaration) const
+Ref<DeprecatedCSSOMValue> CSSImageValue::customCreateDeprecatedCSSOMWrapper(CSSStyleDeclaration& owner) const
 {
-    // We expose CSSImageValues as URI primitive values in CSSOM to maintain old behavior.
-    return DeprecatedCSSOMPrimitiveValue::create(CSSURLValue::create(m_location), styleDeclaration);
-}
-
-bool CSSImageValue::knownToBeOpaque(const RenderElement& renderer) const
-{
-    return m_cachedImage.value_or(nullptr) && (**m_cachedImage).currentFrameKnownToBeOpaque(&renderer);
+    // We expose CSSImageValues as URI primitive values in the deprecated CSSOM to maintain old behavior.
+    return CSS::createDeprecatedCSSOMValue(CSSValuePool::singleton(), owner, m_location);
 }
 
 } // namespace WebCore

@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include "JSDOMBinding.h"
+#include "JSDOMWrapperCache.h"
 #include <JavaScriptCore/ArrayPrototype.h>
 
 namespace JSC {
@@ -88,18 +88,15 @@ public:
         return globalObject.arrayPrototype();
     }
 
-    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
-    {
-        return Structure::create(vm, globalObject, prototype, TypeInfo(DerivedArrayType, StructureFlags), info(), NonArray);
-    }
+    static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
 private:
     JSObservableArray(VM&, Structure*);
     void finishCreation(VM&, Ref<ObservableArray>&&);
 
-    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM&);
+    static JSC::GCClient::IsoSubspace* LEGACY_NODELETE subspaceForImpl(JSC::VM&);
 
-    RefPtr<ObservableArray> m_array;
+    const RefPtr<ObservableArray> m_array;
 };
 
 } // namespace JSC

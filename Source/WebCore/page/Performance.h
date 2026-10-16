@@ -36,13 +36,16 @@
 #include "DOMHighResTimeStamp.h"
 #include "EventTarget.h"
 #include "EventTargetInterfaces.h"
-#include "ReducedResolutionSeconds.h"
+#include "PerformanceEntry.h"
 #include "ScriptExecutionContext.h"
 #include "Timer.h"
+#include <array>
+#include <limits>
 #include <memory>
 #include <wtf/ContinuousTime.h>
-#include <wtf/ListHashSet.h>
+#include <wtf/Forward.h>
 #include <wtf/MonotonicTime.h>
+#include <wtf/OrderedHashSet.h>
 
 namespace JSC {
 class JSGlobalObject;
@@ -58,13 +61,11 @@ class EventCounts;
 class LargestContentfulPaint;
 class NetworkLoadMetrics;
 class PerformanceUserTiming;
-class PerformanceEntry;
 class PerformanceMark;
 class PerformanceMeasure;
 class PerformanceNavigation;
 class PerformanceNavigationTiming;
 class PerformanceObserver;
-class PerformancePaintTiming;
 class PerformanceTiming;
 class ResourceResponse;
 class ResourceTiming;
@@ -88,13 +89,14 @@ public:
 
     DOMHighResTimeStamp now() const;
     DOMHighResTimeStamp timeOrigin() const;
+    MonotonicTime monotonicTimeFromOriginRelative(Seconds offset) const;
     ReducedResolutionSeconds nowInReducedResolutionSeconds() const;
 
     PerformanceNavigation& navigation();
     PerformanceTiming& timing();
-    EventCounts& eventCounts();
+    EventCounts& eventCounts() LIFETIME_BOUND;
 
-    uint64_t interactionCount();
+    uint64_t LEGACY_NODELETE interactionCount();
 
     Vector<Ref<PerformanceEntry>> getEntries() const;
     Vector<Ref<PerformanceEntry>> getEntriesByType(const String& entryType) const;
@@ -105,7 +107,7 @@ public:
     void processEventEntry(const PerformanceEventTimingCandidate&);
 
     void clearResourceTimings();
-    void setResourceTimingBufferSize(unsigned);
+    void LEGACY_NODELETE setResourceTimingBufferSize(unsigned);
 
     ExceptionOr<Ref<PerformanceMark>> mark(JSC::JSGlobalObject&, const String& markName, std::optional<PerformanceMarkOptions>&&);
     void clearMarks(const String& markName);
@@ -126,15 +128,15 @@ public:
     void registerPerformanceObserver(PerformanceObserver&);
     void unregisterPerformanceObserver(PerformanceObserver&);
 
-    static void allowHighPrecisionTime();
-    static Seconds timeResolution();
-    static Seconds reduceTimeResolution(Seconds);
+    static void LEGACY_NODELETE allowHighPrecisionTime();
+    static Seconds LEGACY_NODELETE timeResolution();
+    static ReducedResolutionSeconds reduceTimeResolution(Seconds);
 
-    Seconds relativeTimeFromTimeOriginInReducedResolutionSeconds(MonotonicTime) const;
+    ReducedResolutionSeconds relativeTimeFromTimeOriginInReducedResolutionSeconds(MonotonicTime) const;
     DOMHighResTimeStamp relativeTimeFromTimeOriginInReducedResolution(MonotonicTime) const;
-    MonotonicTime monotonicTimeFromRelativeTime(DOMHighResTimeStamp) const;
+    MonotonicTime LEGACY_NODELETE monotonicTimeFromRelativeTime(DOMHighResTimeStamp) const;
 
-    ScriptExecutionContext* scriptExecutionContext() const final;
+    ScriptExecutionContext* LEGACY_NODELETE scriptExecutionContext() const final;
 
     void scheduleTaskIfNeeded();
 
@@ -150,27 +152,35 @@ private:
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
 
-    bool isResourceTimingBufferFull() const;
+    bool LEGACY_NODELETE isResourceTimingBufferFull() const;
     void resourceTimingBufferFullTimerFired();
 
     void queueEntry(PerformanceEntry&);
+
+    // https://w3c.github.io/performance-timeline/#performance-entry-buffer-map
+    struct PerformanceEntryBuffer {
+        Vector<Ref<PerformanceEntry>> buffer;
+        unsigned maxBufferSize { std::numeric_limits<unsigned>::max() };
+        unsigned droppedEntriesCount { 0 };
+        bool availableFromTimeline { true };
+    };
+
+    static unsigned entryTypeIndex(PerformanceEntry::Type type) { return static_cast<unsigned>(type); }
+    PerformanceEntryBuffer& entryBufferTuple(PerformanceEntry::Type);
+    const PerformanceEntryBuffer& entryBufferTuple(PerformanceEntry::Type) const;
+
+    void initializeEntryBufferMap();
+    bool addToEntryBuffer(PerformanceEntry&);
+    void clearEntryBuffer(PerformanceEntry::Type, const String& name = { });
 
     const std::unique_ptr<EventCounts> m_eventCounts;
     mutable RefPtr<PerformanceNavigation> m_navigation;
     mutable RefPtr<PerformanceTiming> m_timing;
 
-    // https://w3c.github.io/resource-timing/#sec-extensions-performance-interface recommends initial buffer size of 250.
-    Vector<Ref<PerformanceEntry>> m_resourceTimingBuffer;
-
     Timer m_resourceTimingBufferFullTimer;
     Vector<Ref<PerformanceEntry>> m_backupResourceTimingBuffer;
 
-    RefPtr<PerformanceEntry> m_firstInput;
-    Vector<Ref<PerformanceEntry>> m_eventTimingBuffer;
-
-    // Sizes recommended by https://w3c.github.io/timing-entrytypes-registry/#registry:
-    unsigned m_eventTimingBufferSize { 150 };
-    unsigned m_resourceTimingBufferSize { 250 };
+    const RefPtr<PerformanceEntry> m_firstInput;
 
     // https://w3c.github.io/resource-timing/#dfn-resource-timing-buffer-full-flag
     bool m_resourceTimingBufferFullFlag { false };
@@ -181,11 +191,10 @@ private:
     ContinuousTime m_continuousTimeOrigin;
 
     RefPtr<PerformanceNavigationTiming> m_navigationTiming;
-    RefPtr<PerformancePaintTiming> m_firstContentfulPaint;
-    RefPtr<PerformanceEntry> m_largestContentfulPaint;
-    std::unique_ptr<PerformanceUserTiming> m_userTiming;
+    const std::unique_ptr<PerformanceUserTiming> m_userTiming;
 
-    ListHashSet<RefPtr<PerformanceObserver>> m_observers;
+    std::array<PerformanceEntryBuffer, PerformanceEntry::performanceEntryTypeCount> m_entryBufferMap;
+    OrderedHashSet<Ref<PerformanceObserver>> m_observers;
 };
 
 } // namespace WebCore

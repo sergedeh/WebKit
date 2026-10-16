@@ -94,7 +94,7 @@ static WebCore::VideoFrameRotation computeVideoFrameRotation(int rotation)
 
     AVCaptureDeviceRotationCoordinator* coordinator = (AVCaptureDeviceRotationCoordinator*)object;
     String persistentId = [coordinator device].uniqueID;
-    auto rotation = computeVideoFrameRotation(clampToInteger([coordinator videoRotationAngleForHorizonLevelPreview]));
+    auto rotation = computeVideoFrameRotation(clampTo<int>([coordinator videoRotationAngleForHorizonLevelPreview]));
 
     RunLoop::mainSingleton().dispatch([protectedSelf = retainPtr(self), self, persistentId = WTF::move(persistentId).isolatedCopy(), rotation] {
         if (_managerProxy)
@@ -122,7 +122,7 @@ static WebCore::VideoFrameRotation computeVideoFrameRotation(int rotation)
         iterator->value = WTF::move(coordinator);
     }
 
-    return computeVideoFrameRotation((clampToInteger([iterator->value videoRotationAngleForHorizonLevelPreview])));
+    return computeVideoFrameRotation((clampTo<int>([iterator->value videoRotationAngleForHorizonLevelPreview])));
 }
 
 -(void)stop:(const String&)persistentId {
@@ -200,8 +200,7 @@ bool UserMediaPermissionRequestManagerProxy::isMonitoringCaptureDeviceRotation(c
 {
     if (persistentId.isEmpty())
         return false;
-    RetainPtr observer = m_objcObserver;
-    return [observer isMonitoringCaptureDeviceRotation:persistentId];
+    return [m_objcObserver isMonitoringCaptureDeviceRotation:persistentId];
 }
 
 void UserMediaPermissionRequestManagerProxy::startMonitoringCaptureDeviceRotation(const String& persistentId)
@@ -218,7 +217,7 @@ void UserMediaPermissionRequestManagerProxy::startMonitoringCaptureDeviceRotatio
     }
 
     if (!m_objcObserver)
-        m_objcObserver = adoptNS([[WKRotationCoordinatorObserver alloc] initWithRequestManagerProxy:*this]);
+        lazyInitialize(m_objcObserver, adoptNS([[WKRotationCoordinatorObserver alloc] initWithRequestManagerProxy:*this]));
 
     if (auto currentRotation = [m_objcObserver start:persistentId layer:layer])
         rotationAngleForCaptureDeviceChanged(persistentId, *currentRotation);

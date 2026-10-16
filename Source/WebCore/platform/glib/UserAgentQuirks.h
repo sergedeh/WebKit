@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "UserAgent.h"
 #include <wtf/Assertions.h>
 #include <wtf/text/WTFString.h>
 
@@ -36,6 +37,7 @@ public:
         NeedsChromeBrowser,
         NeedsFirefoxBrowser,
         NeedsMacintoshPlatform,
+        NeedsAndroidPlatform,
         NeedsUnbrandedUserAgent,
 
         NumUserAgentQuirks
@@ -62,7 +64,7 @@ public:
 
     bool isEmpty() const { return !m_quirks; }
 
-    static UserAgentQuirks quirksForURL(const URL&);
+    static UserAgentQuirks quirksForURL(const URL&, UserAgentType = UserAgentType::Default);
 
     static String stringForQuirk(UserAgentQuirk);
 

@@ -27,6 +27,7 @@
 #define SandboxInitializationParameters_h
 
 #include <wtf/Vector.h>
+#include <wtf/text/UTF8CStringView.h>
 #include <wtf/text/WTFString.h>
 
 #if PLATFORM(COCOA)
@@ -44,14 +45,14 @@ public:
 #if PLATFORM(COCOA)
     void addConfDirectoryParameter(ASCIILiteral name, int confID);
     void addPathParameter(ASCIILiteral name, NSString *path);
-    void addPathParameter(ASCIILiteral name, const char* path);
-    void addParameter(ASCIILiteral name, CString&& value);
+    void addPathParameter(ASCIILiteral name, UTF8CStringView path);
+    void addParameter(ASCIILiteral name, UTF8CString&& value);
 
     Vector<const char*> namedParameterVector() const;
 
-    size_t count() const;
-    ASCIILiteral name(size_t index) const;
-    const char* value(size_t index) const;
+    size_t LEGACY_NODELETE count() const;
+    ASCIILiteral LEGACY_NODELETE name(size_t index) const;
+    const char* LEGACY_NODELETE value(size_t index) const;
 
     enum class ProfileSelectionMode : uint8_t {
         UseDefaultSandboxProfilePath,
@@ -67,7 +68,7 @@ public:
         m_overrideSandboxProfilePathOrSandboxProfile = path;
     }
 
-    const String& overrideSandboxProfilePath() const
+    const String& overrideSandboxProfilePath() const LIFETIME_BOUND
     {
         ASSERT(m_profileSelectionMode == ProfileSelectionMode::UseOverrideSandboxProfilePath);
         return m_overrideSandboxProfilePathOrSandboxProfile;
@@ -79,14 +80,14 @@ public:
         m_overrideSandboxProfilePathOrSandboxProfile = profile;
     }
 
-    const String& sandboxProfile() const
+    const String& sandboxProfile() const LIFETIME_BOUND
     {
         ASSERT(m_profileSelectionMode == ProfileSelectionMode::UseSandboxProfile);
         return m_overrideSandboxProfilePathOrSandboxProfile;
     }
 
     void setUserDirectorySuffix(const String& suffix) { m_userDirectorySuffix = suffix; }
-    const String& userDirectorySuffix() const { return m_userDirectorySuffix; }
+    const String& userDirectorySuffix() const LIFETIME_BOUND { return m_userDirectorySuffix; }
 #endif
 
 private:
@@ -94,7 +95,7 @@ private:
     void appendPathInternal(ASCIILiteral name, const char* path);
 
     mutable Vector<ASCIILiteral> m_parameterNames;
-    mutable Vector<CString> m_parameterValues;
+    mutable Vector<UTF8CString> m_parameterValues;
     String m_userDirectorySuffix;
 
     ProfileSelectionMode m_profileSelectionMode;
@@ -107,9 +108,7 @@ SandboxInitializationParameters::SandboxInitializationParameters()
 {
 }
 
-SandboxInitializationParameters::~SandboxInitializationParameters()
-{
-}
+SandboxInitializationParameters::~SandboxInitializationParameters() = default;
 #endif
 
 } // namespace WebKit

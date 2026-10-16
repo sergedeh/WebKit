@@ -31,6 +31,7 @@ PASS background-position-y
 PASS background-repeat
 PASS background-size
 PASS baseline-shift
+PASS baseline-source
 PASS block-size
 PASS border-block-end-color
 PASS border-block-end-style
@@ -148,7 +149,6 @@ PASS font-variant-position
 PASS font-variation-settings
 PASS font-weight
 PASS font-width
-PASS glyph-orientation-horizontal
 PASS glyph-orientation-vertical
 PASS grid-auto-columns
 PASS grid-auto-flow
@@ -218,6 +218,7 @@ PASS min-width
 PASS mix-blend-mode
 PASS object-fit
 PASS object-position
+PASS object-view-box
 PASS offset-anchor
 PASS offset-distance
 PASS offset-path
@@ -232,6 +233,7 @@ PASS outline-style
 PASS outline-width
 PASS overflow-anchor
 PASS overflow-block
+PASS overflow-clip-margin
 PASS overflow-inline
 PASS overflow-wrap
 PASS overflow-x
@@ -353,6 +355,7 @@ PASS view-timeline-name
 PASS view-transition-name
 PASS visibility
 PASS white-space-collapse
+PASS white-space-trim
 PASS widows
 PASS width
 PASS will-change

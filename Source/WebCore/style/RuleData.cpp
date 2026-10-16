@@ -29,16 +29,21 @@
 #include "config.h"
 #include "RuleData.h"
 
+#include "CSSContentValue.h"
 #include "CSSFontSelector.h"
 #include "CSSKeyframesRule.h"
+#include "CSSKeywordValueInlines.h"
+#include "CSSPropertyNames.h"
 #include "CSSSelector.h"
 #include "CSSSelectorList.h"
+#include "CSSValueList.h"
 #include "CommonAtomStrings.h"
 #include "HTMLNames.h"
 #include "ScriptExecutionContext.h"
 #include "SecurityOrigin.h"
 #include "SelectorChecker.h"
 #include "SelectorFilter.h"
+#include "StylePropertiesInlines.h"
 #include "StyleResolver.h"
 #include "StyleRule.h"
 #include "StyleRuleImport.h"
@@ -59,7 +64,7 @@ struct SameSizeAsRuleData {
 
 static_assert(sizeof(RuleData) == sizeof(SameSizeAsRuleData), "RuleData should stay small");
 
-static inline MatchBasedOnRuleHash computeMatchBasedOnRuleHash(const CSSSelector& selector)
+static inline MatchBasedOnRuleHash LEGACY_NODELETE computeMatchBasedOnRuleHash(const CSSSelector& selector)
 {
     if (selector.precedingInComplexSelector())
         return MatchBasedOnRuleHash::None;
@@ -88,19 +93,31 @@ static inline MatchBasedOnRuleHash computeMatchBasedOnRuleHash(const CSSSelector
 static inline PropertyAllowlist determinePropertyAllowlist(const CSSSelector& selector)
 {
     for (const CSSSelector* component = &selector; component; component = component->precedingInComplexSelector()) {
+        if (component->match() == CSSSelector::Match::PseudoElement) {
+            switch (component->pseudoElement()) {
+            case CSSSelector::PseudoElement::GrammarError:
+            case CSSSelector::PseudoElement::Highlight:
+            case CSSSelector::PseudoElement::Selection:
+            case CSSSelector::PseudoElement::SpellingError:
+            case CSSSelector::PseudoElement::TargetText:
+                return PropertyAllowlist::Highlight;
+            case CSSSelector::PseudoElement::Marker:
+                return PropertyAllowlist::Marker;
 #if ENABLE(VIDEO)
-        // Property allow-list for `::cue`:
-        if (component->match() == CSSSelector::Match::PseudoElement && component->pseudoElement() == CSSSelector::PseudoElement::UserAgentPart && component->value() == UserAgentParts::cue())
-            return PropertyAllowlist::Cue;
-        // Property allow-list for `::cue(selector)`:
-        if (component->match() == CSSSelector::Match::PseudoElement && component->pseudoElement() == CSSSelector::PseudoElement::Cue)
-            return PropertyAllowlist::CueSelector;
-        // Property allow-list for '::-internal-cue-background':
-        if (component->match() == CSSSelector::Match::PseudoElement && component->pseudoElement() == CSSSelector::PseudoElement::UserAgentPart && component->value() == UserAgentParts::internalCueBackground())
-            return PropertyAllowlist::CueBackground;
+            case CSSSelector::PseudoElement::UserAgentPart:
+                if (component->value() == UserAgentParts::cue())
+                    return PropertyAllowlist::Cue;
+                // Property allow-list for '::-internal-cue-background':
+                if (component->value() == UserAgentParts::internalCueBackground())
+                    return PropertyAllowlist::CueBackground;
+                break;
+            case CSSSelector::PseudoElement::Cue:
+                return PropertyAllowlist::CueSelector;
 #endif
-        if (component->match() == CSSSelector::Match::PseudoElement && component->pseudoElement() == CSSSelector::PseudoElement::Marker)
-            return propertyAllowlistForPseudoElement(PseudoElementType::Marker);
+            default:
+                break;
+            }
+        }
 
         if (const auto* selectorList = selector.selectorList()) {
             for (auto& subSelector : *selectorList) {
@@ -113,14 +130,68 @@ static inline PropertyAllowlist determinePropertyAllowlist(const CSSSelector& se
     return PropertyAllowlist::None;
 }
 
+static bool isKeywordOrKeywordList(const CSSValue& value, CSSValueID keyword)
+{
+    if (auto* list = dynamicDowncast<CSSValueList>(value)) {
+        for (auto& item : *list) {
+            if (!isValueID(item, keyword))
+                return false;
+        }
+        return true;
+    }
+    return isValueID(value, keyword);
+}
+
+// ::before/::after may follow another pseudo-element, like ::part(foo)::before or ::slotted(span)::after.
+static bool selectorHasBeforeOrAfterPseudoElement(const CSSSelector& selector)
+{
+    for (auto* component = &selector; component; component = component->precedingInComplexSelector()) {
+        if (component->matchesPseudoElement() && (component->pseudoElement() == CSSSelector::PseudoElement::Before || component->pseudoElement() == CSSSelector::PseudoElement::After))
+            return true;
+    }
+    return false;
+}
+
+// ::before/::after only generate a box with non-'none' content, which animations and transitions can also supply.
+static PseudoElementBoxGeneration computePseudoElementBoxGeneration(const CSSSelector& selector, const StyleProperties& properties)
+{
+    if (!selectorHasBeforeOrAfterPseudoElement(selector))
+        return PseudoElementBoxGeneration::NotForBeforeOrAfter;
+
+    for (auto property : properties) {
+        auto& value = *property.value();
+        switch (property.id()) {
+        case CSSPropertyID::Content: {
+            auto* contentValue = dynamicDowncast<CSSContentValue>(value);
+            if (!contentValue || !(contentValue->content().isNone() || contentValue->content().isNormal()))
+                return PseudoElementBoxGeneration::Normal;
+            break;
+        }
+        case CSSPropertyID::AnimationName:
+            if (!isKeywordOrKeywordList(value, CSSValueID::None))
+                return PseudoElementBoxGeneration::Normal;
+            break;
+        case CSSPropertyID::TransitionBehavior:
+            // Only allow-discrete transitions can change 'content' or 'display'.
+            if (!isKeywordOrKeywordList(value, CSSValueID::Normal))
+                return PseudoElementBoxGeneration::Normal;
+            break;
+        default:
+            break;
+        }
+    }
+    return PseudoElementBoxGeneration::NotForBeforeOrAfter;
+}
+
 RuleData::RuleData(const StyleRule& styleRule, unsigned selectorIndex, unsigned selectorListIndex, unsigned position, IsStartingStyle isStartingStyle)
     : m_styleRuleWithSelectorIndex(&styleRule, static_cast<uint16_t>(selectorIndex))
     , m_selectorListIndex(selectorListIndex)
-    , m_matchBasedOnRuleHash(enumToUnderlyingType(computeMatchBasedOnRuleHash(selector())))
+    , m_matchBasedOnRuleHash(std::to_underlying(computeMatchBasedOnRuleHash(selector())))
     , m_canMatchPseudoElement(complexSelectorCanMatchPseudoElement(selector()))
-    , m_propertyAllowlist(enumToUnderlyingType(determinePropertyAllowlist(selector())))
-    , m_isStartingStyle(enumToUnderlyingType(isStartingStyle))
+    , m_propertyAllowlist(std::to_underlying(determinePropertyAllowlist(selector())))
+    , m_isStartingStyle(std::to_underlying(isStartingStyle))
     , m_isEnabled(true)
+    , m_pseudoElementBoxGeneration(std::to_underlying(computePseudoElementBoxGeneration(selector(), styleRule.properties())))
     , m_position(position)
     , m_descendantSelectorIdentifierHashes(SelectorFilter::collectHashes(selector()))
 {

@@ -30,6 +30,7 @@
 #include "GPUTextureFormat.h"
 #include "WebGPURenderPassLayout.h"
 #include <optional>
+#include <wtf/Forward.h>
 #include <wtf/Vector.h>
 
 namespace WebCore {
@@ -40,14 +41,14 @@ struct GPURenderPassLayout : public GPUObjectDescriptorBase {
         return {
             { label },
             colorFormats.map([](auto& colorFormat) -> std::optional<WebGPU::TextureFormat> {
-                if (colorFormat)
-                    return WebCore::convertToBacking(*colorFormat);
-                return std::nullopt;
+                return colorFormat ? std::optional { WebCore::convertToBacking(*colorFormat) } : std::nullopt;
             }),
             depthStencilFormat ? std::optional { WebCore::convertToBacking(*depthStencilFormat) } : std::nullopt,
             sampleCount,
         };
     }
+
+    Ref<JSON::Object> toJSON() const;
 
     Vector<std::optional<GPUTextureFormat>> colorFormats;
     std::optional<GPUTextureFormat> depthStencilFormat;

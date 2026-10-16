@@ -30,6 +30,7 @@
 #if ENABLE(MATHML)
 #include "AccessibilityMathMLElement.h"
 
+#include "AccessibilityNodeObjectInlines.h"
 #include "AXObjectCacheInlines.h"
 #include "AXUtilities.h"
 #include "AccessibilityObjectInlines.h"
@@ -37,6 +38,7 @@
 #include "MathMLNames.h"
 #include "NodeInlines.h"
 #include "Settings.h"
+#include "StyleComputedStyle+GettersInlines.h"
 
 namespace WebCore {
 
@@ -61,7 +63,7 @@ AccessibilityRole AccessibilityMathMLElement::determineAccessibilityRole()
     if (m_ariaRole != AccessibilityRole::Unknown)
         return m_ariaRole;
 
-    if (WebCore::elementName(m_renderer->protectedNode().get()) == ElementName::MathML_math)
+    if (WebCore::elementName(m_renderer->node()) == ElementName::MathML_math)
         return AccessibilityRole::DocumentMath;
 
     // It's not clear which role a platform should choose for a math element.
@@ -87,7 +89,7 @@ void AccessibilityMathMLElement::addChildren()
 
     m_subtreeDirty = false;
 
-#ifndef NDEBUG
+#if ASSERT_ENABLED
     verifyChildrenIndexInParent();
 #endif
 }
@@ -95,7 +97,7 @@ void AccessibilityMathMLElement::addChildren()
 String AccessibilityMathMLElement::textUnderElement(TextUnderElementMode mode) const
 {
     if (m_isAnonymousOperator && !mode.isHidden()) {
-        char16_t operatorChar = downcast<RenderMathMLOperator>(*m_renderer).textContent();
+        char16_t operatorChar = protect(downcast<RenderMathMLOperator>(*m_renderer))->singleCharCodePoint();
         return operatorChar ? String(span(operatorChar)) : String();
     }
 
@@ -138,7 +140,7 @@ bool AccessibilityMathMLElement::isMathFenced() const
 
 bool AccessibilityMathMLElement::isMathSubscriptSuperscript() const
 {
-    return m_renderer && m_renderer->isRenderMathMLScripts() && !isMathMultiscript();
+    return m_renderer && protect(m_renderer)->isRenderMathMLScripts() && !isMathMultiscript();
 }
 
 bool AccessibilityMathMLElement::isMathRow() const
@@ -153,12 +155,12 @@ bool AccessibilityMathMLElement::isMathUnderOver() const
 
 bool AccessibilityMathMLElement::isMathSquareRoot() const
 {
-    return m_renderer && m_renderer->isRenderMathMLSquareRoot();
+    return m_renderer && protect(m_renderer)->isRenderMathMLSquareRoot();
 }
 
 bool AccessibilityMathMLElement::isMathToken() const
 {
-    return m_renderer && m_renderer->isRenderMathMLToken();
+    return m_renderer && protect(m_renderer)->isRenderMathMLToken();
 }
 
 bool AccessibilityMathMLElement::isMathRoot() const
@@ -168,7 +170,7 @@ bool AccessibilityMathMLElement::isMathRoot() const
 
 bool AccessibilityMathMLElement::isMathOperator() const
 {
-    return m_renderer && m_renderer->isRenderMathMLOperator();
+    return m_renderer && protect(m_renderer)->isRenderMathMLOperator();
 }
 
 bool AccessibilityMathMLElement::isMathFenceOperator() const
@@ -410,7 +412,7 @@ void AccessibilityMathMLElement::mathPrescripts(AccessibilityMathMultiscriptPair
     std::pair<AccessibilityObject*, AccessibilityObject*> prescriptPair;
     for (RefPtr child = node()->firstChild(); child; child = child->nextSibling()) {
         if (foundPrescript) {
-            RefPtr axChild = axObjectCache()->getOrCreate(*child);
+            RefPtr axChild = protect(axObjectCache())->getOrCreate(*child);
             if (axChild && axChild->isMathElement()) {
                 if (!prescriptPair.first)
                     prescriptPair.first = axChild.get();
@@ -443,7 +445,7 @@ void AccessibilityMathMLElement::mathPostscripts(AccessibilityMathMultiscriptPai
         if (WebCore::elementName(*child) == ElementName::MathML_mprescripts)
             break;
 
-        RefPtr axChild = axObjectCache()->getOrCreate(*child);
+        RefPtr axChild = protect(axObjectCache())->getOrCreate(*child);
         if (axChild && axChild->isMathElement()) {
             if (!foundBaseElement)
                 foundBaseElement = true;

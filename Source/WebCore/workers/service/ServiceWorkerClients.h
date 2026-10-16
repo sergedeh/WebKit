@@ -65,6 +65,6 @@ private:
     HashMap<PromiseIdentifier, Ref<DeferredPromise>> m_pendingPromises;
 };
 
-WebCoreOpaqueRoot root(ServiceWorkerClients*);
+WebCoreOpaqueRoot LEGACY_NODELETE root(ServiceWorkerClients*);
 
 } // namespace WebCore

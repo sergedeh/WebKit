@@ -104,11 +104,6 @@ void ProgressTracker::reset()
     m_progressHeartbeatTimer.stop();
 }
 
-Ref<Page> ProgressTracker::protectedPage() const
-{
-    return m_page;
-}
-
 void ProgressTracker::progressStarted(LocalFrame& frame)
 {
     LOG(Progress, "Progress started (%p) - frame %p(frameID %" PRIu64 "), value %f, tracked frames %d, originating frame %p", this, &frame, frame.frameID().toUInt64(), m_progressValue, m_numProgressTrackedFrames, m_originatingProgressFrame.get());
@@ -131,12 +126,12 @@ void ProgressTracker::progressStarted(LocalFrame& frame)
         m_isMainLoad = isMainFrame || elapsedTimeSinceMainLoadComplete < subframePartOfMainLoadThreshold;
 
         m_client->progressStarted(*originatingProgressFrame);
-        protectedPage()->progressEstimateChanged(*originatingProgressFrame);
+        protect(m_page)->progressEstimateChanged(*originatingProgressFrame);
     }
     m_numProgressTrackedFrames++;
 
     RefPtr originatingProgressFrame = m_originatingProgressFrame.get();
-    PROGRESS_TRACKER_RELEASE_LOG(PROGRESSTRACKER_PROGRESSSTARTED, frame.frameID().toUInt64(), m_progressValue, m_numProgressTrackedFrames, originatingProgressFrame ? originatingProgressFrame->frameID().toUInt64() : 0, m_isMainLoad);
+    PROGRESS_TRACKER_RELEASE_LOG(ProgressTrackerProgressStarted, frame.frameID().toUInt64(), m_progressValue, m_numProgressTrackedFrames, originatingProgressFrame ? originatingProgressFrame->frameID().toUInt64() : 0, m_isMainLoad);
 
     m_client->didChangeEstimatedProgress();
     InspectorInstrumentation::frameStartedLoading(frame);
@@ -145,14 +140,14 @@ void ProgressTracker::progressStarted(LocalFrame& frame)
 void ProgressTracker::progressEstimateChanged(LocalFrame& frame)
 {
     m_client->progressEstimateChanged(frame);
-    protectedPage()->progressEstimateChanged(frame);
+    protect(m_page)->progressEstimateChanged(frame);
 }
 
 void ProgressTracker::progressCompleted(LocalFrame& frame)
 {
     RefPtr originatingProgressFrame = m_originatingProgressFrame.get();
     LOG(Progress, "Progress completed (%p) - frame %p(frameID %" PRIu64 "), value %f, tracked frames %d, originating frame %p", this, &frame, frame.frameID().toUInt64(), m_progressValue, m_numProgressTrackedFrames, originatingProgressFrame.get());
-    PROGRESS_TRACKER_RELEASE_LOG(PROGRESSTRACKER_PROGRESSCOMPLETED, frame.frameID().toUInt64(), m_progressValue, m_numProgressTrackedFrames, originatingProgressFrame ? originatingProgressFrame->frameID().toUInt64() : 0, m_isMainLoad);
+    PROGRESS_TRACKER_RELEASE_LOG(ProgressTrackerProgressCompleted, frame.frameID().toUInt64(), m_progressValue, m_numProgressTrackedFrames, originatingProgressFrame ? originatingProgressFrame->frameID().toUInt64() : 0, m_isMainLoad);
 
     if (m_numProgressTrackedFrames <= 0)
         return;
@@ -170,7 +165,7 @@ void ProgressTracker::finalProgressComplete()
 {
     RefPtr frame = std::exchange(m_originatingProgressFrame, nullptr).get();
     LOG(Progress, "Final progress complete (%p)", this);
-    PROGRESS_TRACKER_RELEASE_LOG(PROGRESSTRACKER_FINALPROGRESSCOMPLETE, m_progressValue, m_numProgressTrackedFrames, frame ? frame->frameID().toUInt64() : 0, m_isMainLoad, isMainLoadProgressing());
+    PROGRESS_TRACKER_RELEASE_LOG(ProgressTrackerFinalProgressComplete, m_progressValue, m_numProgressTrackedFrames, frame ? frame->frameID().toUInt64() : 0, m_isMainLoad, isMainLoadProgressing());
 
     // Before resetting progress value be sure to send client a least one notification
     // with final progress value.
@@ -185,9 +180,9 @@ void ProgressTracker::finalProgressComplete()
         m_mainLoadCompletionTime = MonotonicTime::now();
 
     if (frame) {
-        frame->loader().protectedClient()->setMainFrameDocumentReady(true);
+        protect(frame->loader().client())->setMainFrameDocumentReady(true);
         m_client->progressFinished(*frame);
-        protectedPage()->progressFinished(*frame);
+        protect(m_page)->progressFinished(*frame);
         frame->loader().loadProgressingStatusChanged();
 
         InspectorInstrumentation::frameStoppedLoading(*frame);
@@ -250,7 +245,7 @@ void ProgressTracker::incrementProgress(ResourceLoaderIdentifier identifier, uns
 
     // For documents that use WebCore's layout system, treat first layout as the half-way point.
     // FIXME: The hasHTMLView function is a sort of roundabout way of asking "do you use WebCore's layout system".
-    bool useClampedMaxProgress = frame->loader().protectedClient()->hasHTMLView()
+    bool useClampedMaxProgress = protect(frame->loader().client())->hasHTMLView()
         && !frame->loader().stateMachine().firstLayoutDone();
     double maxProgressValue = useClampedMaxProgress ? 0.5 : finalProgressValue;
     increment = (maxProgressValue - m_progressValue) * percentOfRemainingBytes;

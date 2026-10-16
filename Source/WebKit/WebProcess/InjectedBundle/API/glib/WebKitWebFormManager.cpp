@@ -22,18 +22,21 @@
 
 #include "WebKitWebFormManagerPrivate.h"
 #include <JavaScriptCore/APICast.h>
+#include <JavaScriptCore/JSCellInlines.h>
+#include <JavaScriptCore/JSObjectRef.h>
 #include <WebCore/HTMLInputElement.h>
 #include <WebCore/HTMLTextAreaElement.h>
 #include <WebCore/JSNode.h>
 #include <jsc/JSCContextPrivate.h>
 #include <jsc/JSCValuePrivate.h>
+#include <wtf/glib/WTFGType.h>
 
 using namespace WebCore;
 
 /**
  * WebKitWebFormManager:
  *
- * Form manager of a #WebKitWebPage in a #WebKitScriptWorld
+ * Form manager of a #WebKitWebPage in a #WebKitScriptWorld.
  *
  * Since: 2.40
  */
@@ -48,6 +51,12 @@ enum {
 
 static std::array<unsigned, LAST_SIGNAL> signals;
 
+#if ENABLE(FUTURE_GLIB_API)
+struct _WebKitWebFormManagerPrivate {
+};
+
+WEBKIT_DEFINE_FINAL_TYPE(WebKitWebFormManager, webkit_web_form_manager, G_TYPE_OBJECT, GObject)
+#else
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GTK/WPE Port
 G_DEFINE_TYPE(WebKitWebFormManager, webkit_web_form_manager, G_TYPE_OBJECT)
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
@@ -55,6 +64,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 static void webkit_web_form_manager_init(WebKitWebFormManager*)
 {
 }
+#endif
 
 static void webkit_web_form_manager_class_init(WebKitWebFormManagerClass* klass)
 {
@@ -63,9 +73,9 @@ static void webkit_web_form_manager_class_init(WebKitWebFormManagerClass* klass)
      * @form_manager: the #WebKitWebFormManager on which the signal is emitted
      * @frame: a #WebKitFrame
      * @elements: (element-type JSCValue) (transfer none): a #GPtrArray of
-     *     #JSCValue with the list of forms in the page
+     *     #JSCValue with the list of form controls associated with @frame
      *
-     * Emitted after form elements (or form associated elements) are associated to @frame.
+     * Emitted after form elements (or form associated elements) are associated with @frame.
      * This is useful to implement form auto filling for web pages where form fields are added
      * dynamically. This signal might be emitted multiple times for the same frame.
      *

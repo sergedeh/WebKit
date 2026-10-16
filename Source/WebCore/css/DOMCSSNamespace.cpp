@@ -39,6 +39,7 @@
 #include "Document.h"
 #include "HighlightRegistry.h"
 #include "MutableStyleProperties.h"
+#include "Settings.h"
 #include "StyleProperties.h"
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/WTFString.h>
@@ -52,7 +53,7 @@ bool DOMCSSNamespace::supports(Document& document, const String& property, const
 
     auto propertyNameWithoutWhitespace = property;
     CSSPropertyID propertyID = cssPropertyID(propertyNameWithoutWhitespace);
-    if (propertyID == CSSPropertyInvalid && isCustomPropertyName(propertyNameWithoutWhitespace)) {
+    if (propertyID == CSSPropertyID::Invalid && isCustomPropertyName(propertyNameWithoutWhitespace)) {
         auto dummyStyle = MutableStyleProperties::create();
         return CSSParser::parseCustomPropertyValue(dummyStyle, AtomString { propertyNameWithoutWhitespace }, value, IsImportant::No, parserContext) != CSSParser::ParseResult::Error;
     }
@@ -63,7 +64,7 @@ bool DOMCSSNamespace::supports(Document& document, const String& property, const
     if (CSSProperty::isDescriptorOnly(propertyID))
         return false;
 
-    if (propertyID == CSSPropertyInvalid)
+    if (propertyID == CSSPropertyID::Invalid)
         return false;
 
     if (value.isEmpty())
@@ -84,7 +85,7 @@ bool DOMCSSNamespace::supports(Document& document, const String& conditionText)
 String DOMCSSNamespace::escape(const String& ident)
 {
     StringBuilder builder;
-    serializeIdentifier(ident, builder);
+    serializeIdentifier(builder, ident);
     return builder.toString();
 }
 

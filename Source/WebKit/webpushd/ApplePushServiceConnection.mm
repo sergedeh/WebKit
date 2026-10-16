@@ -29,6 +29,7 @@
 #if HAVE(APPLE_PUSH_SERVICE_URL_TOKEN_SUPPORT)
 
 #import <wtf/BlockPtr.h>
+#import <wtf/Borrow.h>
 #import <wtf/WeakPtr.h>
 #import <wtf/cocoa/VectorCocoa.h>
 #import <wtf/darwin/DispatchExtras.h>
@@ -71,9 +72,10 @@ namespace WebPushD {
 
 ApplePushServiceConnection::ApplePushServiceConnection(const String& incomingPushServiceName)
 {
-    m_connection = adoptNS([[APSConnection alloc] initWithEnvironmentName:APSEnvironmentProduction namedDelegatePort:incomingPushServiceName.createNSString().get() queue:mainDispatchQueueSingleton()]);
-    m_delegate = adoptNS([[_WKAPSConnectionDelegate alloc] initWithConnection:this]);
-    [m_connection setDelegate:m_delegate.get()];
+    lazyInitialize(m_connection, adoptNS([[APSConnection alloc] initWithEnvironmentName:APSEnvironmentProduction namedDelegatePort:incomingPushServiceName.createNSString().get() queue:mainDispatchQueueSingleton()]));
+    RetainPtr delegate = adoptNS([[_WKAPSConnectionDelegate alloc] initWithConnection:this]);
+    lazyInitialize(m_delegate, RetainPtr { delegate });
+    [m_connection setDelegate:delegate.get()];
 }
 
 ApplePushServiceConnection::~ApplePushServiceConnection()
@@ -83,7 +85,7 @@ ApplePushServiceConnection::~ApplePushServiceConnection()
 
 static RetainPtr<APSURLTokenInfo> makeTokenInfo(const String& topic, const Vector<uint8_t>& vapidPublicKey)
 {
-    return adoptNS([[APSURLTokenInfo alloc] initWithTopic:topic.createNSString().get() vapidPublicKey:toNSData(vapidPublicKey).get()]);
+    return adoptNS([[APSURLTokenInfo alloc] initWithTopic:topic.createNSString().get() vapidPublicKey:toNSData(borrow(vapidPublicKey)->span()).get()]);
 }
 
 void ApplePushServiceConnection::subscribe(const String& topic, const Vector<uint8_t>& vapidPublicKey, SubscribeHandler&& subscribeHandler)

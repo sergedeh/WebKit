@@ -31,9 +31,13 @@
 #include "DrawingAreaProxy.h"
 #include "EditingRange.h"
 #include "EditorState.h"
+#include "NativeWebMouseEvent.h"
 #include "WebPreferences.h"
 #include "WebProcessPool.h"
 #include <WebCore/CompositionUnderline.h>
+#include <WebCore/DoublePoint.h>
+#include <WebCore/DragData.h>
+#include <WebCore/SelectionData.h>
 
 using namespace WebKit;
 
@@ -53,7 +57,7 @@ View::~View()
 void View::createWebPage(const API::PageConfiguration& configuration)
 {
     auto& pool = configuration.processPool();
-    m_pageProxy = pool.createWebPage(*m_pageClient, configuration.copy());
+    lazyInitialize(m_pageProxy, pool.createWebPage(*m_pageClient, configuration.copy()));
 
 #if ENABLE(MEMORY_SAMPLER)
     if (getenv("WEBKIT_SAMPLE_MEMORY"))
@@ -76,6 +80,9 @@ void View::frameDisplayed()
 
 void View::willStartLoad()
 {
+#if ENABLE(DRAG_SUPPORT)
+    m_dragData = std::nullopt;
+#endif
     m_client->willStartLoad(*this);
 }
 
@@ -124,6 +131,11 @@ void View::themeColorDidChange()
     m_client->themeColorDidChange();
 }
 
+void View::pageScaleFactorDidChange()
+{
+    m_client->pageScaleFactorDidChange(*this);
+}
+
 void View::setSize(const WebCore::IntSize& size)
 {
     m_size = size;
@@ -157,5 +169,42 @@ void View::willExitFullScreen(CompletionHandler<void()>&& completionHandler)
     m_fullscreenState = WebFullScreenManagerProxy::FullscreenState::ExitingFullscreen;
 }
 #endif // ENABLE(FULLSCREEN_API)
+
+#if ENABLE(DRAG_SUPPORT)
+void View::setDragData(WebCore::SelectionData&& selectionData, OptionSet<WebCore::DragOperation> dragOperationMask)
+{
+    if (RefPtr image = selectionData.image()) {
+        // A ShareableBitmap received over IPC can't be sent again, so a copy is needed to resend with each drag update.
+        // FIXME: Consider not sending the image back to the WebProcess.
+        RefPtr copy = WebCore::ShareableBitmap::create({ image->size(), image->colorSpace(), image->pixelFormat() });
+        if (copy && copy->sizeInBytes() == image->sizeInBytes())
+            memcpySpan(copy->mutableSpan(), image->span());
+        else
+            copy = nullptr;
+        selectionData.setImage(WTF::move(copy));
+    }
+
+    m_dragData = WTF::move(selectionData);
+    m_dragMask = dragOperationMask;
+}
+
+bool View::updateDrag(const WebKit::NativeWebMouseEvent& event)
+{
+    if (!m_dragData || (event.type() != WebKit::WebEventType::MouseMove && event.type() != WebKit::WebEventType::MouseUp))
+        return false;
+
+    auto clientPosition = WebCore::roundedIntPoint(event.position());
+    auto globalPosition = WebCore::roundedIntPoint(event.globalPosition());
+    WebCore::DragData dragData(&m_dragData.value(), clientPosition, globalPosition, m_dragMask);
+    page().dragUpdated(dragData);
+    if (event.type() == WebKit::WebEventType::MouseUp) {
+        page().performDragOperation(dragData, { }, { }, { });
+        auto dragOperation = page().currentDragOperation();
+        page().dragEnded(clientPosition, globalPosition, dragOperation ? OptionSet<WebCore::DragOperation> { *dragOperation } : OptionSet<WebCore::DragOperation> { });
+        m_dragData = std::nullopt;
+    }
+    return true;
+}
+#endif // ENABLE(DRAG_SUPPORT)
 
 } // namespace WKWPE

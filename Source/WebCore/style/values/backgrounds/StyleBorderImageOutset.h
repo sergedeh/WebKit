@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 Samuel Weinig <sam@webkit.org>
+ * Copyright (C) 2025-2026 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,6 +28,11 @@
 #include <WebCore/StylePrimitiveNumericTypes.h>
 
 namespace WebCore {
+
+namespace CSS {
+struct BorderImageOutset;
+}
+
 namespace Style {
 
 // <border-image-outset-value> = <length [0,∞]> | <number [0,∞]>
@@ -44,7 +49,7 @@ struct BorderImageOutsetValue {
     constexpr bool isLength() const { return WTF::holdsAlternative<Length>(m_value); }
     constexpr bool isNumber() const { return WTF::holdsAlternative<Number>(m_value); }
 
-    template<typename... F> constexpr decltype(auto) switchOn(F&&... f) const
+    template<typename... F> constexpr decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         return WTF::switchOn(m_value, std::forward<F>(f)...);
     }
@@ -112,14 +117,17 @@ DEFINE_TYPE_WRAPPER_GET(BorderImageOutset, values);
 
 // MARK: - Conversion
 
+template<> struct ToCSS<BorderImageOutset> { auto operator()(const BorderImageOutset&, const Style::ComputedStyle&) -> CSS::BorderImageOutset; };
+template<> struct ToStyle<CSS::BorderImageOutset> { auto operator()(const CSS::BorderImageOutset&, const BuilderState&) -> BorderImageOutset; };
+
 template<> struct CSSValueConversion<BorderImageOutset> { auto operator()(BuilderState&, const CSSValue&) -> BorderImageOutset; };
-template<> struct CSSValueCreation<BorderImageOutset> { auto operator()(CSSValuePool&, const RenderStyle&, const BorderImageOutset&) -> Ref<CSSValue>; };
+template<> struct CSSValueCreation<BorderImageOutset> { auto operator()(CSSValuePool&, const Style::ComputedStyle&, const BorderImageOutset&) -> Ref<CSSValue>; };
 
 // MARK: - Blending
 
 template<> struct Blending<BorderImageOutsetValue> {
-    auto canBlend(const BorderImageOutsetValue&, const BorderImageOutsetValue&) -> bool;
-    auto requiresInterpolationForAccumulativeIteration(const BorderImageOutsetValue&, const BorderImageOutsetValue&) -> bool;
+    bool LEGACY_NODELETE canBlend(const BorderImageOutsetValue&, const BorderImageOutsetValue&);
+    bool LEGACY_NODELETE requiresInterpolationForAccumulativeIteration(const BorderImageOutsetValue&, const BorderImageOutsetValue&);
     auto blend(const BorderImageOutsetValue&, const BorderImageOutsetValue&, const BlendingContext&) -> BorderImageOutsetValue;
 };
 

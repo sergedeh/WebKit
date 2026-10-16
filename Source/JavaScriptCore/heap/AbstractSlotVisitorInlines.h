@@ -26,6 +26,7 @@
 #pragma once
 
 #include <JavaScriptCore/AbstractSlotVisitor.h>
+#include <JavaScriptCore/GCSegmentedArrayInlines.h>
 #include <JavaScriptCore/Heap.h>
 #include <JavaScriptCore/WeakInlines.h>
 #include <JavaScriptCore/WriteBarrier.h>
@@ -35,6 +36,11 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC {
 
 using ReferrerToken = AbstractSlotVisitor::ReferrerToken;
+
+inline bool AbstractSlotVisitor::isEmpty()
+{
+    return m_collectorStack.isEmpty() && m_mutatorStack.isEmpty();
+}
 
 inline ReferrerToken::ReferrerToken(HeapCell* cell)
     : m_bits(std::bit_cast<uintptr_t>(cell) | HeapCellToken)
@@ -100,26 +106,11 @@ inline AbstractSlotVisitor::ReferrerContext::~ReferrerContext()
     m_visitor.m_context = m_previous;
 }
 
-inline AbstractSlotVisitor::AbstractSlotVisitor(JSC::Heap& heap, CString codeName, ConcurrentPtrHashSet& opaqueRoots)
-    : m_heap(heap)
-    , m_codeName(codeName)
+inline AbstractSlotVisitor::AbstractSlotVisitor(Collector& collector, ASCIICString codeName, ConcurrentPtrHashSet& opaqueRoots)
+    : m_collector(collector)
+    , m_codeName(WTF::move(codeName))
     , m_opaqueRoots(opaqueRoots)
 {
-}
-
-inline JSC::Heap* AbstractSlotVisitor::heap() const
-{
-    return &m_heap;
-}
-
-inline VM& AbstractSlotVisitor::vm()
-{
-    return m_heap.vm();
-}
-
-inline const VM& AbstractSlotVisitor::vm() const
-{
-    return m_heap.vm();
 }
 
 inline bool AbstractSlotVisitor::addOpaqueRoot(void* ptr)
@@ -224,9 +215,18 @@ ALWAYS_INLINE ReferrerToken AbstractSlotVisitor::referrer() const
     return m_context->referrer();
 }
 
+inline void AbstractSlotVisitor::didStartMarking(CollectionScope scope, bool isAnalyzingHeap)
+{
+    ASSERT(!m_visitCount);
+    ASSERT(!m_isAnalyzingHeap);
+    m_collectionScope = scope;
+    m_isAnalyzingHeap = isAnalyzingHeap;
+}
+
 ALWAYS_INLINE void AbstractSlotVisitor::reset()
 {
     m_visitCount = 0;
+    m_isAnalyzingHeap = false;
 }
 
 } // namespace JSC

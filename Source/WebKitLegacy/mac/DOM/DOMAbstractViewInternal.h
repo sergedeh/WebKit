@@ -24,6 +24,7 @@
  */
 
 #import <WebKitLegacy/DOMAbstractView.h>
+#import <wtf/Compiler.h>
 
 namespace WebCore {
 class DOMWindow;
@@ -32,9 +33,9 @@ class WindowProxy;
 }
 
 WebCore::LocalDOMWindow* core(DOMAbstractView *);
-DOMAbstractView *kit(WebCore::LocalDOMWindow*);
-DOMAbstractView *kit(WebCore::DOMWindow*);
-DOMAbstractView *kit(WebCore::WindowProxy*);
+DOMAbstractView * LEGACY_NODELETE kit(WebCore::LocalDOMWindow*);
+DOMAbstractView * LEGACY_NODELETE kit(WebCore::DOMWindow*);
+DOMAbstractView * LEGACY_NODELETE kit(WebCore::WindowProxy*);
 WebCore::WindowProxy* toWindowProxy(DOMAbstractView *);
 
 @interface DOMAbstractView (WebKitLegacyInternal)

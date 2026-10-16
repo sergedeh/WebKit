@@ -11,9 +11,6 @@ declare_args() {
   # If true, it assumes that //third_party/abseil-cpp is an available
   # dependency for googletest.
   gtest_enable_absl_printers = false
-
-  # Set to default here so that it can be set via gn args
-  use_cxx17 = false
 }
 
 if (host_os == "mac" && use_system_xcode == "") {
@@ -32,6 +29,10 @@ if (host_os == "mac" && use_system_xcode == "") {
 }
 
 enable_java_templates = true
+
+perfetto_build_with_embedder = true
+perfetto_build_standalone = false
+is_perfetto_build_generator = false
 
 # Build with fewer Android dependencies
 limit_android_deps = true
@@ -62,3 +63,8 @@ if (is_win) {
 } else {
   enable_safe_libcxx = false
 }
+
+vpython_spec_files = [
+  "//vpython.toml",
+  "//vpython.toml.uv.lock",
+]

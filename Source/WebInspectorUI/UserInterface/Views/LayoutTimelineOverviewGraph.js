@@ -69,57 +69,18 @@ WI.LayoutTimelineOverviewGraph = class LayoutTimelineOverviewGraph extends WI.Ti
         if (this.hidden)
             return;
 
-        this._updateRowLayout(this._timelinePaintRecordRow);
-        this._updateRowLayout(this._timelineLayoutRecordRow);
+        for (let {element, recordBars, records} of [this._timelinePaintRecordRow, this._timelineLayoutRecordRow])
+            this.layoutRecordBars(element, recordBars, records);
     }
 
     updateSelectedRecord()
     {
         super.updateSelectedRecord();
 
-        for (let recordRow of [this._timelineLayoutRecordRow, this._timelinePaintRecordRow]) {
-            for (let recordBar of recordRow.recordBars) {
-                if (recordBar.records.includes(this.selectedRecord)) {
-                    this.selectedRecordBar = recordBar;
-                    return;
-                }
-            }
-        }
-
-        this.selectedRecordBar = null;
+        this.updateSelectedRecordBar([this._timelineLayoutRecordRow.recordBars, this._timelinePaintRecordRow.recordBars]);
     }
 
     // Private
-
-    _updateRowLayout(row)
-    {
-        var secondsPerPixel = this.timelineOverview.secondsPerPixel;
-        var recordBarIndex = 0;
-
-        function createBar(records, renderMode)
-        {
-            var timelineRecordBar = row.recordBars[recordBarIndex];
-            if (!timelineRecordBar)
-                timelineRecordBar = row.recordBars[recordBarIndex] = new WI.TimelineRecordBar(this, records, renderMode);
-            else {
-                timelineRecordBar.renderMode = renderMode;
-                timelineRecordBar.records = records;
-            }
-
-            timelineRecordBar.refresh(this);
-            if (!timelineRecordBar.element.parentNode)
-                row.element.appendChild(timelineRecordBar.element);
-            ++recordBarIndex;
-        }
-
-        WI.TimelineRecordBar.createCombinedBars(row.records, secondsPerPixel, this, createBar.bind(this));
-
-        // Remove the remaining unused TimelineRecordBars.
-        for (; recordBarIndex < row.recordBars.length; ++recordBarIndex) {
-            row.recordBars[recordBarIndex].records = null;
-            row.recordBars[recordBarIndex].element.remove();
-        }
-    }
 
     _layoutTimelineRecordAdded(event)
     {

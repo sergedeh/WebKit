@@ -25,7 +25,6 @@
 
 #pragma once
 
-#include <JavaScriptCore/Forward.h>
 #include <WebCore/FloatRect.h>
 #include <WebCore/ImageBuffer.h>
 #include <WebCore/IntRect.h>
@@ -52,8 +51,9 @@ class FloatRect;
 
 class FilterImage : public RefCounted<FilterImage> {
 public:
-    static RefPtr<FilterImage> create(const FloatRect& primitiveSubregion, const FloatRect& imageRect, const IntRect& absoluteImageRect, bool isAlphaImage, bool isValidPremultiplied, RenderingMode, const DestinationColorSpace&, ImageBufferAllocator&);
+    static RefPtr<FilterImage> create(const FloatRect& primitiveSubregion, const FloatRect& imageRect, const IntRect& absoluteImageRect, bool isAlphaImage, bool isValidPremultiplied, RenderingMode, const ColorSpace&, ImageBufferAllocator&);
     static RefPtr<FilterImage> create(const FloatRect& primitiveSubregion, const FloatRect& imageRect, const IntRect& absoluteImageRect, Ref<ImageBuffer>&&, ImageBufferAllocator&);
+    static RefPtr<FilterImage> create(const FloatRect& primitiveSubregion, FilterImage& other, ImageBufferAllocator&);
 
     // The return values are in filter coordinates.
     FloatRect primitiveSubregion() const { return m_primitiveSubregion; }
@@ -62,23 +62,23 @@ public:
 
     // The return values are in user-space coordinates.
     IntRect absoluteImageRect() const { return m_absoluteImageRect; }
-    IntRect absoluteImageRectRelativeTo(const FilterImage& origin) const;
+    IntRect LEGACY_NODELETE absoluteImageRectRelativeTo(const FilterImage& origin) const;
     FloatPoint mappedAbsolutePoint(const FloatPoint&) const;
 
     bool isAlphaImage() const { return m_isAlphaImage; }
     RenderingMode renderingMode() const { return m_renderingMode; }
-    const DestinationColorSpace& colorSpace() const { return m_colorSpace; }
+    const ColorSpace& colorSpace() const LIFETIME_BOUND { return m_colorSpace; }
 
     size_t memoryCost() const;
 
     WEBCORE_EXPORT ImageBuffer* imageBuffer();
     PixelBuffer* pixelBuffer(AlphaPremultiplication);
 
-    RefPtr<PixelBuffer> getPixelBuffer(AlphaPremultiplication, const IntRect& sourceRect, std::optional<DestinationColorSpace> = std::nullopt);
-    void copyPixelBuffer(PixelBuffer& destinationPixelBuffer, const IntRect& sourceRect);
+    RefPtr<PixelBuffer> getPixelBuffer(AlphaPremultiplication, const IntRect& sourceRect, std::optional<ColorSpace> = std::nullopt);
+    bool copyPixelBuffer(PixelBuffer& destinationPixelBuffer, const IntRect& sourceRect);
 
-    void correctPremultipliedPixelBuffer();
-    void transformToColorSpace(const DestinationColorSpace&);
+    void LEGACY_NODELETE correctPremultipliedPixelBuffer();
+    void LEGACY_NODELETE transformToColorSpace(const ColorSpace&);
 
 #if USE(CORE_IMAGE)
     ImageBuffer* filterResultImageBuffer(const Filter&);
@@ -89,14 +89,14 @@ public:
 #endif
 
 private:
-    FilterImage(const FloatRect& primitiveSubregion, const FloatRect& imageRect, const IntRect& absoluteImageRect, bool isAlphaImage, bool isValidPremultiplied, RenderingMode, const DestinationColorSpace&, ImageBufferAllocator&);
+    FilterImage(const FloatRect& primitiveSubregion, const FloatRect& imageRect, const IntRect& absoluteImageRect, bool isAlphaImage, bool isValidPremultiplied, RenderingMode, const ColorSpace&, ImageBufferAllocator&);
     FilterImage(const FloatRect& primitiveSubregion, const FloatRect& imageRect, const IntRect& absoluteImageRect, Ref<ImageBuffer>&&, ImageBufferAllocator&);
 
-    RefPtr<PixelBuffer>& pixelBufferSlot(AlphaPremultiplication);
+    RefPtr<PixelBuffer>& LEGACY_NODELETE pixelBufferSlot(AlphaPremultiplication);
 
     ImageBuffer* imageBufferFromPixelBuffer();
 
-    bool requiresPixelBufferColorSpaceConversion(std::optional<DestinationColorSpace>) const;
+    bool requiresPixelBufferColorSpaceConversion(std::optional<ColorSpace>) const;
 
     FloatRect m_primitiveSubregion;
     FloatRect m_imageRect;
@@ -105,7 +105,7 @@ private:
     bool m_isAlphaImage { false };
     bool m_isValidPremultiplied { true };
     RenderingMode m_renderingMode;
-    DestinationColorSpace m_colorSpace;
+    ColorSpace m_colorSpace;
 
     RefPtr<ImageBuffer> m_imageBuffer;
     RefPtr<PixelBuffer> m_unpremultipliedPixelBuffer;

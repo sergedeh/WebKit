@@ -26,18 +26,14 @@
 #pragma once
 
 #include <WebCore/ThreadTimers.h>
-#include <functional>
 #include <wtf/AbstractCanMakeCheckedPtr.h>
-#include <wtf/CheckedRef.h>
-#include <wtf/CompactRefPtrTuple.h>
+#include <wtf/CurrentThread.h>
 #include <wtf/Function.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Platform.h>
 #include <wtf/RunLoop.h>
 #include <wtf/Seconds.h>
 #include <wtf/TZoneMalloc.h>
-#include <wtf/Threading.h>
 #include <wtf/TypeTraits.h>
 #include <wtf/Vector.h>
 #include <wtf/WeakPtr.h>
@@ -61,14 +57,15 @@ public:
     WEBCORE_EXPORT TimerBase();
     WEBCORE_EXPORT virtual ~TimerBase();
 
-    // TimerBase's destructor inspects Ref<Thread> m_thread, which won't work if we are moved-from.
     TimerBase(TimerBase&&) = delete;
-    TimerBase& operator=(TimerBase&&) = delete;
+    TimerBase& LEGACY_NODELETE operator=(TimerBase&&) = delete;
 
     WEBCORE_EXPORT void start(Seconds nextFireInterval, Seconds repeatInterval);
 
     void startRepeating(Seconds repeatInterval) { start(repeatInterval, repeatInterval); }
     void startOneShot(Seconds delay) { start(delay, 0_s); }
+
+    WEBCORE_EXPORT void startOneShotBeforeDueTimers();
 
     inline void stop();
     inline bool isActive() const;
@@ -105,14 +102,14 @@ private:
 
     WEBCORE_EXPORT void stopSlowCase();
 
-    void checkConsistency() const;
-    void checkHeapIndex() const;
+    void LEGACY_NODELETE checkConsistency() const;
+    void LEGACY_NODELETE checkHeapIndex() const;
 
     void setNextFireTime(MonotonicTime);
 
     bool inHeap() const { return m_heapItemWithBitfields.pointer() && m_heapItemWithBitfields.pointer()->isInHeap(); }
 
-    bool hasValidHeapPosition() const;
+    bool LEGACY_NODELETE hasValidHeapPosition() const;
     void updateHeapIfNeeded(MonotonicTime oldTime);
 
     void heapDecreaseKey();
@@ -129,7 +126,9 @@ private:
     Seconds m_repeatInterval; // 0 if not repeating
 
     CompactRefPtrTuple<ThreadTimerHeapItem, uint8_t> m_heapItemWithBitfields;
-    const Ref<Thread> m_thread { Thread::currentSingleton() };
+#if ASSERT_ENABLED
+    const uint32_t m_creationThreadID { currentThreadID() };
+#endif
 
     friend class ThreadTimers;
     friend class TimerHeapLessThanFunction;
@@ -150,7 +149,7 @@ public:
     }
 
     template<typename TimerFiredClass, typename TimerFiredBaseClass>
-    requires (WTF::HasRefPtrMemberFunctions<TimerFiredClass>::value && WTF::HasThreadSafeWeakPtrFunctions<TimerFiredClass>::value)
+    requires (WTF::HasRefPtrMemberFunctions<TimerFiredClass> && WTF::HasThreadSafeWeakPtrFunctions<TimerFiredClass>)
     Timer(TimerFiredClass& object, void (TimerFiredBaseClass::*function)())
         : m_function([weakObject = ThreadSafeWeakPtr { object }, function] {
             if (RefPtr protectedObject = weakObject.get())
@@ -160,7 +159,7 @@ public:
     }
 
     template<typename TimerFiredClass, typename TimerFiredBaseClass>
-    requires (WTF::HasRefPtrMemberFunctions<TimerFiredClass>::value && !WTF::HasThreadSafeWeakPtrFunctions<TimerFiredClass>::value && WTF::HasWeakPtrFunctions<TimerFiredClass>::value)
+    requires (WTF::HasRefPtrMemberFunctions<TimerFiredClass> && !WTF::HasThreadSafeWeakPtrFunctions<TimerFiredClass> && WTF::HasWeakPtrFunctions<TimerFiredClass>)
     Timer(TimerFiredClass& object, void (TimerFiredBaseClass::*function)())
         : m_function([weakObject = WeakPtr { object }, function] {
             if (RefPtr protectedObject = weakObject.get())
@@ -170,7 +169,7 @@ public:
     }
 
     template<typename TimerFiredClass, typename TimerFiredBaseClass>
-    requires (WTF::HasCheckedPtrMemberFunctions<TimerFiredClass>::value && (!WTF::HasRefPtrMemberFunctions<TimerFiredClass>::value || (!WTF::HasWeakPtrFunctions<TimerFiredClass>::value && !WTF::HasThreadSafeWeakPtrFunctions<TimerFiredClass>::value)))
+    requires (WTF::HasCheckedPtrMemberFunctions<TimerFiredClass> && (!WTF::HasRefPtrMemberFunctions<TimerFiredClass> || (!WTF::HasWeakPtrFunctions<TimerFiredClass> && !WTF::HasThreadSafeWeakPtrFunctions<TimerFiredClass>)))
     Timer(TimerFiredClass& object, void (TimerFiredBaseClass::*function)())
         : m_function([checkedObject = CheckedRef { object }, function] {
             (checkedObject.ptr()->*function)();
@@ -200,12 +199,7 @@ inline void TimerBase::stop()
 
 inline bool TimerBase::isActive() const
 {
-    // FIXME: Write this in terms of USE(WEB_THREAD) instead of PLATFORM(IOS_FAMILY).
-#if !PLATFORM(IOS_FAMILY)
-    ASSERT(m_thread.ptr() == &Thread::currentSingleton());
-#else
-    ASSERT(WebThreadIsCurrent() || pthread_main_np() || m_thread.ptr() == &Thread::currentSingleton());
-#endif // PLATFORM(IOS_FAMILY)
+    ASSERT(canCurrentThreadIDAccessThreadLocalData(m_creationThreadID));
     return static_cast<bool>(nextFireTime());
 }
 

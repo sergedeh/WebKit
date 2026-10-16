@@ -31,47 +31,68 @@
 #include "CommonVM.h"
 #include "DocumentView.h"
 #include "Element.h"
-#include "FrameDestructionObserverInlines.h"
 #include "ExceptionCode.h"
+#include "FrameDestructionObserverInlines.h"
 #include "HTMLBodyElement.h"
 #include "HistoryController.h"
+#include "JSValueInWrappedObjectInlines.h"
 #include "LocalFrameInlines.h"
 #include "LocalFrameView.h"
 #include "Navigation.h"
 #include "NavigationNavigationType.h"
+#include "ScriptWrappableInlines.h"
+#include "Settings.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(NavigateEvent);
 
-NavigateEvent::NavigateEvent(const AtomString& type, NavigateEvent::Init&& init, EventIsTrusted isTrusted, AbortController* abortController)
-    : Event(EventInterfaceType::NavigateEvent, type, init, isTrusted)
+NavigateEvent::NavigateEvent(JSC::JSGlobalObject& globalObject, const AtomString& type, Init&& init, EventIsTrusted isTrusted, AbortController* abortController)
+    : Event(EventInterfaceType::NavigateEvent, type, WTF::move(init), isTrusted)
     , m_navigationType(init.navigationType)
-    , m_destination(init.destination.releaseNonNull())
-    , m_signal(init.signal.releaseNonNull())
-    , m_formData(init.formData)
-    , m_downloadRequest(init.downloadRequest)
-    , m_sourceElement(init.sourceElement)
+    , m_destination(WTF::move(init.destination))
+    , m_signal(WTF::move(init.signal))
+    , m_formData(WTF::move(init.formData))
+    , m_downloadRequest(WTF::move(init.downloadRequest))
+    , m_sourceElement(WTF::move(init.sourceElement))
     , m_canIntercept(init.canIntercept)
     , m_userInitiated(init.userInitiated)
     , m_hashChange(init.hashChange)
     , m_hasUAVisualTransition(init.hasUAVisualTransition)
     , m_abortController(abortController)
 {
-    Locker<JSC::JSLock> locker(commonVM().apiLock());
-    m_info.setWeakly(init.info);
+    JSC::JSLockHolder lock(commonVM());
+    m_info.set(globalObject, wrapper(), init.info);
 }
 
-Ref<NavigateEvent> NavigateEvent::create(const AtomString& type, NavigateEvent::Init&& init, AbortController* abortController)
+NavigateEvent::NavigateEvent(RefPtr<DOMWrapperWorld>&& world, const AtomString& type, Init&& init, EventIsTrusted isTrusted, AbortController* abortController)
+    : Event(EventInterfaceType::NavigateEvent, type, WTF::move(init), isTrusted)
+    , m_navigationType(init.navigationType)
+    , m_destination(WTF::move(init.destination))
+    , m_signal(WTF::move(init.signal))
+    , m_formData(WTF::move(init.formData))
+    , m_downloadRequest(WTF::move(init.downloadRequest))
+    , m_sourceElement(WTF::move(init.sourceElement))
+    , m_canIntercept(init.canIntercept)
+    , m_userInitiated(init.userInitiated)
+    , m_hashChange(init.hashChange)
+    , m_hasUAVisualTransition(init.hasUAVisualTransition)
+    , m_abortController(abortController)
 {
-    return adoptRef(*new NavigateEvent(type, WTF::move(init), EventIsTrusted::Yes, abortController));
+    JSC::JSLockHolder lock(commonVM());
+    m_info.setWeakly(WTF::move(world), init.info);
 }
 
-Ref<NavigateEvent> NavigateEvent::create(const AtomString& type, NavigateEvent::Init&& init)
+Ref<NavigateEvent> NavigateEvent::create(RefPtr<DOMWrapperWorld>&& world, const AtomString& type, Init&& init, AbortController* abortController)
 {
-    // FIXME: AbortController is required but JS bindings need to create it with one.
-    return adoptRef(*new NavigateEvent(type, WTF::move(init), EventIsTrusted::No, nullptr));
+    return adoptRef(*new NavigateEvent(WTF::move(world), type, WTF::move(init), EventIsTrusted::Yes, abortController));
+}
+
+Ref<NavigateEvent> NavigateEvent::create(JSC::JSGlobalObject& globalObject, const AtomString& type, Init&& init)
+{
+    // FIXME: AbortController is required but JS bindings need to create it without one.
+    return adoptRef(*new NavigateEvent(globalObject, type, WTF::move(init), EventIsTrusted::No, nullptr));
 }
 
 // https://html.spec.whatwg.org/multipage/nav-history-apis.html#navigateevent-perform-shared-checks
@@ -89,6 +110,17 @@ ExceptionOr<void> NavigateEvent::sharedChecks(Document& document)
     return { };
 }
 
+JSC::JSValue NavigateEvent::info()
+{
+    return m_info.getValue();
+}
+
+void NavigateEvent::setInfo(JSC::JSGlobalObject& globalObject, JSC::JSValue info)
+{
+    JSC::JSLockHolder lock(globalObject.vm());
+    m_info.set(globalObject, wrapper(), info);
+}
+
 // https://html.spec.whatwg.org/multipage/nav-history-apis.html#dom-navigateevent-intercept
 ExceptionOr<void> NavigateEvent::intercept(Document& document, NavigationInterceptOptions&& options)
 {
@@ -100,6 +132,13 @@ ExceptionOr<void> NavigateEvent::intercept(Document& document, NavigationInterce
 
     if (!isBeingDispatched())
         return Exception { ExceptionCode::InvalidStateError, "Event is not being dispatched"_s };
+
+    if (document.settings().navigationAPIPrecommitHandlerEnabled() && options.precommitHandler) {
+        if (!cancelable())
+            return Exception { ExceptionCode::InvalidStateError, "A precommitHandler can only be used on a cancelable navigation"_s };
+
+        m_precommitHandlers.append(options.precommitHandler.releaseNonNull());
+    }
 
     ASSERT(!m_interceptionState || m_interceptionState == InterceptionState::Intercepted);
 
@@ -128,33 +167,30 @@ void NavigateEvent::processScrollBehavior(Document& document)
     m_interceptionState = InterceptionState::Scrolled;
 
     if (m_navigationType == NavigationNavigationType::Traverse) {
-        document.frame()->loader().history().restoreScrollPositionAndViewState();
-
+        protect(document.frame()->loader().history())->restoreScrollPositionAndViewState();
         return;
     }
 
-    if (!document.url().hasFragmentIdentifier()) {
-        if (m_navigationType == NavigationNavigationType::Reload)
-            document.frame()->loader().history().restoreScrollPositionAndViewState();
-        else
-            document.frame()->view()->scrollTo({ 0, 0 });
+    if (document.url().hasFragmentIdentifier()) {
+        if (!document.haveStylesheetsLoaded()) {
+            document.setGotoAnchorNeededAfterStylesheetsLoad(true);
+            return;
+        }
 
-        return;
+        // LocalFrameView::scrollToFragment() only fails when the document's indicated part
+        // is null, and it clears the CSS :target element itself in that case.
+        if (protect(protect(document)->frame()->view())->scrollToFragment(document.url()))
+            return;
     }
 
-    // LocalFrameView::scrollToFragment() will fail only when anchor is not found
-    // if the url has fragment and the fragment is not text fragment.
-    if (!document.findAnchor(document.url().fragmentIdentifier())) {
-        if (m_navigationType == NavigationNavigationType::Reload)
-            document.frame()->loader().history().restoreScrollPositionAndViewState();
+    // The document's indicated part is null, so clear the CSS :target element and scroll
+    // to the beginning of the document.
+    document.setCSSTarget(nullptr);
 
-        return;
-    }
-
-    if (!document.haveStylesheetsLoaded())
-        document.setGotoAnchorNeededAfterStylesheetsLoad(true);
+    if (m_navigationType == NavigationNavigationType::Reload)
+        protect(document.frame()->loader().history())->restoreScrollPositionAndViewState();
     else
-        document.frame()->view()->scrollToFragment(document.url());
+        protect(protect(document)->frame()->view())->setScrollPosition({ 0, 0 });
 }
 
 // https://html.spec.whatwg.org/multipage/nav-history-apis.html#dom-navigateevent-scroll
@@ -191,16 +227,15 @@ void NavigateEvent::finish(Document& document, InterceptionHandlersDidFulfill di
 
     ASSERT(m_interceptionState == InterceptionState::Committed || m_interceptionState == InterceptionState::Scrolled);
     if (focusChanged == FocusDidChange::No && m_focusReset != NavigationFocusReset::Manual) {
-        RefPtr documentElement = document.documentElement();
-        ASSERT(documentElement);
+        if (RefPtr documentElement = document.documentElement()) {
+            RefPtr<Element> focusTarget = documentElement->findAutofocusDelegate();
+            if (!focusTarget)
+                focusTarget = document.body();
+            if (!focusTarget)
+                focusTarget = WTF::move(documentElement);
 
-        RefPtr<Element> focusTarget = documentElement->findAutofocusDelegate();
-        if (!focusTarget)
-            focusTarget = document.body();
-        if (!focusTarget)
-            focusTarget = documentElement;
-
-        document.setFocusedElement(focusTarget.get());
+            document.setFocusedElement(focusTarget.get());
+        }
     }
 
     if (didFulfill == InterceptionHandlersDidFulfill::Yes)

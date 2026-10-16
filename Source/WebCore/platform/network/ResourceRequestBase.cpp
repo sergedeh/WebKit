@@ -30,7 +30,6 @@
 #include "HTTPStatusCodes.h"
 #include "IPAddressSpace.h"
 #include "Logging.h"
-#include "PublicSuffixStore.h"
 #include "RegistrableDomain.h"
 #include "ResourceRequest.h"
 #include "ResourceResponse.h"
@@ -53,7 +52,7 @@ double ResourceRequestBase::s_defaultTimeoutInterval = 0;
 
 inline const ResourceRequest& ResourceRequestBase::asResourceRequest() const
 {
-    return *static_cast<const ResourceRequest*>(this);
+    return downcast<ResourceRequest>(*this);
 }
 
 ResourceRequest ResourceRequestBase::isolatedCopy() const
@@ -73,7 +72,7 @@ void ResourceRequestBase::setAsIsolatedCopy(const ResourceRequest& other)
     setPriority(other.priority());
     setRequester(other.requester());
     setInitiatorIdentifier(other.initiatorIdentifier().isolatedCopy());
-    setCachePartition(other.cachePartition().isolatedCopy());
+    setShouldBlockThirdPartyStorage(other.shouldBlockThirdPartyStorage());
 
     if (auto inspectorInitiatorNodeIdentifier = other.inspectorInitiatorNodeIdentifier())
         setInspectorInitiatorNodeIdentifier(*inspectorInitiatorNodeIdentifier);
@@ -133,6 +132,9 @@ void ResourceRequestBase::setURL(URL&& url, bool didFilterLinkDecoration)
 {
     updateResourceRequest();
 
+    if (m_requestData.m_url == url && m_requestData.m_didFilterLinkDecoration == didFilterLinkDecoration)
+        return;
+
     m_requestData.m_url = WTF::move(url);
     m_requestData.m_didFilterLinkDecoration = didFilterLinkDecoration;
 
@@ -148,17 +150,13 @@ static bool shouldUseGet(const ResourceRequestBase& request, const ResourceRespo
     return redirectResponse.httpStatusCode() == httpStatus303SeeOther;
 }
 
-// https://fetch.spec.whatwg.org/#concept-http-redirect-fetch Step 11
+// https://fetch.spec.whatwg.org/#concept-http-redirect-fetch
 void ResourceRequestBase::redirectAsGETIfNeeded(const ResourceRequestBase &redirectRequest, const ResourceResponse& redirectResponse)
 {
     if (shouldUseGet(redirectRequest, redirectResponse)) {
         setHTTPMethod("GET"_s);
         setHTTPBody(nullptr);
-        m_requestData.m_httpHeaderFields.remove(HTTPHeaderName::ContentLength);
-        m_requestData.m_httpHeaderFields.remove(HTTPHeaderName::ContentLanguage);
-        m_requestData.m_httpHeaderFields.remove(HTTPHeaderName::ContentEncoding);
-        m_requestData.m_httpHeaderFields.remove(HTTPHeaderName::ContentLocation);
-        clearHTTPContentType();
+        m_requestData.m_httpHeaderFields.removeRequestBodyHeaders();
     }
 }
 
@@ -215,7 +213,8 @@ bool ResourceRequestBase::upgradeInsecureRequestIfNeeded(URL& url, ShouldUpgrade
         return false;
 
     // Do not automatically upgrade localhost or IP address connections unless the CSP policy requires it.
-    bool isHostLocalhostOrIPaddress = SecurityOrigin::isLocalhostAddress(url.host()) || URL::hostIsIPAddress(url.host());
+    auto host = url.host();
+    bool isHostLocalhostOrIPaddress = SecurityOrigin::isLocalhostAddress(host) || URL::hostIsIPAddress(host);
     if (isHostLocalhostOrIPaddress && shouldUpgradeLocalhostAndIPAddress == ShouldUpgradeLocalhostAndIPAddress::No)
         return false;
 
@@ -560,7 +559,7 @@ void ResourceRequestBase::setResponseContentDispositionEncodingFallbackArray(con
     m_platformRequestUpdated = false;
 }
 
-RefPtr<FormData> ResourceRequestBase::httpBody() const
+FormData* ResourceRequestBase::httpBody() const
 {
     updateResourceRequest(HTTPBodyUpdatePolicy::UpdateHTTPBody);
 
@@ -569,7 +568,7 @@ RefPtr<FormData> ResourceRequestBase::httpBody() const
 
 bool ResourceRequestBase::hasUpload() const
 {
-    if (auto body = httpBody()) {
+    if (RefPtr body = httpBody()) {
         for (auto& element : body->elements()) {
             if (std::holds_alternative<WebCore::FormDataElement::EncodedFileData>(element.data) || std::holds_alternative<WebCore::FormDataElement::EncodedBlobData>(element.data))
                 return true;
@@ -864,25 +863,18 @@ unsigned initializeMaximumHTTPConnectionCountPerHost()
 }
 #endif
 
-void ResourceRequestBase::setCachePartition(const String& cachePartition)
+String ResourceRequestBase::cachePartition() const
 {
 #if ENABLE(CACHE_PARTITIONING)
-    ASSERT(!cachePartition.isNull());
-    ASSERT(cachePartition == partitionName(cachePartition));
-    m_cachePartition = cachePartition;
+    if (!m_shouldBlockThirdPartyStorage)
+        return emptyString();
+    RegistrableDomain domain(firstPartyForCookies());
+    if (domain.isEmpty())
+        return emptyString();
+    return domain.string();
 #else
-    UNUSED_PARAM(cachePartition);
+    return emptyString();
 #endif
-}
-
-String ResourceRequestBase::partitionName(const String& domain)
-{
-    if (domain.isNull())
-        return emptyString();
-    auto highLevel = PublicSuffixStore::singleton().topPrivatelyControlledDomain(domain);
-    if (highLevel.isNull())
-        return emptyString();
-    return highLevel;
 }
 
 bool ResourceRequestBase::isThirdParty() const

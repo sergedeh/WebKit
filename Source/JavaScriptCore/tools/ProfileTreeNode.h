@@ -25,6 +25,12 @@
 
 #pragma once
 
+#include <wtf/DataLog.h>
+#include <wtf/HashMap.h>
+#include <wtf/Vector.h>
+#include <wtf/text/StringHash.h>
+#include <wtf/text/WTFString.h>
+
 namespace JSC {
 
 class ProfileTreeNode {
@@ -93,9 +99,9 @@ private:
             // in this node (samples directly within this node, excluding samples in children.
             for (unsigned i = 0; i < indent; ++i)
                 dataLogF("    ");
-            dataLogF("% 8lld: %s (%lld stack top)\n",
+            SAFE_DATALOGF("% 8lld: %s (%lld stack top)\n",
                 static_cast<long long>(entry->value.count()),
-                entry->key.utf8().data(),
+                entry->key.utf8(),
                 static_cast<long long>(entry->value.count() - entry->value.childCount()));
 
             // Recursively dump the child nodes.

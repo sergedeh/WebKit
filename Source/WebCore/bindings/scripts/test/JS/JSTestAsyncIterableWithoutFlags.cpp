@@ -27,6 +27,7 @@
 #include "ExtendedDOMIsoSubspaces.h"
 #include "JSDOMAsyncIterator.h"
 #include "JSDOMBinding.h"
+#include "JSDOMBindingFacade.h"
 #include "JSDOMConstructorNotConstructable.h"
 #include "JSDOMConvertInterface.h"
 #include "JSDOMExceptionHandling.h"
@@ -39,7 +40,6 @@
 #include <JavaScriptCore/BuiltinNames.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
-#include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
@@ -76,10 +76,7 @@ public:
         STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSTestAsyncIterableWithoutFlagsPrototype, Base);
         return &vm.plainObjectSpace();
     }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
+    static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue);
 
 private:
     JSTestAsyncIterableWithoutFlagsPrototype(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure)
@@ -119,12 +116,17 @@ static const std::array<HashTableValue, 2> JSTestAsyncIterableWithoutFlagsProtot
 
 const ClassInfo JSTestAsyncIterableWithoutFlagsPrototype::s_info = { "TestAsyncIterableWithoutFlags"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTestAsyncIterableWithoutFlagsPrototype) };
 
+JSC::Structure* JSTestAsyncIterableWithoutFlagsPrototype::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+{
+    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
+}
+
 void JSTestAsyncIterableWithoutFlagsPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSTestAsyncIterableWithoutFlags::info(), JSTestAsyncIterableWithoutFlagsPrototypeTableValues, *this);
-    putDirect(vm, vm.propertyNames->asyncIteratorSymbol, getDirect(vm, vm.propertyNames->builtinNames().valuesPublicName()), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    putDirect(vm, vm.propertyNames->asyncIteratorSymbol, WebCore::getDirect(this, vm, vm.propertyNames->builtinNames().valuesPublicName()), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+    WebCore::putDirectWithoutTransition(this, vm, vm.propertyNames->toStringTagSymbol, jsNontrivialString(vm, info()->className), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
 }
 
 const ClassInfo JSTestAsyncIterableWithoutFlags::s_info = { "TestAsyncIterableWithoutFlags"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTestAsyncIterableWithoutFlags) };
@@ -135,6 +137,19 @@ JSTestAsyncIterableWithoutFlags::JSTestAsyncIterableWithoutFlags(Structure* stru
 }
 
 static_assert(!std::is_base_of<ActiveDOMObject, TestAsyncIterableWithoutFlags>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
+
+JSTestAsyncIterableWithoutFlags* JSTestAsyncIterableWithoutFlags::create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<TestAsyncIterableWithoutFlags>&& impl)
+{
+    auto& vm = globalObject->vm();
+    JSTestAsyncIterableWithoutFlags* ptr = new (NotNull, JSC::allocateCell<JSTestAsyncIterableWithoutFlags>(vm)) JSTestAsyncIterableWithoutFlags(structure, *globalObject, WTF::move(impl));
+    ptr->finishCreation(vm);
+    return ptr;
+}
+
+JSC::Structure* JSTestAsyncIterableWithoutFlags::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+{
+    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
+}
 
 JSObject* JSTestAsyncIterableWithoutFlags::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
@@ -150,7 +165,7 @@ JSObject* JSTestAsyncIterableWithoutFlags::prototype(VM& vm, JSDOMGlobalObject& 
 
 JSValue JSTestAsyncIterableWithoutFlags::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSTestAsyncIterableWithoutFlagsDOMConstructor, DOMConstructorID::TestAsyncIterableWithoutFlags>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSTestAsyncIterableWithoutFlagsDOMConstructor, DOMConstructorID::TestAsyncIterableWithoutFlags>(vm, *uncheckedDowncast<JSDOMGlobalObject>(globalObject));
 }
 
 void JSTestAsyncIterableWithoutFlags::destroy(JSC::JSCell* cell)
@@ -161,12 +176,12 @@ void JSTestAsyncIterableWithoutFlags::destroy(JSC::JSCell* cell)
 
 JSC_DEFINE_CUSTOM_GETTER(jsTestAsyncIterableWithoutFlagsConstructor, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
-    SUPPRESS_UNCOUNTED_LOCAL auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSTestAsyncIterableWithoutFlagsPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSTestAsyncIterableWithoutFlagsPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
-    return JSValue::encode(JSTestAsyncIterableWithoutFlags::getConstructor(vm, prototype->globalObject()));
+    return JSValue::encode(JSTestAsyncIterableWithoutFlags::getConstructor(vm, prototype->realm()));
 }
 
 struct TestAsyncIterableWithoutFlagsIteratorTraits {
@@ -195,7 +210,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
     }
 
     static TestAsyncIterableWithoutFlagsIterator* create(JSC::VM& vm, JSC::Structure* structure, JSTestAsyncIterableWithoutFlags& iteratedObject, IterationKind kind, InternalIterator&& iterator)
@@ -227,7 +242,7 @@ const JSC::ClassInfo TestAsyncIterableWithoutFlagsIteratorPrototype::s_info = { 
 
 static inline EncodedJSValue jsTestAsyncIterableWithoutFlagsPrototypeFunction_valuesCaller(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, JSTestAsyncIterableWithoutFlags* thisObject)
 {
-    SUPPRESS_UNCOUNTED_LOCAL auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
@@ -236,7 +251,7 @@ static inline EncodedJSValue jsTestAsyncIterableWithoutFlagsPrototypeFunction_va
 
 JSC_DEFINE_HOST_FUNCTION(jsTestAsyncIterableWithoutFlagsPrototypeFunction_values, (JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    return IDLOperation<JSTestAsyncIterableWithoutFlags>::call<jsTestAsyncIterableWithoutFlagsPrototypeFunction_valuesCaller>(*lexicalGlobalObject, *callFrame, "values");
+    return IDLOperation<JSTestAsyncIterableWithoutFlags>::call<jsTestAsyncIterableWithoutFlagsPrototypeFunction_valuesCaller>(*lexicalGlobalObject, *callFrame, "values"_s);
 }
 
 JSC_ANNOTATE_HOST_FUNCTION(TestAsyncIterableWithoutFlagsIteratorBaseOnPromiseSettled, TestAsyncIterableWithoutFlagsIteratorBase::onPromiseSettled);
@@ -254,12 +269,14 @@ JSC::GCClient::IsoSubspace* JSTestAsyncIterableWithoutFlags::subspaceForImpl(JSC
 
 void JSTestAsyncIterableWithoutFlags::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSTestAsyncIterableWithoutFlags*>(cell);
+    auto* thisObject = uncheckedDowncast<JSTestAsyncIterableWithoutFlags>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (RefPtr context = thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, makeString("url "_s, context->url().string()));
     Base::analyzeHeap(cell, analyzer);
 }
+
+JSTestAsyncIterableWithoutFlagsOwner::JSTestAsyncIterableWithoutFlagsOwner(ClangVTableWorkaroundTag) { }
 
 bool JSTestAsyncIterableWithoutFlagsOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
@@ -273,7 +290,7 @@ void JSTestAsyncIterableWithoutFlagsOwner::finalize(JSC::Handle<JSC::Unknown> ha
 {
     SUPPRESS_MEMORY_UNSAFE_CAST auto* jsTestAsyncIterableWithoutFlags = static_cast<JSTestAsyncIterableWithoutFlags*>(handle.slot()->asCell());
     auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, jsTestAsyncIterableWithoutFlags->protectedWrapped().ptr(), jsTestAsyncIterableWithoutFlags);
+    SUPPRESS_UNCOUNTED_ARG uncacheWrapper(world, &jsTestAsyncIterableWithoutFlags->wrapped(), jsTestAsyncIterableWithoutFlags);
 }
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -299,7 +316,7 @@ static inline void verifyVTable(TestAsyncIterableWithoutFlags* ptr)
         // TestAsyncIterableWithoutFlags has subclasses. If TestAsyncIterableWithoutFlags has subclasses that get passed
         // to toJS() we currently require TestAsyncIterableWithoutFlags you to opt out of binding hardening
         // by adding the SkipVTableValidation attribute to the interface IDL definition
-        RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
+        RELEASE_ASSERT_WITH_UNQUALIFIED_FUNCTION_NAME(actualVTablePointer == expectedVTablePointer);
     }
 }
 #endif
@@ -321,7 +338,7 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
 
 TestAsyncIterableWithoutFlags* JSTestAsyncIterableWithoutFlags::toWrapped(JSC::VM&, JSC::JSValue value)
 {
-    if (auto* wrapper = jsDynamicCast<JSTestAsyncIterableWithoutFlags*>(value))
+    if (auto* wrapper = dynamicDowncast<JSTestAsyncIterableWithoutFlags>(value))
         return &wrapper->wrapped();
     return nullptr;
 }

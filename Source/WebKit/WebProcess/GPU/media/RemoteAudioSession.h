@@ -31,6 +31,7 @@
 #include "MessageReceiver.h"
 #include "RemoteAudioSessionConfiguration.h"
 #include <WebCore/AudioSession.h>
+#include <wtf/Deque.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace IPC {
@@ -59,7 +60,6 @@ public:
 private:
     RemoteAudioSession(WebProcess&);
     IPC::Connection& ensureConnection();
-    Ref<IPC::Connection> ensureProtectedConnection();
 
     // IPC::MessageReceiver
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
@@ -84,7 +84,7 @@ private:
     size_t maximumNumberOfOutputChannels() const final { return configuration().maximumNumberOfOutputChannels; }
     size_t outputLatency() const final { return configuration().outputLatency; }
 
-    bool tryToSetActiveInternal(bool) final;
+    Ref<SetActivePromise> tryToSetActiveInternal(bool) final;
 
     size_t preferredBufferSize() const final { return configuration().preferredBufferSize; }
     void setPreferredBufferSize(size_t) final;
@@ -96,10 +96,10 @@ private:
 
     bool isMuted() const final { return configuration().isMuted; }
 
-    bool isActive() const final { return configuration().isActive; }
-
     void beginInterruptionForTesting() final;
     void endInterruptionForTesting() final;
+    Ref<CategoryPromise> systemCategoryForTesting() final;
+    Ref<ActivationCountPromise> systemActivationCountForTesting() final;
     void clearInterruptionFlagForTesting() final { m_isInterruptedForTesting = false; }
 
     void setSceneIdentifier(const String&) final;
@@ -128,6 +128,17 @@ private:
     std::optional<RemoteAudioSessionConfiguration> m_configuration;
     ThreadSafeWeakPtr<GPUProcessConnection> m_gpuProcessConnection;
     bool m_isInterruptedForTesting { false };
+
+    // Serialize tryToSetActive IPCs: keep at most one in flight at a time, and coalesce
+    // consecutive same-state requests against the tail of the chain. Different-state
+    // requests append a new entry that's dispatched when the previous reply arrives.
+    void sendNextActivationIPC();
+    struct PendingActivation {
+        bool active;
+        Vector<SetActivePromise::Producer> waiters;
+    };
+    Deque<PendingActivation> m_pendingActivationChain;
+    bool m_activationIPCInFlight { false };
 };
 
 }

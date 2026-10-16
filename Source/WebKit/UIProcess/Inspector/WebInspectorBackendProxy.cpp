@@ -27,48 +27,57 @@
 #include "config.h"
 #include "WebInspectorBackendProxy.h"
 
+#include <wtf/StdLibExtras.h>
+
 namespace WebKit {
+
+WebInspectorBackendProxy::~WebInspectorBackendProxy() = default;
 
 void WebInspectorBackendProxy::requestOpenLocalInspectorFrontend()
 {
-    protectedProxy()->requestOpenLocalInspectorFrontend();
+    protect(m_proxy)->requestOpenLocalInspectorFrontend();
 }
 
 void WebInspectorBackendProxy::didClose()
 {
-    protectedProxy()->didClose();
+    protect(m_proxy)->didClose();
 }
 
 void WebInspectorBackendProxy::bringToFront()
 {
-    protectedProxy()->bringToFront();
+    protect(m_proxy)->bringToFront();
 }
 
 void WebInspectorBackendProxy::elementSelectionChanged(bool active)
 {
-    protectedProxy()->elementSelectionChanged(active);
+    protect(m_proxy)->elementSelectionChanged(active);
 }
 
 void WebInspectorBackendProxy::timelineRecordingChanged(bool active)
 {
-    protectedProxy()->timelineRecordingChanged(active);
+    m_proxy->timelineRecordingChanged(active);
+}
+
+void WebInspectorBackendProxy::showPaintRectsChanged(bool show)
+{
+    protect(m_proxy)->showPaintRectsChanged(show);
 }
 
 void WebInspectorBackendProxy::setDeveloperPreferenceOverride(WebCore::InspectorBackendClient::DeveloperPreference developerPreference, std::optional<bool> overrideValue)
 {
-    protectedProxy()->setDeveloperPreferenceOverride(developerPreference, overrideValue);
+    protect(m_proxy)->setDeveloperPreferenceOverride(developerPreference, overrideValue);
 }
 
 #if ENABLE(INSPECTOR_NETWORK_THROTTLING)
-void WebInspectorBackendProxy::setEmulatedConditions(std::optional<int64_t> bytesPerSecondLimit)
+void WebInspectorBackendProxy::setEmulatedConditions(std::optional<uint64_t> bandwidthBytesPerSecond, Seconds latency)
 {
-    protectedProxy()->setEmulatedConditions(bytesPerSecondLimit);
+    protect(m_proxy)->setEmulatedConditions(bandwidthBytesPerSecond, latency);
 }
 #endif
 
 void WebInspectorBackendProxy::attachAvailabilityChanged(bool available)
 {
-    protectedProxy()->attachAvailabilityChanged(available);
+    protect(m_proxy)->attachAvailabilityChanged(available);
 }
 
 } // namespace WebKit

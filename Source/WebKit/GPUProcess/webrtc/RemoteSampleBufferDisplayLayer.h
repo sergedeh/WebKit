@@ -76,8 +76,6 @@ public:
 private:
     RemoteSampleBufferDisplayLayer(GPUConnectionToWebProcess&, SampleBufferDisplayLayerIdentifier, Ref<IPC::Connection>&&, RemoteSampleBufferDisplayLayerManager&);
 
-    RefPtr<WebCore::LocalSampleBufferDisplayLayer> protectedSampleBufferDisplayLayer() const;
-
 #if !RELEASE_LOG_DISABLED
     void setLogIdentifier(uint64_t);
 #endif
@@ -98,6 +96,7 @@ private:
 
     // WebCore::SampleBufferDisplayLayerClient
     void sampleBufferDisplayLayerStatusDidFail() final;
+    void updateVideoFrameCounters(uint64_t, uint64_t) final;
 #if PLATFORM(IOS_FAMILY)
     bool canShowWhileLocked() const final { return false; }
 #endif

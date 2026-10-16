@@ -110,7 +110,6 @@ public:
     LayoutRect boundingBoxRect() const final;
 
     RenderObject* renderer() const final { return m_renderer.get(); }
-    CheckedPtr<RenderObject> checkedRenderer() const { return renderer(); }
     Document* document() const final;
 
     URL url() const final;
@@ -121,7 +120,6 @@ public:
     String selectedText() const final;
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
     AXTextRuns textRuns() final;
-    AXTextRunLineID listMarkerLineID() const final;
     String listMarkerText() const final;
 #endif
 
@@ -189,6 +187,7 @@ protected:
 private:
     bool isAccessibilityRenderObject() const final { return true; }
     bool isAllowedChildOfTree() const;
+    bool isInsideIgnoredImageOverlay() const;
     AccessibilityObject* containingTree() const;
     CharacterRange documentBasedSelectedTextRange() const;
     RefPtr<Element> rootEditableElementForPosition(const Position&) const;
@@ -209,7 +208,6 @@ private:
     AccessibilitySVGObject* remoteSVGRootElement(CreateIfNecessary) const;
     RefPtr<AccessibilityObject> remoteSVGElementHitTest(const IntPoint&) const;
     void offsetBoundingBoxForRemoteSVGElement(LayoutRect&) const;
-    bool supportsPath() const final;
 
 #if USE(ATSPI)
     void addNodeOnlyChildren();
@@ -226,10 +224,10 @@ private:
 
     bool inheritsPresentationalRole() const override;
 
-    bool shouldGetTextFromNode(const TextUnderElementMode&) const;
+    bool LEGACY_NODELETE shouldGetTextFromNode(const TextUnderElementMode&) const;
 
 #if ENABLE(APPLE_PAY)
-    bool isApplePayButton() const;
+    bool LEGACY_NODELETE isApplePayButton() const;
     ApplePayButtonType applePayButtonType() const;
     String applePayButtonDescription() const;
 #endif

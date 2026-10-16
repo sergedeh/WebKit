@@ -35,10 +35,13 @@ class JSGlobalObject;
 
 namespace Inspector {
 
-class JSGlobalObjectRuntimeAgent final : public InspectorRuntimeAgent {
+class JSGlobalObjectRuntimeAgent final : public InspectorRuntimeAgent, public CanMakeCheckedPtr<JSGlobalObjectRuntimeAgent> {
     WTF_MAKE_NONCOPYABLE(JSGlobalObjectRuntimeAgent);
     WTF_MAKE_TZONE_ALLOCATED(JSGlobalObjectRuntimeAgent);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(JSGlobalObjectRuntimeAgent);
 public:
+    OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeCheckedPtr);
+
     JSGlobalObjectRuntimeAgent(JSAgentContext&);
     ~JSGlobalObjectRuntimeAgent() final;
 
@@ -52,7 +55,7 @@ private:
 
     const UniqueRef<RuntimeFrontendDispatcher> m_frontendDispatcher;
     const Ref<RuntimeBackendDispatcher> m_backendDispatcher;
-    JSC::JSGlobalObject& m_globalObject;
+    SUPPRESS_FORWARD_DECL_MEMBER JSC::JSGlobalObject& m_globalObject;
 };
 
 } // namespace Inspector

@@ -90,8 +90,7 @@ static RefPtr<WebCore::SharedBuffer> convertToOptionalSharedBuffer(T array)
 
 void RemoteLegacyCDMSessionProxy::generateKeyRequest(const String& mimeType, RefPtr<SharedBuffer>&& initData, const String& mediaKeysHashSalt, GenerateKeyCallback&& completion)
 {
-    RefPtr session = m_session;
-    if (!session) {
+    if (!m_session) {
         completion({ }, emptyString(), 0, 0);
         return;
     }
@@ -107,23 +106,20 @@ void RemoteLegacyCDMSessionProxy::generateKeyRequest(const String& mimeType, Ref
     unsigned short errorCode { 0 };
     uint32_t systemCode { 0 };
 
-    auto keyRequest = session->generateKeyRequest(mimeType, initDataArray.get(), destinationURL, errorCode, systemCode);
-
-    destinationURL = "this is a test string"_s;
+    auto keyRequest = m_session->generateKeyRequest(mimeType, initDataArray.get(), destinationURL, errorCode, systemCode);
 
     completion(convertToOptionalSharedBuffer(keyRequest), destinationURL, errorCode, systemCode);
 }
 
 void RemoteLegacyCDMSessionProxy::releaseKeys()
 {
-    if (RefPtr session = m_session)
-        session->releaseKeys();
+    if (m_session)
+        m_session->releaseKeys();
 }
 
 void RemoteLegacyCDMSessionProxy::update(RefPtr<SharedBuffer>&& update, UpdateCallback&& completion)
 {
-    RefPtr session = m_session;
-    if (!session) {
+    if (!m_session) {
         completion(false, nullptr, 0, 0);
         return;
     }
@@ -138,18 +134,17 @@ void RemoteLegacyCDMSessionProxy::update(RefPtr<SharedBuffer>&& update, UpdateCa
     unsigned short errorCode { 0 };
     uint32_t systemCode { 0 };
 
-    bool succeeded = session->update(updateArray.get(), nextMessage, errorCode, systemCode);
+    bool succeeded = m_session->update(updateArray.get(), nextMessage, errorCode, systemCode);
 
     completion(succeeded, convertToOptionalSharedBuffer(nextMessage), errorCode, systemCode);
 }
 
 RefPtr<ArrayBuffer> RemoteLegacyCDMSessionProxy::getCachedKeyForKeyId(const String& keyId)
 {
-    RefPtr session = m_session;
-    if (!session)
+    if (!m_session)
         return nullptr;
-    
-    return session->cachedKeyForKeyID(keyId);
+
+    return m_session->cachedKeyForKeyID(keyId);
 }
 
 void RemoteLegacyCDMSessionProxy::cachedKeyForKeyID(String keyId, CachedKeyForKeyIDCallback&& completion)
@@ -208,12 +203,7 @@ std::optional<SharedPreferencesForWebProcess> RemoteLegacyCDMSessionProxy::share
     if (!m_factory)
         return std::nullopt;
 
-    return protectedFactory()->sharedPreferencesForWebProcess();
-}
-
-RefPtr<WebCore::LegacyCDMSession> RemoteLegacyCDMSessionProxy::protectedSession() const
-{
-    return m_session;
+    return factory()->sharedPreferencesForWebProcess();
 }
 
 } // namespace WebKit

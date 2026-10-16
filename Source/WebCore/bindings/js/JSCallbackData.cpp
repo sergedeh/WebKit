@@ -31,14 +31,57 @@
 
 #include "Document.h"
 #include "JSDOMBinding.h"
+#include "JSDOMGlobalObject.h"
 #include "JSExecState.h"
 #include "JSExecStateInstrumentation.h"
 #include <JavaScriptCore/Exception.h>
+#include <JavaScriptCore/HeapCellInlines.h>
+#include <JavaScriptCore/JSObjectInlines.h>
+#include <JavaScriptCore/WeakInlines.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
 namespace WebCore {
 using namespace JSC;
+
+JSCallbackData::JSCallbackData(JSC::JSObject* callback, JSDOMGlobalObject* globalObject, void* owner)
+    : m_globalObject(globalObject)
+    , m_callback(callback, &m_weakOwner, owner)
+{
+}
+
+JSCallbackData::~JSCallbackData()
+{
+#if !PLATFORM(IOS_FAMILY)
+    ASSERT(m_threadID == currentThreadID());
+#endif
+}
+
+JSDOMGlobalObject* JSCallbackData::globalObject()
+{
+    return m_globalObject.get();
+}
+
+JSC::JSObject* JSCallbackData::callback()
+{
+    return m_callback.get();
+}
+
+JSC::JSValue JSCallbackData::invokeCallback(JSC::JSValue thisValue, JSC::MarkedArgumentBuffer& args, CallbackType callbackType, JSC::PropertyName functionName, NakedPtr<JSC::Exception>& returnedException)
+{
+    auto* globalObject = this->globalObject();
+    if (!globalObject)
+        return { };
+
+    return JSCallbackData::invokeCallback(*globalObject, callback(), thisValue, args, callbackType, functionName, returnedException);
+}
+
+bool JSCallbackData::WeakOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* owner, JSC::AbstractSlotVisitor& visitor, ASCIILiteral* reason)
+{
+    if (reason) [[unlikely]]
+        *reason = "Callback owner is an opaque root"_s;
+    return visitor.containsOpaqueRoot(owner);
+}
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(JSCallbackData);
 
@@ -101,12 +144,12 @@ JSValue JSCallbackData::invokeCallback(JSDOMGlobalObject& globalObject, JSObject
 }
 
 template<typename Visitor>
-void JSCallbackData::visitJSFunction(Visitor& visitor)
+void JSCallbackData::visitJSFunctionInGCThread(Visitor& visitor)
 {
     visitor.append(m_callback);
 }
 
-template void JSCallbackData::visitJSFunction(JSC::AbstractSlotVisitor&);
-template void JSCallbackData::visitJSFunction(JSC::SlotVisitor&);
+template void JSCallbackData::visitJSFunctionInGCThread(JSC::AbstractSlotVisitor&);
+template void JSCallbackData::visitJSFunctionInGCThread(JSC::SlotVisitor&);
 
 } // namespace WebCore

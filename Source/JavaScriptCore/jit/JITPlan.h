@@ -62,7 +62,7 @@ public:
     bool isUnlinked() const { return ::JSC::isUnlinked(m_mode); }
 
     enum class Tier { Baseline = 0, DFG = 1, FTL = 2, Count = 3 };
-    Tier tier() const;
+    Tier LEGACY_NODELETE tier() const;
     JITType jitType() const
     {
         switch (tier()) {
@@ -85,7 +85,7 @@ public:
 
     virtual CompilationResult finalize() = 0;
 
-    virtual void finalizeInGC() { }
+    virtual void reconcileWeakReferencesAtGCEnd() { }
 
     void notifyCompiling();
     virtual void notifyReady();
@@ -96,8 +96,8 @@ public:
     virtual bool iterateCodeBlocksForGC(AbstractSlotVisitor&, NOESCAPE const Function<void(CodeBlock*)>&);
     virtual bool checkLivenessAndVisitChildren(AbstractSlotVisitor&);
 
-    bool isInSafepoint() const;
-    bool safepointKeepsDependenciesLive() const;
+    bool LEGACY_NODELETE isInSafepoint() const;
+    bool LEGACY_NODELETE safepointKeepsDependenciesLive() const;
 
     template<typename Functor>
     void addMainThreadFinalizationTask(const Functor& functor)
@@ -109,7 +109,7 @@ public:
 
     enum class SignpostDetail { None, Canceled };
 
-    CString signpostMessage();
+    UTF8CString signpostMessage();
 
     void beginSignpost()
     {
@@ -124,8 +124,8 @@ public:
     }
 
 protected:
-    bool computeCompileTimes() const;
-    bool reportCompileTimes() const;
+    bool LEGACY_NODELETE computeCompileTimes() const;
+    bool LEGACY_NODELETE reportCompileTimes() const;
 
     enum CompilationPath { FailPath, BaselinePath, DFGPath, FTLPath, CancelPath };
     virtual CompilationPath compileInThreadImpl() = 0;
@@ -140,7 +140,7 @@ protected:
     CodeBlock* m_codeBlock;
     CheckedPtr<JITWorklistThread> m_thread;
     Vector<Ref<SharedTask<void()>>> m_mainThreadFinalizationTasks;
-    CString m_signpostMessage; // Non-null iff Options::useCompilerSignpost()
+    UTF8CString m_signpostMessage; // Non-null iff Options::useCompilerSignpost()
 };
 
 } // namespace JSC

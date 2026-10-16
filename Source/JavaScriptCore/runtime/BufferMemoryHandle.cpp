@@ -30,17 +30,14 @@
 #include "Options.h"
 #include "WasmFaultSignalHandler.h"
 #include <cstring>
-#include <limits>
 #include <mutex>
-#include <wtf/CheckedArithmetic.h>
 #include <wtf/DataLog.h>
-#include <wtf/Gigacage.h>
+#include <wtf/FastMalloc.h>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/OSAllocator.h>
 #include <wtf/Platform.h>
 #include <wtf/PrintStream.h>
-#include <wtf/SafeStrerror.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Vector.h>
 
@@ -55,6 +52,10 @@ namespace JSC {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BufferMemoryHandle);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BufferMemoryManager);
 
+BufferMemoryManager::BufferMemoryManager()
+    : m_maxFastMemoryCount(Options::maxNumWasmFastMemories())
+{ }
+
 size_t BufferMemoryHandle::fastMappedRedzoneBytes()
 {
     return static_cast<size_t>(PageCount::pageSize) * Options::wasmFastMemoryRedzonePages();
@@ -62,10 +63,15 @@ size_t BufferMemoryHandle::fastMappedRedzoneBytes()
 
 size_t BufferMemoryHandle::fastMappedBytes()
 {
-    // MAX_ARRAY_BUFFER_SIZE is 4GB on 64bit and 2GB on 32bit platforms.
-    // This code should never be called in 32bit platforms they don't
-    // support fast memory.
-    return MAX_ARRAY_BUFFER_SIZE + fastMappedRedzoneBytes();
+    // Signaling memory is memory32 only, and reserves memory32's whole address range up front. A
+    // 32-bit process cannot reserve its entire address space, so it never uses this mode, and the
+    // range does not fit its size_t either.
+#if CPU(ADDRESS32)
+    RELEASE_ASSERT_NOT_REACHED();
+    return 0;
+#else
+    return PageCount::maxMemory32Bytes + fastMappedRedzoneBytes();
+#endif
 }
 
 void BufferMemoryResult::dump(PrintStream& out) const
@@ -80,7 +86,12 @@ BufferMemoryResult BufferMemoryManager::tryAllocateFastMemory()
         if (m_fastMemories.size() >= m_maxFastMemoryCount)
             return BufferMemoryResult(nullptr, BufferMemoryResult::Kind::SyncTryToReclaimMemory);
 
+#if OS(WINDOWS)
+        // Windows has no overcommit, so reserve the region and commit lazily.
+        void* result = OSAllocator::tryReserveUncommitted(BufferMemoryHandle::fastMappedBytes());
+#else
         void* result = Gigacage::tryAllocateZeroedVirtualPages(Gigacage::Primitive, BufferMemoryHandle::fastMappedBytes());
+#endif
         if (!result)
             return BufferMemoryResult(nullptr, BufferMemoryResult::Kind::SyncTryToReclaimMemory);
 
@@ -100,7 +111,11 @@ void BufferMemoryManager::freeFastMemory(void* basePtr)
 {
     {
         Locker locker { m_lock };
+#if OS(WINDOWS)
+        OSAllocator::releaseDecommitted(basePtr, BufferMemoryHandle::fastMappedBytes(), 0);
+#else
         Gigacage::freeVirtualPages(Gigacage::Primitive, basePtr, BufferMemoryHandle::fastMappedBytes());
+#endif
         m_fastMemories.removeFirst(basePtr);
     }
 
@@ -111,7 +126,11 @@ BufferMemoryResult BufferMemoryManager::tryAllocateGrowableBoundsCheckingMemory(
 {
     BufferMemoryResult result = [&] {
         Locker locker { m_lock };
+#if OS(WINDOWS)
+        void* result = OSAllocator::tryReserveUncommitted(mappedCapacity);
+#else
         void* result = Gigacage::tryAllocateZeroedVirtualPages(Gigacage::Primitive, mappedCapacity);
+#endif
         if (!result)
             return BufferMemoryResult(nullptr, BufferMemoryResult::Kind::SyncTryToReclaimMemory);
 
@@ -129,11 +148,27 @@ void BufferMemoryManager::freeGrowableBoundsCheckingMemory(void* basePtr, size_t
 {
     {
         Locker locker { m_lock };
+#if OS(WINDOWS)
+        OSAllocator::releaseDecommitted(basePtr, mappedCapacity, 0);
+#else
         Gigacage::freeVirtualPages(Gigacage::Primitive, basePtr, mappedCapacity);
+#endif
         m_growableBoundsCheckingMemories.erase(std::make_pair(std::bit_cast<uintptr_t>(basePtr), mappedCapacity));
     }
 
     dataLogLnIf(Options::logWasmMemory(), "Freed virtual; state: ", *this);
+}
+
+bool BufferMemoryManager::tryMakeReadableAndWritable(void* address, size_t bytes)
+{
+    constexpr bool readable = true;
+    constexpr bool writable = true;
+#if OS(WINDOWS)
+    return OSAllocator::tryProtect(address, bytes, readable, writable);
+#else
+    OSAllocator::protect(address, bytes, readable, writable);
+    return true;
+#endif
 }
 
 bool BufferMemoryManager::isInGrowableOrFastMemory(void* address)
@@ -248,10 +283,15 @@ BufferMemoryHandle::~BufferMemoryHandle()
         switch (m_mode) {
         case MemoryMode::Signaling: {
             // nullBasePointer's zero-sized memory is not used for MemoryMode::Signaling.
+#if OS(WINDOWS)
+            // The region was only reserved; releasing frees it without re-committing.
+            BufferMemoryManager::singleton().freeFastMemory(memory);
+#else
             constexpr bool readable = true;
             constexpr bool writable = true;
             OSAllocator::protect(memory, BufferMemoryHandle::fastMappedBytes(), readable, writable);
             BufferMemoryManager::singleton().freeFastMemory(memory);
+#endif
             break;
         }
         case MemoryMode::BoundsChecking: {
@@ -267,10 +307,14 @@ BufferMemoryHandle::~BufferMemoryHandle()
                     ASSERT(!m_size);
                     return;
                 }
+#if OS(WINDOWS)
+                BufferMemoryManager::singleton().freeGrowableBoundsCheckingMemory(memory, m_mappedCapacity);
+#else
                 constexpr bool readable = true;
                 constexpr bool writable = true;
                 OSAllocator::protect(memory, m_mappedCapacity, readable, writable);
                 BufferMemoryManager::singleton().freeGrowableBoundsCheckingMemory(memory, m_mappedCapacity);
+#endif
                 break;
             }
             }
@@ -302,7 +346,6 @@ void BufferMemoryHandle::registerInstance(JSWebAssemblyInstance& instance)
     RefPtr anchor = instance.anchor();
     RELEASE_ASSERT(anchor);
     m_anchors.add(*anchor);
-    instance.updateCachedMemory();
 }
 #endif
 

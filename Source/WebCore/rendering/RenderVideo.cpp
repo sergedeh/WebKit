@@ -38,6 +38,7 @@
 #include "LocalFrameView.h"
 #include "MediaPlayer.h"
 #include "MediaPlayerEnums.h"
+#include "NaturalDimensions.h"
 #include "Page.h"
 #include "PaintInfo.h"
 #include "RenderBoxInlines.h"
@@ -47,6 +48,8 @@
 #include "RenderObjectInlines.h"
 #include "RenderVideoInlines.h"
 #include "RenderView.h"
+#include "ShareableBitmap.h"
+#include "StylePrimitiveNumericTypes+Evaluation.h"
 #include <wtf/StackStats.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -56,7 +59,7 @@ using namespace HTMLNames;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderVideo);
 
-RenderVideo::RenderVideo(HTMLVideoElement& element, RenderStyle&& style)
+RenderVideo::RenderVideo(HTMLVideoElement& element, Style::ComputedStyle&& style)
     : RenderMedia(Type::Video, element, WTF::move(style))
 {
     setIntrinsicSize(calculateIntrinsicSize());
@@ -70,7 +73,7 @@ void RenderVideo::willBeDestroyed()
 {
     visibleInViewportStateChanged();
 
-    if (RefPtr player = protectedVideoElement()->player())
+    if (RefPtr player = videoElement().player())
         player->renderVideoWillBeDestroyed();
 
     RenderMedia::willBeDestroyed();
@@ -78,7 +81,7 @@ void RenderVideo::willBeDestroyed()
 
 void RenderVideo::visibleInViewportStateChanged()
 {
-    protectedVideoElement()->isVisibleInViewportChanged();
+    protect(videoElement())->isVisibleInViewportChanged();
 }
 
 IntSize RenderVideo::defaultSize()
@@ -92,7 +95,7 @@ IntSize RenderVideo::defaultSize()
 
 void RenderVideo::intrinsicSizeChanged()
 {
-    if (protectedVideoElement()->shouldDisplayPosterImage())
+    if (protect(videoElement())->shouldDisplayPosterImage())
         RenderMedia::intrinsicSizeChanged();
     if (updateIntrinsicSize())
         invalidateLineLayout();
@@ -106,14 +109,14 @@ bool RenderVideo::updateIntrinsicSize()
         return false;
 
     // Treat the media player's natural size as visually non-empty.
-    if (protectedVideoElement()->readyState() >= HTMLMediaElementEnums::HAVE_METADATA)
+    if (protect(videoElement())->readyState() >= HTMLMediaElementEnums::HAVE_METADATA)
         incrementVisuallyNonEmptyPixelCountIfNeeded(roundedIntSize(size));
 
     if (size == intrinsicSize())
         return false;
 
     setIntrinsicSize(size);
-    setNeedsPreferredWidthsUpdate();
+    invalidateContentLogicalWidths();
     setNeedsLayout();
     return true;
 }
@@ -187,13 +190,27 @@ void RenderVideo::imageChanged(WrappedImagePtr newImage, const IntRect* rect)
     // Cache the image intrinsic size so we can continue to use it to draw the image correctly
     // even if we know the video intrinsic size but aren't able to draw video frames yet
     // (we don't want to scale the poster to the video size without keeping aspect ratio).
-    if (protectedVideoElement()->shouldDisplayPosterImage())
+    if (protect(videoElement())->shouldDisplayPosterImage())
         m_cachedImageSize = intrinsicSize();
 
     // The intrinsic size is now that of the image, but in case we already had the
     // intrinsic size of the video we call this here to restore the video size.
     if (updateIntrinsicSize() || selfNeedsLayout())
         invalidateLineLayout();
+}
+
+LayoutSize RenderVideo::posterAwareIntrinsicSize() const
+{
+    if (protect(videoElement())->shouldDisplayPosterImage())
+        return m_cachedImageSize;
+    return intrinsicSize();
+}
+
+NaturalDimensions RenderVideo::zoomedNaturalDimensions() const
+{
+    if (protect(videoElement())->shouldDisplayPosterImage())
+        return RenderImage::zoomedNaturalDimensions();
+    return NaturalDimensions::fixed(FloatSize { intrinsicSize() });
 }
 
 IntRect RenderVideo::videoBox() const
@@ -203,15 +220,134 @@ IntRect RenderVideo::videoBox() const
     if (mediaPlayer && mediaPlayer->shouldIgnoreIntrinsicSize())
         return snappedIntRect(contentBoxRect());
 
-    LayoutSize intrinsicSize = this->intrinsicSize();
+    LayoutSize intrinsicSize = posterAwareIntrinsicSize();
 
-    if (videoElement->shouldDisplayPosterImage())
-        intrinsicSize = m_cachedImageSize;
+    // Only bypass the view-box crop once the fullscreen/PiP transition has genuinely settled
+    // (isChangingVideoFullscreenMode() false): fullscreenMode() flips synchronously on request,
+    // well before the async transition animation finishes, so bypassing immediately would show
+    // full/natural content while the animation still anchors on the cropped inline geometry.
+    if (isBypassingObjectViewBoxForPictureInPicture())
+        return snappedIntRect(LayoutRect(LayoutPoint(), intrinsicSize));
+    if (!style().objectViewBox().isNone() && videoElement->isFullscreen() && !videoElement->isChangingVideoFullscreenMode())
+        return snappedIntRect(contentBoxRect());
 
-    return snappedIntRect(replacedContentRect(intrinsicSize));
+    return snappedIntRect(replacedContentRect());
 }
 
-IntRect RenderVideo::videoBoxInRootView() const
+bool RenderVideo::isBypassingObjectViewBoxForPictureInPicture() const
+{
+    if (style().objectViewBox().isNone())
+        return false;
+    Ref videoElement = this->videoElement();
+    return videoElement->isFullscreen() && !videoElement->isChangingVideoFullscreenMode()
+        && videoElement->fullscreenMode() == HTMLMediaElementEnums::VideoFullscreenModePictureInPicture;
+}
+
+std::optional<LayoutRect> RenderVideo::objectFitContentsRectForFullscreenCompositing(const LayoutRect& dest) const
+{
+    Ref videoElement = this->videoElement();
+    // Deliberately not gated on !isChangingVideoFullscreenMode(): dest (from videoBox()) is
+    // screen-shaped throughout the transition too, since the :fullscreen UA stylesheet resizes
+    // the box synchronously on request, well before the transition animation finishes. Applying
+    // this same fit math throughout (rather than only once settled) keeps the crop's framing
+    // consistent across the transition, avoiding a jump to a differently-shaped crop the moment
+    // the transition ends.
+    if (!videoElement->isFullscreen())
+        return std::nullopt;
+    if (videoElement->fullscreenMode() == HTMLMediaElementEnums::VideoFullscreenModePictureInPicture)
+        return std::nullopt;
+
+    // Fill doesn't need a bespoke uniform scale here: the plain per-axis stretch mapping
+    // (the fallback below) already matches its semantics exactly.
+    auto objectFit = style().objectFit();
+    if (objectFit != ObjectFit::Cover && objectFit != ObjectFit::Contain)
+        return std::nullopt;
+
+    // FIXME: Remove suppression once rdar://189998444 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST auto naturalSize = FloatSize(posterAwareIntrinsicSize());
+    auto subrect = resolvedObjectViewBox(naturalSize);
+    if (!subrect)
+        return std::nullopt;
+
+    // Match native fullscreen video presentation (and other browsers' behavior): scale the crop
+    // subregion uniformly, either growing it to cover the destination with no letterboxing
+    // (object-fit: cover, cropping further into the subregion as needed) or shrinking it to fit
+    // within the destination with no cropping (object-fit: contain, letterboxing instead) — the
+    // same semantics object-fit itself uses, just anchored on the view-box subrect rather than
+    // the whole natural frame. The result is the oversized (cover) or undersized (contain)
+    // full-frame rect to use as the contents rect; the destination rect itself (unchanged)
+    // remains the clip.
+    // FIXME: Remove suppression once rdar://189998444 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST auto destRect = FloatRect(dest);
+    float scale = objectFit == ObjectFit::Cover
+        ? std::max(destRect.width() / subrect->width(), destRect.height() / subrect->height())
+        : std::min(destRect.width() / subrect->width(), destRect.height() / subrect->height());
+    // The scaled subrect exactly matches destRect on the constraining axis (the one that
+    // determined `scale`), and either overflows (cover) or underflows (contain) it on the other
+    // axis. Position that difference according to object-position — matching
+    // RenderReplaced::replacedContentRect()'s handling of the same overflow/underflow — rather
+    // than always centering, which would ignore an author-specified object-position.
+    auto scaledSubrectSize = subrect->size() * scale;
+    auto& objectPosition = style().objectPosition();
+    auto zoom = style().usedZoomForLength();
+    auto xOffset = Style::evaluate<LayoutUnit>(objectPosition.x, LayoutUnit(destRect.width() - scaledSubrectSize.width()), zoom);
+    auto yOffset = Style::evaluate<LayoutUnit>(objectPosition.y, LayoutUnit(destRect.height() - scaledSubrectSize.height()), zoom);
+    FloatPoint scaledSubrectOrigin {
+        destRect.x() + xOffset,
+        destRect.y() + yOffset
+    };
+    FloatRect fullRect {
+        scaledSubrectOrigin.x() - subrect->x() * scale,
+        scaledSubrectOrigin.y() - subrect->y() * scale,
+        naturalSize.width() * scale,
+        naturalSize.height() * scale
+    };
+    return LayoutRect(fullRect);
+}
+
+LayoutRect RenderVideo::croppedVideoBoxForCompositing() const
+{
+    auto dest = videoBox();
+    if (style().objectViewBox().isNone())
+        return dest;
+    if (isBypassingObjectViewBoxForPictureInPicture())
+        return dest;
+    if (auto objectFitRect = objectFitContentsRectForFullscreenCompositing(dest))
+        return *objectFitRect;
+    return computePaintRectForObjectViewBox(dest, posterAwareIntrinsicSize());
+}
+
+LayoutRect RenderVideo::inlineVideoBox() const
+{
+    // Like videoBox(), but never applies the fullscreen/PiP object-view-box bypass.
+    // Used for the fullscreen/PiP transition-anchor rect (VideoPresentationManager's
+    // inlineVideoFrame()), which is queried while fullscreenMode() already/still
+    // reports the target mode, and must reflect where the video sits when displayed
+    // inline (i.e. cropped), not the fullscreen/PiP steady-state display box.
+    Ref videoElement = this->videoElement();
+    RefPtr mediaPlayer = videoElement->player();
+    if (mediaPlayer && mediaPlayer->shouldIgnoreIntrinsicSize())
+        return contentBoxRect();
+
+    // For object-fit: cover, replacedContentRect() intentionally returns a rect larger
+    // than contentBoxRect() (grown/centered to crop-to-fill) — correct for painting/
+    // compositing, where the overflow is clipped separately, but wrong as a transition
+    // anchor, since VideoPresentationInterfaceMac uses this rect directly as the on-screen
+    // frame with no clip layer of its own. Intersecting with contentBoxRect() clamps cover's
+    // overshoot to the true visible box; it's a no-op for fill/contain/none, whose rects
+    // are already contained within (or equal to) contentBoxRect().
+    LayoutRect result = replacedContentRect();
+    result.intersect(contentBoxRect());
+
+    // Snap to the same integer CSS-pixel grid as videoBox() (which bounds the steady-state
+    // compositing clip, see RenderLayerBacking::updateContentsRects()'s use of videoBox() to
+    // intersect the clipping rect). Without this, the unsnapped result here can differ from the
+    // snapped clip boundary by a fraction of a pixel, producing a brief seam along one edge right
+    // as the PiP/fullscreen transition hands off to steady-state compositing.
+    return LayoutRect(snappedIntRect(result));
+}
+
+IntRect RenderVideo::videoBoxInMainFrameView() const
 {
     RefPtr view = document().view();
     if (!view)
@@ -219,17 +355,17 @@ IntRect RenderVideo::videoBoxInRootView() const
 
     auto videoBox = this->videoBox();
     videoBox.moveBy(absoluteBoundingBoxRect().location());
-    return view->contentsToRootView(videoBox);
+    return view->contentsToMainFrameView(videoBox);
 }
 
 bool RenderVideo::shouldDisplayVideo() const
 {
-    return !protectedVideoElement()->shouldDisplayPosterImage();
+    return !protect(videoElement())->shouldDisplayPosterImage();
 }
 
 bool RenderVideo::failedToLoadPosterImage() const
 {
-    return checkedImageResource()->errorOccurred();
+    return protect(imageResource())->errorOccurred();
 }
 
 void RenderVideo::paintReplaced(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
@@ -240,6 +376,7 @@ void RenderVideo::paintReplaced(PaintInfo& paintInfo, const LayoutPoint& paintOf
     Ref page = this->page();
     RefPtr mediaPlayer = videoElement->player();
     bool displayingPoster = videoElement->shouldDisplayPosterImage();
+    GraphicsContext& context = paintInfo.context();
 
     if (!displayingPoster && !mediaPlayer) {
         if (paintInfo.phase == PaintPhase::Foreground)
@@ -256,29 +393,30 @@ void RenderVideo::paintReplaced(PaintInfo& paintInfo, const LayoutPoint& paintOf
 
     auto rect = videoBoxRect;
     rect.moveBy(paintOffset);
-    GraphicsContext& context = paintInfo.context();
+
+    LayoutRect contentRect = contentBoxRect();
+    contentRect.moveBy(paintOffset);
+
+    LayoutRect paintRect = computePaintRectForObjectViewBox(rect, posterAwareIntrinsicSize());
+
+    bool clip = !contentRect.contains(paintRect);
+    GraphicsContextStateSaver stateSaver(context, clip);
+    if (clip)
+        context.clip(contentRect);
 
     if (paintInfo.phase == PaintPhase::Foreground) {
         page->addRelevantRepaintedObject(*this, rect);
         if (displayingPoster && !context.paintingDisabled())
-            protectedDocument()->didPaintImage(videoElement.get(), cachedImage(), videoBoxRect);
+            protect(document())->didPaintImage(videoElement.get(), protect(cachedImage()), videoBoxRect);
     }
-
-    LayoutRect contentRect = contentBoxRect();
-    contentRect.moveBy(paintOffset);
 
     if (context.detectingContentfulPaint()) {
         context.setContentfulPaintDetected();
         return;
     }
 
-    bool clip = !contentRect.contains(rect);
-    GraphicsContextStateSaver stateSaver(context, clip);
-    if (clip)
-        context.clip(contentRect);
-
     if (displayingPoster) {
-        paintIntoRect(paintInfo, rect);
+        paintIntoRect(paintInfo, paintRect);
         return;
     }
 
@@ -299,7 +437,7 @@ void RenderVideo::paintReplaced(PaintInfo& paintInfo, const LayoutPoint& paintOf
         && !paintInfo.paintBehavior.contains(PaintBehavior::Snapshotting))
         return;
 
-    videoElement->paint(context, rect);
+    videoElement->paint(context, paintRect);
 }
 
 void RenderVideo::layout()
@@ -310,21 +448,40 @@ void RenderVideo::layout()
     updatePlayer();
 }
 
-void RenderVideo::styleDidChange(Style::Difference difference, const RenderStyle* oldStyle)
+void RenderVideo::styleDidChange(Style::Difference difference, const Style::ComputedStyle* oldStyle)
 {
     RenderMedia::styleDidChange(difference, oldStyle);
-    if (!oldStyle || style().objectFit() != oldStyle->objectFit())
+    if (!oldStyle)
+        return;
+
+    if (style().objectFit() != oldStyle->objectFit())
         setNeedsLayout();
+
+    // RenderReplaced::styleDidChange() already schedules a layout for an object-view-box change
+    // when a dimension is auto, since the view box can affect the natural size in that case. With
+    // explicit sizing that layout is skipped, but the compositing layer's cached crop rect and
+    // video gravity still need to be refreshed, which a plain repaint won't do on its own.
+    if (style().objectViewBox() != oldStyle->objectViewBox()) {
+        if (!needsLayout())
+            contentChanged(ContentChangeType::Video);
+#if ENABLE(VIDEO_PRESENTATION_MODE)
+        // Propagate the change to VideoPresentationInterfaceMac's cached hasObjectViewBox(),
+        // which drives PiP video gravity, so a style change made while already in an active
+        // fullscreen/PiP session doesn't leave it stale; see HTMLMediaElement::hasObjectViewBoxChanged().
+        Ref videoElement = this->videoElement();
+        videoElement->hasObjectViewBoxChanged(!style().objectViewBox().isNone());
+#endif
+    }
 }
 
-HTMLVideoElement& RenderVideo::videoElement() const
+HTMLVideoElement& LEGACY_NODELETE RenderVideo::videoElement() const
 {
     return downcast<HTMLVideoElement>(RenderMedia::mediaElement());
 }
 
-Ref<HTMLVideoElement> RenderVideo::protectedVideoElement() const
+RefPtr<ShareableBitmap> RenderVideo::createShareableBitmap(const CreateShareableBitmapFromImageOptions&) const
 {
-    return videoElement();
+    return protect(videoElement())->bitmapImageForCurrentTimeSync();
 }
 
 void RenderVideo::updateFromElement()
@@ -350,13 +507,21 @@ bool RenderVideo::updatePlayer()
     if (videoElement->inActiveDocument())
         contentChanged(ContentChangeType::Video);
 
-    videoElement->updateMediaPlayer(videoBox().size(), style().objectFit() != ObjectFit::Fill);
+    // Keep in sync with RenderLayerBacking::updateVideoGravity()'s object-view-box handling:
+    // the cropped-frame geometry computed for object-view-box already bakes in object-fit, so
+    // the player shouldn't also letterbox to preserve aspect ratio. Without this, the player's
+    // m_shouldMaintainAspectRatio (used as the default video gravity once a fullscreen/PiP
+    // transition ends and videoFullscreenLayer() becomes null, see
+    // MediaPlayerPrivateAVFoundationObjC::updateVideoLayerGravity()) would race against, and
+    // briefly override, the correct Resize gravity for any non-Fill object-fit value.
+    bool shouldMaintainAspectRatio = style().objectViewBox().isNone() && style().objectFit() != ObjectFit::Fill;
+    videoElement->updateMediaPlayer(videoBox().size(), shouldMaintainAspectRatio);
     return intrinsicSizeChanged;
 }
 
-LayoutUnit RenderVideo::computeReplacedLogicalWidth(ShouldComputePreferred shouldComputePreferred) const
+LayoutUnit RenderVideo::computeReplacedLogicalWidth(IsComputingIntrinsicSize isComputingIntrinsicSize) const
 {
-    return computeReplacedLogicalWidthRespectingMinMaxWidth(RenderReplaced::computeReplacedLogicalWidth(shouldComputePreferred), shouldComputePreferred);
+    return computeReplacedLogicalWidthRespectingMinMaxWidth(RenderReplaced::computeReplacedLogicalWidth(isComputingIntrinsicSize), isComputingIntrinsicSize);
 }
 
 LayoutUnit RenderVideo::minimumReplacedHeight() const 
@@ -366,17 +531,17 @@ LayoutUnit RenderVideo::minimumReplacedHeight() const
 
 bool RenderVideo::supportsAcceleratedRendering() const
 {
-    return protectedVideoElement()->supportsAcceleratedRendering();
+    return protect(videoElement())->supportsAcceleratedRendering();
 }
 
 void RenderVideo::acceleratedRenderingStateChanged()
 {
-    protectedVideoElement()->acceleratedRenderingStateChanged();
+    protect(videoElement())->acceleratedRenderingStateChanged();
 }
 
 bool RenderVideo::requiresImmediateCompositing() const
 {
-    RefPtr player = protectedVideoElement()->player();
+    RefPtr player = videoElement().player();
     return player && player->requiresImmediateCompositing();
 }
 
@@ -389,6 +554,11 @@ bool RenderVideo::foregroundIsKnownToBeOpaqueInRect(const LayoutRect& localRect,
     if (!videoBox().contains(enclosingIntRect(localRect)))
         return false;
 
+    // object-view-box's inset() can be negative, making the view box a superset of the natural
+    // size, in which case the painted frame is smaller than videoBox() and leaves gaps.
+    if (!objectViewBoxIsContainedWithinNaturalSize())
+        return false;
+
     if (RefPtr player = videoElement->player())
         return player->hasAvailableVideoFrame();
 
@@ -397,7 +567,7 @@ bool RenderVideo::foregroundIsKnownToBeOpaqueInRect(const LayoutRect& localRect,
 
 bool RenderVideo::hasVideoMetadata() const
 {
-    if (RefPtr player = protectedVideoElement()->player())
+    if (RefPtr player = videoElement().player())
         return player->readyState() >= MediaPlayerEnums::ReadyState::HaveMetadata;
     return false;
 }
@@ -409,7 +579,7 @@ bool RenderVideo::hasPosterFrameSize() const
     // so that contain: inline-size could affect the intrinsic size, which should be 0 x block-size.
     if (shouldApplyInlineSizeContainment())
         isEmpty = isHorizontalWritingMode() ? !m_cachedImageSize.height() : !m_cachedImageSize.width();
-    return protectedVideoElement()->shouldDisplayPosterImage() && !isEmpty && !checkedImageResource()->errorOccurred();
+    return protect(videoElement())->shouldDisplayPosterImage() && !isEmpty && !protect(imageResource())->errorOccurred();
 }
 
 bool RenderVideo::hasDefaultObjectSize() const

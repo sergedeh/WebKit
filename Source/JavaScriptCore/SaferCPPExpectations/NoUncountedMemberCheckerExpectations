@@ -2,23 +2,18 @@ API/JSCallbackConstructor.h
 API/JSCallbackObject.h
 API/JSClassRef.h
 API/JSObjectRef.h
-API/JSRetainPtr.h
-API/tests/testapi.cpp
-BytecodeStructs.h
-bytecode/InlineCacheCompiler.h
+bytecode/InlineCacheHandler.h
+bytecode/PropertyInlineCacheClearingWatchpoint.h
 bytecode/SharedJITStubSet.h
-bytecode/StructureStubClearingWatchpoint.h
 bytecompiler/BytecodeGenerator.h
 bytecompiler/Label.h
 debugger/Debugger.cpp
 dfg/DFGFinalizer.h
+[ macOS ] dfg/DFGGraph.h
 dfg/DFGLazyJSValue.h
 dfg/DFGNode.h
-dfg/DFGPropertyTypeKey.h
 dfg/DFGSpeculativeJIT.h
 ftl/FTLLowerDFGToB3.cpp
-ftl/FTLOSRExitHandle.h
-heap/Heap.h
 heap/HeapSnapshotBuilder.h
 heap/JITStubRoutineSet.h
 inspector/InspectorAgentBase.h
@@ -29,7 +24,6 @@ jit/OperationResult.h
 parser/Parser.h
 parser/SourceProvider.h
 profiler/ProfilerEvent.h
-runtime/GetPutInfo.h
 runtime/IndexingHeader.h
 runtime/JSArrayBuffer.h
 runtime/JSDataView.h
@@ -43,4 +37,3 @@ wasm/WasmFunctionParser.h
 wasm/WasmIPIntGenerator.cpp
 wasm/WasmNameSectionParser.h
 wasm/WasmOMGIRGenerator.cpp
-wasm/WasmStreamingCompiler.h

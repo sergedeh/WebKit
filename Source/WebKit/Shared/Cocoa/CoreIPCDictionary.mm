@@ -30,6 +30,8 @@
 #if PLATFORM(COCOA)
 
 #import "CoreIPCTypes.h"
+#import <wtf/Borrow.h>
+#import <wtf/RuntimeApplicationChecks.h>
 
 namespace WebKit {
 
@@ -37,9 +39,12 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(CoreIPCDictionary);
 
 CoreIPCDictionary::CoreIPCDictionary(NSDictionary *dictionary)
 {
+    RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(!isInWebProcess());
+
     m_keyValuePairs.reserveInitialCapacity(dictionary.count);
 
-    for (id key in dictionary) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL id key in dictionary) {
         RetainPtr<id> value = dictionary[key];
         ASSERT(value);
 
@@ -66,7 +71,7 @@ CoreIPCDictionary::CoreIPCDictionary(ValueType&& keyValuePairs)
 RetainPtr<id> CoreIPCDictionary::toID() const
 {
     auto result = adoptNS([[NSMutableDictionary alloc] initWithCapacity:m_keyValuePairs.size()]);
-    for (auto& keyValuePair : m_keyValuePairs) {
+    for (auto& keyValuePair : borrow(m_keyValuePairs)) {
         RetainPtr keyID = keyValuePair.key.toID();
         RetainPtr valueID = keyValuePair.value.toID();
         if (!keyID || !valueID)

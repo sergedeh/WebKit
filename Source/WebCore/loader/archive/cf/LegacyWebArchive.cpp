@@ -61,7 +61,7 @@
 #include "StyleSheetList.h"
 #include "markup.h"
 #include <algorithm>
-#include <wtf/ListHashSet.h>
+#include <wtf/OrderedHashSet.h>
 #include <wtf/RetainPtr.h>
 #include <wtf/URLHash.h>
 #include <wtf/URLParser.h>
@@ -85,7 +85,7 @@ static const CFStringRef LegacyWebArchiveResourceTextEncodingNameKey = CFSTR("We
 static const CFStringRef LegacyWebArchiveResourceResponseKey = CFSTR("WebResourceResponse");
 static const CFStringRef LegacyWebArchiveResourceResponseVersionKey = CFSTR("WebResourceResponseVersion");
 
-static bool isUnreservedURICharacter(char16_t character)
+static bool LEGACY_NODELETE isUnreservedURICharacter(char16_t character)
 {
     return isASCIIAlphanumeric(character) || character == '-' || character == '.' || character == '_' || character == '~';
 }
@@ -103,7 +103,7 @@ static String getFileNameFromURIComponent(StringView input)
     StringBuilder result;
     result.reserveCapacity(length);
     for (unsigned index = 0; index < length; ++index) {
-        char16_t character = decodedInput->characterAt(index);
+        char16_t character = decodedInput->codeUnitAt(index);
         if (isUnreservedURICharacter(character)) {
             result.append(character);
             continue;
@@ -199,7 +199,7 @@ RetainPtr<CFDictionaryRef> LegacyWebArchive::createPropertyListRepresentation(Ar
 {
     auto propertyList = adoptCF(CFDictionaryCreateMutable(0, 3, 0, &kCFTypeDictionaryValueCallBacks));
 
-    auto mainResourceDict = createPropertyListRepresentation(archive.mainResource(), MainResource);
+    auto mainResourceDict = createPropertyListRepresentation(protect(archive.mainResource()), MainResource);
     ASSERT(mainResourceDict);
     if (!mainResourceDict)
         return nullptr;
@@ -402,7 +402,7 @@ RefPtr<LegacyWebArchive> LegacyWebArchive::create(CFDictionaryRef dictionary)
         return nullptr;
     }
 
-    auto subresourceArray = static_cast<CFArrayRef>(CFDictionaryGetValue(dictionary, LegacyWebArchiveSubresourcesKey));
+    RetainPtr subresourceArray = static_cast<CFArrayRef>(CFDictionaryGetValue(dictionary, LegacyWebArchiveSubresourcesKey));
     if (subresourceArray && CFGetTypeID(subresourceArray) != CFArrayGetTypeID()) {
         LOG(Archives, "LegacyWebArchive - Subresources is not the expected Array, aborting invalid WebArchive");
         return nullptr;
@@ -412,7 +412,7 @@ RefPtr<LegacyWebArchive> LegacyWebArchive::create(CFDictionaryRef dictionary)
     if (subresourceArray) {
         auto count = CFArrayGetCount(subresourceArray);
         for (CFIndex i = 0; i < count; ++i) {
-            auto subresourceDict = static_cast<CFDictionaryRef>(CFArrayGetValueAtIndex(subresourceArray, i));
+            RetainPtr subresourceDict = static_cast<CFDictionaryRef>(CFArrayGetValueAtIndex(subresourceArray, i));
             if (CFGetTypeID(subresourceDict) != CFDictionaryGetTypeID()) {
                 LOG(Archives, "LegacyWebArchive - Subresource is not expected CFDictionary, aborting invalid WebArchive");
                 return nullptr;
@@ -423,7 +423,7 @@ RefPtr<LegacyWebArchive> LegacyWebArchive::create(CFDictionaryRef dictionary)
         }
     }
 
-    auto subframeArray = static_cast<CFArrayRef>(CFDictionaryGetValue(dictionary, LegacyWebArchiveSubframeArchivesKey));
+    RetainPtr subframeArray = static_cast<CFArrayRef>(CFDictionaryGetValue(dictionary, LegacyWebArchiveSubframeArchivesKey));
     if (subframeArray && CFGetTypeID(subframeArray) != CFArrayGetTypeID()) {
         LOG(Archives, "LegacyWebArchive - Subframe archives is not the expected Array, aborting invalid WebArchive");
         return nullptr;
@@ -433,7 +433,7 @@ RefPtr<LegacyWebArchive> LegacyWebArchive::create(CFDictionaryRef dictionary)
     if (subframeArray) {
         auto count = CFArrayGetCount(subframeArray);
         for (CFIndex i = 0; i < count; ++i) {
-            auto subframeDict = static_cast<CFDictionaryRef>(CFArrayGetValueAtIndex(subframeArray, i));
+            RetainPtr subframeDict = static_cast<CFDictionaryRef>(CFArrayGetValueAtIndex(subframeArray, i));
             if (CFGetTypeID(subframeDict) != CFDictionaryGetTypeID()) {
                 LOG(Archives, "LegacyWebArchive - Subframe array is not expected CFDictionary, aborting invalid WebArchive");
                 return nullptr;
@@ -541,7 +541,7 @@ RefPtr<LegacyWebArchive> LegacyWebArchive::create(LocalFrame& frame, ArchiveOpti
             continue;
         }
 
-        if (auto localChild = dynamicDowncast<LocalFrame>(child.get())) {
+        if (RefPtr localChild = dynamicDowncast<LocalFrame>(child)) {
             if (auto childFrameArchive = create(*localChild, { }))
                 subframeArchives.append(childFrameArchive.releaseNonNull());
         }
@@ -596,7 +596,7 @@ static void addSubresourcesForAttachmentElementsIfNecessary(LocalFrame& frame, c
     if (identifiers.isEmpty())
         return;
 
-    auto* editorClient = frame.editor().client();
+    CheckedPtr editorClient = frame.editor().client();
     if (!editorClient)
         return;
 
@@ -673,7 +673,7 @@ static HashMap<Ref<CSSStyleSheet>, String> addSubresourcesForCSSStyleSheetsIfNec
     }
 
     for (auto& [cssStyleSheet, path]  : uniqueCSSStyleSheets) {
-        auto contentString = cssStyleSheet->cssText(serializationContext);
+        auto contentString = protect(cssStyleSheet)->cssText(serializationContext);
         if (auto newResource = ArchiveResource::create(utf8Buffer(contentString), URL { cssStyleSheet->href() }, "text/css"_s, "UTF-8"_s, frameName, ResourceResponse(), path))
             subresources.append(newResource.releaseNonNull());
     }
@@ -688,10 +688,10 @@ RefPtr<LegacyWebArchive> LegacyWebArchive::createInternal(Node& node, const Arch
         return nullptr;
 
     Vector<Ref<Node>> nodeList;
-    String markupString = serializeFragment(node, SerializedNodes::SubtreeIncludingNode, &nodeList, ResolveURLs::No, std::nullopt, SerializeShadowRoots::AllForInterchange, { }, options.markupExclusionRules);
+    String markupString = serializeFragment(node, SerializedNodes::SubtreeIncludingNode, &nodeList, ResolveURLs::NoExcludingURLsForPrivacy, std::nullopt, SerializeShadowRoots::AllForInterchange, { }, options.markupExclusionRules);
     auto nodeType = node.nodeType();
-    if (nodeType != Node::DOCUMENT_NODE && nodeType != Node::DOCUMENT_TYPE_NODE)
-        markupString = makeString(documentTypeString(node.document()), markupString);
+    if (nodeType != NodeType::Document && nodeType != NodeType::DocumentType)
+        markupString = makeString(documentTypeString(protect(node.document())), markupString);
 
     return createInternal(markupString, options, *frame, WTF::move(nodeList), frameFilter);
 }
@@ -733,7 +733,7 @@ RefPtr<LegacyWebArchive> LegacyWebArchive::createInternal(const String& markupSt
             if (!localChildFrame)
                 continue;
 
-            if (auto subframeArchive = createInternal(*localChildFrame->document(), options, frameFilter)) {
+            if (auto subframeArchive = createInternal(*protect(localChildFrame->document()), options, frameFilter)) {
                 RefPtr subframeMainResource = subframeArchive->mainResource();
                 auto subframeMainResourceURL = subframeMainResource ? subframeMainResource->url() : URL { };
                 if (!subframeMainResourceURL.isEmpty()) {
@@ -742,17 +742,17 @@ RefPtr<LegacyWebArchive> LegacyWebArchive::createInternal(const String& markupSt
                 }
                 subframeArchives.append(subframeArchive.releaseNonNull());
             } else
-                LOG_ERROR("Unabled to archive subframe %s", childFrame->tree().uniqueName().string().utf8().data());
+                LOG_ERROR("Unabled to archive subframe %s", childFrame->tree().uniqueName().string().utf8());
 
         } else {
-            ListHashSet<URL> subresourceURLs;
+            OrderedHashSet<URL> subresourceURLs;
             node->getSubresourceURLs(subresourceURLs);
             node->getCandidateSubresourceURLs(subresourceURLs);
 
             if (options.shouldSaveScriptsFromMemoryCache == ShouldSaveScriptsFromMemoryCache::Yes && responseURL.protocolIsInHTTPFamily()) {
                 RegistrableDomain domain { responseURL };
                 MemoryCache::singleton().forEachSessionResource(frame.page()->sessionID(), [&](auto& resource) {
-                    if (domain.matches(resource.url()) && resource.hasClients() && (resource.type() == CachedResource::Type::Script || resource.type() == CachedResource::Type::JSON))
+                    if (domain.matches(resource.url()) && resource.hasClients() && (resource.type() == CachedResource::Type::Script || resource.type() == CachedResource::Type::JSON || resource.type() == CachedResource::Type::Text))
                         subresourceURLs.add(resource.url());
                 });
             }
@@ -772,14 +772,17 @@ RefPtr<LegacyWebArchive> LegacyWebArchive::createInternal(const String& markupSt
                 auto resource = documentLoader->subresource(subresourceURL);
                 if (!resource) {
                     ResourceRequest request(URL { subresourceURL });
-                    request.setDomainForCachePartition(frame.document()->domainForCachePartition());
-                    if (auto* cachedResource = MemoryCache::singleton().resourceForRequest(request, frame.page()->sessionID()))
+                    if (RefPtr document = frame.document()) {
+                        request.setShouldBlockThirdPartyStorage(document->shouldBlockThirdPartyStorage());
+                        request.setFirstPartyForCookies(document->firstPartyForCookies());
+                    }
+                    if (RefPtr cachedResource = MemoryCache::singleton().resourceForRequest(request, frame.page()->sessionID()))
                         resource = ArchiveResource::create(cachedResource->resourceBuffer(), subresourceURL, cachedResource->response());
                 }
 
                 if (!resource) {
                     // FIXME: should do something better than spew to console here
-                    LOG_ERROR("Failed to archive subresource for %s", subresourceURL.string().utf8().data());
+                    LOG_ERROR("Failed to archive subresource for %s", subresourceURL.string().utf8());
                     continue;
                 }
 
@@ -807,8 +810,24 @@ RefPtr<LegacyWebArchive> LegacyWebArchive::createInternal(const String& markupSt
         RefPtr documentLoader = frame.loader().documentLoader();
         ASSERT(documentLoader);
         for (auto& icon : documentLoader->linkIcons()) {
-            if (auto resource = documentLoader->subresource(icon.url))
-                subresources.append(resource.releaseNonNull());
+            if (uniqueSubresources.contains(icon.url.string()))
+                continue;
+
+            auto resource = documentLoader->subresource(icon.url);
+            if (!resource)
+                continue;
+
+            auto addResult = uniqueSubresources.add(icon.url.string(), emptyString());
+
+            if (!subresourcesDirectoryName.isNull()) {
+                String subresourceFileName = generateValidFileName(icon.url, uniqueFileNames);
+                uniqueFileNames.add(subresourceFileName);
+                String subresourceFilePath = FileSystem::pathByAppendingComponent(subresourcesDirectoryName, subresourceFileName);
+                resource->setRelativeFilePath(subresourceFilePath);
+                addResult.iterator->value = frame.isMainFrame() ? subresourceFilePath : subresourceFileName;
+            }
+
+            subresources.append(resource.releaseNonNull());
         }
     }
 
@@ -826,13 +845,13 @@ RefPtr<LegacyWebArchive> LegacyWebArchive::createInternal(const String& markupSt
         auto mainFrameFileNameWithExtension = options.mainResourceFileName.endsWith(extension) ? options.mainResourceFileName : makeString(options.mainResourceFileName, extension);
         auto fileNameWithExtension = frame.isMainFrame() ? mainFrameFileNameWithExtension : makeString(subresourcesDirectoryName, "/frame_"_s, frame.frameID().toUInt64(), extension);
 
-        ResolveURLs resolveURLs = ResolveURLs::No;
+        ResolveURLs resolveURLs = ResolveURLs::NoExcludingURLsForPrivacy;
         // Base element is excluded, so all URLs should be replaced with absolute URL.
         bool baseElementExcluded = std::ranges::any_of(options.markupExclusionRules, [&](auto& rule) {
             return rule.elementLocalName == "base"_s;
         });
         if (!document->baseElementURL().isEmpty() && baseElementExcluded)
-            resolveURLs = ResolveURLs::Yes;
+            resolveURLs = ResolveURLs::YesExcludingURLsForPrivacy;
 
         String updatedMarkupString = serializeFragmentWithURLReplacement(*document, SerializedNodes::SubtreeIncludingNode, nullptr, resolveURLs, std::nullopt, WTF::move(uniqueSubresources), WTF::move(uniqueCSSStyleSheets), SerializeShadowRoots::AllForInterchange, { }, options.markupExclusionRules);
         mainResource = ArchiveResource::create(utf8Buffer(updatedMarkupString), responseURL, response.mimeType(), "UTF-8"_s, frame.tree().uniqueName(), ResourceResponse(), fileNameWithExtension);
@@ -864,7 +883,7 @@ RefPtr<LegacyWebArchive> LegacyWebArchive::createFromSelection(LocalFrame* frame
     builder.append(documentTypeString(*document));
 
     Vector<Ref<Node>> nodeList;
-    builder.append(serializePreservingVisualAppearance(frame->selection().selection(), ResolveURLs::No, SerializeComposedTree::Yes, IgnoreUserSelectNone::Yes, PreserveBaseElement::Yes, PreserveDirectionForInlineText::Yes, &nodeList));
+    builder.append(serializePreservingVisualAppearance(frame->selection().selection(), ResolveURLs::NoExcludingURLsForPrivacy, SerializeComposedTree::Yes, IgnoreUserSelectNone::Yes, PreserveBaseElement::Yes, PreserveDirectionForInlineText::Yes, &nodeList));
 
     RefPtr archive = createInternal(builder.toString(), WTF::move(options), *frame, WTF::move(nodeList), { });
     if (!archive)
@@ -875,7 +894,7 @@ RefPtr<LegacyWebArchive> LegacyWebArchive::createFromSelection(LocalFrame* frame
 
     // Wrap the frameset document in an iframe so it can be pasted into
     // another document (which will have a body or frameset of its own). 
-    auto iframeMarkup = makeString("<iframe frameborder=\"no\" marginwidth=\"0\" marginheight=\"0\" width=\"98%%\" height=\"98%%\" src=\""_s, frame->loader().documentLoader()->response().url().string(), "\"></iframe>"_s);
+    auto iframeMarkup = makeString("<iframe frameborder=\"no\" marginwidth=\"0\" marginheight=\"0\" width=\"98%\" height=\"98%\" src=\""_s, frame->loader().documentLoader()->response().url().string(), "\"></iframe>"_s);
     auto iframeResource = ArchiveResource::create(utf8Buffer(iframeMarkup), aboutBlankURL(), textHTMLContentTypeAtom(), "UTF-8"_s, String());
 
     return create(iframeResource.releaseNonNull(), { }, { archive.releaseNonNull() }, frame->frameID());

@@ -24,20 +24,20 @@
  */
 
 #include "config.h"
-#include "Subspace.h"
+#include "CompleteSubspace.h"
 
-#include "AlignedMemoryAllocator.h"
 #include "AllocatorInlines.h"
 #include "JSCellInlines.h"
 #include "LocalAllocatorInlines.h"
 #include "MarkedSpaceInlines.h"
+#include "ResourceExhaustion.h"
 #include "SubspaceInlines.h"
 #include <wtf/RAMSize.h>
 
 namespace JSC {
 
-CompleteSubspace::CompleteSubspace(CString name, JSC::Heap& heap, const HeapCellType& heapCellType, AlignedMemoryAllocator* alignedMemoryAllocator)
-    : Subspace(SubspaceKind::CompleteSubspace, name, heap)
+CompleteSubspace::CompleteSubspace(ASCIICString name, JSC::Heap& heap, const HeapCellType& heapCellType, AlignedMemoryAllocator* alignedMemoryAllocator)
+    : Subspace(SubspaceKind::CompleteSubspace, WTF::move(name), heap)
 {
     initialize(heapCellType, alignedMemoryAllocator);
 }
@@ -69,7 +69,7 @@ Allocator CompleteSubspace::allocatorForSlow(size_t size)
         return allocator;
 
     if (false)
-        dataLog("Creating BlockDirectory/LocalAllocator for ", m_name, ", ", attributes(), ", ", sizeClass, ".\n");
+        dataLog("Creating BlockDirectory/LocalAllocator for ", name(), ", ", attributes(), ", ", sizeClass, ".\n");
     
     std::unique_ptr<BlockDirectory> uniqueDirectory = makeUnique<BlockDirectory>(sizeClass);
     BlockDirectory* directory = uniqueDirectory.get();
@@ -97,7 +97,6 @@ Allocator CompleteSubspace::allocatorForSlow(size_t size)
     }
     
     directory->setNextDirectoryInSubspace(m_firstDirectory);
-    m_alignedMemoryAllocator->registerDirectory(m_space.heap(), directory);
     WTF::storeStoreFence();
     m_firstDirectory = directory;
     return allocator;
@@ -202,7 +201,7 @@ void* CompleteSubspace::reallocatePreciseAllocationNonVirtual(VM& vm, HeapCell* 
 
 void CompleteSubspace::prepareAllAllocators()
 {
-    for (unsigned i = MarkedSpace::numSizeClasses - 1; i--;) {
+    for (unsigned i = MarkedSpace::numSizeClasses; i--;) {
         if (!m_allocatorForSizeStep[i])
             allocatorForSlow(MarkedSpace::s_sizeClassForSizeStep[i]);
         ASSERT(m_allocatorForSizeStep[i]);

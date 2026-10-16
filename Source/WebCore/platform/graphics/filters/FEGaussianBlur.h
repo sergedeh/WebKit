@@ -27,22 +27,26 @@
 
 namespace WebCore {
 
+enum class FilterRenderingOption : uint8_t;
+
 class FEGaussianBlur final : public FilterEffect {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(FEGaussianBlur);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(FEGaussianBlur);
 public:
-    WEBCORE_EXPORT static Ref<FEGaussianBlur> create(float x, float y, EdgeModeType, DestinationColorSpace = DestinationColorSpace::SRGB());
+    WEBCORE_EXPORT static Ref<FEGaussianBlur> create(float x, float y, EdgeModeType, ColorSpace = ColorSpace::SRGB());
 
     bool operator==(const FEGaussianBlur&) const;
 
     float stdDeviationX() const { return m_stdX; }
-    bool setStdDeviationX(float);
+    bool LEGACY_NODELETE setStdDeviationX(float);
 
     float stdDeviationY() const { return m_stdY; }
-    bool setStdDeviationY(float);
+    bool LEGACY_NODELETE setStdDeviationY(float);
 
     EdgeModeType edgeMode() const { return m_edgeMode; }
-    bool setEdgeMode(EdgeModeType);
+    bool LEGACY_NODELETE setEdgeMode(EdgeModeType);
+
+    FloatSize effectiveStdDeviation(OptionSet<FilterRenderingOption> = { }) const;
 
     static IntSize calculateKernelSize(const Filter&, FloatSize stdDeviation);
     static IntSize calculateUnscaledKernelSize(FloatSize stdDeviation);
@@ -51,7 +55,7 @@ public:
     static IntOutsets calculateOutsets(const FloatSize& stdDeviation);
 
 private:
-    FEGaussianBlur(float x, float y, EdgeModeType, DestinationColorSpace);
+    FEGaussianBlur(float x, float y, EdgeModeType, ColorSpace);
 
     bool operator==(const FilterEffect& other) const override { return areEqual<FEGaussianBlur>(*this, other); }
 

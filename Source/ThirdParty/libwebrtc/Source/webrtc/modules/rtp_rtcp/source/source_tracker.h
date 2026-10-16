@@ -33,12 +33,20 @@ namespace webrtc {
 //   - https://w3c.github.io/webrtc-pc/#dom-rtcrtpcontributingsource
 //   - https://w3c.github.io/webrtc-pc/#dom-rtcrtpsynchronizationsource
 //
+// Also used to implement `onssrcchange`/`oncsrcchange` events:
+//  - https://w3c.github.io/webrtc-extensions/#source-change-event
+//
 // This class is thread unsafe.
 class SourceTracker {
  public:
   // Amount of time before the entry associated with an update is removed. See:
   // https://w3c.github.io/webrtc-pc/#dom-rtcrtpreceiver-getcontributingsources
   static constexpr TimeDelta kTimeout = TimeDelta::Seconds(10);
+
+  struct SourceChanged {
+    bool ssrc_changed = false;
+    bool csrc_changed = false;
+  };
 
   explicit SourceTracker(Clock* clock);
 
@@ -48,9 +56,17 @@ class SourceTracker {
   SourceTracker& operator=(SourceTracker&& other) = delete;
 
   // Updates the source entries when a frame is delivered to the
-  // RTCRtpReceiver's MediaStreamTrack.
-  void OnFrameDelivered(const RtpPacketInfos& packet_infos,
-                        Timestamp delivery_time = Timestamp::MinusInfinity());
+  // RTCRtpReceiver's MediaStreamTrack. Returns whether the most recently
+  // received SSRC or CSRC set changed as a result of this frame delivery.
+  SourceChanged OnFrameDelivered(
+      const RtpPacketInfos& packet_infos,
+      Timestamp delivery_time = Timestamp::MinusInfinity());
+
+  // Returns true if at least one frame has been delivered.
+  bool has_delivered_frame() const { return last_received_ssrc_.has_value(); }
+
+  // Returns true if the most recently delivered frame had CSRCs.
+  bool last_frame_has_csrcs() const { return !last_received_csrcs_.empty(); }
 
   // Returns an `RtpSource` for each unique SSRC and CSRC identifier updated in
   // the last `kTimeoutMs` milliseconds. Entries appear in reverse chronological
@@ -132,6 +148,8 @@ class SourceTracker {
   // pruning in const functions.
   mutable SourceList list_;
   mutable SourceMap map_;
+  std::optional<uint32_t> last_received_ssrc_;
+  std::vector<uint32_t> last_received_csrcs_;
 };
 
 }  // namespace webrtc

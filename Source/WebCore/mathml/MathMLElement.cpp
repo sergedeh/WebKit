@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2009 Alex Milowski (alex@milowski.com). All rights reserved.
- * Copyright (C) 2010-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2010-2026 Apple Inc. All rights reserved.
  * Copyright (C) 2010 François Sausset (sausset@gmail.com). All rights reserved.
  * Copyright (C) 2016 Igalia S.L.
  *
@@ -34,17 +34,21 @@
 #include "ContainerNodeInlines.h"
 #include "ElementInlines.h"
 #include "EventHandler.h"
+#include "FrameDestructionObserverInlines.h"
 #include "FrameLoader.h"
 #include "HTMLAnchorElement.h"
 #include "HTMLElement.h"
 #include "HTMLNames.h"
 #include "HTMLParserIdioms.h"
 #include "HTMLTableCellElement.h"
+#include "KeyboardEvent.h"
+#include "LocalFrame.h"
 #include "MathMLNames.h"
 #include "MouseEvent.h"
 #include "NodeName.h"
 #include "RenderTableCell.h"
 #include "Settings.h"
+#include "StyleComputedStyle.h"
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringToIntegerConversion.h>
@@ -77,26 +81,26 @@ unsigned MathMLElement::rowSpan() const
 {
     if (!hasTagName(mtdTag))
         return 1u;
-    auto& rowSpanValue = attributeWithoutSynchronization(rowspanAttr);
-    return std::max(1u, std::min(limitToOnlyHTMLNonNegative(rowSpanValue, 1u), HTMLTableCellElement::maxRowspan));
+    auto& rowSpanValue = attributeWithoutSynchronization(MathMLNames::rowspanAttr);
+    return clampHTMLNonNegativeIntegerToRange(rowSpanValue, HTMLTableCellElement::minRowspan, HTMLTableCellElement::maxRowspan, HTMLTableCellElement::defaultRowspan);
 }
 
 void MathMLElement::attributeChanged(const QualifiedName& name, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason attributeModificationReason)
 {
     switch (name.nodeName()) {
     case AttributeNames::hrefAttr:
-        setIsLink(!newValue.isNull() && !shouldProhibitLinks(this));
+        setIsLink(!newValue.isNull() && !shouldProhibitLinks(this) && allowsHref());
         break;
     case AttributeNames::columnspanAttr:
     case AttributeNames::rowspanAttr:
-        if (is<RenderTableCell>(renderer()) && hasTagName(mtdTag))
-            downcast<RenderTableCell>(*renderer()).colSpanOrRowSpanChanged();
+        if (CheckedPtr cell = dynamicDowncast<RenderTableCell>(renderer()); cell && hasTagName(mtdTag))
+            cell->colSpanOrRowSpanChanged();
         break;
     case AttributeNames::tabindexAttr:
-        if (newValue.isEmpty())
-            setTabIndexExplicitly(std::nullopt);
-        else if (auto optionalTabIndex = parseHTMLInteger(newValue))
+        if (auto optionalTabIndex = parseHTMLInteger(newValue))
             setTabIndexExplicitly(optionalTabIndex.value());
+        else
+            setTabIndexExplicitly(std::nullopt);
         break;
     default:
         if (auto& eventName = HTMLElement::eventNameForEventHandlerAttribute(name); !eventName.isNull()) {
@@ -124,6 +128,8 @@ bool MathMLElement::hasPresentationalHintsForAttribute(const QualifiedName& name
     case AttributeNames::displaystyleAttr:
     case AttributeNames::scriptlevelAttr:
         return true;
+    case AttributeNames::mathvariantAttr:
+        return document().settings().coreMathMLDeprecateLegacyMathvariant();
     default:
         break;
     }
@@ -176,26 +182,26 @@ void MathMLElement::collectPresentationalHintsForAttribute(const QualifiedName& 
 {
     switch (name.nodeName()) {
     case AttributeNames::mathbackgroundAttr:
-        addPropertyToPresentationalHintStyle(style, CSSPropertyBackgroundColor, value);
+        addPropertyToPresentationalHintStyle(style, CSSPropertyID::BackgroundColor, value);
         return;
     case AttributeNames::mathsizeAttr:
         if (document().settings().coreMathMLEnabled()) {
             if (!isDisallowedMathSizeAttribute(value))
-                addPropertyToPresentationalHintStyle(style, CSSPropertyFontSize, value);
+                addPropertyToPresentationalHintStyle(style, CSSPropertyID::FontSize, value);
         } else
-            addPropertyToPresentationalHintStyle(style, CSSPropertyFontSize, convertMathSizeIfNeeded(value));
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::FontSize, convertMathSizeIfNeeded(value));
         return;
     case AttributeNames::mathcolorAttr:
-        addPropertyToPresentationalHintStyle(style, CSSPropertyColor, value);
+        addPropertyToPresentationalHintStyle(style, CSSPropertyID::Color, value);
         return;
     case AttributeNames::dirAttr:
-        addPropertyToPresentationalHintStyle(style, CSSPropertyDirection, value);
+        addPropertyToPresentationalHintStyle(style, CSSPropertyID::Direction, value);
         return;
     case AttributeNames::displaystyleAttr:
         if (equalLettersIgnoringASCIICase(value, "false"_s))
-            addPropertyToPresentationalHintStyle(style, CSSPropertyMathStyle, CSSValueCompact);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::MathStyle, CSSValueID::Compact);
         else if (equalLettersIgnoringASCIICase(value, "true"_s))
-            addPropertyToPresentationalHintStyle(style, CSSPropertyMathStyle, CSSValueNormal);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::MathStyle, CSSValueID::Normal);
         return;
     // https://w3c.github.io/mathml-core/#dfn-scriptlevel
     case AttributeNames::scriptlevelAttr: {
@@ -225,17 +231,26 @@ void MathMLElement::collectPresentationalHintsForAttribute(const QualifiedName& 
                 builder.append('-');
             builder.append(view);
             builder.append(')');
-            addPropertyToPresentationalHintStyle(style, CSSPropertyMathDepth, builder.toString());
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::MathDepth, builder.toString());
             break;
         }
         case ScriptLevelSyntax::Unsigned:
-            addPropertyToPresentationalHintStyle(style, CSSPropertyMathDepth, value);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::MathDepth, value);
             break;
         };
         return;
     }
     default:
         break;
+    }
+
+    if (document().settings().coreMathMLDeprecateLegacyMathvariant() && name.nodeName() == AttributeNames::mathvariantAttr) {
+        // In MathML Core the mathvariant attribute only has a supported value of normal which sets
+        // a presentational hint resetting the value of text-transform to none.
+        // https://w3c.github.io/mathml-core/#dfn-mathvariant
+        if (hasTagName(MathMLNames::miTag) && equalLettersIgnoringASCIICase(value, "normal"_s))
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::TextTransform, CSSValueID::None);
+        return;
     }
 
     if (document().settings().coreMathMLEnabled()) {
@@ -246,22 +261,22 @@ void MathMLElement::collectPresentationalHintsForAttribute(const QualifiedName& 
     // FIXME: The following are deprecated attributes that should lose if there is a conflict with a non-deprecated attribute.
     switch (name.nodeName()) {
     case AttributeNames::fontsizeAttr:
-        addPropertyToPresentationalHintStyle(style, CSSPropertyFontSize, value);
+        addPropertyToPresentationalHintStyle(style, CSSPropertyID::FontSize, value);
         break;
     case AttributeNames::backgroundAttr:
-        addPropertyToPresentationalHintStyle(style, CSSPropertyBackgroundColor, value);
+        addPropertyToPresentationalHintStyle(style, CSSPropertyID::BackgroundColor, value);
         break;
     case AttributeNames::colorAttr:
-        addPropertyToPresentationalHintStyle(style, CSSPropertyColor, value);
+        addPropertyToPresentationalHintStyle(style, CSSPropertyID::Color, value);
         break;
     case AttributeNames::fontstyleAttr:
-        addPropertyToPresentationalHintStyle(style, CSSPropertyFontStyle, value);
+        addPropertyToPresentationalHintStyle(style, CSSPropertyID::FontStyle, value);
         break;
     case AttributeNames::fontweightAttr:
-        addPropertyToPresentationalHintStyle(style, CSSPropertyFontWeight, value);
+        addPropertyToPresentationalHintStyle(style, CSSPropertyID::FontWeight, value);
         break;
     case AttributeNames::fontfamilyAttr:
-        addPropertyToPresentationalHintStyle(style, CSSPropertyFontFamily, value);
+        addPropertyToPresentationalHintStyle(style, CSSPropertyID::FontFamily, value);
         break;
     default:
         ASSERT(!hasPresentationalHintsForAttribute(name));
@@ -284,16 +299,16 @@ bool MathMLElement::willRespondToMouseClickEventsWithEditability(Editability edi
 void MathMLElement::defaultEventHandler(Event& event)
 {
     if (isLink()) {
-        if (focused() && isEnterKeyKeydownEvent(event)) {
+        if (focused() && KeyboardEvent::isEnterKeyKeydownEvent(event)) {
             event.setDefaultHandled();
             dispatchSimulatedClick(&event);
             return;
         }
         if (MouseEvent::canTriggerActivationBehavior(event)) {
-            const auto& href = attributeWithoutSynchronization(hrefAttr);
+            const auto& href = attributeWithoutSynchronization(MathMLNames::hrefAttr);
             event.setDefaultHandled();
             if (RefPtr frame = document().frame())
-                frame->loader().changeLocation(document().completeURL(href), selfTargetFrameName(), &event, ReferrerPolicy::EmptyString, document().shouldOpenExternalURLsPolicyToPropagate());
+                frame->loader().changeLocation(protect(document())->encodingParseURL(href), selfTargetFrameName(), &event, ReferrerPolicy::EmptyString, protect(document())->shouldOpenExternalURLsPolicyToPropagate());
             return;
         }
     }
@@ -334,7 +349,16 @@ bool MathMLElement::isMouseFocusable() const
 
 bool MathMLElement::isURLAttribute(const Attribute& attribute) const
 {
-    return attribute.name().localName() == hrefAttr || StyledElement::isURLAttribute(attribute);
+    if (!allowsHref())
+        return false;
+    // FIXME: Should this be attribute.name().matches(hrefAttr) to also enforce the namespace?
+    return MathMLNames::hrefAttr->hasLocalName(attribute.name().localName()) || StyledElement::isURLAttribute(attribute);
+}
+
+bool MathMLElement::allowsHref() const
+{
+    // FIXME: Should this be hasTagName(HTMLNames::aTag) to also enforce the namespace?
+    return !document().settings().mathMLDisableHrefOnNonAnchorElement() || HTMLNames::aTag->hasLocalName(localName());
 }
 
 bool MathMLElement::supportsFocus() const
@@ -343,6 +367,19 @@ bool MathMLElement::supportsFocus() const
         return StyledElement::supportsFocus();
     // If not a link we should still be able to focus the element if it has tabIndex.
     return isLink() || StyledElement::supportsFocus();
+}
+
+int MathMLElement::defaultTabIndex() const
+{
+    // FIXME: Should this be hasTagName(HTMLNames::aTag) to also enforce the namespace?
+    return HTMLNames::aTag->hasLocalName(localName()) ? 0 : -1;
+}
+
+Node::NeedsPostConnectionSteps MathMLElement::insertionSteps(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
+{
+    auto result = StyledElement::insertionSteps(insertionType, parentOfInsertedTree);
+    hideNonce();
+    return result;
 }
 
 }

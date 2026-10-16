@@ -75,7 +75,7 @@ static void checkVec4F32Type(WGSL::AST::Expression& type)
 
 namespace TestWGSLAPI {
 
-inline Expected<WGSL::ShaderModule, WGSL::FailedCheck> parse(const String& wgsl)
+inline std::expected<WGSL::ShaderModule, WGSL::FailedCheck> parse(const String& wgsl)
 {
     WGSL::ShaderModule shaderModule(wgsl, { 8 });
     auto maybeError = WGSL::parse(shaderModule);
@@ -121,7 +121,6 @@ static void testStruct(ASCIILiteral program, const Vector<String>& fieldNames, c
     EXPECT_TRUE(is<WGSL::AST::Structure>(shader->declarations()[0]));
     auto& str = downcast<WGSL::AST::Structure>(shader->declarations()[0]);
     EXPECT_EQ(str.name(), "B"_s);
-    EXPECT_TRUE(str.attributes().isEmpty());
 
     EXPECT_EQ(str.members().size(), fieldNames.size());
     for (unsigned i = 0; i < fieldNames.size(); ++i) {

@@ -52,13 +52,7 @@ extern "C" {
 #include <setjmp.h>
 }
 
-#if CPU(BIG_ENDIAN) || CPU(MIDDLE_ENDIAN)
-#define ASSUME_LITTLE_ENDIAN 0
-#else
-#define ASSUME_LITTLE_ENDIAN 1
-#endif
-
-#if defined(JCS_ALPHA_EXTENSIONS) && ASSUME_LITTLE_ENDIAN
+#if defined(JCS_ALPHA_EXTENSIONS)
 #define TURBO_JPEG_RGB_SWIZZLE
 inline J_COLOR_SPACE rgbOutputColorSpace() { return JCS_EXT_BGRA; }
 inline bool turboSwizzled(J_COLOR_SPACE colorSpace) { return colorSpace == JCS_EXT_RGBA || colorSpace == JCS_EXT_BGRA; }
@@ -276,7 +270,7 @@ public:
         // Allocate and initialize JPEG decompression object.
         jpeg_create_decompress(&m_info);
 
-        decoder_source_mgr* src = 0;
+        decoder_source_mgr* src = nullptr;
         if (!m_info.src) {
             src = (decoder_source_mgr*)fastCalloc(sizeof(decoder_source_mgr), 1);
             if (!src) {
@@ -568,6 +562,7 @@ JPEGImageDecoder::~JPEGImageDecoder()
 
 ScalableImageDecoderFrame* JPEGImageDecoder::frameBufferAtIndex(size_t index)
 {
+    assertIsHeld(m_lock);
     if (index)
         return 0;
 
@@ -599,7 +594,6 @@ void setPixel(ScalableImageDecoderFrame& buffer, std::span<uint32_t> currentAddr
 {
     WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // non-Apple ports
     JSAMPLE* jsample = *samples + column * (colorSpace == JCS_RGB ? 3 : 4);
-    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     switch (colorSpace) {
     case JCS_RGB:
@@ -619,6 +613,7 @@ void setPixel(ScalableImageDecoderFrame& buffer, std::span<uint32_t> currentAddr
         buffer.backingStore()->setPixel(currentAddress[0], jsample[0] * k / 255, jsample[1] * k / 255, jsample[2] * k / 255, 0xFF);
         break;
     }
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 }
 
 template <J_COLOR_SPACE colorSpace>
@@ -653,6 +648,7 @@ bool JPEGImageDecoder::outputScanlines(ScalableImageDecoderFrame& buffer)
 
 bool JPEGImageDecoder::outputScanlines()
 {
+    assertIsHeld(m_lock);
     if (m_frameBufferCache.isEmpty())
         return false;
 
@@ -703,6 +699,7 @@ bool JPEGImageDecoder::outputScanlines()
 
 void JPEGImageDecoder::jpegComplete()
 {
+    assertIsHeld(m_lock);
     if (m_frameBufferCache.isEmpty())
         return;
 
@@ -715,6 +712,7 @@ void JPEGImageDecoder::jpegComplete()
 
 void JPEGImageDecoder::decode(bool onlySize, bool allDataReceived)
 {
+    assertIsHeld(m_lock);
     if (failed())
         return;
 

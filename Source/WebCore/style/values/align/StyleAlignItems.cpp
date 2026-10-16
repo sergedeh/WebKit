@@ -26,6 +26,7 @@
 #include "config.h"
 #include "StyleAlignItems.h"
 
+#include "CSSKeywordValue.h"
 #include "StyleBuilderChecking.h"
 #include "StylePrimitiveNumericTypes+CSSValueConversion.h"
 
@@ -48,7 +49,7 @@ StyleSelfAlignmentData AlignItems::resolve() const
 
     switch (primary()) {
     case PrimaryKind::Normal:
-        return { ItemPosition::Normal };
+        return resolveOverflowPosition(ItemPosition::Normal);
     case PrimaryKind::Stretch:
         return { ItemPosition::Stretch };
     case PrimaryKind::Baseline:
@@ -79,33 +80,33 @@ StyleSelfAlignmentData AlignItems::resolve() const
 
 auto CSSValueConversion<AlignItems>::operator()(BuilderState& state, const CSSValue& value) -> AlignItems
 {
-    if (RefPtr primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value)) {
-        switch (primitiveValue->valueID()) {
+    if (RefPtr keywordValue = dynamicDowncast<CSSKeywordValue>(value)) {
+        switch (keywordValue->valueID()) {
         // normal
-        case CSSValueNormal:
+        case CSSValueID::Normal:
             return CSS::Keyword::Normal { };
         // stretch
-        case CSSValueStretch:
+        case CSSValueID::Stretch:
             return CSS::Keyword::Stretch { };
         // <baseline-position>
-        case CSSValueBaseline:
+        case CSSValueID::Baseline:
             return CSS::Keyword::Baseline { };
         // <overflow-position>? <self-position>
-        case CSSValueCenter:
+        case CSSValueID::Center:
             return CSS::Keyword::Center { };
-        case CSSValueStart:
+        case CSSValueID::Start:
             return CSS::Keyword::Start { };
-        case CSSValueEnd:
+        case CSSValueID::End:
             return CSS::Keyword::End { };
-        case CSSValueSelfStart:
+        case CSSValueID::SelfStart:
             return CSS::Keyword::SelfStart { };
-        case CSSValueSelfEnd:
+        case CSSValueID::SelfEnd:
             return CSS::Keyword::SelfEnd { };
-        case CSSValueFlexStart:
+        case CSSValueID::FlexStart:
             return CSS::Keyword::FlexStart { };
-        case CSSValueFlexEnd:
+        case CSSValueID::FlexEnd:
             return CSS::Keyword::FlexEnd { };
-        case CSSValueAnchorCenter:
+        case CSSValueID::AnchorCenter:
             return CSS::Keyword::AnchorCenter { };
         default:
             state.setCurrentPropertyInvalidAtComputedValueTime();
@@ -113,13 +114,13 @@ auto CSSValueConversion<AlignItems>::operator()(BuilderState& state, const CSSVa
         }
     }
 
-    auto pair = requiredPairDowncast<CSSPrimitiveValue>(state, value);
+    auto pair = requiredPairDowncast<CSSKeywordValue>(state, value);
     if (!pair)
         return CSS::Keyword::Normal { };
 
     auto consumeAfterBaselinePositionPreference = [&](auto baselinePositionPreference, auto secondValueID) -> AlignItems {
         switch (secondValueID) {
-        case CSSValueBaseline:
+        case CSSValueID::Baseline:
             return { CSS::Keyword::Baseline { }, { baselinePositionPreference } };
         default:
             state.setCurrentPropertyInvalidAtComputedValueTime();
@@ -129,21 +130,23 @@ auto CSSValueConversion<AlignItems>::operator()(BuilderState& state, const CSSVa
 
     auto consumeAfterOverflowPosition = [&](auto overflowPosition, auto secondValueID) -> AlignItems {
         switch (secondValueID) {
-        case CSSValueStart:
+        case CSSValueID::Normal:
+            return { CSS::Keyword::Normal { }, overflowPosition };
+        case CSSValueID::Start:
             return { CSS::Keyword::Start { }, overflowPosition };
-        case CSSValueEnd:
+        case CSSValueID::End:
             return { CSS::Keyword::End { }, overflowPosition };
-        case CSSValueCenter:
+        case CSSValueID::Center:
             return { CSS::Keyword::Center { }, overflowPosition };
-        case CSSValueSelfStart:
+        case CSSValueID::SelfStart:
             return { CSS::Keyword::SelfStart { }, overflowPosition };
-        case CSSValueSelfEnd:
+        case CSSValueID::SelfEnd:
             return { CSS::Keyword::SelfEnd { }, overflowPosition };
-        case CSSValueFlexStart:
+        case CSSValueID::FlexStart:
             return { CSS::Keyword::FlexStart { }, overflowPosition };
-        case CSSValueFlexEnd:
+        case CSSValueID::FlexEnd:
             return { CSS::Keyword::FlexEnd { }, overflowPosition };
-        case CSSValueAnchorCenter:
+        case CSSValueID::AnchorCenter:
             return { CSS::Keyword::AnchorCenter { }, overflowPosition };
         default:
             state.setCurrentPropertyInvalidAtComputedValueTime();
@@ -153,14 +156,14 @@ auto CSSValueConversion<AlignItems>::operator()(BuilderState& state, const CSSVa
 
     switch (pair->first->valueID()) {
     // <baseline-position>
-    case CSSValueFirst:
+    case CSSValueID::First:
         return consumeAfterBaselinePositionPreference(CSS::Keyword::First { }, pair->second->valueID());
-    case CSSValueLast:
+    case CSSValueID::Last:
         return consumeAfterBaselinePositionPreference(CSS::Keyword::Last { }, pair->second->valueID());
     // <overflow-position>? <self-position>
-    case CSSValueUnsafe:
+    case CSSValueID::Unsafe:
         return consumeAfterOverflowPosition(CSS::Keyword::Unsafe { }, pair->second->valueID());
-    case CSSValueSafe:
+    case CSSValueID::Safe:
         return consumeAfterOverflowPosition(CSS::Keyword::Safe { }, pair->second->valueID());
     default:
         state.setCurrentPropertyInvalidAtComputedValueTime();

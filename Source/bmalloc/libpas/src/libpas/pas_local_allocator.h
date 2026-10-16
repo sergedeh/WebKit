@@ -26,7 +26,6 @@
 #ifndef PAS_LOCAL_ALLOCATOR_H
 #define PAS_LOCAL_ALLOCATOR_H
 
-#include "pas_allocation_result.h"
 #include "pas_allocator_scavenge_action.h"
 #include "pas_bitfit_allocator.h"
 #include "pas_config.h"
@@ -57,7 +56,6 @@ struct pas_local_allocator {
     bool current_word_is_valid : 1; /* This is just used by enumeration. */
     bool is_small : 1; /* Marks that this local allocator is used to allocate small objects. */
     bool is_profiled; /* Marks that allocations coming out of this local allocator should be profiled. */
-    bool is_mte_tagged; /* Marks that allocations coming out of this local allocator are MTE-tagged. */
 
     /* This has to have a pointer to our index within the view. We can get to the view using
        page_ish. Maybe worth reconsidering that, but then again maybe it's good enough. 
@@ -77,9 +75,7 @@ struct pas_local_allocator {
     unsigned current_offset; /* current_offset < end_offset means that we have bits to search. */
     unsigned end_offset;
     uint64_t current_word;
-    pas_segregated_view view; /* points to a partial view if we're in partial mode or the size
-                                 directory otherwise. This will point to a partial view in either
-                                 primordial partial mode or in normal partial mode. */
+    pas_segregated_view view; /* Points to the size directory. */
     uint64_t bits[1];
 };
 
@@ -97,7 +93,6 @@ struct pas_local_allocator {
         .current_word_is_valid = false, \
         .is_small = 0, \
         .is_profiled = 0, \
-        .is_mte_tagged = 0, \
         .current_word = 0, \
         .config_kind = pas_local_allocator_config_kind_null \
     })
@@ -168,8 +163,6 @@ PAS_API void pas_local_allocator_move(pas_local_allocator* dst,
 PAS_API bool pas_local_allocator_stop(pas_local_allocator* allocator,
                                       pas_lock_lock_mode page_lock_mode,
                                       pas_lock_hold_mode heap_lock_hold_mode);
-
-PAS_API pas_lock_hold_mode pas_local_allocator_heap_lock_hold_mode(pas_local_allocator* allocator);
 
 /* This is appropriate to call for allocators that are used under a lock and you're holding that
    lock. Allocators associated with TLCs use subtly different logic.

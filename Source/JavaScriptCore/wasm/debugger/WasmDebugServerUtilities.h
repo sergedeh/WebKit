@@ -28,18 +28,21 @@
 #include <wtf/Compiler.h>
 #include <wtf/Platform.h>
 
-#if ENABLE(WEBASSEMBLY)
+#if ENABLE(WEBASSEMBLY_DEBUGGER)
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 #include <JavaScriptCore/CallFrame.h>
 #include <JavaScriptCore/JSWebAssemblyInstance.h>
+#include <JavaScriptCore/WasmExceptionType.h>
 #include <JavaScriptCore/WasmIPIntGenerator.h>
 #include <JavaScriptCore/WasmVirtualAddress.h>
 #include <memory>
 #include <wtf/HexNumber.h>
+#include <wtf/RawHex.h>
 #include <wtf/Ref.h>
 #include <wtf/RefPtr.h>
+#include <wtf/Vector.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringView.h>
 
@@ -95,120 +98,175 @@ private:
     BitField m_event { NoEvent };
 };
 
-struct Breakpoint {
-    enum class Type : uint8_t {
-        // User-set breakpoint (persistent, tracked by virtual address)
-        Regular = 0,
+// Why the VM stopped. Always set when isStopped. Drives GDB wire protocol signal and reason.
+enum class DebugStopReason : uint8_t {
+    // Debugger-imposed stop: passive VM (no WASM context) or WASM function prologue.
+    // Also used for new module load stops (isNewModuleLoad flag is set in that case).
+    Interrupted,
+    Breakpoint, // A user-set breakpoint was hit (reason:breakpoint)
+    Step, // A step breakpoint was hit (reason:trace)
+    WasmTrap, // Wasm trap / exception
+};
 
-        // One-time breakpoint (auto-removed after each stop)
-        Interrupt = 1,
-        Step = 2,
-    };
-
-    Breakpoint() = default;
-    Breakpoint(uint8_t* pc, Type type)
-        : type(type)
-        , pc(pc)
-        , originalBytecode(*pc)
+class Breakpoint final : public ThreadSafeRefCounted<Breakpoint> {
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(Breakpoint, JS_EXPORT_PRIVATE);
+public:
+    static Ref<Breakpoint> create(const ModuleInformation& owner, uint8_t* pc)
     {
+        return adoptRef(*new Breakpoint(owner, pc));
     }
 
-    void patchBreakpoint() { *pc = 0x00; }
-    void restorePatch() { *pc = originalBytecode; }
+    void patchBreakpoint() { *pc = static_cast<uint8_t>(OpType::Unreachable); }
+    void restorePatch() { *pc = static_cast<uint8_t>(originalBytecode); }
 
-    bool isOneTimeBreakpoint() { return type != Type::Regular; }
+    bool isUnused() const { return !siteCount && !oneTimeClaim; }
 
     void dump(PrintStream& out) const
     {
-        out.print("Breakpoint(type:", type);
-        out.print(", pc:", RawPointer(pc));
+        out.print("Breakpoint(pc:", RawPointer(pc));
         out.print(", *pc:", (int)*pc);
-        out.print(", originalBytecode:", originalBytecode, ")");
+        out.print(", originalBytecode:", RawHex(static_cast<unsigned>(originalBytecode)));
+        out.print(", siteCount:", siteCount, ", oneTimeClaim:", oneTimeClaim, ")");
     }
 
-    Type type { Type::Regular };
+    // Keeps the bytecode buffer alive.
+    RefPtr<const ModuleInformation> owner;
     uint8_t* pc { nullptr };
-    uint8_t originalBytecode { 0 };
+    OpType originalBytecode { OpType::Unreachable };
+    // Independent claims, able to coexist; the patch is restored once neither remains.
+    unsigned siteCount { 0 };
+    std::optional<DebugStopReason> oneTimeClaim; // Step or Interrupted while armed.
+
+private:
+    Breakpoint(const ModuleInformation& owner, uint8_t* pc)
+        : owner(&owner)
+        , pc(pc)
+        , originalBytecode(static_cast<OpType>(*pc))
+    {
+    }
 };
 
-// Immutable snapshot of VM state when stopped at a debugging event (interrupt/breakpoint/step).
-// Captures stop reason, location, PC/MC, and execution state for debugger inspection.
+// WASM execution context snapshot captured when stopped at a debugging event.
+// Present for Breakpoint/Step/Trap stops; null for Interrupted stops (no WASM execution context).
 struct StopData {
     WTF_MAKE_STRUCT_TZONE_ALLOCATED(StopData);
 
-    // GDB Remote Protocol stop reason codes mapped to GDB Remote Protocol semantics
-    // Reference: https://sourceware.org/gdb/onlinedocs/gdb/Stop-Reply-Packets.html
-    enum class Code : uint8_t {
-        Unknown = 0,
-        Stop, // SIGSTOP - Debugger interrupt (uncatchable stop) - reason:signal
-        Trace, // SIGTRAP - Single step/trace completion - reason:trace
-        Breakpoint // SIGTRAP - Breakpoint hit - reason:breakpoint (distinct from trace)
-    };
+    StopData(VirtualAddress, OpType originalBytecode, uint8_t* pc, uint8_t* mc, IPInt::IPIntStackEntry*, IPIntCallee*, JSWebAssemblyInstance*, CallFrame*);
 
-    enum class Location : uint8_t {
-        Prologue = 0,
-        Breakpoint
-    };
+    StopData(IPIntCallee*, JSWebAssemblyInstance*, CallFrame*); // Prologue: no pc/mc
 
-    StopData(Breakpoint::Type, VirtualAddress, uint8_t originalBytecode, uint8_t* pc, uint8_t* mc, IPInt::IPIntLocal*, IPInt::IPIntStackEntry*, IPIntCallee*, JSWebAssemblyInstance*, CallFrame*);
-
-    StopData(IPIntCallee*, JSWebAssemblyInstance*);
+    StopData(IPIntCallee*, JSWebAssemblyInstance*, CallFrame*, uint8_t* pc, uint8_t* mc, IPInt::IPIntStackEntry*, Wasm::ExceptionType); // Trap
 
     ~StopData();
 
-    void setCode(Breakpoint::Type);
     void dump(PrintStream&) const;
 
-    Code code { Code::Unknown };
-    Location location;
     VirtualAddress address;
-    uint8_t originalBytecode { 0 };
+    OpType originalBytecode { OpType::Unreachable };
     uint8_t* pc { nullptr };
     uint8_t* mc { nullptr };
-    IPInt::IPIntLocal* locals { nullptr };
     IPInt::IPIntStackEntry* stack { nullptr };
     RefPtr<IPIntCallee> callee;
     JSWebAssemblyInstance* instance { nullptr };
     CallFrame* callFrame { nullptr };
+    std::optional<Wasm::ExceptionType> wasmTrapType;
 };
 
-// Per-VM debugging state machine (Running/Stopped) with current stop information.
-// Owns stopData snapshot while stopped, tracks step-into events across function boundaries.
+// Per-VM debugging state machine with current stop information.
 // Created on-demand via VM::debugState(), accessed only when VM is stopped.
 struct DebugState {
     WTF_MAKE_STRUCT_TZONE_ALLOCATED(DebugState);
 
-    enum class State : uint8_t {
-        Running,
-        Stopped,
-    };
+    using Reason = DebugStopReason;
 
     DebugState() = default;
 
-    void setPrologueStopData(JSWebAssemblyInstance* instance, IPIntCallee* callee)
+    void setPrologueStopData(JSWebAssemblyInstance* instance, IPIntCallee* callee, CallFrame* callFrame)
     {
-        stopData = makeUnique<StopData>(callee, instance);
+        stopReason = Reason::Interrupted;
+        stopData = makeUnique<StopData>(callee, instance, callFrame);
     }
 
-    void setBreakpointStopData(Breakpoint::Type type, VirtualAddress address, uint8_t originalBytecode, uint8_t* pc, uint8_t* mc, IPInt::IPIntLocal* locals, IPInt::IPIntStackEntry* stack, IPIntCallee* callee, JSWebAssemblyInstance* instance, CallFrame* callFrame)
+    void setAtomicsWaitStopData(IPIntCallee* callee, JSWebAssemblyInstance* instance, CallFrame* callFrame, uint8_t* pc, uint8_t* mc, IPInt::IPIntStackEntry* stack)
     {
-        stopData = makeUnique<StopData>(type, address, originalBytecode, pc, mc, locals, stack, callee, instance, callFrame);
+        stopReason = Reason::Interrupted;
+        // ExtAtomic by construction: the only callers are the memory_atomic_wait32/64 externs,
+        // reached by dispatching the 0xFE prefix. *pc can be a sibling instance's patch instead.
+        RELEASE_ASSERT(*pc == static_cast<uint8_t>(OpType::ExtAtomic) || *pc == static_cast<uint8_t>(OpType::Unreachable));
+        stopData = makeUnique<StopData>(VirtualAddress::toVirtual(instance, callee->functionIndex(), pc), OpType::ExtAtomic, pc, mc, stack, callee, instance, callFrame);
     }
 
-    bool atSystemCall() const { return !stopData; }
-    bool atPrologue() const { return !!stopData && stopData->location == StopData::Location::Prologue; }
-    bool atBreakpoint() const { return !!stopData && stopData->location == StopData::Location::Breakpoint; }
+    void setBreakpointStopData(Reason reason, VirtualAddress address, OpType originalBytecode, uint8_t* pc, uint8_t* mc, IPInt::IPIntStackEntry* stack, IPIntCallee* callee, JSWebAssemblyInstance* instance, CallFrame* callFrame)
+    {
+        RELEASE_ASSERT(reason == Reason::Breakpoint || reason == Reason::Step || reason == Reason::Interrupted);
+        stopReason = reason;
+        stopData = makeUnique<StopData>(address, originalBytecode, pc, mc, stack, callee, instance, callFrame);
+    }
+
+    void setTrapStopData(IPIntCallee* callee, JSWebAssemblyInstance* instance, CallFrame* callFrame, uint8_t* pc, uint8_t* mc, IPInt::IPIntStackEntry* stack, Wasm::ExceptionType wasmTrapType)
+    {
+        stopReason = Reason::WasmTrap;
+        stopData = makeUnique<StopData>(callee, instance, callFrame, pc, mc, stack, wasmTrapType);
+    }
+
+    // WHERE-based helpers — determined by stopData presence and pc:
+    bool isStoppedAtSystemCall() const
+    {
+        bool result = !stopData;
+        if (result)
+            RELEASE_ASSERT(stopReason == Reason::Interrupted);
+        return result;
+    }
+    bool isStoppedAtPrologue() const
+    {
+        bool result = stopData && !stopData->pc;
+        if (result)
+            RELEASE_ASSERT(stopReason == Reason::Interrupted || stopReason == Reason::WasmTrap);
+        return result;
+    }
+    bool isStoppedAtBytecode() const
+    {
+        bool result = stopData && !!stopData->pc;
+        if (result) {
+            // FIXME: Reason::Interrupted is only valid here because setAtomicsWaitStopData uses it.
+            // All other Interrupted stops have no stopData->pc. Consider introducing a dedicated
+            // Reason::AtomicsWaitBlocked to keep that case distinct and tighten this assertion.
+            RELEASE_ASSERT(stopReason == Reason::Breakpoint || stopReason == Reason::Step || stopReason == Reason::WasmTrap || stopReason == Reason::Interrupted);
+        }
+        return result;
+    }
+    bool isAtomicsWaitStop() const
+    {
+        if (!isStoppedAtBytecode())
+            return false;
+        if (stopData->originalBytecode != OpType::ExtAtomic)
+            return false;
+        auto extOp = static_cast<ExtAtomicOpType>(*(stopData->pc + 1));
+        return extOp == ExtAtomicOpType::MemoryAtomicWait32 || extOp == ExtAtomicOpType::MemoryAtomicWait64;
+    }
+
+    // WHY-based helpers — determined by stopReason:
+    bool isStoppedDueToWasmTrap() const
+    {
+        return stopReason == Reason::WasmTrap;
+    }
 
     void clearStop()
     {
-        state = State::Running;
+        stopReason = std::nullopt;
+        isNewModuleLoad = false;
+        isStopped = false;
         stopData = nullptr;
     }
 
-    void setStopped() { state = State::Stopped; }
-    bool isStopped() const { return state == State::Stopped; }
-    void setRunning() { state = State::Running; }
-    bool isRunning() const { return state == State::Running; }
+    void setStopped()
+    {
+        // Sets Interrupted on VMs with no stop reason.
+        if (!stopReason.has_value())
+            stopReason = Reason::Interrupted;
+        isStopped = true;
+    }
+
 
     bool hasStepIntoEvent() { return stepIntoEvent.hasAny(); }
     void setStepIntoCall() { stepIntoEvent.set(StepIntoEvent::StepIntoCall); }
@@ -216,8 +274,10 @@ struct DebugState {
     void setStepIntoThrow() { stepIntoEvent.set(StepIntoEvent::StepIntoThrow); }
     bool takeStepIntoThrow() { return stepIntoEvent.take(StepIntoEvent::StepIntoThrow); }
 
-    State state { State::Running };
-    std::unique_ptr<const StopData> stopData { nullptr };
+    std::optional<Reason> stopReason;
+    bool isNewModuleLoad { false };
+    bool isStopped { false }; // FIXME: There is better design (rdar://174508321) for code efficiency.
+    std::unique_ptr<StopData> stopData { nullptr };
 
     // Step-into tracking (for step debugging behavior)
     StepIntoEvent stepIntoEvent;
@@ -240,13 +300,33 @@ String stringToHex(StringView);
 
 void logWasmLocalValue(size_t index, const JSC::IPInt::IPIntLocal&, const Wasm::Type&);
 
-uint64_t parseHex(StringView, uint64_t defaultValue = 0);
+std::optional<uint64_t> parseHexStrict(StringView);
 
 uint32_t parseDecimal(StringView, uint32_t defaultValue = 0);
 
 Vector<StringView> splitWithDelimiters(StringView packet, StringView delimiters);
 
-bool getWasmReturnPC(CallFrame* currentFrame, uint8_t*& returnPC, VirtualAddress& virtualReturnPC);
+// Caller resume location and enclosing instance.
+struct WasmReturnSite {
+    uint8_t* pc { nullptr };
+    JSWebAssemblyInstance* instance { nullptr };
+
+    explicit operator bool() const { return pc && instance; }
+};
+
+WasmReturnSite getWasmReturnPC(CallFrame* currentFrame);
+
+struct FrameInfo {
+    VirtualAddress address;
+    CallFrame* wasmCallFrame { nullptr };
+    RefPtr<IPIntCallee> wasmCallee;
+    size_t inFlightCallFrameSize { 0 };
+
+    bool isWasmFrame() const { return !!wasmCallee; }
+};
+
+Vector<FrameInfo> collectCallStack(VirtualAddress stopAddress, CallFrame* startFrame, VM&, unsigned maxFrames = 100);
+
 
 inline StringView getErrorReply(ProtocolError error)
 {
@@ -271,4 +351,4 @@ inline StringView getErrorReply(ProtocolError error)
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
-#endif // ENABLE(WEBASSEMBLY)
+#endif // ENABLE(WEBASSEMBLY_DEBUGGER)

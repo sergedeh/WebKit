@@ -37,11 +37,6 @@
 
 namespace WTF {
 
-template<typename CharacterType> inline bool isNotASCIISpace(CharacterType c)
-{
-    return !isUnicodeCompatibleASCIIWhitespace(c);
-}
-
 template<typename CharacterType, typename DelimiterType> bool skipExactly(const CharacterType*& position, const CharacterType* end, DelimiterType delimiter)
 {
     if (position < end && *position == delimiter) {
@@ -203,6 +198,15 @@ template<bool characterPredicate(Latin1Character), typename CharacterType> void 
     skip(data, index);
 }
 
+// For byte buffers being parsed as Latin-1.
+template<bool characterPredicate(Latin1Character), typename CharacterType> void skipWhile(std::span<CharacterType>& data) requires(std::is_same_v<std::remove_const_t<CharacterType>, uint8_t>)
+{
+    size_t index = 0;
+    while (index < data.size() && characterPredicate(data[index]))
+        ++index;
+    skip(data, index);
+}
+
 template<bool characterPredicate(char16_t), typename CharacterType> void skipWhile(std::span<CharacterType>& data) requires(std::is_same_v<std::remove_const_t<CharacterType>, char16_t>)
 {
     size_t index = 0;
@@ -297,7 +301,6 @@ static inline bool Latin1CharacterPredicateAdapter(Latin1Character c) { return c
 } // namespace WTF
 
 using WTF::Latin1CharacterPredicateAdapter;
-using WTF::isNotASCIISpace;
 using WTF::skipCharactersExactly;
 using WTF::skipExactly;
 using WTF::skipExactlyIgnoringASCIICase;

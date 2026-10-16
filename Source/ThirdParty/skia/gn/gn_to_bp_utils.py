@@ -1,35 +1,27 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 #
-# Copyright 2018 Google Inc.
+# Copyright 2018 Google LLC
 #
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
 # Generate Android.bp for Skia from GN configuration.
 
-from __future__ import print_function
-
-import argparse
 import json
 import os
-import pprint
 import string
 import subprocess
 import tempfile
 
-parser = argparse.ArgumentParser(description='Process some cmdline flags.')
-parser.add_argument('--gn', dest='gn_cmd', default='gn')
-args = parser.parse_args()
-
-def GenerateJSONFromGN(gn_args):
-  gn_args = ' '.join(sorted('%s=%s' % (k,v) for (k,v) in iter(gn_args.items())))
+def GenerateJSONFromGN(gn_cmd, gn_args):
+  gn_args = ' '.join(sorted('%s=%s' % (k,v) for (k,v) in gn_args.items()))
   tmp = tempfile.mkdtemp()
-  subprocess.check_call([args.gn_cmd, 'gen', tmp, '--args=%s' % gn_args,
+  subprocess.check_call([gn_cmd, 'gen', tmp, '--args=%s' % gn_args,
                          '--ide=json'])
   return json.load(open(os.path.join(tmp, 'project.json')))
 
 def _strip_slash(lst):
-  return {str(p.lstrip('/')) for p in lst}
+  return {p.lstrip('/') for p in lst}
 
 def GrabDependentValues(js, name, value_type, list_to_extend, exclude):
   # Grab the values from other targets that $name depends on (e.g. optional
@@ -56,6 +48,7 @@ def CleanupCFlags(cflags):
   cflags = cflags.union([
     "-Wno-implicit-fallthrough",
     "-Wno-missing-field-initializers",
+    "-Wno-psabi",
     "-Wno-sign-conversion",
     "-Wno-thread-safety-analysis",
     "-Wno-unknown-warning-option",

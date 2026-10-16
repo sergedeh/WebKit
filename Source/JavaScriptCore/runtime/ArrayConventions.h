@@ -75,8 +75,8 @@ namespace JSC {
 static_assert(MIN_SPARSE_ARRAY_INDEX <= MAX_STORAGE_VECTOR_INDEX, "MIN_SPARSE_ARRAY_INDEX must be less than or equal to MAX_STORAGE_VECTOR_INDEX");
 static_assert(MAX_STORAGE_VECTOR_INDEX <= MAX_ARRAY_INDEX, "MAX_STORAGE_VECTOR_INDEX must be less than or equal to MAX_ARRAY_INDEX");
 
-// The value BASE_XXX_VECTOR_LEN is the maximum number of vector elements we'll allocate
-// for an array that was created with a sepcified length (e.g. a = new Array(123))
+// The value BASE_XXX_VECTOR_LEN is the minimum number of vector elements we'll allocate
+// for an array that was created with a specified length (e.g. a = new Array(123))
 #define BASE_CONTIGUOUS_VECTOR_LEN 3U
 #define BASE_CONTIGUOUS_VECTOR_LEN_EMPTY 5U
 #define BASE_CONTIGUOUS_VECTOR_LEN_MIN 3U
@@ -118,20 +118,16 @@ inline IndexingHeader baseIndexingHeaderForArrayStorage(unsigned length)
     return indexingHeaderForArrayStorage(length, BASE_ARRAY_STORAGE_VECTOR_LEN);
 }
 
-#if USE(JSVALUE64)
 JS_EXPORT_PRIVATE void clearArrayMemset(WriteBarrier<Unknown>* base, unsigned count);
 JS_EXPORT_PRIVATE void clearArrayMemset(double* base, unsigned count);
-#endif // USE(JSVALUE64)
 
 ALWAYS_INLINE void clearArray(WriteBarrier<Unknown>* base, unsigned count)
 {
-#if USE(JSVALUE64)
     const unsigned minCountForMemset = 100;
     if (count >= minCountForMemset) {
         clearArrayMemset(base, count);
         return;
     }
-#endif
     
     for (unsigned i = count; i--;)
         base[i].clear();
@@ -139,13 +135,11 @@ ALWAYS_INLINE void clearArray(WriteBarrier<Unknown>* base, unsigned count)
 
 ALWAYS_INLINE void clearArray(double* base, unsigned count)
 {
-#if USE(JSVALUE64)
     const unsigned minCountForMemset = 100;
     if (count >= minCountForMemset) {
         clearArrayMemset(base, count);
         return;
     }
-#endif
     
     for (unsigned i = count; i--;)
         base[i] = PNaN;

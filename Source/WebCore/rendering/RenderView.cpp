@@ -22,6 +22,7 @@
 #include "RenderView.h"
 
 #include "ContainerNodeInlines.h"
+#include "DocumentLoader.h"
 #include "DocumentPage.h"
 #include "Element.h"
 #include "FloatQuad.h"
@@ -44,7 +45,6 @@
 #include "LocalFrame.h"
 #include "LocalFrameView.h"
 #include "Logging.h"
-#include "NodeInlines.h"
 #include "NodeTraversal.h"
 #include "Page.h"
 #include "RenderBoxInlines.h"
@@ -64,27 +64,31 @@
 #include "RenderMultiColumnSpannerPlaceholder.h"
 #include "RenderQuote.h"
 #include "RenderSVGRoot.h"
-#include "RenderStyle+GettersInlines.h"
 #include "RenderTreeBuilder.h"
 #include "RenderWidget.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGImage.h"
 #include "SVGSVGElement.h"
 #include "Settings.h"
-#include "StyleScope.h"
+#include "StyleComputedStyle+GettersInlines.h"
+#include "StyleDocumentScope.h"
 #include "TransformState.h"
 #include <wtf/SetForScope.h>
 #include <wtf/StackStats.h>
 #include <wtf/TZoneMallocInlines.h>
 
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+#include <WebKitAdditions/RenderViewAdditions.cpp>
+#endif
+
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderView);
 
-RenderView::RenderView(Document& document, RenderStyle&& style)
+RenderView::RenderView(Document& document, Style::ComputedStyle&& style)
     : RenderBlockFlow(Type::View, document, WTF::move(style))
     , m_frameView(*document.view())
-    , m_initialContainingBlock(makeUniqueRef<Layout::InitialContainingBlock>(RenderStyle::clone(this->style())))
+    , m_initialContainingBlock(makeUniqueRef<Layout::InitialContainingBlock>(Style::ComputedStyle::clone(this->style())))
     , m_layoutState(makeUniqueRef<Layout::LayoutState>(document, m_initialContainingBlock, Layout::LayoutState::Type::Primary, LayoutIntegration::layoutWithFormattingContextForBox, LayoutIntegration::formattingContextRootLogicalWidthForType, LayoutIntegration::formattingContextRootLogicalHeightForType, LayoutIntegration::layoutWithFormattingContextForBlockInInline))
     , m_selection(*this)
 {
@@ -94,10 +98,10 @@ RenderView::RenderView(Document& document, RenderStyle&& style)
     // init RenderObject attributes
     setInline(false);
     
-    m_minPreferredLogicalWidth = 0;
-    m_maxPreferredLogicalWidth = 0;
+    m_minContentLogicalWidthContribution = 0_lu;
+    m_maxContentLogicalWidthContribution = 0_lu;
 
-    setNeedsPreferredWidthsUpdate(MarkOnlyThis);
+    invalidateContentLogicalWidths(MarkingBehavior::MarkOnlyThis);
     
     setPositionState(PositionType::Absolute); // to 0,0 :)
 
@@ -115,7 +119,7 @@ void RenderView::willBeDestroyed()
     RenderBlockFlow::willBeDestroyed();
 }
 
-void RenderView::styleDidChange(Style::Difference diff, const RenderStyle* oldStyle)
+void RenderView::styleDidChange(Style::Difference diff, const Style::ComputedStyle* oldStyle)
 {
     RenderBlockFlow::styleDidChange(diff, oldStyle);
 
@@ -166,7 +170,7 @@ LayoutUnit RenderView::availableLogicalHeight(AvailableLogicalHeightType) const
     return isHorizontalWritingMode() ? frameView->layoutSize().height() : frameView->layoutSize().width();
 }
 
-bool RenderView::isChildAllowed(const RenderObject& child, const RenderStyle&) const
+bool RenderView::isChildAllowed(const RenderObject& child, const Style::ComputedStyle&) const
 {
     return child.isRenderBox();
 }
@@ -174,20 +178,20 @@ bool RenderView::isChildAllowed(const RenderObject& child, const RenderStyle&) c
 void RenderView::layout()
 {
     StackStats::LayoutCheckPoint layoutCheckPoint;
-    if (!protectedDocument()->paginated())
+    if (!protect(document())->paginated())
         m_pageLogicalSize = { };
 
     if (shouldUsePrintingLayout()) {
         if (!m_pageLogicalSize)
             m_pageLogicalSize = LayoutSize(logicalWidth(), 0_lu);
-        m_minPreferredLogicalWidth = m_pageLogicalSize->width();
-        m_maxPreferredLogicalWidth = m_minPreferredLogicalWidth;
+        m_minContentLogicalWidthContribution = m_pageLogicalSize->width();
+        m_maxContentLogicalWidthContribution = m_minContentLogicalWidthContribution;
     }
 
     // Use calcWidth/Height to get the new width/height, since this will take the full page zoom factor into account.
-    bool relayoutChildren = !shouldUsePrintingLayout() && (width() != viewWidth() || height() != viewHeight());
+    bool relayoutChildren = !shouldUsePrintingLayout() && (borderBoxWidth() != viewWidth() || borderBoxHeight() != viewHeight());
     if (relayoutChildren) {
-        setChildNeedsLayout(MarkOnlyThis);
+        setChildNeedsLayout(MarkingBehavior::MarkOnlyThis);
 
         for (auto& box : childrenOfType<RenderBox>(*this)) {
             if (box.hasRelativeLogicalHeight()
@@ -196,7 +200,7 @@ void RenderView::layout()
                 || box.style().logicalMaxHeight().isPercentOrCalculated()
                 || box.isRenderOrLegacyRenderSVGRoot()
                 )
-                box.setChildNeedsLayout(MarkOnlyThis);
+                box.setChildNeedsLayout(MarkingBehavior::MarkOnlyThis);
         }
     }
 
@@ -219,7 +223,7 @@ void RenderView::layout()
 
 void RenderView::updateQuirksMode()
 {
-    m_layoutState->updateQuirksMode(protectedDocument());
+    m_layoutState->updateQuirksMode(protect(document()));
 }
 
 void RenderView::updateInitialContainingBlockSize()
@@ -245,7 +249,7 @@ LayoutUnit RenderView::clientLogicalWidthForFixedPosition() const
 {
     Ref frameView = this->frameView();
     if (frameView->fixedElementsLayoutRelativeToFrame())
-        return LayoutUnit((isHorizontalWritingMode() ? frameView->visibleWidth() : frameView->visibleHeight()) / frameView->protectedFrame()->frameScaleFactor());
+        return LayoutUnit((isHorizontalWritingMode() ? frameView->visibleWidth() : frameView->visibleHeight()) / protect(frameView->frame())->frameScaleFactor());
 
 #if PLATFORM(IOS_FAMILY)
     if (frameView->useCustomFixedPositionLayoutRect())
@@ -255,14 +259,14 @@ LayoutUnit RenderView::clientLogicalWidthForFixedPosition() const
     if (settings().visualViewportEnabled())
         return isHorizontalWritingMode() ? frameView->layoutViewportRect().width() : frameView->layoutViewportRect().height();
 
-    return clientLogicalWidth();
+    return paddingBoxLogicalWidth();
 }
 
 LayoutUnit RenderView::clientLogicalHeightForFixedPosition() const
 {
     Ref frameView = this->frameView();
     if (frameView->fixedElementsLayoutRelativeToFrame())
-        return LayoutUnit((isHorizontalWritingMode() ? frameView->visibleHeight() : frameView->visibleWidth()) / frameView->protectedFrame()->frameScaleFactor());
+        return LayoutUnit((isHorizontalWritingMode() ? frameView->visibleHeight() : frameView->visibleWidth()) / protect(frameView->frame())->frameScaleFactor());
 
 #if PLATFORM(IOS_FAMILY)
     if (frameView->useCustomFixedPositionLayoutRect())
@@ -272,7 +276,7 @@ LayoutUnit RenderView::clientLogicalHeightForFixedPosition() const
     if (settings().visualViewportEnabled())
         return isHorizontalWritingMode() ? frameView->layoutViewportRect().height() : frameView->layoutViewportRect().width();
 
-    return clientLogicalHeight();
+    return paddingBoxLogicalHeight();
 }
 
 void RenderView::mapLocalToContainer(const RenderLayerModelObject* ancestorContainer, TransformState& transformState, OptionSet<MapCoordinatesMode> mode, bool* wasFixed) const
@@ -280,12 +284,12 @@ void RenderView::mapLocalToContainer(const RenderLayerModelObject* ancestorConta
     // If a container was specified, and was not nullptr or the RenderView,
     // then we should have found it by now.
     ASSERT_ARG(ancestorContainer, !ancestorContainer || ancestorContainer == this);
-    ASSERT_UNUSED(wasFixed, !wasFixed || *wasFixed == (mode.contains(IsFixed)));
+    ASSERT_UNUSED(wasFixed, !wasFixed || *wasFixed == (mode.contains(MapCoordinatesMode::IsFixed)));
 
-    if (mode.contains(IsFixed))
+    if (mode.contains(MapCoordinatesMode::IsFixed))
         transformState.move(toLayoutSize(frameView().scrollPositionRespectingCustomFixedPosition()));
 
-    if (!ancestorContainer && mode.contains(UseTransforms) && shouldUseTransformFromContainer(nullptr)) {
+    if (!ancestorContainer && mode.contains(MapCoordinatesMode::UseTransforms) && shouldUseTransformFromContainer(nullptr)) {
         TransformationMatrix t;
         getTransformFromContainer(LayoutSize(), t);
         transformState.applyTransform(t);
@@ -312,17 +316,17 @@ const RenderElement* RenderView::pushMappingToContainer(const RenderLayerModelOb
 
 void RenderView::mapAbsoluteToLocalPoint(OptionSet<MapCoordinatesMode> mode, TransformState& transformState) const
 {
-    if (mode & UseTransforms && shouldUseTransformFromContainer(nullptr)) {
+    if (mode & MapCoordinatesMode::UseTransforms && shouldUseTransformFromContainer(nullptr)) {
         TransformationMatrix t;
         getTransformFromContainer(LayoutSize(), t);
         transformState.applyTransform(t);
     }
 
-    if (mode & IsFixed)
+    if (mode & MapCoordinatesMode::IsFixed)
         transformState.move(toLayoutSize(frameView().scrollPositionRespectingCustomFixedPosition()));
 }
 
-bool RenderView::requiresColumns(int) const
+bool RenderView::requiresFragmentedFlow() const
 {
     return frameView().pagination().mode != Pagination::Mode::Unpaginated;
 }
@@ -341,8 +345,11 @@ void RenderView::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
 {
     // If we ever require layout but receive a paint anyway, something has gone horribly wrong.
     ASSERT(!needsLayout());
-    // RenderViews should never be called to paint with an offset not on device pixels.
-    ASSERT(LayoutPoint(IntPoint(paintOffset.x(), paintOffset.y())) == paintOffset);
+    // RenderViews should never be called to paint with an offset not on device pixels. Where the page scale joins
+    // the layer rather than the layout, the backing store grid is the device scale times the page scale, so
+    // snapping an integral position to it can land a fraction of a CSS pixel.
+    ASSERT(LayoutPoint(IntPoint(paintOffset.x(), paintOffset.y())) == paintOffset
+        || (document().pixelSnappingScaleFactor() != document().deviceScaleFactor() && paintOffset.x().abs() < 1 && paintOffset.y().abs() < 1));
 
     // This avoids painting garbage between columns if there is a column gap.
     Ref frameView = this->frameView();
@@ -369,7 +376,7 @@ RenderElement* RenderView::rendererForRootBackground() const
     if (documentRenderer.shouldApplyAnyContainment())
         return nullptr;
 
-    if (RefPtr body = protectedDocument()->body()) {
+    if (RefPtr body = document().body()) {
         if (auto* renderer = body->renderer()) {
             if (!renderer->shouldApplyAnyContainment())
                 return renderer;
@@ -381,10 +388,10 @@ RenderElement* RenderView::rendererForRootBackground() const
 static inline bool rendererObscuresBackground(const RenderElement& rootElement)
 {
     auto& style = rootElement.style();
-    if (style.usedVisibility() != Visibility::Visible || !style.opacity().isOpaque() || style.hasTransform())
+    if (rootElement.usedStyle().visibility() != UsedVisibility::Visible || !style.opacity().isOpaque() || !style.transform().isNone() || !style.offsetPath().isNone())
         return false;
 
-    if (style.hasBorderRadius())
+    if (style.border().hasBorderRadius())
         return false;
 
     if (rootElement.isComposited())
@@ -414,14 +421,14 @@ void RenderView::paintBoxDecorations(PaintInfo& paintInfo, const LayoutPoint&)
     // FIXME: This needs to be dynamic.  We should be able to go back to blitting if we ever stop being inside
     // a transform, transparency layer, etc.
     Ref document = this->document();
-    for (RefPtr element = document->ownerElement(); element && element->renderer(); element = element->protectedDocument()->ownerElement()) {
-        RenderLayer* layer = element->renderer()->enclosingLayer();
+    for (RefPtr element = document->ownerElement(); element && element->renderer(); element = element->document().ownerElement()) {
+        CheckedPtr layer = element->renderer()->enclosingLayer();
         if (layer->cannotBlitToWindow()) {
             frameView().setCannotBlitToWindow();
             break;
         }
 
-        if (auto* compositingLayer = layer->enclosingCompositingLayerForRepaint().layer) {
+        if (CheckedPtr compositingLayer = layer->enclosingCompositingLayerForRepaint().layer) {
             if (!compositingLayer->backing()->paintsIntoWindow()) {
                 frameView().setCannotBlitToWindow();
                 break;
@@ -442,7 +449,7 @@ void RenderView::paintBoxDecorations(PaintInfo& paintInfo, const LayoutPoint&)
     if (RenderElement* rootRenderer = documentElement ? documentElement->renderer() : nullptr) {
         // The document element's renderer is currently forced to be a block, but may not always be.
         auto* rootBox = dynamicDowncast<RenderBox>(*rootRenderer);
-        rootFillsViewport = rootBox && !rootBox->x() && !rootBox->y() && rootBox->width() >= width() && rootBox->height() >= height();
+        rootFillsViewport = rootBox && !rootBox->x() && !rootBox->y() && rootBox->borderBoxWidth() >= borderBoxWidth() && rootBox->borderBoxHeight() >= borderBoxHeight();
         rootObscuresBackground = rendererObscuresBackground(*rootRenderer);
         shouldPropagateBackgroundPaintingToInitialContainingBlock = !!rendererForRootBackground();
     }
@@ -485,6 +492,19 @@ bool RenderView::shouldRepaint(const LayoutRect& rect) const
 
 void RenderView::repaintRootContents()
 {
+    // The contents background could come from the root (document element) renderer.
+    // If the root is not composited, repainting this RenderView should repaint it and
+    // its background. But if it's composited, then the background doesn't get repainted
+    // unless we explicitly repaint its layers.
+    if (RefPtr rootElement = protect(document())->documentElement()) {
+        if (CheckedPtr rootRenderer = dynamicDowncast<RenderLayerModelObject>(rootElement->renderer())) {
+            // Only repaint if its has its own backing. Otherwise, it paints into its
+            // ancestor layer (this RenderView), which we're repainting anyway.
+            if (CheckedPtr rootLayer = rootRenderer->layer(); rootLayer && compositedWithOwnBackingStore(*rootLayer))
+                rootLayer->setBackingNeedsRepaint(GraphicsLayerShouldClipToLayer::DoNotClip);
+        }
+    }
+
     if (layer()->isComposited()) {
         layer()->setBackingNeedsRepaint(GraphicsLayerShouldClipToLayer::DoNotClip);
         return;
@@ -494,6 +514,25 @@ void RenderView::repaintRootContents()
     // This should be cleaned up via webkit.org/b/159913 and webkit.org/b/159914.
     CheckedPtr repaintContainer = containerForRepaint().renderer;
     repaintUsingContainer(repaintContainer.get(), computeRectForRepaint(layoutOverflowRect(), repaintContainer.get()));
+}
+
+static LayoutRect mapRepaintRectToOwnerCoordinates(LayoutRect rect, const RenderView& renderView, const RenderBox& ownerRenderer)
+{
+    // A dirty rect in an iframe is relative to the contents of that iframe.
+    // When we traverse between parent frames and child frames, we need to make sure
+    // that the coordinate system is mapped appropriately between the iframe's contents
+    // and the Renderer that contains the iframe. This transformation must account for a
+    // left scrollbar (if one exists).
+    Ref frameView = renderView.frameView();
+    rect.moveBy(-renderView.viewRect().location());
+    rect.scale(frameView->frameScaleFactor());
+    if (auto* ownerWidget = dynamicDowncast<RenderWidget>(ownerRenderer))
+        rect.moveBy(ownerWidget->widgetContentLocation());
+    else
+        rect.moveBy(ownerRenderer.contentBoxRect().location());
+    if (frameView->verticalScrollbar() && frameView->shouldPlaceVerticalScrollbarOnLeft())
+        rect.move(LayoutSize(protect(frameView->verticalScrollbar())->occupiedWidth(), 0));
+    return rect;
 }
 
 void RenderView::repaintViewRectangle(const LayoutRect& repaintRect)
@@ -527,19 +566,7 @@ void RenderView::repaintViewRectangle(const LayoutRect& repaintRect)
                 frameView().layoutContext().setNeedsFullRepaint();
             }
 
-            adjustedRect.moveBy(-viewRect.location());
-            adjustedRect.moveBy(ownerBox->contentBoxRect().location());
-
-            // A dirty rect in an iframe is relative to the contents of that iframe.
-            // When we traverse between parent frames and child frames, we need to make sure
-            // that the coordinate system is mapped appropriately between the iframe's contents
-            // and the Renderer that contains the iframe. This transformation must account for a
-            // left scrollbar (if one exists).
-            Ref frameView = this->frameView();
-            if (frameView->verticalScrollbar() && frameView->shouldPlaceVerticalScrollbarOnLeft())
-                adjustedRect.move(LayoutSize(frameView->protectedVerticalScrollbar()->occupiedWidth(), 0));
-
-            ownerBox->repaintRectangle(adjustedRect);
+            ownerBox->repaintRectangle(mapRepaintRectToOwnerCoordinates(adjustedRect, *this, *ownerBox));
         }
         return;
     }
@@ -579,38 +606,21 @@ bool RenderView::accumulateRepaintRect(IntRect rect, IntRect viewRect)
 
 void RenderView::flushAccumulatedRepaintRegion() const
 {
-    IntSize rectOffset;
-
     CheckedPtr<RenderBox> iframeOwnerRenderer;
-    if (RefPtr ownerElement = protectedDocument()->ownerElement()) {
+    if (RefPtr ownerElement = document().ownerElement()) {
         iframeOwnerRenderer = ownerElement->renderBox();
         if (!iframeOwnerRenderer) {
             m_accumulatedRepaintRegion = nullptr;
             return;
         }
-
-        auto viewRect = this->viewRect();
-        auto rectOffsetLayoutSize = toLayoutSize(-viewRect.location() + iframeOwnerRenderer->contentBoxRect().location());
-
-        // A dirty rect in an iframe is relative to the contents of that iframe.
-        // When we traverse between parent frames and child frames, we need to make sure
-        // that the coordinate system is mapped appropriately between the iframe's contents
-        // and the Renderer that contains the iframe. This transformation must account for a
-        // left scrollbar (if one exists).
-        Ref frameView = this->frameView();
-        if (frameView->verticalScrollbar() && frameView->shouldPlaceVerticalScrollbarOnLeft())
-            rectOffsetLayoutSize += LayoutSize { frameView->protectedVerticalScrollbar()->occupiedWidth(), 0 };
-
-        rectOffset = roundedIntSize(rectOffsetLayoutSize);
     }
 
     ASSERT(m_accumulatedRepaintRegion);
     auto repaintRects = m_accumulatedRepaintRegion->rects();
     for (auto rect : repaintRects) {
-        if (iframeOwnerRenderer) {
-            rect.move(rectOffset);
-            iframeOwnerRenderer->repaintRectangle(rect);
-        } else
+        if (iframeOwnerRenderer)
+            iframeOwnerRenderer->repaintRectangle(mapRepaintRectToOwnerCoordinates(rect, *this, *iframeOwnerRenderer));
+        else
             frameView().repaintContentRectangle(rect);
     }
     m_accumulatedRepaintRegion = nullptr;
@@ -625,7 +635,7 @@ void RenderView::repaintViewAndCompositedLayers()
         compositor.repaintCompositedLayers();
 }
 
-auto RenderView::computeVisibleRectsInContainer(const RepaintRects& rects, const RenderLayerModelObject* container, VisibleRectContext context) const -> std::optional<RepaintRects>
+auto RenderView::computeVisibleRectsInContainer(const RepaintRects& rects, const RenderLayerModelObject* container, const VisibleRectContext&, VisibleRectState state) const -> std::optional<RepaintRects>
 {
     // If a container was specified, and was not nullptr or the RenderView,
     // then we should have found it by now.
@@ -641,12 +651,12 @@ auto RenderView::computeVisibleRectsInContainer(const RepaintRects& rects, const
         adjustedRects.flipForWritingMode(LayoutSize(viewWidth(), viewHeight()), writingMode().isHorizontal());
     }
 
-    if (context.hasPositionFixedDescendant)
+    if (state.hasPositionFixedDescendant)
         adjustedRects.moveBy(frameView().scrollPositionRespectingCustomFixedPosition());
 
     // Apply our transform if we have one (because of full page zooming).
     if (!container && hasLayer() && layer()->transform())
-        adjustedRects.transform(*layer()->transform(), protectedDocument()->deviceScaleFactor());
+        adjustedRects.transform(*layer()->transform(), protect(document())->deviceScaleFactor());
 
     return adjustedRects;
 }
@@ -659,10 +669,10 @@ bool RenderView::isScrollableOrRubberbandableBox() const
     return frameView().isScrollable(defineScrollable);
 }
 
-void RenderView::boundingRects(Vector<LayoutRect>& rects, const LayoutPoint& accumulatedOffset) const
+Vector<FloatRect> RenderView::localBorderBoxRects() const
 {
     // FIXME: It's weird that this gets is size from the layer.
-    rects.append(LayoutRect { accumulatedOffset, layer()->size() });
+    return { FloatRect { { }, layer()->size() } };
 }
 
 void RenderView::absoluteQuads(Vector<FloatQuad>& quads, bool* wasFixed) const
@@ -674,20 +684,20 @@ void RenderView::absoluteQuads(Vector<FloatQuad>& quads, bool* wasFixed) const
 
 bool RenderView::printing() const
 {
-    return protectedDocument()->printing();
+    SUPPRESS_UNCOUNTED_ARG return document().printing();
 }
 
 bool RenderView::shouldUsePrintingLayout() const
 {
     if (!printing())
         return false;
-    return frameView().protectedFrame()->shouldUsePrintingLayout();
+    return frameView().frame().shouldUsePrintingLayout();
 }
 
 LayoutRect RenderView::viewRect() const
 {
     if (shouldUsePrintingLayout())
-        return LayoutRect(LayoutPoint(), size());
+        return LayoutRect(LayoutPoint(), borderBoxSize());
     return frameView().visibleContentRect(ScrollableArea::LegacyIOSDocumentVisibleRect);
 }
 
@@ -709,13 +719,12 @@ bool RenderView::shouldPaintBaseBackground() const
 {
     Ref document = this->document();
     Ref frameView = this->frameView();
-    RefPtr ownerElement = document->ownerElement();
 
     // Fill with a base color if we're the root document.
     if (frameView->frame().isMainFrame())
         return !frameView->isTransparent();
 
-    if (ownerElement && ownerElement->hasTagName(HTMLNames::frameTag))
+    if (auto* ownerElement = document->ownerElement(); ownerElement && ownerElement->hasTagName(HTMLNames::frameTag))
         return true;
 
     // Locate the <body> element using the DOM. This is easier than trying
@@ -732,15 +741,22 @@ bool RenderView::shouldPaintBaseBackground() const
     if (is<HTMLFrameSetElement>(*body))
         return true;
 
-    auto* frameRenderer = ownerElement ? ownerElement->renderer() : nullptr;
-    if (!frameRenderer)
-        return false;
+    if (RefPtr parentFrame = frameView->frame().parent()) {
+        if (auto* documentLoader = document->loader(); documentLoader && documentLoader->isInitialAboutBlank() == IsInitialAboutBlank::Yes) {
+            // https://github.com/w3c/csswg-drafts/issues/9624#issuecomment-1944425637
+            // > RESOLVED: initial about:blank iframes are always transparent
+            return false;
+        }
 
-    // iframes should fill with a base color if the used color scheme of the
-    // element and the used color scheme of the embedded document’s root
-    // element do not match.
-    if (frameView->useDarkAppearance() != frameRenderer->useDarkAppearance())
-        return !frameView->isTransparent();
+        if (RefPtr parentFrameView = parentFrame->virtualView()) {
+            // iframes should fill with a base color if the used color scheme of the
+            // element and the used color scheme of the embedded document’s root
+            // element do not match.
+            bool useDarkAppearance = parentFrameView->appearanceOfOwnerElementOfChildFrame(protect(frameView->frame())).contains(FrameOwnerElementAppearance::IsDark);
+            if (frameView->useDarkAppearance() != useDarkAppearance)
+                return !frameView->isTransparent();
+        }
+    }
 
     return false;
 }
@@ -820,7 +836,7 @@ void RenderView::setPageLogicalSize(LayoutSize size)
     m_pageLogicalSize = size;
 }
 
-float RenderView::zoomFactor() const
+float RenderView::pageZoomFactor() const
 {
     return frameView().frame().pageZoomFactor();
 }
@@ -903,14 +919,9 @@ bool RenderView::usesCompositing() const
 RenderLayerCompositor& RenderView::compositor()
 {
     if (!m_compositor)
-        m_compositor = makeUnique<RenderLayerCompositor>(*this);
+        lazyInitialize(m_compositor, makeUnique<RenderLayerCompositor>(*this));
 
     return *m_compositor;
-}
-
-CheckedRef<RenderLayerCompositor> RenderView::checkedCompositor()
-{
-    return compositor();
 }
 
 void RenderView::setIsInWindow(bool isInWindow)
@@ -922,7 +933,7 @@ void RenderView::setIsInWindow(bool isInWindow)
 ImageQualityController& RenderView::imageQualityController()
 {
     if (!m_imageQualityController)
-        m_imageQualityController = makeUnique<ImageQualityController>(*this);
+        lazyInitialize(m_imageQualityController, makeUnique<ImageQualityController>(*this));
     return *m_imageQualityController;
 }
 
@@ -997,19 +1008,15 @@ void RenderView::resumePausedImageAnimationsIfNeeded(const IntRect& visibleRect)
         }
     }
     for (auto& pair : toRemove)
-        removeRendererWithPausedImageAnimations(*pair.first, *pair.second);
+        removeRendererWithPausedImageAnimations(*pair.first, protect(*pair.second));
 
-    Vector<Ref<SVGSVGElement>> svgSvgElementsToRemove;
-    m_SVGSVGElementsWithPausedImageAnimation.forEach([&] (WeakPtr<SVGSVGElement, WeakPtrImplWithEventTargetData> svgSvgElement) {
-        if (svgSvgElement && svgSvgElement->resumePausedAnimationsIfNeeded(visibleRect))
-            svgSvgElementsToRemove.append(*svgSvgElement);
+    m_SVGSVGElementsWithPausedImageAnimation.removeIf([&](auto& svgSvgElement) {
+        return svgSvgElement.resumePausedAnimationsIfNeeded(visibleRect);
     });
-    for (auto& svgSvgElement : svgSvgElementsToRemove)
-        m_SVGSVGElementsWithPausedImageAnimation.remove(svgSvgElement.get());
 }
 
 #if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
-static SVGSVGElement* svgSvgElementFrom(RenderElement& renderElement)
+static SVGSVGElement* LEGACY_NODELETE svgSvgElementFrom(RenderElement& renderElement)
 {
     if (auto* svgSvgElement = dynamicDowncast<SVGSVGElement>(renderElement.element()))
         return svgSvgElement;
@@ -1036,7 +1043,7 @@ void RenderView::updatePlayStateForAllAnimations(const IntRect& visibleRect)
             RefPtr image = cachedImage->image();
             if (RefPtr svgImage = dynamicDowncast<SVGImage>(image.get())) {
                 if (shouldAnimate && hasPausedAnimation) {
-                    svgImage->resumeAnimation();
+                    svgImage->startAnimation();
                     removeRendererWithPausedImageAnimations(renderElement, *cachedImage);
                 } else if (!hasPausedAnimation) {
                     svgImage->stopAnimation();
@@ -1062,10 +1069,10 @@ void RenderView::updatePlayStateForAllAnimations(const IntRect& visibleRect)
 
         for (auto& layer : renderElement.style().backgroundLayers().usedValues()) {
             RefPtr image = layer.image().tryStyleImage();
-            updateAnimation(image ? image->cachedImage() : nullptr);
+            updateAnimation(image ? protect(image->cachedImage()) : nullptr);
         }
         if (auto* renderImage = dynamicDowncast<RenderImage>(renderElement))
-            updateAnimation(renderImage->cachedImage());
+            updateAnimation(protect(renderImage->cachedImage()));
 
         if (needsRepaint)
             renderElement.repaint();
@@ -1159,6 +1166,16 @@ void RenderView::registerContainerQueryBox(const RenderBox& box)
 void RenderView::unregisterContainerQueryBox(const RenderBox& box)
 {
     m_containerQueryBoxes.remove(box);
+}
+
+void RenderView::registerScrollStateQueryBox(const RenderBox& box)
+{
+    m_scrollStateQueryBoxes.add(box);
+}
+
+void RenderView::unregisterScrollStateQueryBox(const RenderBox& box)
+{
+    m_scrollStateQueryBoxes.remove(box);
 }
 
 void RenderView::registerAnchor(const RenderBoxModelObject& renderer)

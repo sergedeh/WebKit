@@ -75,7 +75,6 @@ void AutomationSessionClient::requestNewPageWithOptions(WebKit::WebAutomationSes
                 { }, /* clickLocationInRootViewCoordinates */
                 { }, /* redirectResponse */
                 false, /* isRequestFromClientOrUserInput */
-                false, /* treatAsSameOriginNavigation */
                 false, /* hasOpenedFrames */
                 false, /* openedByDOMWithOpener */
                 false, /* hasOpener */
@@ -87,6 +86,7 @@ void AutomationSessionClient::requestNewPageWithOptions(WebKit::WebAutomationSes
                 std::nullopt, /* sourceBackForwardItemIdentifier */
                 WebCore::LockHistory::No, /* lockHistory */
                 WebCore::LockBackForwardList::No, /* lockBackForwardList */
+                WebCore::NavigationHistoryBehavior::Auto, /* navigationHistoryBehavior */
                 { }, /* clientRedirectSourceForHistory */
                 { }, /* effectiveSandboxFlags */
                 WebCore::ReferrerPolicy::EmptyString, /* effectiveReferrerPolicy */

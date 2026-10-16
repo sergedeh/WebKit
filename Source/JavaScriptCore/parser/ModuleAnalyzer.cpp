@@ -27,6 +27,7 @@
 #include "ModuleAnalyzer.h"
 
 #include "IdentifierInlines.h"
+#include "JSCJSValueInlines.h"
 #include "JSGlobalObject.h"
 #include "JSModuleRecord.h"
 #include "ModuleScopeData.h"
@@ -34,17 +35,17 @@
 
 namespace JSC {
 
-ModuleAnalyzer::ModuleAnalyzer(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, const VariableEnvironment& declaredVariables, const VariableEnvironment& lexicalVariables, CodeFeatures features)
+ModuleAnalyzer::ModuleAnalyzer(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, CodeFeatures features)
     : m_vm(globalObject->vm())
-    , m_moduleRecord(JSModuleRecord::create(globalObject, m_vm, globalObject->moduleRecordStructure(), moduleKey, sourceCode, declaredVariables, lexicalVariables, features))
+    , m_moduleRecord(JSModuleRecord::create(globalObject, m_vm, globalObject->moduleRecordStructure(), moduleKey, sourceCode, features))
 {
 }
 
-void ModuleAnalyzer::appendRequestedModule(const Identifier& specifier, RefPtr<ScriptFetchParameters>&& attributes)
+void ModuleAnalyzer::appendRequestedModule(const Identifier& specifier, RefPtr<ScriptFetchParameters>&& attributes, AbstractModuleRecord::ModulePhase phase)
 {
-    auto result = m_requestedModules.add(specifier.impl());
-    if (result.isNewEntry)
-        moduleRecord()->appendRequestedModule(specifier, WTF::move(attributes));
+    ModuleMapKey key { specifier.impl(), attributes ? attributes->type() : ScriptFetchParameters::Type::JavaScript };
+    if (m_requestedModules[phase].add(key).isNewEntry)
+        moduleRecord()->appendRequestedModule(specifier, WTF::move(attributes), phase);
 }
 
 void ModuleAnalyzer::exportVariable(ModuleProgramNode& moduleProgramNode, const RefPtr<UniquedStringImpl>& localName, const VariableEnvironmentEntry& variable)
@@ -83,8 +84,12 @@ void ModuleAnalyzer::exportVariable(ModuleProgramNode& moduleProgramNode, const 
         // export { namespace }
         //
         // Sec 15.2.1.16.1 step 11-a-ii-2-b https://tc39.github.io/ecma262/#sec-parsemodule
-        for (auto& exportName : moduleProgramNode.moduleScopeData().exportedBindings().get(localName.get()))
-            moduleRecord()->addExportEntry(JSModuleRecord::ExportEntry::createNamespace(Identifier::fromUid(m_vm, exportName.get()), importEntry.moduleRequest));
+        for (auto& exportName : moduleProgramNode.moduleScopeData().exportedBindings().get(localName.get())) {
+            if (importEntry.phase == AbstractModuleRecord::ModulePhase::Defer)
+                moduleRecord()->addExportEntry(JSModuleRecord::ExportEntry::createLocal(Identifier::fromUid(m_vm, exportName.get()), Identifier::fromUid(m_vm, localName.get())));
+            else
+                moduleRecord()->addExportEntry(JSModuleRecord::ExportEntry::createNamespace(Identifier::fromUid(m_vm, exportName.get()), importEntry.moduleRequest, importEntry.moduleRequestType));
+        }
         return;
     }
 
@@ -92,12 +97,12 @@ void ModuleAnalyzer::exportVariable(ModuleProgramNode& moduleProgramNode, const 
     // import a from "mod"
     // export { a }
     for (auto& exportName : moduleProgramNode.moduleScopeData().exportedBindings().get(localName.get()))
-        moduleRecord()->addExportEntry(JSModuleRecord::ExportEntry::createIndirect(Identifier::fromUid(m_vm, exportName.get()), importEntry.importName, importEntry.moduleRequest));
+        moduleRecord()->addExportEntry(JSModuleRecord::ExportEntry::createIndirect(Identifier::fromUid(m_vm, exportName.get()), importEntry.importName, importEntry.moduleRequest, importEntry.moduleRequestType));
 }
 
 
 
-Expected<JSModuleRecord*, std::tuple<ErrorType, String>> ModuleAnalyzer::analyze(ModuleProgramNode& moduleProgramNode)
+std::expected<JSModuleRecord*, std::tuple<ErrorType, String>> ModuleAnalyzer::analyze(ModuleProgramNode& moduleProgramNode)
 {
     // Traverse the module AST and collect
     // * Import entries
@@ -141,11 +146,13 @@ Expected<JSModuleRecord*, std::tuple<ErrorType, String>> ModuleAnalyzer::analyze
     //     This exports all the names from the specified external module as the current module's name.
     //
     //     export * from "mod"
-    for (const auto& pair : m_moduleRecord->declaredVariables())
+    for (const auto& pair : moduleProgramNode.varDeclarations())
         exportVariable(moduleProgramNode, pair.key, pair.value);
 
-    for (const auto& pair : m_moduleRecord->lexicalVariables())
+    for (const auto& pair : moduleProgramNode.lexicalVariables())
         exportVariable(moduleProgramNode, pair.key, pair.value);
+
+    m_moduleRecord->setHasTLA(moduleProgramNode.usesAwait());
 
     if (Options::dumpModuleRecord()) [[unlikely]]
         m_moduleRecord->dump();

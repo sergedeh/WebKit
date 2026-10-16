@@ -30,21 +30,32 @@
 ]
 messages -> ModelProcessModelPlayerProxy {
     CreateLayer()
-    ReloadModel(Ref<WebCore::Model> model, WebCore::LayoutSize layoutSize, std::optional<WebCore::TransformationMatrix> entityTransformToRestore, std::optional<WebCore::ModelPlayerAnimationState> animationStateToRestore)
+    ReloadModel(WebCore::NodeIdentifier nodeID, Ref<WebCore::Model> model, WebCore::LayoutSize layoutSize, std::optional<WebCore::TransformationMatrix> entityTransformToRestore, std::optional<WebCore::ModelPlayerAnimationState> animationStateToRestore)
     ModelVisibilityDidChange(bool isVisible)
-    DisableUnloadDelayForTesting()
-    
+    [EnabledBy=AllowTestOnlyIPC] DisableUnloadDelayForTesting()
+    [EnabledBy=AllowTestOnlyIPC] SceneGraphAsTextForTesting(std::optional<WebCore::NodeIdentifier> rootNode, Vector<std::pair<WebCore::NodeIdentifier, String>> modelLabels, struct WebCore::ModelSceneGraphAsTextOptions options) -> (String sceneGraph)
+
     # WebCore::ModelPlayer
-    LoadModel(Ref<WebCore::Model> url, WebCore::LayoutSize layoutSize)
+    LoadModel(WebCore::NodeIdentifier nodeID, Ref<WebCore::Model> url, WebCore::LayoutSize layoutSize, bool isForImmersive)
+    UnloadModel(WebCore::NodeIdentifier nodeID)
     SizeDidChange(WebCore::LayoutSize layoutSize)
-    SetEntityTransform(WebCore::TransformationMatrix transform)
-    SetAutoplay(bool autoplay)
-    SetLoop(bool loop)
-    SetPlaybackRate(double playbackRate) -> (double effectivePlaybackRate) Async
-    SetPaused(bool paused) -> (bool succeeded) Async
-    SetCurrentTime(Seconds currentTime) -> () Async
-    SetEnvironmentMap(Ref<WebCore::SharedBuffer> data)
+    SetEntityTransform(WebCore::NodeIdentifier nodeID, WebCore::TransformationMatrix transform)
+    SetAutoplay(WebCore::NodeIdentifier nodeID, bool autoplay)
+    SetLoop(WebCore::NodeIdentifier nodeID, bool loop)
+    SetPlaybackRate(WebCore::NodeIdentifier nodeID, double playbackRate) -> (double effectivePlaybackRate) Async
+    SetPaused(WebCore::NodeIdentifier nodeID, bool paused) -> (bool succeeded) Async
+    SetCurrentTime(WebCore::NodeIdentifier nodeID, Seconds currentTime) -> () Async
+    SetEnvironmentMapData(Ref<WebCore::SharedBuffer> data)
+#if ENABLE(SPATIAL_PORTAL)
+    [EnabledBy=SpatialPortalEnabled] DisableEnvironmentMap()
+    [EnabledBy=SpatialPortalEnabled] EnableSystemEnvironmentMap()
+#endif
     SetHasPortal(bool hasPortal)
+#if ENABLE(SPATIAL_PORTAL)
+    [EnabledBy=SpatialPortalEnabled] SetPortalTransform(struct WebCore::UsedPortalTransform portalTransform)
+    [EnabledBy=SpatialPortalEnabled] SetPortalAction(enum:bool WebCore::PortalActionKind kind)
+    [EnabledBy=SpatialPortalEnabled] SetAnchor(WebCore::NodeIdentifier nodeID, std::optional<WebCore::NodeIdentifier> anchorNode, String placement)
+#endif
     SetStageMode(enum:bool WebCore::StageModeOperation stagemodeOp)
     BeginStageModeTransform(WebCore::TransformationMatrix transform)
     UpdateStageModeTransform(WebCore::TransformationMatrix transform)
@@ -55,6 +66,12 @@ messages -> ModelProcessModelPlayerProxy {
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
     EnsureImmersivePresentation() -> (std::optional<WebCore::LayerHostingContextIdentifier> contextID) Async
     ExitImmersivePresentation() -> () Async
+#endif
+
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    [EnabledBy=SpatialPortalEnabled] EnterVolumetricPresentation() -> (std::optional<WebCore::LayerHostingContextIdentifier> contextID) Async
+    [EnabledBy=SpatialPortalEnabled] ExitVolumetricPresentation()
+    [EnabledBy=SpatialPortalEnabled] UpdateVolumetricPresentationSize(WebCore::FloatSize volumeSizeInMeters)
 #endif
 }
 

@@ -53,17 +53,19 @@ public:
     ~ServicesOverlayController();
 
     // DataDetectorHighlightClient.
-    void ref() const final;
+    void LEGACY_NODELETE ref() const final;
     void deref() const final;
 
     void selectedTelephoneNumberRangesChanged();
     void selectionRectsDidChange(const Vector<LayoutRect>&, const Vector<GapRects>&, bool isTextOnly);
 
+    unsigned telephoneNumberRangesChangedCountForTesting() const { return m_telephoneNumberRangesChangedCountForTesting; }
+
 private:
     // PageOverlayClient
     void willMoveToPage(PageOverlay&, Page*) override;
-    void didMoveToPage(PageOverlay&, Page*) override;
-    void drawRect(PageOverlay&, GraphicsContext&, const IntRect& dirtyRect) override;
+    void LEGACY_NODELETE didMoveToPage(PageOverlay&, Page*) override;
+    void LEGACY_NODELETE drawRect(PageOverlay&, GraphicsContext&, const IntRect& dirtyRect) override;
     bool mouseEvent(PageOverlay&, const PlatformMouseEvent&) override;
     void didScrollFrame(PageOverlay&, LocalFrame&) override;
 
@@ -75,7 +77,7 @@ private:
     void invalidateHighlightsOfType(DataDetectorHighlight::Type);
     void buildPotentialHighlightsIfNeeded();
 
-    void replaceHighlightsOfTypePreservingEquivalentHighlights(HashSet<RefPtr<DataDetectorHighlight>>&&, DataDetectorHighlight::Type);
+    void replaceHighlightsOfTypePreservingEquivalentHighlights(HashSet<Ref<DataDetectorHighlight>>&&, DataDetectorHighlight::Type);
     void removeAllPotentialHighlightsOfType(DataDetectorHighlight::Type);
     void buildPhoneNumberHighlights();
     void buildSelectionHighlight();
@@ -102,15 +104,13 @@ private:
     Vector<SimpleRange> telephoneNumberRangesForFocusedFrame();
 
     Page& page() const { return m_page; }
-    Ref<Page> protectedPage() const { return m_page.get(); }
 
     WeakRef<Page> m_page;
     WeakPtr<PageOverlay> m_servicesOverlay;
 
     RefPtr<DataDetectorHighlight> m_activeHighlight;
     RefPtr<DataDetectorHighlight> m_nextActiveHighlight;
-    HashSet<RefPtr<DataDetectorHighlight>> m_potentialHighlights;
-    HashSet<RefPtr<DataDetectorHighlight>> m_animatingHighlights;
+    HashSet<Ref<DataDetectorHighlight>> m_potentialHighlights;
     WeakHashSet<DataDetectorHighlight> m_highlights;
 
     Vector<LayoutRect> m_currentSelectionRects;
@@ -127,6 +127,8 @@ private:
 
     Timer m_determineActiveHighlightTimer;
     Timer m_buildHighlightsTimer;
+
+    unsigned m_telephoneNumberRangesChangedCountForTesting { 0 };
 };
 
 } // namespace WebCore

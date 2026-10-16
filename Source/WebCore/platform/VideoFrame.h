@@ -80,7 +80,9 @@ public:
     static RefPtr<VideoFrame> createFromPixelBuffer(Ref<PixelBuffer>&&, PlatformVideoColorSpace&& = { });
     static RefPtr<VideoFrame> createNV12(std::span<const uint8_t>, size_t width, size_t height, const ComputedPlaneLayout&, const ComputedPlaneLayout&, PlatformVideoColorSpace&&);
     static RefPtr<VideoFrame> createRGBA(std::span<const uint8_t>, size_t width, size_t height, const ComputedPlaneLayout&, PlatformVideoColorSpace&&);
+    static RefPtr<VideoFrame> createRGBX(std::span<const uint8_t>, size_t width, size_t height, const ComputedPlaneLayout&, PlatformVideoColorSpace&&);
     static RefPtr<VideoFrame> createBGRA(std::span<const uint8_t>, size_t width, size_t height, const ComputedPlaneLayout&, PlatformVideoColorSpace&&);
+    static RefPtr<VideoFrame> createBGRX(std::span<const uint8_t>, size_t width, size_t height, const ComputedPlaneLayout&, PlatformVideoColorSpace&&);
     static RefPtr<VideoFrame> createI420(std::span<const uint8_t>, size_t width, size_t height, const ComputedPlaneLayout&, const ComputedPlaneLayout&, const ComputedPlaneLayout&, PlatformVideoColorSpace&&);
     static RefPtr<VideoFrame> createI420A(std::span<const uint8_t>, size_t width, size_t height, const ComputedPlaneLayout&, const ComputedPlaneLayout&, const ComputedPlaneLayout&, const ComputedPlaneLayout&, PlatformVideoColorSpace&&);
 
@@ -94,14 +96,18 @@ public:
     WEBCORE_EXPORT RefPtr<VideoFrameCV> asVideoFrameCV();
 #endif
 
-    enum class ShouldCloneWithDifferentTimestamp : bool { No, Yes };
-    Ref<VideoFrame> updateTimestamp(MediaTime, ShouldCloneWithDifferentTimestamp);
+    enum class ShouldClone : bool { No, Yes };
+    // updateTimestamp and updateShouldIgnoreAlpha should be called before being used by VideoFrame consumers.
+    Ref<VideoFrame> updateTimestamp(MediaTime, ShouldClone);
+    Ref<VideoFrame> updateShouldIgnoreAlpha(bool, ShouldClone);
 
     using CopyCallback = CompletionHandler<void(std::optional<Vector<PlaneLayout>>&&)>;
     void copyTo(std::span<uint8_t>, VideoPixelFormat, Vector<ComputedPlaneLayout>&&, CopyCallback&&);
 
     virtual IntSize presentationSize() const = 0;
     virtual uint32_t pixelFormat() const = 0;
+    virtual bool isEncoded() const { return false; }
+    virtual bool hasSameEncodedFormat(const VideoFrame&) const { return false; }
 
     virtual bool isRemoteProxy() const { return false; }
     virtual bool isLibWebRTC() const { return false; }
@@ -111,17 +117,21 @@ public:
 #endif
 #if PLATFORM(COCOA)
     virtual CVPixelBufferRef pixelBuffer() const { return nullptr; };
-    RetainPtr<CVPixelBufferRef> protectedPixelBuffer() const { return pixelBuffer(); }
 #endif
     WEBCORE_EXPORT virtual void setOwnershipIdentity(const ProcessIdentity&) { }
 
-    void initializeCharacteristics(MediaTime presentationTime, bool isMirrored, Rotation);
+    void LEGACY_NODELETE initializeCharacteristics(MediaTime presentationTime, bool isMirrored, Rotation);
 
     RefPtr<NativeImage> copyNativeImage() const;
-    const PlatformVideoColorSpace& colorSpace() const { return m_colorSpace; }
+    const PlatformVideoColorSpace& colorSpace() const LIFETIME_BOUND { return m_colorSpace; }
 
     bool hasNoTransformation() const { return m_rotation == VideoFrameRotation::None && !m_isMirrored; }
     bool has90DegreeRotation() const { return m_rotation == VideoFrameRotation::Left || m_rotation == VideoFrameRotation::Right; }
+
+    // Whether the alpha component, if any, must be ignored, the frame being then fully opaque.
+    virtual bool shouldIgnoreAlpha() const { return false; }
+
+    WEBCORE_EXPORT bool is10bits() const;
 
 protected:
     WEBCORE_EXPORT VideoFrame(MediaTime presentationTime, bool isMirrored, Rotation, PlatformVideoColorSpace&& = { });
@@ -130,6 +140,8 @@ protected:
 
 private:
     virtual Ref<VideoFrame> clone() = 0;
+    // Called by updateShouldIgnoreAlpha on a frame that is not shared.
+    virtual void setShouldIgnoreAlpha(bool) { }
 
     const MediaTime m_presentationTime;
     const bool m_isMirrored;

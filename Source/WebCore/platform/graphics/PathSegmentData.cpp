@@ -29,6 +29,7 @@
 #include "AffineTransform.h"
 #include "GeometryUtilities.h"
 #include <numbers>
+#include <wtf/HexNumber.h>
 #include <wtf/text/TextStream.h>
 
 namespace WebCore {
@@ -73,7 +74,7 @@ void PathMoveTo::extendBoundingRect(const FloatPoint&, const FloatPoint&, FloatR
 {
 }
 
-void PathMoveTo::applyElements(const PathElementApplier& applier) const
+void PathMoveTo::applyElements(NOESCAPE const PathElementApplier& applier) const
 {
     applier({ PathElement::Type::MoveToPoint, { point } });
 }
@@ -111,7 +112,7 @@ void PathLineTo::extendBoundingRect(const FloatPoint& currentPoint, const FloatP
     boundingRect.extend(point);
 }
 
-void PathLineTo::applyElements(const PathElementApplier& applier) const
+void PathLineTo::applyElements(NOESCAPE const PathElementApplier& applier) const
 {
     applier({ PathElement::Type::AddLineToPoint, { point } });
 }
@@ -143,7 +144,7 @@ void PathQuadCurveTo::extendFastBoundingRect(const FloatPoint& currentPoint, con
     extendRect(boundingRect, currentPoint, controlPoint, endPoint);
 }
 
-static float calculateQuadratic(float t, float p0, float p1, float p2)
+static float LEGACY_NODELETE calculateQuadratic(float t, float p0, float p1, float p2)
 {
     // Fallback to a value which won't affect the calculations.
     if (!(t >= 0 && t <= 1))
@@ -155,7 +156,7 @@ static float calculateQuadratic(float t, float p0, float p1, float p2)
     return (s * s * p0) + (2 * s * t * p1) + (t * t * p2);
 }
 
-static float calculateQuadraticExtremity(float p0, float p1, float p2)
+static float LEGACY_NODELETE calculateQuadraticExtremity(float p0, float p1, float p2)
 {
     // B(t)  = (1 - t)^2 P0 + 2 (1 - t)t P1 + t^2 P2, 0 <= t <= 1
     // B'(t) = 2(1 - t) (P1 - P0) + 2t (P2 - P1)
@@ -190,7 +191,7 @@ static float calculateQuadraticExtremity(float p0, float p1, float p2)
     return calculateQuadratic(t, p0, p1, p2);
 }
 
-static FloatPoint calculateQuadraticExtremity(const FloatPoint& currentPoint, const FloatPoint& controlPoint, const FloatPoint& endPoint)
+static FloatPoint LEGACY_NODELETE calculateQuadraticExtremity(const FloatPoint& currentPoint, const FloatPoint& controlPoint, const FloatPoint& endPoint)
 {
     float x = calculateQuadraticExtremity(currentPoint.x(), controlPoint.x(), endPoint.x());
     float y = calculateQuadraticExtremity(currentPoint.y(), controlPoint.y(), endPoint.y());
@@ -203,7 +204,7 @@ void PathQuadCurveTo::extendBoundingRect(const FloatPoint& currentPoint, const F
     extendRect(boundingRect, currentPoint, extremity, endPoint);
 }
 
-void PathQuadCurveTo::applyElements(const PathElementApplier& applier) const
+void PathQuadCurveTo::applyElements(NOESCAPE const PathElementApplier& applier) const
 {
     applier({ PathElement::Type::AddQuadCurveToPoint, { controlPoint, endPoint } });
 }
@@ -236,7 +237,7 @@ void PathBezierCurveTo::extendFastBoundingRect(const FloatPoint& currentPoint, c
     extendRect(boundingRect, currentPoint, controlPoint1, controlPoint2, endPoint);
 }
 
-static float calculateBezier(float t, float p0, float p1, float p2, float p3)
+static float LEGACY_NODELETE calculateBezier(float t, float p0, float p1, float p2, float p3)
 {
     // Fallback to a value which won't affect the calculations.
     if (!(t >= 0 && t <= 1))
@@ -248,7 +249,7 @@ static float calculateBezier(float t, float p0, float p1, float p2, float p3)
     return (s * s * s * p0) + (3 * s * s * t * p1) + (3 * s * t * t * p2) + (t * t * t * p3);
 }
 
-static std::pair<float, float> calculateBezierExtremities(float p0, float p1, float p2, float p3)
+static std::pair<float, float> LEGACY_NODELETE calculateBezierExtremities(float p0, float p1, float p2, float p3)
 {
     // B(t)  = (1 - t)^3 P0 + 3 (1 - t)^2 t P1 + 3 (1 -t) t^2 P2 + t^3 p3, 0 <= t <= 1
     // B'(t) = 3(1 - t)^2 (P1 - P0) + 6(1 - t)t (P2 - P1) + 3t^2 (P3 - P2)
@@ -306,7 +307,7 @@ static std::pair<float, float> calculateBezierExtremities(float p0, float p1, fl
     return std::make_pair(s1, s2);
 }
 
-static std::pair<FloatPoint, FloatPoint> calculateBezierExtremities(const FloatPoint& currentPoint, const FloatPoint& controlPoint1, const FloatPoint& controlPoint2, const FloatPoint& endPoint)
+static std::pair<FloatPoint, FloatPoint> LEGACY_NODELETE calculateBezierExtremities(const FloatPoint& currentPoint, const FloatPoint& controlPoint1, const FloatPoint& controlPoint2, const FloatPoint& endPoint)
 {
     auto x = calculateBezierExtremities(currentPoint.x(), controlPoint1.x(), controlPoint2.x(), endPoint.x());
     auto y = calculateBezierExtremities(currentPoint.y(), controlPoint1.y(), controlPoint2.y(), endPoint.y());
@@ -320,7 +321,7 @@ void PathBezierCurveTo::extendBoundingRect(const FloatPoint& currentPoint, const
     extendRect(boundingRect, currentPoint, bezierExtremities.first, bezierExtremities.second, endPoint);
 }
 
-void PathBezierCurveTo::applyElements(const PathElementApplier& applier) const
+void PathBezierCurveTo::applyElements(NOESCAPE const PathElementApplier& applier) const
 {
     applier({ PathElement::Type::AddCurveToPoint, { controlPoint1, controlPoint2, endPoint } });
 }
@@ -338,14 +339,14 @@ WTF::TextStream& operator<<(WTF::TextStream& ts, const PathBezierCurveTo& data)
     return ts;
 }
 
-static float angleOfLine(const FloatPoint& p1, const FloatPoint& p2)
+static float LEGACY_NODELETE angleOfLine(const FloatPoint& p1, const FloatPoint& p2)
 {
     if (abs(p1.x() - p2.x()) < 0.00001)
         return p1.y() - p2.y() >= 0 ? std::numbers::pi_v<float> / 2 : 3 * std::numbers::pi_v<float> / 2;
     return atan2(p1.y() - p2.y(), p1.x() - p2.x());
 }
 
-static FloatPoint calculateArcToEndPoint(const FloatPoint& currentPoint, const FloatPoint& controlPoint1, const FloatPoint& controlPoint2, float radius)
+static FloatPoint LEGACY_NODELETE calculateArcToEndPoint(const FloatPoint& currentPoint, const FloatPoint& controlPoint1, const FloatPoint& controlPoint2, float radius)
 {
     float angle1 = angleOfLine(currentPoint, controlPoint1);
     float angle2 = angleOfLine(controlPoint1, controlPoint2);
@@ -407,7 +408,7 @@ void PathArc::extendFastBoundingRect(const FloatPoint&, const FloatPoint&, Float
     boundingRect.extend(minXMinYCorner, maxXMaxYCorner);
 }
 
-static float angleInClockwise(float angle, RotationDirection direction)
+static float LEGACY_NODELETE angleInClockwise(float angle, RotationDirection direction)
 {
     return direction == RotationDirection::Clockwise ? angle : angle - radiansPerTurnFloat;
 }
@@ -672,7 +673,7 @@ void PathDataLine::extendBoundingRect(const FloatPoint&, const FloatPoint&, Floa
     boundingRect.extend(end());
 }
 
-void PathDataLine::applyElements(const PathElementApplier& applier) const
+void PathDataLine::applyElements(NOESCAPE const PathElementApplier& applier) const
 {
     applier({ PathElement::Type::MoveToPoint, { start() } });
     applier({ PathElement::Type::AddLineToPoint, { end() } });
@@ -689,6 +690,14 @@ WTF::TextStream& operator<<(WTF::TextStream& ts, const PathDataLine& data)
     ts << "move to "_s << data.start();
     ts << ", "_s;
     ts << "add line to "_s << data.end();
+    return ts;
+}
+
+WTF::TextStream& operator<<(WTF::TextStream& ts, const PathDataLineColorThickness& data)
+{
+    ts << data.line;
+    ts << " #"_s << hex(data.color.value, 8);
+    ts << ' ' << data.thickness;
     return ts;
 }
 
@@ -715,7 +724,7 @@ void PathDataQuadCurve::extendBoundingRect(const FloatPoint&, const FloatPoint&,
     extendRect(boundingRect, start, extremity, endPoint);
 }
 
-void PathDataQuadCurve::applyElements(const PathElementApplier& applier) const
+void PathDataQuadCurve::applyElements(NOESCAPE const PathElementApplier& applier) const
 {
     applier({ PathElement::Type::MoveToPoint, { start } });
     applier({ PathElement::Type::AddQuadCurveToPoint, { controlPoint, endPoint } });
@@ -759,7 +768,7 @@ void PathDataBezierCurve::extendBoundingRect(const FloatPoint&, const FloatPoint
     extendRect(boundingRect, start, bezierExtremities.first, bezierExtremities.second, endPoint);
 }
 
-void PathDataBezierCurve::applyElements(const PathElementApplier& applier) const
+void PathDataBezierCurve::applyElements(NOESCAPE const PathElementApplier& applier) const
 {
     applier({ PathElement::Type::MoveToPoint, { start } });
     applier({ PathElement::Type::AddCurveToPoint, { controlPoint1, controlPoint2, endPoint } });
@@ -832,7 +841,7 @@ void PathCloseSubpath::extendBoundingRect(const FloatPoint&, const FloatPoint& l
     boundingRect.extend(lastMoveToPoint);
 }
 
-void PathCloseSubpath::applyElements(const PathElementApplier& applier) const
+void PathCloseSubpath::applyElements(NOESCAPE const PathElementApplier& applier) const
 {
     applier({ PathElement::Type::CloseSubpath, { } });
 }

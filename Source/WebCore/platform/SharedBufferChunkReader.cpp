@@ -46,7 +46,7 @@ SharedBufferChunkReader::SharedBufferChunkReader(FragmentedSharedBuffer* buffer,
 {
 }
 
-SharedBufferChunkReader::SharedBufferChunkReader(FragmentedSharedBuffer* buffer, const char* separator)
+SharedBufferChunkReader::SharedBufferChunkReader(FragmentedSharedBuffer* buffer, UTF8CStringView separator)
     : m_iteratorCurrent(buffer->begin())
     , m_iteratorEnd(buffer->end())
     , m_segment(m_iteratorCurrent != m_iteratorEnd ? m_iteratorCurrent->segment->span().data() : nullptr)
@@ -59,10 +59,10 @@ void SharedBufferChunkReader::setSeparator(const Vector<char>& separator)
     m_separator = separator;
 }
 
-void SharedBufferChunkReader::setSeparator(const char* separator)
+void SharedBufferChunkReader::setSeparator(UTF8CStringView separator)
 {
     m_separator.clear();
-    m_separator.append(unsafeSpan(separator));
+    m_separator.append(byteCast<char>(separator.span()));
 }
 
 bool SharedBufferChunkReader::nextChunk(Vector<uint8_t>& chunk, bool includeSeparator)
@@ -135,9 +135,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // Glib ports only.
     requestedSize -= readBytesCount;
 
     auto currentSegment = m_iteratorCurrent;
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     while (requestedSize && ++currentSegment != m_iteratorEnd) {
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         size_t lengthInSegment = std::min(currentSegment->segment->size(), requestedSize);
         data.append(currentSegment->segment->span().first(lengthInSegment));
         readBytesCount += lengthInSegment;

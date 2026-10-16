@@ -26,10 +26,13 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// https://webidl.spec.whatwg.org/#idl-DOMException
+
 [
     DoNotCheckConstants,
-    Exposed=(Window,Worker),
-    Exception
+    Exposed=*,
+    Exception,
+    Serializable
 ] interface DOMException {
     constructor(optional DOMString message = "", optional DOMString name = "Error");
 

@@ -26,6 +26,7 @@
 #pragma once
 
 #include <WebCore/ISOBox.h>
+#include <span>
 
 namespace WebCore {
 
@@ -43,13 +44,14 @@ public:
     Vector<uint8_t> defaultKID() const { return m_defaultKID; }
     Vector<uint8_t> defaultConstantIV() const { return m_defaultConstantIV; }
 
-    bool parseWithoutTypeAndSize(JSC::DataView&);
+    bool parseWithoutTypeAndSize(std::span<const uint8_t>);
 
-    bool parse(JSC::DataView&, unsigned& offset) override;
+    bool parse(const ByteView&, unsigned& offset) final;
+    bool pack(MutableByteView&, unsigned& offset) const final;
 
 private:
-    bool parsePayload(JSC::DataView&, unsigned& offset);
-
+    uint64_t partialSize() const final;
+    bool parsePayload(const ByteView&, unsigned& offset);
     std::optional<int8_t> m_defaultCryptByteBlock;
     std::optional<int8_t> m_defaultSkipByteBlock;
     int8_t m_defaultIsProtected { 0 };

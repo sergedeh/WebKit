@@ -25,6 +25,7 @@
 #include "config.h"
 #include "StyleTextAutospace.h"
 
+#include "CSSKeywordValue.h"
 #include "StyleBuilderChecking.h"
 
 namespace WebCore {
@@ -34,64 +35,43 @@ namespace Style {
 
 auto CSSValueConversion<TextAutospace>::operator()(BuilderState& state, const CSSValue& value) -> TextAutospace
 {
-    if (RefPtr primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value)) {
-        switch (primitiveValue->valueID()) {
-        case CSSValueNormal:
+    if (auto* keywordValue = dynamicDowncast<CSSKeywordValue>(value)) {
+        switch (keywordValue->valueID()) {
+        case CSSValueID::Normal:
             return CSS::Keyword::Normal { };
-        case CSSValueAuto:
+        case CSSValueID::Auto:
             return CSS::Keyword::Auto { };
-        case CSSValueNoAutospace:
+        case CSSValueID::NoAutospace:
             return CSS::Keyword::NoAutospace { };
-        case CSSValueIdeographAlpha:
-            return CSS::Keyword::IdeographAlpha { };
-        case CSSValueIdeographNumeric:
-            return CSS::Keyword::IdeographNumeric { };
         default:
             state.setCurrentPropertyInvalidAtComputedValueTime();
             return CSS::Keyword::NoAutospace { };
         }
     }
 
-    auto list = requiredListDowncast<CSSValueList, CSSPrimitiveValue>(state, value);
+    auto list = requiredListDowncast<CSSValueList, CSSKeywordValue>(state, value);
     if (!list)
         return CSS::Keyword::NoAutospace { };
 
-    if (list->size() == 1) {
-        switch (Ref first = list->item(0); first->valueID()) {
-        case CSSValueNormal:
-            return CSS::Keyword::Normal { };
-        case CSSValueAuto:
-            return CSS::Keyword::Auto { };
-        case CSSValueNoAutospace:
-            return CSS::Keyword::NoAutospace { };
-        case CSSValueIdeographAlpha:
-            return CSS::Keyword::IdeographAlpha { };
-        case CSSValueIdeographNumeric:
-            return CSS::Keyword::IdeographNumeric { };
+    WebCore::TextAutospace::Options options;
+    for (auto& item : *list) {
+        switch (item.valueID()) {
+        case CSSValueID::IdeographAlpha:
+            options.add(WebCore::TextAutospace::Type::IdeographAlpha);
+            break;
+        case CSSValueID::IdeographNumeric:
+            options.add(WebCore::TextAutospace::Type::IdeographNumeric);
+            break;
+        case CSSValueID::Insert:
+            options.add(WebCore::TextAutospace::Type::Insert);
+            break;
         default:
             state.setCurrentPropertyInvalidAtComputedValueTime();
             return CSS::Keyword::NoAutospace { };
         }
     }
-    if (list->size() == 2) {
-        switch (Ref first = list->item(0); first->valueID()) {
-        case CSSValueIdeographAlpha:
-            if (Ref second = list->item(1); second->valueID() == CSSValueIdeographNumeric)
-                return { CSS::Keyword::IdeographAlpha { }, CSS::Keyword::IdeographNumeric { } };
-            break;
-        case CSSValueIdeographNumeric:
-            if (Ref second = list->item(1); second->valueID() == CSSValueIdeographAlpha)
-                return { CSS::Keyword::IdeographAlpha { }, CSS::Keyword::IdeographNumeric { } };
-            break;
-        default:
-            break;
-        }
-        state.setCurrentPropertyInvalidAtComputedValueTime();
-        return CSS::Keyword::NoAutospace { };
-    }
 
-    state.setCurrentPropertyInvalidAtComputedValueTime();
-    return CSS::Keyword::NoAutospace { };
+    return WebCore::TextAutospace { options };
 }
 
 } // namespace Style

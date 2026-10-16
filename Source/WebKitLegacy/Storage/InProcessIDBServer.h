@@ -64,9 +64,8 @@ public:
 
     virtual ~InProcessIDBServer();
 
-    WebCore::IDBClient::IDBConnectionToServer& connectionToServer() const;
-    WebCore::IDBServer::IDBConnectionToClient& connectionToClient() const;
-    WebCore::IDBServer::IDBServer& server() { return *m_server; }
+    WebCore::IDBClient::IDBConnectionToServer& LEGACY_NODELETE connectionToServer() const;
+    WebCore::IDBServer::IDBConnectionToClient& LEGACY_NODELETE connectionToClient() const;
 
     void ref() const final { ThreadSafeRefCounted::ref(); }
     void deref() const final { ThreadSafeRefCounted::deref(); }
@@ -135,9 +134,8 @@ public:
 private:
     InProcessIDBServer(PAL::SessionID, const String& databaseDirectoryPath = nullString());
 
-    Lock m_serverLock;
-    std::unique_ptr<WebCore::IDBServer::IDBServer> m_server;
-    RefPtr<WebCore::IDBClient::IDBConnectionToServer> m_connectionToServer;
+    std::unique_ptr<WebCore::IDBServer::IDBServer> m_server WTF_GUARDED_BY_CAPABILITY(m_queue.get());
+    const RefPtr<WebCore::IDBClient::IDBConnectionToServer> m_connectionToServer;
     RefPtr<WebCore::IDBServer::IDBConnectionToClient> m_connectionToClient;
     const Ref<WTF::WorkQueue> m_queue;
 };

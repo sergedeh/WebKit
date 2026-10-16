@@ -32,9 +32,11 @@ OBJC_CLASS WebCoreRenderThemeNotificationObserver;
 
 namespace WebCore {
 
-class RenderStyle;
-
 struct AttachmentLayout;
+
+namespace Style {
+class ComputedStyle;
+}
 
 class RenderThemeMac final : public RenderThemeCocoa {
 public:
@@ -48,7 +50,7 @@ public:
 
     void inflateRectForControlRenderer(const RenderElement&, FloatRect&) final;
 
-    bool isControlStyled(const RenderStyle&) const final;
+    bool isControlStyled(const Style::ComputedStyle&) const final;
 
     bool supportsSelectionForegroundColors(OptionSet<StyleColorOptions>) const final;
 
@@ -69,27 +71,27 @@ public:
 
     ScrollbarWidth scrollbarWidthStyleForPart(StyleAppearance) final { return ScrollbarWidth::Thin; }
 
-    int minimumMenuListSize(const RenderStyle&) const final;
+    int minimumMenuListSize(const Style::ComputedStyle&) const final;
 
-    void adjustSliderThumbSize(RenderStyle&, const Element*) const final;
+    void adjustSliderThumbSize(Style::ComputedStyle&, const Element*) const final;
 
-    IntSize sliderTickSize() const final;
-    int sliderTickOffsetFromTrackCenter() const final;
+    IntSize LEGACY_NODELETE sliderTickSize() const final;
+    int LEGACY_NODELETE sliderTickOffsetFromTrackCenter() const final;
 
-    Style::PaddingBox popupInternalPaddingBox(const RenderStyle&) const final;
-    PopupMenuStyle::Size popupMenuSize(const RenderStyle&, IntRect&) const final;
+    Style::PaddingBox platformPopupInternalPaddingBox(const Style::ComputedStyle&) const final;
+    PopupMenuStyle::Size popupMenuSize(const Style::ComputedStyle&, IntRect&) const final;
 
     std::optional<FontCascadeDescription> controlFont(StyleAppearance, const FontCascade&, float zoomFactor) const final;
     Style::PaddingBox controlPadding(StyleAppearance, const Style::PaddingBox&, float zoomFactor) const final;
     Style::PreferredSizePair controlSize(StyleAppearance, const FontCascade&, const Style::PreferredSizePair&, float zoomFactor) const final;
     Style::MinimumSizePair minimumControlSize(StyleAppearance, const FontCascade&, const Style::MinimumSizePair&, float zoomFactor) const final;
     Style::LineWidthBox controlBorder(StyleAppearance, const FontCascade&, const Style::LineWidthBox&, float zoomFactor, const Element*) const final;
-    bool controlRequiresPreWhiteSpace(StyleAppearance) const final;
+    bool LEGACY_NODELETE controlRequiresPreWhiteSpace(StyleAppearance) const final;
 
     bool popsMenuByArrowKeys() const final { return true; }
 
     FloatSize meterSizeForBounds(const RenderMeter&, const FloatRect&) const final;
-    bool supportsMeter(StyleAppearance) const final;
+    bool LEGACY_NODELETE supportsMeter(StyleAppearance) const final;
 
     void createColorWellSwatchSubtree(HTMLElement&) final;
     void setColorWellSwatchBackground(HTMLElement&, Color) final;
@@ -97,7 +99,7 @@ public:
     IntRect progressBarRectForBounds(const RenderProgress&, const IntRect&) const final;
 
     // Controls color values returned from platformFocusRingColor(). systemColor() will be used when false.
-    bool usesTestModeFocusRingColor() const;
+    bool LEGACY_NODELETE usesTestModeFocusRingColor() const;
 
     WEBCORE_EXPORT static IconAndSize iconForAttachment(const String& fileName, const String& attachmentType, const String& title);
     WEBCORE_EXPORT Color systemColor(CSSValueID, OptionSet<StyleColorOptions>) const final;
@@ -105,36 +107,36 @@ public:
     bool hasSwitchHapticFeedback(SwitchTrigger trigger) const final { return trigger == SwitchTrigger::PointerTracking; }
 
     bool canPaint(const PaintInfo&, const Settings&, StyleAppearance) const final;
-    bool canCreateControlPartForRenderer(const RenderElement&) const final;
-    bool canCreateControlPartForBorderOnly(const RenderElement&) const final;
-    bool canCreateControlPartForDecorations(const RenderElement&) const final;
+    bool LEGACY_NODELETE canCreateControlPartForRenderer(const RenderElement&) const final;
+    bool LEGACY_NODELETE canCreateControlPartForBorderOnly(const RenderElement&) const final;
+    bool LEGACY_NODELETE canCreateControlPartForDecorations(const RenderElement&) const final;
 
     int baselinePosition(const RenderBox&) const final;
 
     bool supportsLargeFormControls() const final;
 
-    void adjustMenuListStyle(RenderStyle&, const Element*) const final;
+    void adjustMenuListStyle(Style::ComputedStyle&, const Element*) const final;
 
-    void adjustMenuListButtonStyle(RenderStyle&, const Element*) const final;
+    void adjustMenuListButtonStyle(Style::ComputedStyle&, const Element*) const final;
 
-    void adjustSliderTrackStyle(RenderStyle&, const Element*) const final;
+    void adjustSliderTrackStyle(Style::ComputedStyle&, const Element*) const final;
 
-    void adjustSliderThumbStyle(RenderStyle&, const Element*) const final;
+    void adjustSliderThumbStyle(Style::ComputedStyle&, const Element*) const final;
 
-    void adjustSearchFieldStyle(RenderStyle&, const Element*) const final;
+    void adjustSearchFieldStyle(Style::ComputedStyle&, const Element*) const final;
 
-    void adjustSearchFieldCancelButtonStyle(RenderStyle&, const Element*) const final;
+    void adjustSearchFieldCancelButtonStyle(Style::ComputedStyle&, const Element*) const final;
 
-    void adjustSearchFieldDecorationPartStyle(RenderStyle&, const Element*) const final;
+    void adjustSearchFieldDecorationPartStyle(Style::ComputedStyle&, const Element*) const final;
 
-    void adjustSearchFieldResultsDecorationPartStyle(RenderStyle&, const Element*) const final;
+    void adjustSearchFieldResultsDecorationPartStyle(Style::ComputedStyle&, const Element*) const final;
 
-    void adjustSearchFieldResultsButtonStyle(RenderStyle&, const Element*) const final;
+    void adjustSearchFieldResultsButtonStyle(Style::ComputedStyle&, const Element*) const final;
 
-    void adjustListButtonStyle(RenderStyle&, const Element*) const final;
+    void adjustListButtonStyle(Style::ComputedStyle&, const Element*) const final;
 
 #if ENABLE(SERVICE_CONTROLS)
-    void adjustImageControlsButtonStyle(RenderStyle&, const Element*) const final;
+    void adjustImageControlsButtonStyle(Style::ComputedStyle&, const Element*) const final;
 #endif
 
 #if ENABLE(ATTACHMENT_ELEMENT)
@@ -144,7 +146,7 @@ public:
 
     String fileListNameForWidth(const FileList*, const FontCascade&, int width, bool multipleFilesAllowed) const final;
 
-    bool searchFieldShouldAppearAsTextField(const RenderStyle&, const Settings&) const final;
+    bool LEGACY_NODELETE searchFieldShouldAppearAsTextField(const Style::ComputedStyle&, const Settings&) const final;
 
 #if ENABLE(SERVICE_CONTROLS)
     IntSize imageControlsButtonSize() const final;
@@ -154,15 +156,14 @@ public:
 private:
     RenderThemeMac();
 
-    std::span<const IntSize, 4> menuListSizes() const;
-    std::span<const IntSize, 4> searchFieldSizes() const;
-    std::span<const IntSize, 4> cancelButtonSizes() const;
-    std::span<const IntSize, 4> resultsButtonSizes() const;
-    void setSearchFieldSize(RenderStyle&) const;
+    std::span<const IntSize, 4> LEGACY_NODELETE menuListSizes() const;
+    std::span<const IntSize, 4> LEGACY_NODELETE searchFieldSizes() const;
+    std::span<const IntSize, 4> LEGACY_NODELETE cancelButtonSizes() const;
+    std::span<const IntSize, 4> LEGACY_NODELETE resultsButtonSizes() const;
+    void setSearchFieldSize(Style::ComputedStyle&) const;
 
-    mutable RetainPtr<NSPopUpButtonCell> m_popupButton;
 
-    RetainPtr<WebCoreRenderThemeNotificationObserver> m_notificationObserver;
+    const RetainPtr<WebCoreRenderThemeNotificationObserver> m_notificationObserver;
 };
 
 } // namespace WebCore

@@ -50,20 +50,12 @@ public:
     {
     }
     
-    template<typename... Args>
-    void resize(Code& code, const Args&... args)
+    void resize(Code& code)
     {
-        m_gp.resize(Tmp::absoluteIndexEnd(code, GP), args...);
-        m_fp.resize(Tmp::absoluteIndexEnd(code, FP), args...);
+        m_gp.resize(Tmp::absoluteIndexEnd(code, GP));
+        m_fp.resize(Tmp::absoluteIndexEnd(code, FP));
     }
-    
-    template<typename... Args>
-    void clear(const Args&... args)
-    {
-        m_gp.remove(args...);
-        m_fp.remove(args...);
-    }
-    
+
     const Value& operator[](Tmp tmp) const
     {
         if (tmp.isGP())
@@ -103,6 +95,14 @@ public:
             m_gp.append(tmp, std::forward<PassedValue>(value));
         else
             m_fp.append(tmp, std::forward<PassedValue>(value));
+    }
+
+    void forEachValue(NOESCAPE const Invocable<void(Value&)> auto& func)
+    {
+        for (size_t i = 0; i < m_gp.size(); ++i)
+            func(m_gp[i]);
+        for (size_t i = 0; i < m_fp.size(); ++i)
+            func(m_fp[i]);
     }
 
 private:

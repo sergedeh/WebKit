@@ -46,20 +46,22 @@ public:
         auto physicalRect = logicalRect(lineBox);
         if (!lineBox.isHorizontal())
             physicalRect = physicalRect.transposedRect();
-        lineBox.formattingContextRoot().flipForWritingMode(physicalRect);
+        protect(lineBox.formattingContextRoot())->flipForWritingMode(physicalRect);
         return physicalRect;
     }
 
     static float logicalTopAdjustedForPrecedingBlock(const InlineIterator::LineBox& lineBox)
     {
+        if (auto blockLevelBox = lineBox.blockLevelBox())
+            return blockLevelBox->logicalTop();
         // FIXME: Move adjustEnclosingTopForPrecedingBlock from RenderBlockFlow to here.
-        return lineBox.formattingContextRoot().adjustEnclosingTopForPrecedingBlock(LayoutUnit { lineBox.contentLogicalTopAdjustedForPrecedingLineBox() });
+        return protect(lineBox.formattingContextRoot())->adjustEnclosingTopForPrecedingBlock(LayoutUnit { lineBox.contentLogicalTopAdjustedForPrecedingLineBox() });
     }
 
     static RenderObject::HighlightState selectionState(const InlineIterator::LineBox& lineBox)
     {
-        auto& root = lineBox.formattingContextRoot();
-        if (root.selectionState() == RenderObject::HighlightState::None)
+        CheckedRef root = lineBox.formattingContextRoot();
+        if (root->selectionState() == RenderObject::HighlightState::None)
             return RenderObject::HighlightState::None;
 
         auto lineState = RenderObject::HighlightState::None;

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008, 2009, 2010, 2011 Apple Inc. All rights reserved.
+ * Copyright (C) 2008-2026 Apple Inc. All rights reserved.
  * Copyright 2010, The Android Open Source Project
  *
  * Redistribution and use in source and binary forms, with or without
@@ -39,8 +39,8 @@
 #include <WebCore/ScriptWrappable.h>
 #include <WebCore/Timer.h>
 #include <wtf/CheckedRef.h>
-#include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
+#include <wtf/OrderedHashMap.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
 
 namespace WebCore {
@@ -65,14 +65,14 @@ public:
     WEBCORE_EXPORT ~Geolocation();
 
     WEBCORE_EXPORT void resetAllGeolocationPermission();
-    Document* document() const;
+    Document* LEGACY_NODELETE document() const;
 
     void getCurrentPosition(Ref<PositionCallback>&&, RefPtr<PositionErrorCallback>&&, PositionOptions&&);
     int watchPosition(Ref<PositionCallback>&&, RefPtr<PositionErrorCallback>&&, PositionOptions&&);
     void clearWatch(int watchID);
 
     WEBCORE_EXPORT void setIsAllowed(bool, const String& authorizationToken);
-    const String& authorizationToken() const { return m_authorizationToken; }
+    const String& authorizationToken() const LIFETIME_BOUND { return m_authorizationToken; }
     WEBCORE_EXPORT void resetIsAllowed();
     bool isAllowed() const { return m_allowGeolocation == AllowGeolocation::Yes; }
 
@@ -82,8 +82,8 @@ public:
     void setError(GeolocationError&);
     bool shouldBlockGeolocationRequests();
 
-    Navigator* navigator();
-    WEBCORE_EXPORT LocalFrame* frame() const;
+    Navigator* LEGACY_NODELETE navigator();
+    WEBCORE_EXPORT LocalFrame* LEGACY_NODELETE frame() const;
 
 private:
     explicit Geolocation(Navigator&);
@@ -97,9 +97,8 @@ private:
 
     bool isDenied() const { return m_allowGeolocation == AllowGeolocation::No; }
 
-    Page* page() const;
+    Page* LEGACY_NODELETE page() const;
     SecurityOrigin* securityOrigin() const;
-    RefPtr<SecurityOrigin> protectedSecurityOrigin() const;
 
     typedef Vector<Ref<GeoNotifier>> GeoNotifierVector;
     typedef HashSet<Ref<GeoNotifier>> GeoNotifierSet;
@@ -110,15 +109,13 @@ private:
         GeoNotifier* find(int id);
         void remove(int id);
         void remove(GeoNotifier*);
-        bool contains(GeoNotifier*) const;
+        bool LEGACY_NODELETE contains(GeoNotifier*) const;
         void clear();
-        bool isEmpty() const;
+        bool LEGACY_NODELETE isEmpty() const;
         void getNotifiersVector(GeoNotifierVector&) const;
     private:
-        typedef HashMap<int, Ref<GeoNotifier>> IdToNotifierMap;
-        typedef HashMap<Ref<GeoNotifier>, int> NotifierToIdMap;
+        typedef OrderedHashMap<int, Ref<GeoNotifier>> IdToNotifierMap;
         IdToNotifierMap m_idToNotifierMap;
-        NotifierToIdMap m_notifierToIdMap;
     };
 
     bool hasListeners() const { return !m_oneShots.isEmpty() || !m_watchers.isEmpty(); }
@@ -165,17 +162,16 @@ private:
     Watchers m_watchers;
     GeoNotifierSet m_pendingForPermissionNotifiers;
     RefPtr<GeolocationPosition> m_lastPosition;
-
-    bool m_hasBeenRequested { false };
-
-    AllowGeolocation m_allowGeolocation { AllowGeolocation::Unknown };
     String m_authorizationToken;
-    bool m_isSuspended { false };
-    bool m_resetOnResume { false };
-    bool m_hasChangedPosition { false };
     RefPtr<GeolocationPositionError> m_errorWaitingForResume;
     Timer m_resumeTimer;
     GeoNotifierSet m_requestsAwaitingCachedPosition;
+
+    AllowGeolocation m_allowGeolocation { AllowGeolocation::Unknown };
+    bool m_hasBeenRequested { false };
+    bool m_isSuspended { false };
+    bool m_resetOnResume { false };
+    bool m_hasChangedPosition { false };
 };
     
 } // namespace WebCore

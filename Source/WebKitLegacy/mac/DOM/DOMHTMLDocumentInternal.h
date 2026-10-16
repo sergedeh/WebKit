@@ -24,10 +24,11 @@
  */
 
 #import <WebKitLegacy/DOMHTMLDocument.h>
+#import <wtf/Compiler.h>
 
 namespace WebCore {
 class HTMLDocument;
 }
 
 WebCore::HTMLDocument* core(DOMHTMLDocument *);
-DOMHTMLDocument *kit(WebCore::HTMLDocument*);
+DOMHTMLDocument * LEGACY_NODELETE kit(WebCore::HTMLDocument*);

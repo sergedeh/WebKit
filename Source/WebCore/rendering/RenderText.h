@@ -26,7 +26,6 @@
 #include <WebCore/Color.h>
 #include <WebCore/FontCascade.h>
 #include <WebCore/RenderElement.h>
-#include <WebCore/RenderTextLineBoxes.h>
 #include <WebCore/Text.h>
 #include <wtf/Forward.h>
 #include <wtf/Markable.h>
@@ -57,38 +56,35 @@ public:
 
     virtual ~RenderText();
 
-    Layout::InlineTextBox* layoutBox();
-    const Layout::InlineTextBox* layoutBox() const;
+    Layout::InlineTextBox* LEGACY_NODELETE layoutBox();
+    const Layout::InlineTextBox* LEGACY_NODELETE layoutBox() const;
 
-    WEBCORE_EXPORT Text* textNode() const;
-    RefPtr<Text> protectedTextNode() const { return textNode(); }
+    WEBCORE_EXPORT Text* LEGACY_NODELETE textNode() const;
 
-    const RenderStyle& style() const;
-    // FIXME: Remove checkedStyle once https://github.com/llvm/llvm-project/pull/142485 lands. This is a false positive.
-    const CheckedRef<const RenderStyle> checkedStyle() const { return style(); }
-    const RenderStyle& firstLineStyle() const;
-    const RenderStyle* getCachedPseudoStyle(const Style::PseudoElementIdentifier&, const RenderStyle* parentStyle = nullptr) const;
+    const Style::ComputedStyle& style() const LIFETIME_BOUND;
+
+    const Style::ComputedStyle& firstLineStyle() const LIFETIME_BOUND;
+    const Style::ComputedStyle* lazyPseudoElementStyle(const Style::PseudoElementIdentifier&, const Style::ComputedStyle* parentStyle = nullptr) const LIFETIME_BOUND;
 
     Color selectionBackgroundColor() const;
     Color selectionForegroundColor() const;
     Color selectionEmphasisMarkColor() const;
-    std::unique_ptr<RenderStyle> selectionPseudoStyle() const;
+    const Style::ComputedStyle* selectionPseudoStyle() const LIFETIME_BOUND;
 
-    const RenderStyle* spellingErrorPseudoStyle() const;
-    const RenderStyle* grammarErrorPseudoStyle() const;
-    const RenderStyle* targetTextPseudoStyle() const;
+    const Style::ComputedStyle* spellingErrorPseudoStyle() const LIFETIME_BOUND;
+    const Style::ComputedStyle* grammarErrorPseudoStyle() const LIFETIME_BOUND;
+    const Style::ComputedStyle* targetTextPseudoStyle() const LIFETIME_BOUND;
 
     virtual String originalText() const;
 
 
-    const String& text() const { return m_text; }
+    const String& text() const LIFETIME_BOUND { return m_text; }
     String textWithoutConvertingBackslashToYenSymbol() const;
 
     void boundingRects(Vector<LayoutRect>&, const LayoutPoint& accumulatedOffset) const final;
     Vector<IntRect> absoluteRectsForRange(unsigned startOffset = 0, unsigned endOffset = UINT_MAX, bool useSelectionHeight = false, bool* wasFixed = nullptr) const;
-#if PLATFORM(IOS_FAMILY)
+
     void collectSelectionGeometries(Vector<SelectionGeometry>&, unsigned startOffset = 0, unsigned endOffset = std::numeric_limits<unsigned>::max()) final;
-#endif
 
     void absoluteQuads(Vector<FloatQuad>&, bool* wasFixed) const final;
     Vector<FloatQuad> absoluteQuadsForRange(unsigned startOffset = 0, unsigned endOffset = UINT_MAX, OptionSet<RenderObject::BoundingRectBehavior> = { }, bool* wasFixed = nullptr) const;
@@ -122,19 +118,19 @@ public:
         bool hasBreak { false };
         bool endsWithBreak { false };
     };
-    Widths trimmedPreferredWidths(float leadWidth, bool& stripFrontSpaces);
+    Widths trimmedIntrinsicLogicalWidths(float leadingWidth, bool& stripFrontSpaces);
 
     float hangablePunctuationStartWidth(unsigned index) const;
     float hangablePunctuationEndWidth(unsigned index) const;
-    unsigned firstCharacterIndexStrippingSpaces() const;
-    unsigned lastCharacterIndexStrippingSpaces() const;
-    static bool isHangableStopOrComma(char16_t);
+    unsigned LEGACY_NODELETE firstCharacterIndexStrippingSpaces() const;
+    unsigned LEGACY_NODELETE lastCharacterIndexStrippingSpaces() const;
+    static bool LEGACY_NODELETE isHangableStopOrComma(char16_t);
     
     WEBCORE_EXPORT virtual IntRect linesBoundingBox() const;
     WEBCORE_EXPORT IntPoint firstRunLocation() const;
 
     void setText(const String&, bool force = false);
-    void setTextWithOffset(const String&, unsigned offset);
+    virtual void setTextWithOffset(const String&, unsigned offset);
 
     bool canBeSelectionLeaf() const override { return true; }
 
@@ -160,30 +156,29 @@ public:
 
     void momentarilyRevealLastTypedCharacter(unsigned offsetAfterLastTypedCharacter);
 
-    bool containsOnlyCollapsibleWhitespace() const;
+    bool LEGACY_NODELETE containsOnlyCollapsibleWhitespace() const;
 
-    FontCascade::CodePath fontCodePath() const { return static_cast<FontCascade::CodePath>(m_fontCodePath); }
+    FontCascade::CodePath fontCodePath() const { return m_fontCodePath; }
     bool canUseSimpleFontCodePath() const { return fontCodePath() == FontCascade::CodePath::Simple; }
     bool shouldUseSimpleGlyphOverflowCodePath() const { return fontCodePath() == FontCascade::CodePath::SimpleWithGlyphOverflow; }
 
-    virtual void styleDidChange(Style::Difference, const RenderStyle* oldStyle);
+    virtual void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle);
 
-#if ENABLE(TEXT_AUTOSIZING)
     float candidateComputedTextSize() const { return m_candidateComputedTextSize; }
     void setCandidateComputedTextSize(float size) { m_candidateComputedTextSize = size; }
-#endif
 
-    StringView stringView(unsigned start = 0, std::optional<unsigned> stop = std::nullopt) const;
+    StringView LEGACY_NODELETE stringView(unsigned start = 0, std::optional<unsigned> stop = std::nullopt) const;
     
-    bool containsOnlyCSSWhitespace(unsigned from, unsigned length) const;
+    bool LEGACY_NODELETE containsOnlyCSSWhitespace(unsigned from, unsigned length) const;
 
     Vector<std::pair<unsigned, unsigned>> contentRangesBetweenOffsetsForType(const DocumentMarkerType, unsigned startOffset, unsigned endOffset) const;
 
-    RenderInline* inlineWrapperForDisplayContents();
+    bool hasInlineWrapperForDisplayContents() const { return m_hasInlineWrapperForDisplayContents; }
+    RenderInline* LEGACY_NODELETE inlineWrapperForDisplayContents();
     void setInlineWrapperForDisplayContents(RenderInline*);
 
     template <typename MeasureTextCallback>
-    static float measureTextConsideringPossibleTrailingSpace(bool currentCharacterIsSpace, unsigned startIndex, unsigned wordLength, WordTrailingSpace&, SingleThreadWeakHashSet<const Font>& fallbackFonts, MeasureTextCallback&&);
+    static float measureTextConsideringPossibleTrailingSpace(bool currentCharacterIsSpace, unsigned startIndex, unsigned wordLength, WordTrailingSpace&, SingleThreadWeakHashSet<const Font>& fallbackFonts, NOESCAPE const MeasureTextCallback&);
 
     void resetMinMaxWidth();
 
@@ -195,15 +190,18 @@ public:
     std::optional<bool> hasStrongDirectionalityContent() const { return m_hasStrongDirectionalityContent; }
 
 protected:
-    virtual void computePreferredLogicalWidths(float leadWidth, bool forcedMinMaxWidthComputation = false);
+    virtual void computeMinMaxIntrinsicLogicalWidths(float leadingWidth, bool forcedMinMaxWidthComputation = false);
     void willBeDestroyed() override;
 
     virtual void setRenderedText(const String&);
-    virtual Vector<char16_t> previousCharacter() const;
+    virtual char32_t previousCharacter() const;
 
     virtual void setTextInternal(const String&, bool force);
 
 private:
+    void updateRenderedText();
+    void updateRenderedText(const String&);
+
     RenderText(Type, Node&, const String&);
 
     ASCIILiteral renderName() const override;
@@ -216,13 +214,11 @@ private:
     LayoutRect selectionRectForRepaint(const RenderLayerModelObject* repaintContainer, bool clipToVisibleContent = true) final;
     RepaintRects localRectsForRepaint(RepaintOutlineBounds) const final;
 
-    void computePreferredLogicalWidths(float leadWidth, SingleThreadWeakHashSet<const Font>& fallbackFonts, GlyphOverflow&, bool forcedMinMaxWidthComputation = false);
+    void computeMinMaxIntrinsicLogicalWidths(float leadingWidth, SingleThreadWeakHashSet<const Font>& fallbackFonts, GlyphOverflow&, bool forcedMinMaxWidthComputation = false);
 
-    void computeFontCodePath();
-    
     bool nodeAtPoint(const HitTestRequest&, HitTestResult&, const HitTestLocation&, const LayoutPoint&, HitTestAction) final { ASSERT_NOT_REACHED(); return false; }
 
-    float widthFromCache(const FontCascade&, unsigned start, unsigned len, float xPos, SingleThreadWeakHashSet<const Font>* fallbackFonts, GlyphOverflow*, const RenderStyle&) const;
+    float widthFromCache(const FontCascade&, unsigned start, unsigned len, float xPos, SingleThreadWeakHashSet<const Font>* fallbackFonts, GlyphOverflow*, const Style::ComputedStyle&) const;
     bool computeUseBackslashAsYenSymbol() const;
 
     void secureText(char16_t mask);
@@ -233,14 +229,12 @@ private:
     void container() const = delete; // Use parent() instead.
     void container(const RenderLayerModelObject&, bool&) const = delete; // Use parent() instead.
 
-    float maxWordFragmentWidth(const RenderStyle&, const FontCascade&, StringView word, unsigned minimumPrefixLength, unsigned minimumSuffixLength, bool currentCharacterIsSpace, unsigned characterIndex, float xPos, float entireWordWidth, WordTrailingSpace&, SingleThreadWeakHashSet<const Font>& fallbackFonts, GlyphOverflow&);
-    float widthFromCacheConsideringPossibleTrailingSpace(const RenderStyle&, const FontCascade&, unsigned startIndex, unsigned wordLen, float xPos, bool currentCharacterIsSpace, WordTrailingSpace&, SingleThreadWeakHashSet<const Font>& fallbackFonts, GlyphOverflow&) const;
+    float maxWordFragmentWidth(const Style::ComputedStyle&, const FontCascade&, StringView word, unsigned minimumPrefixLength, unsigned minimumSuffixLength, unsigned minimumWordLength, bool currentCharacterIsSpace, unsigned characterIndex, float xPos, float entireWordWidth, WordTrailingSpace&, SingleThreadWeakHashSet<const Font>& fallbackFonts, GlyphOverflow&);
+    float widthFromCacheConsideringPossibleTrailingSpace(const Style::ComputedStyle&, const FontCascade&, unsigned startIndex, unsigned wordLen, float xPos, bool currentCharacterIsSpace, WordTrailingSpace&, SingleThreadWeakHashSet<const Font>& fallbackFonts, GlyphOverflow&) const;
     void initiateFontLoadingByAccessingGlyphDataAndComputeCanUseSimplifiedTextMeasuring(const String&);
 
-#if ENABLE(TEXT_AUTOSIZING)
     // FIXME: This should probably be part of the text sizing structures in Document instead. That would save some memory.
     float m_candidateComputedTextSize { 0 };
-#endif
     Markable<float> m_minWidth;
     Markable<float> m_maxWidth;
     float m_beginMinWidth { 0 };
@@ -265,36 +259,37 @@ private:
     unsigned m_originalTextDiffersFromRendered : 1 { false };
     unsigned m_hasInlineWrapperForDisplayContents : 1 { false };
     unsigned m_hasSecureTextTimer : 1 { false };
-    unsigned m_fontCodePath : 2 { 0 };
+    FontCascade::CodePath m_fontCodePath : 2;
 };
 
-String applyTextTransform(const RenderStyle&, const String&, Vector<char16_t> previousCharacter);
-String applyTextTransform(const RenderStyle&, const String&);
-String capitalize(const String&, Vector<char16_t> previousCharacter);
-String capitalize(const String&);
-TextBreakIterator::LineMode::Behavior mapLineBreakToIteratorMode(LineBreak);
-TextBreakIterator::ContentAnalysis mapWordBreakToContentAnalysis(WordBreak);
+String applyTextTransform(const Style::ComputedStyle&, const String&, char32_t previousCharacter);
+String applyTextTransform(const Style::ComputedStyle&, const String&);
+String capitalize(const String&, char32_t previousCharacter, const AtomString& locale);
+String capitalize(const String&, const AtomString& locale);
+bool isDutchLocale(const AtomString&);
+TextBreakIterator::LineMode::Behavior LEGACY_NODELETE mapLineBreakToIteratorMode(LineBreak);
+TextBreakIterator::ContentAnalysis LEGACY_NODELETE mapWordBreakToContentAnalysis(WordBreak);
 
 inline char16_t RenderText::characterAt(unsigned i) const
 {
     return i >= length() ? 0 : text()[i];
 }
 
-inline const RenderStyle& RenderText::style() const
+inline const Style::ComputedStyle& RenderText::style() const
 {
     return parent()->style();
 }
 
-inline const RenderStyle& RenderText::firstLineStyle() const
+inline const Style::ComputedStyle& RenderText::firstLineStyle() const
 {
     return parent()->firstLineStyle();
 }
 
-inline const RenderStyle* RenderText::getCachedPseudoStyle(const Style::PseudoElementIdentifier& pseudoElementIdentifier, const RenderStyle* parentStyle) const
+inline const Style::ComputedStyle* RenderText::lazyPseudoElementStyle(const Style::PseudoElementIdentifier& pseudoElementIdentifier, const Style::ComputedStyle* parentStyle) const
 {
     // Pseudostyle is associated with an element, so ascend the tree until we find a non-anonymous ancestor.
     if (auto* ancestor = firstNonAnonymousAncestor())
-        return ancestor->getCachedPseudoStyle(pseudoElementIdentifier, parentStyle);
+        return ancestor->lazyPseudoElementStyle(pseudoElementIdentifier, parentStyle);
     return nullptr;
 }
 
@@ -319,28 +314,28 @@ inline Color RenderText::selectionEmphasisMarkColor() const
     return Color();
 }
 
-inline std::unique_ptr<RenderStyle> RenderText::selectionPseudoStyle() const
+inline const Style::ComputedStyle* RenderText::selectionPseudoStyle() const
 {
     if (auto* ancestor = firstNonAnonymousAncestor())
         return ancestor->selectionPseudoStyle();
     return nullptr;
 }
 
-inline const RenderStyle* RenderText::spellingErrorPseudoStyle() const
+inline const Style::ComputedStyle* RenderText::spellingErrorPseudoStyle() const
 {
     if (auto* ancestor = firstNonAnonymousAncestor())
         return ancestor->spellingErrorPseudoStyle();
     return nullptr;
 }
 
-inline const RenderStyle* RenderText::grammarErrorPseudoStyle() const
+inline const Style::ComputedStyle* RenderText::grammarErrorPseudoStyle() const
 {
     if (auto* ancestor = firstNonAnonymousAncestor())
         return ancestor->grammarErrorPseudoStyle();
     return nullptr;
 }
 
-inline const RenderStyle* RenderText::targetTextPseudoStyle() const
+inline const Style::ComputedStyle* RenderText::targetTextPseudoStyle() const
 {
     if (auto* ancestor = firstNonAnonymousAncestor())
         return ancestor->targetTextPseudoStyle();
@@ -350,11 +345,6 @@ inline const RenderStyle* RenderText::targetTextPseudoStyle() const
 inline RenderText* Text::renderer() const
 {
     return downcast<RenderText>(Node::renderer());
-}
-
-inline CheckedPtr<RenderText> Text::checkedRenderer() const
-{
-    return renderer();
 }
 
 inline void RenderText::resetMinMaxWidth()

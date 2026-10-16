@@ -27,9 +27,11 @@
 
 #include "ASTBuilder.h"
 #include "ASTDeclaration.h"
+#include "ASTDiagnostic.h"
 #include "ASTDirective.h"
 #include "ASTIdentityExpression.h"
 #include "CallGraph.h"
+#include "Overload.h"
 #include "TypeStore.h"
 #include "WGSL.h"
 #include "WGSLEnums.h"
@@ -41,7 +43,7 @@
 
 namespace WGSL {
 
-class ShaderModule {
+class ShaderModule : public AST::DiagnosticContainer {
     WTF_MAKE_TZONE_ALLOCATED(ShaderModule);
 public:
     explicit ShaderModule(const String& source)
@@ -51,15 +53,17 @@ public:
     ShaderModule(const String& source, const Configuration& configuration)
         : m_source(source)
         , m_configuration(configuration)
-    { }
+    {
+        initializeOverloads();
+    }
 
-    const String& source() const { return m_source; }
-    const Configuration& configuration() const { return m_configuration; }
-    AST::Declaration::List& declarations() { return m_declarations; }
-    const AST::Declaration::List& declarations() const { return m_declarations; }
-    AST::Directive::List& directives() { return m_directives; }
-    TypeStore& types() { return m_types; }
-    AST::Builder& astBuilder() { return m_astBuilder; }
+    const String& source() const LIFETIME_BOUND { return m_source; }
+    const Configuration& configuration() const LIFETIME_BOUND { return m_configuration; }
+    AST::Declaration::List& declarations() LIFETIME_BOUND { return m_declarations; }
+    const AST::Declaration::List& declarations() const LIFETIME_BOUND { return m_declarations; }
+    AST::Directive::List& directives() LIFETIME_BOUND { return m_directives; }
+    TypeStore& types() LIFETIME_BOUND { return m_types; }
+    AST::Builder& astBuilder() LIFETIME_BOUND { return m_astBuilder; }
 
     const CallGraph& callGraph() const { return *m_callGraph; }
     void setCallGraph(CallGraph&& callGraph)
@@ -89,6 +93,9 @@ public:
 
     bool usesWorkgroupUniformLoad() const { return m_usesWorkgroupUniformLoad; }
     void setUsesWorkgroupUniformLoad() { m_usesWorkgroupUniformLoad = true; }
+
+    bool usesWorkgroupUniformLoadAtomic() const { return m_usesWorkgroupUniformLoadAtomic; }
+    void setUsesWorkgroupUniformLoadAtomic() { m_usesWorkgroupUniformLoadAtomic = true; }
 
     bool usesDivision() const { return m_usesDivision; }
     void setUsesDivision() { m_usesDivision = true; }
@@ -150,6 +157,9 @@ public:
 
     bool usesInsertBits() const { return m_usesInsertBits; }
     void setUsesInsertBits() { m_usesInsertBits = true; }
+
+    bool usesZeroWorkgroupVar() const { return m_usesZeroWorkgroupVar; }
+    void setUsesZeroWorkgroupVar() { m_usesZeroWorkgroupVar = true; }
 
     template<typename T>
     std::enable_if_t<std::is_base_of_v<AST::Node, T>, void> replace(T* current, T&& replacement)
@@ -270,34 +280,51 @@ public:
         m_replacements.shrinkCapacity(limit);
     }
 
-    OptionSet<Extension>& enabledExtensions() { return m_enabledExtensions; }
-    OptionSet<LanguageFeature> requiredFeatures() { return m_requiredFeatures; }
-    bool containsOverride(uint32_t idValue) const
+    OptionSet<Extension>& enabledExtensions() LIFETIME_BOUND { return m_enabledExtensions; }
+    OptionSet<LanguageFeature>& requiredFeatures() LIFETIME_BOUND { return m_requiredFeatures; }
+    bool containsOverrideID(uint32_t idValue) const
     {
         return m_pipelineOverrideIds.contains(idValue);
     }
-    void addOverride(uint32_t idValue)
+    void addOverrideID(uint32_t idValue)
     {
         m_pipelineOverrideIds.add(idValue);
     }
     bool hasFeature(const String& featureName) const { return m_configuration.supportedFeatures.contains(featureName); }
 
-    template<typename Validator>
-    void addOverrideValidation(AST::Expression& expression, Validator&& validator)
-    {
-        auto result = m_overrideValidations.add(&expression, Vector<Function<std::optional<String>(const ConstantValue&)>> { });
-        result.iterator->value.append(WTF::move(validator));
-    }
+    using OverrideValidator = Function<std::optional<Error>(const HashMap<String, ConstantValue>&)>;
 
     template<typename Validator>
     void addOverrideValidation(Validator&& validator)
     {
-        m_finalOverrideValidations.append(WTF::move(validator));
+        m_overrideValidations.append(WTF::move(validator));
     }
 
-    std::optional<Error> validateOverrides(const HashMap<String, ConstantValue>&);
+    size_t currentOverrideValidationsSize() const
+    {
+        return m_overrideValidations.size();
+    }
+
+    void revertOverrideValidations(size_t size)
+    {
+        m_overrideValidations.shrink(size);
+    }
+
+    std::optional<Error> validateOverrides(const PrepareResult&, HashMap<String, ConstantValue>&);
+
+    const OverloadedDeclaration* lookupOverload(const String&) const;
+    // Only the type checker resolves overloads. Later passes look builtins up only for their
+    // constant and validation functions, which this keeps.
+    void releaseOverloadCandidates();
+
+    void addOverride(AST::Variable& variable) { m_overrides.append(&variable); }
+    bool containsOverride(const String& key) const;
+
+    Result<ConstantValue> ensureOverrideValue(const AST::Expression&, const HashMap<String, ConstantValue>&) const;
 
 private:
+    void initializeOverloads();
+
     String m_source;
     bool m_usesExternalTextures { false };
     bool m_usesPackArray { false };
@@ -305,6 +332,7 @@ private:
     bool m_usesPackVector { false };
     bool m_usesUnpackVector { false };
     bool m_usesWorkgroupUniformLoad { false };
+    bool m_usesWorkgroupUniformLoadAtomic { false };
     bool m_usesDivision { false };
     bool m_usesModulo { false };
     bool m_usesFrexp { false };
@@ -325,6 +353,7 @@ private:
     bool m_usesMin { false };
     bool m_usesFtoi { false };
     bool m_usesInsertBits { false };
+    bool m_usesZeroWorkgroupVar { false };
     OptionSet<Extension> m_enabledExtensions;
     OptionSet<LanguageFeature> m_requiredFeatures;
     Configuration m_configuration;
@@ -335,8 +364,9 @@ private:
     std::optional<CallGraph> m_callGraph;
     Vector<std::function<void()>> m_replacements;
     HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_pipelineOverrideIds;
-    HashMap<const AST::Expression*, Vector<Function<std::optional<String>(const ConstantValue&)>>> m_overrideValidations;
-    Vector<Function<std::optional<Error>()>> m_finalOverrideValidations;
+    Vector<OverrideValidator> m_overrideValidations;
+    HashMap<String, OverloadedDeclaration> m_overloadedOperations;
+    Vector<AST::Variable*> m_overrides;
 };
 
 } // namespace WGSL

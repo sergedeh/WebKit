@@ -33,11 +33,9 @@
 #include "pas_heap_config.h"
 #include "pas_heap_inlines.h"
 #include "pas_heap_ref.h"
-#include "pas_heap_table.h"
 #include "pas_immortal_heap.h"
 #include "pas_log.h"
 #include "pas_mar_registry.h"
-#include "pas_monotonic_time.h"
 #include "pas_primitive_heap_ref.h"
 #include "pas_probabilistic_guard_malloc_allocator.h"
 #include "pas_segregated_size_directory.h"
@@ -64,7 +62,8 @@ pas_heap* pas_heap_create(pas_heap_ref* heap_ref,
     PAS_ASSERT(pas_is_aligned(config->get_type_size(heap_ref->type),
                               config->get_type_alignment(heap_ref->type)));
     
-    heap = pas_immortal_heap_allocate(sizeof(pas_heap), "pas_heap", pas_object_allocation);
+    heap = pas_immortal_heap_allocate_with_alignment(
+        sizeof(pas_heap), PAS_ALIGNOF(pas_heap), "pas_heap", pas_object_allocation);
 
     begin = (uintptr_t)heap;
     PAS_PROFILE(CREATE_HEAP, begin);
@@ -74,12 +73,10 @@ pas_heap* pas_heap_create(pas_heap_ref* heap_ref,
     heap->type = heap_ref->type;
     pas_segregated_heap_construct(
         &heap->segregated_heap, heap, config, runtime_config);
-    pas_large_heap_construct(&heap->megapage_large_heap, true);
-    pas_large_heap_construct(&heap->large_heap, false);
+    pas_large_heap_construct(&heap->large_heap, config->large_map_variant);
     heap->heap_ref = heap_ref;
     heap->heap_ref_kind = heap_ref_kind;
     heap->config_kind = config->kind;
-    heap->is_non_compact_heap = heap_ref->is_non_compact_heap;
 
     // PGM being enabled in the config does not guarantee it will be called during runtime.
     if (config->pgm_enabled)

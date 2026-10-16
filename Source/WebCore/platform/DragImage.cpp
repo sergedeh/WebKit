@@ -41,12 +41,6 @@
 
 namespace WebCore {
 
-#if PLATFORM(COCOA)
-const float ColorSwatchCornerRadius = 4;
-const float ColorSwatchStrokeSize = 4;
-const float ColorSwatchWidth = 24;
-#endif
-
 DragImageRef fitDragImageToMaxSize(DragImageRef image, const IntSize& layoutSize, const IntSize& maxSize)
 {
     float heightResizeRatio = 0.0f;
@@ -84,14 +78,14 @@ struct ScopedNodeDragEnabler {
         : element(dynamicDowncast<Element>(node))
     {
         if (element)
-            element->setBeingDragged(true);
-        frame.protectedDocument()->updateLayout();
+            protect(element)->setBeingDragged(true);
+        protect(frame.document())->updateLayout();
     }
 
     ~ScopedNodeDragEnabler()
     {
         if (element)
-            element->setBeingDragged(false);
+            protect(element)->setBeingDragged(false);
     }
 
     RefPtr<Element> element;
@@ -104,7 +98,7 @@ static DragImageRef createDragImageFromSnapshot(RefPtr<ImageBuffer> snapshot, No
 
     ImageOrientation orientation;
     if (node) {
-        auto* elementRenderer = dynamicDowncast<RenderElement>(node->renderer());
+        CheckedPtr elementRenderer = dynamicDowncast<RenderElement>(node->renderer());
         if (!elementRenderer)
             return nullptr;
 
@@ -121,7 +115,7 @@ DragImageRef createDragImageForNode(LocalFrame& frame, Node& node)
 {
     ScopedNodeDragEnabler enableDrag(frame, node);
 
-    SnapshotOptions options { { SnapshotFlags::DraggableElement }, PixelFormat::BGRA8, DestinationColorSpace::SRGB() };
+    SnapshotOptions options { { SnapshotFlags::DraggableElement }, PixelFormat::BGRA8, ColorSpace::SRGB() };
 
     return createDragImageFromSnapshot(snapshotNode(frame, node, WTF::move(options)), &node);
 }
@@ -130,7 +124,7 @@ DragImageRef createDragImageForNode(LocalFrame& frame, Node& node)
 
 DragImageData createDragImageForSelection(LocalFrame& frame, bool forceBlackText)
 {
-    SnapshotOptions options { { }, PixelFormat::BGRA8, DestinationColorSpace::SRGB() };
+    SnapshotOptions options { { }, PixelFormat::BGRA8, ColorSpace::SRGB() };
     if (forceBlackText)
         options.flags.add(SnapshotFlags::ForceBlackText);
     return { createDragImageFromSnapshot(snapshotSelection(frame, WTF::move(options)), nullptr), nullptr };
@@ -142,13 +136,13 @@ struct ScopedFrameSelectionState {
     ScopedFrameSelectionState(LocalFrame& frame)
         : frame(frame)
     {
-        if (auto* renderView = frame.contentRenderer())
+        if (CheckedPtr renderView = frame.contentRenderer())
             selection = renderView->selection().get();
     }
 
     ~ScopedFrameSelectionState()
     {
-        if (auto* renderView = frame->contentRenderer()) {
+        if (CheckedPtr renderView = frame->contentRenderer()) {
             ASSERT(selection);
             renderView->selection().set(selection.value(), RenderSelection::RepaintMode::Nothing);
         }
@@ -162,8 +156,8 @@ struct ScopedFrameSelectionState {
 
 DragImageRef createDragImageForRange(LocalFrame& frame, const SimpleRange& range, bool forceBlackText)
 {
-    frame.protectedDocument()->updateLayout();
-    RenderView* view = frame.contentRenderer();
+    protect(frame.document())->updateLayout();
+    CheckedPtr view = frame.contentRenderer();
     if (!view)
         return nullptr;
 
@@ -183,12 +177,12 @@ DragImageRef createDragImageForRange(LocalFrame& frame, const SimpleRange& range
 
     const ScopedFrameSelectionState selectionState(frame);
 
-    RenderObject* startRenderer = start.deprecatedNode()->renderer();
-    RenderObject* endRenderer = end.deprecatedNode()->renderer();
+    CheckedPtr startRenderer = start.deprecatedNode()->renderer();
+    CheckedPtr endRenderer = end.deprecatedNode()->renderer();
     if (!startRenderer || !endRenderer)
         return nullptr;
 
-    SnapshotOptions options { { SnapshotFlags::PaintSelectionOnly }, PixelFormat::BGRA8, DestinationColorSpace::SRGB() };
+    SnapshotOptions options { { SnapshotFlags::PaintSelectionOnly }, PixelFormat::BGRA8, ColorSpace::SRGB() };
     if (forceBlackText)
         options.flags.add(SnapshotFlags::ForceBlackText);
 
@@ -207,23 +201,16 @@ DragImageRef createDragImageForImage(LocalFrame& frame, Node& node, IntRect& ima
 {
     ScopedNodeDragEnabler enableDrag(frame, node);
 
-    RenderObject* renderer = node.renderer();
-    if (!renderer)
+    if (!node.renderer())
         return nullptr;
 
-    // Calculate image and element metrics for the client, then create drag image.
-    LayoutRect topLevelRect;
-    IntRect paintingRect = snappedIntRect(renderer->paintingRootRect(topLevelRect));
+    SnapshotOptions options { { SnapshotFlags::DraggableElement }, PixelFormat::BGRA8, ColorSpace::SRGB() };
 
-    if (paintingRect.isEmpty())
+    RefPtr snapshot = snapshotNode(frame, node, WTF::move(options), &imageRect, &elementRect);
+    if (imageRect.isEmpty())
         return nullptr;
 
-    elementRect = snappedIntRect(topLevelRect);
-    imageRect = paintingRect;
-
-    SnapshotOptions options { { SnapshotFlags::DraggableElement }, PixelFormat::BGRA8, DestinationColorSpace::SRGB() };
-
-    return createDragImageFromSnapshot(snapshotNode(frame, node, WTF::move(options)), &node);
+    return createDragImageFromSnapshot(WTF::move(snapshot), &node);
 }
 
 #if !PLATFORM(IOS_FAMILY) || !ENABLE(DRAG_SUPPORT)
@@ -285,7 +272,7 @@ DragImage::~DragImage()
         deleteDragImage(m_dragImageRef);
 }
 
-#if !PLATFORM(COCOA) && !PLATFORM(GTK) && !PLATFORM(WIN) && !(PLATFORM(WPE) && ENABLE(DRAG_SUPPORT) && USE(SKIA))
+#if !PLATFORM(COCOA) && !PLATFORM(GTK) && !PLATFORM(WIN) && !(PLATFORM(WPE) && ENABLE(DRAG_SUPPORT))
 
 IntSize dragImageSize(DragImageRef)
 {

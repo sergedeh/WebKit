@@ -42,41 +42,41 @@ WKTypeID WKNotificationManagerGetTypeID()
 
 void WKNotificationManagerSetProvider(WKNotificationManagerRef managerRef, const WKNotificationProviderBase* wkProvider)
 {
-    toProtectedImpl(managerRef)->setProvider(makeUnique<WebNotificationProvider>(wkProvider));
+    protect(toImpl(managerRef))->setProvider(makeUnique<WebNotificationProvider>(wkProvider));
 }
 
 void WKNotificationManagerProviderDidShowNotification(WKNotificationManagerRef managerRef, uint64_t notificationID)
 {
-    toProtectedImpl(managerRef)->providerDidShowNotification(WebNotificationIdentifier { notificationID });
+    protect(toImpl(managerRef))->providerDidShowNotification(WebNotificationIdentifier { notificationID });
 }
 
 void WKNotificationManagerProviderDidClickNotification(WKNotificationManagerRef managerRef, uint64_t notificationID)
 {
-    toProtectedImpl(managerRef)->providerDidClickNotification(WebNotificationIdentifier { notificationID });
+    protect(toImpl(managerRef))->providerDidClickNotification(WebNotificationIdentifier { notificationID });
 }
 
 void WKNotificationManagerProviderDidClickNotification_b(WKNotificationManagerRef managerRef, WKDataRef identifier)
 {
-    auto span = toImpl(identifier)->span();
-    if (span.size() != 16)
+    auto uuid = WTF::UUID::tryCreate(toImpl(identifier)->span());
+    if (!uuid)
         return;
 
-    toProtectedImpl(managerRef)->providerDidClickNotification(WTF::UUID { std::span<const uint8_t, 16> { span } });
+    protect(toImpl(managerRef))->providerDidClickNotification(*uuid);
 }
 
 void WKNotificationManagerProviderDidCloseNotifications(WKNotificationManagerRef managerRef, WKArrayRef notificationIDs)
 {
-    toProtectedImpl(managerRef)->providerDidCloseNotifications(toProtectedImpl(notificationIDs).get());
+    protect(toImpl(managerRef))->providerDidCloseNotifications(protect(toImpl(notificationIDs)).get());
 }
 
 void WKNotificationManagerProviderDidUpdateNotificationPolicy(WKNotificationManagerRef managerRef, WKSecurityOriginRef origin, bool allowed)
 {
-    toProtectedImpl(managerRef)->providerDidUpdateNotificationPolicy(toProtectedImpl(origin).get(), allowed);
+    protect(toImpl(managerRef))->providerDidUpdateNotificationPolicy(protect(toImpl(origin)).get(), allowed);
 }
 
 void WKNotificationManagerProviderDidRemoveNotificationPolicies(WKNotificationManagerRef managerRef, WKArrayRef origins)
 {
-    toProtectedImpl(managerRef)->providerDidRemoveNotificationPolicies(toProtectedImpl(origins).get());
+    protect(toImpl(managerRef))->providerDidRemoveNotificationPolicies(protect(toImpl(origins)).get());
 }
 
 WKNotificationManagerRef WKNotificationManagerGetSharedServiceWorkerNotificationManager()

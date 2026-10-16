@@ -49,10 +49,11 @@ class MachSendRight;
 namespace IPC {
 class Connection;
 class Decoder;
+enum class Critical : bool;
 }
 
 namespace WebCore {
-class DestinationColorSpace;
+class ColorSpace;
 class DisplayRefreshMonitor;
 class GraphicsLayer;
 class GraphicsLayerFactory;
@@ -87,7 +88,7 @@ public:
     DrawingAreaIdentifier identifier() const { return m_identifier; }
 
 #if ENABLE(TILED_CA_DRAWING_AREA)
-    static bool supportsGPUProcessRendering(DrawingAreaType);
+    static bool LEGACY_NODELETE supportsGPUProcessRendering(DrawingAreaType);
 #else
     static bool supportsGPUProcessRendering();
 #endif
@@ -134,6 +135,7 @@ public:
     virtual void setRootCompositingLayer(WebCore::Frame&, WebCore::GraphicsLayer*) = 0;
     virtual void addRootFrame(WebCore::FrameIdentifier) { }
     virtual void removeRootFrame(WebCore::FrameIdentifier) { }
+    virtual bool hasRootFrame(WebCore::FrameIdentifier) const { return false; }
 
     // Cause a rendering update to happen as soon as possible.
     virtual void triggerRenderingUpdate() = 0;
@@ -153,7 +155,7 @@ public:
 
     virtual void attachViewOverlayGraphicsLayer(WebCore::FrameIdentifier, WebCore::GraphicsLayer*) { }
 
-    virtual std::optional<WebCore::DestinationColorSpace> displayColorSpace() const { return { }; }
+    virtual std::optional<WebCore::ColorSpace> displayColorSpace() const { return { }; }
 
     virtual bool addMilestonesToDispatch(OptionSet<WebCore::LayoutMilestone>) { return false; }
 
@@ -171,7 +173,11 @@ public:
 #if USE(COORDINATED_GRAPHICS) || USE(TEXTURE_MAPPER)
     virtual void updateGeometry(const WebCore::IntSize&, CompletionHandler<void()>&&) = 0;
     virtual bool enterAcceleratedCompositingModeIfNeeded() = 0;
-    virtual void backgroundColorDidChange() { };
+    virtual void backgroundColorDidChange() { }
+#endif
+
+#if USE(COORDINATED_GRAPHICS)
+    virtual void releaseMemory(WTF::Critical) { }
 #endif
 
 #if PLATFORM(WPE) && ENABLE(WPE_PLATFORM) && (USE(GBM) || OS(ANDROID))
@@ -184,7 +190,7 @@ public:
 
 #if ENABLE(DAMAGE_TRACKING)
     virtual void resetDamageHistoryForTesting() { }
-    virtual void foreachRegionInDamageHistoryForTesting(Function<void(const WebCore::Region&)>&&) const { }
+    virtual void foreachRegionInDamageHistoryForTesting(NOESCAPE const Function<void(const WebCore::Region&)>&) const { }
 #endif
 
     virtual void adoptLayersFromDrawingArea(DrawingArea&) { }
@@ -207,8 +213,6 @@ protected:
         Ref webPage = m_webPage;
         return webPage->send(std::forward<T>(message), m_identifier.toUInt64(), { });
     }
-
-    Ref<WebPage> protectedWebPage() const { return m_webPage; }
 
     DrawingAreaIdentifier m_identifier;
     WeakRef<WebPage> m_webPage;
@@ -237,7 +241,7 @@ private:
     RefPtr<WebCore::DisplayRefreshMonitor> createDisplayRefreshMonitor(WebCore::PlatformDisplayID) override;
 
 #if PLATFORM(COCOA)
-    virtual void setColorSpace(std::optional<WebCore::DestinationColorSpace>) { }
+    virtual void setColorSpace(std::optional<WebCore::ColorSpace>) { }
 #endif
 
 #if PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE)

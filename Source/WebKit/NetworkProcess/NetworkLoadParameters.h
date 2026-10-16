@@ -27,6 +27,7 @@
 
 #include "NavigationActionData.h"
 #include "NetworkActivityTracker.h"
+#include "NetworkCacheKey.h"
 #include "PolicyDecision.h"
 #include "WebPageProxyIdentifier.h"
 #include <WebCore/BlobDataFileReference.h>
@@ -40,6 +41,20 @@
 namespace WebKit {
 
 enum class PreconnectOnly : bool { No, Yes };
+
+// Present when the load may use a compression dictionary. NetworkDataTask follows redirects itself
+// and has to rematch for the new URL, so destination outlives any one match; match is unset when
+// nothing matched.
+struct CompressionDictionaryParameters {
+    struct Match {
+        NetworkCache::Key key;
+        std::array<uint8_t, 32> hash;
+        String id;
+    };
+
+    WebCore::FetchOptions::Destination destination { WebCore::FetchOptions::Destination::EmptyString };
+    std::optional<Match> match { };
+};
 
 struct NetworkLoadParameters {
     Markable<WebPageProxyIdentifier> webPageProxyID;
@@ -56,18 +71,24 @@ struct NetworkLoadParameters {
     bool shouldClearReferrerOnHTTPSToHTTPRedirect { true };
     bool needsCertificateInfo { false };
     bool isMainFrameNavigation { false };
-    std::optional<NavigationActionData> mainResourceNavigationDataForAnyFrame;
-    Vector<Ref<WebCore::BlobDataFileReference>> blobFileReferences;
+    std::optional<NavigationActionData> mainResourceNavigationDataForAnyFrame { };
+    Vector<Ref<WebCore::BlobDataFileReference>> blobFileReferences { };
     PreconnectOnly shouldPreconnectOnly { PreconnectOnly::No };
-    std::optional<NetworkActivityTracker> networkActivityTracker;
+    std::optional<NetworkActivityTracker> networkActivityTracker { };
     std::optional<NavigatingToAppBoundDomain> isNavigatingToAppBoundDomain { NavigatingToAppBoundDomain::No };
     bool hadMainFrameMainResourcePrivateRelayed { false };
     bool allowPrivacyProxy { true };
-    OptionSet<WebCore::AdvancedPrivacyProtections> advancedPrivacyProtections;
+    OptionSet<WebCore::AdvancedPrivacyProtections> advancedPrivacyProtections { };
     bool isInitiatedByDedicatedWorker { false };
 
-    RefPtr<WebCore::SecurityOrigin> protectedSourceOrigin() const { return sourceOrigin; }
     uint64_t requiredCookiesVersion { 0 };
+
+    // The navigation initiator lost the navigated frame's Storage Access API grant (computed in
+    // the WebProcess). We should block storage access cookies on this load's network requests without
+    // revoking the frame's storage from JS until the navigation load commits.
+    bool navigationLosesFrameSpecificStorageAccess { false };
+
+    std::optional<CompressionDictionaryParameters> compressionDictionary { };
 };
 
 } // namespace WebKit

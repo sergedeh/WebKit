@@ -13,7 +13,6 @@
 #include "compiler/translator/tree_util/DriverUniform.h"
 #include "compiler/translator/tree_util/IntermNode_util.h"
 #include "compiler/translator/tree_util/IntermTraverse.h"
-#include "compiler/translator/tree_util/SpecializationConstant.h"
 
 namespace sh
 {
@@ -100,13 +99,21 @@ bool Traverser::visitAggregate(Visit visit, TIntermAggregate *node)
 
     // Replace the old dFdx() or dFdy() node with the new node that contains the corrected value
     //
-    // Note the following bugs (anglebug.com/42265816):
+    // Note the following limitations (anglebug.com/42265816):
     //
-    // - Side effects of operand are duplicated with the above
-    // - If the direct child of this node is itself dFdx/y, its queueReplacement will not be
-    //   effective as the parent is also replaced.
+    // - Side effects of operand are duplicated with the above.
+    // - If the operand is itself dFdx/dFdy, the derivatives under it are left unrotated and
+    //   unflipped (see below).
     queueReplacement(rotatedFlippedResult, OriginalNode::IS_DROPPED);
 
+    // Do not recurse into a dFdx/dFdy operand. A queued replacement of the operand records this
+    // node as its parent, which updateTree() redirects to the new expression. The operand is not
+    // a direct child of that expression, so the replacement would fail.
+    TIntermAggregate *operandAgg = operand->getAsAggregate();
+    if (operandAgg && (operandAgg->getOp() == EOpDFdx || operandAgg->getOp() == EOpDFdy))
+    {
+        return false;
+    }
     return true;
 }
 }  // anonymous namespace

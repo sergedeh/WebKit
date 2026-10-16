@@ -26,8 +26,8 @@
 #include "config.h"
 #include "CoordinatedPlatformLayerBufferNativeImage.h"
 
-#if USE(COORDINATED_GRAPHICS)
-#include "BitmapTexture.h"
+#if USE(COORDINATED_GRAPHICS) && USE(TEXTURE_MAPPER)
+#include "BitmapTexturePool.h"
 #include "CoordinatedPlatformLayerBufferRGB.h"
 #include "NativeImage.h"
 #include "TextureMapper.h"
@@ -40,11 +40,14 @@
 #if USE(SKIA)
 #include "GLContext.h"
 #include "PlatformDisplay.h"
+#include "SkiaUtilities.h"
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+#include <skia/core/SkColorSpace.h>
+#include <skia/core/SkPixmap.h> // NOLINT
 #include <skia/gpu/ganesh/GrBackendSurface.h>
 #include <skia/gpu/ganesh/SkImageGanesh.h>
+#include <skia/gpu/ganesh/SkSurfaceGanesh.h>
 #include <skia/gpu/ganesh/gl/GrGLBackendSurface.h>
-#include <skia/core/SkPixmap.h> // NOLINT
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 #endif
 
@@ -75,17 +78,11 @@ CoordinatedPlatformLayerBufferNativeImage::CoordinatedPlatformLayerBufferNativeI
     RELEASE_ASSERT(grContext);
     grContext->flushAndSubmit(GLFence::isSupported(display.glDisplay()) ? GrSyncCpu::kNo : GrSyncCpu::kYes);
 
-    unsigned textureID = 0;
-    GrBackendTexture backendTexture;
-    if (SkImages::GetBackendTextureFromImage(image, &backendTexture, false)) {
-        GrGLTextureInfo textureInfo;
-        if (GrBackendTextures::GetGLTextureInfo(backendTexture, &textureInfo))
-            textureID = textureInfo.fID;
-    }
+    auto textureID = SkiaUtilities::retrieveGLTextureID(*image);
     if (!textureID)
         return;
 
-    m_buffer = CoordinatedPlatformLayerBufferRGB::create(textureID, m_image->size(), m_flags, GLFence::create(display.glDisplay()));
+    lazyInitialize(m_buffer, CoordinatedPlatformLayerBufferRGB::create(*textureID, m_image->size(), m_flags, GLFence::create(display.glDisplay())));
 #endif
 }
 
@@ -103,7 +100,7 @@ CoordinatedPlatformLayerBufferNativeImage::~CoordinatedPlatformLayerBufferNative
 #endif
 }
 
-bool CoordinatedPlatformLayerBufferNativeImage::tryEnsureBuffer(TextureMapper& textureMapper)
+bool CoordinatedPlatformLayerBufferNativeImage::tryEnsureBuffer()
 {
     if (m_buffer)
         return true;
@@ -116,20 +113,28 @@ bool CoordinatedPlatformLayerBufferNativeImage::tryEnsureBuffer(TextureMapper& t
     OptionSet<BitmapTexture::Flags> textureFlags;
     if (m_image->hasAlpha())
         textureFlags.add(BitmapTexture::Flags::SupportsAlpha);
-    auto texture = textureMapper.acquireTextureFromPool(m_size, textureFlags);
+
+#if USE(SKIA)
+    if (m_image->platformImage()->imageInfo().colorType() == kBGRA_8888_SkColorType)
+        textureFlags.add(BitmapTexture::Flags::UseBGRALayout);
+#endif
+
+    auto texture = BitmapTexturePool::singleton().acquireTexture(m_size, textureFlags);
 
 #if USE(CAIRO)
-    auto* surface = m_image->platformImage().get();
-    auto* imageData = cairo_image_surface_get_data(surface);
-    texture->updateContents(imageData, IntRect(IntPoint(), m_size), IntPoint(), cairo_image_surface_get_stride(surface), PixelFormat::BGRA8);
+    auto surface = m_image->platformImage();
+    auto* imageData = cairo_image_surface_get_data(surface.get());
+    texture->updateContents(imageData, IntRect(IntPoint(), m_size), IntPoint(), cairo_image_surface_get_stride(surface.get()), PixelFormat::BGRA8);
 #elif USE(SKIA)
     const auto& image = m_image->platformImage();
     SkPixmap pixmap;
-    if (image->peekPixels(&pixmap))
-        texture->updateContents(pixmap.addr(), IntRect(IntPoint(), m_size), IntPoint(), image->imageInfo().minRowBytes(), PixelFormat::BGRA8);
+    if (!image->peekPixels(&pixmap))
+        return false;
+
+    texture->updateContents(pixmap.addr(), IntRect(IntPoint(), m_size), IntPoint(), image->imageInfo().minRowBytes(), PixelFormat::BGRA8);
 #endif
 
-    m_buffer = CoordinatedPlatformLayerBufferRGB::create(WTF::move(texture), m_flags, nullptr);
+    lazyInitialize(m_buffer, CoordinatedPlatformLayerBufferRGB::create(WTF::move(texture), m_flags, nullptr));
     return true;
 }
 
@@ -137,7 +142,7 @@ void CoordinatedPlatformLayerBufferNativeImage::paintToTextureMapper(TextureMapp
 {
     waitForContentsIfNeeded();
 
-    if (!tryEnsureBuffer(textureMapper))
+    if (!tryEnsureBuffer())
         return;
 
     m_buffer->paintToTextureMapper(textureMapper, targetRect, modelViewMatrix, opacity);
@@ -145,4 +150,4 @@ void CoordinatedPlatformLayerBufferNativeImage::paintToTextureMapper(TextureMapp
 
 } // namespace WebCore
 
-#endif // USE(COORDINATED_GRAPHICS)
+#endif // USE(COORDINATED_GRAPHICS) && USE(TEXTURE_MAPPER)

@@ -45,10 +45,13 @@ private:
     double minimumZoomScale() const override;
     void simulateAccessibilitySettingsChangeNotification(JSValueRef) override;
     bool isShowingDateTimePicker() const override;
+    JSObjectRef dateTimePickerRect() const override;
     double dateTimePickerValue() const override;
     void chooseDateTimePickerValue() override;
     bool isShowingDataListSuggestions() const override;
     void activateDataListSuggestion(unsigned index, JSValueRef callback) override;
+    void setSelectedColorForColorPicker(double, double, double) override;
+    bool isShowingColorPicker() const override;
     void beginBackSwipe(JSValueRef) override;
     void completeBackSwipe(JSValueRef) override;
     void playBackEventStream(JSStringRef, JSValueRef) override;
@@ -67,12 +70,16 @@ private:
 
     void chooseMenuAction(JSStringRef, JSValueRef) override;
 
+    void dismissFormAccessoryView() final;
+    void selectFormAccessoryPickerRow(long) final;
+    bool selectFormAccessoryHasCheckedItemAtRow(long) const final;
+
     void activateAtPoint(long x, long y, JSValueRef callback) override;
 
     void sendEventStream(JSStringRef, JSValueRef) override;
 
     NSTableView *dataListSuggestionsTableView() const;
-    JSRetainPtr<JSStringRef> scrollbarStateForScrollingNodeID(unsigned long long scrollingNodeID, unsigned long long processID, bool) const override;
+    RefPtr<OpaqueJSString> scrollbarStateForScrollingNodeID(unsigned long long scrollingNodeID, unsigned long long processID, bool) const override;
 
     int64_t pasteboardChangeCount() const final;
 

@@ -23,6 +23,7 @@
 
 #include "ActiveDOMObject.h"
 #include "Document.h"
+#include "DocumentPage.h"
 #include "DocumentParser.h"
 #include "LocalFrame.h"
 #include "LocalFrameInlines.h"
@@ -50,7 +51,7 @@ PageGroupLoadDeferrer::PageGroupLoadDeferrer(Page& page, bool deferSelf)
             RefPtr localFrame = dynamicDowncast<LocalFrame>(frame);
             if (!localFrame)
                 continue;
-            localFrame->protectedDocument()->suspendScheduledTasks(ReasonForSuspension::WillDeferLoading);
+            protect(localFrame->document())->suspendScheduledTasks(ReasonForSuspension::WillDeferLoading);
         }
     }
 
@@ -72,7 +73,7 @@ PageGroupLoadDeferrer::~PageGroupLoadDeferrer()
             RefPtr localFrame = dynamicDowncast<LocalFrame>(frame);
             if (!localFrame)
                 continue;
-            localFrame->protectedDocument()->resumeScheduledTasks(ReasonForSuspension::WillDeferLoading);
+            protect(localFrame->document())->resumeScheduledTasks(ReasonForSuspension::WillDeferLoading);
         }
     }
 }

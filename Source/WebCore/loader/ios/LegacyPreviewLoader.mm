@@ -39,6 +39,7 @@
 #import "ResourceLoader.h"
 #import "Settings.h"
 #import <wtf/NeverDestroyed.h>
+#import <wtf/text/TextStream.h>
 
 namespace WebCore {
 
@@ -54,13 +55,13 @@ static LegacyPreviewLoaderClient& emptyClient()
     return emptyClient.get();
 }
 
-static Ref<LegacyPreviewLoaderClient> makeClient(const ResourceLoader& loader, const String& previewFileName, const String& previewType)
+static Ref<LegacyPreviewLoaderClient> makeClient(const ResourceLoader& loader, const PreviewConverter& converter)
 {
     if (RefPtr client = testingClient())
         return client.releaseNonNull();
     if (!loader.frameLoader())
         return emptyClient();
-    if (RefPtr client = loader.frameLoader()->client().createPreviewLoaderClient(previewFileName, previewType))
+    if (RefPtr client = loader.frameLoader()->client().createPreviewLoaderClient(converter.previewFileName(), converter.previewUTI()))
         return client.releaseNonNull();
     return emptyClient();
 }
@@ -72,21 +73,16 @@ Ref<LegacyPreviewLoader> LegacyPreviewLoader::create(ResourceLoader& loader, con
 
 LegacyPreviewLoader::LegacyPreviewLoader(ResourceLoader& loader, const ResourceResponse& response)
     : m_converter { PreviewConverter::create(response, *this) }
-    , m_client { makeClient(loader, m_converter->previewFileName(), m_converter->previewUTI()) }
+    , m_client { makeClient(loader, protect(*m_converter)) }
     , m_resourceLoader { loader }
-    , m_shouldDecidePolicyBeforeLoading { loader.frame()->settings().shouldDecidePolicyBeforeLoadingQuickLookPreview() }
+    , m_shouldDecidePolicyBeforeLoading { protect(loader.frame())->settings().shouldDecidePolicyBeforeLoadingQuickLookPreview() }
 {
     ASSERT(PreviewConverter::supportsMIMEType(response.mimeType()));
-    protectedConverter()->addClient(*this);
-    LOG(Network, "LegacyPreviewLoader created with preview file name \"%s\".", m_converter->previewFileName().utf8().data());
+    protect(m_converter)->addClient(*this);
+    LOG_WITH_STREAM(Network, stream << "LegacyPreviewLoader created with preview file name \""_s << m_converter->previewFileName() << "\"."_s);
 }
 
 LegacyPreviewLoader::~LegacyPreviewLoader() = default;
-
-RefPtr<PreviewConverter> LegacyPreviewLoader::protectedConverter() const
-{
-    return m_converter;
-}
 
 bool LegacyPreviewLoader::didReceiveData(const SharedBuffer& buffer)
 {
@@ -95,7 +91,7 @@ bool LegacyPreviewLoader::didReceiveData(const SharedBuffer& buffer)
 
     LOG(Network, "LegacyPreviewLoader appending buffer with size %ld.", buffer.size());
     m_originalData.append(buffer);
-    protectedConverter()->updateMainResource();
+    protect(m_converter)->updateMainResource();
     m_client->didReceiveData(buffer);
     return true;
 }
@@ -107,7 +103,7 @@ bool LegacyPreviewLoader::didFinishLoading()
 
     LOG(Network, "LegacyPreviewLoader finished appending data.");
     m_finishedLoadingDataIntoConverter = true;
-    protectedConverter()->finishUpdating();
+    protect(m_converter)->finishUpdating();
     m_client->didFinishLoading();
     return true;
 }
@@ -119,7 +115,7 @@ void LegacyPreviewLoader::didFail()
 
     LOG(Network, "LegacyPreviewLoader failed.");
     m_finishedLoadingDataIntoConverter = true;
-    protectedConverter()->failedUpdating();
+    protect(m_converter)->failedUpdating();
     m_client->didFail();
     m_converter = nullptr;
 }
@@ -135,7 +131,7 @@ void LegacyPreviewLoader::previewConverterDidStartConverting(PreviewConverter& c
 
     ASSERT(!m_hasProcessedResponse);
     m_originalData.reset();
-    resourceLoader->protectedDocumentLoader()->setPreviewConverter(std::exchange(m_converter, nullptr));
+    protect(resourceLoader->documentLoader())->setPreviewConverter(std::exchange(m_converter, nullptr));
     auto response { converter.previewResponse() };
 
     if (m_shouldDecidePolicyBeforeLoading) {
@@ -144,13 +140,14 @@ void LegacyPreviewLoader::previewConverterDidStartConverting(PreviewConverter& c
         return;
     }
 
-    resourceLoader->didReceiveResponse(WTF::move(response), [this, weakThis = WeakPtr { static_cast<PreviewConverterClient&>(*this) }, converter = Ref { converter }] {
-        if (!weakThis)
+    resourceLoader->didReceiveResponse(WTF::move(response), [weakThis = WeakPtr { *this }, converter = Ref { converter }] {
+        RefPtr protectedThis = weakThis;
+        if (!protectedThis)
             return;
 
-        m_hasProcessedResponse = true;
+        protectedThis->m_hasProcessedResponse = true;
 
-        RefPtr resourceLoader = m_resourceLoader.get();
+        RefPtr resourceLoader = protectedThis->m_resourceLoader;
         if (!resourceLoader)
             return;
 
@@ -159,14 +156,14 @@ void LegacyPreviewLoader::previewConverterDidStartConverting(PreviewConverter& c
 
         if (!converter->previewData().isEmpty()) {
             auto bufferSize = converter->previewData().size();
-            resourceLoader->didReceiveBuffer(converter->previewData().copy(), bufferSize, DataPayloadBytes);
+            resourceLoader->didReceiveBuffer(protect(converter->previewData())->copy(), bufferSize, DataPayloadBytes);
         }
 
         if (resourceLoader->reachedTerminalState())
             return;
 
-        if (m_needsToCallDidFinishLoading) {
-            m_needsToCallDidFinishLoading = false;
+        if (protectedThis->m_needsToCallDidFinishLoading) {
+            protectedThis->m_needsToCallDidFinishLoading = false;
             resourceLoader->didFinishLoading(NetworkLoadMetrics { });
         }
     });

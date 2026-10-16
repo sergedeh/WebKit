@@ -29,7 +29,6 @@
 #include "MediaQueryEvaluator.h"
 #include "MediaQueryList.h"
 #include "MediaQueryParser.h"
-#include "MediaQueryParserContext.h"
 #include "NodeRenderStyle.h"
 #include "RenderElement.h"
 #include "ResolvedStyle.h"
@@ -50,7 +49,7 @@ void MediaQueryMatcher::documentDestroyed()
 {
     m_document = nullptr;
     auto mediaQueryLists = std::exchange(m_mediaQueryLists, { });
-    for (auto& mediaQueryList : mediaQueryLists) {
+    for (RefPtr mediaQueryList : mediaQueryLists) {
         if (mediaQueryList)
             mediaQueryList->detachFromMatcher();
     }
@@ -61,27 +60,14 @@ AtomString MediaQueryMatcher::mediaType() const
     if (!m_document || !m_document->frame() || !m_document->frame()->view())
         return nullAtom();
 
-    return m_document->frame()->view()->mediaType();
-}
-
-std::unique_ptr<RenderStyle> MediaQueryMatcher::documentElementUserAgentStyle() const
-{
-    if (!m_document || !m_document->frame())
-        return nullptr;
-
-    CheckedPtr documentElement = m_document->documentElement();
-    if (!documentElement)
-        return nullptr;
-
-    return m_document->styleScope().resolver().styleForElement(*documentElement, { m_document->renderStyle() }, RuleMatchingBehavior::MatchOnlyUserAgentRules).style;
+    return protect(m_document->frame()->view())->mediaType();
 }
 
 bool MediaQueryMatcher::evaluate(const MQ::MediaQueryList& queries)
 {
-    auto style = documentElementUserAgentStyle();
-    if (!style)
+    if (!m_document)
         return false;
-    return MQ::MediaQueryEvaluator { mediaType(), *m_document, style.get() }.evaluate(queries);
+    return MQ::MediaQueryEvaluator { mediaType(), *protect(m_document) }.evaluate(queries);
 }
 
 void MediaQueryMatcher::addMediaQueryList(MediaQueryList& list)
@@ -100,9 +86,9 @@ RefPtr<MediaQueryList> MediaQueryMatcher::matchMedia(const String& query)
     if (!m_document)
         return nullptr;
 
-    auto queries = MQ::MediaQueryParser::parse(query, m_document->cssParserContext());
+    auto queries = MQ::MediaQueryParser::parse(query, protect(m_document)->cssParserContext());
     bool matches = evaluate(queries);
-    return MediaQueryList::create(*m_document, *this, WTF::move(queries), matches);
+    return MediaQueryList::create(protect(*m_document), *this, WTF::move(queries), matches);
 }
 
 void MediaQueryMatcher::evaluateAll(EventMode eventMode)
@@ -111,13 +97,12 @@ void MediaQueryMatcher::evaluateAll(EventMode eventMode)
 
     ++m_evaluationRound;
 
-    auto style = documentElementUserAgentStyle();
-    if (!style)
+    if (!m_document)
         return;
 
     LOG_WITH_STREAM(MediaQueries, stream << "MediaQueryMatcher::styleResolverChanged " << m_document->url());
 
-    MQ::MediaQueryEvaluator evaluator { mediaType(), *m_document, style.get() };
+    MQ::MediaQueryEvaluator evaluator { mediaType(), *protect(m_document) };
 
     auto mediaQueryLists = m_mediaQueryLists;
     for (auto& list : mediaQueryLists) {

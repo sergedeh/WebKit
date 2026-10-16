@@ -27,6 +27,8 @@
 #include "CSSCounterStyleRule.h"
 
 #include "CSSCounterStyleDescriptors.h"
+#include "CSSKeywordValue.h"
+#include "CSSMarkup.h"
 #include "CSSPropertyParser.h"
 #include "CSSPropertyParserConsumer+CounterStyles.h"
 #include "CSSStyleSheet.h"
@@ -57,42 +59,54 @@ CSSCounterStyleDescriptors::System toCounterStyleSystemEnum(const CSSValue* syst
     if (!system)
         return CSSCounterStyleDescriptors::System::Symbolic;
 
-    ASSERT(system->isValueID() || system->isPair());
-    CSSValueID systemKeyword = CSSValueInvalid;
-    if (system->isValueID())
-        systemKeyword = system->valueID();
+    ASSERT(system->isKeywordValue() || system->isPair());
+    CSSValueID systemKeyword = CSSValueID::Invalid;
+    if (RefPtr systemIdent = dynamicDowncast<CSSKeywordValue>(system))
+        systemKeyword = systemIdent->valueID();
     else if (system->isPair()) {
-        // This value must be `fixed` or `extends`, both of which can or must have an additional component.
-        systemKeyword = system->first().valueID();
+        if (RefPtr systemIdent = dynamicDowncast<CSSKeywordValue>(system->first())) {
+            // This value must be `fixed` or `extends`, both of which can or must have an additional component.
+            systemKeyword = systemIdent->valueID();
+        }
     }
     switch (systemKeyword) {
-    case CSSValueCyclic:
+    case CSSValueID::Cyclic:
         return CSSCounterStyleDescriptors::System::Cyclic;
-    case CSSValueFixed:
+    case CSSValueID::Fixed:
         return CSSCounterStyleDescriptors::System::Fixed;
-    case CSSValueSymbolic:
+    case CSSValueID::Symbolic:
         return CSSCounterStyleDescriptors::System::Symbolic;
-    case CSSValueAlphabetic:
+    case CSSValueID::Alphabetic:
         return CSSCounterStyleDescriptors::System::Alphabetic;
-    case CSSValueNumeric:
+    case CSSValueID::Numeric:
         return CSSCounterStyleDescriptors::System::Numeric;
-    case CSSValueAdditive:
+    case CSSValueID::Additive:
         return CSSCounterStyleDescriptors::System::Additive;
-    case CSSValueInternalDisclosureClosed:
+    case CSSValueID::InternalDisclosureClosed:
         return CSSCounterStyleDescriptors::System::DisclosureClosed;
-    case CSSValueInternalDisclosureOpen:
+    case CSSValueID::InternalDisclosureOpen:
         return CSSCounterStyleDescriptors::System::DisclosureOpen;
-    case CSSValueInternalSimplifiedChineseInformal:
+    case CSSValueID::InternalSimplifiedChineseInformal:
         return CSSCounterStyleDescriptors::System::SimplifiedChineseInformal;
-    case CSSValueInternalSimplifiedChineseFormal:
+    case CSSValueID::InternalSimplifiedChineseFormal:
         return CSSCounterStyleDescriptors::System::SimplifiedChineseFormal;
-    case CSSValueInternalTraditionalChineseInformal:
+    case CSSValueID::InternalTraditionalChineseInformal:
         return CSSCounterStyleDescriptors::System::TraditionalChineseInformal;
-    case CSSValueInternalTraditionalChineseFormal:
+    case CSSValueID::InternalTraditionalChineseFormal:
         return CSSCounterStyleDescriptors::System::TraditionalChineseFormal;
-    case CSSValueInternalEthiopicNumeric:
+    case CSSValueID::InternalJapaneseInformal:
+        return CSSCounterStyleDescriptors::System::JapaneseInformal;
+    case CSSValueID::InternalJapaneseFormal:
+        return CSSCounterStyleDescriptors::System::JapaneseFormal;
+    case CSSValueID::InternalKoreanHangulFormal:
+        return CSSCounterStyleDescriptors::System::KoreanHangulFormal;
+    case CSSValueID::InternalKoreanHanjaInformal:
+        return CSSCounterStyleDescriptors::System::KoreanHanjaInformal;
+    case CSSValueID::InternalKoreanHanjaFormal:
+        return CSSCounterStyleDescriptors::System::KoreanHanjaFormal;
+    case CSSValueID::InternalEthiopicNumeric:
         return CSSCounterStyleDescriptors::System::EthiopicNumeric;
-    case CSSValueExtends:
+    case CSSValueID::Extends:
         return CSSCounterStyleDescriptors::System::Extends;
     default:
         ASSERT_NOT_REACHED();
@@ -157,7 +171,12 @@ String CSSCounterStyleRule::cssText() const
     const auto speakAsPrefix = speakAsText.isEmpty() ? ""_s : " speak-as: "_s;
     const auto speakAsSuffix = speakAsText.isEmpty() ? ""_s : ";"_s;
 
-    return makeString("@counter-style "_s, name(), " {"_s,
+    StringBuilder builder;
+
+    builder.append("@counter-style "_s);
+    serializeIdentifier(builder, name());
+
+    builder.append(" {"_s,
         systemPrefix, systemText, systemSuffix,
         symbolsPrefix, symbolsText, symbolsSuffix,
         additiveSymbolsPrefix, additiveSymbolsText, additiveSymbolsSuffix,
@@ -169,6 +188,8 @@ String CSSCounterStyleRule::cssText() const
         fallbackPrefix, fallbackText, fallbackSuffix,
         speakAsPrefix, speakAsText, speakAsSuffix,
     " }"_s);
+
+    return builder.toString();
 }
 
 void CSSCounterStyleRule::reattach(StyleRuleBase& rule)
@@ -195,7 +216,7 @@ void CSSCounterStyleRule::setName(const String& text)
 
 void CSSCounterStyleRule::setSystem(const String& text)
 {
-    auto systemValue = cssValueFromText(CSSPropertySystem, text);
+    auto systemValue = cssValueFromText(CSSPropertyID::System, text);
     if (!systemValue)
         return;
     auto system = toCounterStyleSystemEnum(systemValue.get());
@@ -210,7 +231,7 @@ void CSSCounterStyleRule::setSystem(const String& text)
 
 void CSSCounterStyleRule::setNegative(const String& text)
 {
-    auto newValue = cssValueFromText(CSSPropertyNegative, text);
+    auto newValue = cssValueFromText(CSSPropertyID::Negative, text);
     if (!newValue)
         return;
     CSSStyleSheet::RuleMutationScope mutationScope(this);
@@ -219,7 +240,7 @@ void CSSCounterStyleRule::setNegative(const String& text)
 
 void CSSCounterStyleRule::setPrefix(const String& text)
 {
-    auto newValue = cssValueFromText(CSSPropertyPrefix, text);
+    auto newValue = cssValueFromText(CSSPropertyID::Prefix, text);
     if (!newValue)
         return;
     CSSStyleSheet::RuleMutationScope mutationScope(this);
@@ -228,7 +249,7 @@ void CSSCounterStyleRule::setPrefix(const String& text)
 
 void CSSCounterStyleRule::setSuffix(const String& text)
 {
-    auto newValue = cssValueFromText(CSSPropertySuffix, text);
+    auto newValue = cssValueFromText(CSSPropertyID::Suffix, text);
     if (!newValue)
         return;
     CSSStyleSheet::RuleMutationScope mutationScope(this);
@@ -237,7 +258,7 @@ void CSSCounterStyleRule::setSuffix(const String& text)
 
 void CSSCounterStyleRule::setRange(const String& text)
 {
-    auto newValue = cssValueFromText(CSSPropertyRange, text);
+    auto newValue = cssValueFromText(CSSPropertyID::Range, text);
     if (!newValue)
         return;
     CSSStyleSheet::RuleMutationScope mutationScope(this);
@@ -246,7 +267,7 @@ void CSSCounterStyleRule::setRange(const String& text)
 
 void CSSCounterStyleRule::setPad(const String& text)
 {
-    auto newValue = cssValueFromText(CSSPropertyPad, text);
+    auto newValue = cssValueFromText(CSSPropertyID::Pad, text);
     if (!newValue)
         return;
     CSSStyleSheet::RuleMutationScope mutationScope(this);
@@ -255,7 +276,7 @@ void CSSCounterStyleRule::setPad(const String& text)
 
 void CSSCounterStyleRule::setFallback(const String& text)
 {
-    auto newValue = cssValueFromText(CSSPropertyFallback, text);
+    auto newValue = cssValueFromText(CSSPropertyID::Fallback, text);
     if (!newValue)
         return;
     CSSStyleSheet::RuleMutationScope mutationScope(this);
@@ -264,7 +285,7 @@ void CSSCounterStyleRule::setFallback(const String& text)
 
 void CSSCounterStyleRule::setSymbols(const String& text)
 {
-    auto newValue = cssValueFromText(CSSPropertySymbols, text);
+    auto newValue = cssValueFromText(CSSPropertyID::Symbols, text);
     if (!newValue)
         return;
     CSSStyleSheet::RuleMutationScope mutationScope(this);
@@ -273,7 +294,7 @@ void CSSCounterStyleRule::setSymbols(const String& text)
 
 void CSSCounterStyleRule::setAdditiveSymbols(const String& text)
 {
-    auto newValue = cssValueFromText(CSSPropertyAdditiveSymbols, text);
+    auto newValue = cssValueFromText(CSSPropertyID::AdditiveSymbols, text);
     if (!newValue)
         return;
     CSSStyleSheet::RuleMutationScope mutationScope(this);

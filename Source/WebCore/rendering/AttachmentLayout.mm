@@ -23,64 +23,31 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
-#include "AttachmentLayout.h"
+#import "config.h"
+#import "AttachmentLayout.h"
 
 #if ENABLE(ATTACHMENT_ELEMENT) && PLATFORM(COCOA)
 
-#include "ColorCocoa.h"
-#include "ElementInlines.h"
-#include "FontCacheCoreText.h"
-#include "FrameSelection.h"
-#include "GeometryUtilities.h"
-#include "RenderObjectInlines.h"
-#include "RenderTheme.h"
-#include <pal/spi/cf/CoreTextSPI.h>
-#include <wtf/cocoa/TypeCastsCocoa.h>
+#import "ColorCocoa.h"
+#import "ElementInlines.h"
+#import "FontCacheCoreText.h"
+#import "FrameSelection.h"
+#import "GeometryUtilities.h"
+#import "PlatformRenderTheme.h"
+#import "RenderObjectInlines.h"
+#import "RenderTheme.h"
+#import <pal/spi/cf/CoreTextSPI.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 
 namespace WebCore {
 
 #if PLATFORM(MAC)
 
-constexpr CGFloat attachmentIconSize = 48;
-constexpr CGFloat attachmentIconBackgroundPadding = 6;
-constexpr CGFloat attachmentIconBackgroundSize = attachmentIconSize + attachmentIconBackgroundPadding;
-constexpr CGFloat attachmentIconSelectionBorderThickness = 1;
-constexpr CGFloat attachmentIconBackgroundRadius = 3;
-constexpr CGFloat attachmentIconToTitleMargin = 2;
-
-constexpr auto attachmentIconBackgroundColor = Color::black.colorWithAlphaByte(30);
-constexpr auto attachmentIconBorderColor = Color::white.colorWithAlphaByte(125);
-
-constexpr CGFloat attachmentTitleFontSize = 12;
-constexpr CGFloat attachmentTitleBackgroundRadius = 3;
-constexpr CGFloat attachmentTitleBackgroundPadding = 3;
-constexpr CGFloat attachmentTitleMaximumWidth = 100 - (attachmentTitleBackgroundPadding * 2);
-constexpr CFIndex attachmentTitleMaximumLineCount = 2;
-
-constexpr CGFloat attachmentSubtitleFontSize = 10;
-constexpr int attachmentSubtitleWidthIncrement = 10;
-constexpr auto attachmentSubtitleTextColor = SRGBA<uint8_t> { 82, 145, 214 };
-
-constexpr CGFloat attachmentProgressBarWidth = 30;
-constexpr CGFloat attachmentProgressBarHeight = 5;
-constexpr CGFloat attachmentProgressBarOffset = -9;
-constexpr CGFloat attachmentProgressBarBorderWidth = 1;
-constexpr auto attachmentProgressBarBackgroundColor = Color::black.colorWithAlphaByte(89);
-constexpr auto attachmentProgressBarFillColor = Color::white;
-constexpr auto attachmentProgressBarBorderColor = Color::black.colorWithAlphaByte(128);
-
-constexpr CGFloat attachmentPlaceholderBorderRadius = 5;
-constexpr auto attachmentPlaceholderBorderColor = Color::black.colorWithAlphaByte(56);
-constexpr CGFloat attachmentPlaceholderBorderWidth = 2;
-constexpr CGFloat attachmentPlaceholderBorderDashLength = 6;
-constexpr CGFloat attachmentMargin = 3;
-
 static Color titleTextColorForAttachment(const RenderAttachment& attachment, AttachmentLayoutStyle style)
 {
     if (style == AttachmentLayoutStyle::Selected && attachment.frame().selection().isFocusedAndActive())
-        return RenderTheme::singleton().systemColor(CSSValueAppleSystemAlternateSelectedText, attachment.styleColorOptions());
-    return RenderTheme::singleton().systemColor(CSSValueCanvastext, attachment.styleColorOptions());
+        return RenderTheme::singleton().systemColor(CSSValueID::AppleSystemAlternateSelectedText, attachment.styleColorOptions(StyleColorOptionsPurpose::Rendering));
+    return RenderTheme::singleton().systemColor(CSSValueID::Canvastext, attachment.styleColorOptions(StyleColorOptionsPurpose::Rendering));
 }
 
 void AttachmentLayout::layOutTitle(const RenderAttachment& attachment)
@@ -90,7 +57,7 @@ void AttachmentLayout::layOutTitle(const RenderAttachment& attachment)
     baseline = CGRound(attachmentIconBackgroundSize + attachmentIconToTitleMargin + CTFontGetAscent(font.get()));
     wrappingWidth = attachmentTitleMaximumWidth;
     widthPadding = attachmentIconBackgroundSize;
-    String title = attachment.attachmentElement().attachmentTitleForDisplay();
+    String title = protect(attachment.attachmentElement())->attachmentTitleForDisplay();
     if (title.isEmpty())
         return;
     NSDictionary *textAttributes = @{
@@ -174,7 +141,7 @@ AttachmentLayout::AttachmentLayout(const RenderAttachment& attachment, Attachmen
         attachmentRect.unite(line.backgroundRect);
     if (!subtitleTextRect.isEmpty()) {
         FloatRect roundedSubtitleTextRect = subtitleTextRect;
-        roundedSubtitleTextRect.inflateX(attachmentSubtitleWidthIncrement - clampToInteger(ceilf(subtitleTextRect.width())) % attachmentSubtitleWidthIncrement);
+        roundedSubtitleTextRect.inflateX(attachmentSubtitleWidthIncrement - clampTo<int>(ceilf(subtitleTextRect.width())) % attachmentSubtitleWidthIncrement);
         attachmentRect.unite(roundedSubtitleTextRect);
     }
     attachmentRect.inflate(attachmentMargin);
@@ -185,7 +152,7 @@ AttachmentLayout::AttachmentLayout(const RenderAttachment& attachment, Attachmen
 
 #if PLATFORM(IOS_FAMILY)
 
-constexpr CGSize attachmentSize = { 160, 119 };
+constexpr CGSize attachmentSize [[maybe_unused]] = { 160, 119 };
 
 constexpr CGFloat attachmentBorderRadius = 16;
 constexpr auto attachmentBorderColor = SRGBA<uint8_t> { 204, 204, 204 };
@@ -215,7 +182,7 @@ static BOOL getAttachmentProgress(const RenderAttachment& attachment, float& pro
 static RetainPtr<CTFontRef> attachmentActionFont()
 {
     auto style = kCTUIFontTextStyleFootnote;
-    auto size = contentSizeCategory();
+    RetainPtr size = contentSizeCategory();
     auto attributes = static_cast<CFDictionaryRef>(@{ (id)kCTFontTraitsAttribute: @{ (id)kCTFontSymbolicTrait: @(kCTFontTraitTightLeading | kCTFontTraitEmphasized) } });
     auto emphasizedFontDescriptor = adoptCF(CTFontDescriptorCreateWithTextStyleAndAttributes(style, size, attributes));
 
@@ -224,18 +191,18 @@ static RetainPtr<CTFontRef> attachmentActionFont()
 
 static RetainPtr<UIColor> attachmentActionColor(const RenderAttachment& attachment)
 {
-    return cocoaColor(attachment.style().visitedDependentColor());
+    return cocoaColor(protect(attachment.style())->visitedDependentColor());
 }
 
 static RetainPtr<CTFontRef> attachmentTitleFont()
 {
-    auto fontDescriptor = adoptCF(CTFontDescriptorCreateWithTextStyle(kCTUIFontTextStyleShortCaption1, contentSizeCategory(), 0));
+    RetainPtr fontDescriptor = adoptCF(CTFontDescriptorCreateWithTextStyle(kCTUIFontTextStyleShortCaption1, protect(contentSizeCategory()), 0));
     return adoptCF(CTFontCreateWithFontDescriptor(fontDescriptor.get(), 0, nullptr));
 }
 
 static UIColor *attachmentTitleColor(const RenderAttachment& renderer)
 {
-    return cocoaColor(RenderTheme::singleton().systemColor(CSSValueAppleSystemGray, renderer.styleColorOptions())).autorelease();
+    return cocoaColor(RenderTheme::singleton().systemColor(CSSValueID::AppleSystemGray, renderer.styleColorOptions(StyleColorOptionsPurpose::Rendering))).autorelease();
 }
 
 static RetainPtr<CTFontRef> attachmentSubtitleFont() { return attachmentTitleFont(); }
@@ -252,7 +219,7 @@ static CGFloat shortCaptionPointSizeWithContentSizeCategory(CFStringRef contentS
 static CGFloat attachmentDynamicTypeScaleFactor()
 {
     CGFloat fixedPointSize = shortCaptionPointSizeWithContentSizeCategory(kCTFontContentSizeCategoryL);
-    CGFloat dynamicPointSize = shortCaptionPointSizeWithContentSizeCategory(contentSizeCategory());
+    CGFloat dynamicPointSize = shortCaptionPointSizeWithContentSizeCategory(protect(contentSizeCategory()));
     if (!dynamicPointSize || !fixedPointSize)
         return 1;
     return std::max<CGFloat>(1, dynamicPointSize / fixedPointSize);
@@ -261,12 +228,12 @@ static CGFloat attachmentDynamicTypeScaleFactor()
 AttachmentLayout::AttachmentLayout(const RenderAttachment& attachment, AttachmentLayoutStyle)
 {
     excludeTypographicLeading = true;
-    attachmentRect = FloatRect(0, 0, attachment.width().toFloat(), attachment.height().toFloat());
+    attachmentRect = FloatRect(0, 0, attachment.borderBoxWidth().toFloat(), attachment.borderBoxHeight().toFloat());
     wrappingWidth = attachmentWrappingTextMaximumWidth * attachmentDynamicTypeScaleFactor();
     widthPadding = attachmentRect.width();
 
     hasProgress = getAttachmentProgress(attachment, progress);
-    String title = attachment.attachmentElement().attachmentTitleForDisplay();
+    String title = protect(attachment.attachmentElement())->attachmentTitleForDisplay();
     String action = attachment.attachmentElement().attachmentActionForDisplay();
     String subtitle = attachment.attachmentElement().attachmentSubtitleForDisplay();
 
@@ -278,7 +245,7 @@ AttachmentLayout::AttachmentLayout(const RenderAttachment& attachment, Attachmen
     }
 
     if (action.isEmpty() && !hasProgress) {
-        attachment.attachmentElement().requestIconIfNeededWithSize(FloatSize());
+        protect(attachment.attachmentElement())->requestIconIfNeededWithSize(FloatSize());
         FloatSize iconSize = attachment.attachmentElement().iconSize();
         icon = attachment.attachmentElement().icon();
         
@@ -287,7 +254,7 @@ AttachmentLayout::AttachmentLayout(const RenderAttachment& attachment, Attachmen
             yOffset += iconRect.height() + attachmentItemMargin;
         }
     } else {
-        NSDictionary *textAttributesTitle = @{
+        RetainPtr textAttributesTitle = @{
             (id)kCTFontAttributeName: (id)attachmentActionFont().get(),
             (id)kCTForegroundColorAttributeName: attachmentActionColor(attachment).get()
         };
@@ -296,13 +263,13 @@ AttachmentLayout::AttachmentLayout(const RenderAttachment& attachment, Attachmen
     }
 
     bool forceSingleLineTitle = !action.isEmpty() || !subtitle.isEmpty() || hasProgress;
-    NSDictionary *textAttributesTitle = @{
+    RetainPtr textAttributesTitle = @{
         (id)kCTFontAttributeName: (id)attachmentTitleFont().get(),
         (id)kCTForegroundColorAttributeName: attachmentTitleColor(attachment)
     };
 
     buildWrappedLines(title, attachmentTitleFont().get(), textAttributesTitle, forceSingleLineTitle ? 1 : attachmentWrappingTextMaximumLineCount);
-    NSDictionary *textAttributesSubTitle = @{
+    RetainPtr textAttributesSubTitle = @{
         (id)kCTFontAttributeName: (id)attachmentSubtitleFont().get(),
         (id)kCTForegroundColorAttributeName: attachmentSubtitleColor(attachment)
     };
@@ -353,7 +320,7 @@ void AttachmentLayout::buildWrappedLines(String& text, CTFontRef font, NSDiction
     auto textPath = adoptCF(CGPathCreateWithRect(CGRectMake(0, 0, textSize.width, textSize.height), nullptr));
     auto textFrame = adoptCF(CTFramesetterCreateFrame(framesetter.get(), fitRange, textPath.get(), nullptr));
     
-    auto ctLines = CTFrameGetLines(textFrame.get());
+    RetainPtr ctLines = CTFrameGetLines(textFrame.get());
     auto lineCount = CFArrayGetCount(ctLines);
     if (!lineCount)
         return;
@@ -363,22 +330,24 @@ void AttachmentLayout::buildWrappedLines(String& text, CTFontRef font, NSDiction
     // Lay out and record the first (maximumLineCount - 1) lines.
     CFIndex lineIndex = 0;
     auto nonTruncatedLineCount = std::min<CFIndex>(maximumLineCount - 1, lineCount);
-    for (; lineIndex < nonTruncatedLineCount; ++lineIndex)
-        addLine(font, (CTLineRef)CFArrayGetValueAtIndex(ctLines, lineIndex));
+    for (; lineIndex < nonTruncatedLineCount; ++lineIndex) {
+        RetainPtr line = (CTLineRef)CFArrayGetValueAtIndex(ctLines, lineIndex);
+        addLine(font, line);
+    }
     
     if (lineIndex == lineCount)
         return;
     
     // We had text that didn't fit in the first (maximumLineCount - 1) lines.
     // Combine it into one last line, and center-truncate it.
-    auto firstRemainingLine = (CTLineRef)CFArrayGetValueAtIndex(ctLines, lineIndex);
+    RetainPtr firstRemainingLine = (CTLineRef)CFArrayGetValueAtIndex(ctLines, lineIndex);
     auto remainingRangeStart = CTLineGetStringRange(firstRemainingLine).location;
     auto remainingRange = CFRangeMake(remainingRangeStart, [attributedText length] - remainingRangeStart);
     auto remainingPath = adoptCF(CGPathCreateWithRect(CGRectMake(0, 0, CGFLOAT_MAX, CGFLOAT_MAX), nullptr));
     auto remainingFrame = adoptCF(CTFramesetterCreateFrame(framesetter.get(), remainingRange, remainingPath.get(), nullptr));
     auto ellipsisString = adoptNS([[NSAttributedString alloc] initWithString:@"\u2026" attributes:textAttributes]);
     auto ellipsisLine = adoptCF(CTLineCreateWithAttributedString((CFAttributedStringRef)ellipsisString.get()));
-    auto remainingLine = (CTLineRef)CFArrayGetValueAtIndex(CTFrameGetLines(remainingFrame.get()), 0);
+    RetainPtr remainingLine = (CTLineRef)CFArrayGetValueAtIndex(protect(CTFrameGetLines(remainingFrame.get())), 0);
     auto truncatedLine = adoptCF(CTLineCreateTruncatedLine(remainingLine, wrappingWidth, kCTLineTruncationMiddle, ellipsisLine.get()));
     
     if (!truncatedLine)

@@ -46,7 +46,10 @@
 #include "NodeName.h"
 #include "RenderObjectInlines.h"
 #include "RenderTextControlMultiLine.h"
+#include "ScriptDisallowedScope.h"
 #include "ShadowRoot.h"
+#include "StyleAppearance.h"
+#include "StyleComputedStyle+SettersInlines.h"
 #include "Text.h"
 #include "TextControlInnerElements.h"
 #include "TextIterator.h"
@@ -61,7 +64,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(HTMLTextAreaElement);
 
 using namespace HTMLNames;
 
-static inline unsigned computeLengthForAPIValue(StringView text)
+static inline unsigned LEGACY_NODELETE computeLengthForAPIValue(StringView text)
 {
     unsigned length = text.length();
     unsigned crlfCount = 0;
@@ -72,28 +75,29 @@ static inline unsigned computeLengthForAPIValue(StringView text)
     return text.length() - crlfCount;
 }
 
-HTMLTextAreaElement::HTMLTextAreaElement(Document& document, HTMLFormElement* form)
-    : HTMLTextFormControlElement(textareaTag, document, form)
+HTMLTextAreaElement::HTMLTextAreaElement(const QualifiedName& tagName, Document& document)
+    : HTMLTextFormControlElement(tagName, document)
 {
+    ASSERT(hasTagName(textareaTag));
     setFormControlValueMatchesRenderer(true);
 }
 
-Ref<HTMLTextAreaElement> HTMLTextAreaElement::create(const QualifiedName& tagName, Document& document, HTMLFormElement* form)
+Ref<HTMLTextAreaElement> HTMLTextAreaElement::create(const QualifiedName& tagName, Document& document)
 {
-    ASSERT_UNUSED(tagName, tagName == textareaTag);
-    auto textArea = adoptRef(*new HTMLTextAreaElement(document, form));
+    Ref textArea = adoptRef(*new HTMLTextAreaElement(tagName, document));
     textArea->ensureUserAgentShadowRoot();
     return textArea;
 }
 
 Ref<HTMLTextAreaElement> HTMLTextAreaElement::create(Document& document)
 {
-    return create(textareaTag, document, nullptr);
+    return create(textareaTag, document);
 }
 
 void HTMLTextAreaElement::didAddUserAgentShadowRoot(ShadowRoot& root)
 {
-    root.appendChild(TextControlInnerTextElement::create(protectedDocument(), isInnerTextElementEditable()));
+    ScriptDisallowedScope::EventAllowedScope rootScope { root };
+    root.appendChild(TextControlInnerTextElement::create(protect(document()), isInnerTextElementEditable()));
 }
 
 const AtomString& HTMLTextAreaElement::formControlType() const
@@ -137,13 +141,13 @@ void HTMLTextAreaElement::collectPresentationalHintsForAttribute(const Qualified
 {
     if (name == wrapAttr) {
         if (m_wrap != NoWrap) {
-            addPropertyToPresentationalHintStyle(style, CSSPropertyWhiteSpaceCollapse, CSSValuePreserve);
-            addPropertyToPresentationalHintStyle(style, CSSPropertyTextWrapMode, CSSValueWrap);
-            addPropertyToPresentationalHintStyle(style, CSSPropertyOverflowWrap, CSSValueBreakWord);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::WhiteSpaceCollapse, CSSValueID::Preserve);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::TextWrapMode, CSSValueID::Wrap);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::OverflowWrap, CSSValueID::BreakWord);
         } else {
-            addPropertyToPresentationalHintStyle(style, CSSPropertyWhiteSpaceCollapse, CSSValuePreserve);
-            addPropertyToPresentationalHintStyle(style, CSSPropertyTextWrapMode, CSSValueNowrap);
-            addPropertyToPresentationalHintStyle(style, CSSPropertyOverflowWrap, CSSValueNormal);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::WhiteSpaceCollapse, CSSValueID::Preserve);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::TextWrapMode, CSSValueID::Nowrap);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::OverflowWrap, CSSValueID::Normal);
         }
     } else
         HTMLTextFormControlElement::collectPresentationalHintsForAttribute(name, value, style);
@@ -159,7 +163,7 @@ void HTMLTextAreaElement::attributeChanged(const QualifiedName& name, const Atom
         if (m_rows != rows) {
             m_rows = rows;
             if (CheckedPtr renderer = this->renderer())
-                renderer->setNeedsLayoutAndPreferredWidthsUpdate();
+                renderer->setNeedsLayoutAndInvalidateContentLogicalWidths();
         }
         break;
     }
@@ -168,7 +172,7 @@ void HTMLTextAreaElement::attributeChanged(const QualifiedName& name, const Atom
         if (m_cols != cols) {
             m_cols = cols;
             if (CheckedPtr renderer = this->renderer())
-                renderer->setNeedsLayoutAndPreferredWidthsUpdate();
+                renderer->setNeedsLayoutAndInvalidateContentLogicalWidths();
         }
         break;
     }
@@ -185,7 +189,7 @@ void HTMLTextAreaElement::attributeChanged(const QualifiedName& name, const Atom
         if (wrap != m_wrap) {
             m_wrap = wrap;
             if (CheckedPtr renderer = this->renderer())
-                renderer->setNeedsLayoutAndPreferredWidthsUpdate();
+                renderer->setNeedsLayoutAndInvalidateContentLogicalWidths();
         }
         break;
     }
@@ -202,7 +206,12 @@ void HTMLTextAreaElement::attributeChanged(const QualifiedName& name, const Atom
     }
 }
 
-RenderPtr<RenderElement> HTMLTextAreaElement::createElementRenderer(RenderStyle&& style, const RenderTreePosition&)
+bool HTMLTextAreaElement::supportsBaseAppearance(StyleAppearance appearance) const
+{
+    return appearance == StyleAppearance::Base;
+}
+
+RenderPtr<RenderElement> HTMLTextAreaElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
 {
     return createRenderer<RenderTextControlMultiLine>(*this, WTF::move(style));
 }
@@ -212,7 +221,7 @@ bool HTMLTextAreaElement::appendFormData(DOMFormData& formData)
     if (name().isEmpty())
         return false;
 
-    protectedDocument()->updateLayout();
+    protect(document())->updateLayout();
 
     formData.append(name(), m_wrap == HardWrap ? valueWithHardLineBreaks() : value().get());
     if (auto& dirname = attributeWithoutSynchronization(dirnameAttr); !dirname.isNull())
@@ -262,7 +271,7 @@ void HTMLTextAreaElement::subtreeHasChanged()
     setChangedSinceLastFormControlChangeEvent(true);
 
     if (RefPtr frame = document().frame())
-        frame->protectedEditor()->textDidChangeInTextArea(*this);
+        protect(frame->editor())->textDidChangeInTextArea(*this);
     // When typing in a textarea, childrenChanged is not called, so we need to force the directionality check.
     if (selfOrPrecedingNodesAffectDirAuto())
         updateEffectiveTextDirection();
@@ -316,7 +325,7 @@ String HTMLTextAreaElement::sanitizeUserInputValue(const String& proposedValue, 
 
 RefPtr<TextControlInnerTextElement> HTMLTextAreaElement::innerTextElement() const
 {
-    RefPtr root = userAgentShadowRoot();
+    auto* root = userAgentShadowRoot();
     return root ? downcast<TextControlInnerTextElement>(root->firstChild()) : nullptr;
 }
 
@@ -332,10 +341,12 @@ void HTMLTextAreaElement::updateValue() const
 
     ASSERT(renderer());
     m_value = innerTextValue();
-    const_cast<HTMLTextAreaElement*>(this)->setFormControlValueMatchesRenderer(true);
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST const_cast<HTMLTextAreaElement*>(this)->setFormControlValueMatchesRenderer(true);
     m_isDirty = true;
     m_wasModifiedByUser = true;
-    const_cast<HTMLTextAreaElement*>(this)->updatePlaceholderVisibility();
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST const_cast<HTMLTextAreaElement*>(this)->updatePlaceholderVisibility();
 }
 
 ValueOrReference<String> HTMLTextAreaElement::value() const
@@ -395,10 +406,10 @@ void HTMLTextAreaElement::setValueCommon(const String& newValue, TextFieldEventB
         else {
             // We don't change text selection here but need to update caret to
             // the end of the text value except for initialize.
-            cacheSelection(endOfString, endOfString, SelectionHasNoDirection);
+            cacheSelection(endOfString, endOfString, normalizeSelectionDirection(SelectionHasNoDirection));
         }
     } else if (shouldClamp)
-        cacheSelection(std::min(endOfString, selectionStartValue), std::min(endOfString, selectionEndValue), SelectionHasNoDirection);
+        cacheSelection(std::min(endOfString, selectionStartValue), std::min(endOfString, selectionEndValue), normalizeSelectionDirection(SelectionHasNoDirection));
 
     setTextAsOfLastFormControlChangeEvent(String(normalizedValue));
 
@@ -524,32 +535,26 @@ void HTMLTextAreaElement::setRows(unsigned rows)
 
 void HTMLTextAreaElement::updatePlaceholderText()
 {
-    auto& placeholderText = attributeWithoutSynchronization(placeholderAttr);
-    if (placeholderText.isEmpty()) {
+    if (!hasAttributeWithoutSynchronization(placeholderAttr)) {
         if (RefPtr placeholder = m_placeholder) {
-            protectedUserAgentShadowRoot()->removeChild(*placeholder);
+            protect(userAgentShadowRoot())->removeChild(*placeholder);
             m_placeholder = nullptr;
         }
         return;
     }
     if (!m_placeholder) {
-        m_placeholder = TextControlPlaceholderElement::create(protectedDocument());
-        protectedUserAgentShadowRoot()->insertBefore(*protectedPlaceholderElement(), innerTextElement()->protectedNextSibling());
+        m_placeholder = TextControlPlaceholderElement::create(protect(document()));
+        protect(userAgentShadowRoot())->insertBefore(*protect(m_placeholder), protect(innerTextElement()->nextSibling()));
     }
-    protectedPlaceholderElement()->setInnerText(String { placeholderText });
+    protect(m_placeholder)->setInnerText(String { attributeWithoutSynchronization(placeholderAttr) });
 }
 
-RefPtr<HTMLElement> HTMLTextAreaElement::protectedPlaceholderElement() const
+Style::ComputedStyle HTMLTextAreaElement::createInnerTextStyle(const Style::ComputedStyle& style)
 {
-    return m_placeholder;
-}
-
-RenderStyle HTMLTextAreaElement::createInnerTextStyle(const RenderStyle& style)
-{
-    auto textBlockStyle = RenderStyle::create();
+    auto textBlockStyle = Style::ComputedStyle::create();
     textBlockStyle.inheritFrom(style);
     adjustInnerTextStyle(style, textBlockStyle);
-    textBlockStyle.setDisplay(DisplayType::Block);
+    textBlockStyle.setDisplay(Style::DisplayType::BlockFlow);
     return textBlockStyle;
 }
 
@@ -559,6 +564,7 @@ void HTMLTextAreaElement::copyNonAttributePropertiesFromElement(const Element& s
 
     setValueCommon(sourceElement.value(), DispatchNoEvent, TextControlSetValueSelection::DoNotSet);
     m_isDirty = sourceElement.m_isDirty;
+    m_wasModifiedByUser = sourceElement.m_wasModifiedByUser;
     HTMLTextFormControlElement::copyNonAttributePropertiesFromElement(source);
 
     updateValidity();

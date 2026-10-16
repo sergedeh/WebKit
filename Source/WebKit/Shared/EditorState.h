@@ -29,15 +29,17 @@
 #include <WebCore/Color.h>
 #include <WebCore/ElementContext.h>
 #include <WebCore/FontAttributes.h>
+#include <WebCore/FrameIdentifier.h>
 #include <WebCore/IntRect.h>
 #include <WebCore/PlatformLayerIdentifier.h>
 #include <WebCore/ScrollTypes.h>
-#include <WebCore/WritingDirection.h>
-#include <wtf/text/WTFString.h>
-
-#if PLATFORM(IOS_FAMILY)
 #include <WebCore/SelectionGeometry.h>
-#endif
+#include <WebCore/SelectionType.h>
+#include <WebCore/WritingDirection.h>
+#include <optional>
+#include <wtf/Markable.h>
+#include <wtf/Vector.h>
+#include <wtf/text/WTFString.h>
 
 #if USE(DICTATION_ALTERNATIVES)
 #include <WebCore/DictationContext.h>
@@ -74,9 +76,8 @@ struct EditorState {
     void move(float x, float y);
 
     EditorStateIdentifier identifier;
+    WebCore::SelectionType selectionType { WebCore::SelectionType::None };
     bool shouldIgnoreSelectionChanges { false };
-    bool selectionIsNone { true }; // This will be false when there is a caret selection.
-    bool selectionIsRange { false };
     bool selectionIsRangeInsideImageOverlay { false };
     bool selectionIsRangeInAutoFilledAndViewableField { false };
     bool isContentEditable { false };
@@ -88,6 +89,7 @@ struct EditorState {
 #if PLATFORM(MAC)
     bool canEnableAutomaticSpellingCorrection { true };
     bool inputMethodUsesCorrectKeyEventOrder { false };
+    bool inputMethodMustUseCompositionEvents { false };
 #endif
 
     struct PostLayoutData {
@@ -100,6 +102,7 @@ struct EditorState {
         WebCore::WritingDirection baseWritingDirection { WebCore::WritingDirection::Natural };
         bool selectionIsTransparentOrFullyClipped { false };
         bool canEnableWritingSuggestions { false };
+        bool insideFixedPosition { false };
 #endif
 #if PLATFORM(IOS_FAMILY)
         String markedText;
@@ -113,7 +116,6 @@ struct EditorState {
         bool isReplaceAllowed { false };
         bool hasContent { false };
         bool isStableStateUpdate { false };
-        bool insideFixedPosition { false };
         bool hasPlainText { false };
         WebCore::Color caretColor; // FIXME: Maybe this should be on VisualData?
         bool hasCaretColorAuto { false };
@@ -140,28 +142,36 @@ struct EditorState {
         bool canPaste { false };
     };
 
+    bool LEGACY_NODELETE isEditableOrRanged() const;
     bool hasPostLayoutData() const { return !!postLayoutData; }
 
     // Visual data is only updated in sync with rendering updates.
     struct VisualData {
-#if PLATFORM(IOS_FAMILY) || PLATFORM(GTK) || PLATFORM(WPE)
+        // Local root frame the rects below are relative to, so the UIProcess can map them to
+        // main-frame coordinates when the selection is in a cross-origin subframe.
+        Markable<WebCore::FrameIdentifier> rootFrameID;
+#if PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE)
         WebCore::IntRect caretRectAtStart;
+#endif
+#if PLATFORM(COCOA)
+        Vector<WebCore::SelectionGeometry> selectionGeometries;
+        Vector<WebCore::PlatformLayerIdentifier> intersectingLayerIDs;
+        WebCore::IntRect caretRectAtEnd;
 #endif
 #if PLATFORM(IOS_FAMILY)
         WebCore::IntRect selectionClipRect;
         WebCore::IntRect editableRootBounds;
-        WebCore::IntRect caretRectAtEnd;
-        Vector<WebCore::SelectionGeometry> selectionGeometries;
         Vector<WebCore::SelectionGeometry> markedTextRects;
         WebCore::IntRect markedTextCaretRectAtStart;
         WebCore::IntRect markedTextCaretRectAtEnd;
         std::optional<WebCore::PlatformLayerIdentifier> enclosingLayerID;
-        Vector<WebCore::PlatformLayerIdentifier> intersectingLayerIDs;
         std::optional<WebCore::ScrollingNodeID> enclosingScrollingNodeID;
         std::optional<WebCore::ScrollingNodeID> scrollingNodeIDAtStart;
         std::optional<WebCore::ScrollingNodeID> scrollingNodeIDAtEnd;
         WebCore::ScrollOffset enclosingScrollOffset;
         bool enclosingLayerUsesContentsLayer { false };
+        bool needsHideSelectionDuringOverflowScrollQuirk { false };
+        bool shouldAllowTouchMoveToChangeSelectionQuirk { false };
 #endif // PLATFORM(IOS_FAMILY)
     };
 

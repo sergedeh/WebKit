@@ -33,7 +33,6 @@
 
 #import <WebCore/DocumentFullscreen.h>
 
-using namespace WebCore;
 
 @implementation WebKitFullScreenListener
 
@@ -51,7 +50,7 @@ using namespace WebCore;
 - (void)webkitWillEnterFullScreen
 {
     if (_element && _initialCompletionHandler)
-        _initialCompletionHandler(_element->document().fullscreen().willEnterFullscreen(*_element, WebCore::HTMLMediaElementEnums::VideoFullscreenModeStandard));
+        _initialCompletionHandler(protect(protect(_element->document())->fullscreen())->willEnterFullscreen(protect(*_element), WebCore::HTMLMediaElementEnums::VideoFullscreenModeStandard));
 }
 
 - (void)webkitDidEnterFullScreen
@@ -63,7 +62,7 @@ using namespace WebCore;
 - (void)webkitWillExitFullScreen
 {
     if (_element)
-        _element->document().fullscreen().willExitFullscreen();
+        protect(protect(_element->document())->fullscreen())->willExitFullscreen();
 }
 
 - (void)webkitDidExitFullScreen

@@ -36,6 +36,7 @@
 #include <optional>
 #include <span>
 #include <tuple>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/text/WTFString.h>
 
@@ -51,9 +52,9 @@ static bool soupServerListen(SoupServer* server, const String& host, unsigned po
     if (host == "all"_s)
         return soup_server_listen_all(server, port, options, error);
 
-    GRefPtr<GSocketAddress> address = adoptGRef(g_inet_socket_address_new_from_string(host.utf8().data(), port));
+    GRefPtr<GSocketAddress> address = adoptGRef(g_inet_socket_address_new_from_string(host.utf8().legacyCStringPointer(), port));
     if (!address) {
-        g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid host IP address '%s'", host.utf8().data());
+        SAFE_G_SET_ERROR(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid host IP address '%s'", host.utf8());
         return false;
     }
 
@@ -79,11 +80,11 @@ static void handleIncomingHandshake(SoupServer*, SoupServerMessage* message, con
     if (webSocketServer->messageHandler().acceptHandshake(WTF::move(handshakeMessage))) // Follow with handshake procedure
         return;
 
-    HTTPRequestHandler::Response errorResponse = { 503, "Service Unavailable", "text/plain"_s };
-    RELEASE_LOG(WebDriverBiDi, "Error during handshake, sending error response: %s", errorResponse.data.data());
+    HTTPRequestHandler::Response errorResponse = { 503, "Service Unavailable"_s, "text/plain"_s };
+    RELEASE_LOG(WebDriverBiDi, "Error during handshake, sending error response: %s", errorResponse.data);
     soup_server_message_set_status(message, errorResponse.statusCode, nullptr);
     auto* responseHeaders = soup_server_message_get_response_headers(message);
-    soup_message_headers_append(responseHeaders, "Content-Type", errorResponse.contentType.utf8().data());
+    soup_message_headers_append(responseHeaders, "Content-Type", errorResponse.contentType.utf8().legacyCStringPointer());
     soup_message_headers_append(responseHeaders, "Cache-Control", "no-cache");
     auto* responseBody = soup_server_message_get_response_body(message);
     soup_message_body_append(responseBody, SOUP_MEMORY_COPY, errorResponse.data.data(), errorResponse.data.length());
@@ -95,7 +96,7 @@ static void handleWebSocketMessage(SoupWebsocketConnection* connection, SoupWebs
     if (messageType != SOUP_WEBSOCKET_DATA_TEXT) {
         RELEASE_LOG(WebDriverBiDi, "websocket message handler received non-text message. error return");
         auto errorReply = WebSocketMessageHandler::Message::fail(CommandResult::ErrorCode::InvalidArgument, std::nullopt, { "Non-text message received"_s });
-        GRefPtr<GBytes> rawMessage = adoptGRef(g_bytes_new(errorReply.payload.data(), errorReply.payload.length()));
+        GRefPtr rawMessage = gBytesNew(errorReply.payload.span());
         soup_websocket_connection_send_message(connection, SOUP_WEBSOCKET_DATA_TEXT, rawMessage.get());
         return;
     }
@@ -103,13 +104,13 @@ static void handleWebSocketMessage(SoupWebsocketConnection* connection, SoupWebs
 
     gsize messageSize;
     gconstpointer messageData = g_bytes_get_data(message, &messageSize);
-    WebSocketMessageHandler::Message messageObj = { connection, { std::span<const char>(static_cast<const char*>(messageData), messageSize) } };
+    WebSocketMessageHandler::Message messageObj = { connection, UTF8CString { unsafeMakeSpan(static_cast<const char8_t*>(messageData), messageSize) } };
     webSocketServer->messageHandler().handleMessage(WTF::move(messageObj), [](WebSocketMessageHandler::Message&& message) {
         if (!message.connection) {
-            RELEASE_LOG(WebDriverBiDi, "No connection found when trying to send message: %s", message.payload.data());
+            RELEASE_LOG(WebDriverBiDi, "No connection found when trying to send message: %s", message.payload);
             return;
         }
-        GRefPtr<GBytes> rawMessage = adoptGRef(g_bytes_new(message.payload.data(), message.payload.length()));
+        GRefPtr rawMessage = gBytesNew(message.payload.span());
         // Using send_message to avoid dealing with null chars in the middle of the message
         soup_websocket_connection_send_message(message.connection.get(), SOUP_WEBSOCKET_DATA_TEXT, rawMessage.get());
     });
@@ -144,6 +145,21 @@ std::optional<String> WebSocketServer::listen(const String& host, unsigned port)
         return std::nullopt;
     }
 
+    unsigned boundPort = port;
+    if (!boundPort) {
+        if (GSList* uris = soup_server_get_uris(m_soupServer.get())) {
+            int effectivePort = g_uri_get_port(static_cast<GUri*>(uris->data));
+            if (effectivePort > 0)
+                boundPort = effectivePort;
+            g_slist_free_full(uris, reinterpret_cast<GDestroyNotify>(g_uri_unref));
+        }
+        ASSERT_WITH_MESSAGE(boundPort, "Failed to find actual WebSocket listening port");
+        if (!boundPort) {
+            soup_server_disconnect(m_soupServer.get());
+            return std::nullopt;
+        }
+    }
+
     // Callback for handling incoming WebSocket handshake requests
     soup_server_add_handler(m_soupServer.get(), nullptr, handleIncomingHandshake, this, nullptr);
 
@@ -153,7 +169,7 @@ std::optional<String> WebSocketServer::listen(const String& host, unsigned port)
     // "/session" is the default resource to start bidi-only sessions
     m_listener = WebSocketListener::create(
         host.isNull() ? "localhost"_s : host,
-        port,
+        boundPort,
         false,
         { "/session"_s }
     );
@@ -163,8 +179,8 @@ std::optional<String> WebSocketServer::listen(const String& host, unsigned port)
 void WebSocketServer::sendMessage(WebSocketMessageHandler::Connection connection, const String& message)
 {
     ASSERT(connection);
-    RELEASE_LOG(WebDriverBiDi, "Sending message: %s", message.utf8().data());
-    GRefPtr<GBytes> rawMessage = adoptGRef(g_bytes_new(message.utf8().data(), message.utf8().length()));
+    RELEASE_LOG(WebDriverBiDi, "Sending message: %s", message.utf8());
+    GRefPtr rawMessage = gBytesNew(message.utf8().span());
     soup_websocket_connection_send_message(connection.get(), SOUP_WEBSOCKET_DATA_TEXT, rawMessage.get());
 }
 

@@ -279,6 +279,10 @@ NS_ASSUME_NONNULL_END
 #endif // PLATFORM(IOS_FAMILY)
 
 #if PLATFORM(MAC)
+
+#import <AppKit/AppKit.h>
+
+#if !__has_feature(modules)
 #import <AVKit/AVPlayerView.h>
 
 @class AVPlayerController;
@@ -293,6 +297,11 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 NS_ASSUME_NONNULL_END
+
+#else
+@class AVPlayerView;
+#endif // !__has_feature(modules)
+
 #endif // PLATFORM(MAC)
 
 #endif // USE(APPLE_INTERNAL_SDK)
@@ -483,11 +492,12 @@ NS_ASSUME_NONNULL_END
 
 
 #if ENABLE(WIRELESS_PLAYBACK_TARGET) && HAVE(AVROUTEPICKERVIEW)
-#if USE(APPLE_INTERNAL_SDK)
+#if USE(APPLE_INTERNAL_SDK) && !__has_feature(modules)
 #import <AVKit/AVRoutePickerView_Private.h>
 #import <AVKit/AVRoutePickerView_WebKitOnly.h>
 #else
 
+#if !__has_feature(modules)
 #import <AVKit/AVRoutePickerView.h>
 
 NS_ASSUME_NONNULL_BEGIN
@@ -501,7 +511,8 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 NS_ASSUME_NONNULL_END
-#endif // USE(APPLE_INTERNAL_SDK)
+#endif // !__has_feature(modules)
+#endif // USE(APPLE_INTERNAL_SDK) && !__has_feature(modules)
 #endif // ENABLE(WIRELESS_PLAYBACK_TARGET) && HAVE(AVROUTEPICKERVIEW)
 
 // AVPictureInPicture SPI
@@ -607,164 +618,3 @@ typedef NS_ENUM(NSInteger, AVPlayerControllerTimeControlStatus) {
 NS_ASSUME_NONNULL_END
 
 #endif // PLATFORM(APPLETV)
-
-#if HAVE(AVKIT_CONTENT_SOURCE)
-
-#if USE(APPLE_INTERNAL_SDK)
-
-#import <AVKit/AVMediaSource.h>
-
-#else
-
-@class CALayer;
-@class AVInterstitialTimeRange;
-
-typedef struct REEntity *REEntityRef;
-
-NS_ASSUME_NONNULL_BEGIN
-
-@protocol AVMediaPlaybackSource <NSObject>
-
-@property (nonatomic, readonly) double rate;
-@property (nonatomic, readonly) BOOL canTogglePlayback;
-@property (nonatomic, readonly) BOOL isLoading;
-@property (nonatomic, readonly) BOOL canSeek;
-@property (nonatomic, readonly) BOOL isSeeking;
-@property (nonatomic, readonly) BOOL canScanForward;
-@property (nonatomic, readonly) BOOL canScanBackward;
-@property (nonatomic, readonly) BOOL requiresLinearPlayback;
-@property (nonatomic, readonly) BOOL hasLiveStreamContent;
-@property (nonatomic, readonly, nullable) NSError *playbackError;
-- (void)play;
-- (void)pause;
-- (void)seekTo:(double)time;
-- (void)beginScanningForward;
-- (void)endScanningForward;
-- (void)beginScanningBackward;
-- (void)endScanningBackward;
-
-@end
-
-@protocol AVMediaTimelineSource <NSObject>
-
-@property (nonatomic, readonly) float minValue;
-@property (nonatomic, readonly) float maxValue;
-@property (nonatomic, readonly) float currentValue;
-
-@optional
-
-@property (nonatomic, readonly, nullable) NSArray<NSValue *> *seekableTimeRanges;
-- (void)beginScrubbing;
-- (void)endScrubbing;
-
-@end
-
-@protocol AVListable <NSObject>
-
-@property (nonatomic, readonly) NSString *localizedTitle;
-
-@end
-
-@protocol AVMediaAudioAndCaptionSource <NSObject>
-
-@property (nonatomic, readonly, nullable) id<AVListable> currentAudioOption;
-@property (nonatomic, readonly, nullable) NSArray<AVListable> *audioOptions;
-- (void)updateCurrentAudioOption:(id<AVListable>)currentAudioOption;
-@property (nonatomic, readonly, nullable) id<AVListable> currentCaptionOption;
-@property (nonatomic, readonly, nullable) NSArray<AVListable> *captionOptions;
-- (void)updateCurrentCaptionOption:(id<AVListable>)currentCaptionOption;
-@property (nonatomic, readonly, nullable) CALayer *captionLayer;
-- (void)setCaptionContentInsets:(UIEdgeInsets)insets;
-
-@end
-
-@protocol AVMediaVolumeSource <NSObject>
-
-@property (nonatomic, readonly) BOOL hasAudio;
-@property (nonatomic, readonly) BOOL muted;
-@property (nonatomic, readonly) double volume;
-- (void)updateVolume:(double)volume;
-- (void)updateMuted:(BOOL)muted;
-
-@optional
-
-- (void)beginChangingVolume;
-- (void)endChangingVolume;
-
-@end
-
-@protocol AVMediaContainerSource <NSObject>
-
-@property (nonatomic, readonly, nullable) CALayer *videoLayer;
-#if PLATFORM(VISION)
-@property (nonatomic, readonly, nullable) REEntityRef entityRef;
-#endif
-@property (nonatomic, readonly) CGSize videoSize;
-
-@end
-
-@protocol AVMediaThumbnailSource <NSObject>
-@end
-
-@protocol AVMediaInterstitialSource <NSObject>
-
-@property (nonatomic, readonly, nullable) NSArray<AVInterstitialTimeRange *> *interstitialTimeRanges;
-@property (nonatomic, readonly) BOOL isInterstitialActive;
-- (void)skipActiveInterstitial;
-
-@end
-
-@protocol AVMediaMetadataSource <NSObject>
-
-@property (nonatomic, readonly, nullable) NSString *title;
-@property (nonatomic, readonly, nullable) NSString *subtitle;
-
-@optional
-
-@property (nonatomic, readonly, nullable) NSDate *approximateStartDate;
-@property (nonatomic, readonly, nullable) NSDate *approximateEndDate;
-@property (nonatomic, readonly, nullable) NSDate *exactStartDate;
-@property (nonatomic, readonly, nullable) NSDate *exactEndDate;
-
-@end
-
-@protocol AVMediaSource <
-    AVMediaTimelineSource,
-    AVMediaPlaybackSource,
-    AVMediaAudioAndCaptionSource,
-    AVMediaVolumeSource,
-    AVMediaContainerSource,
-    AVMediaThumbnailSource,
-    AVMediaMetadataSource
->
-@end
-
-NS_ASSUME_NONNULL_END
-
-#endif // USE(APPLE_INTERNAL_SDK)
-
-#endif // HAVE(AVKIT_CONTENT_SOURCE)
-
-// CLEANUP(rdar://164667890)
-#if HAVE(AVLEGIBLEMEDIAOPTIONSMENUCONTROLLER) && USE(APPLE_INTERNAL_SDK) && !__has_feature(modules)
-#if __has_include(<AVKit/AVLegibleMediaOptionsMenuController_Private.h>)
-#import <AVKit/AVLegibleMediaOptionsMenuController_Private.h>
-#else
-// SDK does not have -menuWithContents:. Redeclare:
-#import <AVKit/AVLegibleMediaOptionsMenuController.h>
-typedef NS_OPTIONS(NSInteger, AVLegibleMediaOptionsMenuContents) {
-    AVLegibleMediaOptionsMenuContentsLegible = 1 << 0,
-    AVLegibleMediaOptionsMenuContentsCaptionAppearance = 1 << 1,
-    AVLegibleMediaOptionsMenuContentsAll = (AVLegibleMediaOptionsMenuContentsLegible | AVLegibleMediaOptionsMenuContentsCaptionAppearance)
-} API_AVAILABLE(ios(26.4), macos(26.4), visionos(26.4)) API_UNAVAILABLE(tvos, watchos);
-
-@interface AVLegibleMediaOptionsMenuController (MenuWithContents)
-#if TARGET_OS_OSX && !TARGET_OS_MACCATALYST
-- (nullable NSMenu *)menuWithContents:(AVLegibleMediaOptionsMenuContents)contents;
-#else
-- (nullable UIMenu *)menuWithContents:(AVLegibleMediaOptionsMenuContents)contents;
-#endif
-@end
-
-#endif // __has_include(<AVKit/AVLegibleMediaOptionsMenuController_Private.h>)
-#endif // HAVE(AVLEGIBLEMEDIAOPTIONSMENUCONTROLLER) && USE(APPLE_INTERNAL_SDK)

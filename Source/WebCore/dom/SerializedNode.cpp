@@ -106,10 +106,11 @@ Ref<Node> SerializedNode::deserialize(SerializedNode&& serializedNode, WebCore::
             serializedDocument.baseURLOverride,
             serializedDocument.documentURI,
             document.compatibilityMode(),
+            document.parserContentPolicy(),
             document,
             RefPtr { document.securityOriginPolicy() }.get(),
             serializedDocument.contentType,
-            document.protectedDecoder().get()
+            protect(document.decoder()).get()
         );
     }, [&] (SerializedNode::Element&& element) -> Ref<Node> {
         constexpr bool createdByParser { false };
@@ -125,7 +126,7 @@ Ref<Node> SerializedNode::deserialize(SerializedNode&& serializedNode, WebCore::
             Ref content = TemplateContentDocumentFragment::create(Ref { document.ensureTemplateDocument() }.get(), result);
             for (auto&& child : std::exchange(element.content->children, { })) {
                 if (RefPtr childNode = deserialize(WTF::move(child), document)) {
-                    childNode->setTreeScopeRecursively(content->protectedTreeScope());
+                    childNode->setTreeScopeRecursively(protect(content->treeScope()));
                     content->appendChildCommon(*childNode);
                 }
             }
@@ -142,7 +143,7 @@ Ref<Node> SerializedNode::deserialize(SerializedNode&& serializedNode, WebCore::
     RefPtr containerNode = dynamicDowncast<WebCore::ContainerNode>(node);
     for (auto&& child : WTF::move(serializedChildren)) {
         Ref childNode = deserialize(WTF::move(child), document);
-        childNode->setTreeScopeRecursively(containerNode->protectedTreeScope());
+        childNode->setTreeScopeRecursively(protect(containerNode->treeScope()));
         containerNode->appendChildCommon(childNode);
     }
 

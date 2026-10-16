@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024, 2025 Igalia S.L.
+ * Copyright (C) 2024, 2025, 2026 Igalia S.L.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,12 +30,12 @@
 #include "GLDisplay.h"
 #include "IntSize.h"
 #include <wtf/OptionSet.h>
+#include <wtf/text/ASCIILiteral.h>
 #include <wtf/unix/UnixFileDescriptor.h>
 
 struct gbm_bo;
 struct gbm_device;
 typedef void* EGLImage;
-typedef intptr_t EGLAttrib;
 
 namespace WebCore {
 
@@ -50,18 +50,29 @@ public:
 
     enum class BufferFlag : uint8_t {
         ForceLinear = 1 << 0,
-        ForceVivanteSuperTiled = 1 << 1
+        ForceVivanteSuperTiled = 1 << 1,
+        UseBGRALayout = 1 << 2
     };
+
+    // The probe verifies dma-buf allocation, export and CPU mapping once per session
+    // before committing to this path. The CPU-mapping side has two strategies:
+    // mmap() on the dma-buf FD when gbm exports an RDWR-capable FD, otherwise
+    // gbm_bo_map() as a driver-native fallback. The single GPU-sampling export always
+    // goes through gbm_bo_get_fd_for_plane() so Mesa attaches its implicit-sync fence;
+    // see DMABufBufferAttributes::fromGBMBufferObject().
+    static bool isSupported();
+
+    static ASCIILiteral exportStrategyDescription();
 
     // Will only return a MemoryMappedGPUBuffer, if gbm_bo allocation + mapping to userland + EGLImage creation succeeded.
     static std::unique_ptr<MemoryMappedGPUBuffer> create(const IntSize&, OptionSet<BufferFlag>);
 
     // Returns the actual allocated buffer size, which may be larger than size()
     // due to GPU alignment requirements (e.g. tiled formats).
-    IntSize allocatedSize() const;
+    const IntSize& allocatedSize() const LIFETIME_BOUND { return m_allocatedSize; }
 
-    const IntSize& size() const { return m_size; }
-    const OptionSet<BufferFlag>& flags() const { return m_flags; }
+    const IntSize& size() const LIFETIME_BOUND { return m_size; }
+    const OptionSet<BufferFlag>& flags() const LIFETIME_BOUND { return m_flags; }
 
     // Map dma-buf into memory, if not yet mapped.
     bool mapIfNeeded();
@@ -91,7 +102,7 @@ public:
 
         static std::unique_ptr<AccessScope> create(MemoryMappedGPUBuffer&, Mode);
 
-        const Mode& mode() const { return m_mode; }
+        const Mode& mode() const LIFETIME_BOUND { return m_mode; }
         const MemoryMappedGPUBuffer& buffer() const { return m_buffer; }
 
     private:
@@ -116,25 +127,29 @@ private:
     };
 
     bool performDMABufSyncSystemCall(OptionSet<DMABufSyncFlag> flags);
-    bool allocate(struct gbm_device*, const GLDisplay::BufferFormat&);
-    bool createDMABufFromGBMBufferObject();
-    UnixFileDescriptor exportGBMBufferObjectAsDMABuf(unsigned planeIndex);
+
+    struct gbm_bo* allocate(struct gbm_device*, const GLDisplay::BufferFormat&);
+    bool createDMABufFromGBMBufferObject(struct gbm_bo*);
 
     void updateContentsInLinearFormat(const void* srcData, const IntRect& targetRect, unsigned bytesPerLine);
     void updateContentsInVivanteSuperTiledFormat(const void* srcData, const IntRect& targetRect, unsigned bytesPerLine);
 
-    int primaryPlaneDmaBufFD() const;
     uint32_t primaryPlaneDmaBufStride() const;
+    int primaryPlaneDmaBufFD() const;
 
     IntSize m_size;
+    IntSize m_allocatedSize;
     OptionSet<BufferFlag> m_flags;
-    struct gbm_bo* m_bo { nullptr };
     uint64_t m_modifier { 0 };
-    Vector<EGLAttrib> m_eglAttributes;
-    RefPtr<DMABufBuffer> m_dmaBuf;
+    const RefPtr<DMABufBuffer> m_dmaBuf;
+
+    // Owned for the lifetime of the buffer. gbm_bo_map() requires it; even on the
+    // dma-buf-mmap strategy we keep it so ownership doesn't depend on the strategy.
+    struct gbm_bo* m_bo { nullptr };
+    void* m_gbmBoMapData { nullptr };
 
     void* m_mappedData { nullptr };
-    uint32_t m_mappedLength { 0 };
+    size_t m_mappedLength { 0 };
 };
 
 inline std::unique_ptr<MemoryMappedGPUBuffer::AccessScope> makeGPUBufferReadScope(MemoryMappedGPUBuffer& buffer)

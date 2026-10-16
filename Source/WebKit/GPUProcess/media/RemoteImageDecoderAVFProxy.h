@@ -28,7 +28,7 @@
 #if ENABLE(GPU_PROCESS) && HAVE(AVASSETREADER)
 
 #include "MessageReceiver.h"
-#include <WebCore/DestinationColorSpace.h>
+#include <WebCore/ColorSpace.h>
 #include <WebCore/ImageDecoderAVFObjC.h>
 #include <WebCore/ImageDecoderIdentifier.h>
 #include <WebCore/ProcessIdentity.h>
@@ -57,7 +57,7 @@ public:
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
     void didReceiveSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&) final;
 
-    bool allowsExitUnderMemoryPressure() const;
+    bool LEGACY_NODELETE allowsExitUnderMemoryPressure() const;
 
     void ref() const final;
     void deref() const final;

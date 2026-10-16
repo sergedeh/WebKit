@@ -27,12 +27,15 @@
 #include "LayoutIntegrationFormattingContextLayout.h"
 
 #include "BlockLayoutState.h"
+#include "FloatingObjects.h"
 #include "InlineLayoutState.h"
 #include "LayoutIntegrationBoxGeometryUpdater.h"
 #include "LayoutIntegrationUtils.h"
 #include "RenderBlock.h"
+#include "RenderBlockFlowInlines.h"
+#include "RenderStyleConstants.h"
 #include "RenderBoxInlines.h"
-#include "RenderFlexibleBox.h"
+#include "RenderElementInlines.h"
 #include "RenderLayoutState.h"
 #include "RenderObjectInlines.h"
 #include "TextBoxTrimmer.h"
@@ -42,7 +45,7 @@ namespace LayoutIntegration {
 
 static inline const Layout::ElementBox& rootLayoutBox(const Layout::ElementBox& child)
 {
-    auto* ancestor = &child.parent();
+    SUPPRESS_UNCHECKED_LOCAL auto* ancestor = &child.parent();
     while (!ancestor->isInitialContainingBlock()) {
         if (ancestor->establishesFormattingContext())
             break;
@@ -51,34 +54,62 @@ static inline const Layout::ElementBox& rootLayoutBox(const Layout::ElementBox& 
     return *ancestor;
 }
 
-void layoutWithFormattingContextForBox(const Layout::ElementBox& box, std::optional<LayoutUnit> widthConstraint, std::optional<LayoutUnit> heightConstraint, Layout::LayoutState& layoutState)
+static void layoutRendererWithOverridingBorderBoxSize(RenderBox& renderer, std::optional<LayoutUnit> overridingBorderBoxLogicalWidth, std::optional<LayoutUnit> overridingBorderBoxLogicalHeight)
 {
-    auto& renderer = downcast<RenderBox>(*box.rendererForIntegration());
-
-    if (widthConstraint) {
-        renderer.setOverridingBorderBoxLogicalWidth(*widthConstraint);
-        renderer.setNeedsLayout(MarkOnlyThis);
+    if (overridingBorderBoxLogicalWidth) {
+        renderer.setOverridingBorderBoxLogicalWidth(*overridingBorderBoxLogicalWidth);
+        renderer.setNeedsLayout(MarkingBehavior::MarkOnlyThis);
     }
 
-    if (heightConstraint) {
-        renderer.setOverridingBorderBoxLogicalHeight(*heightConstraint);
-        renderer.setNeedsLayout(MarkOnlyThis);
+    if (overridingBorderBoxLogicalHeight) {
+        renderer.setOverridingBorderBoxLogicalHeight(*overridingBorderBoxLogicalHeight);
+        renderer.setNeedsLayout(MarkingBehavior::MarkOnlyThis);
     }
 
     renderer.layoutIfNeeded();
 
-    if (widthConstraint)
+    if (overridingBorderBoxLogicalWidth)
         renderer.clearOverridingBorderBoxLogicalWidth();
 
+    if (overridingBorderBoxLogicalHeight)
+        renderer.clearOverridingBorderBoxLogicalHeight();
+}
+
+// Lay the renderer out at the given overriding border-box size, then feed the result back into modern
+// layout's BoxGeometry. containingBlockInlineSize is the inline size positions resolve against.
+static void layoutRendererAndUpdateBoxGeometry(const Layout::ElementBox& box, RenderBox& renderer, std::optional<LayoutUnit> overridingBorderBoxLogicalWidth, std::optional<LayoutUnit> overridingBorderBoxLogicalHeight, LayoutUnit containingBlockInlineSize, Layout::LayoutState& layoutState)
+{
+    layoutRendererWithOverridingBorderBoxSize(renderer, overridingBorderBoxLogicalWidth, overridingBorderBoxLogicalHeight);
+
     auto updater = BoxGeometryUpdater { layoutState, rootLayoutBox(box) };
-    updater.updateBoxGeometryAfterIntegrationLayout(box, widthConstraint.value_or(renderer.containingBlock()->contentBoxLogicalWidth()));
+    updater.updateBoxGeometryAfterIntegrationLayout(box, containingBlockInlineSize);
+}
+
+void layoutWithFormattingContextForBox(const Layout::ElementBox& box, std::optional<LayoutUnit> overridingBorderBoxLogicalWidth, std::optional<LayoutUnit> overridingBorderBoxLogicalHeight, Layout::LayoutState& layoutState)
+{
+    CheckedRef renderer = downcast<RenderBox>(*box.rendererForIntegration());
+    auto containingBlockInlineSize = overridingBorderBoxLogicalWidth.value_or(renderer->containingBlock()->contentBoxLogicalWidth());
+    layoutRendererAndUpdateBoxGeometry(box, renderer.get(), overridingBorderBoxLogicalWidth, overridingBorderBoxLogicalHeight, containingBlockInlineSize, layoutState);
+}
+
+void layoutGridItemWithFormattingContext(const Layout::ElementBox& box, std::optional<LayoutUnit> overridingBorderBoxLogicalWidth, std::optional<LayoutUnit> overridingBorderBoxLogicalHeight, LayoutUnit gridAreaInlineSize, Layout::LayoutState& layoutState)
+{
+    ASSERT(box.isGridItem());
+    CheckedRef renderer = downcast<RenderBox>(*box.rendererForIntegration());
+
+    // A grid item's containing block is its grid area. Keep the grid area's inline size set on the renderer so
+    // descendants resolve percentage/calc sizes against it during layout, and resolve the item's own geometry
+    // against it below rather than against the grid container's content box.
+    renderer->setGridAreaContentLogicalWidth(gridAreaInlineSize);
+    layoutRendererAndUpdateBoxGeometry(box, renderer.get(), overridingBorderBoxLogicalWidth, overridingBorderBoxLogicalHeight, gridAreaInlineSize, layoutState);
+    renderer->clearGridAreaContentSize();
 }
 
 static inline void populateRootRendererWithFloatsFromIFC(auto& rootBlockContainer, auto& placedFloats)
 {
     auto blockFormattingContextRootWritingMode = placedFloats.blockFormattingContextRoot().style().writingMode();
     for (auto& floatItem : placedFloats.list()) {
-        auto* layoutBox = floatItem.layoutBox();
+        CheckedPtr layoutBox = floatItem.layoutBox();
         if (!layoutBox) {
             // Floats inherited by IFC do not have associated layout boxes.
             continue;
@@ -89,10 +120,8 @@ static inline void populateRootRendererWithFloatsFromIFC(auto& rootBlockContaine
             continue;
         }
 
-        auto [marginBoxVisualRect, borderBoxVisualRect] = Layout::IntegrationUtils::toMarginAndBorderBoxVisualRect(floatItem.boxGeometry(), rootBlockContainer.size(), blockFormattingContextRootWritingMode);
-        floatingObject.setFrameRect(marginBoxVisualRect);
-        floatingObject.setMarginOffset({ borderBoxVisualRect.x() - marginBoxVisualRect.x(), borderBoxVisualRect.y() - marginBoxVisualRect.y() });
-        floatingObject.setIsPlaced(true);
+        auto [marginBoxVisualRect, borderBoxVisualRect] = Layout::IntegrationUtils::toMarginAndBorderBoxVisualRect(floatItem.boxGeometry(), rootBlockContainer.borderBoxSize(), blockFormattingContextRootWritingMode);
+        rootBlockContainer.placeFloatingBox(floatingObject, marginBoxVisualRect, { borderBoxVisualRect.x() - marginBoxVisualRect.x(), borderBoxVisualRect.y() - marginBoxVisualRect.y() });
     }
 }
 
@@ -113,109 +142,172 @@ static inline void populateIFCWithNewlyPlacedFloats(auto& blockRenderer, auto& p
 
         auto floatRect = floatingObject->frameRect();
 
+        auto borderBoxSize = floatingObject->renderer()->borderBoxSize();
+        auto marginOffset = floatingObject->marginOffset();
+        auto borderBoxTopLeft = floatRect.location() + marginOffset;
+
         auto boxGeometry = Layout::BoxGeometry { };
-        boxGeometry.setTopLeft(blockLogicalTopLeft + floatRect.location());
-        boxGeometry.setContentBoxWidth(floatRect.width());
-        boxGeometry.setContentBoxHeight(floatRect.height());
+        boxGeometry.setTopLeft(blockLogicalTopLeft + borderBoxTopLeft);
+        boxGeometry.setContentBoxWidth(borderBoxSize.width());
+        boxGeometry.setContentBoxHeight(borderBoxSize.height());
         boxGeometry.setBorder({ });
         boxGeometry.setPadding({ });
-        boxGeometry.setHorizontalMargin({ });
-        boxGeometry.setVerticalMargin({ });
+        boxGeometry.setHorizontalMargin({ marginOffset.width(), floatRect.width() - marginOffset.width() - borderBoxSize.width() });
+        boxGeometry.setVerticalMargin({ marginOffset.height(), floatRect.height() - marginOffset.height() - borderBoxSize.height() });
 
         auto shapeOutsideInfo = floatingObject->renderer()->shapeOutsideInfo();
         RefPtr shape = shapeOutsideInfo ? &shapeOutsideInfo->computedShape() : nullptr;
 
-        auto usedPosition = RenderStyle::usedFloat(*floatingObject->renderer()) == UsedFloat::Left ? Layout::PlacedFloats::Item::Position::Start : Layout::PlacedFloats::Item::Position::End;
-        placedFloats.add({ usedPosition, boxGeometry, floatRect.location(), WTF::move(shape) });
+        auto usedPosition = floatingObject->renderer()->usedStyle().floating() == UsedFloat::Left ? Layout::PlacedFloats::Item::Position::Start : Layout::PlacedFloats::Item::Position::End;
+        placedFloats.add({ usedPosition, boxGeometry, borderBoxTopLeft, WTF::move(shape) });
     }
 }
 
-static inline void updateRenderTreeLegacyLineClamp(auto& inlineLayoutState, auto& renderTreeLayoutState)
+static inline size_t LEGACY_NODELETE remainingLinesForLineClamp(auto& inlineLayoutState)
 {
-    auto& parentBlockLayoutState = inlineLayoutState.parentBlockLayoutState();
-
-    if (!parentBlockLayoutState.lineClamp())
-        return;
-    auto legacyLineClamp = renderTreeLayoutState.legacyLineClamp();
-    if (!legacyLineClamp)
-        return;
-    legacyLineClamp->currentLineCount += inlineLayoutState.lineCountWithInlineContentIncludingNestedBlocks();
-    renderTreeLayoutState.setLegacyLineClamp(legacyLineClamp);
+    // The lines we have already put on the parent's own lines (and in its earlier nested blocks) are part of the clamp's
+    // budget, and the nested block has to lay out within what is left of it. A block level sibling gets this from
+    // LineClampUpdater, which drops each preceding sibling's line count from the budget as it goes.
+    auto maximumLines = inlineLayoutState.parentBlockLayoutState().lineClamp()->maximumLines;
+    auto lineCount = inlineLayoutState.lineCountWithInlineContentIncludingNestedBlocks();
+    return maximumLines > lineCount ? maximumLines - lineCount : 0;
 }
 
-static inline void udpdateIFCLineClamp(auto& inlineLayoutState, auto& renderTreeLayoutState)
+static inline void updateRenderTreeLineClampBeforeLayout(auto& inlineLayoutState, auto& renderTreeLayoutState)
+{
+    auto& parentBlockLayoutState = inlineLayoutState.parentBlockLayoutState();
+
+    auto lineClamp = parentBlockLayoutState.lineClamp();
+    if (!lineClamp)
+        return;
+
+    auto currentLineCount = inlineLayoutState.lineCountWithInlineContentIncludingNestedBlocks();
+
+    if (auto legacyLineClamp = renderTreeLayoutState.legacyLineClamp()) {
+        legacyLineClamp->currentLineCount += currentLineCount;
+        renderTreeLayoutState.setLegacyLineClamp(legacyLineClamp);
+        return;
+    }
+
+    if (auto renderTreeLineClamp = renderTreeLayoutState.lineClamp())
+        renderTreeLayoutState.setLineClamp(RenderLayoutState::LineClamp { remainingLinesForLineClamp(inlineLayoutState), renderTreeLineClamp->shouldDiscardOverflow, renderTreeLineClamp->clampAfterBox, renderTreeLineClamp->isStableTextWrap, renderTreeLineClamp->hasConstrainedTextWrapContent });
+}
+
+static inline void updateIFCLineClampAfterLayout(auto& inlineLayoutState, auto& renderTreeLayoutState)
 {
     auto& parentBlockLayoutState = inlineLayoutState.parentBlockLayoutState();
 
     if (!parentBlockLayoutState.lineClamp())
         return;
-    auto legacyLineClamp = renderTreeLayoutState.legacyLineClamp();
-    if (!legacyLineClamp)
+
+    auto currentLineCount = inlineLayoutState.lineCountWithInlineContentIncludingNestedBlocks();
+
+    if (auto legacyLineClamp = renderTreeLayoutState.legacyLineClamp()) {
+        auto newlyConstructedLineCount = legacyLineClamp->currentLineCount - currentLineCount;
+        inlineLayoutState.setLineCountWithInlineContentIncludingNestedBlocks(currentLineCount + newlyConstructedLineCount);
         return;
-    auto newlyConstructedLineCount = legacyLineClamp->currentLineCount - inlineLayoutState.lineCountWithInlineContentIncludingNestedBlocks();
-    inlineLayoutState.setLineCountWithInlineContentIncludingNestedBlocks(inlineLayoutState.lineCountWithInlineContentIncludingNestedBlocks() + newlyConstructedLineCount);
+    }
+
+    // The lines the nested block just produced (what it took off the budget it was given, including the lines of its own
+    // nested blocks) count towards the clamp for the lines that follow it, the way a block level sibling's do.
+    if (auto renderTreeLineClamp = renderTreeLayoutState.lineClamp()) {
+        auto remainingLines = remainingLinesForLineClamp(inlineLayoutState);
+        inlineLayoutState.setLineCountWithInlineContentIncludingNestedBlocks(currentLineCount + remainingLines - std::min(remainingLines, renderTreeLineClamp->maximumLines));
+    }
 }
 
 void layoutWithFormattingContextForBlockInInline(const Layout::ElementBox& block, LayoutPoint blockLineLogicalTopLeft, Layout::InlineLayoutState& inlineLayoutState, Layout::LayoutState& layoutState)
 {
     auto& parentBlockLayoutState = inlineLayoutState.parentBlockLayoutState();
     auto& placedFloats = parentBlockLayoutState.placedFloats();
-    auto& blockRenderer = downcast<RenderBox>(*block.rendererForIntegration());
-    auto& rootBlockContainer = downcast<RenderBlockFlow>(*rootLayoutBox(block).rendererForIntegration());
-    auto& renderTreeLayoutState = *rootBlockContainer.view().frameView().layoutContext().layoutState();
+    CheckedRef blockRenderer = downcast<RenderBox>(*block.rendererForIntegration());
+    CheckedRef rootBlockContainer = downcast<RenderBlockFlow>(*rootLayoutBox(block).rendererForIntegration());
+    auto& renderTreeLayoutState = *rootBlockContainer->view().frameView().layoutContext().layoutState();
 
     auto updateRenderTreeBeforeLayout = [&] {
-        populateRootRendererWithFloatsFromIFC(rootBlockContainer, placedFloats);
-        updateRenderTreeLegacyLineClamp(inlineLayoutState, renderTreeLayoutState);
+        populateRootRendererWithFloatsFromIFC(rootBlockContainer.get(), placedFloats);
+        updateRenderTreeLineClampBeforeLayout(inlineLayoutState, renderTreeLayoutState);
     };
     updateRenderTreeBeforeLayout();
 
     auto positionAndMargin = RenderBlockFlow::BlockPositionAndMargin { };
     auto layoutBlockRenderer = [&] {
         if (inlineLayoutState.lineCount()) {
-            auto textBoxTrimStartDisabler = TextBoxTrimStartDisabler { blockRenderer };
-            positionAndMargin = rootBlockContainer.layoutBlockChildFromInlineLayout(blockRenderer, blockLineLogicalTopLeft.y(), Layout::IntegrationUtils::toMarginInfo(parentBlockLayoutState.marginState()));
+            auto textBoxTrimStartDisabler = TextBoxTrimStartDisabler { blockRenderer.get() };
+            positionAndMargin = rootBlockContainer->layoutBlockChildFromInlineLayout(blockRenderer.get(), blockLineLogicalTopLeft.y(), Layout::IntegrationUtils::toMarginInfo(parentBlockLayoutState.marginState()));
             return;
         }
-        positionAndMargin = rootBlockContainer.layoutBlockChildFromInlineLayout(blockRenderer, blockLineLogicalTopLeft.y(), Layout::IntegrationUtils::toMarginInfo(parentBlockLayoutState.marginState()));
+        positionAndMargin = rootBlockContainer->layoutBlockChildFromInlineLayout(blockRenderer.get(), blockLineLogicalTopLeft.y(), Layout::IntegrationUtils::toMarginInfo(parentBlockLayoutState.marginState()));
     };
     layoutBlockRenderer();
-    ASSERT(!blockRenderer.needsLayout());
+    ASSERT(!blockRenderer->needsLayout());
 
     auto updateIFCAfterLayout = [&] {
         auto updater = BoxGeometryUpdater { layoutState, rootLayoutBox(block) };
-        updater.updateBoxGeometryAfterIntegrationLayout(block, rootBlockContainer.contentBoxLogicalWidth());
+        updater.updateBoxGeometryAfterIntegrationLayout(block, rootBlockContainer->contentBoxLogicalWidth());
 
         auto& blockGeometry = layoutState.ensureGeometryForBox(block);
-        auto resolvedMarginBefore = positionAndMargin.childLogicalTop - blockLineLogicalTopLeft.y();
-        blockGeometry.setTopLeft(LayoutPoint { blockGeometry.marginStart(), resolvedMarginBefore });
-        // We don't know what the after margin here is (or if there's any at all) before processing the content after.
-        // FIXME: Check if blockGeometry needs the adjusted margin after value at all.
-        blockGeometry.setVerticalMargin({ resolvedMarginBefore, { } });
+        auto borderBoxTop = LayoutUnit { };
 
-        udpdateIFCLineClamp(inlineLayoutState, renderTreeLayoutState);
-        populateIFCWithNewlyPlacedFloats(blockRenderer, placedFloats, blockLineLogicalTopLeft);
-        auto contentOffsetAfterSelfCollapsingBlock = blockRenderer.isSelfCollapsingBlock() ? positionAndMargin.containerLogicalBottom - positionAndMargin.childLogicalTop : 0_lu;
-        parentBlockLayoutState.marginState() = Layout::IntegrationUtils::toMarginState(positionAndMargin.marginInfo, contentOffsetAfterSelfCollapsingBlock);
+        auto contentOffsetAfterSelfCollapsingBlock = blockRenderer->isSelfCollapsingBlock() ? std::max(0_lu, positionAndMargin.childLogicalTop - positionAndMargin.containerLogicalBottom) : 0_lu;
+        if (contentOffsetAfterSelfCollapsingBlock) {
+            // This is where "next line top position" diverges from "current line's bottom".
+            // See the last paragraph at https://www.w3.org/TR/CSS22/box.html#collapsing-margins
+            // Instead of stretching the line box (by setting margin on the box) let's simply offset the box.
+            // In practical terms, this means the starting position of the next line may not align exactly with where the bottom of the block ends.
+            borderBoxTop = contentOffsetAfterSelfCollapsingBlock;
+            blockGeometry.setVerticalMargin({ { }, { } });
+        } else {
+            borderBoxTop = positionAndMargin.childLogicalTop - blockLineLogicalTopLeft.y();
+            auto advanceAfter = LayoutUnit { };
+            if (alwaysPageBreak(blockRenderer->style().breakAfter()) || blockRenderer->isSelfCollapsingBlock())
+                advanceAfter = std::max(0_lu, positionAndMargin.containerLogicalBottom - positionAndMargin.childLogicalTop - blockRenderer->logicalHeight());
+            blockGeometry.setVerticalMargin({ borderBoxTop, advanceAfter });
+        }
+        blockGeometry.setTopLeft(LayoutPoint { blockGeometry.marginStart(), borderBoxTop });
+
+        updateIFCLineClampAfterLayout(inlineLayoutState, renderTreeLayoutState);
+        // Floats are positioned relative to their containing block's border box, which sits at borderBoxTop within the line (see setTopLeft above) and not at the line's top left.
+        populateIFCWithNewlyPlacedFloats(blockRenderer.get(), placedFloats, blockLineLogicalTopLeft + LayoutSize { blockGeometry.marginStart(), borderBoxTop });
+        auto marginState = Layout::IntegrationUtils::toMarginState(positionAndMargin.marginInfo);
+        // This box's clearance sits above its margin before, so that margin is behind the position the content after
+        // the box starts at, even though the box keeps it for that content (CSS 2.2 8.3.1, 9.5.2). A negative margin
+        // before is not above the border box at all, which is why this is the positive part only.
+        if (auto marginBeforeWithClearance = rootBlockContainer->selfCollapsingMarginBeforeWithClear(blockRenderer.ptr()))
+            marginState.marginBeforeWithClearance = *marginBeforeWithClearance;
+        parentBlockLayoutState.marginState() = marginState;
     };
     updateIFCAfterLayout();
 }
 
 LayoutUnit formattingContextRootLogicalWidthForType(const Layout::ElementBox& box, LogicalWidthType logicalWidthType)
 {
-    ASSERT(box.establishesFormattingContext());
+    // Either a box inline layout treats as atomic, or a block level box on a line: the render tree lays both of them
+    // out, so it is the render tree that knows what they cost (see LineBuilder::handleBlockContent).
+    ASSERT(box.establishesFormattingContext() || box.isBlockLevelBox());
 
-    auto& renderer = downcast<RenderBox>(*box.rendererForIntegration());
+    CheckedRef renderer = downcast<RenderBox>(*box.rendererForIntegration());
+
+    auto isOrthogonalBlockLevelBox = [&] {
+        if (!box.isBlockLevelBox())
+            return false;
+        CheckedPtr containingBlock = renderer->containingBlock();
+        return containingBlock && containingBlock->writingMode().isOrthogonal(renderer->writingMode());
+    };
+
     switch (logicalWidthType) {
-    case LogicalWidthType::PreferredMaximum:
-        return renderer.maxPreferredLogicalWidth();
-    case LogicalWidthType::PreferredMinimum:
-        return renderer.minPreferredLogicalWidth();
+    case LogicalWidthType::MaxContentContribution:
+        if (isOrthogonalBlockLevelBox())
+            return renderer->computeIntrinsicLogicalHeight();
+        return renderer->maxContentLogicalWidthContribution();
+    case LogicalWidthType::MinContentContribution:
+        if (isOrthogonalBlockLevelBox())
+            return renderer->computeIntrinsicLogicalHeight();
+        return renderer->minContentLogicalWidthContribution();
     case LogicalWidthType::MaxContent:
     case LogicalWidthType::MinContent: {
-        auto minimunLogicalWidth = LayoutUnit { };
-        auto maximumLogicalWidth = LayoutUnit { };
-        renderer.computeIntrinsicLogicalWidths(minimunLogicalWidth, maximumLogicalWidth);
+        auto intrinsicWidthComputationScope = IntrinsicLogicalWidthComputationScope { renderer->view().frameView().layoutContext(), renderer.get() };
+        auto [minimunLogicalWidth, maximumLogicalWidth] = renderer->computeIntrinsicLogicalWidths();
         return logicalWidthType == LogicalWidthType::MaxContent ? maximumLogicalWidth : minimunLogicalWidth;
     }
     default:
@@ -226,16 +318,11 @@ LayoutUnit formattingContextRootLogicalWidthForType(const Layout::ElementBox& bo
 
 LayoutUnit formattingContextRootLogicalHeightForType(const Layout::ElementBox& box, LogicalHeightType logicalHeightType)
 {
+    UNUSED_PARAM(box);
     ASSERT(box.establishesFormattingContext());
 
-    auto& renderer = downcast<RenderBox>(*box.rendererForIntegration());
     switch (logicalHeightType) {
     case LogicalHeightType::MinContent: {
-        // Since currently we can't ask RenderBox for content height, this is limited to flex items
-        // where the legacy flex layout "fixed" this by caching the content height in RenderBox::updateLogicalHeight
-        // before additional height constraints applied.
-        if (auto* flexContainer = dynamicDowncast<RenderFlexibleBox>(renderer.parent()))
-            return flexContainer->cachedFlexItemIntrinsicContentLogicalHeight(renderer);
         ASSERT_NOT_IMPLEMENTED_YET();
         return { };
     }

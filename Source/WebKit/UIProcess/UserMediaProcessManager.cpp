@@ -41,10 +41,14 @@ namespace WebKit {
 static const ASCIILiteral audioExtensionPath { "com.apple.webkit.microphone"_s };
 static const ASCIILiteral videoExtensionPath { "com.apple.webkit.camera"_s };
 static const ASCIILiteral appleCameraServicePath { "com.apple.applecamerad"_s };
+#if USE(APPLE_INTERNAL_SDK) && HAVE(ADDITIONAL_APPLE_CAMERA_SERVICE)
 static const ASCIILiteral additionalAppleCameraServicePath { "com.apple.appleh13camerad"_s };
+#endif
+#if USE(APPLE_INTERNAL_SDK) && HAVE(APPLE_CAMERA_USER_CLIENT)
 static const ASCIILiteral appleCameraUserClientPath { "com.apple.aneuserd"_s };
 static const ASCIILiteral appleCameraUserClientIOKitClientClass { "H11ANEInDirectPathClient"_s };
 static const ASCIILiteral appleCameraUserClientIOKitServiceClass { "H11ANEIn"_s };
+#endif
 #endif
 
 UserMediaProcessManager& UserMediaProcessManager::singleton()
@@ -53,12 +57,10 @@ UserMediaProcessManager& UserMediaProcessManager::singleton()
     return manager;
 }
 
-UserMediaProcessManager::UserMediaProcessManager()
-{
-}
+UserMediaProcessManager::UserMediaProcessManager() = default;
 
 #if ENABLE(SANDBOX_EXTENSIONS)
-static bool needsAppleCameraService()
+static bool LEGACY_NODELETE needsAppleCameraService()
 {
 #if !PLATFORM(MAC) && !PLATFORM(MACCATALYST)
     return false;
@@ -176,7 +178,7 @@ bool UserMediaProcessManager::willCreateMediaStream(UserMediaPermissionRequestMa
         }
 
         for (const auto& id : ids)
-            RELEASE_LOG(WebRTC, "UserMediaProcessManager::willCreateMediaStream - granting extension %s", id.utf8().data());
+            RELEASE_LOG(WebRTC, "UserMediaProcessManager::willCreateMediaStream - granting extension %s", id.utf8());
 
         if (needsAudioSandboxExtension)
             process->grantAudioCaptureExtension();
@@ -205,12 +207,12 @@ void UserMediaProcessManager::revokeSandboxExtensionsIfNeeded(WebProcessProxy& p
     for (auto& mainPage : process.mainPages()) {
         hasAudioCapture |= mainPage->isCapturingAudio();
         hasVideoCapture |= mainPage->isCapturingVideo();
-        if (RefPtr managerProxy = mainPage->userMediaPermissionRequestManagerIfExists())
+        if (auto* managerProxy = mainPage->userMediaPermissionRequestManagerIfExists())
             hasPendingCapture |= managerProxy->hasPendingCapture();
     }
 
     for (auto& weakRemotePage : process.remotePages()) {
-        if (RefPtr remotePage = weakRemotePage.get()) {
+        if (auto* remotePage = weakRemotePage.get()) {
             hasAudioCapture |= remotePage->mediaState().containsAny(WebCore::MediaProducer::IsCapturingAudioMask);
             hasVideoCapture |= remotePage->mediaState().containsAny(WebCore::MediaProducer::IsCapturingVideoMask);
         }
@@ -245,7 +247,7 @@ void UserMediaProcessManager::revokeSandboxExtensionsIfNeeded(WebProcessProxy& p
         return;
 
     for (const auto& id : params)
-        RELEASE_LOG(WebRTC, "UserMediaProcessManager::endedCaptureSession - revoking extension %s", id.utf8().data());
+        RELEASE_LOG(WebRTC, "UserMediaProcessManager::endedCaptureSession - revoking extension %s", id.utf8());
 
     process.send(Messages::WebProcess::RevokeUserMediaDeviceSandboxExtensions(params), 0);
 #endif

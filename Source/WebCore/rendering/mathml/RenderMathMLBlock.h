@@ -42,13 +42,13 @@ class RenderMathMLBlock : public RenderBlock {
     WTF_MAKE_TZONE_ALLOCATED(RenderMathMLBlock);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderMathMLBlock);
 public:
-    RenderMathMLBlock(Type, MathMLPresentationElement&, RenderStyle&&);
-    RenderMathMLBlock(Type, Document&, RenderStyle&&);
+    RenderMathMLBlock(Type, MathMLPresentationElement&, Style::ComputedStyle&&);
+    RenderMathMLBlock(Type, Document&, Style::ComputedStyle&&);
     virtual ~RenderMathMLBlock();
 
     MathMLStyle& mathMLStyle() const { return m_mathMLStyle; }
 
-    bool isChildAllowed(const RenderObject&, const RenderStyle&) const override;
+    bool isChildAllowed(const RenderObject&, const Style::ComputedStyle&) const override;
 
     // MathML defines an "embellished operator" as roughly an <mo> that may have subscripts,
     // superscripts, underscripts, overscripts, or a denominator (as in d/dx, where "d" is some
@@ -57,15 +57,15 @@ public:
     // embellished operator, and omits any embellishments.
     // FIXME: We don't yet handle all the cases in the MathML spec. See
     // https://bugs.webkit.org/show_bug.cgi?id=78617.
-    virtual RenderMathMLOperator* unembellishedOperator() const { return nullptr; }
+    virtual CheckedPtr<RenderMathMLOperator> unembellishedOperator() const;
 
 protected:
-    void styleDidChange(Style::Difference, const RenderStyle* oldStyle) override;
+    void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) override;
 
     inline LayoutUnit ruleThicknessFallback() const;
 
     LayoutUnit mathAxisHeight() const;
-    LayoutUnit mirrorIfNeeded(LayoutUnit horizontalOffset, LayoutUnit boxWidth = 0_lu) const;
+    LayoutUnit LEGACY_NODELETE mirrorIfNeeded(LayoutUnit horizontalOffset, LayoutUnit boxWidth = 0_lu) const;
     inline LayoutUnit mirrorIfNeeded(LayoutUnit horizontalOffset, const RenderBox& child) const;
 
     static inline LayoutUnit ascentForChild(const RenderBox& child);
@@ -76,7 +76,7 @@ protected:
     void layoutFloatingChildren();
 
     void shiftInFlowChildren(LayoutUnit left, LayoutUnit top);
-    void adjustPreferredLogicalWidthsForBorderAndPadding();
+    void adjustContentLogicalWidthsForBorderAndPadding();
     void adjustLayoutForBorderAndPadding();
 
     enum class LayoutPhase : uint8_t {
@@ -96,7 +96,7 @@ protected:
     LayoutUnit applySizeToMathContent(LayoutPhase, const SizeAppliedToMathContent&);
 
 private:
-    bool isRenderMathMLBlock() const final { return true; }
+    bool LEGACY_NODELETE isRenderMathMLBlock() const final { return true; }
     ASCIILiteral renderName() const override { return "RenderMathMLBlock"_s; }
     bool canDropAnonymousBlockChild() const final { return false; }
     void layoutItems(RelayoutChildren);
@@ -108,7 +108,7 @@ class RenderMathMLTable final : public RenderTable {
     WTF_MAKE_TZONE_ALLOCATED(RenderMathMLTable);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderMathMLTable);
 public:
-    inline RenderMathMLTable(MathMLElement&, RenderStyle&&);
+    inline RenderMathMLTable(MathMLElement&, Style::ComputedStyle&&);
     virtual ~RenderMathMLTable();
 
     MathMLStyle& mathMLStyle() const { return m_mathMLStyle; }
@@ -120,7 +120,7 @@ private:
     const Ref<MathMLStyle> m_mathMLStyle;
 };
 
-LayoutUnit toUserUnits(const MathMLElement::Length&, const RenderStyle&, const LayoutUnit& referenceValue);
+LayoutUnit toUserUnits(const MathMLElement::Length&, const Style::ComputedStyle&, const LayoutUnit& referenceValue);
 
 } // namespace WebCore
 

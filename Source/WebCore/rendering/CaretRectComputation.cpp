@@ -30,7 +30,6 @@
 #include "InlineIteratorBoxInlines.h"
 #include "InlineIteratorLineBox.h"
 #include "InlineIteratorTextBox.h"
-#include "InlineIteratorTextBoxInlines.h"
 #include "InlineIteratorSVGTextBox.h"
 #include "LayoutIntegrationLineLayout.h"
 #include "LineSelection.h"
@@ -64,12 +63,12 @@ static LayoutRect computeCaretRectForEmptyElement(const RenderBoxModelObject& re
     // However, as soon as some content is entered, the line boxes will be
     // constructed and this kludge is not called any more. So only the caret size
     // of an empty :first-line'd block is wrong. I think we can live with that.
-    const RenderStyle& currentStyle = renderer.firstLineStyle();
-    const WritingMode writingMode = currentStyle.writingMode();
+    CheckedRef currentStyle = renderer.firstLineStyle();
+    const WritingMode writingMode = currentStyle->writingMode();
 
     enum CaretAlignment { AlignLogicalLeft, AlignLogicalRight, AlignCenter };
     CaretAlignment alignment;
-    switch (currentStyle.textAlign()) {
+    switch (currentStyle->textAlign()) {
     case Style::TextAlign::Left:
     case Style::TextAlign::WebKitLeft:
         alignment = writingMode.isLogicalLeftLineLeft()
@@ -118,8 +117,8 @@ static LayoutRect computeCaretRectForEmptyElement(const RenderBoxModelObject& re
     }
     x = std::min(x, std::max<LayoutUnit>(maxX - caretWidth(), 0));
 
-    auto lineHeight = LayoutUnit::fromFloatCeil(currentStyle.computedLineHeight());
-    auto height = std::min(lineHeight, LayoutUnit { currentStyle.metricsOfPrimaryFont().height() });
+    auto lineHeight = LayoutUnit::fromFloatCeil(currentStyle->usedLineHeight());
+    auto height = std::min(lineHeight, LayoutUnit { currentStyle->metricsOfPrimaryFont().height() });
     auto y = renderer.borderAndPaddingBefore() + (lineHeight > height ? (lineHeight - height) / 2 : LayoutUnit { });
 
     auto rect = LayoutRect(x, y, caretWidth(), height);
@@ -132,8 +131,8 @@ static LayoutRect computeCaretRectForEmptyElement(const RenderBoxModelObject& re
 
 static LayoutRect computeCaretRectForLinePosition(const InlineIterator::LineBoxIterator& lineBox, float logicalLeftPosition, CaretRectMode caretRectMode)
 {
-    auto& root = lineBox->formattingContextRoot();
-    auto writingMode = root.writingMode();
+    CheckedRef root = lineBox->formattingContextRoot();
+    auto writingMode = root->writingMode();
     auto lineSelectionRect = LineSelection::logicalRect(*lineBox);
 
     int height = lineSelectionRect.height();
@@ -150,7 +149,7 @@ static LayoutRect computeCaretRectForLinePosition(const InlineIterator::LineBoxI
     float lineRight = lineSelectionRect.maxX();
 
     bool rightAligned = false;
-    switch (root.style().textAlign()) {
+    switch (root->style().textAlign()) {
     case Style::TextAlign::Right:
     case Style::TextAlign::WebKitRight:
         rightAligned = writingMode.isLogicalLeftLineLeft();
@@ -171,7 +170,7 @@ static LayoutRect computeCaretRectForLinePosition(const InlineIterator::LineBoxI
     }
 
     float leftEdge = std::min<float>(0, lineLeft);
-    float rightEdge = std::max<float>(root.logicalWidth(), lineRight);
+    float rightEdge = std::max<float>(root->logicalWidth(), lineRight);
 
     if (rightAligned) {
         left = std::max(left, leftEdge);
@@ -274,11 +273,11 @@ static LayoutRect computeCaretRectForBox(const RenderBox& renderer, const Inline
     // They never refer to children.
     // FIXME: Paint the carets inside empty blocks differently than the carets before/after elements.
 
-    LayoutRect rect(renderer.location(), LayoutSize(caretWidth(), renderer.height()));
+    LayoutRect rect(renderer.location(), LayoutSize(caretWidth(), renderer.borderBoxHeight()));
     auto writingMode = boxAndOffset.box ? boxAndOffset.box->writingMode() : renderer.writingMode();
 
     if ((!boxAndOffset.offset) == writingMode.isInlineFlipped())
-        rect.move(LayoutSize(renderer.width() - caretWidth(), 0_lu));
+        rect.move(LayoutSize(renderer.borderBoxWidth() - caretWidth(), 0_lu));
 
     if (boxAndOffset.box) {
         auto lineBox = boxAndOffset.box->lineBox();
@@ -305,13 +304,13 @@ static LayoutRect computeCaretRectForBox(const RenderBox& renderer, const Inline
     // FIXME: Border/padding should be added for all elements but this workaround
     // is needed because we use offsets inside an "atomic" element to represent
     // positions before and after the element in deprecated editing offsets.
-    if (renderer.element() && !(editingIgnoresContent(*renderer.element()) || isRenderedTable(renderer.element()))) {
+    if (renderer.element() && !(editingIgnoresContent(protect(*renderer.element())) || isRenderedTable(renderer.element()))) {
         rect.setX(rect.x() + renderer.borderLeft() + renderer.paddingLeft());
         rect.setY(rect.y() + renderer.paddingTop() + renderer.borderTop());
     }
 
     if (caretRectMode == CaretRectMode::ExpandToEndOfLine)
-        rect.shiftMaxXEdgeTo(renderer.x() + renderer.width());
+        rect.shiftMaxXEdgeTo(renderer.x() + renderer.borderBoxWidth());
 
     return writingMode.isHorizontal() ? rect : rect.transposedRect();
 }

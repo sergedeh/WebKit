@@ -18,8 +18,6 @@
  *
  */
 
-// RefPtr is documented at http://webkit.org/coding/RefPtr.html
-
 #pragma once
 
 #include <algorithm>
@@ -33,6 +31,55 @@ namespace WTF {
 template<typename T, typename PtrTraits, typename RefDerefTraits> class RefPtr;
 template<typename T, typename PtrTraits = RawPtrTraits<T>, typename RefDerefTraits = DefaultRefDerefTraits<T>> RefPtr<T, PtrTraits, RefDerefTraits> adoptRef(T*);
 
+/**
+ * @brief RefPtr is a nullable intrusive reference-counting smart pointer.
+ *
+ * It extends the lifetime of the referenced object by calling ref() on construction
+ * and deref() on destruction. When the reference count reaches zero, the object
+ * is automatically deleted.
+ *
+ * RefPtr can only be used with classes that implement ref() and deref() member
+ * functions, typically by inheriting from RefCounted, ThreadSafeRefCounted, or
+ * AbstractRefCounted. Another common pattern is to have an object forward its
+ * ref-counting to its owner. In such cases, you provide custom ref() and deref()
+ * functions on the ownee which internally call ref() / deref() on the owner.
+ * This is an alternative to subclassing RefCounted / ThreadSafeRefCounted.
+ * For types with non-standard ref/deref interfaces, you can provide custom
+ * RefDerefTraits as a template parameter (see DefaultRefDerefTraits in Ref.h).
+ *
+ * @note RefCounted uses non-atomic operations and is not thread-safe. If you
+ * need to share ownership across threads, use ThreadSafeRefCounted instead,
+ * which uses atomic reference counting.
+ *
+ * If you expect the pointer to never be null during its usage, consider using
+ * Ref instead, which provides clearer non-nullable semantics.
+ *
+ * To create a RefPtr, use one of the following:
+ * @code
+ * // Increments the ref count on assignment and decrements when when
+ * // going out of scope.
+ * RefPtr ptr = &object;
+ * // X::create() uses adoptRef() internally to take ownership without incrementing
+ * // the ref count since ref-counted objects get constructed with a ref count
+ * // of 1.
+ * RefPtr ptr = X::create();
+ * class X {
+ * public:
+ *     static RefPtr<X> create() { return adoptRef(new X); }
+ * private:
+ *     X() = default;
+ * };
+ * @endcode
+ *
+ * Use adoptRef() when you receive an object that you already own (i.e., it was
+ * created with a +1 ref count). This is typically used within a static create()
+ * factory function on the class, and the constructor should be private to ensure
+ * all instances are created through the factory. Using the regular RefPtr
+ * constructor instead of adoptRef() would add an extra ref, causing a leak when
+ * the RefPtr is destroyed. Use the regular constructor when you want to add a
+ * reference to an object you don't already own. Newly constructed RefCounted
+ * or ThreadSafeRefCounted objects start with a ref count of 1.
+ */
 template<typename T, typename _PtrTraits, typename _RefDerefTraits>
 class RefPtr {
     WTF_FORBID_HEAP_ALLOCATION_ALLOWING_PLACEMENT_NEW;
@@ -51,12 +98,13 @@ public:
     ALWAYS_INLINE RefPtr(const RefPtr& o) : m_ptr(RefDerefTraits::refIfNotNull(PtrTraits::unwrap(o.m_ptr))) { }
     template<typename X, typename Y, typename Z> RefPtr(const RefPtr<X, Y, Z>& o) : m_ptr(RefDerefTraits::refIfNotNull(PtrTraits::unwrap(o.get()))) { }
 
-    ALWAYS_INLINE RefPtr(RefPtr&& o) : m_ptr(o.leakRef()) { }
-    template<typename X, typename Y, typename Z> RefPtr(RefPtr<X, Y, Z>&& o) : m_ptr(o.leakRef()) { }
+    ALWAYS_INLINE RefPtr(RefPtr&& o) noexcept : m_ptr(o.leakRef()) { }
+    template<typename X, typename Y, typename Z> RefPtr(RefPtr<X, Y, Z>&& o) noexcept : m_ptr(o.leakRef()) { }
     template<typename X, typename Y> RefPtr(Ref<X, Y>&&);
     template<typename X, typename Y, typename Z> RefPtr(const WeakPtr<X, Y, Z>& o) requires std::is_convertible_v<X*, T*> : m_ptr(RefDerefTraits::refIfNotNull(o.get())) { }
     template<typename X, typename Y> RefPtr(const CheckedPtr<X, Y>& o) requires std::is_convertible_v<X*, T*> : m_ptr(RefDerefTraits::refIfNotNull(o.get())) { }
-    template<typename X, typename Y> RefPtr(const ThreadSafeWeakPtr<X, Y>& o) requires std::is_convertible_v<X*, T*> : m_ptr(RefDerefTraits::refIfNotNull(o.get())) { }
+    template<typename X> RefPtr(const ThreadSafeWeakPtr<X>& o) requires std::is_convertible_v<X*, T*> : m_ptr(RefDerefTraits::refIfNotNull(o.get())) { }
+    template<typename X, typename Deleter> RefPtr(const std::unique_ptr<X, Deleter>& o) requires std::is_convertible_v<X*, T*> : m_ptr(RefDerefTraits::refIfNotNull(o.get())) { }
 
     // Hash table deleted values, which are only constructed and never copied or destroyed.
     RefPtr(HashTableDeletedValueType) : m_ptr(PtrTraits::hashTableDeletedValue()) { }
@@ -108,7 +156,7 @@ private:
     RefPtr(T* ptr, AdoptTag) : m_ptr(ptr) { }
 
     typename PtrTraits::StorageType m_ptr;
-} SWIFT_ESCAPABLE;
+} SWIFT_SELF_CONTAINED;
 
 // Template deduction guide.
 template<typename X, typename Y> RefPtr(Ref<X, Y>&&) -> RefPtr<X, Y, DefaultRefDerefTraits<X>>;
@@ -116,8 +164,10 @@ template<typename X, typename Y, typename Z> RefPtr(const WeakPtr<X, Y, Z>&) -> 
 template<typename X, typename Y, typename Z> RefPtr(WeakPtr<X, Y, Z>&) -> RefPtr<X, RawPtrTraits<X>, DefaultRefDerefTraits<X>>;
 template<typename X, typename Y> RefPtr(const CheckedPtr<X, Y>&) -> RefPtr<X, RawPtrTraits<X>, DefaultRefDerefTraits<X>>;
 template<typename X, typename Y> RefPtr(CheckedPtr<X, Y>&) -> RefPtr<X, RawPtrTraits<X>, DefaultRefDerefTraits<X>>;
-template<typename X, typename Y> RefPtr(const ThreadSafeWeakPtr<X, Y>&) -> RefPtr<X, RawPtrTraits<X>, DefaultRefDerefTraits<X>>;
-template<typename X, typename Y> RefPtr(ThreadSafeWeakPtr<X, Y>&) -> RefPtr<X, RawPtrTraits<X>, DefaultRefDerefTraits<X>>;
+template<typename X> RefPtr(const ThreadSafeWeakPtr<X>&) -> RefPtr<X, RawPtrTraits<X>, DefaultRefDerefTraits<X>>;
+template<typename X> RefPtr(ThreadSafeWeakPtr<X>&) -> RefPtr<X, RawPtrTraits<X>, DefaultRefDerefTraits<X>>;
+template<typename X, typename Deleter> RefPtr(const std::unique_ptr<X, Deleter>&) -> RefPtr<X, RawPtrTraits<X>, DefaultRefDerefTraits<X>>;
+template<typename X, typename Deleter> RefPtr(std::unique_ptr<X, Deleter>&) -> RefPtr<X, RawPtrTraits<X>, DefaultRefDerefTraits<X>>;
 
 template<typename T, typename U, typename V>
 template<typename X, typename Y>
@@ -218,12 +268,11 @@ inline bool operator==(const RefPtr<T, U, V>& a, X* b)
 template<typename T, typename U, typename V>
 inline RefPtr<T, U, V> adoptRef(T* p)
 {
-    adopted(p);
     return RefPtr<T, U, V>(p, RefPtr<T, U, V>::Adopt);
 }
 
 template<typename T, typename PtrTraits = RawPtrTraits<T>, typename RefDerefTraits = DefaultRefDerefTraits<T>>
-    requires HasRefPtrMemberFunctions<T>::value
+    requires CanUseDefaultRefDerefTraits<T>
 ALWAYS_INLINE CLANG_POINTER_CONVERSION RefPtr<T, PtrTraits, RefDerefTraits> protect(T* ptr)
 {
     return RefPtr<T, PtrTraits, RefDerefTraits>(ptr);
@@ -233,6 +282,12 @@ template<typename T, typename PtrTraits, typename RefDerefTraits>
 ALWAYS_INLINE CLANG_POINTER_CONVERSION RefPtr<T, PtrTraits, RefDerefTraits> protect(const RefPtr<T, PtrTraits, RefDerefTraits>& ptr)
 {
     return ptr.copyRef();
+}
+
+template<typename T, typename PtrTraits, typename RefDerefTraits>
+RefPtr<T, PtrTraits, RefDerefTraits> protect(RefPtr<T, PtrTraits, RefDerefTraits>&&)
+{
+    static_assert(WTF::unreachableForType<T>, "Calling protect() on an rvalue is unnecessary; the caller already owns the value.");
 }
 
 template<typename T, typename U = RawPtrTraits<T>, typename V = DefaultRefDerefTraits<T>, typename X, typename Y, typename Z>
@@ -279,8 +334,26 @@ inline bool is(const RefPtr<ArgType, PtrTraits, RefDerefTraits>& source)
     return is<ExpectedType>(source.get());
 }
 
+template<typename... ExpectedTypes, typename ArgType, typename PtrTraits, typename RefDerefTraits>
+inline bool isAnyOf(const RefPtr<ArgType, PtrTraits, RefDerefTraits>& source)
+{
+    return isAnyOf<ExpectedTypes...>(source.get());
+}
+
 template<typename Target, typename Source, typename PtrTraits, typename RefDerefTraits>
-inline RefPtr<match_constness_t<Source, Target>> uncheckedDowncast(RefPtr<Source, PtrTraits, RefDerefTraits> source)
+inline match_constness_t<Source, Target>* uncheckedDowncast(RefPtr<Source, PtrTraits, RefDerefTraits>& source LIFETIME_BOUND)
+{
+    return uncheckedDowncast<Target>(source.get());
+}
+
+template<typename Target, typename Source, typename PtrTraits, typename RefDerefTraits>
+inline match_constness_t<Source, Target>* uncheckedDowncast(const RefPtr<Source, PtrTraits, RefDerefTraits>& source LIFETIME_BOUND)
+{
+    return uncheckedDowncast<Target>(source.get());
+}
+
+template<typename Target, typename Source, typename PtrTraits, typename RefDerefTraits>
+inline RefPtr<match_constness_t<Source, Target>> uncheckedDowncast(RefPtr<Source, PtrTraits, RefDerefTraits>&& source)
 {
     static_assert(!std::same_as<Source, Target>, "Unnecessary cast to same type");
     static_assert(std::derived_from<Target, Source>, "Should be a downcast");
@@ -289,17 +362,41 @@ inline RefPtr<match_constness_t<Source, Target>> uncheckedDowncast(RefPtr<Source
 }
 
 template<typename Target, typename Source, typename PtrTraits, typename RefDerefTraits>
-inline RefPtr<match_constness_t<Source, Target>> downcast(RefPtr<Source, PtrTraits, RefDerefTraits> source)
+inline match_constness_t<Source, Target>* downcast(RefPtr<Source, PtrTraits, RefDerefTraits>& source LIFETIME_BOUND)
+{
+    return downcast<Target>(source.get());
+}
+
+template<typename Target, typename Source, typename PtrTraits, typename RefDerefTraits>
+inline match_constness_t<Source, Target>* downcast(const RefPtr<Source, PtrTraits, RefDerefTraits>& source LIFETIME_BOUND)
+{
+    return downcast<Target>(source.get());
+}
+
+template<typename Target, typename Source, typename PtrTraits, typename RefDerefTraits>
+inline RefPtr<match_constness_t<Source, Target>> downcast(RefPtr<Source, PtrTraits, RefDerefTraits>&& source)
 {
     static_assert(!std::same_as<Source, Target>, "Unnecessary cast to same type");
     static_assert(std::derived_from<Target, Source>, "Should be a downcast");
-    RELEASE_ASSERT(!source || is<Target>(*source));
+    RELEASE_ASSERT_WITH_UNQUALIFIED_FUNCTION_NAME(!source || is<Target>(*source));
     return unsafeRefPtrDowncast<match_constness_t<Source, Target>>(WTF::move(source));
 }
 
-template<typename Target, typename Source, typename TargetPtrTraits = RawPtrTraits<Target>, typename TargetRefDerefTraits = DefaultRefDerefTraits<Target>,
+template<typename Target, typename Source, typename PtrTraits, typename RefDerefTraits>
+inline match_constness_t<Source, Target>* dynamicDowncast(RefPtr<Source, PtrTraits, RefDerefTraits>& source LIFETIME_BOUND)
+{
+    return dynamicDowncast<Target>(source.get());
+}
+
+template<typename Target, typename Source, typename PtrTraits, typename RefDerefTraits>
+inline match_constness_t<Source, Target>* dynamicDowncast(const RefPtr<Source, PtrTraits, RefDerefTraits>& source LIFETIME_BOUND)
+{
+    return dynamicDowncast<Target>(source.get());
+}
+
+template<typename Target, typename Source, typename TargetPtrTraits = RawPtrTraits<match_constness_t<Source, Target>>, typename TargetRefDerefTraits = DefaultRefDerefTraits<match_constness_t<Source, Target>>,
     typename SourcePtrTraits, typename SourceRefDerefTraits>
-inline RefPtr<match_constness_t<Source, Target>, TargetPtrTraits, TargetRefDerefTraits> dynamicDowncast(RefPtr<Source, SourcePtrTraits, SourceRefDerefTraits> source)
+inline RefPtr<match_constness_t<Source, Target>, TargetPtrTraits, TargetRefDerefTraits> dynamicDowncast(RefPtr<Source, SourcePtrTraits, SourceRefDerefTraits>&& source)
 {
     static_assert(!std::same_as<Source, Target>, "Unnecessary cast to same type");
     static_assert(std::derived_from<Target, Source>, "Should be a downcast");
@@ -309,7 +406,7 @@ inline RefPtr<match_constness_t<Source, Target>, TargetPtrTraits, TargetRefDeref
 }
 
 template<typename T, typename U>
-ALWAYS_INLINE void lazyInitialize(const RefPtr<T>& ptr, Ref<U>&& obj)
+SUPPRESS_NODELETE ALWAYS_INLINE void LEGACY_NODELETE lazyInitialize(const RefPtr<T>& ptr, Ref<U>&& obj)
 {
     RELEASE_ASSERT(!ptr);
     const_cast<RefPtr<T>&>(ptr) = WTF::move(obj);

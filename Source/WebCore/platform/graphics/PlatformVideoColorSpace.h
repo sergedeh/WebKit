@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <WebCore/PlatformVideoChromaLocation.h>
 #include <WebCore/PlatformVideoColorPrimaries.h>
 #include <WebCore/PlatformVideoMatrixCoefficients.h>
 #include <WebCore/PlatformVideoTransferCharacteristics.h>
@@ -35,12 +36,33 @@ namespace WebCore {
 
 struct PlatformVideoColorSpace {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(PlatformVideoColorSpace);
-    std::optional<PlatformVideoColorPrimaries> primaries;
-    std::optional<PlatformVideoTransferCharacteristics> transfer;
-    std::optional<PlatformVideoMatrixCoefficients> matrix;
-    std::optional<bool> fullRange;
+    std::optional<PlatformVideoColorPrimaries> primaries { };
+    std::optional<PlatformVideoTransferCharacteristics> transfer { };
+    std::optional<PlatformVideoMatrixCoefficients> matrix { };
+    std::optional<bool> fullRange { };
+    // Must stay after fullRange: VideoColorSpaceInit aliases this struct, and the
+    // bindings generator initialises it positionally in VideoColorSpaceInit.idl order.
+    std::optional<PlatformVideoChromaLocation> chromaLocation { };
 
+    bool isValid() const { return primaries || transfer || matrix || fullRange || chromaLocation; }
     friend bool operator==(const PlatformVideoColorSpace&, const PlatformVideoColorSpace&) = default;
 };
+
+// https://w3c.github.io/webcodecs/#srgb-color-space
+inline PlatformVideoColorSpace srgbColorSpace()
+{
+    return {
+        .primaries = PlatformVideoColorPrimaries::Bt709,
+        .transfer = PlatformVideoTransferCharacteristics::Iec6196621,
+        .matrix = PlatformVideoMatrixCoefficients::Bt709,
+        .fullRange = true
+    };
+}
+
+void overrideVideoColorSpaceAsNeeded(PlatformVideoColorSpace&, const std::optional<PlatformVideoColorSpace>&);
+
+WEBCORE_EXPORT bool usesITUR2100TF(const PlatformVideoColorSpace&);
+
+WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, PlatformVideoColorSpace);
 
 }

@@ -26,9 +26,9 @@
 
 #pragma once
 
-#include <WebCore/ModelPlayer.h>
-#include <WebCore/ModelPlayerClient.h>
-#include <WebCore/ModelPlayerIdentifier.h>
+#include "ModelPlayer.h"
+#include "ModelPlayerClient.h"
+#include "ModelPlayerIdentifier.h"
 #include <wtf/Forward.h>
 #include <wtf/Platform.h>
 #include <wtf/WeakPtr.h>
@@ -45,25 +45,22 @@ private:
 
     // ModelPlayer overrides.
     ModelPlayerIdentifier identifier() const final { return m_id; }
-    void load(Model&, LayoutSize) override;
-    void configureGraphicsLayer(GraphicsLayer&, ModelPlayerGraphicsLayerConfiguration&&) override;
-    void sizeDidChange(LayoutSize) override;
-    void enterFullscreen() override;
-    void handleMouseDown(const LayoutPoint&, MonotonicTime) override;
-    void handleMouseMove(const LayoutPoint&, MonotonicTime) override;
-    void handleMouseUp(const LayoutPoint&, MonotonicTime) override;
-    void getCamera(CompletionHandler<void(std::optional<WebCore::HTMLModelElementCamera>&&)>&&) override;
-    void setCamera(WebCore::HTMLModelElementCamera, CompletionHandler<void(bool success)>&&) override;
-    void isPlayingAnimation(CompletionHandler<void(std::optional<bool>&&)>&&) override;
-    void setAnimationIsPlaying(bool, CompletionHandler<void(bool success)>&&) override;
-    void isLoopingAnimation(CompletionHandler<void(std::optional<bool>&&)>&&) override;
-    void setIsLoopingAnimation(bool, CompletionHandler<void(bool success)>&&) override;
-    void animationDuration(CompletionHandler<void(std::optional<Seconds>&&)>&&) override;
-    void animationCurrentTime(CompletionHandler<void(std::optional<Seconds>&&)>&&) override;
-    void setAnimationCurrentTime(Seconds, CompletionHandler<void(bool success)>&&) override;
-    void hasAudio(CompletionHandler<void(std::optional<bool>&&)>&&) override;
-    void isMuted(CompletionHandler<void(std::optional<bool>&&)>&&) override;
-    void setIsMuted(bool, CompletionHandler<void(bool success)>&&) override;
+    void load(NodeIdentifier, Model&, LayoutSize, bool) override;
+    void LEGACY_NODELETE configureGraphicsLayer(GraphicsLayer&, ModelPlayerGraphicsLayerConfiguration&&) override;
+    void LEGACY_NODELETE sizeDidChange(LayoutSize) override;
+    void LEGACY_NODELETE enterFullscreen() override;
+    void LEGACY_NODELETE handleMouseDown(const LayoutPoint&, MonotonicTime) override;
+    void LEGACY_NODELETE handleMouseMove(const LayoutPoint&, MonotonicTime) override;
+    void LEGACY_NODELETE handleMouseUp(const LayoutPoint&, MonotonicTime) override;
+    void LEGACY_NODELETE getCamera(CompletionHandler<void(std::optional<WebCore::HTMLModelElementCamera>&&)>&&) override;
+    void LEGACY_NODELETE setCamera(WebCore::HTMLModelElementCamera, CompletionHandler<void(bool success)>&&) override;
+    void LEGACY_NODELETE isPlayingAnimation(NodeIdentifier, CompletionHandler<void(std::optional<bool>&&)>&&) override;
+    void LEGACY_NODELETE setAnimationIsPlaying(NodeIdentifier, bool, CompletionHandler<void(bool success)>&&) override;
+    void LEGACY_NODELETE isLoopingAnimation(NodeIdentifier, CompletionHandler<void(std::optional<bool>&&)>&&) override;
+    void LEGACY_NODELETE setIsLoopingAnimation(NodeIdentifier, bool, CompletionHandler<void(bool success)>&&) override;
+    void LEGACY_NODELETE animationDuration(NodeIdentifier, CompletionHandler<void(std::optional<Seconds>&&)>&&) override;
+    void LEGACY_NODELETE animationCurrentTime(NodeIdentifier, CompletionHandler<void(std::optional<Seconds>&&)>&&) override;
+    void LEGACY_NODELETE setAnimationCurrentTime(NodeIdentifier, Seconds, CompletionHandler<void(bool success)>&&) override;
 #if ENABLE(MODEL_ELEMENT_ACCESSIBILITY)
     ModelPlayerAccessibilityChildren accessibilityChildren() override;
 #endif

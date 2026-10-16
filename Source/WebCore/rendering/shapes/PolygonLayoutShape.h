@@ -43,8 +43,14 @@ public:
     {
     }
 
-    const FloatPoint& vertex1() const override { return m_vertex1; }
-    const FloatPoint& vertex2() const override { return m_vertex2; }
+    OffsetPolygonEdge(const FloatPoint& vertex1, const FloatPoint& vertex2, const FloatSize& offset)
+        : m_vertex1(vertex1 + offset)
+        , m_vertex2(vertex2 + offset)
+    {
+    }
+
+    const FloatPoint& vertex1() const LIFETIME_BOUND override { return m_vertex1; }
+    const FloatPoint& vertex2() const LIFETIME_BOUND override { return m_vertex2; }
 
     bool isWithinYRange(float y1, float y2) const { return y1 <= minY() && y2 >= maxY(); }
     bool overlapsYRange(float y1, float y2) const { return y2 >= minY() && y1 <= maxY(); }
@@ -56,12 +62,17 @@ private:
     FloatPoint m_vertex2;
 };
 
+// Unites the horizontal extent that the edge from vertex1 to vertex2, grown by `shapeMargin`, covers
+// between the y1 and y2 scanlines. Walking every edge of a closed contour this way gives the widest
+// extent of the whole shape in that band.
+void uniteEdgeExcludedInterval(FloatShapeInterval&, const FloatPoint& vertex1, const FloatPoint& vertex2, float y1, float y2, float shapeMargin);
+
 class PolygonLayoutShape : public LayoutShape {
     WTF_MAKE_NONCOPYABLE(PolygonLayoutShape);
 public:
-    PolygonLayoutShape(Vector<FloatPoint>&& vertices, float boxLogicalWidth)
+    PolygonLayoutShape(Vector<FloatPoint>&& vertices, float borderBoxLogicalWidth)
         : m_polygon(WTF::move(vertices))
-        , m_boxLogicalWidth(boxLogicalWidth)
+        , m_borderBoxLogicalWidth(borderBoxLogicalWidth)
     {
     }
 
@@ -73,7 +84,7 @@ public:
 
 private:
     FloatPolygon m_polygon;
-    float m_boxLogicalWidth { 0.f };
+    float m_borderBoxLogicalWidth { 0.f };
 };
 
 } // namespace WebCore

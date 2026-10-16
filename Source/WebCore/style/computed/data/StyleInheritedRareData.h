@@ -55,6 +55,7 @@
 #include <WebCore/StyleTextEmphasisStyle.h>
 #include <WebCore/StyleTextIndent.h>
 #include <WebCore/StyleTextShadow.h>
+#include <WebCore/StyleTextSizeAdjust.h>
 #include <WebCore/StyleTextUnderlineOffset.h>
 #include <WebCore/StyleTextUnderlinePosition.h>
 #include <WebCore/StyleTouchAction.h>
@@ -71,10 +72,6 @@
 
 #if HAVE(CORE_MATERIAL)
 #include <WebCore/AppleVisualEffect.h>
-#endif
-
-#if ENABLE(TEXT_AUTOSIZING)
-#include <WebCore/StyleTextSizeAdjust.h>
 #endif
 
 #if ENABLE(DARK_MODE_CSS)
@@ -105,12 +102,20 @@ public:
 #endif
 
     float usedZoom;
-    float deviceScaleFactor { 1.0f };
+    // This lives here so that we can access the device scale factor cheaply during
+    // layout in order to perform pixel snapping for StyleLineWidth evaluations.
+    // Otherwise, we get significant regressions on performance benchmarks.
+    float deviceScaleFactor;
     WebkitTextStrokeWidth textStrokeWidth;
 
     Color textStrokeColor;
     Color textFillColor;
     Color textEmphasisColor;
+    // Duplicates the color property as an unresolved Style::Color, which InheritedData::color
+    // cannot hold. A highlight pseudo-element inherits it unresolved so that currentcolor keeps
+    // resolving against each originating element down the highlight chain.
+    // https://drafts.csswg.org/css-pseudo-4/#highlight-cascade
+    Color colorForHighlight;
     Color visitedLinkTextStrokeColor;
     Color visitedLinkTextFillColor;
     Color visitedLinkTextEmphasisColor;
@@ -134,7 +139,7 @@ public:
 
     Cursor::Images cursorImages;
 
-#if ENABLE(TOUCH_EVENTS)
+#if ENABLE(CSS_TAP_HIGHLIGHT_COLOR)
     Color tapHighlightColor;
 #endif
 
@@ -157,9 +162,7 @@ public:
 
     StrokeMiterlimit strokeMiterLimit;
 
-#if ENABLE(TEXT_AUTOSIZING)
     TextSizeAdjust textSizeAdjust;
-#endif
 
     MathDepth mathDepth;
 
@@ -168,6 +171,7 @@ public:
 
     Widows widows;
     Orphans orphans;
+    HyphenateLimitEdge internalHyphenateLimitCharsWord;
     HyphenateLimitEdge hyphenateLimitBefore;
     HyphenateLimitEdge hyphenateLimitAfter;
     HyphenateLimitLines hyphenateLimitLines;
@@ -180,8 +184,8 @@ public:
     PREFERRED_TYPE(OverflowWrap) unsigned overflowWrap : 2;
     PREFERRED_TYPE(NBSPMode) unsigned nbspMode : 1;
     PREFERRED_TYPE(LineBreak) unsigned lineBreak : 3;
-    PREFERRED_TYPE(UserSelect) unsigned userSelect : 2;
-    PREFERRED_TYPE(ColorSpace) unsigned colorSpace : 1;
+    PREFERRED_TYPE(UserSelect) unsigned webkitUserSelect : 2;
+    PREFERRED_TYPE(UserSelect) unsigned usedUserSelect : 2;
     PREFERRED_TYPE(SpeakAs) unsigned speakAs : 4;
     PREFERRED_TYPE(Hyphens) unsigned hyphens : 2;
     PREFERRED_TYPE(TextCombine) unsigned textCombine : 1;
@@ -204,6 +208,7 @@ public:
     PREFERRED_TYPE(RubyAlign) unsigned rubyAlign : 2;
     PREFERRED_TYPE(RubyOverhang) unsigned rubyOverhang : 1;
     PREFERRED_TYPE(TextZoom) unsigned textZoom: 1;
+    PREFERRED_TYPE(InterpolateSize) unsigned interpolateSize : 1;
 #if ENABLE(WEBKIT_TOUCH_CALLOUT_CSS_PROPERTY)
     PREFERRED_TYPE(WebkitTouchCallout) unsigned touchCallout : 1;
 #endif
@@ -215,13 +220,17 @@ public:
     PREFERRED_TYPE(bool) unsigned hasExplicitlySetStrokeColor : 1;
     PREFERRED_TYPE(bool) unsigned effectiveInert : 1;
     PREFERRED_TYPE(bool) unsigned effectivelyTransparent : 1;
+    PREFERRED_TYPE(bool) unsigned effectiveWrapInsideAvoid : 1; // This box or an ancestor has wrap-inside: avoid.
     PREFERRED_TYPE(bool) unsigned isInSubtreeWithBlendMode : 1;
     PREFERRED_TYPE(bool) unsigned isForceHidden : 1;
     PREFERRED_TYPE(ContentVisibility) unsigned usedContentVisibility : 2;
     PREFERRED_TYPE(bool) unsigned autoRevealsWhenFound : 1;
     PREFERRED_TYPE(bool) unsigned insideDefaultButton : 1;
     PREFERRED_TYPE(bool) unsigned insideSubmitButton : 1;
-    PREFERRED_TYPE(bool) unsigned evaluationTimeZoomEnabled : 1;
+    PREFERRED_TYPE(bool) unsigned inBaseAppearanceSubtree : 1;
+#if ENABLE(SMART_IMAGE_RESIZER)
+    PREFERRED_TYPE(bool) unsigned isAffectedBySmartImageResizer : 1;
+#endif
 #if HAVE(CORE_MATERIAL)
     PREFERRED_TYPE(AppleVisualEffect) unsigned usedAppleVisualEffectForSubtree : 5;
 #endif

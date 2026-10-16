@@ -32,6 +32,7 @@
 #import <JavaScriptCore/ExecutableAllocator.h>
 #import <wtf/CompletionHandler.h>
 #import <wtf/OSObjectPtr.h>
+#import <wtf/Threading.h>
 #import <wtf/WTFProcess.h>
 #import <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 
@@ -55,7 +56,7 @@ namespace WebKit {
 
 class XPCServiceInitializerDelegate {
 public:
-    XPCServiceInitializerDelegate(XPCObjectPtr<xpc_connection_t>, xpc_object_t initializerMessage);
+    XPCServiceInitializerDelegate(OSObjectPtr<xpc_connection_t>, xpc_object_t initializerMessage);
 
     virtual ~XPCServiceInitializerDelegate();
 
@@ -73,8 +74,8 @@ protected:
     bool hasEntitlement(ASCIILiteral entitlement);
     bool isClientSandboxed();
 
-    XPCObjectPtr<xpc_connection_t> m_connection;
-    XPCObjectPtr<xpc_object_t> m_initializerMessage;
+    OSObjectPtr<xpc_connection_t> m_connection;
+    OSObjectPtr<xpc_object_t> m_initializerMessage;
 };
 
 template<typename XPCServiceType>
@@ -94,7 +95,7 @@ void setJSCOptions(xpc_object_t initializerMessage, EnableLockdownMode, EnableEn
 void disableJSC(NOESCAPE WTF::CompletionHandler<void(void)>&& beforeFinalizeHandler);
 
 template<typename XPCServiceType, typename XPCServiceInitializerDelegateType, bool isWebContentProcess = false>
-void XPCServiceInitializer(XPCObjectPtr<xpc_connection_t> connection, xpc_object_t initializerMessage)
+void XPCServiceInitializer(OSObjectPtr<xpc_connection_t> connection, xpc_object_t initializerMessage)
 {
     XPCServiceInitializerDelegateType delegate(WTF::move(connection), initializerMessage);
 

@@ -10,16 +10,14 @@
 #ifndef LIBANGLE_FRAME_CAPTURE_H_
 #define LIBANGLE_FRAME_CAPTURE_H_
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #include <fstream>
+#include "common/unsafe_buffers.h"
 #include "sys/stat.h"
 
 #include "common/PackedEnums.h"
 #include "common/SimpleMutex.h"
 #include "common/frame_capture_binary_data.h"
+#include "common/frame_capture_shared.h"
 #include "common/frame_capture_utils.h"
 #include "common/string_utils.h"
 #include "common/system_utils.h"
@@ -35,7 +33,6 @@
 
 namespace gl
 {
-enum class BigGLEnum;
 enum class GLESEnum;
 }  // namespace gl
 
@@ -328,6 +325,13 @@ class ResourceTracker final : angle::NonCopyable
 
     std::map<GLuint, egl::ImageID> &getTextureIDToImageTable() { return mMatchTextureIDToImage; }
 
+    std::map<egl::ImageID, std::vector<uint8_t>> &getImageDataMap() { return mImageDataMap; }
+
+    std::map<gl::ContextID, std::set<GLuint>> &getExternalImageBindingsToRestore()
+    {
+        return mExternalImageBindingsToRestore;
+    }
+
     void setShaderProgramType(gl::ShaderProgramID id, angle::ShaderProgramType type)
     {
         mShaderProgramType[id] = type;
@@ -368,6 +372,8 @@ class ResourceTracker final : angle::NonCopyable
         mDefaultUniformsToReset.clear();
         mDefaultUniformResetCalls.clear();
         mDefaultUniformBaseLocations.clear();
+        mImageDataMap.clear();
+        mExternalImageBindingsToRestore.clear();
     }
 
   private:
@@ -407,6 +413,8 @@ class ResourceTracker final : angle::NonCopyable
     std::map<gl::ContextID, TrackedResourceArray> mTrackedResourcesPerContext;
     std::map<EGLImage, egl::AttributeMap> mMatchImageToAttribs;
     std::map<GLuint, egl::ImageID> mMatchTextureIDToImage;
+    std::map<egl::ImageID, std::vector<uint8_t>> mImageDataMap;
+    std::map<gl::ContextID, std::set<GLuint>> mExternalImageBindingsToRestore;
     std::map<gl::ShaderProgramID, ShaderProgramType> mShaderProgramType;
 };
 
@@ -491,6 +499,7 @@ using TextureLevelDataMap = std::map<gl::TextureID, TextureLevels>;
 struct SurfaceParams
 {
     gl::Extents extents;
+    EGLint type = EGL_NONE;
     egl::ColorSpace colorSpace;
 };
 
@@ -814,7 +823,7 @@ class FrameCaptureShared final : angle::NonCopyable
         for (size_t i = 0; i < numObjs; ++i)
         {
             mResourceTrackerCL.mCLParamIDToIndexVector[paramCaptureKey->uniqueID].push_back(
-                (this->*getCLObjIndexFunc)(&objs[i]));
+                (this->*getCLObjIndexFunc)(&ANGLE_UNSAFE_TODO(objs[i])));
         }
     }
 
@@ -846,9 +855,11 @@ class FrameCaptureShared final : angle::NonCopyable
                             GLintptr offset,
                             GLsizeiptr length,
                             bool writable,
-                            bool coherent);
+                            bool coherent,
+                            bool persistent);
 
     void trackTextureUpdate(const gl::Context *context, const CallCapture &call);
+    void trackFramebufferAttachmentUpdate(const gl::Context *context, const CallCapture &call);
     void trackImageUpdate(const gl::Context *context, const CallCapture &call);
     void trackDefaultUniformUpdate(const gl::Context *context, const CallCapture &call);
     void trackVertexArrayUpdate(const gl::Context *context, const CallCapture &call);
@@ -963,6 +974,17 @@ class FrameCaptureShared final : angle::NonCopyable
 
     angle::SimpleMutex &getFrameCaptureMutex() { return mFrameCaptureMutex; }
 
+    void markGLSyncEmitted(gl::SyncID syncID) { mEmittedGLSyncIDs.insert(syncID.value); }
+    void markEGLSyncEmitted(egl::SyncID syncID) { mEmittedEGLSyncIDs.insert(syncID.value); }
+    bool isGLSyncEmitted(gl::SyncID syncID) const
+    {
+        return mEmittedGLSyncIDs.find(syncID.value) != mEmittedGLSyncIDs.end();
+    }
+    bool isEGLSyncEmitted(egl::SyncID syncID) const
+    {
+        return mEmittedEGLSyncIDs.find(syncID.value) != mEmittedEGLSyncIDs.end();
+    }
+
     void setDeferredLinkProgram(gl::ShaderProgramID programID)
     {
         mDeferredLinkPrograms.emplace(programID);
@@ -1044,6 +1066,8 @@ class FrameCaptureShared final : angle::NonCopyable
     void scanSetupCalls(std::vector<CallCapture> &setupCalls);
 
     std::vector<CallCapture> mFrameCalls;
+    std::vector<size_t> mClientVertexArrayCallIndices;
+    gl::AttributesMask mClientVertexArrayDirtyAttribMask;
 
     // We save one large buffer of binary data for the whole CPP replay.
     // This simplifies a lot of file management.
@@ -1057,7 +1081,7 @@ class FrameCaptureShared final : angle::NonCopyable
     std::string mOutDirectory;
     std::string mCaptureLabel;
     bool mCompression;
-    gl::AttribArray<int> mClientVertexArrayMap;
+    gl::AttribArray<const void *> mClientVertexArrayData;
     uint32_t mFrameIndex;
     uint32_t mCaptureStartFrame;
     uint32_t mCaptureEndFrame;
@@ -1078,6 +1102,11 @@ class FrameCaptureShared final : angle::NonCopyable
     angle::SimpleMutex mFrameCaptureMutex;
     bool mCallCaptured           = false;
     bool mStartFrameCallCaptured = false;
+
+    // Track Sync IDs emitted in the trace to allow skipping of external sync objects
+    // to prevent corrupttion of Sync state tracking
+    std::unordered_set<GLuint> mEmittedGLSyncIDs;
+    std::unordered_set<GLuint> mEmittedEGLSyncIDs;
 
     // When true, it removes unnecessary calls going into
     // replay files that occur before mCaptureStartFrame
@@ -1159,9 +1188,8 @@ void CaptureGLCallToFrameCapture(CaptureFuncT captureFunc,
     }
     FrameCaptureShared *frameCaptureShared = context->getShareGroup()->getFrameCaptureShared();
 
-    // EGL calls are protected by the global context mutex but only a subset of GL calls
-    // are so protected. Ensure FrameCaptureShared access thread safety by using a
-    // frame-capture only mutex.
+    // Most but not all GL calls take the ContextMutex so we ensure thread-safe FrameCaptureShared
+    // access by always taking the frame-capture mutex
     std::lock_guard<angle::SimpleMutex> lock(frameCaptureShared->getFrameCaptureMutex());
 
     if (!frameCaptureShared->isCapturing())
@@ -1202,21 +1230,22 @@ void CaptureEGLCallToFrameCapture(CaptureFuncT captureFunc,
         egl::Display *display = GetEGLDisplayArg(captureParams...);
         if (display)
         {
-            for (const auto &contextIter : display->getState().contextMap)
-            {
-                context = contextIter.second;
-                break;
-            }
+            context = display->getState().contextMap.first();
         }
         if (!context)
         {
             return;
         }
     }
+
+    // Take standard per-context EGL entry point lock
     std::lock_guard<egl::ContextMutex> lock(context->getContextMutex());
 
     angle::FrameCaptureShared *frameCaptureShared =
         context->getShareGroup()->getFrameCaptureShared();
+    // Also take the the frame-capture mutex to cover the GL capture path
+    std::lock_guard<angle::SimpleMutex> fcLock(frameCaptureShared->getFrameCaptureMutex());
+
     if (!frameCaptureShared->isCapturing())
     {
         return;
@@ -1265,9 +1294,9 @@ void CaptureGetParameter(const gl::State &glState,
                          ParamCapture *paramCapture);
 
 void CaptureGetActiveUniformBlockivParameters(const gl::State &glState,
-                                              gl::ShaderProgramID handle,
-                                              gl::UniformBlockIndex uniformBlockIndex,
-                                              GLenum pname,
+                                              gl::ShaderProgramID programPacked,
+                                              gl::UniformBlockIndex uniformBlockIndexPacked,
+                                              gl::UniformBlockParameter pnamePacked,
                                               ParamCapture *paramCapture);
 
 template <typename T>
@@ -1508,25 +1537,6 @@ struct SaveFileHelper
     std::string mFilePath;
 };
 
-// TODO: Consolidate to C output and remove option. http://anglebug.com/42266223
-
-constexpr char kEnabledVarName[]        = "ANGLE_CAPTURE_ENABLED";
-constexpr char kOutDirectoryVarName[]   = "ANGLE_CAPTURE_OUT_DIR";
-constexpr char kFrameStartVarName[]     = "ANGLE_CAPTURE_FRAME_START";
-constexpr char kFrameEndVarName[]       = "ANGLE_CAPTURE_FRAME_END";
-constexpr char kBinaryDataSizeVarName[] = "ANGLE_CAPTURE_MAX_RESIDENT_BINARY_SIZE";
-constexpr char kBlockSizeVarName[]      = "ANGLE_CAPTURE_BLOCK_SIZE";
-constexpr char kTriggerVarName[]        = "ANGLE_CAPTURE_TRIGGER";
-constexpr char kEndCaptureVarName[]     = "ANGLE_CAPTURE_END_CAPTURE";
-constexpr char kCaptureLabelVarName[]   = "ANGLE_CAPTURE_LABEL";
-constexpr char kCompressionVarName[]    = "ANGLE_CAPTURE_COMPRESSION";
-constexpr char kSerializeStateVarName[] = "ANGLE_CAPTURE_SERIALIZE_STATE";
-constexpr char kValidationVarName[]     = "ANGLE_CAPTURE_VALIDATION";
-constexpr char kValidationExprVarName[] = "ANGLE_CAPTURE_VALIDATION_EXPR";
-constexpr char kSourceExtVarName[]      = "ANGLE_CAPTURE_SOURCE_EXT";
-constexpr char kSourceSizeVarName[]     = "ANGLE_CAPTURE_SOURCE_SIZE";
-constexpr char kForceShadowVarName[]    = "ANGLE_CAPTURE_FORCE_SHADOW";
-
 constexpr size_t kFunctionSizeLimit = 5000;
 
 // Limit based on MSVC Compiler Error C2026
@@ -1535,23 +1545,6 @@ constexpr size_t kStringLengthLimit = 16380;
 // Default limit to number of bytes in a capture source files.
 constexpr char kDefaultSourceFileExt[]           = "cpp";
 constexpr size_t kDefaultSourceFileSizeThreshold = 400000;
-
-// Android debug properties that correspond to the above environment variables
-constexpr char kAndroidEnabled[]        = "debug.angle.capture.enabled";
-constexpr char kAndroidOutDir[]         = "debug.angle.capture.out_dir";
-constexpr char kAndroidFrameStart[]     = "debug.angle.capture.frame_start";
-constexpr char kAndroidFrameEnd[]       = "debug.angle.capture.frame_end";
-constexpr char kAndroidBinaryDataSize[] = "debug.angle.capture.max_resident_binary_size";
-constexpr char kAndroidBlockSize[]      = "debug.angle.capture.block_size";
-constexpr char kAndroidTrigger[]        = "debug.angle.capture.trigger";
-constexpr char kAndroidEndCapture[]     = "debug.angle.capture.end_capture";
-constexpr char kAndroidCaptureLabel[]   = "debug.angle.capture.label";
-constexpr char kAndroidCompression[]    = "debug.angle.capture.compression";
-constexpr char kAndroidValidation[]     = "debug.angle.capture.validation";
-constexpr char kAndroidValidationExpr[] = "debug.angle.capture.validation_expr";
-constexpr char kAndroidSourceExt[]      = "debug.angle.capture.source_ext";
-constexpr char kAndroidSourceSize[]     = "debug.angle.capture.source_size";
-constexpr char kAndroidForceShadow[]    = "debug.angle.capture.force_shadow";
 
 void WriteCppReplayForCall(const CallCapture &call,
                            ReplayWriter &replayWriter,

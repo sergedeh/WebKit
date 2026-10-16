@@ -22,10 +22,11 @@
 #include "config.h"
 #include <wtf/text/WTFString.h>
 
+#include <cmath>
 #include <wtf/ASCIICType.h>
 #include <wtf/DataLog.h>
+#include <wtf/Function.h>
 #include <wtf/HexNumber.h>
-#include <wtf/NeverDestroyed.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>
 #include <wtf/dtoa.h>
@@ -34,7 +35,6 @@
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringToIntegerConversion.h>
-#include <wtf/unicode/CharacterNames.h>
 #include <wtf/unicode/UTF8Conversion.h>
 
 namespace WTF {
@@ -57,7 +57,7 @@ String::String(std::span<const char8_t> characters)
 {
 }
 
-// Construct a string with Latin-1 data.
+// Construct a string with Latin-1 data. Intentionally private; `char` carries no encoding.
 String::String(std::span<const char> characters)
     : m_impl(characters.data() ? RefPtr { StringImpl::create(byteCast<Latin1Character>(characters)) } : nullptr)
 {
@@ -69,28 +69,16 @@ String::String(const char* nullTerminatedString)
 {
 }
 
-std::strong_ordering codePointCompare(const String& a, const String& b)
-{
-    return codePointCompare(a.impl(), b.impl());
-}
-
-char32_t String::characterStartingAt(unsigned i) const
+char32_t String::codePointAt(unsigned i) const
 {
     if (!m_impl || i >= m_impl->length())
         return 0;
-    SUPPRESS_UNCOUNTED_ARG return m_impl->characterStartingAt(i);
+    SUPPRESS_UNCOUNTED_ARG return m_impl->codePointAt(i);
 }
 
 String makeStringByJoining(std::span<const String> strings, const String& separator)
 {
-    StringBuilder builder;
-    for (const auto& string : strings) {
-        if (builder.isEmpty())
-            builder.append(string);
-        else
-            builder.append(separator, string);
-    }
-    return builder.toString();
+    return makeString(interleave(strings, separator));
 }
 
 String makeStringByRemoving(const String& string, unsigned position, unsigned lengthToRemove)
@@ -142,6 +130,11 @@ String String::convertToLowercaseWithoutLocaleStartingAtFailingIndex8Bit(unsigne
     SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->convertToLowercaseWithoutLocaleStartingAtFailingIndex8Bit(failingIndex) : String { };
 }
 
+String String::convertToLowercaseWithoutLocaleStartingAtFailingIndex16Bit(unsigned failingIndex) const
+{
+    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->convertToLowercaseWithoutLocaleStartingAtFailingIndex16Bit(failingIndex) : String { };
+}
+
 String String::convertToUppercaseWithoutLocale() const
 {
     // FIXME: Should this function, and the many others like it, be inlined?
@@ -158,6 +151,16 @@ String String::convertToUppercaseWithLocale(const AtomString& localeIdentifier) 
 {
     // FIXME: Should this function, and the many others like it, be inlined?
     SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->convertToUppercaseWithLocale(localeIdentifier) : String { };
+}
+
+String String::convertToUppercaseWithoutLocaleStartingAtFailingIndex8Bit(unsigned failingIndex) const
+{
+    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->convertToUppercaseWithoutLocaleStartingAtFailingIndex8Bit(failingIndex) : String { };
+}
+
+String String::convertToUppercaseWithoutLocaleStartingAtFailingIndex16Bit(unsigned failingIndex) const
+{
+    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->convertToUppercaseWithoutLocaleStartingAtFailingIndex16Bit(failingIndex) : String { };
 }
 
 String String::trim(CodeUnitMatchFunction predicate) const
@@ -178,7 +181,7 @@ String String::foldCase() const
     SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->foldCase() : String { };
 }
 
-Expected<Vector<char16_t>, UTF8ConversionError> String::charactersWithoutNullTermination() const
+std::expected<Vector<char16_t>, UTF8ConversionError> String::charactersWithoutNullTermination() const
 {
     Vector<char16_t> result;
     if (!m_impl)
@@ -195,7 +198,7 @@ Expected<Vector<char16_t>, UTF8ConversionError> String::charactersWithoutNullTer
     return result;
 }
 
-Expected<Vector<char16_t>, UTF8ConversionError> String::charactersWithNullTermination() const
+std::expected<Vector<char16_t>, UTF8ConversionError> String::charactersWithNullTermination() const
 {
     auto result = charactersWithoutNullTermination();
     if (result)
@@ -382,75 +385,48 @@ Vector<String> String::splitAllowingEmptyEntries(StringView separator) const
     return splitInternal<true>(separator);
 }
 
-CString String::ascii() const
+ASCIICString String::ascii() const
 {
-    // Printable ASCII characters 32..127 and the null character are
-    // preserved, characters outside of this range are converted to '?'.
-
-    if (isEmpty()) {
-        std::span<char> characterBuffer;
-        return CString::newUninitialized(0, characterBuffer);
-    }
-
-    if (this->is8Bit()) {
-        auto characters = this->span8();
-
-        std::span<char> characterBuffer;
-        CString result = CString::newUninitialized(characters.size(), characterBuffer);
-
-        size_t characterBufferIndex = 0;
-        for (auto character : characters)
-            characterBuffer[characterBufferIndex++] = character && (character < 0x20 || character > 0x7f) ? '?' : byteCast<char>(character);
-
-        return result;        
-    }
-
-    auto characters = span16();
-    std::span<char> characterBuffer;
-    CString result = CString::newUninitialized(characters.size(), characterBuffer);
-
-    size_t characterBufferIndex = 0;
-    for (auto character : characters)
-        characterBuffer[characterBufferIndex++] = character && (character < 0x20 || character > 0x7f) ? '?' : character;
-
-    return result;
+    if (is8Bit())
+        return StringImpl::asciiForCharacters(span8());
+    return StringImpl::asciiForCharacters(span16());
 }
 
-CString String::latin1() const
+Latin1CString String::latin1() const
 {
     // Basic Latin1 (ISO) encoding - Unicode characters 0..255 are
     // preserved, characters outside of this range are converted to '?'.
 
     if (isEmpty())
-        return ""_span;
+        return Latin1CString { ""_span8 };
 
     if (is8Bit())
-        return CString(this->span8());
+        return Latin1CString { this->span8() };
 
     auto characters = this->span16();
-    std::span<char> characterBuffer;
-    CString result = CString::newUninitialized(characters.size(), characterBuffer);
+    std::span<Latin1Character> characterBuffer;
+    auto result = Latin1CString::newUninitialized(characters.size(), characterBuffer);
 
     size_t characterBufferIndex = 0;
     for (auto character : characters)
-        characterBuffer[characterBufferIndex++] = !isLatin1(character) ? '?' : character;
+        characterBuffer[characterBufferIndex++] = !isLatin1(character) ? Latin1Character { '?' } : static_cast<Latin1Character>(character);
 
     return result;
 }
 
-Expected<CString, UTF8ConversionError> String::tryGetUTF8(ConversionMode mode) const
+std::expected<UTF8CString, UTF8ConversionError> String::tryGetUTF8(ConversionMode mode) const
 {
-    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->tryGetUTF8(mode) : CString { ""_span };
+    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->tryGetUTF8(mode) : UTF8CString { u8""_span };
 }
 
-Expected<CString, UTF8ConversionError> String::tryGetUTF8() const
+std::expected<UTF8CString, UTF8ConversionError> String::tryGetUTF8() const
 {
     return tryGetUTF8(LenientConversion);
 }
 
-CString String::utf8(ConversionMode mode) const
+UTF8CString String::utf8(ConversionMode mode) const
 {
-    Expected<CString, UTF8ConversionError> expectedString = tryGetUTF8(mode);
+    auto expectedString = tryGetUTF8(mode);
     RELEASE_ASSERT(expectedString);
     return expectedString.value();
 }
@@ -523,14 +499,24 @@ String String::fromCodePoint(char32_t codePoint)
 
 // String Operations
 
-template<typename CharacterType, TrailingJunkPolicy policy>
+enum class WhitespacePolicy : bool { Skip, Preserve };
+enum class ParseMode : bool { General, Fixed };
+
+template<typename CharacterType, TrailingJunkPolicy trailingJunkPolicy, WhitespacePolicy whitespacePolicy, ParseMode mode>
 static inline double toDoubleType(std::span<const CharacterType> data, bool* ok, size_t& parsedLength)
 {
     size_t leadingSpacesLength = 0;
-    while (leadingSpacesLength < data.size() && isUnicodeCompatibleASCIIWhitespace(data[leadingSpacesLength]))
-        ++leadingSpacesLength;
+    if constexpr (whitespacePolicy == WhitespacePolicy::Skip) {
+        while (leadingSpacesLength < data.size() && isUnicodeCompatibleASCIIWhitespace(data[leadingSpacesLength]))
+            ++leadingSpacesLength;
+    }
 
-    double number = parseDouble(data.subspan(leadingSpacesLength), parsedLength);
+    double number;
+    if constexpr (mode == ParseMode::Fixed)
+        number = parseFixedDouble(data.subspan(leadingSpacesLength), parsedLength);
+    else
+        number = parseDouble(data.subspan(leadingSpacesLength), parsedLength);
+
     if (!parsedLength) {
         if (ok)
             *ok = false;
@@ -539,46 +525,66 @@ static inline double toDoubleType(std::span<const CharacterType> data, bool* ok,
 
     parsedLength += leadingSpacesLength;
     if (ok)
-        *ok = policy == TrailingJunkPolicy::Allow || parsedLength == data.size();
+        *ok = trailingJunkPolicy == TrailingJunkPolicy::Allow || parsedLength == data.size();
     return number;
 }
 
 double charactersToDouble(std::span<const Latin1Character> data, bool* ok)
 {
     size_t parsedLength;
-    return toDoubleType<Latin1Character, TrailingJunkPolicy::Disallow>(data, ok, parsedLength);
+    return toDoubleType<Latin1Character, TrailingJunkPolicy::Disallow, WhitespacePolicy::Skip, ParseMode::General>(data, ok, parsedLength);
 }
 
 double charactersToDouble(std::span<const char16_t> data, bool* ok)
 {
     size_t parsedLength;
-    return toDoubleType<char16_t, TrailingJunkPolicy::Disallow>(data, ok, parsedLength);
+    return toDoubleType<char16_t, TrailingJunkPolicy::Disallow, WhitespacePolicy::Skip, ParseMode::General>(data, ok, parsedLength);
+}
+
+double charactersToFixedDouble(std::span<const Latin1Character> data, bool* ok)
+{
+    size_t parsedLength;
+    return toDoubleType<Latin1Character, TrailingJunkPolicy::Disallow, WhitespacePolicy::Preserve, ParseMode::Fixed>(data, ok, parsedLength);
+}
+
+double charactersToFixedDouble(std::span<const char16_t> data, bool* ok)
+{
+    size_t parsedLength;
+    return toDoubleType<char16_t, TrailingJunkPolicy::Disallow, WhitespacePolicy::Preserve, ParseMode::Fixed>(data, ok, parsedLength);
+}
+
+static inline float doubleToFloatCheckingOverflow(double number, bool* isValid)
+{
+    float result = static_cast<float>(number);
+    if (isValid && *isValid && std::isfinite(number) && !std::isfinite(result))
+        *isValid = false;
+    return result;
 }
 
 float charactersToFloat(std::span<const Latin1Character> data, bool* ok)
 {
-    // FIXME: This will return ok even when the string fits into a double but not a float.
     size_t parsedLength;
-    return static_cast<float>(toDoubleType<Latin1Character, TrailingJunkPolicy::Disallow>(data, ok, parsedLength));
+    double number = toDoubleType<Latin1Character, TrailingJunkPolicy::Disallow, WhitespacePolicy::Skip, ParseMode::General>(data, ok, parsedLength);
+    return doubleToFloatCheckingOverflow(number, ok);
 }
 
 float charactersToFloat(std::span<const char16_t> data, bool* ok)
 {
-    // FIXME: This will return ok even when the string fits into a double but not a float.
     size_t parsedLength;
-    return static_cast<float>(toDoubleType<char16_t, TrailingJunkPolicy::Disallow>(data, ok, parsedLength));
+    double number = toDoubleType<char16_t, TrailingJunkPolicy::Disallow, WhitespacePolicy::Skip, ParseMode::General>(data, ok, parsedLength);
+    return doubleToFloatCheckingOverflow(number, ok);
 }
 
 float charactersToFloat(std::span<const Latin1Character> data, size_t& parsedLength)
 {
-    // FIXME: This will return ok even when the string fits into a double but not a float.
-    return static_cast<float>(toDoubleType<Latin1Character, TrailingJunkPolicy::Allow>(data, nullptr, parsedLength));
+    double number = toDoubleType<Latin1Character, TrailingJunkPolicy::Allow, WhitespacePolicy::Skip, ParseMode::General>(data, nullptr, parsedLength);
+    return static_cast<float>(number);
 }
 
 float charactersToFloat(std::span<const char16_t> data, size_t& parsedLength)
 {
-    // FIXME: This will return ok even when the string fits into a double but not a float.
-    return static_cast<float>(toDoubleType<char16_t, TrailingJunkPolicy::Allow>(data, nullptr, parsedLength));
+    double number = toDoubleType<char16_t, TrailingJunkPolicy::Allow, WhitespacePolicy::Skip, ParseMode::General>(data, nullptr, parsedLength);
+    return static_cast<float>(number);
 }
 
 const StaticString nullStringData { nullptr };
@@ -595,7 +601,9 @@ Vector<char> asciiDebug(String& string);
 
 void String::show() const
 {
-    dataLogF("%s\n", asciiDebug(impl()).span().data());
+    auto ascii = asciiDebug(impl());
+    auto span = ascii.span();
+    dataLogF("%.*s\n", static_cast<int>(span.size()), span.data());
 }
 
 String* string(const char* s)
@@ -620,8 +628,7 @@ Vector<char> asciiDebug(StringImpl* impl)
             buffer.append('\\', 'u', hex(ch, 4));
         }
     }
-    CString narrowString = buffer.toString().ascii();
-    return { narrowString.spanIncludingNullTerminator() };
+    return { buffer.toString().ascii().spanIncludingNullTerminator() };
 }
 
 Vector<char> asciiDebug(String& string)

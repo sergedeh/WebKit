@@ -32,6 +32,10 @@
 
 namespace WebCore {
 
+namespace CSSCalc {
+class Value;
+}
+
 class CSSMathValue : public CSSNumericValue {
 public:
     CSSMathValue(CSSNumericType type)
@@ -43,6 +47,7 @@ public:
 
     template<typename T> bool equalsImpl(const CSSNumericValue&) const;
 
+    RefPtr<CSSCalc::Value> toCSSCalcValue() const;
     RefPtr<CSSValue> toCSSValue() const final;
 };
 
@@ -54,14 +59,14 @@ template<typename T> bool CSSMathValue::equalsImpl(const CSSNumericValue& other)
         return false;
 
     ASSERT(styleValueType() == other.styleValueType());
-    Ref thisValues = static_cast<const T*>(this)->values();
+    Ref thisValues = downcast<T>(*this).values();
     Ref otherValues = otherT->values();
     auto length = thisValues->length();
     if (length != otherValues->length())
         return false;
 
     for (size_t i = 0 ; i < length; ++i) {
-        if (!thisValues->array()[i]->equals(otherValues->array()[i].get()))
+        if (!protect(thisValues->array()[i])->equals(otherValues->array()[i].get()))
             return false;
     }
 

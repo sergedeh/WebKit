@@ -31,6 +31,7 @@
 
 #import "DumpRenderTree.h"
 #import "TestRunner.h"
+#import <JavaScriptCore/JSStringRefCPP.h>
 #import <JavaScriptCore/RegularExpression.h>
 #import <WebCore/ProtectionSpaceCocoa.h>
 #import <WebKit/WebDataSourcePrivate.h>
@@ -159,10 +160,10 @@ BOOL canAuthenticateServerTrustAgainstProtectionSpace(NSString *host)
 
 -(NSURLRequest *)webView: (WebView *)wv resource:identifier willSendRequest: (NSURLRequest *)request redirectResponse:(NSURLResponse *)redirectResponse fromDataSource:(WebDataSource *)dataSource
 {
-    if (!done && gTestRunner->dumpResourceLoadCallbacks()) {
+    if (!done && gTestRunner->shouldDumpResourceLoadCallbacks()) {
         NSString *string = [NSString stringWithFormat:@"%@ - willSendRequest %@ redirectResponse %@", identifier, [request _drt_descriptionSuitableForTestResult],
             [redirectResponse _drt_descriptionSuitableForTestResult]];
-        printf("%s\n", [string UTF8String]);
+        gTestRunner->addResourceLoadCallback([string UTF8String]);
     }
 
     if (!done && gTestRunner->willSendRequestReturnsNull())
@@ -186,7 +187,7 @@ BOOL canAuthenticateServerTrustAgainstProtectionSpace(NSString *host)
             replace(blockedURL, JSC::Yarr::RegularExpression("&key=[^&]+&"_s), "&key=GENERATED_KEY&"_s);
             replace(blockedURL, JSC::Yarr::RegularExpression("reportID=[-0123456789abcdefABCDEF]+"_s), "reportID=GENERATED_REPORT_ID"_s);
             auto script = makeString("console.log('Blocked access to external URL "_s, blockedURL, "');"_s);
-            auto scriptRef = adopt(JSStringCreateWithUTF8CString(script.utf8().data()));
+            RefPtr scriptRef = createJSString(script);
             JSGlobalContextRef jsContext = [mainFrame globalContext];
             JSEvaluateScript(jsContext, scriptRef.get(), 0, 0, 0, 0);
             return nil;
@@ -252,12 +253,14 @@ BOOL canAuthenticateServerTrustAgainstProtectionSpace(NSString *host)
 
 -(void)webView: (WebView *)wv resource:identifier didReceiveResponse: (NSURLResponse *)response fromDataSource:(WebDataSource *)dataSource
 {
-    if (!done && gTestRunner->dumpResourceLoadCallbacks()) {
+    if (!done && gTestRunner->shouldDumpResourceLoadCallbacks()) {
         NSString *string = [NSString stringWithFormat:@"%@ - didReceiveResponse %@", identifier, [response _drt_descriptionSuitableForTestResult]];
-        printf("%s\n", [string UTF8String]);
+        gTestRunner->addResourceLoadCallback([string UTF8String]);
     }
-    if (!done && gTestRunner->dumpResourceResponseMIMETypes())
-        printf("%s has MIME type %s\n", [[[[response URL] relativePath] lastPathComponent] UTF8String], [[response MIMEType] UTF8String]);
+    if (!done && !gTestRunner->resourceResponseMIMETypesToDump().empty()) {
+        if (gTestRunner->resourceResponseMIMETypesToDump() == "*" || gTestRunner->resourceResponseMIMETypesToDump().contains([[[[response URL] relativePath] lastPathComponent] UTF8String]))
+            gTestRunner->addResourceLoadCallback([[NSString stringWithFormat:@"%s has MIME type %s\n", [[[[response URL] relativePath] lastPathComponent] UTF8String], [[response MIMEType] UTF8String]] UTF8String]);
+    }
 }
 
 -(void)webView: (WebView *)wv resource:identifier didReceiveContentLength: (NSInteger)length fromDataSource:(WebDataSource *)dataSource
@@ -266,9 +269,9 @@ BOOL canAuthenticateServerTrustAgainstProtectionSpace(NSString *host)
 
 -(void)webView: (WebView *)wv resource:identifier didFinishLoadingFromDataSource:(WebDataSource *)dataSource
 {
-    if (!done && gTestRunner->dumpResourceLoadCallbacks()) {
+    if (!done && gTestRunner->shouldDumpResourceLoadCallbacks()) {
         NSString *string = [NSString stringWithFormat:@"%@ - didFinishLoading", identifier];
-        printf("%s\n", [string UTF8String]);
+        gTestRunner->addResourceLoadCallback([string UTF8String]);
     }
 }
 
@@ -280,9 +283,9 @@ BOOL canAuthenticateServerTrustAgainstProtectionSpace(NSString *host)
             NSString *string = [NSString stringWithFormat:@"Failed to load %@\n%@", identifier, [error _drt_descriptionSuitableForTestResult]];
             printf("%s\n", string.UTF8String);
         }
-    } else if (!done && gTestRunner->dumpResourceLoadCallbacks()) {
+    } else if (!done && gTestRunner->shouldDumpResourceLoadCallbacks()) {
         NSString *string = [NSString stringWithFormat:@"%@ - didFailLoadingWithError: %@", identifier, [error _drt_descriptionSuitableForTestResult]];
-        printf("%s\n", [string UTF8String]);
+        gTestRunner->addResourceLoadCallback([string UTF8String]);
     }
 }
 
@@ -303,9 +306,9 @@ BOOL canAuthenticateServerTrustAgainstProtectionSpace(NSString *host)
 {
     // Only log the message when shouldPaintBrokenImage() returns NO; this avoids changing results of layout tests with failed
     // images, e.g., security/block-test-no-port.html.
-    if (!done && gTestRunner->dumpResourceLoadCallbacks() && !gTestRunner->shouldPaintBrokenImage()) {
+    if (!done && gTestRunner->shouldDumpResourceLoadCallbacks() && !gTestRunner->shouldPaintBrokenImage()) {
         NSString *string = [NSString stringWithFormat:@"%@ - shouldPaintBrokenImage: NO", [imageURL _drt_descriptionSuitableForTestResult]];
-        printf("%s\n", [string UTF8String]);
+        gTestRunner->addResourceLoadCallback([string UTF8String]);
     }
 
     return gTestRunner->shouldPaintBrokenImage();
@@ -313,9 +316,9 @@ BOOL canAuthenticateServerTrustAgainstProtectionSpace(NSString *host)
 
 -(BOOL)webView:(WebView *)webView resource:(id)identifier canAuthenticateAgainstProtectionSpace:(NSURLProtectionSpace *)protectionSpaceNS forDataSource:(WebDataSource *)dataSource
 {
-    if (!done && gTestRunner->dumpResourceLoadCallbacks()) {
+    if (!done && gTestRunner->shouldDumpResourceLoadCallbacks()) {
         NSString *string = [NSString stringWithFormat:@"%@ - canAuthenticateAgainstProtectionSpace", identifier];
-        printf("%s\n", [string UTF8String]);
+        gTestRunner->addResourceLoadCallback([string UTF8String]);
     }
 
     WebCore::ProtectionSpace protectionSpace(protectionSpaceNS);

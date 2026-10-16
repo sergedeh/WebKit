@@ -34,10 +34,16 @@
 #include <WebCore/FrameIdentifier.h>
 #include <WebCore/HTMLMediaElementEnums.h>
 #include <WebCore/IntRect.h>
+#include <wtf/CompletionHandler.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
 #include <wtf/RunLoop.h>
+#include <wtf/URL.h>
 #include <wtf/WeakPtr.h>
+
+#if ENABLE(QUICKLOOK_FULLSCREEN)
+#include "FullScreenMediaDetails.h"
+#endif
 
 namespace IPC {
 class Connection;
@@ -81,7 +87,7 @@ public:
     void enterFullScreenForOwnerElements(WebCore::FrameIdentifier, CompletionHandler<void()>&&);
     void exitFullScreenInMainFrame(CompletionHandler<void()>&&);
 
-    WebCore::Element* element();
+    WebCore::Element* LEGACY_NODELETE element();
 
     void videoControlsManagerDidChange();
 
@@ -99,8 +105,8 @@ protected:
     void setFullscreenInsets(const WebCore::FloatBoxExtent&);
     void setFullscreenAutoHideDuration(Seconds);
 
-    WebCore::IntRect m_initialFrame;
-    WebCore::IntRect m_finalFrame;
+    WebCore::IntRect m_initialFrameInMainFrameCoordinates;
+    WebCore::IntRect m_finalFrameInMainFrameCoordinates;
     WebCore::IntPoint m_scrollPosition;
     const Ref<WebPage> m_page;
     RefPtr<WebCore::Element> m_element;
@@ -127,7 +133,7 @@ private:
     const Logger& logger() const { return m_logger; }
     uint64_t logIdentifier() const { return m_logIdentifier; }
     ASCIILiteral logClassName() const { return "WebFullScreenManager"_s; }
-    WTFLogChannel& logChannel() const;
+    WTFLogChannel& LEGACY_NODELETE logChannel() const;
 #endif
 
 #if ENABLE(VIDEO)
@@ -146,10 +152,27 @@ private:
 #endif
 #endif // ENABLE(VIDEO)
 
+    void performEnterFullScreen();
+
+    // State stored by enterFullScreenForElement for performEnterFullScreen to use
+    CompletionHandler<void(WebCore::ExceptionOr<void>)> m_pendingWillEnterCallback;
+    CompletionHandler<bool(bool)> m_pendingDidEnterCallback;
+    WebCore::HTMLMediaElementEnums::VideoFullscreenMode m_pendingMode { WebCore::HTMLMediaElementEnums::VideoFullscreenModeStandard };
+
 #if ENABLE(QUICKLOOK_FULLSCREEN)
     enum class IsUpdating : bool { No, Yes };
     FullScreenMediaDetails getImageMediaDetails(CheckedPtr<WebCore::RenderImage>, IsUpdating);
     bool m_willUseQuickLookForFullscreen { false };
+
+    // Timer for waiting on responsive image load
+    RunLoop::Timer m_waitForLargerImageLoadTimer;
+    enum class LargerImageLoadState  { NotWaiting, WaitingForLoad, TimedOut };
+    LargerImageLoadState m_waitingForLargerImageLoad { LargerImageLoadState::NotWaiting };
+    URL m_imageSourceBeforeViewportChange;
+
+    void waitForLargerImageLoadTimerFired();
+
+    std::optional<FullScreenMediaDetails> m_pendingImageMediaDetails;
 #endif
 
     bool m_closing { false };

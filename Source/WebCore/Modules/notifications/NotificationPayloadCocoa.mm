@@ -28,24 +28,31 @@
 
 #if ENABLE(DECLARATIVE_WEB_PUSH)
 
-static NSString * const WebNotificationDefaultActionKey = @"WebNotificationDefaultActionKey";
-static NSString * const WebNotificationAppBadgeKey = @"WebNotificationAppBadgeKey";
-static NSString * const WebNotificationOptionsKey = @"WebNotificationOptionsKey";
-static NSString * const WebNotificationMutableKey = @"WebNotificationMutableKey";
+#import <wtf/cocoa/TypeCastsCocoa.h>
 
 namespace WebCore {
 
+namespace NotificationPayloadKeys {
+static NSString * const WebNotificationDefaultActionKey = @"WebNotificationDefaultActionKey";
+static NSString * const WebNotificationTitleKey = @"WebNotificationTitleKey";
+static NSString * const WebNotificationAppBadgeKey = @"WebNotificationAppBadgeKey";
+static NSString * const WebNotificationOptionsKey = @"WebNotificationOptionsKey";
+static NSString * const WebNotificationMutableKey = @"WebNotificationMutableKey";
+}
+
 std::optional<NotificationPayload> NotificationPayload::fromDictionary(NSDictionary *dictionary)
 {
-    RetainPtr<NSURL> defaultAction = dictionary[WebNotificationDefaultActionKey];
+    using namespace NotificationPayloadKeys;
+
+    RetainPtr defaultAction = dynamic_objc_cast<NSURL>(dictionary[WebNotificationDefaultActionKey]);
     if (!defaultAction)
         return std::nullopt;
 
-    RetainPtr<NSString> title = dictionary[WebNotificationTitleKey];
+    RetainPtr title = dynamic_objc_cast<NSString>(dictionary[WebNotificationTitleKey]);
     if (!title)
         return std::nullopt;
 
-    RetainPtr<NSNumber> appBadge = dictionary[WebNotificationAppBadgeKey];
+    RetainPtr<id> appBadge = dictionary[WebNotificationAppBadgeKey];
     if (!appBadge)
         return std::nullopt;
 
@@ -56,18 +63,18 @@ std::optional<NotificationPayload> NotificationPayload::fromDictionary(NSDiction
         rawAppBadge = [appBadge unsignedLongLongValue];
     }
 
-    RetainPtr<NSDictionary> options = dictionary[WebNotificationOptionsKey];
+    RetainPtr<id> options = dictionary[WebNotificationOptionsKey];
     if (!options)
         return std::nullopt;
 
     std::optional<NotificationOptionsPayload> rawOptions;
     if (![options isKindOfClass:[NSNull class]]) {
-        rawOptions = NotificationOptionsPayload::fromDictionary(options.get());
+        rawOptions = NotificationOptionsPayload::fromDictionary(dynamic_objc_cast<NSDictionary>(options.get()));
         if (!rawOptions)
             return std::nullopt;
     }
 
-    RetainPtr<NSNumber> isMutable = dictionary[WebNotificationMutableKey];
+    RetainPtr isMutable = dynamic_objc_cast<NSNumber>(dictionary[WebNotificationMutableKey]);
     if (!isMutable)
         return std::nullopt;
 
@@ -76,6 +83,8 @@ std::optional<NotificationPayload> NotificationPayload::fromDictionary(NSDiction
 
 NSDictionary *NotificationPayload::dictionaryRepresentation() const
 {
+    using namespace NotificationPayloadKeys;
+
     RetainPtr nsAppBadge = appBadge ? @(*appBadge) : [NSNull null];
     RetainPtr nsOptions = options ? options->dictionaryRepresentation() : [NSNull null];
 

@@ -9,10 +9,10 @@
 
 #include "include/core/SkPath.h"
 #include "include/core/SkPathTypes.h"
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkSpan_impl.h"
-#include "src/base/SkEnumBitMask.h"
+#include "include/core/SkSpan.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkEnumBitMask.h"
 #include "src/core/SkPathPriv.h"
 #include "src/core/SkSLTypeShared.h"
 #include "src/gpu/BufferWriter.h"
@@ -92,7 +92,8 @@ TessellateCurvesRenderStep::TessellateCurvesRenderStep(Layout layout,
                      evenOdd ? kEvenOddStencilPass : kWindingStencilPass,
                      /*staticAttrs=*/{{{"resolveLevel_and_idx",
                                        VertexAttribType::kFloat2, SkSLType::kFloat2}}},
-                     /*appendAttrs=*/kAttributes[infinitySupport])
+                     /*appendAttrs=*/kAttributes[infinitySupport],
+                     /*storageUniforms=*/{})
         , fInfinitySupport(infinitySupport) {
     SkASSERT(this->appendDataStride() ==
              PatchStride(infinitySupport ? kAttribs : kAttribsWithCurveType));
@@ -117,7 +118,7 @@ TessellateCurvesRenderStep::TessellateCurvesRenderStep(Layout layout,
 
 TessellateCurvesRenderStep::~TessellateCurvesRenderStep() {}
 
-std::string TessellateCurvesRenderStep::vertexSkSL() const {
+std::string TessellateCurvesRenderStep::vertexSkSL(const RootNodesInfo&) const {
     return SkSL::String::printf(
             // TODO: Approximate perspective scaling to match how PatchWriter is configured (or
             // provide explicit tessellation level in instance data instead of replicating
@@ -132,6 +133,7 @@ std::string TessellateCurvesRenderStep::vertexSkSL() const {
 }
 
 void TessellateCurvesRenderStep::writeVertices(DrawWriter* dw,
+                                               StorageContext* /*storageContext*/,
                                                const DrawParams& params,
                                                uint32_t ssboIndex) const {
     SkPath path = params.geometry().shape().asPath(); // TODO: Iterate the Shape directly

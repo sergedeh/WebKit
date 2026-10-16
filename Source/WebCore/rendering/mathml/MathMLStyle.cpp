@@ -60,20 +60,20 @@ const MathMLStyle* MathMLStyle::getMathMLStyle(RenderObject* renderer)
 
 void MathMLStyle::resolveMathMLStyleTree(RenderObject* renderer)
 {
-    for (auto* child = renderer; child; child = child->nextInPreOrder(renderer)) {
+    for (CheckedPtr child = renderer; child; child = child->nextInPreOrder(renderer)) {
         // FIXME: Should we make RenderMathMLTable derive from RenderMathMLBlock in order to simplify this?
-        if (auto* mathMLTable = dynamicDowncast<RenderMathMLTable>(child))
+        if (CheckedPtr mathMLTable = dynamicDowncast<RenderMathMLTable>(child))
             mathMLTable->mathMLStyle().resolveMathMLStyle(child);
-        else if (auto* mathMLBlock = dynamicDowncast<RenderMathMLBlock>(child))
+        else if (CheckedPtr mathMLBlock = dynamicDowncast<RenderMathMLBlock>(child))
             mathMLBlock->mathMLStyle().resolveMathMLStyle(child);
     }
 }
 
-RenderObject* MathMLStyle::getMathMLParentNode(RenderObject* renderer)
+CheckedPtr<RenderObject> MathMLStyle::getMathMLParentNode(RenderObject* renderer)
 {
-    auto* parentRenderer = renderer->parent();
+    CheckedPtr parentRenderer = renderer->parent();
 
-    while (parentRenderer && !(is<RenderMathMLTable>(parentRenderer) || is<RenderMathMLBlock>(parentRenderer)))
+    while (parentRenderer && !isAnyOf<RenderMathMLTable, RenderMathMLBlock>(parentRenderer))
         parentRenderer = parentRenderer->parent();
 
     return parentRenderer;
@@ -95,8 +95,8 @@ void MathMLStyle::resolveMathMLStyle(RenderObject* renderer)
     ASSERT(renderer);
 
     auto oldMathVariant = m_mathVariant;
-    auto* parentRenderer = getMathMLParentNode(renderer);
-    const MathMLStyle* parentStyle = getMathMLStyle(parentRenderer);
+    CheckedPtr parentRenderer = getMathMLParentNode(renderer);
+    const RefPtr parentStyle = getMathMLStyle(parentRenderer);
 
     // By default, we just inherit the style from our parent.
     m_mathVariant = MathVariant::None;
@@ -111,7 +111,7 @@ void MathMLStyle::resolveMathMLStyle(RenderObject* renderer)
     }
 
     // The mathvariant attributes override the default behavior.
-    if (auto* element = dynamicDowncast<MathMLElement>(downcast<RenderElement>(renderer)->element())) {
+    if (RefPtr element = dynamicDowncast<MathMLElement>(downcast<RenderElement>(renderer)->element())) {
         auto mathVariant = element->specifiedMathVariant();
         if (mathVariant)
             m_mathVariant = mathVariant.value();

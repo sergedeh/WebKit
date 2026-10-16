@@ -34,6 +34,7 @@
 #import <WebCore/FloatPoint.h>
 #import <WebCore/FloatQuad.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/WeakObjCPtr.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
 
 #if HAVE(UI_SCROLL_VIEW_TRANSFERS_SCROLLING_TO_PARENT)
@@ -213,8 +214,9 @@ static UIAxis axesForDelta(WebCore::FloatSize delta)
 {
     static bool hasAPI = [UIScrollView instancesRespondToSelector:@selector(showScrollIndicatorsForContentOffsetChanges:)];
     if (hasAPI) {
-        [self showScrollIndicatorsForContentOffsetChanges:[animated, offset, self] {
-            [self setContentOffset:offset animated:animated];
+        [self showScrollIndicatorsForContentOffsetChanges:[animated, offset, weakSelf = WeakObjCPtr { self }] {
+            if (RetainPtr strongSelf = weakSelf.get())
+                [strongSelf setContentOffset:offset animated:animated];
         }];
         return;
     }
@@ -258,11 +260,11 @@ static UIAxis axesForDelta(WebCore::FloatSize delta)
 
 - (UIViewController *)_wk_viewControllerForFullScreenPresentation
 {
-    auto controller = self.window.rootViewController;
-    UIViewController *nextPresentedController = nil;
-    while ((nextPresentedController = controller.presentedViewController))
-        controller = nextPresentedController;
-    return controller.viewIfLoaded.window == self.window ? controller : nil;
+    RetainPtr<UIViewController> controller = self.window.rootViewController;
+    RetainPtr<UIViewController> nextPresentedController;
+    while ((nextPresentedController = controller.get().presentedViewController))
+        controller = WTF::move(nextPresentedController);
+    return controller.get().viewIfLoaded.window == self.window ? controller.autorelease() : nil;
 }
 
 - (WebCore::FloatQuad)_wk_convertQuad:(const WebCore::FloatQuad&)quad toCoordinateSpace:(id<UICoordinateSpace>)destination

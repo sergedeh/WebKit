@@ -28,7 +28,7 @@
 #include <WebCore/ProcessIdentifier.h>
 #include <pal/SessionID.h>
 #include <wtf/Forward.h>
-#include <wtf/RetainReleaseSwift.h>
+#include <wtf/SwiftBridging.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakListHashSet.h>
 #include <wtf/WeakPtr.h>
@@ -48,7 +48,7 @@ public:
     explicit WebBackForwardCache(WebProcessPool&);
     ~WebBackForwardCache();
 
-    void ref() const;
+    void LEGACY_NODELETE ref() const;
     void deref() const;
 
     void setCapacity(WebProcessPool&, unsigned);
@@ -69,7 +69,6 @@ public:
     Ref<SuspendedPageProxy> takeSuspendedPage(WebBackForwardListItem&);
 
 private:
-    Ref<WebProcessPool> protectedProcessPool() const;
 
     void removeOldestEntry();
     void removeEntriesMatching(NOESCAPE const Function<bool(WebBackForwardListItem&)>&);
@@ -78,10 +77,11 @@ private:
     WeakRef<WebProcessPool> m_processPool;
     unsigned m_capacity { 0 };
     WeakListHashSet<WebBackForwardListItem> m_itemsWithCachedPage;
-} SWIFT_SHARED_REFERENCE(refWebBackForwardCache, derefWebBackForwardCache);
+} DERIVED_CLASS_SWIFT_SHARED_REFERENCE(refWebBackForwardCache, derefWebBackForwardCache);
 
 } // namespace WebKit
 
+#if !ENABLE(SWIFT_BASE_CLASS_ANNOTATIONS)
 inline void refWebBackForwardCache(WebKit::WebBackForwardCache* WTF_NONNULL obj)
 {
     obj->ref();
@@ -91,3 +91,4 @@ inline void derefWebBackForwardCache(WebKit::WebBackForwardCache* WTF_NONNULL ob
 {
     obj->deref();
 }
+#endif

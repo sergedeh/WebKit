@@ -21,7 +21,7 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
 // THE POSSIBILITY OF SUCH DAMAGE.
 
-#if ENABLE_SWIFTUI && compiler(>=6.0)
+#if ENABLE_SWIFTUI
 
 import Foundation
 
@@ -48,6 +48,20 @@ extension WKWebpagePreferences.UpgradeToHTTPSPolicy {
     }
 }
 
+@available(anyAppleOSAndDownlevels 26.4, *)
+@_spi_available(watchOSAndOpenSourceTBA, *)
+@_spi_available(tvOSAndOpenSourceTBA, *)
+extension WKSecurityRestrictionMode {
+    init(_ wrapped: WebPage.NavigationPreferences.SecurityRestrictionMode) {
+        self =
+            switch wrapped {
+            case .none: .none
+            case .maximizeCompatibility: .maximizeCompatibility
+            case .lockdown: .lockdown
+            }
+    }
+}
+
 extension WKWebpagePreferences {
     convenience init(_ wrapped: WebPage.NavigationPreferences) {
         self.init()
@@ -59,6 +73,15 @@ extension WKWebpagePreferences {
         if let isLockdownModeEnabled = wrapped.backingIsLockdownModeEnabled, self.isLockdownModeEnabled != isLockdownModeEnabled {
             self.isLockdownModeEnabled = isLockdownModeEnabled
         }
+
+        if let securityRestrictionMode = wrapped.backingSecurityRestrictionMode {
+            self.securityRestrictionMode = .init(securityRestrictionMode)
+        }
+
+        self.alternateRequest = wrapped.alternateRequest
+        self.overrideReferrer = wrapped.overrideReferrer
+        self.globalPrivacyControlEnabled = wrapped.isGlobalPrivacyControlEnabled
+        self.allowsJSHandleCreationInPageWorld = wrapped.allowsJSHandleCreationInPageWorld
     }
 }
 

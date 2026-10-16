@@ -33,8 +33,8 @@
 #include "JSWebAssemblyArray.h"
 #include "JSWebAssemblyStruct.h"
 #include "WasmCallee.h"
-#include <wtf/CheckedArithmetic.h>
 #include <wtf/FastMalloc.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
 namespace JSC { namespace Wasm {
@@ -46,7 +46,7 @@ bool WasmCallableFunction::isJS() const
     return boxedCallee == CalleeBits { &WasmToJSCallee::singleton() };
 }
 
-std::unique_ptr<Segment> Segment::tryCreate(std::optional<I32InitExpr> offset, uint32_t sizeInBytes, Kind kind)
+std::unique_ptr<Segment> Segment::tryCreate(std::optional<I32InitExpr> offset, uint32_t sizeInBytes, Kind kind, uint32_t memoryIndex)
 {
     auto result = tryFastZeroedMalloc(allocationSize(sizeInBytes));
     void* memory;
@@ -54,7 +54,7 @@ std::unique_ptr<Segment> Segment::tryCreate(std::optional<I32InitExpr> offset, u
         return nullptr;
 
     ASSERT(kind == Kind::Passive || !!offset);
-    return std::unique_ptr<Segment>(new (memory) Segment(sizeInBytes, kind, WTF::move(offset)));
+    return std::unique_ptr<Segment>(new (memory) Segment(sizeInBytes, kind, WTF::move(offset), memoryIndex));
 }
 
 String makeString(const Name& characters)
@@ -82,20 +82,20 @@ void validateWasmValue(uint64_t wasmValue, Type expectedType)
             ASSERT(value.isInt32());
 
         if (isStructref(expectedType))
-            ASSERT(jsDynamicCast<JSWebAssemblyStruct*>(value));
+            ASSERT(is<JSWebAssemblyStruct>(value));
 
         if (isArrayref(expectedType))
-            ASSERT(jsDynamicCast<JSWebAssemblyArray*>(value));
+            ASSERT(is<JSWebAssemblyArray>(value));
 
         if (isRefWithTypeIndex(expectedType)) {
-            auto expectedRTT = Wasm::TypeInformation::getCanonicalRTT(expectedType.index);
+            auto expectedRTT = Wasm::TypeInformation::getCanonicalRTT(expectedType.index());
             if (expectedRTT->kind() == RTTKind::Function) {
-                ASSERT(jsDynamicCast<JSFunction*>(value));
+                ASSERT(is<JSFunction>(value));
                 return;
             }
-            auto objectPtr = jsCast<WebAssemblyGCObjectBase*>(value);
-            auto objectRTT = objectPtr->rtt();
-            ASSERT(objectRTT->isSubRTT(expectedRTT.get()));
+            auto objectPtr = uncheckedDowncast<WebAssemblyGCObjectBase>(value);
+            auto& objectRTT = objectPtr->rtt();
+            ASSERT(objectRTT.isSubRTT(expectedRTT.get()));
         }
     }
 }
@@ -107,7 +107,7 @@ void BlockSignature::dump(PrintStream& out) const
         out.print("("_s);
         CommaPrinter comma;
         for (FunctionArgCount arg = 0; arg < argumentCount(); ++arg)
-            out.print(comma, makeString(argumentType(arg).kind));
+            out.print(comma, makeString(argumentType(arg).kind()));
         out.print(")"_s);
     }
 
@@ -115,7 +115,7 @@ void BlockSignature::dump(PrintStream& out) const
         CommaPrinter comma;
         out.print(" -> ["_s);
         for (FunctionArgCount ret = 0; ret < returnCount(); ++ret)
-            out.print(comma, makeString(returnType(ret).kind));
+            out.print(comma, makeString(returnType(ret).kind()));
         out.print("]"_s);
     }
 }

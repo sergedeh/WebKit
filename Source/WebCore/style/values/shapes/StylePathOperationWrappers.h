@@ -29,6 +29,12 @@
 #include <WebCore/PathOperation.h>
 
 namespace WebCore {
+
+struct AcceleratedEffectBoxPath;
+struct AcceleratedEffectBasicShapePath;
+struct AcceleratedEffectRayPath;
+struct AcceleratedEffectReferencePath;
+
 namespace Style {
 
 struct OffsetPath;
@@ -44,7 +50,7 @@ struct RayPath {
     ALWAYS_INLINE const RayFunction& ray() const { return operation->ray(); }
     ALWAYS_INLINE CSSBoxType referenceBox() const { return operation->referenceBox(); }
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
@@ -61,7 +67,7 @@ struct RayPath {
 private:
     friend ClipPath;
     friend OffsetPath;
-    friend std::optional<WebCore::Path> tryPath(const RayPath&, const TransformOperationData&);
+    friend std::optional<WebCore::Path> tryPath(const RayPath&, const TransformOperationData&, ZoomFactor);
     friend WTF::TextStream& operator<<(WTF::TextStream&, const RayPath&);
 
     Ref<RayPathOperation> operation;
@@ -74,9 +80,10 @@ struct ReferencePath {
 
     ALWAYS_INLINE const URL& url() const { return operation->url(); }
     ALWAYS_INLINE const AtomString& fragment() const { return operation->fragment(); }
+    ALWAYS_INLINE const std::optional<WebCore::Path>& path() const { return operation->path(); }
     ALWAYS_INLINE CSSBoxType referenceBox() const { return operation->referenceBox(); }
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
@@ -93,7 +100,7 @@ struct ReferencePath {
 private:
     friend ClipPath;
     friend OffsetPath;
-    friend std::optional<WebCore::Path> tryPath(const ReferencePath&, const TransformOperationData&);
+    friend std::optional<WebCore::Path> tryPath(const ReferencePath&, const TransformOperationData&, ZoomFactor);
     friend WTF::TextStream& operator<<(WTF::TextStream&, const ReferencePath&);
 
     Ref<ReferencePathOperation> operation;
@@ -107,7 +114,7 @@ struct BasicShapePath {
     ALWAYS_INLINE const BasicShape& shape() const { return operation->shape(); }
     ALWAYS_INLINE CSSBoxType referenceBox() const { return operation->referenceBox(); }
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
@@ -124,7 +131,7 @@ struct BasicShapePath {
 private:
     friend ClipPath;
     friend OffsetPath;
-    friend std::optional<WebCore::Path> tryPath(const BasicShapePath&, const TransformOperationData&);
+    friend std::optional<WebCore::Path> tryPath(const BasicShapePath&, const TransformOperationData&, ZoomFactor);
     friend WTF::TextStream& operator<<(WTF::TextStream&, const BasicShapePath&);
 
     Ref<ShapePathOperation> operation;
@@ -137,7 +144,7 @@ struct BoxPath {
 
     ALWAYS_INLINE CSSBoxType referenceBox() const { return operation->referenceBox(); }
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
         return visitor(referenceBox());
@@ -151,33 +158,33 @@ struct BoxPath {
 private:
     friend ClipPath;
     friend OffsetPath;
-    friend std::optional<WebCore::Path> tryPath(const BoxPath&, const TransformOperationData&);
+    friend std::optional<WebCore::Path> tryPath(const BoxPath&, const TransformOperationData&, ZoomFactor);
 
     Ref<BoxPathOperation> operation;
 };
 
-inline std::optional<WebCore::Path> tryPath(const RayPath& rayPath, const TransformOperationData& data)
+inline std::optional<WebCore::Path> tryPath(const RayPath& rayPath, const TransformOperationData& data, ZoomFactor zoom)
 {
     Ref operation = rayPath.operation;
-    return operation->getPath(data);
+    return operation->getPath(data, zoom);
 }
 
-inline std::optional<WebCore::Path> tryPath(const ReferencePath& referencePath, const TransformOperationData& data)
+inline std::optional<WebCore::Path> tryPath(const ReferencePath& referencePath, const TransformOperationData& data, ZoomFactor zoom)
 {
     Ref operation = referencePath.operation;
-    return operation->getPath(data);
+    return operation->getPath(data, zoom);
 }
 
-inline std::optional<WebCore::Path> tryPath(const BasicShapePath& basicShapePath, const TransformOperationData& data)
+inline std::optional<WebCore::Path> tryPath(const BasicShapePath& basicShapePath, const TransformOperationData& data, ZoomFactor zoom)
 {
     Ref operation = basicShapePath.operation;
-    return operation->getPath(data);
+    return operation->getPath(data, zoom);
 }
 
-inline std::optional<WebCore::Path> tryPath(const BoxPath& boxPath, const TransformOperationData& data)
+inline std::optional<WebCore::Path> tryPath(const BoxPath& boxPath, const TransformOperationData& data, ZoomFactor zoom)
 {
     Ref operation = boxPath.operation;
-    return operation->getPath(data);
+    return operation->getPath(data, zoom);
 }
 
 // MARK: - Conversion
@@ -186,15 +193,26 @@ inline std::optional<WebCore::Path> tryPath(const BoxPath& boxPath, const Transf
 template<> struct CSSValueConversion<RefPtr<PathOperation>> { RefPtr<PathOperation> operator()(BuilderState&, const CSSValue&, SupportRayPathOperation); };
 
 // `RayPath` is special-cased to return a `CSSRayValue`.
-template<> struct CSSValueCreation<RayPath> { Ref<CSSValue> operator()(CSSValuePool&, const RenderStyle&, const RayPath&); };
+template<> struct CSSValueCreation<RayPath> { Ref<CSSValue> operator()(CSSValuePool&, const Style::ComputedStyle&, const RayPath&); };
 
 // `BasicShapePath` is special-cased to handle non-standard `PathConversion` argument.
-template<> struct CSSValueCreation<BasicShapePath> { Ref<CSSValue> operator()(CSSValuePool&, const RenderStyle&, const BasicShapePath&, PathConversion = PathConversion::None); };
+template<> struct CSSValueCreation<BasicShapePath> { Ref<CSSValue> operator()(CSSValuePool&, const Style::ComputedStyle&, const BasicShapePath&, PathConversion = PathConversion::None); };
 
 // MARK: - Serialization
 
 // `BasicShapePath` is special-cased to handle non-standard `PathConversion` argument.
-template<> struct Serialize<BasicShapePath> { void operator()(StringBuilder&, const CSS::SerializationContext&, const RenderStyle&, const BasicShapePath&, PathConversion = PathConversion::None); };
+template<> struct Serialize<BasicShapePath> { void operator()(StringBuilder&, const CSS::SerializationContext&, const Style::ComputedStyle&, const BasicShapePath&, PathConversion = PathConversion::None); };
+
+// MARK: - Evaluation
+
+#if ENABLE(THREADED_ANIMATIONS)
+
+template<> struct Evaluation<RayPath, AcceleratedEffectRayPath> { AcceleratedEffectRayPath operator()(const RayPath&, const TransformOperationData& data, ZoomFactor); };
+template<> struct Evaluation<ReferencePath, AcceleratedEffectReferencePath> { AcceleratedEffectReferencePath operator()(const ReferencePath&, const TransformOperationData&, ZoomFactor); };
+template<> struct Evaluation<BasicShapePath, AcceleratedEffectBasicShapePath> { AcceleratedEffectBasicShapePath operator()(const BasicShapePath&, const FloatRect&, ZoomFactor); };
+template<> struct Evaluation<BoxPath, AcceleratedEffectBoxPath> { AcceleratedEffectBoxPath operator()(const BoxPath&, const TransformOperationData&, ZoomFactor); };
+
+#endif
 
 // MARK: - Logging
 

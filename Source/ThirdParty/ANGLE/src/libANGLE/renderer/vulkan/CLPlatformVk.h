@@ -8,14 +8,10 @@
 #ifndef LIBANGLE_RENDERER_VULKAN_CLPLATFORMVK_H_
 #define LIBANGLE_RENDERER_VULKAN_CLPLATFORMVK_H_
 
-#include "common/MemoryBuffer.h"
-#include "common/SimpleMutex.h"
-#include "libANGLE/angletypes.h"
-#include "libANGLE/renderer/CLPlatformImpl.h"
-
 #include "libANGLE/renderer/vulkan/vk_utils.h"
 
-#include "libANGLE/Display.h"
+#include "libANGLE/renderer/CLPlatformImpl.h"
+
 #include "libANGLE/SizedMRUCache.h"
 
 namespace rx
@@ -62,6 +58,7 @@ class CLPlatformVk : public CLPlatformImpl, public vk::ErrorContext, public vk::
     std::shared_ptr<angle::WaitableEvent> postMultiThreadWorkerTask(
         const std::shared_ptr<angle::Closure> &task) override;
     void notifyDeviceLost() override;
+    GlobalOps::Api getFrontendApi() const override { return GlobalOps::Api::OpenCL; }
 
   private:
     explicit CLPlatformVk(const cl::Platform &platform);

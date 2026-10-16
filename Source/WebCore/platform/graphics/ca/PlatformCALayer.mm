@@ -28,12 +28,13 @@
 
 #if USE(CA)
 
+#include "FontSelector.h"
 #include "GraphicsContextCG.h"
 #include "IOSurface.h"
-#include "LayerPool.h"
 #include "PlatformCALayerClient.h"
 #include "PlatformCALayerDelegatedContents.h"
 #include "PlatformScreen.h"
+#include "TextRun.h"
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreText/CoreText.h>
 #include <QuartzCore/CABase.h>
@@ -85,8 +86,8 @@ void PlatformCALayer::drawRepaintIndicator(GraphicsContext& graphicsContext, Pla
 
     FontCascadeDescription fontDescription;
     fontDescription.setOneFamily("Helvetica"_s);
-    fontDescription.setSpecifiedSize(fontSize);
     fontDescription.setComputedSize(fontSize);
+    fontDescription.setUsedSize(fontSize);
 
     FontCascade cascade(WTF::move(fontDescription));
     cascade.update(nullptr);
@@ -163,18 +164,14 @@ void PlatformCALayer::drawTextAtPoint(CGContextRef context, CGFloat x, CGFloat y
     auto string = adoptCF(CFStringCreateWithBytesNoCopy(kCFAllocatorDefault, byteCast<UInt8>(text.data()), text.size(), kCFStringEncodingUTF8, false, kCFAllocatorNull));
     auto attributedString = adoptCF(CFAttributedStringCreate(kCFAllocatorDefault, string.get(), attributes.get()));
     auto line = adoptCF(CTLineCreateWithAttributedString(attributedString.get()));
+    CGContextSetTextMatrix(context, CGAffineTransformIdentity);
     CGContextSetTextPosition(context, x, y);
     CTLineDraw(line.get(), context);
 }
 
-Ref<PlatformCALayer> PlatformCALayer::createCompatibleLayerOrTakeFromPool(PlatformCALayer::LayerType layerType, PlatformCALayerClient* client, IntSize size)
+Ref<PlatformCALayer> PlatformCALayer::createCompatibleLayerWithSize(PlatformCALayer::LayerType layerType, PlatformCALayerClient* client, IntSize size) const
 {
-    if (auto layerFromPool = layerPool() ? layerPool()->takeLayerWithSize(size) : nullptr) {
-        layerFromPool->setOwner(client);
-        return layerFromPool.releaseNonNull();
-    }
-
-    auto layer = createCompatibleLayer(layerType, client);
+    Ref layer = createCompatibleLayer(layerType, client);
     layer->setBounds(FloatRect(FloatPoint(), size));
     return layer;
 }
@@ -199,19 +196,6 @@ ContentsFormat PlatformCALayer::contentsFormatForLayer(PlatformCALayerClient* cl
     UNUSED_PARAM(contentsFormats);
     ASSERT(contentsFormats.contains(ContentsFormat::RGBA8));
     return ContentsFormat::RGBA8;
-}
-
-void PlatformCALayer::moveToLayerPool()
-{
-    ASSERT(!superlayer());
-    if (auto pool = layerPool())
-        pool->addLayer(*this);
-}
-
-LayerPool* PlatformCALayer::layerPool()
-{
-    static NeverDestroyed<UniqueRef<LayerPool>> sharedPool = makeUniqueRef<LayerPool>();
-    return sharedPool->ptr();
 }
 
 void PlatformCALayer::clearContents()
@@ -241,7 +225,7 @@ void PlatformCALayer::setDelegatedContents(const PlatformCALayerDelegatedContent
 
 void PlatformCALayer::setDelegatedContents(const PlatformCALayerInProcessDelegatedContents& contents)
 {
-    setDelegatedContents({ contents.surface.createSendRight(), contents.finishedFence, std::nullopt });
+    setDelegatedContents({ contents.surface.createSendRight(), contents.finishedFence });
 }
 
 bool PlatformCALayer::needsPlatformContext() const

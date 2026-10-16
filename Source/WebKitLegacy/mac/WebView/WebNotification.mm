@@ -37,14 +37,13 @@
 #import <WebCore/ScriptExecutionContext.h>
 #import <wtf/RefPtr.h>
 
-using namespace WebCore;
 #endif
 
 @interface WebNotificationPrivate : NSObject
 {
 @public
 #if ENABLE(NOTIFICATIONS)
-    std::optional<NotificationData> _internal;
+    std::optional<WebCore::NotificationData> _internal;
 #endif
 }
 @end
@@ -52,14 +51,19 @@ using namespace WebCore;
 @implementation WebNotificationPrivate
 @end
 
+@interface WebNotification () {
+    RetainPtr<WebNotificationPrivate> _private;
+}
+@end
+
 #if ENABLE(NOTIFICATIONS)
 @implementation WebNotification (WebNotificationInternal)
 
-- (id)initWithCoreNotification:(NotificationData&&)coreNotification
+- (id)initWithCoreNotification:(WebCore::NotificationData&&)coreNotification
 {
     if (!(self = [super init]))
         return nil;
-    _private = [[WebNotificationPrivate alloc] init];
+    _private = adoptNS([[WebNotificationPrivate alloc] init]);
     _private->_internal = WTF::move(coreNotification);
     return self;
 }
@@ -70,12 +74,6 @@ using namespace WebCore;
 - (id)init
 {
     return nil;
-}
-
-- (void)dealloc
-{
-    [_private release];
-    [super dealloc];
 }
 
 - (NSString *)title
@@ -127,11 +125,11 @@ using namespace WebCore;
 {
 #if ENABLE(NOTIFICATIONS)
     switch (_private->_internal->direction) {
-        case Notification::Direction::Auto:
+        case WebCore::Notification::Direction::Auto:
             return @"auto";
-        case Notification::Direction::Ltr:
+        case WebCore::Notification::Direction::Ltr:
             return @"ltr";
-        case Notification::Direction::Rtl:
+        case WebCore::Notification::Direction::Rtl:
             return @"rtl";
     }
 #else
@@ -160,7 +158,7 @@ using namespace WebCore;
 - (void)dispatchShowEvent
 {
 #if ENABLE(NOTIFICATIONS)
-    Notification::ensureOnNotificationThread(*_private->_internal, [](auto* notification) {
+    WebCore::Notification::ensureOnNotificationThread(*_private->_internal, [](auto* notification) {
         if (notification)
             notification->dispatchShowEvent();
     });
@@ -170,7 +168,7 @@ using namespace WebCore;
 - (void)dispatchCloseEvent
 {
 #if ENABLE(NOTIFICATIONS)
-    Notification::ensureOnNotificationThread(*_private->_internal, [](auto* notification) {
+    WebCore::Notification::ensureOnNotificationThread(*_private->_internal, [](auto* notification) {
         if (notification)
             notification->dispatchCloseEvent();
     });
@@ -180,7 +178,7 @@ using namespace WebCore;
 - (void)dispatchClickEvent
 {
 #if ENABLE(NOTIFICATIONS)
-    Notification::ensureOnNotificationThread(*_private->_internal, [](auto* notification) {
+    WebCore::Notification::ensureOnNotificationThread(*_private->_internal, [](auto* notification) {
         if (notification)
             notification->dispatchClickEvent();
     });
@@ -190,7 +188,7 @@ using namespace WebCore;
 - (void)dispatchErrorEvent
 {
 #if ENABLE(NOTIFICATIONS)
-    Notification::ensureOnNotificationThread(*_private->_internal, [](auto* notification) {
+    WebCore::Notification::ensureOnNotificationThread(*_private->_internal, [](auto* notification) {
         if (notification)
             notification->dispatchErrorEvent();
     });
@@ -200,7 +198,7 @@ using namespace WebCore;
 - (void)finalize
 {
 #if ENABLE(NOTIFICATIONS)
-    Notification::ensureOnNotificationThread(*_private->_internal, [](auto* notification) {
+    WebCore::Notification::ensureOnNotificationThread(*_private->_internal, [](auto* notification) {
         if (notification)
             notification->finalize();
     });

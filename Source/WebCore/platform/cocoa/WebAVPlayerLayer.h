@@ -46,7 +46,7 @@ WEBCORE_EXPORT @interface WebAVPlayerLayer : CALayer
 @property (nonatomic, getter=isReadyForDisplay) BOOL readyForDisplay;
 @property (nonatomic, assign) RefPtr<WebCore::VideoPresentationModel> presentationModel;
 @property (nonatomic, retain, nonnull) AVPlayerController *playerController;
-@property (nonatomic, retain, nonnull) CALayer *videoSublayer;
+@property (nonatomic, retain, nullable) CALayer *videoSublayer;
 @property (nonatomic, retain, nullable) CALayer *captionsLayer;
 @property (nonatomic, copy, nullable) NSDictionary *pixelBufferAttributes;
 @property CGSize videoDimensions;
@@ -57,5 +57,13 @@ WEBCORE_EXPORT @interface WebAVPlayerLayer : CALayer
 - (void)setCaptionPreviewProfileID:(NSString * _Nonnull)profileID position:(CGPoint)position text:(nullable NSString *)text;
 - (void)stopShowingCaptionPreview;
 @end
+
+#if !RELEASE_LOG_DISABLED
+@interface WebAVPlayerLayer (Logging)
+@property (readonly, nonatomic) uint64_t logIdentifier;
+@property (readonly, nullable, nonatomic) const Logger* loggerPtr;
+@property (readonly, nullable, nonatomic) WTFLogChannel* logChannel;
+@end
+#endif
 
 #endif // HAVE(AVKIT)

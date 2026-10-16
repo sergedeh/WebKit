@@ -30,6 +30,7 @@
 
 #if ENABLE(MATHML)
 
+#include "ContainerNodeInlines.h"
 #include "ElementInlines.h"
 #include "NodeName.h"
 #include "RenderMathMLFraction.h"
@@ -88,17 +89,17 @@ MathMLFractionElement::FractionAlignment MathMLFractionElement::cachedFractionAl
         return alignment.value();
 
     if (document().settings().coreMathMLEnabled()) {
-        alignment = FractionAlignmentCenter;
+        alignment = FractionAlignment::Center;
         return alignment.value();
     }
 
     auto& value = attributeWithoutSynchronization(name);
     if (equalLettersIgnoringASCIICase(value, "left"_s))
-        alignment = FractionAlignmentLeft;
+        alignment = FractionAlignment::Left;
     else if (equalLettersIgnoringASCIICase(value, "right"_s))
-        alignment = FractionAlignmentRight;
+        alignment = FractionAlignment::Right;
     else
-        alignment = FractionAlignmentCenter;
+        alignment = FractionAlignment::Center;
     return alignment.value();
 }
 
@@ -134,13 +135,13 @@ void MathMLFractionElement::attributeChanged(const QualifiedName& name, const At
 
     if (affectsLayout) {
         if (CheckedPtr renderer = this->renderer())
-            renderer->setNeedsLayoutAndPreferredWidthsUpdate();
+            renderer->setNeedsLayoutAndInvalidateContentLogicalWidths();
     }
 
     MathMLElement::attributeChanged(name, oldValue, newValue, attributeModificationReason);
 }
 
-RenderPtr<RenderElement> MathMLFractionElement::createElementRenderer(RenderStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> MathMLFractionElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
 {
     ASSERT(hasTagName(MathMLNames::mfracTag));
     return createRenderer<RenderMathMLFraction>(*this, WTF::move(style));

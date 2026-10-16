@@ -35,7 +35,7 @@
 #include "JSObjectInlines.h"
 #include "JSWebAssemblyHelpers.h"
 #include "JSWebAssemblyMemory.h"
-#include "StructureInlines.h"
+#include "StructureCreateInlines.h"
 
 namespace JSC {
 static JSC_DECLARE_HOST_FUNCTION(webAssemblyMemoryProtoFuncGrow);
@@ -56,7 +56,6 @@ const ClassInfo WebAssemblyMemoryPrototype::s_info = { "WebAssembly.Memory"_s, &
 @begin prototypeTableWebAssemblyMemory
  grow   webAssemblyMemoryProtoFuncGrow      Function 1
  buffer webAssemblyMemoryProtoGetterBuffer  ReadOnly|CustomAccessor
- type   webAssemblyMemoryProtoFuncType      Function 0
 @end
 */
 // two more functions are added if Options::useWasmMemoryToBufferAPIs() is true; see finishCreation()
@@ -65,7 +64,7 @@ ALWAYS_INLINE JSWebAssemblyMemory* getMemory(JSGlobalObject* globalObject, VM& v
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    JSWebAssemblyMemory* memory = jsDynamicCast<JSWebAssemblyMemory*>(value); 
+    JSWebAssemblyMemory* memory = dynamicDowncast<JSWebAssemblyMemory>(value);
     if (!memory) {
         throwException(globalObject, throwScope, 
             createTypeError(globalObject, "WebAssembly.Memory.prototype.buffer getter called with non WebAssembly.Memory |this| value"_s));
@@ -82,12 +81,17 @@ JSC_DEFINE_HOST_FUNCTION(webAssemblyMemoryProtoFuncGrow, (JSGlobalObject* global
     JSWebAssemblyMemory* memory = getMemory(globalObject, vm, callFrame->thisValue()); 
     RETURN_IF_EXCEPTION(throwScope, { });
     
-    uint32_t delta = toNonWrappingUint32(globalObject, callFrame->argument(0));
+    uint64_t delta = addressValueToUint64(globalObject, callFrame->argument(0), memory->memory().addressType());
     RETURN_IF_EXCEPTION(throwScope, { });
 
     PageCount result = memory->grow(vm, globalObject, delta);
     RETURN_IF_EXCEPTION(throwScope, { });
 
+    if (memory->memory().addressType().is64Bit()) {
+        JSValue bigInt = JSBigInt::createFrom(globalObject, result.pageCount());
+        RETURN_IF_EXCEPTION(throwScope, { });
+        return JSValue::encode(bigInt);
+    }
     return JSValue::encode(jsNumber(result.pageCount()));
 }
 
@@ -149,6 +153,9 @@ void WebAssemblyMemoryPrototype::finishCreation(VM& vm, JSGlobalObject* globalOb
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+
+    if (Options::useWasmJSTypes())
+        JSC_NATIVE_FUNCTION_WITHOUT_TRANSITION("type"_s, webAssemblyMemoryProtoFuncType, static_cast<unsigned>(PropertyAttribute::None), 0, ImplementationVisibility::Public);
 
     if (Options::useWasmMemoryToBufferAPIs()) {
         JSC_NATIVE_FUNCTION_WITHOUT_TRANSITION("toFixedLengthBuffer"_s, webAssemblyMemoryProtoFuncToFixedLengthBuffer, static_cast<unsigned>(PropertyAttribute::None), 0, ImplementationVisibility::Public);

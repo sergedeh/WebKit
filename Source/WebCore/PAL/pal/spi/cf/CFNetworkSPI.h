@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,9 +27,6 @@
 
 #include <wtf/Compiler.h>
 #include <wtf/Platform.h>
-
-// FIXME: Remove when support for macOS 14 is no longer required.
-#if !__has_feature(modules) || !PLATFORM(MAC) || __MAC_OS_X_VERSION_MIN_REQUIRED >= 150000
 
 DECLARE_SYSTEM_HEADER
 
@@ -134,6 +131,11 @@ extern "C" {
 #endif
 DISPATCH_RETURNS_RETAINED dispatch_data_t nw_proxy_config_copy_agent_data(nw_proxy_config_t);
 void nw_proxy_config_get_identifier(nw_proxy_config_t, uuid_t out_identifier);
+OS_OBJECT_RETURNS_RETAINED nw_proxy_config_t nw_proxy_config_create_with_agent_data(const uint8_t* bytes, size_t length, const uuid_t identifier);
+bool nw_proxy_config_stack_requires_http_protocols(nw_proxy_config_t);
+void nw_context_add_proxy(nw_context_t, nw_proxy_config_t);
+void nw_context_clear_proxies(nw_context_t);
+void nw_context_set_tracker_lookup_callback(nw_context_t, nw_context_tracker_lookup_callback_t);
 #ifdef __cplusplus
 }
 #endif
@@ -358,9 +360,7 @@ typedef NS_ENUM(NSInteger, NSURLSessionCompanionProxyPreference) {
 @property (readwrite, assign) BOOL _allowsHTTP3;
 #endif
 @property (nullable, retain) _NSHSTSStorage *_hstsStorage;
-#if HAVE(NETWORK_LOADER)
 @property BOOL _usesNWLoader;
-#endif
 @property (readwrite, assign) NSInteger _connectionCacheNumPriorityLevels;
 @property (readwrite, assign) NSInteger _connectionCacheNumFastLanes;
 @property (readwrite, assign) NSInteger _connectionCacheMinimumFastLanePriority;
@@ -378,9 +378,6 @@ typedef NS_ENUM(NSInteger, NSURLSessionCompanionProxyPreference) {
 #endif
 #if ENABLE(SERVER_PRECONNECT)
 @property (nonatomic, assign) BOOL _preconnect;
-#endif
-#if ENABLE(INSPECTOR_NETWORK_THROTTLING)
-@property (readwrite, assign) int64_t _bytesPerSecondLimit;
 #endif
 @end
 
@@ -584,9 +581,11 @@ WTF_EXTERN_C_END
 - (void)_setExplicitCookieStorage:(CFHTTPCookieStorageRef)storage;
 @end
 
+#if !__has_include(<CFNetwork/CFNSURLConnection.h>)
 @interface NSURLSessionWebSocketTask (SPI)
-- (void)_sendCloseCode:(NSURLSessionWebSocketCloseCode)closeCode reason:(NSData *)reason;
+- (void)_sendCloseCode:(NSURLSessionWebSocketCloseCode)closeCode reason:(NSData * _Nullable)reason;
 @end
+#endif
 
 @interface NSMutableURLRequest (Staging_88972294)
 @property (setter=_setPrivacyProxyFailClosedForUnreachableNonMainHosts:) BOOL _privacyProxyFailClosedForUnreachableNonMainHosts;
@@ -614,9 +613,7 @@ WTF_EXTERN_C_END
 #endif
 
 @interface NSURLProtectionSpace (SPI)
-- (void)_setServerTrust:(SecTrustRef)serverTrust;
+- (void)_setServerTrust:(SecTrustRef _Nullable)serverTrust;
 @end
 
 #endif // defined(__OBJC__)
-
-#endif // !__has_feature(modules) || !PLATFORM(MAC) || __MAC_OS_X_VERSION_MIN_REQUIRED >= 150000

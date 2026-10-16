@@ -28,6 +28,7 @@
 
 #pragma once
 
+#include "DatabaseTask.h"
 #include <memory>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
@@ -38,8 +39,6 @@
 namespace WebCore {
 
 class Database;
-class DatabaseTask;
-class DatabaseTaskSynchronizer;
 class Document;
 class SQLTransactionCoordinator;
 
@@ -61,7 +60,7 @@ public:
     void recordDatabaseClosed(Database&);
     Thread* getThread() { return m_thread.get(); }
 
-    SQLTransactionCoordinator& transactionCoordinator() { return m_transactionCoordinator; }
+    SQLTransactionCoordinator& transactionCoordinator() LIFETIME_BOUND { return m_transactionCoordinator; }
 
 private:
     DatabaseThread();
@@ -75,7 +74,7 @@ private:
     MessageQueue<DatabaseTask> m_queue;
 
     // This set keeps track of the open databases that have been used on this thread.
-    using DatabaseSet = HashSet<RefPtr<Database>>;
+    using DatabaseSet = HashSet<Ref<Database>>;
     mutable Lock m_openDatabaseSetLock;
     DatabaseSet m_openDatabaseSet WTF_GUARDED_BY_LOCK(m_openDatabaseSetLock);
 

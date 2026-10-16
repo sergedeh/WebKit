@@ -28,7 +28,7 @@
 #include "JSObjectInlines.h"
 #include "StringObject.h"
 #include "StrongInlines.h"
-#include "StructureInlines.h"
+#include "StructureCreateInlines.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -52,22 +52,22 @@ template<>
 void JSRopeString::RopeBuilder<RecordOverflow>::expand()
 {
     RELEASE_ASSERT(!this->hasOverflowed());
-    ASSERT(m_strings.size() == JSRopeString::s_maxInternalRopeLength);
+    ASSERT(m_index == JSRopeString::s_maxInternalRopeLength);
     static_assert(3 == JSRopeString::s_maxInternalRopeLength);
     ASSERT(m_length);
-    ASSERT(asString(m_strings.at(0))->length());
-    ASSERT(asString(m_strings.at(1))->length());
-    ASSERT(asString(m_strings.at(2))->length());
+    ASSERT(m_strings[0]->length());
+    ASSERT(m_strings[1]->length());
+    ASSERT(m_strings[2]->length());
 
-    JSString* string = JSRopeString::create(m_vm, asString(m_strings.at(0)), asString(m_strings.at(1)), asString(m_strings.at(2)));
+    JSString* string = JSRopeString::create(m_vm, m_strings[0], m_strings[1], m_strings[2]);
     ASSERT(string->length() == m_length);
-    m_strings.clear();
-    m_strings.append(string);
+    m_strings[0] = string;
+    m_index = 1;
 }
 
 void JSString::dumpToStream(const JSCell* cell, PrintStream& out)
 {
-    const JSString* thisObject = jsCast<const JSString*>(cell);
+    const JSString* thisObject = uncheckedDowncast<JSString>(cell);
     out.printf("<%p, %s, [%u], ", thisObject, thisObject->className().characters(), thisObject->length());
     uintptr_t pointer = thisObject->fiberConcurrently();
     if (pointer & isRopeInPointer) {
@@ -226,11 +226,14 @@ GCOwnedDataScope<AtomStringImpl*> JSRopeString::resolveRopeToExistingAtomString(
 }
 
 template<bool reportAllocation, typename Function>
-const String& JSRopeString::resolveRopeWithFunction(JSGlobalObject* nullOrGlobalObjectForOOM, Function&& function) const
+const String& JSRopeString::resolveRopeWithFunction(JSGlobalObject* nullOrGlobalObjectForOOM, NOESCAPE const Function& function) const
 {
     ASSERT(isRope());
-    
+
     VM& vm = this->vm();
+    if constexpr (validateDFGDoesGC)
+        vm.verifyCanGC();
+
     if (isSubstring()) {
         ASSERT(!substringBase()->isRope());
         auto newImpl = substringBase()->valueInternal().substringSharingImpl(substringOffset(), length());

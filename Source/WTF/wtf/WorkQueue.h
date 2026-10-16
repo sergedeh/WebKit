@@ -30,7 +30,9 @@
 #include <wtf/Forward.h>
 #include <wtf/FunctionDispatcher.h>
 #include <wtf/Seconds.h>
-#include <wtf/Threading.h>
+#include <wtf/ThreadAssertions.h>
+#include <wtf/ThreadSafeRefCounted.h>
+#include <wtf/ThreadingEnums.h>
 
 #if USE(COCOA_EVENT_LOOP)
 #include <wtf/darwin/DispatchOSObject.h>
@@ -42,7 +44,7 @@ namespace WTF {
 
 class WorkQueueBase : protected ThreadLike {
 public:
-    using QOS = Thread::QOS;
+    using QOS = ThreadQOS;
 
     WTF_EXPORT_PRIVATE virtual ~WorkQueueBase();
 
@@ -53,7 +55,6 @@ public:
 
 #if USE(COCOA_EVENT_LOOP)
     dispatch_queue_t dispatchQueue() const { return m_dispatchQueue.get(); }
-    OSObjectPtr<dispatch_queue_t> protectedDispatchQueue() const { return dispatchQueue(); }
 #endif
 
     virtual void ref() const = 0;
@@ -79,7 +80,7 @@ protected:
     uint32_t m_threadID { 0 };
 private:
     void platformInitialize(ASCIILiteral name, Type, QOS);
-    void platformInvalidate();
+    void LEGACY_NODELETE platformInvalidate();
 };
 
 /**
@@ -97,6 +98,7 @@ public:
 
     // WorkQueueBase
     void dispatch(Function<void()>&&) override;
+    void dispatchAfter(Seconds, Function<void()>&&) override;
     bool isCurrent() const override;
     void ref() const override { GuaranteedSerialFunctionDispatcher::ref(); }
     void deref() const override { GuaranteedSerialFunctionDispatcher::deref(); }

@@ -34,31 +34,40 @@
 #include <wtf/MonotonicTime.h>
 #include <wtf/Seconds.h>
 
+namespace API {
+class WebsitePolicies;
+}
+
 namespace WebKit {
+
+class WebPreferences;
 
 class EnhancedSecurityTracking final : public CanMakeWeakPtr<EnhancedSecurityTracking> {
 public:
     void initializeWithWebsiteDataStore(WebsiteDataStore&);
 
-    void trackNavigation(const API::Navigation&, bool hasOpenedPage);
+    void trackNavigation(const API::Navigation&, bool hasOpenedPage, bool httpFallbackInProgress = false);
 
     bool isEnhancedSecurityEnabled() const { return isEnhancedSecurityEnabledForState(enhancedSecurityState()); }
-    EnhancedSecurity enhancedSecurityState() const;
+    EnhancedSecurity LEGACY_NODELETE enhancedSecurityState() const;
     EnhancedSecurityReason enhancedSecurityReason() const { return m_activeReason; }
+
+    bool shouldEnableForInsecureResponse(const API::Navigation&, bool hasOpenedPage);
+
+    void enableFor(EnhancedSecurityReason, const API::Navigation&);
 
     void initializeFrom(const EnhancedSecurityTracking&);
 
 private:
     enum class ActivationState : uint8_t { None, Dormant, Active };
 
-    void reset();
-    void makeDormant();
-    void makeActive();
+    void LEGACY_NODELETE reset();
+    void LEGACY_NODELETE makeDormant();
+    void LEGACY_NODELETE makeActive();
 
     void handleBackForwardNavigation(const API::Navigation&);
 
-    void enableFor(EnhancedSecurityReason, const API::Navigation&);
-    bool enableIfRequired(const API::Navigation&);
+    bool enableIfRequired(const API::Navigation&, bool httpFallbackInProgress);
 
     void trackSameSiteNavigation(const API::Navigation&);
     void trackChangingSiteNavigation();

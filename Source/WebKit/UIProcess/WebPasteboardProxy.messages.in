@@ -61,7 +61,7 @@ messages -> WebPasteboardProxy {
     SetPasteboardColor(String pasteboardName, WebCore::Color color, std::optional<WebKit::WebPageProxyIdentifier> pageID) -> (int64_t changeCount) Synchronous
     SetPasteboardStringForType(String pasteboardName, String pasteboardType, String string, std::optional<WebKit::WebPageProxyIdentifier> pageID) -> (int64_t changeCount) Synchronous
     SetPasteboardBufferForType(String pasteboardName, String pasteboardType, RefPtr<WebCore::SharedBuffer> buffer, std::optional<WebKit::WebPageProxyIdentifier> pageID) -> (int64_t changeCount) Synchronous
-    WriteWebArchiveToPasteBoard(String pasteboardName, WebCore::FrameIdentifier rootFrameIdentifier, HashMap<WebCore::FrameIdentifier, Ref<WebCore::LegacyWebArchive>> localFrameArchives, Vector<WebCore::FrameIdentifier> remoteFrameIdentifiers) -> (int64_t changeCount) Synchronous
+    WriteWebArchiveToPasteBoard(String pasteboardName, WebCore::FrameIdentifier rootFrameIdentifier, HashMap<WebCore::FrameIdentifier, Ref<WebCore::LegacyWebArchive>> localFrameArchives, Vector<WebCore::FrameIdentifier> remoteFrameIdentifiers) -> (enum:uint8_t WebKit::WriteWebArchiveToPasteBoardResult result, int64_t changeCount) Synchronous
     ContainsURLStringSuitableForLoading(String pasteboardName, std::optional<WebKit::WebPageProxyIdentifier> pageID) -> (bool result) Synchronous
     URLStringSuitableForLoading(String pasteboardName, std::optional<WebKit::WebPageProxyIdentifier> pageID) -> (String url, String title) Synchronous
 
@@ -78,12 +78,15 @@ messages -> WebPasteboardProxy {
     ReadBuffer(String pasteboardName, String pasteboardType) -> (RefPtr<WebCore::SharedBuffer> buffer) Synchronous
     WriteToClipboard(String pasteboardName, WebCore::SelectionData pasteboardContent)
     ClearClipboard(String pasteboardName)
-    GetPasteboardChangeCount(String pasteboardName) -> (int64_t changeCount) Synchronous
 #endif
 
 #if USE(LIBWPE) && !PLATFORM(WPE)
     GetPasteboardTypes() -> (Vector<String> types) Synchronous
     WriteWebContentToPasteboard(struct WebCore::PasteboardWebContent content)
     WriteStringToPasteboard(String pasteboardType, String text)
+#endif
+
+#if PLATFORM(GTK) || PLATFORM(WPE) || PLATFORM(WIN)
+    GetPasteboardChangeCount(String pasteboardName) -> (int64_t changeCount) Synchronous
 #endif
 }

@@ -23,8 +23,6 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#pragma once
-
 #import "config.h"
 #import "ModelProcess.h"
 
@@ -32,6 +30,12 @@
 
 #import "ModelConnectionToWebProcess.h"
 #import <wtf/RetainPtr.h>
+
+#if ENABLE(LOGD_BLOCKING_IN_WEBCONTENT) && ENABLE(STREAMING_IPC_IN_LOG_FORWARDING)
+#import "LogStreamIdentifier.h"
+#import "ModelProcessProxyMessages.h"
+#import "StreamServerConnection.h"
+#endif
 
 namespace WebKit {
 using namespace WebCore;
@@ -41,6 +45,13 @@ void ModelProcess::dispatchSimulatedNotificationsForPreferenceChange(const Strin
 {
 }
 #endif // ENABLE(CFPREFS_DIRECT_MODE)
+
+#if ENABLE(LOGD_BLOCKING_IN_WEBCONTENT) && ENABLE(STREAMING_IPC_IN_LOG_FORWARDING)
+void ModelProcess::sendCreateLogStreamToParent(IPC::Connection& parentConnection, IPC::StreamServerConnectionHandle&& handle, LogStreamIdentifier identifier, CompletionHandler<void()>&& completionHandler)
+{
+    parentConnection.sendWithAsyncReply(Messages::ModelProcessProxy::CreateLogStream(WTF::move(handle), identifier), WTF::move(completionHandler));
+}
+#endif
 
 } // namespace WebKit
 

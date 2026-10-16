@@ -8,8 +8,6 @@
     jsTestIsAsync = true;
 
     if (window.testRunner) {
-        testRunner.waitUntilDone();
-        testRunner.dumpAsText();
 
         document.addEventListener("pointerdown", function (e) {
             twist = e.twist;
@@ -17,7 +15,9 @@
             finishJSTest();
         });
 
-        UIHelper.activateAt(10, 10);
+        (async () => {
+            await UIHelper.activateAt(10, 10);
+        })();
     }
 </script>
 </html>

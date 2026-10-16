@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024-2025 Samuel Weinig <sam@webkit.org>
+ * Copyright (C) 2024-2026 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,19 +35,22 @@
 #include "CSSCalcTree+NumericIdentity.h"
 #include "CSSCalcTree+Traversal.h"
 #include "CSSCalcTree.h"
+#include "CSSNormalizedMixPercentages.h"
 #include "CSSPrimitiveNumericCategory.h"
 #include "CSSPrimitiveValue.h"
 #include "CSSUnevaluatedCalc.h"
-#include "RenderStyle.h"
-#include "RenderStyle+GettersInlines.h"
 #include "StyleBuilderState.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "StyleLengthResolution.h"
 #include <wtf/StdLibExtras.h>
+#include <wtf/ZippedRange.h>
 
 namespace WebCore {
 namespace CSSCalc {
 
 static auto copyAndSimplify(const Random::Sharing&, const SimplificationOptions&) -> Random::Sharing;
+static auto copyAndSimplify(const CalcMix::Item&, const SimplificationOptions&) -> CalcMix::Item;
+static auto copyAndSimplify(const Vector<CalcMix::Item>&, const SimplificationOptions&) -> Vector<CalcMix::Item>;
 static auto copyAndSimplify(const CSS::Keyword::None&, const SimplificationOptions&) -> CSS::Keyword::None;
 static auto copyAndSimplify(const Children&, const SimplificationOptions&) -> Children;
 static auto copyAndSimplify(const ChildOrNone&, const SimplificationOptions&) -> ChildOrNone;
@@ -59,7 +62,7 @@ template<typename Op, typename... Args> static double executeMathOperation(Args&
     return executeOperation<ToCalculationTreeOp<Op>::op>(std::forward<Args>(args)...);
 }
 
-template<typename... F> static decltype(auto) switchTogether(const Child& a, const Child& b, F&&... f)
+template<typename... F> static decltype(auto) switchTogether(const Child& a, const Child& b, NOESCAPE F&&... f)
 {
     auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
     using ResultType = decltype(visitor(std::declval<Number>(), std::declval<Number>()));
@@ -76,7 +79,7 @@ template<typename... F> static decltype(auto) switchTogether(const Child& a, con
 
 // MARK: Predicate: percentageResolveToDimension
 
-static bool percentageResolveToDimension(const SimplificationOptions& options)
+static bool LEGACY_NODELETE percentageResolveToDimension(const SimplificationOptions& options)
 {
     switch (options.category) {
     case CSS::Category::Integer:
@@ -101,66 +104,66 @@ static bool percentageResolveToDimension(const SimplificationOptions& options)
 
 // MARK: Predicate: unitsMatch
 
-constexpr bool unitsMatch(const Number&, const Number&, const SimplificationOptions&)
+constexpr bool LEGACY_NODELETE unitsMatch(const Number&, const Number&, const SimplificationOptions&)
 {
     return true;
 }
 
-constexpr bool unitsMatch(const Percentage&, const Percentage&, const SimplificationOptions&)
+constexpr bool LEGACY_NODELETE unitsMatch(const Percentage&, const Percentage&, const SimplificationOptions&)
 {
     return true;
 }
 
-static bool unitsMatch(const CanonicalDimension& a, const CanonicalDimension& b, const SimplificationOptions&)
+static bool LEGACY_NODELETE unitsMatch(const CanonicalDimension& a, const CanonicalDimension& b, const SimplificationOptions&)
 {
     return a.dimension == b.dimension;
 }
 
-static bool unitsMatch(const NonCanonicalDimension& a, const NonCanonicalDimension& b, const SimplificationOptions&)
+static bool LEGACY_NODELETE unitsMatch(const NonCanonicalDimension& a, const NonCanonicalDimension& b, const SimplificationOptions&)
 {
     return a.unit == b.unit;
 }
 
 // MARK: Predicate: magnitudeComparable
 
-constexpr bool magnitudeComparable(const Number&, const SimplificationOptions&)
+constexpr bool LEGACY_NODELETE magnitudeComparable(const Number&, const SimplificationOptions&)
 {
     return true;
 }
 
-static bool magnitudeComparable(const Percentage&, const SimplificationOptions& options)
+static bool LEGACY_NODELETE magnitudeComparable(const Percentage&, const SimplificationOptions& options)
 {
     return !percentageResolveToDimension(options);
 }
 
-constexpr bool magnitudeComparable(const CanonicalDimension&, const SimplificationOptions&)
+constexpr bool LEGACY_NODELETE magnitudeComparable(const CanonicalDimension&, const SimplificationOptions&)
 {
     return true;
 }
 
-constexpr bool magnitudeComparable(const NonCanonicalDimension&, const SimplificationOptions&)
+constexpr bool LEGACY_NODELETE magnitudeComparable(const NonCanonicalDimension&, const SimplificationOptions&)
 {
     return true;
 }
 
 // MARK: Predicate: fullyResolved
 
-constexpr bool fullyResolved(const Number&, const SimplificationOptions&)
+constexpr bool LEGACY_NODELETE fullyResolved(const Number&, const SimplificationOptions&)
 {
     return true;
 }
 
-static bool fullyResolved(const Percentage&, const SimplificationOptions& options)
+static bool LEGACY_NODELETE fullyResolved(const Percentage&, const SimplificationOptions& options)
 {
     return !percentageResolveToDimension(options);
 }
 
-constexpr bool fullyResolved(const CanonicalDimension&, const SimplificationOptions&)
+constexpr bool LEGACY_NODELETE fullyResolved(const CanonicalDimension&, const SimplificationOptions&)
 {
     return true;
 }
 
-constexpr bool fullyResolved(const NonCanonicalDimension&, const SimplificationOptions&)
+constexpr bool LEGACY_NODELETE fullyResolved(const NonCanonicalDimension&, const SimplificationOptions&)
 {
     return false;
 }
@@ -173,119 +176,111 @@ std::optional<CanonicalDimension> canonicalize(NonCanonicalDimension root, const
 
     auto tryMakeCanonical = [&](double value, CSS::LengthUnit lengthUnit) -> std::optional<CanonicalDimension> {
         if (conversionData)
-            return CanonicalDimension { .value = Style::computeCanonicalNonCalcLengthDouble(value, lengthUnit, *conversionData), .dimension = CanonicalDimension::Dimension::Length };
+            return CanonicalDimension { .value = Style::resolveLength(value, lengthUnit, *conversionData), .dimension = CanonicalDimension::Dimension::Length };
         return { };
     };
 
     switch (root.unit) {
     // Absolute Lengths (can be canonicalized without conversion data).
-    case CSSUnitType::CSS_CM:
+    case CSSUnitType::Cm:
         return makeCanonical(root.value * CSS::pixelsPerCm,              CanonicalDimension::Dimension::Length);
-    case CSSUnitType::CSS_MM:
+    case CSSUnitType::Mm:
         return makeCanonical(root.value * CSS::pixelsPerMm,              CanonicalDimension::Dimension::Length);
-    case CSSUnitType::CSS_Q:
+    case CSSUnitType::Q:
         return makeCanonical(root.value * CSS::pixelsPerQ,               CanonicalDimension::Dimension::Length);
-    case CSSUnitType::CSS_IN:
+    case CSSUnitType::In:
         return makeCanonical(root.value * CSS::pixelsPerInch,            CanonicalDimension::Dimension::Length);
-    case CSSUnitType::CSS_PT:
+    case CSSUnitType::Pt:
         return makeCanonical(root.value * CSS::pixelsPerPt,              CanonicalDimension::Dimension::Length);
-    case CSSUnitType::CSS_PC:
+    case CSSUnitType::Pc:
         return makeCanonical(root.value * CSS::pixelsPerPc,              CanonicalDimension::Dimension::Length);
 
     // Font, Viewport and Container relative Lengths (require conversion data for canonicalization).
-    case CSSUnitType::CSS_EM:
-    case CSSUnitType::CSS_EX:
-    case CSSUnitType::CSS_LH:
-    case CSSUnitType::CSS_CAP:
-    case CSSUnitType::CSS_CH:
-    case CSSUnitType::CSS_IC:
-    case CSSUnitType::CSS_RCAP:
-    case CSSUnitType::CSS_RCH:
-    case CSSUnitType::CSS_REM:
-    case CSSUnitType::CSS_REX:
-    case CSSUnitType::CSS_RIC:
-    case CSSUnitType::CSS_RLH:
-    case CSSUnitType::CSS_VW:
-    case CSSUnitType::CSS_VH:
-    case CSSUnitType::CSS_VMIN:
-    case CSSUnitType::CSS_VMAX:
-    case CSSUnitType::CSS_VB:
-    case CSSUnitType::CSS_VI:
-    case CSSUnitType::CSS_SVW:
-    case CSSUnitType::CSS_SVH:
-    case CSSUnitType::CSS_SVMIN:
-    case CSSUnitType::CSS_SVMAX:
-    case CSSUnitType::CSS_SVB:
-    case CSSUnitType::CSS_SVI:
-    case CSSUnitType::CSS_LVW:
-    case CSSUnitType::CSS_LVH:
-    case CSSUnitType::CSS_LVMIN:
-    case CSSUnitType::CSS_LVMAX:
-    case CSSUnitType::CSS_LVB:
-    case CSSUnitType::CSS_LVI:
-    case CSSUnitType::CSS_DVW:
-    case CSSUnitType::CSS_DVH:
-    case CSSUnitType::CSS_DVMIN:
-    case CSSUnitType::CSS_DVMAX:
-    case CSSUnitType::CSS_DVB:
-    case CSSUnitType::CSS_DVI:
-    case CSSUnitType::CSS_CQW:
-    case CSSUnitType::CSS_CQH:
-    case CSSUnitType::CSS_CQI:
-    case CSSUnitType::CSS_CQB:
-    case CSSUnitType::CSS_CQMIN:
-    case CSSUnitType::CSS_CQMAX:
+    case CSSUnitType::Em:
+    case CSSUnitType::Ex:
+    case CSSUnitType::Lh:
+    case CSSUnitType::Cap:
+    case CSSUnitType::Ch:
+    case CSSUnitType::Ic:
+    case CSSUnitType::Rcap:
+    case CSSUnitType::Rch:
+    case CSSUnitType::Rem:
+    case CSSUnitType::Rex:
+    case CSSUnitType::Ric:
+    case CSSUnitType::Rlh:
+    case CSSUnitType::Vw:
+    case CSSUnitType::Vh:
+    case CSSUnitType::Vmin:
+    case CSSUnitType::Vmax:
+    case CSSUnitType::Vb:
+    case CSSUnitType::Vi:
+    case CSSUnitType::Svw:
+    case CSSUnitType::Svh:
+    case CSSUnitType::Svmin:
+    case CSSUnitType::Svmax:
+    case CSSUnitType::Svb:
+    case CSSUnitType::Svi:
+    case CSSUnitType::Lvw:
+    case CSSUnitType::Lvh:
+    case CSSUnitType::Lvmin:
+    case CSSUnitType::Lvmax:
+    case CSSUnitType::Lvb:
+    case CSSUnitType::Lvi:
+    case CSSUnitType::Dvw:
+    case CSSUnitType::Dvh:
+    case CSSUnitType::Dvmin:
+    case CSSUnitType::Dvmax:
+    case CSSUnitType::Dvb:
+    case CSSUnitType::Dvi:
+    case CSSUnitType::Cqw:
+    case CSSUnitType::Cqh:
+    case CSSUnitType::Cqi:
+    case CSSUnitType::Cqb:
+    case CSSUnitType::Cqmin:
+    case CSSUnitType::Cqmax:
         return tryMakeCanonical(root.value, *CSS::toLengthUnit(root.unit));
 
     // <angle>
-    case CSSUnitType::CSS_RAD:
+    case CSSUnitType::Rad:
         return makeCanonical(root.value * degreesPerRadianDouble,        CanonicalDimension::Dimension::Angle);
-    case CSSUnitType::CSS_GRAD:
+    case CSSUnitType::Grad:
         return makeCanonical(root.value * degreesPerGradientDouble,      CanonicalDimension::Dimension::Angle);
-    case CSSUnitType::CSS_TURN:
+    case CSSUnitType::Turn:
         return makeCanonical(root.value * degreesPerTurnDouble,          CanonicalDimension::Dimension::Angle);
 
     // <time>
-    case CSSUnitType::CSS_MS:
+    case CSSUnitType::Ms:
         return makeCanonical(root.value * CSS::secondsPerMillisecond,    CanonicalDimension::Dimension::Time);
 
     // <frequency>
-    case CSSUnitType::CSS_KHZ:
+    case CSSUnitType::Khz:
         return makeCanonical(root.value * CSS::hertzPerKilohertz,        CanonicalDimension::Dimension::Frequency);
 
     // <resolution>
-    case CSSUnitType::CSS_X:
+    case CSSUnitType::X:
         return makeCanonical(root.value * CSS::dppxPerX,                 CanonicalDimension::Dimension::Resolution);
-    case CSSUnitType::CSS_DPI:
+    case CSSUnitType::Dpi:
         return makeCanonical(root.value * CSS::dppxPerDpi,               CanonicalDimension::Dimension::Resolution);
-    case CSSUnitType::CSS_DPCM:
+    case CSSUnitType::Dpcm:
         return makeCanonical(root.value * CSS::dppxPerDpcm,              CanonicalDimension::Dimension::Resolution);
 
     // Canonical dimensional types should never be stored in a NonCanonicalDimension.
-    case CSSUnitType::CSS_PX:
-    case CSSUnitType::CSS_DEG:
-    case CSSUnitType::CSS_S:
-    case CSSUnitType::CSS_HZ:
-    case CSSUnitType::CSS_DPPX:
-    case CSSUnitType::CSS_FR:
+    case CSSUnitType::Px:
+    case CSSUnitType::Deg:
+    case CSSUnitType::S:
+    case CSSUnitType::Hz:
+    case CSSUnitType::Dppx:
+    case CSSUnitType::Fr:
     // Non-dimensional types should never be stored in a NonCanonicalDimension.
-    case CSSUnitType::CSS_NUMBER:
-    case CSSUnitType::CSS_INTEGER:
-    case CSSUnitType::CSS_PERCENTAGE:
+    case CSSUnitType::Number:
+    case CSSUnitType::Integer:
+    case CSSUnitType::Percentage:
     // Non-numeric types should never be stored in a NonCanonicalDimension.
-    case CSSUnitType::CSS_ATTR:
-    case CSSUnitType::CSS_CALC:
-    case CSSUnitType::CSS_CALC_PERCENTAGE_WITH_ANGLE:
-    case CSSUnitType::CSS_CALC_PERCENTAGE_WITH_LENGTH:
-    case CSSUnitType::CSS_DIMENSION:
-    case CSSUnitType::CSS_FONT_FAMILY:
-    case CSSUnitType::CSS_IDENT:
-    case CSSUnitType::CSS_PROPERTY_ID:
-    case CSSUnitType::CSS_QUIRKY_EM:
-    case CSSUnitType::CSS_STRING:
-    case CSSUnitType::CSS_UNKNOWN:
-    case CSSUnitType::CSS_VALUE_ID:
-    case CSSUnitType::CustomIdent:
+    case CSSUnitType::Calc:
+    case CSSUnitType::CalcPercentageWithAngle:
+    case CSSUnitType::CalcPercentageWithLength:
+    case CSSUnitType::QuirkyEm:
+    case CSSUnitType::Unknown:
         break;
     }
 
@@ -311,7 +306,7 @@ template<typename Op> static std::optional<Child> simplifyForOperation(Child& a,
     );
 }
 
-template<typename Op, typename Completion> static std::optional<Child> simplifyForOperationWithCompletion(Child& a, Child& b, const SimplificationOptions& options, Completion&& completion)
+template<typename Op, typename Completion> static std::optional<Child> simplifyForOperationWithCompletion(Child& a, Child& b, const SimplificationOptions& options, NOESCAPE const Completion& completion)
 {
     return switchTogether(a, b,
         [&]<Numeric T>(const T& numericA, const T& numericB) -> std::optional<Child> {
@@ -339,17 +334,14 @@ template<typename Op> static std::optional<Child> simplifyForRound(Op& root, con
 
 template<typename Op> static std::optional<Child> simplifyForTrig(Op& root, const SimplificationOptions&)
 {
-    // NOTE: `a` has been type checked by this point to be `<number>` or an `<angle>`, though they may not
-    // be able to be fully resolved yet. If its an `<angle>`, it is also already been converted to canonical
-    // units via earlier simplification.
+    // NOTE: `root.a` has been type checked by this point to be `<number>`, or to be a Deg2Rad
+    // wrapper inserted at parse time around an `<angle>` subtree. The Deg2Rad node takes care of
+    // converting degrees to radians, so simplification here only needs to collapse the trig
+    // function when the wrapped value has resolved to a Number (i.e. a value in radians).
 
     return WTF::switchOn(root.a,
         [&](const Number& a) -> std::optional<Child> {
             return makeChild(Number { .value = executeMathOperation<Op>(a.value) });
-        },
-        [&](const CanonicalDimension& a) -> std::optional<Child> {
-            ASSERT(a.dimension == CanonicalDimension::Dimension::Angle);
-            return makeChild(Number { .value = executeMathOperation<Op>(deg2rad(a.value)) });
         },
         [](const auto&) -> std::optional<Child> {
             return { };
@@ -535,7 +527,7 @@ std::optional<Child> simplify(SiblingCount&, const SimplificationOptions& option
     if (!options.conversionData->styleBuilderState()->element())
         return { };
 
-    return makeChild(Number { .value = static_cast<double>(options.conversionData->protectedStyleBuilderState()->siblingCount()) });
+    return makeChild(Number { .value = static_cast<double>(protect(options.conversionData->styleBuilderState())->siblingCount()) });
 }
 
 std::optional<Child> simplify(SiblingIndex&, const SimplificationOptions& options)
@@ -545,7 +537,7 @@ std::optional<Child> simplify(SiblingIndex&, const SimplificationOptions& option
     if (!options.conversionData->styleBuilderState()->element())
         return { };
 
-    return makeChild(Number { .value = static_cast<double>(options.conversionData->protectedStyleBuilderState()->siblingIndex()) });
+    return makeChild(Number { .value = static_cast<double>(protect(options.conversionData->styleBuilderState())->siblingIndex()) });
 }
 
 std::optional<Child> simplify(Sum& root, const SimplificationOptions& options)
@@ -849,7 +841,10 @@ std::optional<Child> simplify(Product& root, const SimplificationOptions& option
                     },
                     [&](const Percentage& percentage) -> bool {
                         auto invertedPercentageChildType = Type::invert(getType(percentage));
-                        auto multipliedType = Type::multiply(productResult.type, invertedPercentageChildType);
+                        if (!invertedPercentageChildType)
+                            return false;
+
+                        auto multipliedType = Type::multiply(productResult.type, *invertedPercentageChildType);
                         if (!multipliedType)
                             return false;
 
@@ -859,7 +854,10 @@ std::optional<Child> simplify(Product& root, const SimplificationOptions& option
                     },
                     [&](const CanonicalDimension& canonicalDimension) -> bool {
                         auto invertedCanonicalDimensionType = Type::invert(getType(canonicalDimension));
-                        auto multipliedType = Type::multiply(productResult.type, invertedCanonicalDimensionType);
+                        if (!invertedCanonicalDimensionType)
+                            return false;
+
+                        auto multipliedType = Type::multiply(productResult.type, *invertedCanonicalDimensionType);
                         if (!multipliedType)
                             return false;
 
@@ -917,8 +915,11 @@ std::optional<Child> simplify(Negate& root, const SimplificationOptions&)
 
     return WTF::switchOn(root.a,
         [&]<Numeric T>(T& a) -> std::optional<Child> {
-            // 6.1. If root’s child is a numeric value, return an equivalent numeric value, but with the value negated (0 - value).
-            return makeChildWithValueBasedOn(0.0 - a.value, a);
+            // 6.1. If root’s child is a numeric value, return an equivalent numeric value, but with the value negated.
+            // NOTE: We use unary negation rather than the spec's literal "0 - value" so that the sign of a zero is
+            // flipped (negating +0 yields -0), matching IEEE 754 and the runtime Negate executor.
+            // https://drafts.csswg.org/css-values-4/#calc-ieee
+            return makeChildWithValueBasedOn(-a.value, a);
         },
         [](IndirectNode<Negate>& a) -> std::optional<Child> {
             // 6.2. If root’s child is a Negate node, return the child’s child.
@@ -945,12 +946,10 @@ std::optional<Child> simplify(Negate& root, const SimplificationOptions&)
             if (!std::ranges::all_of(a->children, isNumeric))
                 return { };
 
-            for (auto& child : a->children) {
-                WTF::switchOn(child,
-                    [&]<Numeric T>(T& child) { child.value = -child.value; },
-                    [](auto&) { }
-                );
-            }
+            WTF::switchOn(a->children[0],
+                [&]<Numeric T>(T& child) { child.value = -child.value; },
+                [](auto&) { }
+            );
 
             return { Child { WTF::move(a) } };
         },
@@ -979,6 +978,23 @@ std::optional<Child> simplify(Invert& root, const SimplificationOptions&)
     );
 }
 
+std::optional<Child> simplify(Deg2Rad& root, const SimplificationOptions&)
+{
+    // Deg2Rad wraps an <angle> subtree and produces a <number> in radians. It is inserted at
+    // parse time inside trig functions whose argument is an <angle>, so that evaluation does not
+    // need to inspect the argument's type.
+
+    return WTF::switchOn(root.angle,
+        [&](const CanonicalDimension& a) -> std::optional<Child> {
+            ASSERT(a.dimension == CanonicalDimension::Dimension::Angle);
+            return makeChild(Number { .value = deg2rad(a.value) });
+        },
+        [](const auto&) -> std::optional<Child> {
+            return { };
+        }
+    );
+}
+
 std::optional<Child> simplify(Min& root, const SimplificationOptions& options)
 {
     return simplifyForMinMax(root, options);
@@ -999,41 +1015,65 @@ std::optional<Child> simplify(Clamp& root, const SimplificationOptions& options)
         return { WTF::move(root.val) };
     }
 
-    // FIXME: Are any of these transforms kosher?
-    // If only MIN and VAL have matching units, we can transform clamp(MIN, VAL, MAX) aka (max(MIN, min(VAL, MAX)) into a min(newVAL, MAX).
-    // If only VAL and MAX have matching units, we can transform clamp(MIN, VAL, MAX) aka (max(MIN, min(VAL, MAX)) into a max(MIN, newVAL).
+    auto convertToMin = [&] -> std::optional<Child> {
+        Vector<Child> newChildren;
+        newChildren.reserveInitialCapacity(2);
+        newChildren.append(WTF::move(root.val));
+        newChildren.append(get<Child>(WTF::move(root.max)));
+
+        auto min = Min { .children = WTF::move(newChildren) };
+        auto minType = toType(min);
+        if (!minType)
+            return std::nullopt;
+
+        return makeChild(WTF::move(min), *minType);
+    };
+
+    auto convertToMax = [&] -> std::optional<Child> {
+        Vector<Child> newChildren;
+        newChildren.reserveInitialCapacity(2);
+        newChildren.append(get<Child>(WTF::move(root.min)));
+        newChildren.append(WTF::move(root.val));
+
+        auto max = Max { .children = WTF::move(newChildren) };
+        auto maxType = toType(max);
+        if (!maxType)
+            return std::nullopt;
+
+        return makeChild(WTF::move(max), *maxType);
+    };
 
     return WTF::switchOn(root.val,
         [&]<Numeric T>(T& val) -> std::optional<Child> {
             if (minIsNone) {
                 auto& maxChild = get<Child>(root.max);
                 if (!WTF::holdsAlternative<T>(maxChild))
-                    return { };
+                    return convertToMin();
 
                 auto& max = get<T>(maxChild);
 
                 if (!unitsMatch(val, max, options))
-                    return { };
+                    return convertToMin();
 
                 // As units already match, we only have to check that one of the arguments is `magnitudeComparable`.
                 if (!magnitudeComparable(val, options))
-                    return { };
+                    return convertToMin();
 
                 // - clamp(none, VAL, MAX) is equivalent to min(VAL, MAX)
                 return makeChildWithValueBasedOn(executeMathOperation<Min>(val.value, max.value), val);
             } else if (maxIsNone) {
                 auto& minChild = get<Child>(root.min);
                 if (!WTF::holdsAlternative<T>(minChild))
-                    return { };
+                    return convertToMax();
 
                 auto& min = get<T>(minChild);
 
                 if (!unitsMatch(min, val, options))
-                    return { };
+                    return convertToMax();
 
                 // As units already match, we only have to check that one of the arguments is `magnitudeComparable`.
                 if (!magnitudeComparable(val, options))
-                    return { };
+                    return convertToMax();
 
                 // - clamp(MIN, VAL, none) is equivalent to max(MIN, VAL)
                 return makeChildWithValueBasedOn(executeMathOperation<Max>(min.value, val.value), val);
@@ -1331,26 +1371,22 @@ std::optional<Child> simplify(Random& root, const SimplificationOptions& options
                 valueStep = numericStep.value;
             }
 
-            auto randomBaseValue = WTF::switchOn(root.sharing,
-                [&](const Random::SharingOptions& sharingOptions) -> std::optional<double> {
-                    if (sharingOptions.elementShared.has_value() && !options.conversionData->styleBuilderState()->element())
+            // A fixed <number> can only be simplified here when it is a raw value; a calc-based fixed value
+            // needs full evaluation. All other sharing resolves through the shared resolver.
+            std::optional<double> randomBaseValue;
+            if (auto* sharingFixed = std::get_if<Random::SharingFixed>(&root.sharing)) {
+                randomBaseValue = WTF::switchOn(sharingFixed->value,
+                    [](const CSS::Number<CSS::ClosedUnitRange>::Raw& raw) -> std::optional<double> {
+                        return raw.value;
+                    },
+                    [](const CSS::Number<CSS::ClosedUnitRange>::Calc&) -> std::optional<double> {
                         return { };
-                    return options.conversionData->protectedStyleBuilderState()->lookupCSSRandomBaseValue(
-                        sharingOptions.identifier,
-                        sharingOptions.elementShared
-                    );
-                },
-                [&](const Random::SharingFixed& sharingFixed) -> std::optional<double> {
-                    return WTF::switchOn(sharingFixed.value,
-                        [](const CSS::Number<CSS::ClosedUnitRange>::Raw& raw) -> std::optional<double> {
-                            return raw.value;
-                        },
-                        [](const CSS::Number<CSS::ClosedUnitRange>::Calc&) -> std::optional<double> {
-                            return { };
-                        }
-                    );
-                }
-            );
+                    }
+                );
+            } else {
+                CheckedPtr builderState = options.conversionData->styleBuilderState();
+                randomBaseValue = resolveRandomBaseValue(root.sharing, *builderState);
+            }
             if (!randomBaseValue)
                 return { };
 
@@ -1385,6 +1421,203 @@ std::optional<Child> simplify(Progress& root, const SimplificationOptions& optio
     );
 }
 
+std::optional<Child> simplify(ProgressNoClamp& root, const SimplificationOptions& options)
+{
+    if (root.value.index() != root.start.index() || root.start.index() != root.end.index())
+        return { };
+
+    return WTF::switchOn(root.value,
+        [&]<Numeric T>(const T& numericValue) -> std::optional<Child> {
+            const auto& numericStart = get<T>(root.start);
+            const auto& numericEnd = get<T>(root.end);
+
+            if (!unitsMatch(numericValue, numericStart, options) || !unitsMatch(numericStart, numericEnd, options) || !fullyResolved(numericValue, options))
+                return { };
+
+            return makeChild(Number { .value = executeMathOperation<ProgressNoClamp>(numericValue.value, numericStart.value, numericEnd.value) });
+        },
+        [](const auto&) -> std::optional<Child> {
+            return { };
+        }
+    );
+}
+
+std::optional<Child> simplify(CalcMix& root, const SimplificationOptions& options)
+{
+    auto zeroValueMatchingChild = [options](auto& child) -> Child {
+        auto childType = getType(child.value);
+        auto category = childType.calculationCategory();
+        ASSERT(category);
+        switch (*category) {
+        case CSS::Category::Integer:
+        case CSS::Category::Number:
+            return makeChild(Number { .value = 0 });
+        case CSS::Category::Percentage:
+            return makeChild(Percentage { .value = 0, .hint = Type::determinePercentHint(options.category) });
+        case CSS::Category::LengthPercentage:
+            return makeChild(Percentage { .value = 0, .hint = PercentHint::Length });
+        case CSS::Category::Length:
+            return makeChild(CanonicalDimension { .value = 0, .dimension = CanonicalDimension::Dimension::Length });
+        case CSS::Category::Angle:
+            return makeChild(CanonicalDimension { .value = 0, .dimension = CanonicalDimension::Dimension::Angle });
+        case CSS::Category::AnglePercentage:
+            return makeChild(Percentage { .value = 0, .hint = PercentHint::Angle });
+        case CSS::Category::Time:
+            return makeChild(CanonicalDimension { .value = 0, .dimension = CanonicalDimension::Dimension::Time });
+        case CSS::Category::Frequency:
+            return makeChild(CanonicalDimension { .value = 0, .dimension = CanonicalDimension::Dimension::Frequency });
+        case CSS::Category::Resolution:
+            return makeChild(CanonicalDimension { .value = 0, .dimension = CanonicalDimension::Dimension::Resolution });
+        case CSS::Category::Flex:
+            return makeChild(CanonicalDimension { .value = 0, .dimension = CanonicalDimension::Dimension::Flex });
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    };
+
+    bool canNormalize = true;
+    unsigned numberOfKnownZeroWeights = 0;
+
+    for (auto& item : root.children) {
+        if (!item.weight)
+            continue;
+        WTF::switchOn(*item.weight,
+            [&](const CalcMix::Item::Weight::Raw& raw) {
+                if (!raw.value)
+                    ++numberOfKnownZeroWeights;
+            },
+            [&](const CalcMix::Item::Weight::Calc&) {
+                canNormalize = false;
+            }
+        );
+    }
+
+    // If not all the percentage weights are fully resolvable (e.g. `calc-mix(10px calc(50% * sibling-index()), 20px)`
+    // at parse time) we can't normalize.
+    if (!canNormalize) {
+        // Even if we can't normalize, we can still remove any items with a weight that is known to be zero.
+        if (numberOfKnownZeroWeights > 0) {
+            auto newNumberOfChildren = root.children.size() - numberOfKnownZeroWeights;
+
+            // If all the weights are known to be zero, we can simplify all the way down zero value for the calc-mix itself.
+            if (!newNumberOfChildren)
+                return zeroValueMatchingChild(root.children[0]);
+
+            Vector<CalcMix::Item> newChildren;
+            newChildren.reserveInitialCapacity(newNumberOfChildren);
+            for (auto& item : root.children) {
+                // Skip any known zero weights.
+                if (item.weight && item.weight->isKnownZero())
+                    continue;
+                newChildren.append(WTF::move(item));
+            }
+            root.children = WTF::move(newChildren);
+        }
+        return { };
+    }
+
+    struct InputCalcMixWeight {
+        std::optional<CalcMix::Item::Weight::Raw> percentage;
+    };
+
+    // NOTE: Per spec, "Any “leftover” mix percentage is applied to a consistently-typed zero value, and thus effectively discarded".
+    auto [percentages, _] = CSS::normalizedMixPercentages<CSS::ForceNormalization::No>(root.children | std::views::transform([](const auto& item) {
+        return InputCalcMixWeight { .percentage = item.weight ? item.weight->raw() : std::nullopt };
+    }));
+
+    // Remove any items with a weight of 0, including items with omitted weights when the specified weights sum to 100% or more.
+    Vector<CalcMix::Item> newChildren;
+    for (auto [item, normalizedWeight] : zippedRange(root.children, percentages)) {
+        if (!normalizedWeight)
+            continue;
+        item.weight = CalcMix::Item::Weight { normalizedWeight };
+        newChildren.append(WTF::move(item));
+    }
+
+    // If all the weights are zero, we can simplify all the way down zero value for the calc-mix itself.
+    if (newChildren.isEmpty())
+        return zeroValueMatchingChild(root.children[0]);
+
+    root.children = WTF::move(newChildren);
+
+    // Types used to check if all the values are fully simplified down to the same type.
+    // This can fail in cases like:
+    //     width: calc-mix(10% 25%, 10px 75%) - <length-percentage> result allows either <percentage> or <length> values, but <percentage> is not resolvable until later.
+    //     width: calc-mix(10px * sibling-index() 25%, 10px 75%) - `10px * sibling-index()` cannot be fully simplified until later.
+    //     width: calc-mix(10em 25%, 10px 75%) - `10em` cannot be resolved until later.
+
+    std::optional<Variant<Number, Percentage, CanonicalDimension, NonCanonicalDimension>> result;
+
+    for (auto& item : root.children) {
+        auto weight = item.weight->raw()->value / 100.0;
+
+        bool success = WTF::switchOn(item.value,
+            [&](const Number& value) {
+                if (!result) {
+                    result = Number { .value = value.value * weight };
+                    return true;
+                }
+                if (!WTF::holdsAlternative<Number>(*result))
+                    return false;
+
+                auto addition = value.value * weight;
+                auto newResult = get<Number>(*result).value + addition;
+                get<Number>(*result).value = newResult;
+                return true;
+            },
+            [&](const Percentage& value) {
+                if (!result) {
+                    result = Percentage { .value = value.value * weight, .hint = value.hint };
+                    return true;
+                }
+                if (!WTF::holdsAlternative<Percentage>(*result) || get<Percentage>(*result).hint != value.hint)
+                    return false;
+
+                auto addition = value.value * weight;
+                auto newResult = get<Percentage>(*result).value + addition;
+                get<Percentage>(*result).value = newResult;
+                return true;
+            },
+            [&](const CanonicalDimension& value) {
+                if (!result) {
+                    result = CanonicalDimension { .value = value.value * weight, .dimension = value.dimension };
+                    return true;
+                }
+                if (!WTF::holdsAlternative<CanonicalDimension>(*result) || get<CanonicalDimension>(*result).dimension != value.dimension)
+                    return false;
+
+                auto addition = value.value * weight;
+                auto newResult = get<CanonicalDimension>(*result).value + addition;
+                get<CanonicalDimension>(*result).value = newResult;
+                return true;
+            },
+            [&](const NonCanonicalDimension& value) {
+                if (!result) {
+                    result = NonCanonicalDimension { .value = value.value * weight, .unit = value.unit };
+                    return true;
+                }
+                if (!WTF::holdsAlternative<NonCanonicalDimension>(*result) || get<NonCanonicalDimension>(*result).unit != value.unit)
+                    return false;
+
+                auto addition = value.value * weight;
+                auto newResult = get<NonCanonicalDimension>(*result).value + addition;
+                get<NonCanonicalDimension>(*result).value = newResult;
+                return true;
+            },
+            [&](const auto&) {
+                return false;
+            }
+        );
+        if (!success)
+            return { };
+    }
+
+    return WTF::switchOn(*result,
+        [&]<Numeric T>(const T& numeric) -> std::optional<Child> {
+            return makeChild(numeric);
+        }
+    );
+}
+
 std::optional<Child> simplify(Anchor& anchor, const SimplificationOptions& options)
 {
     if (!options.conversionData || !options.conversionData->styleBuilderState())
@@ -1404,7 +1637,7 @@ std::optional<Child> simplify(Anchor& anchor, const SimplificationOptions& optio
         // If no fallback value is specified, it makes the declaration referencing it invalid at computed-value time."
 
         if (!anchor.fallback)
-            options.conversionData->protectedStyleBuilderState()->setCurrentPropertyInvalidAtComputedValueTime();
+            options.conversionData->styleBuilderState()->setCurrentPropertyInvalidAtComputedValueTime();
 
         // Replace the anchor node with the fallback node.
         return std::exchange(anchor.fallback, { });
@@ -1420,9 +1653,9 @@ std::optional<Child> simplify(AnchorSize& anchorSize, const SimplificationOption
     CheckedPtr builderState = options.conversionData->styleBuilderState();
 
     std::optional<Style::ScopedName> anchorSizeScopedName;
-    if (!anchorSize.elementName.isNull()) {
+    if (anchorSize.elementName) {
         anchorSizeScopedName = Style::ScopedName {
-            .name = anchorSize.elementName,
+            .name = Style::toStyle(*anchorSize.elementName, *builderState).value,
             .scopeOrdinal = builderState->styleScopeOrdinal()
         };
     }
@@ -1431,7 +1664,7 @@ std::optional<Child> simplify(AnchorSize& anchorSize, const SimplificationOption
 
     if (!result) {
         if (!anchorSize.fallback)
-            options.conversionData->protectedStyleBuilderState()->setCurrentPropertyInvalidAtComputedValueTime();
+            options.conversionData->styleBuilderState()->setCurrentPropertyInvalidAtComputedValueTime();
 
         return std::exchange(anchorSize.fallback, { });
     }
@@ -1446,7 +1679,17 @@ Random::Sharing copyAndSimplify(const Random::Sharing& root, const Simplificatio
     return root;
 }
 
-CSS::Keyword::None copyAndSimplify(const CSS::Keyword::None& root, const SimplificationOptions&)
+CalcMix::Item copyAndSimplify(const CalcMix::Item& root, const SimplificationOptions& options)
+{
+    return { .value = copyAndSimplify(root.value, options), .weight = root.weight };
+}
+
+Vector<CalcMix::Item> copyAndSimplify(const Vector<CalcMix::Item>& items, const SimplificationOptions& options)
+{
+    return WTF::map(items, [&](auto& item) { return copyAndSimplify(item, options); });
+}
+
+CSS::Keyword::None LEGACY_NODELETE copyAndSimplify(const CSS::Keyword::None& root, const SimplificationOptions&)
 {
     return root;
 }

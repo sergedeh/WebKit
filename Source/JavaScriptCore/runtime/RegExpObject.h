@@ -71,7 +71,7 @@ public:
         return std::bit_cast<RegExp*>(m_regExpAndFlags & regExpMask);
     }
 
-    bool setLastIndex(JSGlobalObject* globalObject, size_t lastIndex)
+    bool setLastIndex(JSGlobalObject* globalObject, uint64_t lastIndex)
     {
         VM& vm = getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -108,10 +108,15 @@ public:
     bool testInline(JSGlobalObject* globalObject, JSString* string) { return !!matchInline(globalObject, string); }
     JS_EXPORT_PRIVATE JSValue exec(JSGlobalObject*, JSString*);
     JSValue execInline(JSGlobalObject*, JSString*);
+    JSValue execInline(JSGlobalObject*, JSString*, MatchResult&);
     MatchResult match(JSGlobalObject*, JSString*);
     JSValue matchGlobal(JSGlobalObject*, JSString*);
 
-    bool isSymbolReplaceFastAndNonObservable();
+    bool isSymbolMatchFastAndNonObservable(JSGlobalObject*);
+    bool isSymbolSearchFastAndNonObservable(JSGlobalObject*);
+    bool isSymbolMatchAllFastAndNonObservable(JSGlobalObject*);
+    bool isSymbolReplaceFastAndNonObservable(JSGlobalObject*);
+    bool isSymbolSplitFastAndNonObservable(JSGlobalObject*);
 
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
     static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);

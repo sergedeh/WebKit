@@ -31,11 +31,13 @@
 #include "Exception.h"
 #include "ExceptionCode.h"
 #include "InternalObserver.h"
+#include "JSDOMConvertAny.h"
 #include "JSDOMPromiseDeferred.h"
-#include "JSValueInWrappedObject.h"
+#include "JSValueInWrappedObjectInlines.h"
 #include "Observable.h"
 #include "ReducerCallback.h"
 #include "ScriptExecutionContext.h"
+#include "ScriptWrappableInlines.h"
 #include "SubscribeOptions.h"
 #include "Subscriber.h"
 #include "SubscriberCallback.h"
@@ -55,37 +57,40 @@ public:
 private:
     void next(JSC::JSValue value) final
     {
+        auto* globalObject = protect(scriptExecutionContext())->globalObject();
+        ASSERT(globalObject);
+
         if (!m_accumulator) {
             m_index++;
-            m_accumulator.setWeakly(value);
+            auto* owner = subscriber() ? subscriber()->wrapper() : nullptr;
+            m_accumulator.set(*globalObject, owner, value);
             return;
         }
-
-        auto* globalObject = protectedScriptExecutionContext()->globalObject();
-        ASSERT(globalObject);
 
         Ref vm = globalObject->vm();
 
         JSC::JSLockHolder lock(vm);
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-        auto result = protectedCallback()->invokeRethrowingException(m_accumulator.getValue(), value, m_index++);
+        auto result = protect(m_callback)->invokeRethrowingException(m_accumulator.getValue(), value, m_index++);
 
         JSC::Exception* exception = scope.exception();
         if (exception) [[unlikely]] {
             scope.clearException();
             auto value = exception->value();
-            protectedPromise()->reject<IDLAny>(value);
+            protect(m_promise)->reject<IDLAny>(value);
             Ref { m_signal }->signalAbort(value);
         }
 
-        if (result.type() == CallbackResultType::Success)
-            m_accumulator.setWeakly(result.releaseReturnValue());
+        if (result.type() == CallbackResultType::Success) {
+            auto* owner = subscriber() ? subscriber()->wrapper() : nullptr;
+            m_accumulator.set(*globalObject, owner, result.releaseReturnValue());
+        }
     }
 
     void error(JSC::JSValue value) final
     {
-        protectedPromise()->reject<IDLAny>(value);
+        protect(m_promise)->reject<IDLAny>(value);
     }
 
     void complete() final
@@ -93,21 +98,18 @@ private:
         InternalObserver::complete();
 
         if (!m_accumulator) [[unlikely]] {
-            protectedPromise()->reject(Exception { ExceptionCode::TypeError, "No inital value for Observable with no values"_s });
+            protect(m_promise)->reject(Exception { ExceptionCode::TypeError, "No inital value for Observable with no values"_s });
             return;
         }
 
-        protectedPromise()->resolve<IDLAny>(m_accumulator.getValue());
+        protect(m_promise)->resolve<IDLAny>(m_accumulator.getValue());
     }
 
-    void visitAdditionalChildren(JSC::AbstractSlotVisitor& visitor) const final
+    void visitAdditionalChildrenInGCThread(JSC::AbstractSlotVisitor& visitor) const final
     {
-        m_callback->visitJSFunction(visitor);
-        m_accumulator.visit(visitor);
+        m_callback->visitJSFunctionInGCThread(visitor);
+        m_accumulator.visitInGCThread(visitor);
     }
-
-    Ref<DeferredPromise> protectedPromise() const { return m_promise; }
-    Ref<ReducerCallback> protectedCallback() const { return m_callback; }
 
     InternalObserverReduce(ScriptExecutionContext& context, Ref<AbortSignal>&& signal, Ref<ReducerCallback>&& callback, JSC::JSValue initialValue, Ref<DeferredPromise>&& promise)
         : InternalObserver(context)
@@ -115,8 +117,11 @@ private:
         , m_callback(WTF::move(callback))
         , m_promise(WTF::move(promise))
     {
-        if (!initialValue.isUndefined()) [[unlikely]]
-            m_accumulator.setWeakly(initialValue);
+        if (!initialValue.isUndefined()) [[unlikely]] {
+            auto* owner = subscriber() ? subscriber()->wrapper() : nullptr;
+            if (auto* globalObject = context.globalObject())
+                m_accumulator.set(*globalObject, owner, initialValue);
+        }
     }
 
     uint64_t m_index { 0 };

@@ -37,6 +37,7 @@
 #include "StreamServerConnection.h"
 #include "WebGPUIdentifier.h"
 #include <WebCore/AudioSession.h>
+#include <WebCore/MediaSessionIdentifier.h>
 #include <WebCore/PlatformMediaSession.h>
 #include <WebCore/SharedMemory.h>
 #include <wtf/AbstractThreadSafeRefCountedAndCanMakeWeakPtr.h>
@@ -82,7 +83,7 @@ public:
     void deref() const final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::deref(); }
 
     IPC::Connection& connection() { return m_connection.get(); }
-    IPC::MessageReceiverMap& messageReceiverMap() { return m_messageReceiverMap; }
+    IPC::MessageReceiverMap& messageReceiverMap() LIFETIME_BOUND { return m_messageReceiverMap; }
 
     void didBecomeUnresponsive();
 #if HAVE(AUDIT_TOKEN)
@@ -90,20 +91,16 @@ public:
 #endif
     Ref<RemoteSharedResourceCacheProxy> sharedResourceCache();
 #if PLATFORM(COCOA) && ENABLE(MEDIA_STREAM)
-    SampleBufferDisplayLayerManager& sampleBufferDisplayLayerManager();
-    Ref<SampleBufferDisplayLayerManager> protectedSampleBufferDisplayLayerManager();
+    SampleBufferDisplayLayerManager& sampleBufferDisplayLayerManager() LIFETIME_BOUND;
     void resetAudioMediaStreamTrackRendererInternalUnit(AudioMediaStreamTrackRendererInternalUnitIdentifier);
 #endif
 #if ENABLE(VIDEO)
     RemoteVideoFrameObjectHeapProxy& videoFrameObjectHeapProxy();
-    Ref<RemoteVideoFrameObjectHeapProxy> protectedVideoFrameObjectHeapProxy();
     RemoteMediaPlayerManager& mediaPlayerManager();
-    Ref<RemoteMediaPlayerManager> protectedMediaPlayerManager();
 #endif
 
 #if PLATFORM(COCOA) && ENABLE(WEB_AUDIO)
     RemoteAudioSourceProviderManager& audioSourceProviderManager();
-    Ref<RemoteAudioSourceProviderManager> protectedAudioSourceProviderManager();
 #endif
 
     void updateMediaConfiguration(bool forceUpdate);
@@ -114,7 +111,8 @@ public:
 #endif
 
 #if ENABLE(EXTENSION_CAPABILITIES)
-    void setMediaEnvironment(WebCore::PageIdentifier, const String&);
+    void setMediaPlaybackEnvironment(WebCore::PageIdentifier, const String&);
+    void setDisplayCaptureEnvironment(WebCore::PageIdentifier, const String&);
 #endif
 
     void configureLoggingChannel(const String&, WTFLogChannelState, WTFLogLevel);
@@ -137,9 +135,10 @@ public:
     void addClient(const Client& client) { m_clients.add(client); }
 
     static constexpr Seconds defaultTimeout = 3_s;
+    bool waitForDidInitialize();
+
 private:
     GPUProcessConnection(Ref<IPC::Connection>&&);
-    bool waitForDidInitialize();
     void invalidate();
 
     // IPC::Connection::Client
@@ -152,7 +151,7 @@ private:
     bool dispatchSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&);
 
     // Messages.
-    void didReceiveRemoteCommand(WebCore::PlatformMediaSession::RemoteControlCommandType, const WebCore::PlatformMediaSession::RemoteCommandArgument&);
+    void didReceiveRemoteCommand(WebCore::PlatformMediaSession::RemoteControlCommandType, const WebCore::PlatformMediaSession::RemoteCommandArgument&, std::optional<WebCore::MediaSessionIdentifier> targetSession);
     void didInitialize(std::optional<GPUProcessConnectionInfo>&&);
 
 #if ENABLE(ROUTING_ARBITRATION)
@@ -165,7 +164,7 @@ private:
     IPC::MessageReceiverMap m_messageReceiverMap;
     GPUProcessConnectionIdentifier m_identifier { GPUProcessConnectionIdentifier::generate() };
     bool m_hasInitialized { false };
-    RefPtr<RemoteSharedResourceCacheProxy> m_sharedResourceCache;
+    const RefPtr<RemoteSharedResourceCacheProxy> m_sharedResourceCache;
 #if HAVE(AUDIT_TOKEN)
     std::optional<audit_token_t> m_auditToken;
 #endif
@@ -173,10 +172,10 @@ private:
     const std::unique_ptr<SampleBufferDisplayLayerManager> m_sampleBufferDisplayLayerManager;
 #endif
 #if ENABLE(VIDEO)
-    RefPtr<RemoteVideoFrameObjectHeapProxy> m_videoFrameObjectHeapProxy;
+    const RefPtr<RemoteVideoFrameObjectHeapProxy> m_videoFrameObjectHeapProxy;
 #endif
 #if PLATFORM(COCOA) && ENABLE(WEB_AUDIO)
-    RefPtr<RemoteAudioSourceProviderManager> m_audioSourceProviderManager;
+    const RefPtr<RemoteAudioSourceProviderManager> m_audioSourceProviderManager;
 #endif
 
 #if PLATFORM(COCOA)

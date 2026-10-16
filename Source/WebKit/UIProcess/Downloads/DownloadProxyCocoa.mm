@@ -56,7 +56,7 @@ void DownloadProxy::publishProgress(const URL& url)
     if (!handle)
         return;
 
-    protectedDataStore()->protectedNetworkProcess()->send(Messages::NetworkProcess::PublishDownloadProgress(m_downloadID, url, WTF::move(*handle)), 0);
+    protect(protect(m_dataStore)->networkProcess())->send(Messages::NetworkProcess::PublishDownloadProgress(m_downloadID, url, WTF::move(*handle)), 0);
 #endif
 }
 
@@ -89,6 +89,8 @@ Vector<uint8_t> DownloadProxy::bookmarkDataForURL(const URL& url)
     RetainPtr localURL = adoptNS([[NSURL alloc] initFileURLWithPath:url.fileSystemPath().createNSString().get() relativeToURL:nil]);
     NSError *error = nil;
     RetainPtr bookmark = [localURL bookmarkDataWithOptions:NSURLBookmarkCreationMinimalBookmark includingResourceValuesForKeys:nil relativeToURL:nil error:&error];
+    if (!bookmark && error)
+        RELEASE_LOG_ERROR(Network, "DownloadProxy::bookmarkDataForURL: Failed to create bookmark data for URL, error = %" PUBLIC_LOG_STRING, error.description.UTF8String);
     return span(bookmark.get());
 }
 

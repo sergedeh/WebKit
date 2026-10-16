@@ -9,12 +9,12 @@
 #define sktext_gpu_SubRunAllocator_DEFINED
 
 #include "include/core/SkSpan.h"
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkMath.h"
-#include "include/private/base/SkTLogic.h"
-#include "include/private/base/SkTemplates.h"
-#include "include/private/base/SkTo.h"
-#include "src/base/SkArenaAlloc.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkMath.h"
+#include "include/private/SkTLogic.h"
+#include "include/private/SkTemplates.h"
+#include "include/private/SkTo.h"
+#include "src/core/SkArenaAlloc.h"
 
 #include <algorithm>
 #include <array>
@@ -32,6 +32,24 @@ namespace sktext::gpu {
 
 // BagOfBytes parcels out bytes with a given size and alignment.
 class BagOfBytes {
+    // The maximum alignment supported by GrBagOfBytes. 16 seems to be a good number for alignment.
+    // If a use case for larger alignments is found, we can turn this into a template parameter.
+    inline static constexpr int kMaxAlignment = std::max(16, (int)alignof(std::max_align_t));
+    // The largest size that can be allocated. In larger sizes, the block is rounded up to 4K
+    // chunks. Leave a 4K of slop.
+    inline static constexpr int k4K = (1 << 12);
+    // This should never overflow with the calculations done on the code.
+    inline static constexpr int kMaxByteSize = std::numeric_limits<int>::max() - k4K;
+    // The assumed alignment of new char[] given the platform.
+    // There is a bug in Emscripten's allocator that make alignment different than max_align_t.
+    // kAllocationAlignment accounts for this difference. For more information see:
+    // https://github.com/emscripten-core/emscripten/issues/10072
+#if !defined(SK_FORCE_8_BYTE_ALIGNMENT)
+    static constexpr int kAllocationAlignment = alignof(std::max_align_t);
+#else
+    static constexpr int kAllocationAlignment = 8;
+#endif
+
 public:
     BagOfBytes(char* block, size_t blockSize, size_t firstHeapAllocation);
     explicit BagOfBytes(size_t firstHeapAllocation = 0);
@@ -104,37 +122,22 @@ public:
         return 0 <= n && n < kMaxN;
     }
 
-    // Returns a pointer to memory suitable for holding n Ts.
-    template <typename T> char* allocateBytesFor(int n = 1) {
-        static_assert(alignof(T) <= kMaxAlignment, "Alignment is too big for arena");
-        static_assert(sizeof(T) < kMaxByteSize, "Size is too big for arena");
-        SkASSERT_RELEASE(WillCountFit<T>(n));
+    // Returns a pointer to memory suitable for holding n values each with Size and Alignment.
+    // Allocates 1 aligned byte if n == 0.
+    template <size_t Size, size_t Alignment> char* allocateBytesFor(int n = 1)
+        requires (Alignment <= kMaxAlignment && Size < kMaxByteSize && Size % Alignment == 0) {
+        SkASSERT_RELEASE(0 <= n && static_cast<size_t>(n) <= kMaxByteSize / Size);
+        int size = n ? n * Size : 1;
+        return this->allocateBytes(size, Alignment);
+    }
 
-        int size = n ? n * sizeof(T) : 1;
-        return this->allocateBytes(size, alignof(T));
+    template <typename T> char* allocateBytesFor(int n = 1) {
+        return allocateBytesFor<sizeof(T), alignof(T)>(n);
     }
 
     void* alignedBytes(int unsafeSize, int unsafeAlignment);
 
 private:
-    // The maximum alignment supported by GrBagOfBytes. 16 seems to be a good number for alignment.
-    // If a use case for larger alignments is found, we can turn this into a template parameter.
-    inline static constexpr int kMaxAlignment = std::max(16, (int)alignof(std::max_align_t));
-    // The largest size that can be allocated. In larger sizes, the block is rounded up to 4K
-    // chunks. Leave a 4K of slop.
-    inline static constexpr int k4K = (1 << 12);
-    // This should never overflow with the calculations done on the code.
-    inline static constexpr int kMaxByteSize = std::numeric_limits<int>::max() - k4K;
-    // The assumed alignment of new char[] given the platform.
-    // There is a bug in Emscripten's allocator that make alignment different than max_align_t.
-    // kAllocationAlignment accounts for this difference. For more information see:
-    // https://github.com/emscripten-core/emscripten/issues/10072
-    #if !defined(SK_FORCE_8_BYTE_ALIGNMENT)
-        static constexpr int kAllocationAlignment = alignof(std::max_align_t);
-    #else
-        static constexpr int kAllocationAlignment = 8;
-    #endif
-
     static constexpr size_t AlignUp(int size, int alignment) {
         return (size + (alignment - 1)) & -alignment;
     }
@@ -185,23 +188,30 @@ private:
 template <typename T>
 class SubRunInitializer {
 public:
-    SubRunInitializer(void* memory) : fMemory{memory} { SkASSERT(memory != nullptr); }
-    ~SubRunInitializer() {
-        ::operator delete(fMemory);
-    }
+    explicit SubRunInitializer(void* memory) : fMemory{memory} { SkASSERT(memory != nullptr); }
+
     template <typename... Args>
     T* initialize(Args&&... args) {
         // Warn on more than one initialization.
         SkASSERT(fMemory != nullptr);
-        return new (std::exchange(fMemory, nullptr)) T(std::forward<Args>(args)...);
+        return new (fMemory.release()) T(std::forward<Args>(args)...);
     }
 
 private:
-    void* fMemory;
+    struct Deleter {
+        // Frees the heap memory without calling a destructor.
+        // We must use `::operator delete(p)` instead of `delete p` because `p` is `void*`.
+        // Deleting a `void*` is undefined behavior in C++.
+        // This is paired with the placement `::operator new` in AllocateClassMemoryAndArena.
+        void operator()(void* p) const { ::operator delete(p); }
+    };
+    std::unique_ptr<void, Deleter> fMemory;
 };
 
-// GrSubRunAllocator provides fast allocation where the user takes care of calling the destructors
-// of the returned pointers, and GrSubRunAllocator takes care of deleting the storage. The
+template <typename T> struct AllocateAndArenaResult;
+
+// SubRunAllocator provides fast allocation where the user takes care of calling the destructors
+// of the returned pointers, and SubRunAllocator takes care of deleting the storage. The
 // unique_ptrs returned, are to assist in assuring the object's destructor is called.
 // A note on zero length arrays: according to the standard a pointer must be returned, and it
 // can't be a nullptr. In such a case, SkArena allocates one byte, but does not initialize it.
@@ -231,20 +241,8 @@ public:
     SubRunAllocator& operator=(SubRunAllocator&&) = default;
 
     template <typename T>
-    static std::tuple<SubRunInitializer<T>, int, SubRunAllocator>
-    AllocateClassMemoryAndArena(int allocSizeHint) {
-        SkASSERT_RELEASE(allocSizeHint >= 0);
-        // Round the size after the object the optimal amount.
-        int extraSize = BagOfBytes::PlatformMinimumSizeWithOverhead(allocSizeHint, alignof(T));
-
-        // Don't overflow or die.
-        SkASSERT_RELEASE(INT_MAX - SkTo<int>(sizeof(T)) > extraSize);
-        int totalMemorySize = sizeof(T) + extraSize;
-
-        void* memory = ::operator new (totalMemorySize);
-        SubRunAllocator alloc{SkTAddOffset<char>(memory, sizeof(T)), extraSize, extraSize/2};
-        return {memory, totalMemorySize, std::move(alloc)};
-    }
+    static AllocateAndArenaResult<T>
+    AllocateClassMemoryAndArena(int allocSizeHint);
 
     template <typename T, typename... Args> T* makePOD(Args&&... args) {
         static_assert(HasNoDestructor<T>, "This is not POD. Use makeUnique.");
@@ -259,9 +257,10 @@ public:
         return std::unique_ptr<T, Destroyer>{new (bytes) T(std::forward<Args>(args)...)};
     }
 
-    template<typename T> T* makePODArray(int n) {
+    template<typename T, size_t Alignment = alignof(T)> T* makePODArray(int n)
+        requires (sizeof(T) % Alignment == 0) {
         static_assert(HasNoDestructor<T>, "This is not POD. Use makeUniqueArray.");
-        return reinterpret_cast<T*>(fAlloc.template allocateBytesFor<T>(n));
+        return reinterpret_cast<T*>(fAlloc.template allocateBytesFor<sizeof(T), Alignment>(n));
     }
 
     template<typename T>
@@ -323,6 +322,34 @@ public:
 private:
     BagOfBytes fAlloc;
 };
+
+// Members are destroyed in the reverse order of their declaration:
+// https://isocpp.org/wiki/faq/dtors#order-dtors-for-members
+// `alloc` must be destroyed first because it may contain pointers to memory owned by `initializer`.
+// `initializer` must be destroyed last because it owns the backing memory.
+// See also: https://issues.skia.org/issues/530646115
+template <typename T>
+struct AllocateAndArenaResult {
+    SubRunInitializer<T> initializer;
+    int totalMemorySize;
+    SubRunAllocator alloc;
+};
+
+template <typename T>
+inline AllocateAndArenaResult<T>
+SubRunAllocator::AllocateClassMemoryAndArena(int allocSizeHint) {
+    SkASSERT_RELEASE(allocSizeHint >= 0);
+    // Round the size after the object the optimal amount.
+    int extraSize = BagOfBytes::PlatformMinimumSizeWithOverhead(allocSizeHint, alignof(T));
+
+    // Don't overflow or die.
+    SkASSERT_RELEASE(INT_MAX - SkTo<int>(sizeof(T)) > extraSize);
+    int totalMemorySize = sizeof(T) + extraSize;
+
+    void* memory = ::operator new (totalMemorySize);
+    SubRunAllocator alloc{SkTAddOffset<char>(memory, sizeof(T)), extraSize, extraSize/2};
+    return {SubRunInitializer<T>{memory}, totalMemorySize, std::move(alloc)};
+}
 
 // Helper for defining allocators with inline/reserved storage.
 // For argument declarations, stick to the base type (SubRunAllocator).

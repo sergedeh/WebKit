@@ -122,7 +122,7 @@ void WebDateTimePickerGtk::didChooseDate()
     m_page->didChooseDate(calendarDateToString(year, month, day, m_currentDate, m_secondFormat));
 }
 
-void WebDateTimePickerGtk::showDateTimePicker(WebCore::DateTimeChooserParameters&& params)
+void WebDateTimePickerGtk::platformShowDateTimePicker(WebCore::DateTimeChooserParameters&& params)
 {
     if (m_popover) {
         update(WTF::move(params));
@@ -140,8 +140,8 @@ void WebDateTimePickerGtk::showDateTimePicker(WebCore::DateTimeChooserParameters
     m_popover = gtk_popover_new(webView);
 #endif
     gtk_popover_set_position(GTK_POPOVER(m_popover), GTK_POS_BOTTOM);
-    GdkRectangle rectInRootView = params.anchorRectInRootView;
-    gtk_popover_set_pointing_to(GTK_POPOVER(m_popover), &rectInRootView);
+    GdkRectangle rectInMainFrameView = params.anchorRectInMainFrameView;
+    gtk_popover_set_pointing_to(GTK_POPOVER(m_popover), &rectInMainFrameView);
     g_signal_connect_swapped(m_popover, "closed", G_CALLBACK(+[](WebDateTimePickerGtk* picker) {
         picker->endPicker();
     }), this);

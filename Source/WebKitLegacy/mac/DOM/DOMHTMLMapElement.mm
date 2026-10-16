@@ -28,6 +28,7 @@
 #import "DOMHTMLCollectionInternal.h"
 #import "DOMNodeInternal.h"
 #import "ExceptionHandlers.h"
+#import <WebCore/ElementInlines.h>
 #import <WebCore/HTMLCollection.h>
 #import <WebCore/HTMLMapElement.h>
 #import <WebCore/HTMLNames.h>
@@ -37,7 +38,7 @@
 #import <wtf/GetPtr.h>
 #import <wtf/URL.h>
 
-#define IMPL static_cast<WebCore::HTMLMapElement*>(reinterpret_cast<WebCore::Node*>(_internal))
+#define IMPL protect(downcast<WebCore::HTMLMapElement>(reinterpret_cast<WebCore::Node*>(_internal)))
 
 @implementation DOMHTMLMapElement
 

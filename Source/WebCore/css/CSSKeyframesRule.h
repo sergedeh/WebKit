@@ -39,16 +39,16 @@ class StyleRuleKeyframe;
 
 class StyleRuleKeyframes final : public StyleRuleBase {
 public:
-    static Ref<StyleRuleKeyframes> create(const AtomString& name);
+    static Ref<StyleRuleKeyframes> LEGACY_NODELETE create(const AtomString& name);
     ~StyleRuleKeyframes();
     
-    const Vector<Ref<StyleRuleKeyframe>>& keyframes() const;
+    const Vector<Ref<StyleRuleKeyframe>>& LEGACY_NODELETE keyframes() const;
 
     void parserAppendKeyframe(RefPtr<StyleRuleKeyframe>&&);
     void wrapperAppendKeyframe(Ref<StyleRuleKeyframe>&&);
     void wrapperRemoveKeyframe(unsigned);
 
-    const AtomString& name() const { return m_name; }
+    const AtomString& name() const LIFETIME_BOUND { return m_name; }
     void setName(const AtomString& name) { m_name = name; }
 
     std::optional<size_t> findKeyframeIndex(const String& key) const;
@@ -75,8 +75,10 @@ public:
     String cssText() const final;
     void reattach(StyleRuleBase&) final;
 
-    const AtomString& name() const { return m_keyframesRule->name(); }
+    const AtomString& name() const LIFETIME_BOUND { return m_keyframesRule->name(); }
     void setName(const AtomString&);
+
+    StyleRuleKeyframes& keyframesRule() const LIFETIME_BOUND { return m_keyframesRule.get(); }
 
     CSSRuleList& cssRules();
 
@@ -85,7 +87,7 @@ public:
     CSSKeyframeRule* findRule(const String& key);
 
     // For IndexedGetter and CSSRuleList.
-    unsigned length() const;
+    unsigned LEGACY_NODELETE length() const;
     CSSKeyframeRule* item(unsigned index) const;
     bool isSupportedPropertyIndex(unsigned index) const { return index < length(); }
 

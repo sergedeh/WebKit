@@ -27,13 +27,19 @@
 
 #import "AppDelegate.h"
 #import "SettingsController.h"
+#if __MAC_OS_X_VERSION_MIN_REQUIRED >= 270000
+#import <AppKit/NSRefreshController.h>
+#endif
 #import <PDFKit/PDFDocument.h>
 #import <QuartzCore/CATextLayer.h>
 #import <SecurityInterface/SFCertificateTrustPanel.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#import <WebKit/WKDownload.h>
+#import <WebKit/WKDownloadDelegate.h>
 #import <WebKit/WKFrameInfo.h>
 #import <WebKit/WKNavigationActionPrivate.h>
 #import <WebKit/WKNavigationDelegate.h>
+#import <WebKit/WKNavigationDelegatePrivate.h>
 #import <WebKit/WKOpenPanelParametersPrivate.h>
 #import <WebKit/WKPreferencesPrivate.h>
 #import <WebKit/WKUIDelegate.h>
@@ -46,10 +52,13 @@
 #import <WebKit/WKWebsiteDataStorePrivate.h>
 #import <WebKit/WebNSURLExtras.h>
 #import <WebKit/_WKArchiveConfiguration.h>
+#import <WebKit/_WKFindDelegate.h>
+#import <WebKit/_WKFindOptions.h>
 #import <WebKit/_WKIconLoadingDelegate.h>
 #import <WebKit/_WKInspector.h>
 #import <WebKit/_WKLinkIconParameters.h>
 #import <WebKit/_WKUserInitiatedAction.h>
+#import <objc/runtime.h>
 
 static void* keyValueObservingContext = &keyValueObservingContext;
 static const int testHeaderBannerHeight = 42;
@@ -73,11 +82,31 @@ static const int testFooterBannerHeight = 58;
 
 @end
 
-@interface WK2BrowserWindowController () <NSTextFinderBarContainer, WKNavigationDelegate, WKUIDelegate, WKUIDelegatePrivate, _WKIconLoadingDelegate>
+@interface FindBarFieldEditor : NSTextView
+@end
+
+@implementation FindBarFieldEditor
+
+- (void)performTextFinderAction:(id)sender
+{
+    [self.window.windowController performTextFinderAction:sender];
+}
+
+- (BOOL)validateMenuItem:(NSMenuItem *)menuItem
+{
+    if (menuItem.action == @selector(performTextFinderAction:))
+        return YES;
+    return [super validateMenuItem:menuItem];
+}
+
+@end
+
+@interface WK2BrowserWindowController () <NSTextFinderBarContainer, _WKFindDelegate, NSSearchFieldDelegate, WKDownloadDelegate, WKNavigationDelegate, WKNavigationDelegatePrivate, WKUIDelegate, WKUIDelegatePrivate, _WKIconLoadingDelegate>
 @end
 
 @implementation WK2BrowserWindowController {
     WKWebViewConfiguration *_configuration;
+    WKWindowFeatures *_windowFeatures;
     WKWebView *_webView;
     BOOL _zoomTextOnly;
     BOOL _isPrivateBrowsingWindow;
@@ -86,9 +115,21 @@ static const int testFooterBannerHeight = 58;
 
     MiniBrowserNSTextFinder *_textFinder;
     NSView *_textFindBarView;
+
+    NSView *_findBar;
+    NSSearchField *_findSearchField;
+    NSTextField *_findMatchCountLabel;
+    FindBarFieldEditor *_findBarFieldEditor;
+    id _findBarClickMonitor;
+
     BOOL _findBarVisible;
+    BOOL _usingFindDelegate;
 
     CATextLayer *_pointerLockBanner;
+
+#if __MAC_OS_X_VERSION_MIN_REQUIRED >= 270000
+    NSRefreshController *_refreshController;
+#endif
 }
 
 - (void)awakeFromNib
@@ -133,31 +174,44 @@ static const int testFooterBannerHeight = 58;
 
     _webView._usePlatformFindUI = NO;
 
-    _textFinder = [[MiniBrowserNSTextFinder alloc] init];
-    _textFinder.incrementalSearchingEnabled = YES;
-    _textFinder.incrementalSearchingShouldDimContentView = NO;
-    _textFinder.client = _webView;
-    _textFinder.findBarContainer = self;
-    
-#if __has_feature(objc_arc)
-    __weak WKWebView *weakWebView = _webView;
-#else
-    WKWebView *weakWebView = _webView;
-#endif
-    _textFinder.hideInterfaceCallback = ^{
-        WKWebView *webView = weakWebView;
-        [webView _hideFindUI];
-    };
-
     _zoomTextOnly = NO;
+
+    // FIXME: <webkit.org/b/317881> Remove this protocol check once the CMake port builds WKWebView+RefreshControl.swift.
+#if __MAC_OS_X_VERSION_MIN_REQUIRED >= 270000
+    Protocol *refreshControlHosting = NSProtocolFromString(@"AppKit.NSRefreshControlHosting");
+    if (refreshControlHosting && [_webView conformsToProtocol:refreshControlHosting]) {
+        _refreshController = [[NSRefreshController alloc] init];
+        _refreshController.target = self;
+        _refreshController.action = @selector(_refreshControllerActivated:);
+        _webView.refreshController = _refreshController;
+    }
+#endif
+}
+
+- (id)windowWillReturnFieldEditor:(NSWindow *)sender toObject:(id)client
+{
+    if (client == _findSearchField) {
+        if (!_findBarFieldEditor) {
+            _findBarFieldEditor = [[FindBarFieldEditor alloc] init];
+            _findBarFieldEditor.fieldEditor = YES;
+        }
+        return _findBarFieldEditor;
+    }
+    return nil;
 }
 
 - (instancetype)initWithConfiguration:(WKWebViewConfiguration *)configuration
+{
+    return [self initWithConfiguration:configuration windowFeatures:nil];
+}
+
+- (instancetype)initWithConfiguration:(WKWebViewConfiguration *)configuration windowFeatures:(WKWindowFeatures *)windowFeatures
 {
     if (!(self = [super initWithWindowNibName:@"BrowserWindow"]))
         return nil;
 
     _configuration = [configuration copy];
+    _windowFeatures = windowFeatures;
     _isPrivateBrowsingWindow = !_configuration.websiteDataStore.isPersistent;
 
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(userAgentDidChange:) name:kUserAgentChangedNotificationName object:nil];
@@ -167,6 +221,11 @@ static const int testFooterBannerHeight = 58;
 - (void)dealloc
 {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
+    if (_findBarClickMonitor)
+        [NSEvent removeMonitor:_findBarClickMonitor];
+    _webView._findDelegate = nil;
+    _textFinder.client = nil;
+    _textFinder.findBarContainer = nil;
     [_webView removeObserver:self forKeyPath:@"title"];
     [_webView removeObserver:self forKeyPath:@"URL"];
     [_webView removeObserver:self forKeyPath:@"hasOnlySecureContent"];
@@ -176,6 +235,47 @@ static const int testFooterBannerHeight = 58;
     [progressIndicator unbind:NSValueBinding];
 }
 
+static NSRect frameForWindowFeatures(WKWindowFeatures *features, NSWindow *window)
+{
+    NSRect contentRect = [window contentRectForFrameRect:window.frame];
+
+    // The web view insets its viewport underneath the titlebar and toolbar, so that inset has to be
+    // added back on to give the page the size it asked for.
+    CGFloat viewportInset = NSHeight(window.contentView.frame) - NSHeight(window.contentLayoutRect);
+
+    if (features.width.doubleValue > 0)
+        contentRect.size.width = features.width.doubleValue;
+    if (features.height.doubleValue > 0)
+        contentRect.size.height = features.height.doubleValue + viewportInset;
+
+    NSRect frameRect = [window frameRectForContentRect:contentRect];
+
+    if (features.x)
+        frameRect.origin.x = features.x.doubleValue;
+
+    if (features.y)
+        frameRect.origin.y = NSMaxY(NSScreen.screens.firstObject.frame) - features.y.doubleValue - NSHeight(frameRect);
+    else
+        frameRect.origin.y = NSMaxY(window.frame) - NSHeight(frameRect);
+
+    return [window constrainFrameRect:frameRect toScreen:nil];
+}
+
+- (void)applyWindowFeatures
+{
+    if (!_windowFeatures.x && !_windowFeatures.y && !_windowFeatures.width && !_windowFeatures.height)
+        return;
+
+    NSWindow *window = self.window;
+
+    // For windows that are opened with specific geometry, ignore AppKit's frame autosaving (and don't contribute to it).
+    self.windowFrameAutosaveName = @"";
+    window.tabbingMode = NSWindowTabbingModeDisallowed;
+
+    [window layoutIfNeeded];
+    [window setFrame:frameForWindowFeatures(_windowFeatures, window) display:NO];
+}
+
 - (void)windowDidLoad
 {
     [super windowDidLoad];
@@ -183,6 +283,8 @@ static const int testFooterBannerHeight = 58;
     // Private windows get separate identifier so they can't merge with regular windows
     if (_isPrivateBrowsingWindow)
         self.window.tabbingIdentifier = @"MiniBrowserPrivateWindow";
+
+    [self applyWindowFeatures];
 }
 
 - (void)userAgentDidChange:(NSNotification *)notification
@@ -196,7 +298,7 @@ static const int testFooterBannerHeight = 58;
 {
     [urlText setStringValue:[self addProtocolIfNecessary:urlText.stringValue]];
     NSURL *url = [NSURL _webkit_URLWithUserTypedString:urlText.stringValue];
-    [_webView loadRequest:[NSURLRequest requestWithURL:url]];
+    [_webView loadURL:url];
 }
 
 - (IBAction)setPageScale:(id)sender
@@ -255,6 +357,23 @@ static const int testFooterBannerHeight = 58;
         [[NSUserDefaults standardUserDefaults] setObject:permissions forKey:@"NotificationPermissions"];
 
         decisionHandler(granted);
+    }];
+}
+
+- (void)_webView:(WKWebView *)webView requestLocalNetworkAccessPermissionForSecurityOrigin:(WKSecurityOrigin *)securityOrigin topLevelOrigin:(WKSecurityOrigin *)topLevelOrigin isLoopback:(BOOL)isLoopback decisionHandler:(void (^)(WKPermissionDecision))decisionHandler
+{
+    NSString *originString = [NSString stringWithFormat:@"%@://%@", topLevelOrigin.protocol, topLevelOrigin.host];
+    NSString *frameString = [securityOrigin.host isEqualToString:topLevelOrigin.host] ? @"" : [NSString stringWithFormat:@" (requested by %@://%@)", securityOrigin.protocol, securityOrigin.host];
+    NSString *target = isLoopback ? @"this device (loopback)" : @"devices on your local network";
+
+    NSAlert *alert = [[NSAlert alloc] init];
+    [alert setMessageText:[NSString stringWithFormat:@"Allow %@ to connect to %@?%@", originString, target, frameString]];
+    [alert setInformativeText:@"Allowing this grants access to every address in that space, not just one device or port."];
+    [alert addButtonWithTitle:@"Deny"];
+    [alert addButtonWithTitle:@"Allow"];
+
+    [alert beginSheetModalForWindow:self.window completionHandler:^void (NSModalResponse response) {
+        decisionHandler(response == NSAlertSecondButtonReturn ? WKPermissionDecisionGrant : WKPermissionDecisionDeny);
     }];
 }
 
@@ -356,6 +475,14 @@ static BOOL areEssentiallyEqual(double a, double b)
 {
     [_webView reload];
 }
+
+#if __MAC_OS_X_VERSION_MIN_REQUIRED >= 270000
+- (void)_refreshControllerActivated:(NSRefreshController *)refreshController
+{
+    [_webView reload];
+    [refreshController performSelector:@selector(endRefreshing) withObject:nil afterDelay:2.5];
+}
+#endif
 
 - (IBAction)showCertificate:(id)sender
 {
@@ -563,6 +690,10 @@ static BOOL areEssentiallyEqual(double a, double b)
     preferences._colorFilterEnabled = settings.appleColorFilterEnabled;
     preferences.siteSpecificQuirksModeEnabled = settings.siteSpecificQuirksModeEnabled;
     preferences._punchOutWhiteBackgroundsInDarkMode = settings.punchOutWhiteBackgroundsInDarkMode;
+    if ([preferences respondsToSelector:@selector(_setAXCustomColorModeEnabled:)])
+        preferences._axCustomColorModeEnabled = settings.axCustomColorModeEnabled;
+    if ([preferences respondsToSelector:@selector(_setShowAXCustomColorModeControls:)])
+        preferences._showAXCustomColorModeControls = settings.showAXCustomColorModeControls;
     preferences._mockCaptureDevicesEnabled = settings.useMockCaptureDevices;
     preferences.tabFocusesLinks = settings.tabFocusesLinksEnabled;
 
@@ -699,9 +830,9 @@ static BOOL areEssentiallyEqual(double a, double b)
 
 - (nullable WKWebView *)webView:(WKWebView *)webView createWebViewWithConfiguration:(WKWebViewConfiguration *)configuration forNavigationAction:(WKNavigationAction *)navigationAction windowFeatures:(WKWindowFeatures *)windowFeatures
 {
-    WK2BrowserWindowController *controller = [[WK2BrowserWindowController alloc] initWithConfiguration:configuration];
+    WK2BrowserWindowController *controller = [[WK2BrowserWindowController alloc] initWithConfiguration:configuration windowFeatures:windowFeatures];
     [controller.window makeKeyAndOrderFront:self];
-    
+
     [[[NSApplication sharedApplication] browserAppDelegate] didCreateBrowserWindowController:controller];
 
     return controller->_webView;
@@ -870,6 +1001,19 @@ static BOOL isJavaScriptURL(NSURL *url)
     return [url.scheme isEqualToString:@"javascript"];
 }
 
+static BOOL responseIsAttachment(NSURLResponse *response)
+{
+    if (![response isKindOfClass:[NSHTTPURLResponse class]])
+        return NO;
+
+    NSString *disposition = [(NSHTTPURLResponse *)response valueForHTTPHeaderField:@"Content-Disposition"];
+    if (!disposition.length)
+        return NO;
+
+    NSString *type = [[disposition componentsSeparatedByString:@";"].firstObject stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    return [type caseInsensitiveCompare:@"attachment"] == NSOrderedSame;
+}
+
 #pragma mark WKNavigationDelegate
 
 - (void)webView:(WKWebView *)webView decidePolicyForNavigationAction:(WKNavigationAction *)navigationAction preferences:(WKWebpagePreferences *)preferences decisionHandler:(void (^)(WKNavigationActionPolicy, WKWebpagePreferences *))decisionHandler
@@ -887,6 +1031,13 @@ static BOOL isJavaScriptURL(NSURL *url)
     }();
 
     preferences.allowsContentJavaScript = NSApplication.sharedApplication.browserAppDelegate.settingsController.allowsContentJavascript;
+
+    // This has to be tested before _canHandleRequest, which is true for the http and https
+    // URLs that a download attribute usually points at.
+    if (navigationAction.shouldPerformDownload) {
+        decisionHandler(WKNavigationActionPolicyDownload, preferences);
+        return;
+    }
 
     if (navigationAction._canHandleRequest) {
         decisionHandler(WKNavigationActionPolicyAllow, preferences);
@@ -907,7 +1058,11 @@ static BOOL isJavaScriptURL(NSURL *url)
 - (void)webView:(WKWebView *)webView decidePolicyForNavigationResponse:(WKNavigationResponse *)navigationResponse decisionHandler:(void (^)(WKNavigationResponsePolicy))decisionHandler
 {
     LOG(@"decidePolicyForNavigationResponse");
-    decisionHandler(WKNavigationResponsePolicyAllow);
+
+    // WebKit does not turn these into downloads on the client's behalf, so a browser that wants
+    // them downloaded has to ask for it here.
+    BOOL shouldDownload = responseIsAttachment(navigationResponse.response) || (!navigationResponse.canShowMIMEType && navigationResponse.forMainFrame);
+    decisionHandler(shouldDownload ? WKNavigationResponsePolicyDownload : WKNavigationResponsePolicyAllow);
     [self validateToolbar];
 }
 
@@ -936,6 +1091,9 @@ static BOOL isJavaScriptURL(NSURL *url)
 - (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)navigation
 {
     LOG(@"didFinishNavigation: %@", navigation);
+#if __MAC_OS_X_VERSION_MIN_REQUIRED >= 270000
+    [_refreshController endRefreshing];
+#endif
 }
 
 - (void)webView:(WKWebView *)webView didReceiveAuthenticationChallenge:(NSURLAuthenticationChallenge *)challenge completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition disposition, NSURLCredential *__nullable credential))completionHandler
@@ -964,6 +1122,11 @@ static BOOL isJavaScriptURL(NSURL *url)
                 completionHandler(NSURLSessionAuthChallengeRejectProtectionSpace, nil);
         }];
         return;
+    } else if ([challenge.protectionSpace.authenticationMethod isEqualToString:NSURLAuthenticationMethodServerTrust]) {
+        if ([[NSApplication sharedApplication] browserAppDelegate].settingsController.acceptAllTLSCertificates) {
+            completionHandler(NSURLSessionAuthChallengeUseCredential, [NSURLCredential credentialForTrust:challenge.protectionSpace.serverTrust]);
+            return;
+        }
     }
     completionHandler(NSURLSessionAuthChallengeRejectProtectionSpace, nil);
 }
@@ -971,6 +1134,24 @@ static BOOL isJavaScriptURL(NSURL *url)
 - (void)webView:(WKWebView *)webView didFailNavigation:(WKNavigation *)navigation withError:(NSError *)error
 {
     LOG(@"didFailNavigation: %@, error %@", navigation, error);
+}
+
+- (void)webView:(WKWebView *)webView navigationAction:(WKNavigationAction *)navigationAction didBecomeDownload:(WKDownload *)download
+{
+    LOG(@"navigationAction didBecomeDownload: %@", download);
+    download.delegate = self;
+}
+
+- (void)webView:(WKWebView *)webView navigationResponse:(WKNavigationResponse *)navigationResponse didBecomeDownload:(WKDownload *)download
+{
+    LOG(@"navigationResponse didBecomeDownload: %@", download);
+    download.delegate = self;
+}
+
+- (void)_webView:(WKWebView *)webView contextMenuDidCreateDownload:(WKDownload *)download
+{
+    LOG(@"contextMenuDidCreateDownload: %@", download);
+    download.delegate = self;
 }
 
 - (void)webViewWebContentProcessDidTerminate:(WKWebView *)webView
@@ -1004,12 +1185,339 @@ static BOOL isJavaScriptURL(NSURL *url)
     });
 }
 
+#pragma mark WKDownloadDelegate
+
+static NSURL *availableDownloadURLWithFilename(NSString *filename)
+{
+    NSURL *downloadsDirectory = [NSFileManager.defaultManager URLsForDirectory:NSDownloadsDirectory inDomains:NSUserDomainMask].firstObject;
+    if (!downloadsDirectory)
+        return nil;
+
+    NSURL *candidate = [downloadsDirectory URLByAppendingPathComponent:filename];
+
+    // WebKit refuses a destination that already exists rather than overwriting it, so keep
+    // looking until the name is free.
+    NSString *base = candidate.URLByDeletingPathExtension.lastPathComponent;
+    NSString *extension = candidate.pathExtension;
+    for (unsigned suffix = 1; [NSFileManager.defaultManager fileExistsAtPath:candidate.path]; ++suffix) {
+        candidate = [downloadsDirectory URLByAppendingPathComponent:[NSString stringWithFormat:@"%@-%u", base, suffix]];
+        if (extension.length)
+            candidate = [candidate URLByAppendingPathExtension:extension];
+    }
+
+    return candidate;
+}
+
+- (void)download:(WKDownload *)download decideDestinationUsingResponse:(NSURLResponse *)response suggestedFilename:(NSString *)suggestedFilename completionHandler:(void (^)(NSURL *))completionHandler
+{
+    NSURL *destination = availableDownloadURLWithFilename(suggestedFilename.length ? suggestedFilename : @"download");
+    if (!destination) {
+        NSLog(@"Cancelling download of %@: no download folder.", download.originalRequest.URL);
+        completionHandler(nil);
+        return;
+    }
+
+    NSLog(@"Downloading %@ to %@", download.originalRequest.URL, destination.path);
+    completionHandler(destination);
+}
+
+- (void)downloadDidFinish:(WKDownload *)download
+{
+    NSLog(@"Finished downloading %@", download.progress.fileURL.path);
+}
+
+- (void)download:(WKDownload *)download didFailWithError:(NSError *)error resumeData:(NSData *)resumeData
+{
+    NSLog(@"Failed downloading %@: %@", download.originalRequest.URL, error);
+}
+
 #pragma mark Find in Page
+
+static const NSUInteger findMaxMatchCount = 1000;
+
+- (BOOL)_shouldUseFindDelegate
+{
+    SettingsController *settings = [[NSApplication sharedApplication] browserAppDelegate].settingsController;
+    return settings.useFindDelegate;
+}
+
+- (void)_ensureFindDelegateSetup
+{
+    if (_findBar)
+        return;
+    _webView._findDelegate = self;
+    [self _buildFindBar];
+}
+
+- (void)_ensureTextFinderSetup
+{
+    if (_textFinder)
+        return;
+    _textFinder = [[MiniBrowserNSTextFinder alloc] init];
+    _textFinder.incrementalSearchingEnabled = YES;
+    _textFinder.incrementalSearchingShouldDimContentView = NO;
+    _textFinder.client = _webView;
+    _textFinder.findBarContainer = self;
+    __weak WKWebView *weakWebView = _webView;
+    _textFinder.hideInterfaceCallback = ^{
+        [weakWebView _hideFindUI];
+    };
+}
+
+- (void)_buildFindBar
+{
+    NSVisualEffectView *bar = [[NSVisualEffectView alloc] init];
+    bar.translatesAutoresizingMaskIntoConstraints = NO;
+    bar.material = NSVisualEffectMaterialTitlebar;
+    bar.blendingMode = NSVisualEffectBlendingModeWithinWindow;
+    _findBar = bar;
+
+    _findSearchField = [[NSSearchField alloc] init];
+    _findSearchField.translatesAutoresizingMaskIntoConstraints = NO;
+    _findSearchField.placeholderString = @"Find in Page";
+    _findSearchField.delegate = self;
+    [_findBar addSubview:_findSearchField];
+
+    NSButton *prevButton = [NSButton buttonWithTitle:@"<" target:self action:@selector(_findPrevious:)];
+    prevButton.translatesAutoresizingMaskIntoConstraints = NO;
+    prevButton.bezelStyle = NSBezelStyleRounded;
+    [_findBar addSubview:prevButton];
+
+    NSButton *nextButton = [NSButton buttonWithTitle:@">" target:self action:@selector(_findNext:)];
+    nextButton.translatesAutoresizingMaskIntoConstraints = NO;
+    nextButton.bezelStyle = NSBezelStyleRounded;
+    [_findBar addSubview:nextButton];
+
+    NSButton *doneButton = [NSButton buttonWithTitle:@"Done" target:self action:@selector(_hideFindBar:)];
+    doneButton.translatesAutoresizingMaskIntoConstraints = NO;
+    doneButton.bezelStyle = NSBezelStyleRounded;
+    [_findBar addSubview:doneButton];
+
+    _findMatchCountLabel = [NSTextField labelWithString:@""];
+    _findMatchCountLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    _findMatchCountLabel.font = [NSFont systemFontOfSize:11];
+    _findMatchCountLabel.textColor = [NSColor secondaryLabelColor];
+    _findMatchCountLabel.lineBreakMode = NSLineBreakByTruncatingTail;
+    [_findMatchCountLabel setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
+    [_findBar addSubview:_findMatchCountLabel];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [_findSearchField.leadingAnchor constraintEqualToAnchor:_findBar.leadingAnchor constant:4],
+        [_findSearchField.centerYAnchor constraintEqualToAnchor:_findBar.centerYAnchor],
+        [prevButton.leadingAnchor constraintEqualToAnchor:_findSearchField.trailingAnchor constant:4],
+        [prevButton.centerYAnchor constraintEqualToAnchor:_findBar.centerYAnchor],
+        [prevButton.widthAnchor constraintEqualToConstant:30],
+        [nextButton.leadingAnchor constraintEqualToAnchor:prevButton.trailingAnchor constant:2],
+        [nextButton.centerYAnchor constraintEqualToAnchor:_findBar.centerYAnchor],
+        [nextButton.widthAnchor constraintEqualToConstant:30],
+        [doneButton.leadingAnchor constraintEqualToAnchor:nextButton.trailingAnchor constant:2],
+        [doneButton.centerYAnchor constraintEqualToAnchor:_findBar.centerYAnchor],
+        [_findMatchCountLabel.leadingAnchor constraintEqualToAnchor:doneButton.trailingAnchor constant:4],
+        [_findMatchCountLabel.centerYAnchor constraintEqualToAnchor:_findBar.centerYAnchor],
+        [_findMatchCountLabel.trailingAnchor constraintLessThanOrEqualToAnchor:_findBar.trailingAnchor constant:-4],
+    ]];
+}
+
+- (void)_showFindBar
+{
+    if (!_findBarVisible) {
+        _findBarVisible = YES;
+
+        [containerView addSubview:_findBar];
+        [NSLayoutConstraint activateConstraints:@[
+            [_findBar.topAnchor constraintEqualToAnchor:containerView.safeAreaLayoutGuide.topAnchor],
+            [_findBar.leadingAnchor constraintEqualToAnchor:containerView.leadingAnchor],
+            [_findBar.trailingAnchor constraintEqualToAnchor:containerView.trailingAnchor],
+            [_findBar.heightAnchor constraintEqualToConstant:30],
+        ]];
+
+        __weak WK2BrowserWindowController *weakSelf = self;
+        _findBarClickMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown handler:^NSEvent *(NSEvent *event) {
+            WK2BrowserWindowController *strongSelf = weakSelf;
+            if (!strongSelf)
+                return event;
+            NSPoint locationInBar = [strongSelf->_findBar convertPoint:event.locationInWindow fromView:nil];
+            if (![strongSelf->_findBar mouse:locationInBar inRect:strongSelf->_findBar.bounds])
+                [strongSelf _hideFindBarAndUI];
+            return event;
+        }];
+    }
+
+    [self.window makeFirstResponder:_findSearchField];
+    [_findSearchField selectText:nil];
+}
+
+- (void)_hideFindBarAndUI
+{
+    if (!_findBarVisible)
+        return;
+
+    _findBarVisible = NO;
+    [NSEvent removeMonitor:_findBarClickMonitor];
+    _findBarClickMonitor = nil;
+    [_findBar removeFromSuperview];
+    _findMatchCountLabel.stringValue = @"";
+    [_webView _hideFindUI];
+    [self.window makeFirstResponder:_webView];
+}
+
+- (void)_findStringInDirection:(BOOL)backward
+{
+    NSString *searchString = _findSearchField.stringValue;
+    if (!searchString.length)
+        return;
+
+    _WKFindOptions options = _WKFindOptionsCaseInsensitive | _WKFindOptionsWrapAround | _WKFindOptionsShowFindIndicator | _WKFindOptionsShowOverlay | _WKFindOptionsDetermineMatchIndex;
+    if (backward)
+        options |= _WKFindOptionsBackwards;
+
+    [_webView _findString:searchString options:options maxCount:findMaxMatchCount];
+    [_findSearchField selectText:nil];
+}
 
 - (IBAction)performTextFinderAction:(id)sender
 {
-    [_textFinder performAction:[sender tag]];
+    NSInteger tag = [sender tag];
+
+    if (tag == NSTextFinderActionShowFindInterface) {
+        BOOL shouldUseFindDelegate = [self _shouldUseFindDelegate];
+
+        if (_findBarVisible && shouldUseFindDelegate != _usingFindDelegate) {
+            if (_usingFindDelegate)
+                [self _hideFindBarAndUI];
+            else {
+                [_textFinder performAction:NSTextFinderActionHideFindInterface];
+                _findBarVisible = NO;
+                [_textFindBarView removeFromSuperview];
+                [_webView _hideFindUI];
+            }
+        }
+
+        _usingFindDelegate = shouldUseFindDelegate;
+
+        if (_usingFindDelegate) {
+            [self _ensureFindDelegateSetup];
+            [self _showFindBar];
+        } else {
+            [self _ensureTextFinderSetup];
+            [_textFinder performAction:NSTextFinderActionShowFindInterface];
+        }
+        return;
+    }
+
+    if (_usingFindDelegate) {
+        switch (tag) {
+        case NSTextFinderActionNextMatch:
+            [self _findStringInDirection:NO];
+            break;
+        case NSTextFinderActionPreviousMatch:
+            [self _findStringInDirection:YES];
+            break;
+        case NSTextFinderActionHideFindInterface:
+            [self _hideFindBarAndUI];
+            break;
+        default:
+            break;
+        }
+    } else {
+        [self _ensureTextFinderSetup];
+        [_textFinder performAction:tag];
+    }
 }
+
+- (void)_findNext:(id)sender
+{
+    [self _findStringInDirection:NO];
+}
+
+- (void)_findPrevious:(id)sender
+{
+    [self _findStringInDirection:YES];
+}
+
+- (void)_hideFindBar:(id)sender
+{
+    [self _hideFindBarAndUI];
+}
+
+- (void)cancelOperation:(id)sender
+{
+    if (_findBarVisible) {
+        if (_usingFindDelegate)
+            [self _hideFindBarAndUI];
+        else
+            [_textFinder performAction:NSTextFinderActionHideFindInterface];
+    }
+}
+
+- (BOOL)control:(NSControl *)control textView:(NSTextView *)textView doCommandBySelector:(SEL)commandSelector
+{
+    if (!_usingFindDelegate || control != _findSearchField)
+        return NO;
+
+    if (commandSelector == @selector(insertNewline:)) {
+        BOOL shiftDown = !!([NSEvent modifierFlags] & NSEventModifierFlagShift);
+        [self _findStringInDirection:shiftDown];
+        return YES;
+    }
+
+    if (commandSelector == @selector(cancelOperation:)) {
+        [self _hideFindBarAndUI];
+        return YES;
+    }
+
+    return NO;
+}
+
+#pragma mark NSSearchFieldDelegate
+
+- (void)controlTextDidChange:(NSNotification *)notification
+{
+    if (!_usingFindDelegate)
+        return;
+
+    NSString *searchString = _findSearchField.stringValue;
+    if (!searchString.length) {
+        _findMatchCountLabel.stringValue = @"";
+        [_webView _hideFindUI];
+        return;
+    }
+
+    [_webView _findString:searchString options:_WKFindOptionsCaseInsensitive | _WKFindOptionsWrapAround | _WKFindOptionsShowFindIndicator | _WKFindOptionsShowOverlay | _WKFindOptionsDetermineMatchIndex maxCount:findMaxMatchCount];
+}
+
+#pragma mark _WKFindDelegate
+
+- (void)_updateDisplayedMatchCount:(NSUInteger)matchCount matchIndex:(NSInteger)matchIndex
+{
+    if (!matchCount)
+        _findMatchCountLabel.stringValue = @"Not found";
+    else if (matchCount == 1)
+        _findMatchCountLabel.stringValue = @"1 match";
+    else if (matchCount > findMaxMatchCount)
+        _findMatchCountLabel.stringValue = [NSString stringWithFormat:@"More than %lu matches", (unsigned long)findMaxMatchCount];
+    else if (matchIndex != NSNotFound && matchIndex >= 0)
+        _findMatchCountLabel.stringValue = [NSString stringWithFormat:@"%lu of %lu", (unsigned long)(matchIndex % matchCount + 1), (unsigned long)matchCount];
+    else
+        _findMatchCountLabel.stringValue = [NSString stringWithFormat:@"%lu matches", (unsigned long)matchCount];
+}
+
+- (void)_webView:(WKWebView *)webView didCountMatches:(NSUInteger)matches forString:(NSString *)string
+{
+    [self _updateDisplayedMatchCount:matches matchIndex:NSNotFound];
+}
+
+- (void)_webView:(WKWebView *)webView didFindMatches:(NSUInteger)matches forString:(NSString *)string withMatchIndex:(NSInteger)matchIndex
+{
+    [self _updateDisplayedMatchCount:matches matchIndex:matchIndex];
+}
+
+- (void)_webView:(WKWebView *)webView didFailToFindString:(NSString *)string
+{
+    [self _updateDisplayedMatchCount:0 matchIndex:NSNotFound];
+}
+
+#pragma mark NSTextFinderBarContainer
 
 - (NSView *)findBarView
 {
@@ -1021,7 +1529,6 @@ static BOOL isJavaScriptURL(NSURL *url)
     _textFindBarView = findBarView;
     _textFindBarView.autoresizingMask = NSViewMaxYMargin | NSViewWidthSizable;
     _textFindBarView.frame = NSMakeRect(0, 0, containerView.bounds.size.width, _textFindBarView.frame.size.height);
-
     _findBarVisible = YES;
 }
 

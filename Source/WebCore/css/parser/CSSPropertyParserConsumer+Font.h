@@ -44,13 +44,15 @@ class CSSValueList;
 class ScriptExecutionContext;
 
 enum CSSParserMode : uint8_t;
-enum CSSValueID : uint16_t;
+enum class CSSValueID : uint16_t;
 
 enum class FontTechnology : uint8_t;
 
 struct CSSParserContext;
 
 namespace CSS {
+struct FontPalette;
+struct FontStyleRange;
 struct PropertyParserState;
 }
 
@@ -99,7 +101,7 @@ struct UnresolvedFont {
 
 // MARK: 'font' (shorthand)
 // https://drafts.csswg.org/css-fonts-4/#font-prop
-std::optional<UnresolvedFont> parseUnresolvedFont(const String&, ScriptExecutionContext&, std::optional<CSSParserMode> parserModeOverride = std::nullopt);
+std::optional<UnresolvedFont> parseUnresolvedFont(StringView, ScriptExecutionContext&, std::optional<CSSParserMode> parserModeOverride = std::nullopt);
 
 // MARK: 'font-style'
 // https://drafts.csswg.org/css-fonts-4/#font-style-prop
@@ -113,18 +115,23 @@ RefPtr<CSSValue> consumeFontFamily(CSSParserTokenRange&, CSS::PropertyParserStat
 RefPtr<CSSValue> consumeFamilyName(CSSParserTokenRange&, CSS::PropertyParserState&);
 // Sub-production of 'font-family': <generic-family>
 // https://drafts.csswg.org/css-fonts-4/#generic-family-name-syntax
-const AtomString& genericFontFamily(CSSValueID);
-WebKitFontFamilyNames::FamilyNamesIndex genericFontFamilyIndex(CSSValueID);
+const AtomString& LEGACY_NODELETE genericFontFamily(CSSValueID);
+WebKitFontFamilyNames::FamilyNamesIndex LEGACY_NODELETE genericFontFamilyIndex(CSSValueID);
 
 // MARK: 'font-size-adjust'
 // https://drafts.csswg.org/css-fonts-4/#font-size-adjust-prop
 RefPtr<CSSValue> consumeFontSizeAdjust(CSSParserTokenRange&, CSS::PropertyParserState&);
 
+// MARK: 'font-palette'
+// https://drafts.csswg.org/css-fonts-4/#propdef-font-palette
+std::optional<CSS::FontPalette> consumeFontPaletteUnresolved(CSSParserTokenRange&, CSS::PropertyParserState&);
+RefPtr<CSSValue> consumeFontPalette(CSSParserTokenRange&, CSS::PropertyParserState&);
+
 // MARK: - @font-face descriptor consumers
 
 // MARK: @font-face 'src'
 // https://drafts.csswg.org/css-fonts-4/#src-desc
-RefPtr<CSSValueList> parseFontFaceSrc(const String&, ScriptExecutionContext&);
+RefPtr<CSSValueList> parseFontFaceSrc(StringView, ScriptExecutionContext&);
 RefPtr<CSSValueList> consumeFontFaceSrc(CSSParserTokenRange&, CSS::PropertyParserState&);
 // Sub-production of 'src: <font-tech>
 // https://drafts.csswg.org/css-fonts-4/#font-tech-values
@@ -135,24 +142,31 @@ String consumeFontFormat(CSSParserTokenRange&, CSS::PropertyParserState&, bool r
 
 // MARK: @font-face 'size-adjust'
 // https://drafts.csswg.org/css-fonts-5/#descdef-font-face-size-adjust
-RefPtr<CSSValue> parseFontFaceSizeAdjust(const String&, ScriptExecutionContext&);
+RefPtr<CSSValue> parseFontFaceSizeAdjust(StringView, ScriptExecutionContext&);
 
 // MARK: @font-face 'unicode-range'
 // https://drafts.csswg.org/css-fonts-4/#descdef-font-face-unicode-range
-RefPtr<CSSValueList> parseFontFaceUnicodeRange(const String&, ScriptExecutionContext&);
+RefPtr<CSSValueList> parseFontFaceUnicodeRange(StringView, ScriptExecutionContext&);
 
 // MARK: @font-face 'font-display'
 // https://drafts.csswg.org/css-fonts-4/#descdef-font-face-font-display
-RefPtr<CSSValue> parseFontFaceDisplay(const String&, ScriptExecutionContext&);
+RefPtr<CSSValue> parseFontFaceDisplay(StringView, ScriptExecutionContext&);
+
+// MARK: @font-face metric override descriptors
+// https://drafts.csswg.org/css-fonts-4/#font-metrics-override-desc
+RefPtr<CSSValue> parseFontFaceAscentOverride(StringView, ScriptExecutionContext&);
+RefPtr<CSSValue> parseFontFaceDescentOverride(StringView, ScriptExecutionContext&);
+RefPtr<CSSValue> parseFontFaceLineGapOverride(StringView, ScriptExecutionContext&);
 
 // MARK: @font-face 'font-style'
 // https://drafts.csswg.org/css-fonts-4/#descdef-font-face-font-style
-RefPtr<CSSValue> parseFontFaceFontStyle(const String&, ScriptExecutionContext&);
+RefPtr<CSSValue> parseFontFaceFontStyle(StringView, ScriptExecutionContext&);
 RefPtr<CSSValue> consumeFontFaceFontStyle(CSSParserTokenRange&, CSS::PropertyParserState&);
+std::optional<CSS::FontStyleRange> consumeUnresolvedFontFaceFontStyle(CSSParserTokenRange&, CSS::PropertyParserState&);
 
 // MARK: @font-face 'font-feature-settings'
 // https://drafts.csswg.org/css-fonts-4/#descdef-font-face-font-feature-settings
-RefPtr<CSSValue> parseFontFaceFeatureSettings(const String&, ScriptExecutionContext&);
+RefPtr<CSSValue> parseFontFaceFeatureSettings(StringView, ScriptExecutionContext&);
 // Sub-production of 'font-feature-settings': <feature-tag-value>
 // https://drafts.csswg.org/css-fonts-4/#feature-tag-value
 RefPtr<CSSValue> consumeFeatureTagValue(CSSParserTokenRange&, CSS::PropertyParserState&);
@@ -166,11 +180,11 @@ RefPtr<CSSValue> consumeVariationTagValue(CSSParserTokenRange&, CSS::PropertyPar
 
 // MARK: @font-face 'font-width'
 // https://drafts.csswg.org/css-fonts-4/#descdef-font-face-font-width
-RefPtr<CSSValue> parseFontFaceFontWidth(const String&, ScriptExecutionContext&);
+RefPtr<CSSValue> parseFontFaceFontWidth(StringView, ScriptExecutionContext&);
 
 // MARK: @font-face 'font-weight'
 // https://drafts.csswg.org/css-fonts-4/#descdef-font-face-font-weight
-RefPtr<CSSValue> parseFontFaceFontWeight(const String&, ScriptExecutionContext&);
+RefPtr<CSSValue> parseFontFaceFontWeight(StringView, ScriptExecutionContext&);
 
 // MARK: - @font-feature-values descriptor consumers
 
@@ -183,15 +197,15 @@ Vector<AtomString> consumeFontFeatureValuesPreludeFamilyNameList(CSSParserTokenR
 inline bool isSystemFontShorthand(CSSValueID valueID)
 {
     // This needs to stay in sync with SystemFontDatabase::FontShorthand.
-    static_assert(CSSValueStatusBar - CSSValueCaption == static_cast<SystemFontDatabase::FontShorthandUnderlyingType>(SystemFontDatabase::FontShorthand::StatusBar));
-    return valueID >= CSSValueCaption && valueID <= CSSValueStatusBar;
+    static_assert(std::to_underlying(CSSValueID::StatusBar) - std::to_underlying(CSSValueID::Caption) == static_cast<SystemFontDatabase::FontShorthandUnderlyingType>(SystemFontDatabase::FontShorthand::StatusBar));
+    return valueID >= CSSValueID::Caption && valueID <= CSSValueID::StatusBar;
 }
 
 inline SystemFontDatabase::FontShorthand lowerFontShorthand(CSSValueID valueID)
 {
     // This needs to stay in sync with SystemFontDatabase::FontShorthand.
     ASSERT(isSystemFontShorthand(valueID));
-    return static_cast<SystemFontDatabase::FontShorthand>(valueID - CSSValueCaption);
+    return static_cast<SystemFontDatabase::FontShorthand>(std::to_underlying(valueID) - std::to_underlying(CSSValueID::Caption));
 }
 
 } // namespace CSSPropertyParserHelpers

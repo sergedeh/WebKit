@@ -52,7 +52,7 @@ using namespace HTMLNames;
 static const int dateTimeLocalDefaultStep = 60;
 static const int dateTimeLocalDefaultStepBase = 0;
 static const int dateTimeLocalStepScaleFactor = 1000;
-static const StepRange::StepDescription dateTimeLocalStepDescription { dateTimeLocalDefaultStep, dateTimeLocalDefaultStepBase, dateTimeLocalStepScaleFactor, StepRange::ScaledStepValueShouldBeInteger };
+static const StepRange::StepDescription dateTimeLocalStepDescription { dateTimeLocalDefaultStep, dateTimeLocalDefaultStepBase, dateTimeLocalStepScaleFactor, StepRange::StepValueShouldBe::ScaledInteger };
 
 const AtomString& DateTimeLocalInputType::formControlType() const
 {
@@ -81,10 +81,13 @@ StepRange DateTimeLocalInputType::createStepRange(AnyStepHandling anyStepHandlin
     ASSERT(element());
     Ref element = *this->element();
     const Decimal stepBase = findStepBase(dateTimeLocalDefaultStepBase);
-    const Decimal minimum = parseToNumber(element->attributeWithoutSynchronization(minAttr), Decimal::fromDouble(DateComponents::minimumDateTime()));
-    const Decimal maximum = parseToNumber(element->attributeWithoutSynchronization(maxAttr), Decimal::fromDouble(DateComponents::maximumDateTime()));
+
+    RangeLimitations rangeLimitations = RangeLimitations::Invalid;
+    const Decimal minimum = extractStepRangeBound(minAttr, Decimal::fromDouble(DateComponents::minimumDateTime()), rangeLimitations);
+    const Decimal maximum = extractStepRangeBound(maxAttr, Decimal::fromDouble(DateComponents::maximumDateTime()), rangeLimitations);
+
     const Decimal step = StepRange::parseStep(anyStepHandling, dateTimeLocalStepDescription, element->attributeWithoutSynchronization(stepAttr));
-    return StepRange(stepBase, RangeLimitations::Valid, minimum, maximum, step, dateTimeLocalStepDescription);
+    return StepRange(stepBase, rangeLimitations, minimum, maximum, step, dateTimeLocalStepDescription);
 }
 
 std::optional<DateComponents> DateTimeLocalInputType::parseToDateComponents(StringView source) const
@@ -135,10 +138,10 @@ void DateTimeLocalInputType::setupLayoutParameters(DateTimeEditElement::LayoutPa
     layoutParameters.shouldHaveMillisecondField = shouldHaveMillisecondField(date);
 
     if (layoutParameters.shouldHaveMillisecondField || shouldHaveSecondField(date)) {
-        layoutParameters.dateTimeFormat = layoutParameters.locale.dateTimeFormatWithSeconds();
+        layoutParameters.dateTimeFormat = layoutParameters.locale->dateTimeFormatWithSeconds();
         layoutParameters.fallbackDateTimeFormat = "yyyy-MM-dd'T'HH:mm:ss"_s;
     } else {
-        layoutParameters.dateTimeFormat = layoutParameters.locale.dateTimeFormatWithoutSeconds();
+        layoutParameters.dateTimeFormat = layoutParameters.locale->dateTimeFormatWithoutSeconds();
         layoutParameters.fallbackDateTimeFormat = "yyyy-MM-dd'T'HH:mm"_s;
     }
 }

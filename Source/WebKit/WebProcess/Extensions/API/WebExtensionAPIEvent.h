@@ -42,14 +42,31 @@ class WebExtensionAPIEvent : public WebExtensionAPIObject, public JSWebExtension
 public:
     using ListenerVector = Vector<RefPtr<WebExtensionCallbackHandler>>;
 
-#if PLATFORM(COCOA)
     void invokeListeners();
+#if PLATFORM(COCOA)
     void invokeListenersWithArgument(id argument);
     void invokeListenersWithArgument(id argument1, id argument2);
     void invokeListenersWithArgument(id argument1, id argument2, id argument3);
 #endif
+    void invokeListenersWithJSONArgument(const String& argument1);
+    void invokeListenersWithJSONArgument(const String& argument1, const String& argument2);
 
-    const ListenerVector& listeners() const { return m_listeners; }
+    template<typename T>
+    void invokeListenersWithParametersArgument(T& argument)
+    {
+        if (m_listeners.isEmpty())
+            return;
+
+        // Copy the listeners since call() can trigger a mutation of the listeners.
+        auto listenersCopy = m_listeners;
+
+        for (RefPtr listener : listenersCopy) {
+            // This is a safer cpp false positive (rdar://163760990).
+            SUPPRESS_UNCOUNTED_ARG listener->call(toWebAPI(listener->globalContext(), argument));
+        }
+    }
+
+    const ListenerVector& listeners() const LIFETIME_BOUND { return m_listeners; }
 
     void addListener(WebCore::FrameIdentifier, RefPtr<WebExtensionCallbackHandler>);
     void removeListener(WebCore::FrameIdentifier, RefPtr<WebExtensionCallbackHandler>);
@@ -63,7 +80,7 @@ public:
     }
 
 private:
-    explicit WebExtensionAPIEvent(const WebExtensionAPIObject& parentObject, WebExtensionEventListenerType type)
+    explicit WebExtensionAPIEvent(WebExtensionAPIObject& parentObject, WebExtensionEventListenerType type)
         : WebExtensionAPIObject(parentObject)
         , m_type(type)
     {

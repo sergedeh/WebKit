@@ -205,50 +205,50 @@ JSValue convertToJSValue(JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject&
             RELEASE_ASSERT(!list.hasOverflowed());
             return constructArray(&globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), list);
         },
-        [&](const RefPtr<Float32Array>& array) -> JSValue {
-            return toJS(&lexicalGlobalObject, &globalObject, array.get());
+        [&](const Ref<Float32Array>& array) -> JSValue {
+            return toJS(&lexicalGlobalObject, &globalObject, array);
         },
-        [&](const RefPtr<Int32Array>& array) -> JSValue {
-            return toJS(&lexicalGlobalObject, &globalObject, array.get());
+        [&](const Ref<Int32Array>& array) -> JSValue {
+            return toJS(&lexicalGlobalObject, &globalObject, array);
         },
-        [&](const RefPtr<Uint8Array>& array) -> JSValue {
-            return toJS(&lexicalGlobalObject, &globalObject, array.get());
+        [&](const Ref<Uint8Array>& array) -> JSValue {
+            return toJS(&lexicalGlobalObject, &globalObject, array);
         },
-        [&](const RefPtr<Uint32Array>& array) -> JSValue {
-            return toJS(&lexicalGlobalObject, &globalObject, array.get());
+        [&](const Ref<Uint32Array>& array) -> JSValue {
+            return toJS(&lexicalGlobalObject, &globalObject, array);
         },
-        [&](const RefPtr<WebGLBuffer>& buffer) -> JSValue {
-            return buffer ? toJS(&lexicalGlobalObject, &globalObject, *buffer) : jsNull();
+        [&](const Ref<WebGLBuffer>& buffer) -> JSValue {
+            return toJS(&lexicalGlobalObject, &globalObject, buffer);
         },
-        [&](const RefPtr<WebGLFramebuffer>& buffer) -> JSValue {
-            return buffer ? toJS(&lexicalGlobalObject, &globalObject, *buffer) : jsNull();
+        [&](const Ref<WebGLFramebuffer>& buffer) -> JSValue {
+            return toJS(&lexicalGlobalObject, &globalObject, buffer);
         },
-        [&](const RefPtr<WebGLProgram>& program) -> JSValue {
-            return program ? toJS(&lexicalGlobalObject, &globalObject, *program) : jsNull();
+        [&](const Ref<WebGLProgram>& program) -> JSValue {
+            return toJS(&lexicalGlobalObject, &globalObject, program);
         },
-        [&](const RefPtr<WebGLRenderbuffer>& buffer) -> JSValue {
-            return buffer ? toJS(&lexicalGlobalObject, &globalObject, *buffer) : jsNull();
+        [&](const Ref<WebGLRenderbuffer>& buffer) -> JSValue {
+            return toJS(&lexicalGlobalObject, &globalObject, buffer);
         },
-        [&](const RefPtr<WebGLTexture>& texture) -> JSValue {
-            return texture ? toJS(&lexicalGlobalObject, &globalObject, *texture) : jsNull();
+        [&](const Ref<WebGLTexture>& texture) -> JSValue {
+            return toJS(&lexicalGlobalObject, &globalObject, texture);
         },
-        [&](const RefPtr<WebGLTimerQueryEXT>& query) -> JSValue {
-            return query ? toJS(&lexicalGlobalObject, &globalObject, *query) : jsNull();
+        [&](const Ref<WebGLTimerQueryEXT>& query) -> JSValue {
+            return toJS(&lexicalGlobalObject, &globalObject, query);
         },
-        [&](const RefPtr<WebGLVertexArrayObjectOES>& array) -> JSValue {
-            return array ? toJS(&lexicalGlobalObject, &globalObject, *array) : jsNull();
+        [&](const Ref<WebGLVertexArrayObjectOES>& array) -> JSValue {
+            return toJS(&lexicalGlobalObject, &globalObject, array);
         },
-        [&](const RefPtr<WebGLQuery>& query) -> JSValue {
-            return query ? toJS(&lexicalGlobalObject, &globalObject, *query) : jsNull();
+        [&](const Ref<WebGLQuery>& query) -> JSValue {
+            return toJS(&lexicalGlobalObject, &globalObject, query);
         },
-        [&](const RefPtr<WebGLSampler>& sampler) -> JSValue {
-            return sampler ? toJS(&lexicalGlobalObject, &globalObject, *sampler) : jsNull();
+        [&](const Ref<WebGLSampler>& sampler) -> JSValue {
+            return toJS(&lexicalGlobalObject, &globalObject, sampler);
         },
-        [&](const RefPtr<WebGLTransformFeedback>& transformFeedback) -> JSValue {
-            return transformFeedback ? toJS(&lexicalGlobalObject, &globalObject, *transformFeedback) : jsNull();
+        [&](const Ref<WebGLTransformFeedback>& transformFeedback) -> JSValue {
+            return toJS(&lexicalGlobalObject, &globalObject, transformFeedback);
         },
-        [&](const RefPtr<WebGLVertexArrayObject>& array) -> JSValue {
-            return array ? toJS(&lexicalGlobalObject, &globalObject, *array) : jsNull();
+        [&](const Ref<WebGLVertexArrayObject>& array) -> JSValue {
+            return toJS(&lexicalGlobalObject, &globalObject, array);
         }
     );
 }

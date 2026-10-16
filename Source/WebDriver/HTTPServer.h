@@ -57,7 +57,7 @@ public:
     };
     struct Response {
         unsigned statusCode { 0 };
-        CString data;
+        UTF8CString data;
         String contentType;
     };
     virtual void handleRequest(Request&&, Function<void (Response&&)>&& replyHandler) = 0;
@@ -92,7 +92,7 @@ public:
     bool listen(const std::optional<String>& host, unsigned port);
     void disconnect();
 
-    const String& visibleHost() const { return m_visibleHost; }
+    const String& visibleHost() const LIFETIME_BOUND { return m_visibleHost; }
 
 private:
 #if USE(INSPECTOR_SOCKET_SERVER)

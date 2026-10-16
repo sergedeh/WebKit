@@ -27,10 +27,9 @@
 
 #import "WebPDFViewPlaceholder.h"
 
+#import "WebDelegateImplementationCaching.h"
 #import "WebFrameInternal.h"
 #import "WebPDFViewIOS.h"
-#import <JavaScriptCore/JSContextRef.h>
-#import <JavaScriptCore/OpaqueJSString.h>
 #import <WebCore/DataTransfer.h>
 #import <WebCore/EventHandler.h>
 #import <WebCore/EventNames.h>
@@ -42,13 +41,14 @@
 #import <WebCore/MouseEvent.h>
 #import <WebKitLegacy/WebDataSourcePrivate.h>
 #import <WebKitLegacy/WebFramePrivate.h>
-#import <WebKitLegacy/WebJSPDFDoc.h>
 #import <WebKitLegacy/WebNSURLExtras.h>
 #import <WebKitLegacy/WebNSViewExtras.h>
 #import <WebKitLegacy/WebPDFDocumentExtras.h>
+#import <WebKitLegacy/WebUIDelegate.h>
 #import <WebKitLegacy/WebViewPrivate.h>
 #import <numbers>
 #import <wtf/MonotonicTime.h>
+#import <wtf/RetainPtr.h>
 #import <wtf/SoftLinking.h>
 #import <wtf/Vector.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
@@ -86,7 +86,7 @@ static const float PAGE_HEIGHT_INSET = 4.0f * 2.0f;
 
 @interface WebPDFViewPlaceholder ()
 
-- (void)_evaluateJSForDocument:(CGPDFDocumentRef)document;
+- (void)_printIfDocumentContainsPrintScript:(CGPDFDocumentRef)document;
 - (void)_updateTitleForDocumentIfAvailable;
 - (void)_updateTitleForURL:(NSURL *)URL;
 - (CGSize)_computePageRects:(CGPDFDocumentRef)document;
@@ -103,7 +103,7 @@ static const float PAGE_HEIGHT_INSET = 4.0f * 2.0f;
     NSString *_title;
     NSArray *_pageRects;
     NSArray *_pageYOrigins;
-    CGPDFDocumentRef _document;
+    RetainPtr<CGPDFDocumentRef> _document;
     __weak WebDataSource *_dataSource; // Weak to prevent cycles.
     
     __weak NSObject<WebPDFViewPlaceholderDelegate> *_delegate;
@@ -116,7 +116,6 @@ static const float PAGE_HEIGHT_INSET = 4.0f * 2.0f;
 @synthesize delegate = _delegate;
 @synthesize pageRects = _pageRects;
 @synthesize pageYOrigins = _pageYOrigins;
-@synthesize document = _document;
 @synthesize title = _title;
 @synthesize containerSize = _containerSize;
 
@@ -136,8 +135,6 @@ static const float PAGE_HEIGHT_INSET = 4.0f * 2.0f;
 - (void)setDocument:(CGPDFDocumentRef)document
 {
     @synchronized(self) {
-        CGPDFDocumentRetain(document);
-        CGPDFDocumentRelease(_document);
         _document = document;
     }
 }
@@ -154,7 +151,7 @@ static const float PAGE_HEIGHT_INSET = 4.0f * 2.0f;
 
 - (NSUInteger)totalPages
 {
-    return CGPDFDocumentGetNumberOfPages([self document]);
+    return CGPDFDocumentGetNumberOfPages(protect([self document]));
 }
 
 + (void)setAsPDFDocRepAndView
@@ -263,7 +260,7 @@ static const float PAGE_HEIGHT_INSET = 4.0f * 2.0f;
         return;
 
     [self _updateTitleForDocumentIfAvailable];
-    [self _evaluateJSForDocument:_document];
+    [self _printIfDocumentContainsPrintScript:_document];
 
     // Any remaining work on the document should be done before this call to -layout,
     // which will hand ownership of the document to the delegate (UIWebPDFView) and
@@ -280,7 +277,7 @@ static const float PAGE_HEIGHT_INSET = 4.0f * 2.0f;
     if (!provider)
         return;
 
-    _document = CGPDFDocumentCreateWithProvider(provider.get());
+    _document = adoptCF(CGPDFDocumentCreateWithProvider(provider.get()));
 
     [self _doPostLoadOrUnlockTasks];
 }
@@ -297,20 +294,16 @@ static const float PAGE_HEIGHT_INSET = 4.0f * 2.0f;
 
 #pragma mark internal stuff
 
-- (void)_evaluateJSForDocument:(CGPDFDocumentRef)pdfDocument
+- (void)_printIfDocumentContainsPrintScript:(CGPDFDocumentRef)pdfDocument
 {
     if (!pdfDocument || !CGPDFDocumentIsUnlocked(pdfDocument))
         return;
 
-    NSArray *scripts = allScriptsInPDFDocument(pdfDocument);
+    if (!pdfDocumentContainsPrintScript(pdfDocument))
+        return;
 
-    if ([scripts count]) {
-        JSGlobalContextRef ctx = JSGlobalContextCreate(0);
-        JSObjectRef jsPDFDoc = makeJSPDFDoc(ctx, _dataSource);
-        for (NSString *script in scripts)
-            JSEvaluateScript(ctx, OpaqueJSString::tryCreate(script).get(), jsPDFDoc, nullptr, 0, nullptr);
-        JSGlobalContextRelease(ctx);
-    }
+    RetainPtr frame = [protect(_dataSource) webFrame];
+    CallUIDelegate([frame webView], @selector(webView:printFrameView:), [frame frameView]);
 }
 
 - (void)_updateTitleForURL:(NSURL *)URL
@@ -391,7 +384,7 @@ static const float PAGE_HEIGHT_INSET = 4.0f * 2.0f;
 
     // CG uses page numbers instead of page indices, so 1 based.
     for (size_t i = 1; i <= pageCount; i++) {
-        CGPDFPageRef page = CGPDFDocumentGetPage(pdfDocument, i);
+        RetainPtr page = CGPDFDocumentGetPage(pdfDocument, i);
         if (!page) {
             // So if there is a missing page, then effectively the document ends here.
             // See <rdar://problem/10428152> iOS Mail crashes when opening a PDF
@@ -453,10 +446,10 @@ static const float PAGE_HEIGHT_INSET = 4.0f * 2.0f;
 - (CGRect)rectForPageNumber:(NSUInteger)pageNumber
 {
     // Page number is 1-based, not 0 based.
-    if ((!pageNumber) || (pageNumber > [_pageRects count]))
+    if ((!pageNumber) || (pageNumber > [protect(_pageRects) count]))
         return CGRectNull;
 
-    return [[_pageRects objectAtIndex:pageNumber - 1] _web_CGRectValue];
+    return [[protect(_pageRects) objectAtIndex:pageNumber - 1] _web_CGRectValue];
 }
 
 - (void)simulateClickOnLinkToURL:(NSURL *)URL
@@ -464,12 +457,33 @@ static const float PAGE_HEIGHT_INSET = 4.0f * 2.0f;
     if (!URL)
         return;
 
-    auto event = MouseEvent::create(eventNames().clickEvent, Event::CanBubble::Yes, Event::IsCancelable::Yes, Event::IsComposed::Yes,
-        MonotonicTime::now(), nullptr, 1, { }, { }, 0, 0, { }, MouseButton::Left, 0, nullptr, 0, SyntheticClickType::NoTap, { }, { }, MouseEvent::IsSimulated::Yes);
+    auto event = MouseEvent::create(
+        eventNames().clickEvent,
+        Event::CanBubble::Yes,
+        Event::IsCancelable::Yes,
+        Event::IsComposed::Yes,
+        MonotonicTime::now(),
+        nullptr,
+        1,
+        { },
+        { },
+        0,
+        0,
+        { },
+        MouseButton::Left,
+        0,
+        nullptr,
+        0,
+        SyntheticClickType::NoTap,
+        { },
+        { },
+        std::nullopt,
+        MouseEvent::IsSimulated::Yes
+    );
 
     // Call to the frame loader because this is where our security checks are made.
-    auto* frame = core([_dataSource webFrame]);
-    FrameLoadRequest frameLoadRequest { *frame->document(), frame->document()->securityOrigin(), { URL }, { }, InitiatedByMainFrame::Unknown };
+    RefPtr frame = core([protect(_dataSource) webFrame]);
+    FrameLoadRequest frameLoadRequest { *frame->document(), protect(frame->document())->securityOrigin(), { URL }, { }, InitiatedByMainFrame::Unknown };
     frameLoadRequest.setReferrerPolicy(ReferrerPolicy::NoReferrer);
     frame->loader().loadFrameRequest(WTF::move(frameLoadRequest), event.ptr(), nullptr);
 }

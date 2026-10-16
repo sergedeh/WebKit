@@ -59,7 +59,7 @@ public:
     //
     // This approximation is also the algorithm called for when parsing an HTML fragment.
     // https://html.spec.whatwg.org/multipage/syntax.html#parsing-html-fragments
-    void updateStateFor(const AtomString& tagName);
+    void LEGACY_NODELETE updateStateFor(const AtomString& tagName);
 
     void setForceNullCharacterReplacement(bool);
 
@@ -73,8 +73,6 @@ public:
     void setRAWTEXTState();
     void setRCDATAState();
     void setScriptDataState();
-
-    bool neverSkipNullCharacters() const;
 
 private:
     enum State {
@@ -155,7 +153,7 @@ private:
     bool processToken(SegmentedString&);
     bool processEntity(SegmentedString&);
 
-    void parseError();
+    void LEGACY_NODELETE parseError();
 
     void bufferASCIICharacter(char16_t);
     void bufferCharacter(char16_t);
@@ -165,6 +163,7 @@ private:
     bool emitAndResumeInDataState(SegmentedString&);
     bool emitAndReconsumeInDataState();
     bool emitEndOfFile(SegmentedString&);
+    bool emitReplacedNullCharacter(SegmentedString&, State);
 
     // Return true if we wil emit a character token before dealing with the buffered end tag.
     void flushBufferedEndTag();
@@ -172,18 +171,18 @@ private:
     bool commitToCompleteEndTag(SegmentedString&);
 
     void appendToTemporaryBuffer(char16_t);
-    bool temporaryBufferIs(ASCIILiteral);
+    bool LEGACY_NODELETE temporaryBufferIs(ASCIILiteral);
 
     // Sometimes we speculatively consume input characters and we don't know whether they represent
     // end tags or RCDATA, etc. These functions help manage these state.
-    bool inEndTagBufferingState() const;
+    bool LEGACY_NODELETE inEndTagBufferingState() const;
     void appendToPossibleEndTag(char16_t);
     void saveEndTagNameIfNeeded();
-    bool isAppropriateEndTag() const;
+    bool LEGACY_NODELETE isAppropriateEndTag() const;
 
-    bool haveBufferedCharacterToken() const;
+    bool LEGACY_NODELETE haveBufferedCharacterToken() const;
 
-    static bool isNullCharacterSkippingState(State);
+    bool LEGACY_NODELETE shouldSkipNullCharacters(State) const;
 
     State m_state { DataState };
     bool m_forceNullCharacterReplacement { false };
@@ -195,7 +194,7 @@ private:
     char16_t m_additionalAllowedCharacter { 0 };
 
     // https://html.spec.whatwg.org/#preprocessing-the-input-stream
-    InputStreamPreprocessor<HTMLTokenizer> m_preprocessor;
+    InputStreamPreprocessor m_preprocessor;
 
     Vector<char16_t, 32> m_appropriateEndTagName;
 
@@ -222,8 +221,8 @@ public:
 
     operator bool() const;
 
-    HTMLToken& operator*() const;
-    HTMLToken* operator->() const;
+    HTMLToken& operator*() const LIFETIME_BOUND;
+    HTMLToken* operator->() const LIFETIME_BOUND;
 
 private:
     friend class HTMLTokenizer;
@@ -336,14 +335,9 @@ inline void HTMLTokenizer::setScriptDataState()
     m_state = ScriptDataState;
 }
 
-inline bool HTMLTokenizer::isNullCharacterSkippingState(State state)
+inline bool HTMLTokenizer::shouldSkipNullCharacters(State state) const
 {
-    return state == DataState || state == RCDATAState || state == RAWTEXTState;
-}
-
-inline bool HTMLTokenizer::neverSkipNullCharacters() const
-{
-    return m_forceNullCharacterReplacement;
+    return state == DataState && !m_forceNullCharacterReplacement;
 }
 
 } // namespace WebCore

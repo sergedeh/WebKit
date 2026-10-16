@@ -26,13 +26,15 @@
         "exnref":        { "type": "varint7", "value":  -23, "b3type": "B3::Int64",  "width": 0 },
         "ref":           { "type": "varint7", "value":  -28, "b3type": "B3::Int64",  "width": 64 },
         "ref_null":      { "type": "varint7", "value":  -29, "b3type": "B3::Int64",  "width": 64 },
-        "func":          { "type": "varint7", "value":  -32, "b3type": "B3::Void",   "width": 0 },
-        "struct":        { "type": "varint7", "value":  -33, "b3type": "B3::Void",   "width": 0 },
-        "array":         { "type": "varint7", "value":  -34, "b3type": "B3::Void",   "width": 0 },
-        "sub":           { "type": "varint7", "value":  -48, "b3type": "B3::Void",   "width": 0 },
-        "subfinal":      { "type": "varint7", "value":  -49, "b3type": "B3::Void",   "width": 0 },
-        "rec":           { "type": "varint7", "value":  -50, "b3type": "B3::Void",   "width": 0 },
         "void":          { "type": "varint7", "value":  -64, "b3type": "B3::Void",   "width": 0 }
+    },
+    "defined_type": {
+        "func":          { "type": "varint7", "value":  -32 },
+        "struct":        { "type": "varint7", "value":  -33 },
+        "array":         { "type": "varint7", "value":  -34 },
+        "sub":           { "type": "varint7", "value":  -48 },
+        "subfinal":      { "type": "varint7", "value":  -49 },
+        "rec":           { "type": "varint7", "value":  -50 }
     },
     "packed_type": {
         "i8":        { "type": "varint7", "value":  -8},
@@ -319,6 +321,11 @@
         "i64.trunc_sat_f32_u": { "category": "conversion", "value": 252, "return": ["i64"], "parameter": ["f32"], "immediate": [], "extendedOp": 5 },
         "i64.trunc_sat_f64_s": { "category": "conversion", "value": 252, "return": ["i64"], "parameter": ["f64"], "immediate": [], "extendedOp": 6 },
         "i64.trunc_sat_f64_u": { "category": "conversion", "value": 252, "return": ["i64"], "parameter": ["f64"], "immediate": [], "extendedOp": 7 },
+
+        "i64.add128":     { "category": "widearithmetic", "value": 252, "return": ["i64", "i64"], "parameter": ["i64", "i64", "i64", "i64"], "immediate": [], "extendedOp": 19 },
+        "i64.sub128":     { "category": "widearithmetic", "value": 252, "return": ["i64", "i64"], "parameter": ["i64", "i64", "i64", "i64"], "immediate": [], "extendedOp": 20 },
+        "i64.mul_wide_s": { "category": "widearithmetic", "value": 252, "return": ["i64", "i64"], "parameter": ["i64", "i64"],               "immediate": [], "extendedOp": 21 },
+        "i64.mul_wide_u": { "category": "widearithmetic", "value": 252, "return": ["i64", "i64"], "parameter": ["i64", "i64"],               "immediate": [], "extendedOp": 22 },
 
         "memory.atomic.notify":       { "category": "atomic",     "value": 254, "return": ["i32"],      "parameter": ["addr", "i32"],          "immediate": [{"name": "flags",          "type": "varuint32"}, {"name": "offset",   "type": "varuint32"}], "extendedOp":  0 },
         "memory.atomic.wait32":       { "category": "atomic",     "value": 254, "return": ["i32"],      "parameter": ["addr", "i32", "i64"],   "immediate": [{"name": "flags",          "type": "varuint32"}, {"name": "offset",   "type": "varuint32"}], "extendedOp":  1 },

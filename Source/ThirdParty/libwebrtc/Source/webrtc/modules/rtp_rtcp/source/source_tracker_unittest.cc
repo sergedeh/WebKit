@@ -490,6 +490,66 @@ TEST(SourceTrackerTest, OnFrameDeliveredUpdatesSources) {
                                     kRtpTimestamp0, extensions0)));
 }
 
+TEST(SourceTrackerTest, SourceChangedDetected) {
+  constexpr uint32_t kSsrc1 = 10;
+  constexpr uint32_t kSsrc2 = 11;
+  constexpr uint32_t kCsrc1 = 21;
+  constexpr uint32_t kCsrc2 = 22;
+  // Timestamps are not important in this test (as long as delivery time is not
+  // older than 10 seconds). Whatever frame was last delivered has by definition
+  // the "latest" SSRC/CSRC information.
+  constexpr uint32_t kRtpTimestamp = 123;
+  constexpr Timestamp kReceiveTime = Timestamp::Millis(321);
+
+  SimulatedClock clock(Timestamp::Seconds(1000));
+  SourceTracker tracker(&clock);
+
+  EXPECT_FALSE(tracker.has_delivered_frame());
+  EXPECT_FALSE(tracker.last_frame_has_csrcs());
+
+  // First packet always reports SSRC change.
+  SourceTracker::SourceChanged changed = tracker.OnFrameDelivered(
+      RtpPacketInfos({RtpPacketInfo(kSsrc1, {}, kRtpTimestamp, kReceiveTime)}));
+  EXPECT_TRUE(changed.ssrc_changed);
+  EXPECT_FALSE(changed.csrc_changed);
+  EXPECT_TRUE(tracker.has_delivered_frame());
+  EXPECT_FALSE(tracker.last_frame_has_csrcs());
+
+  // Change SSRC and add CSRC in the same frame.
+  changed = tracker.OnFrameDelivered(RtpPacketInfos(
+      {RtpPacketInfo(kSsrc2, {kCsrc1}, kRtpTimestamp, kReceiveTime)}));
+  EXPECT_TRUE(changed.ssrc_changed);
+  EXPECT_TRUE(changed.csrc_changed);
+  EXPECT_TRUE(tracker.has_delivered_frame());
+  EXPECT_TRUE(tracker.last_frame_has_csrcs());
+
+  // Change CSRC list.
+  changed = tracker.OnFrameDelivered(RtpPacketInfos(
+      {RtpPacketInfo(kSsrc2, {kCsrc1, kCsrc2}, kRtpTimestamp, kReceiveTime)}));
+  EXPECT_FALSE(changed.ssrc_changed);
+  EXPECT_TRUE(changed.csrc_changed);
+
+  // Receive same SSRC/CSRC information as before and neither changes.
+  changed = tracker.OnFrameDelivered(RtpPacketInfos(
+      {RtpPacketInfo(kSsrc2, {kCsrc1, kCsrc2}, kRtpTimestamp, kReceiveTime)}));
+  EXPECT_FALSE(changed.ssrc_changed);
+  EXPECT_FALSE(changed.csrc_changed);
+
+  // Multi-packet frame carrying identical CSRCs across fragments does not
+  // trigger change.
+  changed = tracker.OnFrameDelivered(RtpPacketInfos(
+      {RtpPacketInfo(kSsrc2, {kCsrc1, kCsrc2}, kRtpTimestamp, kReceiveTime),
+       RtpPacketInfo(kSsrc2, {kCsrc1, kCsrc2}, kRtpTimestamp, kReceiveTime)}));
+  EXPECT_FALSE(changed.ssrc_changed);
+  EXPECT_FALSE(changed.csrc_changed);
+
+  // Same CSRCs in different packet order does not trigger change.
+  changed = tracker.OnFrameDelivered(RtpPacketInfos(
+      {RtpPacketInfo(kSsrc2, {kCsrc2, kCsrc1}, kRtpTimestamp, kReceiveTime)}));
+  EXPECT_FALSE(changed.ssrc_changed);
+  EXPECT_FALSE(changed.csrc_changed);
+}
+
 TEST(SourceTrackerTest, TimedOutSourcesAreRemoved) {
   constexpr uint32_t kSsrc = 10;
   constexpr uint32_t kCsrcs0 = 20;

@@ -45,8 +45,6 @@ ASCIILiteral description(ScriptTrackingPrivacyCategory category)
         return "HardwareConcurrency"_s;
     case ScriptTrackingPrivacyCategory::LocalStorage:
         return "LocalStorage"_s;
-    case ScriptTrackingPrivacyCategory::NetworkRequests:
-        return "NetworkRequests"_s;
     case ScriptTrackingPrivacyCategory::Payments:
         return "Payments"_s;
     case ScriptTrackingPrivacyCategory::QueryParameters:
@@ -77,8 +75,6 @@ ScriptTrackingPrivacyFlag scriptCategoryAsFlag(ScriptTrackingPrivacyCategory cat
         return ScriptTrackingPrivacyFlag::HardwareConcurrency;
     case ScriptTrackingPrivacyCategory::LocalStorage:
         return ScriptTrackingPrivacyFlag::LocalStorage;
-    case ScriptTrackingPrivacyCategory::NetworkRequests:
-        return ScriptTrackingPrivacyFlag::NetworkRequests;
     case ScriptTrackingPrivacyCategory::Payments:
         return ScriptTrackingPrivacyFlag::Payments;
     case ScriptTrackingPrivacyCategory::QueryParameters:
@@ -96,16 +92,15 @@ ScriptTrackingPrivacyFlag scriptCategoryAsFlag(ScriptTrackingPrivacyCategory cat
     return ScriptTrackingPrivacyFlag::FormControls;
 }
 
-bool shouldEnableScriptTrackingPrivacy(ScriptTrackingPrivacyCategory category, OptionSet<AdvancedPrivacyProtections> protections)
+bool shouldEnableScriptTrackingPrivacy(ScriptTrackingPrivacyCategory category, OptionSet<AdvancedPrivacyProtections> protections, bool needsConsistentPrivacy)
 {
-    if (protections.contains(AdvancedPrivacyProtections::BaselineProtections))
+    if (protections.contains(AdvancedPrivacyProtections::BaselineProtections) || needsConsistentPrivacy)
         return true;
 
     switch (category) {
     case ScriptTrackingPrivacyCategory::Audio:
     case ScriptTrackingPrivacyCategory::Canvas:
     case ScriptTrackingPrivacyCategory::HardwareConcurrency:
-    case ScriptTrackingPrivacyCategory::NetworkRequests:
     case ScriptTrackingPrivacyCategory::Payments:
     case ScriptTrackingPrivacyCategory::QueryParameters:
     case ScriptTrackingPrivacyCategory::Referrer:

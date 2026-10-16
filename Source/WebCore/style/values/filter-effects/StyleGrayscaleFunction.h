@@ -45,7 +45,7 @@ struct Grayscale {
 
     Parameter value;
 
-    static Grayscale passthroughForInterpolation();
+    static Grayscale LEGACY_NODELETE passthroughForInterpolation();
 
     constexpr bool requiresRepaintForCurrentColorChange() const { return false; }
     constexpr bool affectsOpacity() const { return false; }
@@ -58,12 +58,12 @@ struct Grayscale {
 
     bool operator==(const Grayscale&) const = default;
 };
-using GrayscaleFunction = FunctionNotation<CSSValueGrayscale, Grayscale>;
+using GrayscaleFunction = FunctionNotation<CSSValueID::Grayscale, Grayscale>;
 DEFINE_TYPE_WRAPPER_GET(Grayscale, value);
 
 // MARK: - Conversion
 
-template<> struct ToCSS<Grayscale> { auto operator()(const Grayscale&, const RenderStyle&) -> CSS::Grayscale; };
+template<> struct ToCSS<Grayscale> { auto operator()(const Grayscale&, const Style::ComputedStyle&) -> CSS::Grayscale; };
 template<> struct ToStyle<CSS::Grayscale> { auto operator()(const CSS::Grayscale&, const BuilderState&) -> Grayscale; };
 
 // MARK: - Evaluation

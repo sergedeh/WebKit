@@ -20,14 +20,19 @@
 #include "config.h"
 #include "SVGResources.h"
 
+#include "Document.h"
+#include "DocumentInlines.h"
 #include "FilterOperation.h"
+#include "IsolatedSVGDocumentContext.h"
 #include "LegacyRenderSVGResourceClipperInlines.h"
+#include "LegacyRenderSVGResourceContainerInlines.h"
 #include "LegacyRenderSVGResourceFilterInlines.h"
 #include "LegacyRenderSVGResourceMarkerInlines.h"
 #include "LegacyRenderSVGResourceMaskerInlines.h"
 #include "LegacyRenderSVGRoot.h"
 #include "PathOperation.h"
 #include "RenderElementInlines.h"
+#include "SVGDocumentExtensions.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGFilterElement.h"
 #include "SVGGradientElement.h"
@@ -35,6 +40,7 @@
 #include "SVGNames.h"
 #include "SVGPatternElement.h"
 #include "SVGURIReference.h"
+#include "Settings.h"
 #include "StyleCachedImage.h"
 #include <wtf/RobinHoodHashSet.h>
 #include <wtf/SetForScope.h>
@@ -48,9 +54,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGResources);
 
-SVGResources::SVGResources()
-{
-}
+SVGResources::SVGResources() = default;
 
 static MemoryCompactLookupOnlyRobinHoodHashSet<AtomString> tagSet(std::span<decltype(SVGNames::aTag)* const> tags)
 {
@@ -69,13 +73,11 @@ static const MemoryCompactLookupOnlyRobinHoodHashSet<AtomString>& clipperFilterM
         &SVGNames::aTag,
         &SVGNames::circleTag,
         &SVGNames::ellipseTag,
-        &SVGNames::glyphTag,
         &SVGNames::gTag,
         &SVGNames::imageTag,
         &SVGNames::lineTag,
         &SVGNames::markerTag,
         &SVGNames::maskTag,
-        &SVGNames::missing_glyphTag,
         &SVGNames::pathTag,
         &SVGNames::polygonTag,
         &SVGNames::polylineTag,
@@ -87,13 +89,12 @@ static const MemoryCompactLookupOnlyRobinHoodHashSet<AtomString>& clipperFilterM
 
         // Not listed in the definitions is the clipPath element, the SVG spec says though:
         // The "clipPath" element or any of its children can specify property "clip-path".
-        // So we have to add clipPathTag here, otherwhise clip-path on clipPath will fail.
+        // So we have to add clipPathTag here, otherwise clip-path on clipPath will fail.
         // (Already mailed SVG WG, waiting for a solution)
         &SVGNames::clipPathTag,
 
         // Not listed in the definitions are the text content elements, though filter/clipper/masker on tspan/text/.. is allowed.
         // (Already mailed SVG WG, waiting for a solution)
-        &SVGNames::altGlyphTag,
         &SVGNames::textPathTag,
         &SVGNames::trefTag,
         &SVGNames::tspanTag,
@@ -125,7 +126,6 @@ static const MemoryCompactLookupOnlyRobinHoodHashSet<AtomString>& markerTags()
 static const MemoryCompactLookupOnlyRobinHoodHashSet<AtomString>& fillAndStrokeTags()
 {
     static constexpr std::array tags {
-        &SVGNames::altGlyphTag,
         &SVGNames::circleTag,
         &SVGNames::ellipseTag,
         &SVGNames::lineTag,
@@ -166,10 +166,10 @@ static inline String targetReferenceFromResource(SVGElement& element)
     else
         ASSERT_NOT_REACHED();
 
-    return SVGURIReference::fragmentIdentifierFromIRIString(target, element.protectedDocument());
+    return SVGURIReference::fragmentIdentifierFromIRIString(target, protect(element.document()));
 }
 
-static inline bool isChainableResource(const SVGElement& element, const SVGElement& linkedResource)
+static inline bool LEGACY_NODELETE isChainableResource(const SVGElement& element, const SVGElement& linkedResource)
 {
     if (is<SVGPatternElement>(element))
         return is<SVGPatternElement>(linkedResource);
@@ -184,16 +184,12 @@ static inline bool isChainableResource(const SVGElement& element, const SVGEleme
     return false;
 }
 
-static inline CheckedPtr<LegacyRenderSVGResourceContainer> paintingResourceFromSVGPaint(TreeScope& treeScope, const Style::SVGPaint& paint, AtomString& id, bool& hasPendingResource)
+static CheckedPtr<LegacyRenderSVGResourceContainer> paintingResourceFromTreeScopeAndId(TreeScope& treeScope, const AtomString& id, bool* hasPendingResource)
 {
-    auto paintURL = paint.tryAnyURL();
-    if (!paintURL)
-        return nullptr;
-
-    id = SVGURIReference::fragmentIdentifierFromIRIString(*paintURL, treeScope.protectedDocumentScope());
     CheckedPtr container = getRenderSVGResourceContainerById(treeScope, id);
     if (!container) {
-        hasPendingResource = true;
+        if (hasPendingResource)
+            *hasPendingResource = true;
         return nullptr;
     }
 
@@ -204,7 +200,30 @@ static inline CheckedPtr<LegacyRenderSVGResourceContainer> paintingResourceFromS
     return container;
 }
 
-std::unique_ptr<SVGResources> SVGResources::buildCachedResources(const RenderElement& renderer, const RenderStyle& style)
+static inline CheckedPtr<LegacyRenderSVGResourceContainer> paintingResourceFromSVGPaint(TreeScope& treeScope, const Style::SVGPaint& paint, AtomString& id, bool& hasPendingResource)
+{
+    auto paintURL = paint.tryAnyURL();
+    if (!paintURL)
+        return nullptr;
+
+    Ref document = treeScope.documentScope();
+
+    if (auto externalDocument = document->svgExtensions().externalResourceDocument(paintURL->resolved)) {
+        id = paintURL->resolved.fragmentIdentifier().toAtomString();
+        RefPtr resolvedDocument = *externalDocument;
+        if (id.isEmpty() || !resolvedDocument)
+            return nullptr;
+
+        // The resource lives in the isolated document, which is realized separately and does not use
+        // this document's pending-resource mechanism so no hasPendingResource.
+        return paintingResourceFromTreeScopeAndId(*resolvedDocument, id, nullptr);
+    }
+
+    id = SVGURIReference::fragmentIdentifierFromIRIString(*paintURL, document);
+    return paintingResourceFromTreeScopeAndId(treeScope, id, &hasPendingResource);
+}
+
+std::unique_ptr<SVGResources> SVGResources::buildCachedResources(const RenderElement& renderer, const Style::ComputedStyle& style)
 {
     ASSERT(renderer.element());
     if (!renderer.element())
@@ -229,8 +248,13 @@ std::unique_ptr<SVGResources> SVGResources::buildCachedResources(const RenderEle
     if (clipperFilterMaskerTags().contains(tagName)) {
         WTF::switchOn(style.clipPath(),
             [&](const Style::ReferencePath& clipPath) {
-                // FIXME: -webkit-clip-path should support external resources
-                // https://bugs.webkit.org/show_bug.cgi?id=127032
+                if (auto externalDocument = document->svgExtensions().externalResourceDocument(clipPath.url().resolved)) {
+                    if (RefPtr resolvedDocument = *externalDocument) {
+                        if (auto* clipper = getRenderSVGResourceById<LegacyRenderSVGResourceClipper>(*resolvedDocument, clipPath.fragment()))
+                            ensureResources(foundResources).setClipper(clipper);
+                    }
+                    return;
+                }
                 if (auto* clipper = getRenderSVGResourceById<LegacyRenderSVGResourceClipper>(treeScope, clipPath.fragment()))
                     ensureResources(foundResources).setClipper(clipper);
                 else
@@ -243,6 +267,13 @@ std::unique_ptr<SVGResources> SVGResources::buildCachedResources(const RenderEle
             WTF::switchOn(style.filter().first(),
                 [&](const Style::FilterReference& filterReference) {
                     auto& id = filterReference.cachedFragment;
+                    if (auto externalDocument = document->svgExtensions().externalResourceDocument(filterReference.url.resolved)) {
+                        if (RefPtr resolvedDocument = *externalDocument) {
+                            if (auto* filter = getRenderSVGResourceById<LegacyRenderSVGResourceFilter>(*resolvedDocument, id))
+                                ensureResources(foundResources).setFilter(filter);
+                        }
+                        return;
+                    }
                     if (auto* filter = getRenderSVGResourceById<LegacyRenderSVGResourceFilter>(treeScope, id))
                         ensureResources(foundResources).setFilter(filter);
                     else
@@ -266,6 +297,16 @@ std::unique_ptr<SVGResources> SVGResources::buildCachedResources(const RenderEle
 
     if (markerTags().contains(tagName) && style.hasMarkers()) {
         auto buildCachedMarkerResource = [&](const Style::SVGMarkerResource& markerResource, bool (SVGResources::*setMarker)(LegacyRenderSVGResourceMarker*)) {
+            if (auto markerURL = markerResource.tryURL()) {
+                if (auto externalDocument = document->svgExtensions().externalResourceDocument(markerURL->resolved)) {
+                    if (RefPtr resolvedDocument = *externalDocument) {
+                        auto markerId = markerURL->resolved.fragmentIdentifier().toAtomString();
+                        if (auto* marker = getRenderSVGResourceById<LegacyRenderSVGResourceMarker>(*resolvedDocument, markerId))
+                            (ensureResources(foundResources).*setMarker)(marker);
+                    }
+                    return;
+                }
+            }
             auto markerId = SVGURIReference::fragmentIdentifierFromIRIString(markerResource, document);
             if (auto* marker = getRenderSVGResourceById<LegacyRenderSVGResourceMarker>(treeScope, markerId))
                 (ensureResources(foundResources).*setMarker)(marker);
@@ -278,7 +319,7 @@ std::unique_ptr<SVGResources> SVGResources::buildCachedResources(const RenderEle
     }
 
     if (fillAndStrokeTags().contains(tagName)) {
-        if (style.hasFill()) {
+        if (!style.fill().isNone()) {
             bool hasPendingResource = false;
             AtomString id;
             if (CheckedPtr fill = paintingResourceFromSVGPaint(treeScope, style.fill(), id, hasPendingResource))
@@ -287,7 +328,7 @@ std::unique_ptr<SVGResources> SVGResources::buildCachedResources(const RenderEle
                 treeScope->addPendingSVGResource(id, element);
         }
 
-        if (style.hasStroke()) {
+        if (!style.stroke().isNone()) {
             bool hasPendingResource = false;
             AtomString id;
             if (CheckedPtr stroke = paintingResourceFromSVGPaint(treeScope, style.stroke(), id, hasPendingResource))
@@ -302,7 +343,7 @@ std::unique_ptr<SVGResources> SVGResources::buildCachedResources(const RenderEle
         auto* linkedResource = getRenderSVGResourceContainerById(document, id);
         if (!linkedResource)
             treeScope->addPendingSVGResource(id, element);
-        else if (isChainableResource(element, linkedResource->protectedElement()))
+        else if (isChainableResource(element, linkedResource->element()))
             ensureResources(foundResources).setLinkedResource(linkedResource);
     }
 
@@ -351,7 +392,7 @@ bool SVGResources::markerReverseStart() const
 {
     return m_markerData
         && m_markerData->markerStart
-        && m_markerData->markerStart->markerElement().orientType() == SVGMarkerOrientAutoStartReverse;
+        && protect(m_markerData->markerStart->markerElement())->orientType() == SVGMarkerOrientAutoStartReverse;
 }
 
 void SVGResources::removeClientFromCacheAndMarkForInvalidation(RenderElement& renderer, bool markForInvalidation) const
@@ -523,7 +564,7 @@ bool SVGResources::setClipper(LegacyRenderSVGResourceClipper* clipper)
     ASSERT(clipper->resourceType() == ClipperResourceType);
 
     if (!m_clipperFilterMaskerData)
-        m_clipperFilterMaskerData = makeUnique<ClipperFilterMaskerData>();
+        lazyInitialize(m_clipperFilterMaskerData, makeUnique<ClipperFilterMaskerData>());
 
     m_clipperFilterMaskerData->clipper = clipper;
     return true;
@@ -542,7 +583,7 @@ bool SVGResources::setFilter(LegacyRenderSVGResourceFilter* filter)
     ASSERT(filter->resourceType() == FilterResourceType);
 
     if (!m_clipperFilterMaskerData)
-        m_clipperFilterMaskerData = makeUnique<ClipperFilterMaskerData>();
+        lazyInitialize(m_clipperFilterMaskerData, makeUnique<ClipperFilterMaskerData>());
 
     m_clipperFilterMaskerData->filter = filter;
     return true;
@@ -561,7 +602,7 @@ bool SVGResources::setMarkerStart(LegacyRenderSVGResourceMarker* markerStart)
     ASSERT(markerStart->resourceType() == MarkerResourceType);
 
     if (!m_markerData)
-        m_markerData = makeUnique<MarkerData>();
+        lazyInitialize(m_markerData, makeUnique<MarkerData>());
 
     m_markerData->markerStart = markerStart;
     return true;
@@ -580,7 +621,7 @@ bool SVGResources::setMarkerMid(LegacyRenderSVGResourceMarker* markerMid)
     ASSERT(markerMid->resourceType() == MarkerResourceType);
 
     if (!m_markerData)
-        m_markerData = makeUnique<MarkerData>();
+        lazyInitialize(m_markerData, makeUnique<MarkerData>());
 
     m_markerData->markerMid = markerMid;
     return true;
@@ -599,7 +640,7 @@ bool SVGResources::setMarkerEnd(LegacyRenderSVGResourceMarker* markerEnd)
     ASSERT(markerEnd->resourceType() == MarkerResourceType);
 
     if (!m_markerData)
-        m_markerData = makeUnique<MarkerData>();
+        lazyInitialize(m_markerData, makeUnique<MarkerData>());
 
     m_markerData->markerEnd = markerEnd;
     return true;
@@ -618,7 +659,7 @@ bool SVGResources::setMasker(LegacyRenderSVGResourceMasker* masker)
     ASSERT(masker->resourceType() == MaskerResourceType);
 
     if (!m_clipperFilterMaskerData)
-        m_clipperFilterMaskerData = makeUnique<ClipperFilterMaskerData>();
+        lazyInitialize(m_clipperFilterMaskerData, makeUnique<ClipperFilterMaskerData>());
 
     m_clipperFilterMaskerData->masker = masker;
     return true;
@@ -637,7 +678,7 @@ bool SVGResources::setFill(LegacyRenderSVGResourceContainer* fill)
     ASSERT(fill->resourceType() == PatternResourceType || fill->resourceType() == LinearGradientResourceType || fill->resourceType() == RadialGradientResourceType);
 
     if (!m_fillStrokeData)
-        m_fillStrokeData = makeUnique<FillStrokeData>();
+        lazyInitialize(m_fillStrokeData, makeUnique<FillStrokeData>());
 
     m_fillStrokeData->fill = fill;
     return true;
@@ -656,7 +697,7 @@ bool SVGResources::setStroke(LegacyRenderSVGResourceContainer* stroke)
     ASSERT(stroke->resourceType() == PatternResourceType || stroke->resourceType() == LinearGradientResourceType || stroke->resourceType() == RadialGradientResourceType);
 
     if (!m_fillStrokeData)
-        m_fillStrokeData = makeUnique<FillStrokeData>();
+        lazyInitialize(m_fillStrokeData, makeUnique<FillStrokeData>());
 
     m_fillStrokeData->stroke = stroke;
     return true;

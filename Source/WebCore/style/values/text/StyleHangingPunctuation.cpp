@@ -25,6 +25,7 @@
 #include "config.h"
 #include "StyleHangingPunctuation.h"
 
+#include "CSSKeywordValue.h"
 #include "StyleBuilderChecking.h"
 
 namespace WebCore {
@@ -32,17 +33,17 @@ namespace Style {
 
 auto CSSValueConversion<HangingPunctuation>::operator()(BuilderState& state, const CSSValue& value) -> HangingPunctuation
 {
-    if (RefPtr primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value)) {
-        switch (primitiveValue->valueID()) {
-        case CSSValueNone:
+    if (auto* keywordValue = dynamicDowncast<CSSKeywordValue>(value)) {
+        switch (keywordValue->valueID()) {
+        case CSSValueID::None:
             return CSS::Keyword::None { };
-        case CSSValueFirst:
+        case CSSValueID::First:
             return { HangingPunctuationValue::First };
-        case CSSValueForceEnd:
+        case CSSValueID::ForceEnd:
             return { HangingPunctuationValue::ForceEnd };
-        case CSSValueAllowEnd:
+        case CSSValueID::AllowEnd:
             return { HangingPunctuationValue::AllowEnd };
-        case CSSValueLast:
+        case CSSValueID::Last:
             return { HangingPunctuationValue::Last };
         default:
             state.setCurrentPropertyInvalidAtComputedValueTime();
@@ -50,31 +51,31 @@ auto CSSValueConversion<HangingPunctuation>::operator()(BuilderState& state, con
         }
     }
 
-    auto list = requiredListDowncast<CSSValueList, CSSPrimitiveValue>(state, value);
+    auto list = requiredListDowncast<CSSValueList, CSSKeywordValue>(state, value);
     if (!list)
         return CSS::Keyword::None { };
 
     HangingPunctuationValueEnumSet result;
-    for (Ref item : *list) {
-        switch (item->valueID()) {
-        case CSSValueFirst:
+    for (auto& item : *list) {
+        switch (item.valueID()) {
+        case CSSValueID::First:
             result.value.add(HangingPunctuationValue::First);
             break;
-        case CSSValueForceEnd:
+        case CSSValueID::ForceEnd:
             if (result.contains(HangingPunctuationValue::AllowEnd)) {
                 state.setCurrentPropertyInvalidAtComputedValueTime();
                 return CSS::Keyword::None { };
             }
             result.value.add(HangingPunctuationValue::ForceEnd);
             break;
-        case CSSValueAllowEnd:
+        case CSSValueID::AllowEnd:
             if (result.contains(HangingPunctuationValue::ForceEnd)) {
                 state.setCurrentPropertyInvalidAtComputedValueTime();
                 return CSS::Keyword::None { };
             }
             result.value.add(HangingPunctuationValue::AllowEnd);
             break;
-        case CSSValueLast:
+        case CSSValueID::Last:
             result.value.add(HangingPunctuationValue::Last);
             break;
         default:

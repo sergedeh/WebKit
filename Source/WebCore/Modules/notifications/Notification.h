@@ -37,6 +37,7 @@
 #include <WebCore/EventTarget.h>
 #include <WebCore/EventTargetInterfaces.h>
 #include <WebCore/NotificationDirection.h>
+#include <WebCore/NotificationOptions.h>
 #include <WebCore/NotificationPayload.h>
 #include <WebCore/NotificationPermission.h>
 #include <WebCore/NotificationResources.h>
@@ -46,6 +47,7 @@
 #include <wtf/CompletionHandler.h>
 #include <wtf/URL.h>
 #include <wtf/UUID.h>
+#include <wtf/WallTime.h>
 
 namespace WebCore {
 
@@ -62,21 +64,8 @@ class Notification final : public RefCounted<Notification>, public ActiveDOMObje
 public:
     using Permission = NotificationPermission;
     using Direction = NotificationDirection;
+    using Options = NotificationOptions;
 
-    struct Options {
-        Direction dir;
-        String lang;
-        String body;
-        String tag;
-        String icon;
-        JSC::JSValue data;
-        RefPtr<SerializedScriptValue> serializedData;
-        RefPtr<JSON::Value> jsonData;
-        std::optional<bool> silent;
-#if ENABLE(DECLARATIVE_WEB_PUSH)
-        String navigate;
-#endif
-    };
     // For JS constructor only.
     static ExceptionOr<Ref<Notification>> create(ScriptExecutionContext&, String&& title, Options&&);
 
@@ -95,14 +84,14 @@ public:
     void close();
 
 #if ENABLE(DECLARATIVE_WEB_PUSH)
-    const URL& navigate() const { return m_navigate; }
+    const URL& navigate() const LIFETIME_BOUND { return m_navigate; }
 #endif
-    const String& title() const { return m_title; }
+    const String& title() const LIFETIME_BOUND { return m_title; }
     Direction dir() const { return m_direction; }
-    const String& body() const { return m_body; }
-    const String& lang() const { return m_lang; }
-    const String& tag() const { return m_tag; }
-    const URL& icon() const { return m_icon; }
+    const String& body() const LIFETIME_BOUND { return m_body; }
+    const String& lang() const LIFETIME_BOUND { return m_lang; }
+    const String& tag() const LIFETIME_BOUND { return m_tag; }
+    const URL& icon() const LIFETIME_BOUND { return m_icon; }
     JSC::JSValue dataForBindings(JSC::JSGlobalObject&);
     std::optional<bool> silent() const { return m_silent; }
 
@@ -113,23 +102,24 @@ public:
     WEBCORE_EXPORT void dispatchErrorEvent();
     WEBCORE_EXPORT void dispatchShowEvent();
 
-    WEBCORE_EXPORT void finalize();
+    WEBCORE_EXPORT void LEGACY_NODELETE finalize();
 
     static Permission permission(ScriptExecutionContext&);
     static void requestPermission(Document&, RefPtr<NotificationPermissionCallback>&&, Ref<DeferredPromise>&&);
 
-    ScriptExecutionContext* scriptExecutionContext() const final;
-    using ActiveDOMObject::protectedScriptExecutionContext;
+    ScriptExecutionContext* LEGACY_NODELETE scriptExecutionContext() const final;
 
     WEBCORE_EXPORT NotificationData data() const;
     RefPtr<NotificationResources> resources() const { return m_resources; }
 
-    void markAsShown();
+    void LEGACY_NODELETE markAsShown();
     void showSoon();
 
     WTF::UUID identifier() const { return m_identifier; }
 
     bool isPersistent() const { return !m_serviceWorkerRegistrationURL.isNull(); }
+
+    WEBCORE_EXPORT static void setOverridePersistentNotificationMinimumLifetime(Seconds);
 
     WEBCORE_EXPORT static void ensureOnNotificationThread(ScriptExecutionContextIdentifier, WTF::UUID notificationIdentifier, Function<void(Notification*)>&&);
     WEBCORE_EXPORT static void ensureOnNotificationThread(const NotificationData&, Function<void(Notification*)>&&);
@@ -145,7 +135,7 @@ private:
     // ActiveDOMObject
     void suspend(ReasonForSuspension);
     void stop() final;
-    bool virtualHasPendingActivity() const final;
+    bool LEGACY_NODELETE virtualHasPendingActivity() const final;
 
     // EventTarget
     void refEventTarget() final { ref(); }
@@ -177,6 +167,7 @@ private:
     };
     NotificationSource m_notificationSource;
     URL m_serviceWorkerRegistrationURL;
+    WallTime m_creationTime;
     std::unique_ptr<NotificationResourcesLoader> m_resourcesLoader;
     RefPtr<NotificationResources> m_resources;
 };

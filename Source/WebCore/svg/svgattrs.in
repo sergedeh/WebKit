@@ -70,7 +70,6 @@ fr
 g1
 g2
 glyph-name
-glyph-orientation-horizontal
 glyph-orientation-vertical
 glyphRef
 gradientTransform
@@ -148,6 +147,7 @@ r
 radius
 refX
 refY
+referrerpolicy
 rel
 repeat
 repeatCount
@@ -162,6 +162,7 @@ ry
 scale
 seed
 shape-rendering
+side
 slope
 spacing
 specularConstant
@@ -189,6 +190,7 @@ targetX
 targetY
 text-anchor
 text-decoration
+text-overflow
 text-rendering
 textLength
 title

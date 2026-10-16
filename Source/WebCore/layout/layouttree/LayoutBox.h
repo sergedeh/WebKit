@@ -27,8 +27,8 @@
 
 #include <WebCore/LayoutUnits.h>
 #include <WebCore/RenderObject.h>
-#include <WebCore/RenderStyle.h>
 #include <WebCore/RenderStyleConstants.h>
+#include <WebCore/StyleComputedStyle.h>
 #include <wtf/CheckedPtr.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -36,6 +36,7 @@ namespace WebCore {
 
 class LayoutShape;
 class RenderObject;
+class UsedStyle;
 
 namespace Layout {
 
@@ -52,6 +53,7 @@ public:
     enum class NodeType : uint8_t {
         Text,
         GenericElement,
+        InlineBox,
         ReplacedElement,
         DocumentElement,
         Body,
@@ -82,22 +84,22 @@ public:
 
     bool establishesFormattingContext() const;
     bool establishesBlockFormattingContext() const;
-    bool establishesInlineFormattingContext() const;
-    bool establishesTableFormattingContext() const;
-    bool establishesFlexFormattingContext() const;
-    bool establishesGridFormattingContext() const;
+    bool LEGACY_NODELETE establishesInlineFormattingContext() const;
+    bool LEGACY_NODELETE establishesTableFormattingContext() const;
+    bool LEGACY_NODELETE establishesFlexFormattingContext() const;
+    bool LEGACY_NODELETE establishesGridFormattingContext() const;
     bool establishesIndependentFormattingContext() const;
 
     bool isInFlow() const { return !isFloatingOrOutOfFlowPositioned(); }
     bool isPositioned() const { return isInFlowPositioned() || isOutOfFlowPositioned(); }
     bool isInFlowPositioned() const { return isRelativelyPositioned() || isStickyPositioned(); }
     bool isOutOfFlowPositioned() const { return isAbsolutelyPositioned(); }
-    bool isRelativelyPositioned() const;
-    bool isStickyPositioned() const;
-    bool isAbsolutelyPositioned() const;
-    bool isFixedPositioned() const;
-    bool isFloatingPositioned() const;
-    bool hasFloatClear() const;
+    bool LEGACY_NODELETE isRelativelyPositioned() const;
+    bool LEGACY_NODELETE isStickyPositioned() const;
+    bool LEGACY_NODELETE isAbsolutelyPositioned() const;
+    bool LEGACY_NODELETE isFixedPositioned() const;
+    bool LEGACY_NODELETE isFloatingPositioned() const;
+    bool LEGACY_NODELETE hasFloatClear() const;
     bool isFloatAvoider() const;
 
     bool isFloatingOrOutOfFlowPositioned() const { return isFloatingPositioned() || isOutOfFlowPositioned(); }
@@ -109,22 +111,22 @@ public:
     bool isAnonymous() const { return m_isAnonymous; }
 
     // Block level elements generate block level boxes.
-    bool isBlockLevelBox() const;
+    bool LEGACY_NODELETE isBlockLevelBox() const;
     // A block-level box that is also a block container.
-    bool isBlockBox() const;
+    bool LEGACY_NODELETE isBlockBox() const;
     // A block-level box is also a block container box unless it is a table box or the principal box of a replaced element.
-    bool isBlockContainer() const;
-    bool isInlineLevelBox() const;
-    bool isInlineBox() const;
-    bool isAtomicInlineBox() const;
-    bool isInlineBlockBox() const;
-    bool isInlineTableBox() const;
+    bool LEGACY_NODELETE isBlockContainer() const;
+    bool LEGACY_NODELETE isInlineLevelBox() const;
+    bool LEGACY_NODELETE isInlineBox() const;
+    bool LEGACY_NODELETE isAtomicInlineBox() const;
+    bool LEGACY_NODELETE isInlineBlockBox() const;
+    bool LEGACY_NODELETE isInlineTableBox() const;
     bool isInitialContainingBlock() const { return baseTypeFlags().contains(InitialContainingBlockFlag); }
     bool isLayoutContainmentBox() const;
     bool isSizeContainmentBox() const;
-    bool isInternalRubyBox() const;
-    bool isRubyAnnotationBox() const;
-    bool isInterlinearRubyAnnotationBox() const;
+    bool LEGACY_NODELETE isInternalRubyBox() const;
+    bool LEGACY_NODELETE isRubyAnnotationBox() const;
+    bool LEGACY_NODELETE isInterlinearRubyAnnotationBox() const;
 
     bool isDocumentBox() const { return m_nodeType == NodeType::DocumentElement; }
     bool isTableWrapperBox() const { return m_nodeType == NodeType::TableWrapperBox; }
@@ -136,9 +138,9 @@ public:
     bool isListMarkerBox() const { return m_nodeType == NodeType::ListMarker; }
     bool isReplacedBox() const { return m_nodeType == NodeType::ReplacedElement || m_nodeType == NodeType::Image || m_nodeType == NodeType::ListMarker; }
     bool isWordBreakOpportunity() const { return m_nodeType == NodeType::WordBreakOpportunity; }
-    bool isInternalTableBox() const;
-    inline bool isRuby() const;
-    inline bool isRubyBase() const;
+    bool LEGACY_NODELETE isInternalTableBox() const;
+    inline bool LEGACY_NODELETE isRuby() const;
+    bool LEGACY_NODELETE isRubyBase() const;
     inline bool isRubyInlineBox() const;
     inline bool isTableCaption() const;
     inline bool isTableHeader() const;
@@ -149,11 +151,11 @@ public:
     inline bool isTableColumn() const;
     inline bool isTableCell() const;
     inline bool isFlexBox() const;
-    bool isFlexItem() const;
+    bool LEGACY_NODELETE isFlexItem() const;
     inline bool isGridFormattingContext() const;
     inline bool isGridBox() const;
     inline bool isGridLanesBox() const;
-    bool isGridItem() const;
+    bool LEGACY_NODELETE isGridItem() const;
     inline bool isListItem() const;
 
     bool isInlineIntegrationRoot() const { return m_isInlineIntegrationRoot; }
@@ -161,14 +163,14 @@ public:
 
     const ElementBox& parent() const { return *m_parent; }
     const Box* nextSibling() const { return m_nextSibling.get(); }
-    const Box* nextInFlowSibling() const;
-    const Box* nextInFlowOrFloatingSibling() const;
-    const Box* nextOutOfFlowSibling() const;
+    const Box* LEGACY_NODELETE nextInFlowSibling() const;
+    const Box* LEGACY_NODELETE nextInFlowOrFloatingSibling() const;
+    const Box* LEGACY_NODELETE nextOutOfFlowSibling() const;
     const Box* previousSibling() const { return m_previousSibling.get(); }
-    const Box* previousInFlowSibling() const;
-    const Box* previousInFlowOrFloatingSibling() const;
-    const Box* previousOutOfFlowSibling() const;
-    bool isDescendantOf(const Box&) const;
+    const Box* LEGACY_NODELETE previousInFlowSibling() const;
+    const Box* LEGACY_NODELETE previousInFlowOrFloatingSibling() const;
+    const Box* LEGACY_NODELETE previousOutOfFlowSibling() const;
+    bool LEGACY_NODELETE isDescendantOf(const Box&) const;
     bool isDescendantOfWithinFormattingContext(const Box&) const;
     bool isInFormattingContextEstablishedBy(const ElementBox& formattingContextRoot) const;
 
@@ -178,12 +180,12 @@ public:
     bool isElementBox() const { return baseTypeFlags().contains(ElementBoxFlag); }
     bool isInlineTextBox() const { return baseTypeFlags().contains(InlineTextBoxFlag); }
 
-    bool isPaddingApplicable() const;
-    bool isOverflowVisible() const;
+    bool LEGACY_NODELETE isPaddingApplicable() const;
+    bool LEGACY_NODELETE isOverflowVisible() const;
 
-    void updateStyle(RenderStyle&& newStyle, std::unique_ptr<RenderStyle>&& newFirstLineStyle);
-    const RenderStyle& style() const { return m_style; }
-    const RenderStyle& firstLineStyle() const { return hasRareData() && rareData().firstLineStyle ? *rareData().firstLineStyle : m_style; }
+    void updateStyle(Style::ComputedStyle&& newStyle, std::unique_ptr<Style::ComputedStyle>&& newFirstLineStyle);
+    const Style::ComputedStyle& style() const LIFETIME_BOUND { return m_style; }
+    const Style::ComputedStyle& LEGACY_NODELETE firstLineStyle() const LIFETIME_BOUND { return hasRareData() && rareData().firstLineStyle ? *rareData().firstLineStyle : m_style; }
     WritingMode writingMode() const { return style().writingMode(); }
 
     // FIXME: Find a better place for random DOM things.
@@ -202,15 +204,18 @@ public:
     const LayoutShape* shape() const;
     void setShape(RefPtr<const LayoutShape>);
 
-    const ElementBox* associatedRubyAnnotationBox() const;
+    const ElementBox* LEGACY_NODELETE associatedRubyAnnotationBox() const;
 
     RenderObject* rendererForIntegration() const { return m_renderer.get(); }
     void setRendererForIntegration(RenderObject* renderer) { m_renderer = renderer; }
 
+    UsedStyle usedStyle() const;
+    UsedStyle firstLineUsedStyle() const;
+
     UniqueRef<Box> removeFromParent();
 
 protected:
-    Box(ElementAttributes&&, RenderStyle&&, std::unique_ptr<RenderStyle>&& firstLineStyle, EnumSet<BaseTypeFlag>);
+    Box(ElementAttributes&&, Style::ComputedStyle&&, std::unique_ptr<Style::ComputedStyle>&& firstLineStyle, EnumSet<BaseTypeFlag>);
 
 private:
     friend class ElementBox;
@@ -223,13 +228,13 @@ private:
 
         CellSpan tableCellSpan;
         std::optional<LayoutUnit> columnWidth;
-        std::unique_ptr<RenderStyle> firstLineStyle;
+        std::unique_ptr<Style::ComputedStyle> firstLineStyle;
         RefPtr<const LayoutShape> shape;
     };
 
     bool hasRareData() const { return m_hasRareData; }
     void setHasRareData(bool hasRareData) { m_hasRareData = hasRareData; }
-    const BoxRareData& rareData() const;
+    const BoxRareData& LEGACY_NODELETE rareData() const;
     Box::BoxRareData& rareData();
     BoxRareData& ensureRareData();
     void removeRareData();
@@ -238,7 +243,7 @@ private:
 
     typedef HashMap<const Box*, std::unique_ptr<BoxRareData>> RareDataMap;
 
-    static RareDataMap& rareDataMap();
+    static RareDataMap& LEGACY_NODELETE rareDataMap();
 
     NodeType m_nodeType : 4;
     bool m_isAnonymous : 1;
@@ -248,7 +253,7 @@ private:
     bool m_isInlineIntegrationRoot : 1 { false };
     bool m_isAnonymousTextIndentCandidateForIntegration : 1 { false }; // Either first anonymous block box child or simple anonymous block container (e.g flex item).
 
-    RenderStyle m_style;
+    Style::ComputedStyle m_style;
 
     CheckedPtr<ElementBox> m_parent;
 

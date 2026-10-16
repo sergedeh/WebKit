@@ -34,14 +34,14 @@
 #include "PlatformWebView.h"
 #include "TestController.h"
 #include <JavaScriptCore/JSCTestRunnerUtils.h>
-#include <WebCore/NetworkStorageSession.h>
+#include <JavaScriptCore/JSRetainPtr.h>
+#include <JavaScriptCore/JSStringRefCPP.h>
 #include <WebCore/ResourceLoadObserver.h>
 #include <WebKit/WKBase.h>
 #include <WebKit/WKBundle.h>
 #include <WebKit/WKBundleBackForwardList.h>
 #include <WebKit/WKBundleFrame.h>
 #include <WebKit/WKBundleFramePrivate.h>
-#include <WebKit/WKBundleNodeHandlePrivate.h>
 #include <WebKit/WKBundlePage.h>
 #include <WebKit/WKBundlePagePrivate.h>
 #include <WebKit/WKBundlePrivate.h>
@@ -220,7 +220,7 @@ void TestRunner::waitUntilDone()
         [[maybe_unused]] WTF::String testURL = "(unknown test)"_s;
         if (WKURLRef url = m_testURL.get())
             testURL = toWTFString(adoptWK(WKURLCopyString(url)));
-        LOG_ERROR("(%s) testRunner.waitUntilDone() called after test has terminated. Possibly an async handler was not awaited.", testURL.utf8().data());
+        LOG_ERROR("(%s) testRunner.waitUntilDone() called after test has terminated. Possibly an async handler was not awaited.", testURL.utf8());
         return;
     }
 
@@ -237,12 +237,20 @@ bool TestRunner::shouldWaitUntilDone() const
     return postSynchronousMessageReturningBoolean("GetWaitUntilDone");
 }
 
+bool TestRunner::isWaitingUntilDone() const
+{
+    return postSynchronousMessageReturningBoolean("GetIsWaitingUntilDone");
+}
+
 void TestRunner::notifyDone()
 {
     auto& injectedBundle = InjectedBundle::singleton();
     if (!injectedBundle.isTestRunning())
         return;
-    if (!postSynchronousMessageReturningBoolean("ResolveNotifyDone"))
+    // The UI process replies true when this came from the main-frame process; then the injected bundle
+    // completes notifyDone() locally (deferring while loading, as without site isolation). Otherwise the UI
+    // process routes the dump to the process that owns the main frame.
+    if (!postSynchronousPageMessageReturningBoolean("ResolveNotifyDone"))
         return;
     if (!injectedBundle.page())
         return;
@@ -254,7 +262,8 @@ void TestRunner::forceImmediateCompletion()
     auto& injectedBundle = InjectedBundle::singleton();
     if (!injectedBundle.isTestRunning())
         return;
-    if (!postSynchronousMessageReturningBoolean("ResolveForceImmediateCompletion"))
+    // Reply true when this came from the main-frame process; otherwise the UI process routes the dump.
+    if (!postSynchronousPageMessageReturningBoolean("ResolveForceImmediateCompletion"))
         return;
     if (!injectedBundle.page())
         return;
@@ -345,6 +354,11 @@ void TestRunner::syncLocalStorage()
     postSynchronousMessage("SyncLocalStorage", true);
 }
 
+unsigned TestRunner::storageAreaMapCount()
+{
+    return postSynchronousPageMessageReturningUInt64("GetStorageAreaMapCount", WKRetainPtr<WKTypeRef> { });
+}
+
 bool TestRunner::isCommandEnabled(JSStringRef name)
 {
     return postSynchronousPageMessageReturningBoolean("IsCommandEnabled", toWK(name));
@@ -371,28 +385,37 @@ void TestRunner::setBackgroundFetchPermission(bool enabled)
     postSynchronousPageMessage("SetBackgroundFetchPermission", enabled);
 }
 
-JSRetainPtr<JSStringRef>  TestRunner::lastAddedBackgroundFetchIdentifier() const
+void TestRunner::setVirtualWalletBehavior(JSStringRef action, JSStringRef protocol, JSStringRef responseJSON)
+{
+    postSynchronousPageMessage("SetVirtualWalletBehavior", createWKDictionary({
+        { "Action", toWK(action) },
+        { "Protocol", toWK(protocol) },
+        { "ResponseJSON", toWK(responseJSON) },
+    }));
+}
+
+RefPtr<OpaqueJSString> TestRunner::lastAddedBackgroundFetchIdentifier() const
 {
     auto identifier = InjectedBundle::singleton().lastAddedBackgroundFetchIdentifier();
-    return WKStringCopyJSString(identifier.get());
+    return adoptRef(WKStringCopyJSString(identifier.get()));
 }
 
-JSRetainPtr<JSStringRef>  TestRunner::lastRemovedBackgroundFetchIdentifier() const
+RefPtr<OpaqueJSString> TestRunner::lastRemovedBackgroundFetchIdentifier() const
 {
     auto identifier = InjectedBundle::singleton().lastRemovedBackgroundFetchIdentifier();
-    return WKStringCopyJSString(identifier.get());
+    return adoptRef(WKStringCopyJSString(identifier.get()));
 }
 
-JSRetainPtr<JSStringRef> TestRunner::lastUpdatedBackgroundFetchIdentifier() const
+RefPtr<OpaqueJSString> TestRunner::lastUpdatedBackgroundFetchIdentifier() const
 {
     auto identifier = InjectedBundle::singleton().lastUpdatedBackgroundFetchIdentifier();
-    return WKStringCopyJSString(identifier.get());
+    return adoptRef(WKStringCopyJSString(identifier.get()));
 }
 
-JSRetainPtr<JSStringRef> TestRunner::backgroundFetchState(JSStringRef identifier)
+RefPtr<OpaqueJSString> TestRunner::backgroundFetchState(JSStringRef identifier)
 {
     auto state = InjectedBundle::singleton().backgroundFetchState(toWK(identifier).get());
-    return WKStringCopyJSString(state.get());
+    return adoptRef(WKStringCopyJSString(state.get()));
 }
 
 void TestRunner::setShouldSwapToEphemeralSessionOnNextNavigation(bool shouldSwap)
@@ -422,14 +445,6 @@ bool TestRunner::isPageBoxVisible(JSContextRef context, int pageIndex)
     return WKBundleIsPageBoxVisible(injectedBundle.bundle(), frame, pageIndex);
 }
 
-void TestRunner::setValueForUser(JSContextRef context, JSValueRef element, JSStringRef value)
-{
-    if (!element || !JSValueIsObject(context, element))
-        return;
-
-    WKBundleNodeHandleSetHTMLInputElementValueForUser(adoptWK(WKBundleNodeHandleCreate(context, const_cast<JSObjectRef>(element))).get(), toWK(value).get());
-}
-
 void TestRunner::setAudioResult(JSContextRef context, JSValueRef data)
 {
     auto& injectedBundle = InjectedBundle::singleton();
@@ -457,6 +472,12 @@ void TestRunner::showWebInspector()
 void TestRunner::closeWebInspector()
 {
     WKBundlePageCloseInspectorForTest(page());
+}
+
+void TestRunner::disconnectFrameInspectorTarget(JSContextRef context)
+{
+    // Synchronous so that the disconnect lands before this returns, while breakpoint evaluation is still running.
+    postSynchronousPageMessage("DisconnectFrameInspectorTarget", adoptWK(WKBundleFrameCreateFrameHandle(WKBundleFrameForJavaScriptContext(context))));
 }
 
 void TestRunner::evaluateInWebInspector(JSStringRef script)
@@ -504,9 +525,7 @@ void TestRunner::evaluateScriptInIsolatedWorld(JSContextRef context, unsigned wo
 
 void TestRunner::setPOSIXLocale(JSStringRef locale)
 {
-    char localeBuf[32];
-    JSStringGetUTF8CString(locale, localeBuf, sizeof(localeBuf));
-    setlocale(LC_ALL, localeBuf);
+    setlocale(LC_ALL, utf8CString(locale).legacyCStringPointer());
 }
 
 void TestRunner::setTextDirection(JSContextRef context, JSStringRef direction)
@@ -528,6 +547,12 @@ bool TestRunner::didReceiveServerRedirectForProvisionalNavigation() const
 void TestRunner::clearDidReceiveServerRedirectForProvisionalNavigation()
 {
     postSynchronousPageMessage("ClearDidReceiveServerRedirectForProvisionalNavigation");
+}
+
+RefPtr<OpaqueJSString> TestRunner::lastProvisionalNavigationFailureURL() const
+{
+    auto url = InjectedBundle::singleton().lastProvisionalNavigationFailureURL();
+    return adoptRef(WKStringCopyJSString(url.get()));
 }
 
 void TestRunner::setPageVisibility(JSStringRef state)
@@ -713,10 +738,10 @@ void TestRunner::simulateWebNotificationClickForServiceWorkerNotifications()
     InjectedBundle::singleton().postSimulateWebNotificationClickForServiceWorkerNotifications();
 }
 
-JSRetainPtr<JSStringRef> TestRunner::getBackgroundFetchIdentifier()
+RefPtr<OpaqueJSString> TestRunner::getBackgroundFetchIdentifier()
 {
     auto identifier = InjectedBundle::singleton().getBackgroundFetchIdentifier();
-    return WKStringCopyJSString(identifier.get());
+    return adoptRef(WKStringCopyJSString(identifier.get()));
 }
 
 void TestRunner::abortBackgroundFetch(JSStringRef identifier)
@@ -1106,6 +1131,16 @@ bool TestRunner::hasStatisticsIsolatedSession(JSStringRef hostName)
     return postSynchronousPageMessageReturningBoolean("HasStatisticsIsolatedSession", hostName);
 }
 
+void TestRunner::setGlobalPrivacyControl(bool value)
+{
+    postSynchronousMessageWithReturnValue("SetGlobalPrivacyControl", adoptWK(WKBooleanCreate(value)));
+}
+
+bool TestRunner::getGlobalPrivacyControl()
+{
+    return postSynchronousMessageReturningBoolean("GetGlobalPrivacyControl");
+}
+
 void TestRunner::installTextDidChangeInTextFieldCallback(JSContextRef context, JSValueRef callback)
 {
     cacheTestRunnerCallback(context, TextDidChangeInTextFieldCallbackID, callback);
@@ -1483,13 +1518,13 @@ void TestRunner::simulatePrivateClickMeasurementSessionRestart()
 void TestRunner::setPrivateClickMeasurementTokenPublicKeyURLForTesting(JSStringRef urlString)
 {
     postSynchronousPageMessage("SetPrivateClickMeasurementTokenPublicKeyURLForTesting",
-        adoptWK(WKURLCreateWithUTF8CString(toWTFString(urlString).utf8().data())));
+        toWKURL(toWTFString(urlString)));
 }
 
 void TestRunner::setPrivateClickMeasurementTokenSignatureURLForTesting(JSStringRef urlString)
 {
     postSynchronousPageMessage("SetPrivateClickMeasurementTokenSignatureURLForTesting",
-        adoptWK(WKURLCreateWithUTF8CString(toWTFString(urlString).utf8().data())));
+        toWKURL(toWTFString(urlString)));
 }
 
 void TestRunner::setPrivateClickMeasurementAttributionReportURLsForTesting(JSStringRef sourceURLString, JSStringRef destinationURLString)

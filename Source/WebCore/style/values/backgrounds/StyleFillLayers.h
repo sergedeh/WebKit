@@ -91,7 +91,7 @@ bool hasHDRContent(const CoordinatedValueList<T>& list)
 {
     return std::ranges::any_of(list.usedValues(), [](auto& layer) {
         RefPtr image = layer.image().tryStyleImage();
-        if (auto* cachedImage = image ? image->cachedImage() : nullptr) {
+        if (RefPtr cachedImage = image ? image->cachedImage() : nullptr) {
             if (cachedImage->hasHDRContent())
                 return true;
         }
@@ -116,7 +116,7 @@ bool hasAnyBackgroundClipText(const CoordinatedValueList<T>& list)
 }
 
 template<FillLayer T>
-RefPtr<StyleImage> findLayerUsedImage(const CoordinatedValueList<T>& list, WrappedImagePtr image, bool& isNonEmpty)
+RefPtr<Image> findLayerUsedImage(const CoordinatedValueList<T>& list, WrappedImagePtr image, bool& isNonEmpty)
 {
     for (auto& layer : list.usedValues()) {
         RefPtr layerImage = layer.image().tryStyleImage();

@@ -41,8 +41,6 @@
 
 namespace WebCore {
 
-constexpr int secondsPerHour = 3600;
-constexpr int secondsPerMinute = 60;
 constexpr unsigned nptIdentifierLength = 4; // "npt:"
 
 static String collectDigits(std::span<const Latin1Character> input, unsigned& position)
@@ -56,7 +54,7 @@ static String collectDigits(std::span<const Latin1Character> input, unsigned& po
     return digits.toString();
 }
 
-static StringView collectFraction(std::span<const Latin1Character> input, unsigned& position)
+static StringView LEGACY_NODELETE collectFraction(std::span<const Latin1Character> input, unsigned& position)
 {
     // http://www.ietf.org/rfc/rfc2326.txt
     // [ "." *DIGIT ]
@@ -93,6 +91,15 @@ MediaTime MediaFragmentURIParser::endTime()
     if (m_timeFormat == None)
         parseTimeFragment();
     return m_endTime;
+}
+
+Vector<String> MediaFragmentURIParser::trackIdentifiers()
+{
+    if (!m_url.isValid())
+        return { };
+    if (m_timeFormat == None)
+        parseTimeFragment();
+    return m_trackIdentifiers;
 }
 
 void MediaFragmentURIParser::parseFragments()
@@ -133,11 +140,11 @@ void MediaFragmentURIParser::parseFragments()
         //     name or value are not valid UTF-8 strings, then remove the name-value pair from the list.
         bool validUTF8 = false;
         if (!name.isEmpty() && !value.isEmpty()) {
-            name = String::fromUTF8(name.utf8(StrictConversion).data());
+            name = name.utf8(StrictConversion);
             validUTF8 = !name.isEmpty();
 
             if (validUTF8) {
-                value = String::fromUTF8(value.utf8(StrictConversion).data());
+                value = value.utf8(StrictConversion);
                 validUTF8 = !value.isEmpty();
             }
         }
@@ -162,8 +169,17 @@ void MediaFragmentURIParser::parseTimeFragment()
         ASSERT(fragment.first.is8Bit());
         ASSERT(fragment.second.is8Bit());
 
+        // http://www.w3.org/2008/WebVideo/Fragments/WD-media-fragments-spec/#naming-track
+        // Track selection is denoted by the name track. Multiple track dimensions are allowed,
+        // so every occurrence is kept (unlike the "last occurrence wins" rule that applies to
+        // the temporal dimension below).
+        if (fragment.first == "track"_s) {
+            m_trackIdentifiers.append(fragment.second);
+            continue;
+        }
+
         // http://www.w3.org/2008/WebVideo/Fragments/WD-media-fragments-spec/#naming-time
-        // Temporal clipping is denoted by the name t, and specified as an interval with a begin 
+        // Temporal clipping is denoted by the name t, and specified as an interval with a begin
         // time and an end time
         if (fragment.first != "t"_s)
             continue;
@@ -259,7 +275,10 @@ bool MediaFragmentURIParser::parseNPTTime(std::span<const Latin1Character> timeS
     // npt-ss        =   2DIGIT      ; 0-59
 
     String digits1 = collectDigits(timeString, offset);
-    int value1 = parseInteger<int>(digits1).value_or(0);
+    auto parsedValue1 = parseInteger<int>(digits1);
+    if (!parsedValue1)
+        return false;
+    int value1 = *parsedValue1;
     if (offset >= timeString.size() || timeString[offset] == ',') {
         time = MediaTime::createWithDouble(value1);
         return true;
@@ -267,17 +286,12 @@ bool MediaFragmentURIParser::parseNPTTime(std::span<const Latin1Character> timeS
 
     MediaTime fraction;
     if (timeString[offset] == '.') {
-        if (offset == timeString.size())
-            return true;
         auto digits = collectFraction(timeString, offset);
         bool isValid;
         fraction = MediaTime::createWithDouble(digits.toDouble(isValid));
         time = MediaTime::createWithDouble(value1) + fraction;
         return true;
     }
-    
-    if (digits1.length() < 1)
-        return false;
 
     // Collect the next sequence of 0-9 after ':'
     if (offset >= timeString.size() || timeString[offset++] != ':')
@@ -322,7 +336,7 @@ bool MediaFragmentURIParser::parseNPTTime(std::span<const Latin1Character> timeS
         fraction = MediaTime::createWithDouble(collectFraction(timeString, offset).toDouble(isValid));
     }
     
-    time = MediaTime::createWithDouble((value1 * secondsPerHour) + (value2 * secondsPerMinute) + value3) + fraction;
+    time = MediaTime::createWithDouble(value1 * 3600.0 + value2 * 60.0 + value3) + fraction;
     return true;
 }
 

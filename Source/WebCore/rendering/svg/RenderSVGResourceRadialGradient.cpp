@@ -22,6 +22,7 @@
 #include "config.h"
 #include "RenderSVGResourceRadialGradient.h"
 
+#include "RenderObjectNode.h"
 #include "RenderSVGModelObjectInlines.h"
 #include "RenderSVGResourceRadialGradientInlines.h"
 #include "RenderSVGShape.h"
@@ -32,7 +33,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderSVGResourceRadialGradient);
 
-RenderSVGResourceRadialGradient::RenderSVGResourceRadialGradient(SVGRadialGradientElement& element, RenderStyle&& style)
+RenderSVGResourceRadialGradient::RenderSVGResourceRadialGradient(SVGRadialGradientElement& element, Style::ComputedStyle&& style)
     : RenderSVGResourceGradient(Type::SVGResourceRadialGradient, element, WTF::move(style))
 {
 }
@@ -45,14 +46,13 @@ void RenderSVGResourceRadialGradient::collectGradientAttributesIfNeeded()
         return;
 
     Ref radialGradientElement = this->radialGradientElement();
-    radialGradientElement->synchronizeAllAttributes();
 
     auto attributes = RadialGradientAttributes { };
     if (radialGradientElement->collectGradientAttributes(attributes))
         m_attributes = WTF::move(attributes);
 }
 
-RefPtr<Gradient> RenderSVGResourceRadialGradient::createGradient(const RenderStyle& style)
+RefPtr<Gradient> RenderSVGResourceRadialGradient::createGradient(const Style::ComputedStyle& style)
 {
     if (!m_attributes)
         return nullptr;

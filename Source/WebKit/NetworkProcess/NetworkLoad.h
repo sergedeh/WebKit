@@ -54,7 +54,8 @@ public:
         return adoptRef(*new NetworkLoad(networkLoadClient, WTF::move(networkLoadParameters), networkSession));
     }
 
-    template<typename CreateTaskCallback> static Ref<NetworkLoad> create(NetworkLoadClient& networkLoadClient, NetworkSession& networkSession, NOESCAPE const CreateTaskCallback& createTask)
+    using CreateTaskCallback = Function<RefPtr<NetworkDataTask>(NetworkLoad&)>;
+    static Ref<NetworkLoad> create(NetworkLoadClient& networkLoadClient, NetworkSession& networkSession, NOESCAPE const CreateTaskCallback& createTask)
     {
         return adoptRef(*new NetworkLoad(networkLoadClient, networkSession, createTask));
     }
@@ -67,43 +68,37 @@ public:
 
     bool isAllowedToAskUserForCredentials() const;
 
-    const WebCore::ResourceRequest& currentRequest() const { return m_currentRequest; }
+    const WebCore::ResourceRequest& currentRequest() const LIFETIME_BOUND { return m_currentRequest; }
     void updateRequestAfterRedirection(WebCore::ResourceRequest&) const;
     void reprioritizeRequest(WebCore::ResourceLoadPriority);
 
-    const NetworkLoadParameters& parameters() const { return m_parameters; }
-    const URL& url() const { return parameters().request.url(); }
+    const NetworkLoadParameters& parameters() const LIFETIME_BOUND { return m_parameters; }
+    const URL& url() const LIFETIME_BOUND { return parameters().request.url(); }
     String attributedBundleIdentifier(WebPageProxyIdentifier);
 
     void convertTaskToDownload(PendingDownload&, const WebCore::ResourceRequest&, const WebCore::ResourceResponse&, ResponseCompletionHandler&&);
-    void setPendingDownloadID(DownloadID);
+    void LEGACY_NODELETE setPendingDownloadID(DownloadID);
     void setSuggestedFilename(const String&);
-    void setPendingDownload(PendingDownload&);
-    std::optional<DownloadID> pendingDownloadID() { return protectedTask()->pendingDownloadID(); }
+    void LEGACY_NODELETE setPendingDownload(PendingDownload&);
+    std::optional<DownloadID> pendingDownloadID() { return m_task->pendingDownloadID(); }
 
     bool shouldCaptureExtraNetworkLoadMetrics() const final;
 
     String description() const;
-    void setH2PingCallback(const URL&, CompletionHandler<void(Expected<WTF::Seconds, WebCore::ResourceError>&&)>&&);
+    void setH2PingCallback(const URL&, CompletionHandler<void(std::expected<WTF::Seconds, WebCore::ResourceError>&&)>&&);
 
     void setTimingAllowFailedFlag();
-    std::optional<WebCore::FrameIdentifier> webFrameID() const;
-    std::optional<WebCore::PageIdentifier> webPageID() const;
-    Ref<NetworkProcess> networkProcess();
+    std::optional<WebCore::FrameIdentifier> LEGACY_NODELETE webFrameID() const;
+    std::optional<WebCore::PageIdentifier> LEGACY_NODELETE webPageID() const;
+    Ref<NetworkProcess> LEGACY_NODELETE networkProcess();
 
-    size_t bytesTransferredOverNetwork() const;
+    size_t LEGACY_NODELETE bytesTransferredOverNetwork() const;
 
     void clearClient() { m_client = nullptr; }
 
 private:
     NetworkLoad(NetworkLoadClient&, NetworkLoadParameters&&, NetworkSession&);
-
-    template<typename CreateTaskCallback> NetworkLoad(NetworkLoadClient& client, NetworkSession& networkSession, NOESCAPE const CreateTaskCallback& createTask)
-        : m_client(client)
-        , m_networkProcess(networkSession.networkProcess())
-        , m_task(createTask(*this))
-    {
-    }
+    NetworkLoad(NetworkLoadClient&, NetworkSession&, NOESCAPE const CreateTaskCallback&);
 
     // NetworkDataTaskClient
     void willPerformHTTPRedirection(WebCore::ResourceResponse&&, WebCore::ResourceRequest&&, RedirectCompletionHandler&&) final;
@@ -118,8 +113,9 @@ private:
     void wasBlockedByRestrictions() final;
     void wasBlockedByDisabledFTP() final;
     void didNegotiateModernTLS(const URL&) final;
-
-    RefPtr<NetworkDataTask> protectedTask();
+#if ENABLE(INSPECTOR_NETWORK_THROTTLING)
+    void emulatedConditionsDidChange() final;
+#endif // ENABLE(INSPECTOR_NETWORK_THROTTLING)
 
     void notifyDidReceiveResponse(WebCore::ResourceResponse&&, NegotiatedLegacyTLS, PrivateRelayed, ResponseCompletionHandler&&);
 
@@ -131,6 +127,11 @@ private:
 
     // FIXME: Deduplicate this with NetworkDataTask's m_previousRequest.
     WebCore::ResourceRequest m_currentRequest; // Updated on redirects.
+
+#if ENABLE(INSPECTOR_NETWORK_THROTTLING)
+    class ConditionEmulator;
+    std::unique_ptr<ConditionEmulator> m_conditionEmulator;
+#endif // ENABLE(INSPECTOR_NETWORK_THROTTLING)
 };
 
 } // namespace WebKit

@@ -26,12 +26,16 @@
 #include "config.h"
 #include "ReadableByteStreamController.h"
 
+#include "JSDOMConvertAny.h"
+#include "JSDOMConvertBufferSource.h"
+#include "JSDOMConvertNullable.h"
 #include "JSDOMException.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDOMPromise.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JSReadableByteStreamController.h"
 #include "JSReadableStreamReadResult.h"
+#include "JSValueInWrappedObjectInlines.h"
 #include "ReadableStream.h"
 #include "ReadableStreamBYOBReader.h"
 #include "ReadableStreamBYOBRequest.h"
@@ -69,14 +73,19 @@ Ref<DOMPromise> getAlgorithmPromise(JSDOMGlobalObject& globalObject, RefPtr<Algo
     return algorithmPromise.releaseNonNull();
 }
 
-ReadableByteStreamController::ReadableByteStreamController(ReadableStream& stream, JSC::JSValue underlyingSource, RefPtr<UnderlyingSourcePullCallback>&& pullAlgorithm, RefPtr<UnderlyingSourceCancelCallback>&& cancelAlgorithm, double highWaterMark, size_t autoAllocateChunkSize)
+ReadableByteStreamController::ReadableByteStreamController(JSDOMGlobalObject& globalObject, ReadableStream& stream, JSC::JSValue underlyingSource, RefPtr<UnderlyingSourcePullCallback>&& pullAlgorithm, RefPtr<UnderlyingSourceCancelCallback>&& cancelAlgorithm, double highWaterMark, size_t autoAllocateChunkSize)
     : m_stream(stream)
     , m_strategyHWM(highWaterMark)
-    , m_pullAlgorithm(WTF::move(pullAlgorithm))
-    , m_cancelAlgorithm(WTF::move(cancelAlgorithm))
     , m_autoAllocateChunkSize(autoAllocateChunkSize)
-    , m_underlyingSource(underlyingSource)
 {
+    {
+        Locker lock(m_gcLock);
+        m_pullAlgorithm = WTF::move(pullAlgorithm);
+        m_cancelAlgorithm = WTF::move(cancelAlgorithm);
+    }
+
+    m_underlyingSource.set(globalObject, &globalObject, underlyingSource);
+
     m_pullAlgorithmWrapper =  [](auto& globalObject, auto& controller) {
         return getAlgorithmPromise(globalObject, controller.m_pullAlgorithm, controller.m_underlyingSource.getValue(), controller);
     };
@@ -107,14 +116,15 @@ void ReadableByteStreamController::deref()
     m_stream->deref();
 }
 
+void ReadableByteStreamController::stop()
+{
+    m_storedError.clear();
+    clearAlgorithms();
+}
+
 ReadableStream& ReadableByteStreamController::stream()
 {
     return m_stream;
-}
-
-Ref<ReadableStream> ReadableByteStreamController::protectedStream()
-{
-    return stream();
 }
 
 // https://streams.spec.whatwg.org/#rbs-controller-byob-request
@@ -135,10 +145,10 @@ ExceptionOr<void> ReadableByteStreamController::closeForBindings(JSDOMGlobalObje
     if (m_closeRequested)
         return Exception { ExceptionCode::TypeError, "controller is closed"_s };
 
-    if (protectedStream()->state() != ReadableStream::State::Readable)
+    if (protect(stream())->state() != ReadableStream::State::Readable)
         return Exception { ExceptionCode::TypeError, "controller's stream is not readable"_s };
 
-    close(globalObject);
+    close(globalObject, ShouldThrowOnError::Yes);
     return { };
 }
 
@@ -155,7 +165,7 @@ ExceptionOr<void> ReadableByteStreamController::enqueueForBindings(JSDOMGlobalOb
     if (m_closeRequested)
         return Exception { ExceptionCode::TypeError, "controller is closed"_s };
 
-    if (protectedStream()->state() != ReadableStream::State::Readable)
+    if (protect(stream())->state() != ReadableStream::State::Readable)
         return Exception { ExceptionCode::TypeError, "controller's stream is not readable"_s };
 
     return enqueue(globalObject, chunk);
@@ -173,13 +183,8 @@ ReadableStreamBYOBRequest* ReadableByteStreamController::getByobRequest() const
 {
     if (!m_byobRequest && !m_pendingPullIntos.isEmpty()) {
         auto& firstDescriptor = m_pendingPullIntos.first();
-        auto view = JSC::Uint8Array::create(firstDescriptor.buffer.ptr(), firstDescriptor.byteOffset + firstDescriptor.bytesFilled, firstDescriptor.byteLength - firstDescriptor.bytesFilled);
-        Ref byobRequest = ReadableStreamBYOBRequest::create();
-
-        byobRequest->setController(const_cast<ReadableByteStreamController*>(this));
-        byobRequest->setView(view.ptr());
-
-        m_byobRequest = WTF::move(byobRequest);
+        Ref view = JSC::Uint8Array::create(firstDescriptor.buffer.ptr(), firstDescriptor.byteOffset + firstDescriptor.bytesFilled, firstDescriptor.byteLength - firstDescriptor.bytesFilled);
+        m_byobRequest = ReadableStreamBYOBRequest::create(*const_cast<ReadableByteStreamController*>(this), WTF::move(view));
     }
 
     return m_byobRequest.get();
@@ -217,7 +222,7 @@ ExceptionOr<void> ReadableByteStreamController::start(JSDOMGlobalObject& globalO
         startPromise = DOMPromise::create(globalObject, *promise);
     }
 
-    handleSourcePromise(*startPromise, [weakThis = WeakPtr { *this }](auto& globalObject, auto&& error) {
+    handleSourcePromise(globalObject, *startPromise, [weakThis = WeakPtr { *this }](auto& globalObject, auto&& error) {
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis)
             return;
@@ -243,7 +248,12 @@ void ReadableByteStreamController::didStart(JSDOMGlobalObject& globalObject)
 // Part of https://streams.spec.whatwg.org/#readablestream-close
 void ReadableByteStreamController::closeAndRespondToPendingPullIntos(JSDOMGlobalObject& globalObject)
 {
-    close(globalObject);
+    auto& vm = globalObject.vm();
+    JSC::JSLockHolder lock(vm);
+
+    if (!close(globalObject, ShouldThrowOnError::No))
+        return;
+
     while (!m_pendingPullIntos.isEmpty())
         respond(globalObject, 0);
 }
@@ -323,7 +333,7 @@ size_t ReadableByteStreamController::pullFromBytes(JSDOMGlobalObject& globalObje
 // https://streams.spec.whatwg.org/#readable-byte-stream-controller-enqueue
 ExceptionOr<void> ReadableByteStreamController::enqueue(JSDOMGlobalObject& globalObject, JSC::ArrayBufferView& view)
 {
-    if (m_closeRequested || protectedStream()->state() != ReadableStream::State::Readable)
+    if (m_closeRequested || protect(stream())->state() != ReadableStream::State::Readable)
         return { };
 
     RefPtr buffer = view.possiblySharedBuffer();
@@ -335,7 +345,7 @@ ExceptionOr<void> ReadableByteStreamController::enqueue(JSDOMGlobalObject& globa
 
 ExceptionOr<void> ReadableByteStreamController::enqueue(JSDOMGlobalObject& globalObject, JSC::ArrayBuffer& buffer)
 {
-    if (m_closeRequested || protectedStream()->state() != ReadableStream::State::Readable)
+    if (m_closeRequested || protect(stream())->state() != ReadableStream::State::Readable)
         return { };
 
     if (buffer.isDetached())
@@ -346,7 +356,7 @@ ExceptionOr<void> ReadableByteStreamController::enqueue(JSDOMGlobalObject& globa
 
 ExceptionOr<void> ReadableByteStreamController::enqueue(JSDOMGlobalObject& globalObject, JSC::ArrayBuffer& buffer, size_t byteOffset, size_t byteLength)
 {
-    ASSERT(!m_closeRequested && protectedStream()->state() == ReadableStream::State::Readable);
+    ASSERT(!m_closeRequested && protect(stream())->state() == ReadableStream::State::Readable);
     ASSERT(!buffer.isDetached());
 
     Ref vm = globalObject.vm();
@@ -393,7 +403,7 @@ ExceptionOr<void> ReadableByteStreamController::enqueue(JSDOMGlobalObject& globa
         for (auto& pullInto : filledPullIntos)
             commitPullIntoDescriptor(globalObject, pullInto);
     } else {
-        ASSERT(!protectedStream()->isLocked());
+        ASSERT(!stream->isLocked());
         enqueueChunkToQueue(transferredBufferOrException.releaseReturnValue(), byteOffset, byteLength);
     }
 
@@ -404,7 +414,7 @@ ExceptionOr<void> ReadableByteStreamController::enqueue(JSDOMGlobalObject& globa
 // https://streams.spec.whatwg.org/#abstract-opdef-readablebytestreamcontrollerprocessreadrequestsusingqueue
 void ReadableByteStreamController::processReadRequestsUsingQueue(JSDOMGlobalObject& globalObject)
 {
-    RefPtr reader = protectedStream()->defaultReader();
+    RefPtr reader = stream().defaultReader();
 
     ASSERT(reader);
 
@@ -424,8 +434,8 @@ void ReadableByteStreamController::invalidateByobRequest()
     if (!byobRequest)
         return;
 
-    byobRequest->setController(nullptr);
-    byobRequest->setView(nullptr);
+    byobRequest->clearController();
+    byobRequest->clearView();
     m_byobRequest = nullptr;
 }
 
@@ -502,7 +512,7 @@ void ReadableByteStreamController::callPullIfNeeded(JSDOMGlobalObject& globalObj
     m_pulling = true;
 
     auto promise = m_pullAlgorithmWrapper(globalObject, *this);
-    handleSourcePromise(promise, [weakThis = WeakPtr { *this }](auto& globalObject, auto&& error) {
+    handleSourcePromise(globalObject, promise, [weakThis = WeakPtr { *this }](auto& globalObject, auto&& error) {
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis)
             return;
@@ -523,7 +533,7 @@ void ReadableByteStreamController::callPullIfNeeded(JSDOMGlobalObject& globalObj
 // https://streams.spec.whatwg.org/#readable-byte-stream-controller-should-call-pull
 bool ReadableByteStreamController::shouldCallPull()
 {
-    if (protectedStream()->state() != ReadableStream::State::Readable)
+    if (protect(stream())->state() != ReadableStream::State::Readable)
         return false;
 
     if (m_closeRequested)
@@ -532,11 +542,11 @@ bool ReadableByteStreamController::shouldCallPull()
     if (!m_started)
         return false;
 
-    RefPtr defaultReader = protectedStream()->defaultReader();
+    RefPtr defaultReader = stream().defaultReader();
     if (defaultReader && defaultReader->getNumReadRequests() > 0)
         return true;
 
-    RefPtr byobReader = protectedStream()->byobReader();
+    RefPtr byobReader = stream().byobReader();
     if (byobReader && byobReader->readIntoRequestsSize() > 0)
         return true;
 
@@ -669,12 +679,15 @@ void ReadableByteStreamController::clearPendingPullIntos()
 // https://streams.spec.whatwg.org/#readable-byte-stream-controller-clear-algorithms
 void ReadableByteStreamController::clearAlgorithms()
 {
+    m_underlyingSource.clear();
+
+    Locker lock(m_gcLock);
     m_pullAlgorithm = nullptr;
     m_cancelAlgorithm = nullptr;
 }
 
 // https://streams.spec.whatwg.org/#readable-byte-stream-controller-pull-into
-void ReadableByteStreamController::pullInto(JSDOMGlobalObject& globalObject, JSC::ArrayBufferView& view, size_t min, Ref<ReadableStreamReadIntoRequest>&& readIntoRequest)
+void ReadableByteStreamController::pullInto(JSDOMGlobalObject& globalObject, JSC::ArrayBufferView& view, uint64_t min, Ref<ReadableStreamReadIntoRequest>&& readIntoRequest)
 {
     Ref stream = m_stream.get();
     size_t elementSize = 1;
@@ -682,7 +695,7 @@ void ReadableByteStreamController::pullInto(JSDOMGlobalObject& globalObject, JSC
     if (viewType != JSC::TypedArrayType::TypeDataView)
         elementSize = JSC::elementSize(view.getType());
 
-    auto minimumFill = min * elementSize;
+    size_t minimumFill = min * elementSize;
     ASSERT(minimumFill <= view.byteLength());
     ASSERT(!(minimumFill % elementSize));
 
@@ -748,7 +761,7 @@ void ReadableByteStreamController::runCancelSteps(JSDOMGlobalObject& globalObjec
     m_queueTotalSize = 0;
 
     auto promise = m_cancelAlgorithmWrapper(globalObject, *this, reason);
-    handleSourcePromise(promise, [callback = WTF::move(callback)](auto&, auto&& reason) mutable {
+    handleSourcePromise(globalObject, promise, [callback = WTF::move(callback)](auto&, auto&& reason) mutable {
         callback(WTF::move(reason));
     });
 }
@@ -799,9 +812,8 @@ void ReadableByteStreamController::fillReadRequestFromQueue(JSDOMGlobalObject& g
 
 void ReadableByteStreamController::storeError(JSDOMGlobalObject& globalObject, JSC::JSValue error)
 {
-    Ref vm = globalObject.vm();
     auto thisValue = toJS(&globalObject, &globalObject, *this);
-    m_storedError.set(vm.get(), thisValue.getObject(), error);
+    m_storedError.set(globalObject, thisValue.getObject(), error);
 }
 
 JSC::JSValue ReadableByteStreamController::storedError() const
@@ -814,7 +826,7 @@ ExceptionOr<void> ReadableByteStreamController::respond(JSDOMGlobalObject& globa
 {
     ASSERT(!m_pendingPullIntos.isEmpty());
     auto& firstDescriptor = m_pendingPullIntos.first();
-    auto state = protectedStream()->state();
+    auto state = protect(stream())->state();
     if (state == ReadableStream::State::Closed) {
         if (bytesWritten > 0)
             return Exception { ExceptionCode::TypeError, "stream is closed"_s };
@@ -844,7 +856,7 @@ ExceptionOr<void> ReadableByteStreamController::respondWithNewView(JSDOMGlobalOb
     ASSERT(!view.isDetached());
 
     auto& firstDescriptor = m_pendingPullIntos.first();
-    auto state = protectedStream()->state();
+    auto state = protect(stream())->state();
     if (state == ReadableStream::State::Closed) {
         if (!!view.byteLength())
             return Exception { ExceptionCode::TypeError, "stream is closed"_s };
@@ -884,7 +896,7 @@ void ReadableByteStreamController::respondInternal(JSDOMGlobalObject& globalObje
     ASSERT(!firstDescriptor.buffer->isDetached());
     invalidateByobRequest();
 
-    auto state = protectedStream()->state();
+    auto state = protect(stream())->state();
     if (state == ReadableStream::State::Closed) {
         ASSERT(!bytesWritten);
         respondInClosedState(globalObject, firstDescriptor);
@@ -973,18 +985,22 @@ void ReadableByteStreamController::commitPullIntoDescriptor(JSDOMGlobalObject& g
 // https://streams.spec.whatwg.org/#readable-byte-stream-controller-handle-queue-drain
 void ReadableByteStreamController::handleQueueDrain(JSDOMGlobalObject& globalObject)
 {
-    ASSERT(protectedStream()->state() == ReadableStream::State::Readable);
+    ASSERT(protect(stream())->state() == ReadableStream::State::Readable);
 
     if (!m_queueTotalSize && m_closeRequested) {
         clearAlgorithms();
-        protectedStream()->close();
+        protect(stream())->close();
     } else
         callPullIfNeeded(globalObject);
 }
 
-void ReadableByteStreamController::handleSourcePromise(DOMPromise& algorithmPromise, Callback&& callback)
+void ReadableByteStreamController::handleSourcePromise(JSDOMGlobalObject& globalObject, DOMPromise& algorithmPromise, Callback&& callback)
 {
-    algorithmPromise.whenSettledWithResult([callback = WTF::move(callback)](auto* globalObject, bool isFulfilled, auto result) mutable {
+    // FIXME: Handle the suspended but not stopped case.
+    if (algorithmPromise.isSuspended())
+        return;
+    auto thisValue = toJS(&globalObject, &globalObject, *this);
+    DOMPromise::whenPromiseIsSettled(&globalObject, algorithmPromise.promise(), [callback = WTF::move(callback)](auto* globalObject, bool isFulfilled, auto result) mutable {
         RefPtr context = globalObject ? globalObject->scriptExecutionContext() : nullptr;
         if (!context || context->activeDOMObjectsAreSuspended() || context->activeDOMObjectsAreStopped())
             return;
@@ -993,24 +1009,40 @@ void ReadableByteStreamController::handleSourcePromise(DOMPromise& algorithmProm
             return;
         }
         callback(*globalObject, { });
-    });
+    }, thisValue.getObject());
 }
 
 template<typename Visitor>
-void ReadableByteStreamController::visitAdditionalChildren(Visitor& visitor)
+void ReadableByteStreamController::visitDirectChildrenInGCThread(Visitor& visitor)
 {
-    SUPPRESS_UNCOUNTED_ARG m_stream->visitAdditionalChildren(visitor);
+    m_underlyingSource.visitInGCThread(visitor);
+    m_storedError.visitInGCThread(visitor);
+
+    Locker lock(m_gcLock);
+    if (m_pullAlgorithm)
+        SUPPRESS_UNCOUNTED_ARG m_pullAlgorithm->visitJSFunctionInGCThread(visitor);
+    if (m_cancelAlgorithm)
+        SUPPRESS_UNCOUNTED_ARG m_cancelAlgorithm->visitJSFunctionInGCThread(visitor);
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(ReadableByteStreamController);
+template void ReadableByteStreamController::visitDirectChildrenInGCThread(JSC::AbstractSlotVisitor&);
+template void ReadableByteStreamController::visitDirectChildrenInGCThread(JSC::SlotVisitor&);
 
 template<typename Visitor>
-void JSReadableByteStreamController::visitAdditionalChildren(Visitor& visitor)
+void ReadableByteStreamController::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
-    // Do not ref `wrapped()` here since this function may get called on the GC thread.
-    SUPPRESS_UNCOUNTED_ARG wrapped().visitAdditionalChildren(visitor);
+    SUPPRESS_UNCOUNTED_ARG m_stream->visitAdditionalChildrenInGCThread(visitor);
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSReadableByteStreamController);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(ReadableByteStreamController);
+
+template<typename Visitor>
+void JSReadableByteStreamController::visitAdditionalChildrenInGCThread(Visitor& visitor)
+{
+    // Do not ref `wrapped()` here since this function may get called on a GC thread.
+    SUPPRESS_UNCOUNTED_ARG wrapped().visitAdditionalChildrenInGCThread(visitor);
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSReadableByteStreamController);
 
 } // namespace WebCore

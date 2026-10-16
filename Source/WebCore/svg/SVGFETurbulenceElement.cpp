@@ -24,8 +24,8 @@
 
 #include "NodeDocument.h"
 #include "NodeName.h"
-#include "NodeInlines.h"
 #include "SVGDocumentExtensions.h"
+#include "SVGElementTypeHelpers.h"
 #include "SVGNames.h"
 #include "SVGParserUtilities.h"
 #include "SVGPropertyOwnerRegistry.h"
@@ -37,7 +37,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGFETurbulenceElement);
 
 inline SVGFETurbulenceElement::SVGFETurbulenceElement(const QualifiedName& tagName, Document& document)
-    : SVGFilterPrimitiveStandardAttributes(tagName, document, makeUniqueRef<PropertyRegistry>(*this))
+    : SVGFilterPrimitiveStandardAttributes(tagName, document, PropertyRegistry::singleton())
 {
     ASSERT(hasTagName(SVGNames::feTurbulenceTag));
 
@@ -45,7 +45,7 @@ inline SVGFETurbulenceElement::SVGFETurbulenceElement(const QualifiedName& tagNa
     if (!didRegistration) [[unlikely]] {
         didRegistration = true;
         PropertyRegistry::registerProperty<SVGNames::baseFrequencyAttr, &SVGFETurbulenceElement::m_baseFrequencyX, &SVGFETurbulenceElement::m_baseFrequencyY>();
-        PropertyRegistry::registerProperty<SVGNames::numOctavesAttr, &SVGFETurbulenceElement::m_numOctaves>();
+        PropertyRegistry::registerProperty<SVGNames::numOctavesAttr, &SVGFETurbulenceElement::m_numOctaves>(initialOctavesValue);
         PropertyRegistry::registerProperty<SVGNames::seedAttr, &SVGFETurbulenceElement::m_seed>();
         PropertyRegistry::registerProperty<SVGNames::stitchTilesAttr, SVGStitchOptions, &SVGFETurbulenceElement::m_stitchTiles>();
         PropertyRegistry::registerProperty<SVGNames::typeAttr, TurbulenceType, &SVGFETurbulenceElement::m_type>();
@@ -60,37 +60,29 @@ Ref<SVGFETurbulenceElement> SVGFETurbulenceElement::create(const QualifiedName& 
 void SVGFETurbulenceElement::attributeChanged(const QualifiedName& name, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason attributeModificationReason)
 {
     switch (name.nodeName()) {
-    case AttributeNames::typeAttr: {
-        TurbulenceType propertyValue = SVGPropertyTraits<TurbulenceType>::fromString(*this, newValue);
-        if (propertyValue != TurbulenceType::Unknown)
-            Ref { m_type }->setBaseValInternal<TurbulenceType>(propertyValue);
+    case AttributeNames::typeAttr:
+        protect(m_type)->parseBaseVal<TurbulenceType>(*this, newValue);
         break;
-    }
-    case AttributeNames::stitchTilesAttr: {
-        SVGStitchOptions propertyValue = SVGPropertyTraits<SVGStitchOptions>::fromString(*this, newValue);
-        if (propertyValue > 0)
-            Ref { m_stitchTiles }->setBaseValInternal<SVGStitchOptions>(propertyValue);
+    case AttributeNames::stitchTilesAttr:
+        protect(m_stitchTiles)->parseBaseVal<SVGStitchOptions>(*this, newValue);
         break;
-    }
     case AttributeNames::baseFrequencyAttr:
         if (auto result = parseNumberOptionalNumber(newValue)) {
-            Ref { m_baseFrequencyX }->setBaseValInternal(result->first);
-            Ref { m_baseFrequencyY }->setBaseValInternal(result->second);
+            m_baseFrequencyX->setBaseValInternal(result->first);
+            m_baseFrequencyY->setBaseValInternal(result->second);
+        } else {
+            m_baseFrequencyX->setBaseValInternal(std::nullopt);
+            m_baseFrequencyY->setBaseValInternal(std::nullopt);
         }
         break;
     case AttributeNames::seedAttr:
-        Ref { m_seed }->setBaseValInternal(newValue.toFloat());
+        m_seed->setBaseValInternal(parseNumber(newValue));
         break;
     case AttributeNames::numOctavesAttr: {
         auto result = parseInteger<int>(newValue);
-        if (!result)
-            Ref { m_numOctaves }->setBaseValInternal(initialOctavesValue);
-        else {
-            Ref { m_numOctaves }->setBaseValInternal(*result);
-
-            if (*result <= 0)
-                protectedDocument()->checkedSVGExtensions()->reportWarning(makeString("feTurbulence: problem parsing numOctaves=\""_s, newValue, "\". numOctaves must be > 0. Filtered element will not be displayed."_s));
-        }
+        m_numOctaves->setBaseValInternal(result);
+        if (result && *result <= 0)
+            protect(protect(document())->svgExtensions())->reportWarning(makeString("feTurbulence: problem parsing numOctaves=\""_s, newValue, "\". numOctaves must be > 0. Filtered element will not be displayed."_s));
         break;
     }
     default:

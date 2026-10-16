@@ -26,6 +26,8 @@
 #import "config.h"
 #import "TextAlternativeWithRange.h"
 
+#import <wtf/cocoa/TypeCastsCocoa.h>
+
 #if USE(APPKIT)
 #import <AppKit/NSTextAlternatives.h>
 #elif PLATFORM(IOS_FAMILY)
@@ -46,11 +48,13 @@ TextAlternativeWithRange::TextAlternativeWithRange(PlatformTextAlternatives *tex
 void collectDictationTextAlternatives(NSAttributedString *string, Vector<TextAlternativeWithRange>& alternatives) {
     NSRange effectiveRange = NSMakeRange(0, 0);
     NSUInteger length = [string length];
+    if (!length)
+        return;
     do {
         RetainPtr<NSDictionary> attributes = [string attributesAtIndex:effectiveRange.location effectiveRange:&effectiveRange];
         if (!attributes)
             break;
-        RetainPtr<NSTextAlternatives> textAlternatives = [attributes objectForKey:NSTextAlternativesAttributeName];
+        RetainPtr textAlternatives = dynamic_objc_cast<NSTextAlternatives>([attributes objectForKey:NSTextAlternativesAttributeName]);
         if (textAlternatives)
             alternatives.append(TextAlternativeWithRange(textAlternatives.get(), effectiveRange));
         effectiveRange.location = NSMaxRange(effectiveRange);

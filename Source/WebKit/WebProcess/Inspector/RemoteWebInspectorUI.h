@@ -42,6 +42,7 @@
 namespace WebCore {
 class CertificateInfo;
 class FloatRect;
+struct DiagnosticLoggingDictionary;
 }
 
 namespace WebKit {
@@ -126,7 +127,7 @@ public:
 #if ENABLE(INSPECTOR_TELEMETRY)
     bool supportsDiagnosticLogging() override;
     bool diagnosticLoggingAvailable() override { return m_diagnosticLoggingAvailable; }
-    void logDiagnosticEvent(const String& eventName, const WebCore::DiagnosticLoggingClient::ValueDictionary&) override;
+    void logDiagnosticEvent(const String& eventName, const WebCore::DiagnosticLoggingDictionary&) override;
 #endif
         
 #if ENABLE(INSPECTOR_EXTENSIONS)
@@ -148,7 +149,6 @@ public:
 
 private:
     explicit RemoteWebInspectorUI(WebPage&);
-    const Ref<WebPage> protectedWebPage();
 
     WeakRef<WebPage> m_page;
     const Ref<WebCore::InspectorFrontendAPIDispatcher> m_frontendAPIDispatcher;

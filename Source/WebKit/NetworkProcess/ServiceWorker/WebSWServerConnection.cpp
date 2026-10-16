@@ -39,6 +39,7 @@
 #include "RemoteWorkerType.h"
 #include "SharedBufferReference.h"
 #include "SharedPreferencesForWebProcess.h"
+#include "WebFrameProxyFromNetworkProcessMessages.h"
 #include "WebProcess.h"
 #include "WebProcessMessages.h"
 #include "WebResourceLoaderMessages.h"
@@ -49,6 +50,7 @@
 #include <WebCore/CookieChangeSubscription.h>
 #include <WebCore/ExceptionData.h>
 #include <WebCore/LegacySchemeRegistry.h>
+#include <WebCore/MessagePortChannelRegistry.h>
 #include <WebCore/NotImplemented.h>
 #include <WebCore/NotificationData.h>
 #include <WebCore/SWServerRegistration.h>
@@ -60,6 +62,7 @@
 #include <WebCore/ServiceWorkerUpdateViaCache.h>
 #include <algorithm>
 #include <cstdint>
+#include <wtf/Borrow.h>
 #include <wtf/MainThread.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Vector.h>
@@ -74,6 +77,7 @@ using namespace WebCore;
 #define SWSERVERCONNECTION_RELEASE_LOG_ERROR(fmt, ...) RELEASE_LOG_ERROR(ServiceWorker, "%p - WebSWServerConnection::" fmt, this, ##__VA_ARGS__)
 
 #define MESSAGE_CHECK(assertion) MESSAGE_CHECK_BASE(assertion, m_contentConnection.get())
+#define MESSAGE_CHECK_WITH_RETURN_VALUE(assertion, value) MESSAGE_CHECK_WITH_RETURN_VALUE_BASE(assertion, m_contentConnection.get(), value)
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WebSWServerConnection);
 
@@ -103,22 +107,14 @@ WebSWServerConnection::~WebSWServerConnection()
         completionHandler(false);
 }
 
-NetworkProcess& WebSWServerConnection::networkProcess()
+NetworkProcess* WebSWServerConnection::networkProcess()
 {
-    return m_networkConnectionToWebProcess->networkProcess();
-}
-
-Ref<NetworkProcess> WebSWServerConnection::protectedNetworkProcess()
-{
-    return networkProcess();
+    return m_networkConnectionToWebProcess ? &m_networkConnectionToWebProcess->networkProcess() : nullptr;
 }
 
 std::optional<SharedPreferencesForWebProcess> WebSWServerConnection::sharedPreferencesForWebProcess() const
 {
-    if (!m_networkConnectionToWebProcess)
-        return std::nullopt;
-
-    return m_networkConnectionToWebProcess->sharedPreferencesForWebProcess();
+    return m_networkConnectionToWebProcess ? m_networkConnectionToWebProcess->sharedPreferencesForWebProcess() : std::nullopt;
 }
 
 void WebSWServerConnection::rejectJobInClient(ServiceWorkerJobIdentifier jobIdentifier, const ExceptionData& exceptionData)
@@ -234,7 +230,7 @@ void WebSWServerConnection::controlClient(const NetworkResourceLoadParameters& p
 
     auto ancestorOrigins = map(parameters.frameAncestorOrigins, [](auto& origin) { return origin->toString(); });
     auto advancedPrivacyProtections = server->advancedPrivacyProtectionsFromClient(registration.key().clientOrigin());
-    ServiceWorkerClientData data { clientIdentifier, clientType, ServiceWorkerClientFrameType::None, request.url(), URL(), parameters.webPageID, parameters.webFrameID, request.isAppInitiated() ? WebCore::LastNavigationWasAppInitiated::Yes : WebCore::LastNavigationWasAppInitiated::No, advancedPrivacyProtections, false, false, 0, WTF::move(ancestorOrigins) };
+    ServiceWorkerClientData data { clientIdentifier, clientType, ServiceWorkerClientFrameType::None, request.url(), URL(), parameters.webPageID, parameters.webFrameID, request.isAppInitiated() ? WebCore::LastNavigationWasAppInitiated::Yes : WebCore::LastNavigationWasAppInitiated::No, advancedPrivacyProtections, false, false, 0, WTF::move(ancestorOrigins), parameters.globalPrivacyControlEnabled };
 
     registerServiceWorkerClientInternal(ClientOrigin { registration.key().topOrigin(), SecurityOriginData::fromURLWithoutStrictOpaqueness(request.url()) }, WTF::move(data), registration.identifier(), request.httpUserAgent(), WebCore::SWServer::IsBeingCreatedClient::Yes);
 }
@@ -243,7 +239,7 @@ RefPtr<ServiceWorkerFetchTask> WebSWServerConnection::createFetchTask(NetworkRes
 {
     if (loader.parameters().serviceWorkersMode == ServiceWorkersMode::None) {
         if (loader.parameters().request.requester() == ResourceRequestRequester::Fetch && isNavigationRequest(loader.parameters().options.destination)) {
-            if (auto task = ServiceWorkerFetchTask::fromNavigationPreloader(*this, loader, request, checkedSession().get()))
+            if (auto task = ServiceWorkerFetchTask::fromNavigationPreloader(*this, loader, request, protect(session()).get()))
                 return task;
         }
         return nullptr;
@@ -258,8 +254,8 @@ RefPtr<ServiceWorkerFetchTask> WebSWServerConnection::createFetchTask(NetworkRes
 
     std::optional<ServiceWorkerRegistrationIdentifier> serviceWorkerRegistrationIdentifier;
     if (auto resultingClientIdentifier = loader.parameters().options.resultingClientIdentifier) {
-        auto topOrigin = loader.parameters().isMainFrameNavigation ? SecurityOriginData::fromURLWithoutStrictOpaqueness(request.url()) : loader.parameters().topOrigin->data();
-        RefPtr registration = doRegistrationMatching(topOrigin, request.url());
+        auto topOrigin = loader.parameters().topOriginForServiceWorkers(request);
+        RefPtr registration = server->doRegistrationMatchingSync(topOrigin, request.url());
         if (!registration)
             return nullptr;
 
@@ -326,18 +322,19 @@ RefPtr<ServiceWorkerFetchTask> WebSWServerConnection::createFetchTask(NetworkRes
     }
 
     bool isWorkerReady = worker->isRunning() && worker->state() == ServiceWorkerState::Activated;
-    Ref task = ServiceWorkerFetchTask::create(*this, loader, ResourceRequest { request }, identifier(), worker->identifier(), *registration, checkedSession().get(), isWorkerReady, shouldRaceNetworkAndFetchHandler);
+    Ref task = ServiceWorkerFetchTask::create(*this, loader, ResourceRequest { request }, identifier(), worker->identifier(), *registration, protect(session()).get(), isWorkerReady, shouldRaceNetworkAndFetchHandler);
     startFetch(task, *worker);
     return task;
 }
 
 void WebSWServerConnection::startFetch(ServiceWorkerFetchTask& task, SWServerWorker& worker)
 {
-    auto runServerWorkerAndStartFetch = [weakThis = WeakPtr { *this }, task = WeakPtr { task }](bool success) mutable {
+    auto runServerWorkerAndStartFetch = [weakThis = WeakPtr { *this }, weakTask = WeakPtr { task }](bool success) mutable {
+        RefPtr task = weakTask;
         if (!task)
             return;
 
-        RefPtr protectedThis = weakThis.get();
+        RefPtr protectedThis = weakThis;
         if (!protectedThis) {
             task->cannotHandle();
             return;
@@ -360,7 +357,7 @@ void WebSWServerConnection::startFetch(ServiceWorkerFetchTask& task, SWServerWor
         }
 
         if (!worker->contextConnection())
-            server->createContextConnection(worker->topSite(), worker->serviceWorkerPageIdentifier());
+            server->createContextConnection(worker->topSite(), worker->serviceWorkerPageIdentifier(), worker->crossOriginEmbedderPolicy().value);
 
         auto identifier = *task->serviceWorkerIdentifier();
         server->runServiceWorkerIfNecessary(identifier, [weakThis = WTF::move(weakThis), task = WTF::move(task)](auto* contextConnection) mutable {
@@ -374,7 +371,7 @@ void WebSWServerConnection::startFetch(ServiceWorkerFetchTask& task, SWServerWor
             }
 
             if (!contextConnection) {
-                SWSERVERCONNECTION_RELEASE_LOG_ERROR_WITH_THIS(protectedThis, "startFetch: fetchIdentifier=%s DidNotHandle because failed to run service worker", task->fetchIdentifier().loggingString().utf8().data());
+                SWSERVERCONNECTION_RELEASE_LOG_ERROR_WITH_THIS(protectedThis, "startFetch: fetchIdentifier=%s DidNotHandle because failed to run service worker", task->fetchIdentifier().loggingString().utf8());
                 task->cannotHandle();
                 return;
             }
@@ -386,7 +383,7 @@ void WebSWServerConnection::startFetch(ServiceWorkerFetchTask& task, SWServerWor
     worker.whenActivated(WTF::move(runServerWorkerAndStartFetch));
 }
 
-void WebSWServerConnection::postMessageToServiceWorker(ServiceWorkerIdentifier destinationIdentifier, MessageWithMessagePorts&& message, const ServiceWorkerOrClientIdentifier& sourceIdentifier)
+void WebSWServerConnection::postMessageToServiceWorker(ServiceWorkerIdentifier destinationIdentifier, MessageWithMessagePorts&& message, const ServiceWorkerOrClientIdentifier& sourceIdentifier, Vector<URL>&& blobURLs)
 {
     RefPtr server = this->server();
     if (!server)
@@ -408,16 +405,36 @@ void WebSWServerConnection::postMessageToServiceWorker(ServiceWorkerIdentifier d
     if (!sourceData)
         return;
 
+    CompletionHandlerCallingScope blobURLsInFlight;
+    if (RefPtr connection = m_networkConnectionToWebProcess.get())
+        blobURLsInFlight = connection->retainBlobURLsWhileMessageIsInFlight(blobURLs);
+
     // It's possible this specific worker cannot be re-run (e.g. its registration has been removed)
-    server->runServiceWorkerIfNecessary(destinationIdentifier, [destinationIdentifier, message = WTF::move(message), sourceData = WTF::move(*sourceData)](auto* contextConnection) mutable {
-        if (contextConnection)
+    server->runServiceWorkerIfNecessary(destinationIdentifier, [protectedThis = Ref { *this }, destinationIdentifier, message = WTF::move(message), sourceData = WTF::move(*sourceData), blobURLsInFlight = WTF::move(blobURLsInFlight)](auto* contextConnection) mutable {
+        if (!contextConnection)
+            return;
+
+        // PostMessageToServiceWorker follows a different flow than normal MessagePort post message.
+        // We pre-record the destination so impending message checks pass.
+        RefPtr networkProcess = protectedThis->networkProcess();
+        if (!networkProcess)
+            return;
+        CheckedRef registry = networkProcess->messagePortChannelRegistry();
+        for (auto& transferredPort : borrow(message.transferredPorts))
+            registry->recordPendingTransferDestination(transferredPort.first, contextConnection->webProcessIdentifier());
+
+        if (!blobURLsInFlight) {
             sendToContextProcess(*contextConnection, Messages::WebSWContextManagerConnection::PostMessageToServiceWorker { destinationIdentifier, WTF::move(message), WTF::move(sourceData) });
+            return;
+        }
+        Ref { downcast<WebSWServerToContextConnection>(*contextConnection) }->sendWithAsyncReply(Messages::WebSWContextManagerConnection::PostMessageToServiceWorkerAndNotifyWhenDispatched { destinationIdentifier, WTF::move(message), WTF::move(sourceData) }, [blobURLsInFlight = WTF::move(blobURLsInFlight)] { });
     });
 }
 
 void WebSWServerConnection::scheduleJobInServer(ServiceWorkerJobData&& jobData)
 {
-    checkTopOrigin(jobData.topOrigin);
+    if (!checkTopOrigin(jobData.topOrigin))
+        return;
 
     ASSERT(!jobData.scopeURL.isNull());
     if (jobData.scopeURL.isNull()) {
@@ -425,7 +442,7 @@ void WebSWServerConnection::scheduleJobInServer(ServiceWorkerJobData&& jobData)
         return;
     }
 
-    SWSERVERCONNECTION_RELEASE_LOG("Scheduling ServiceWorker job %s in server", jobData.identifier().loggingString().utf8().data());
+    SWSERVERCONNECTION_RELEASE_LOG("Scheduling ServiceWorker job %s in server", jobData.identifier().loggingString().utf8());
     ASSERT(identifier() == jobData.connectionIdentifier());
 
     if (RefPtr server = this->server())
@@ -478,49 +495,67 @@ void WebSWServerConnection::scheduleUnregisterJobInServer(ServiceWorkerJobIdenti
     server->scheduleUnregisterJob(ServiceWorkerJobDataIdentifier { identifier(), jobIdentifier }, *registration, contextIdentifier, WTF::move(clientURL));
 }
 
-void WebSWServerConnection::postMessageToServiceWorkerClient(ScriptExecutionContextIdentifier destinationContextIdentifier, const MessageWithMessagePorts& message, ServiceWorkerIdentifier sourceIdentifier, const SecurityOriginData& sourceOrigin)
+void WebSWServerConnection::postMessageToServiceWorkerClient(ScriptExecutionContextIdentifier destinationContextIdentifier, const MessageWithMessagePorts& message, ServiceWorkerIdentifier sourceIdentifier, const SecurityOriginData& sourceOrigin, CompletionHandlerCallingScope&& blobURLsInFlight)
 {
     RefPtr server = this->server();
     if (!server)
         return;
 
-    server->postMessageToServiceWorkerClient(destinationContextIdentifier, message, sourceIdentifier, sourceOrigin, [protectedThis = Ref { *this }] (auto destinationContextIdentifier, auto& message, auto sourceServiceWorkerData, auto& sourceOrigin) {
-        protectedThis->send(Messages::WebSWClientConnection::PostMessageToServiceWorkerClient { destinationContextIdentifier, message, sourceServiceWorkerData, sourceOrigin }, 0);
+    // FIXME: When the destination client is still being created, SWServer::postMessageToServiceWorkerClient queues the
+    // message in m_clientsToBeCreatedById without invoking this callback, so blobURLsInFlight is destroyed here rather
+    // than once releaseServiceWorkerClientPendingMessage has flushed the message to the client.
+    server->postMessageToServiceWorkerClient(destinationContextIdentifier, message, sourceIdentifier, sourceOrigin, [protectedThis = Ref { *this }, &blobURLsInFlight] (auto destinationContextIdentifier, auto& message, auto sourceServiceWorkerData, auto& sourceOrigin) {
+        // PostMessageToServiceWorkerClient follows a different flow than normal MessagePort post message.
+        // We pre-record the destination so impending message checks pass.
+        RefPtr networkProcess = protectedThis->networkProcess();
+        if (!networkProcess)
+            return;
+        CheckedRef registry = networkProcess->messagePortChannelRegistry();
+        for (auto& transferredPort : borrow(message.transferredPorts))
+            registry->recordPendingTransferDestination(transferredPort.first, destinationContextIdentifier.processIdentifier());
+        if (!blobURLsInFlight) {
+            protectedThis->send(Messages::WebSWClientConnection::PostMessageToServiceWorkerClient { destinationContextIdentifier, message, sourceServiceWorkerData, sourceOrigin }, 0);
+            return;
+        }
+        protectedThis->sendWithAsyncReply(Messages::WebSWClientConnection::PostMessageToServiceWorkerClientAndNotifyWhenDispatched { destinationContextIdentifier, message, sourceServiceWorkerData, sourceOrigin }, [blobURLsInFlight = WTF::move(blobURLsInFlight)] { }, 0);
     });
 }
 
 void WebSWServerConnection::matchRegistration(const SecurityOriginData& topOrigin, const URL& clientURL, CompletionHandler<void(std::optional<ServiceWorkerRegistrationData>&&)>&& callback)
 {
-    checkTopOrigin(topOrigin);
-
-    if (RefPtr registration = doRegistrationMatching(topOrigin, clientURL)) {
-        callback(registration->data());
+    if (!checkTopOrigin(topOrigin))
         return;
-    }
-    callback({ });
+
+    doRegistrationMatching(topOrigin, clientURL, WTF::move(callback));
 }
 
 void WebSWServerConnection::whenRegistrationReady(const WebCore::SecurityOriginData& topOrigin, const URL& clientURL, CompletionHandler<void(std::optional<WebCore::ServiceWorkerRegistrationData>&&)>&& callback)
 {
-    checkTopOrigin(topOrigin);
+    if (!checkTopOrigin(topOrigin))
+        return;
 
     SWServer::Connection::whenRegistrationReady(topOrigin, clientURL, WTF::move(callback));
 }
 
 void WebSWServerConnection::getRegistrations(const SecurityOriginData& topOrigin, const URL& clientURL, CompletionHandler<void(const Vector<ServiceWorkerRegistrationData>&)>&& callback)
 {
-    checkTopOrigin(topOrigin);
+    if (!checkTopOrigin(topOrigin))
+        return;
 
-    if (RefPtr server = this->server())
-        callback(server->getRegistrations(topOrigin, clientURL));
-    else
-        callback({ });
+    RefPtr server = this->server();
+    if (!server)
+        return callback({ });
+
+    server->getRegistrations(topOrigin, clientURL, [callback = WTF::move(callback)](auto&& registrations) mutable {
+        callback(registrations);
+    });
 }
 
 void WebSWServerConnection::registerServiceWorkerClient(WebCore::ClientOrigin&& clientOrigin, ServiceWorkerClientData&& data, const std::optional<ServiceWorkerRegistrationIdentifier>& controllingServiceWorkerRegistrationIdentifier, String&& userAgent)
 {
     MESSAGE_CHECK(data.identifier.processIdentifier() == identifier());
-    checkTopOrigin(clientOrigin.topOrigin);
+    if (!checkTopOrigin(clientOrigin.topOrigin))
+        return;
 
     registerServiceWorkerClientInternal(WTF::move(clientOrigin), WTF::move(data), controllingServiceWorkerRegistrationIdentifier, WTF::move(userAgent), SWServer::IsBeingCreatedClient::No);
 }
@@ -543,8 +578,6 @@ void WebSWServerConnection::registerServiceWorkerClientInternal(WebCore::ClientO
     if (!server)
         return;
 
-    RefPtr contextConnection = isNewOrigin ? server->contextConnectionForRegistrableDomain(RegistrableDomain { contextOrigin }) : nullptr;
-
     m_clientOrigins.add(data.identifier, clientOrigin);
 
     if (isBeingCreatedClient == SWServer::IsBeingCreatedClient::No) {
@@ -557,9 +590,11 @@ void WebSWServerConnection::registerServiceWorkerClientInternal(WebCore::ClientO
     if (!m_isThrottleable)
         updateThrottleState();
 
-    if (contextConnection) {
-        auto& connection = downcast<WebSWServerToContextConnection>(*contextConnection);
-        protectedNetworkProcess()->protectedParentProcessConnection()->send(Messages::NetworkProcessProxy::RegisterRemoteWorkerClientProcess { RemoteWorkerType::ServiceWorker, identifier(), connection.webProcessIdentifier() }, 0);
+    if (isNewOrigin) {
+        server->forEachContextConnectionForRegistrableDomain(RegistrableDomain { contextOrigin }, [&](auto& contextConnection) {
+            RefPtr networkProcess = this->networkProcess();
+            protect(networkProcess->parentProcessConnection())->send(Messages::NetworkProcessProxy::RegisterRemoteWorkerClientProcess { RemoteWorkerType::ServiceWorker, identifier(), downcast<WebSWServerToContextConnection>(contextConnection).webProcessIdentifier() }, 0);
+        });
     }
 }
 
@@ -589,10 +624,11 @@ void WebSWServerConnection::unregisterServiceWorkerClient(const ScriptExecutionC
     if (isDeletedOrigin) {
         RegistrableDomain potentiallyRemovedDomain { clientOrigin.clientOrigin };
         if (!hasMatchingClient(potentiallyRemovedDomain)) {
-            if (RefPtr contextConnection = server->contextConnectionForRegistrableDomain(potentiallyRemovedDomain)) {
-                auto& connection = downcast<WebSWServerToContextConnection>(*contextConnection);
-                protectedNetworkProcess()->protectedParentProcessConnection()->send(Messages::NetworkProcessProxy::UnregisterRemoteWorkerClientProcess { RemoteWorkerType::ServiceWorker, identifier(), connection.webProcessIdentifier() }, 0);
-            }
+            server->forEachContextConnectionForRegistrableDomain(potentiallyRemovedDomain, [&](auto& contextConnection) {
+                auto& connection = downcast<WebSWServerToContextConnection>(contextConnection);
+                RefPtr networkProcess = downcast<WebSWServerToContextConnection>(contextConnection).networkProcess();
+                protect(networkProcess->parentProcessConnection())->send(Messages::NetworkProcessProxy::UnregisterRemoteWorkerClientProcess { RemoteWorkerType::ServiceWorker, identifier(), connection.webProcessIdentifier() }, 0);
+            });
         }
     }
 }
@@ -633,20 +669,20 @@ void WebSWServerConnection::updateThrottleState()
         return;
 
     for (auto& origin : origins) {
-        if (RefPtr contextConnection = server->contextConnectionForRegistrableDomain(RegistrableDomain { origin })) {
-            auto& connection = downcast<WebSWServerToContextConnection>(*contextConnection);
+        server->forEachContextConnectionForRegistrableDomain(RegistrableDomain { origin }, [&](auto& contextConnection) {
+            auto& connection = downcast<WebSWServerToContextConnection>(contextConnection);
 
             if (connection.isThrottleable() == m_isThrottleable)
-                continue;
+                return;
             bool newThrottleState = computeThrottleState(connection.registrableDomain());
             if (connection.isThrottleable() == newThrottleState)
-                continue;
+                return;
             connection.setThrottleState(newThrottleState);
-        }
+        });
     }
 }
 
-void WebSWServerConnection::subscribeToPushService(WebCore::ServiceWorkerRegistrationIdentifier registrationIdentifier, Vector<uint8_t>&& applicationServerKey, CompletionHandler<void(Expected<PushSubscriptionData, ExceptionData>&&)>&& completionHandler)
+void WebSWServerConnection::subscribeToPushService(WebCore::ServiceWorkerRegistrationIdentifier registrationIdentifier, Vector<uint8_t>&& applicationServerKey, CompletionHandler<void(std::expected<PushSubscriptionData, ExceptionData>&&)>&& completionHandler)
 {
 #if !ENABLE(WEB_PUSH_NOTIFICATIONS)
     UNUSED_PARAM(registrationIdentifier);
@@ -671,18 +707,20 @@ void WebSWServerConnection::subscribeToPushService(WebCore::ServiceWorkerRegistr
         return;
     }
 
-    session->notificationManager().subscribeToPushService(registration->scopeURLWithoutFragment(), WTF::move(applicationServerKey), [weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler), registrableDomain = RegistrableDomain(registration->data().scopeURL)] (Expected<PushSubscriptionData, ExceptionData>&& result) mutable {
-        if (RefPtr resourceLoadStatistics = weakThis && weakThis->session() ? weakThis->session()->resourceLoadStatistics() : nullptr; result && resourceLoadStatistics) {
-            return resourceLoadStatistics->setMostRecentWebPushInteractionTime(WTF::move(registrableDomain), [result = WTF::move(result), completionHandler = WTF::move(completionHandler)] () mutable {
-                completionHandler(WTF::move(result));
-            });
+    session->notificationManager().subscribeToPushService(registration->scopeURLWithoutFragment(), WTF::move(applicationServerKey), [weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler), registrableDomain = RegistrableDomain(registration->data().scopeURL)] (std::expected<PushSubscriptionData, ExceptionData>&& result) mutable {
+        if (RefPtr protectedThis = weakThis) {
+            if (RefPtr resourceLoadStatistics = protectedThis->session() ? protectedThis->session()->resourceLoadStatistics() : nullptr; result && resourceLoadStatistics) {
+                return resourceLoadStatistics->setMostRecentWebPushInteractionTime(WTF::move(registrableDomain), [result = WTF::move(result), completionHandler = WTF::move(completionHandler)] () mutable {
+                    completionHandler(WTF::move(result));
+                });
+            }
         }
         completionHandler(WTF::move(result));
     });
 #endif
 }
 
-void WebSWServerConnection::unsubscribeFromPushService(WebCore::ServiceWorkerRegistrationIdentifier registrationIdentifier, WebCore::PushSubscriptionIdentifier subscriptionIdentifier, CompletionHandler<void(Expected<bool, ExceptionData>&&)>&& completionHandler)
+void WebSWServerConnection::unsubscribeFromPushService(WebCore::ServiceWorkerRegistrationIdentifier registrationIdentifier, WebCore::PushSubscriptionIdentifier subscriptionIdentifier, CompletionHandler<void(std::expected<bool, ExceptionData>&&)>&& completionHandler)
 {
 #if !ENABLE(WEB_PUSH_NOTIFICATIONS)
     UNUSED_PARAM(registrationIdentifier);
@@ -712,7 +750,7 @@ void WebSWServerConnection::unsubscribeFromPushService(WebCore::ServiceWorkerReg
 #endif
 }
 
-void WebSWServerConnection::getPushSubscription(WebCore::ServiceWorkerRegistrationIdentifier registrationIdentifier, CompletionHandler<void(Expected<std::optional<PushSubscriptionData>, ExceptionData>&&)>&& completionHandler)
+void WebSWServerConnection::getPushSubscription(WebCore::ServiceWorkerRegistrationIdentifier registrationIdentifier, CompletionHandler<void(std::expected<std::optional<PushSubscriptionData>, ExceptionData>&&)>&& completionHandler)
 {
 #if !ENABLE(WEB_PUSH_NOTIFICATIONS)
     UNUSED_PARAM(registrationIdentifier);
@@ -741,7 +779,7 @@ void WebSWServerConnection::getPushSubscription(WebCore::ServiceWorkerRegistrati
 #endif
 }
 
-void WebSWServerConnection::getPushPermissionState(WebCore::ServiceWorkerRegistrationIdentifier registrationIdentifier, CompletionHandler<void(Expected<uint8_t, ExceptionData>&&)>&& completionHandler)
+void WebSWServerConnection::getPushPermissionState(WebCore::ServiceWorkerRegistrationIdentifier registrationIdentifier, CompletionHandler<void(std::expected<uint8_t, ExceptionData>&&)>&& completionHandler)
 {
 #if !ENABLE(WEB_PUSH_NOTIFICATIONS)
     UNUSED_PARAM(registrationIdentifier);
@@ -777,8 +815,10 @@ void WebSWServerConnection::contextConnectionCreated(SWServerToContextConnection
     auto& connection =  downcast<WebSWServerToContextConnection>(contextConnection);
     connection.setThrottleState(computeThrottleState(connection.registrableDomain()));
 
-    if (hasMatchingClient(connection.registrableDomain()))
-        networkProcess().protectedParentProcessConnection()->send(Messages::NetworkProcessProxy::RegisterRemoteWorkerClientProcess { RemoteWorkerType::ServiceWorker, identifier(), connection.webProcessIdentifier() }, 0);
+    if (hasMatchingClient(connection.registrableDomain())) {
+        RefPtr networkProcess = this->networkProcess();
+        protect(networkProcess->parentProcessConnection())->send(Messages::NetworkProcessProxy::RegisterRemoteWorkerClientProcess { RemoteWorkerType::ServiceWorker, identifier(), connection.webProcessIdentifier() }, 0);
+    }
 }
 
 void WebSWServerConnection::terminateWorkerFromClient(ServiceWorkerIdentifier serviceWorkerIdentifier, CompletionHandler<void()>&& callback)
@@ -807,12 +847,8 @@ PAL::SessionID WebSWServerConnection::sessionID() const
 
 NetworkSession* WebSWServerConnection::session()
 {
-    return protectedNetworkProcess()->networkSession(sessionID());
-}
-
-CheckedPtr<NetworkSession> WebSWServerConnection::checkedSession()
-{
-    return session();
+    RefPtr networkProcess = this->networkProcess();
+    return networkProcess ? networkProcess->networkSession(sessionID()) : nullptr;
 }
 
 template<typename U> void WebSWServerConnection::sendToContextProcess(WebCore::SWServerToContextConnection& connection, U&& message)
@@ -832,6 +868,31 @@ void WebSWServerConnection::fetchTaskTimedOut(ServiceWorkerIdentifier serviceWor
 
     worker->setHasTimedOutAnyFetchTasks();
     worker->terminate();
+}
+
+void WebSWServerConnection::fetchTaskReceivedMainResourceResponse(std::optional<ServiceWorkerIdentifier> serviceWorkerIdentifier, const ResourceResponse& response, FrameIdentifier frameID)
+{
+    RefPtr networkProcess = this->networkProcess();
+    if (!networkProcess)
+        return;
+
+    auto sendCertificateInfo = [&](const CertificateInfo& certificateInfo) {
+        protect(networkProcess->parentProcessConnection())->send(Messages::WebFrameProxyFromNetworkProcess::ReceivedMainResourceResponseWithCertificateInfo(response.url().hostAndPort(), certificateInfo), frameID);
+    };
+
+    if (serviceWorkerIdentifier) {
+        if (RefPtr server = this->server()) {
+            if (RefPtr worker = server->workerByID(*serviceWorkerIdentifier)) {
+                if (const auto& certificateInfo = worker->certificateInfo(); !certificateInfo.isEmpty()) {
+                    sendCertificateInfo(certificateInfo);
+                    return;
+                }
+            }
+        }
+    }
+
+    if (const auto& certificateInfo = response.certificateInfo(); certificateInfo && !certificateInfo->isEmpty())
+        sendCertificateInfo(*certificateInfo);
 }
 
 void WebSWServerConnection::enableNavigationPreload(WebCore::ServiceWorkerRegistrationIdentifier registrationIdentifier, ExceptionOrVoidCallback&& callback)
@@ -993,7 +1054,7 @@ void WebSWServerConnection::cookieChangeSubscriptions(WebCore::ServiceWorkerRegi
     callback(registration->cookieChangeSubscriptions());
 }
 
-void WebSWServerConnection::addRoutes(WebCore::ServiceWorkerRegistrationIdentifier registrationIdentifier, Vector<WebCore::ServiceWorkerRoute>&& routes, CompletionHandler<void(Expected<void, WebCore::ExceptionData>&&)>&& callback)
+void WebSWServerConnection::addRoutes(WebCore::ServiceWorkerRegistrationIdentifier registrationIdentifier, Vector<WebCore::ServiceWorkerRoute>&& routes, CompletionHandler<void(std::expected<void, WebCore::ExceptionData>&&)>&& callback)
 {
     RefPtr server = this->server();
     if (!server) {
@@ -1004,7 +1065,7 @@ void WebSWServerConnection::addRoutes(WebCore::ServiceWorkerRegistrationIdentifi
 }
 
 #if ENABLE(WEB_PUSH_NOTIFICATIONS)
-void WebSWServerConnection::getNotifications(const URL& registrationURL, const String& tag, CompletionHandler<void(Expected<Vector<WebCore::NotificationData>, WebCore::ExceptionData>&&)>&& completionHandler)
+void WebSWServerConnection::getNotifications(const URL& registrationURL, const String& tag, CompletionHandler<void(std::expected<Vector<WebCore::NotificationData>, WebCore::ExceptionData>&&)>&& completionHandler)
 {
     CheckedPtr session = this->session();
     if (!session) {
@@ -1023,19 +1084,21 @@ void WebSWServerConnection::reportNetworkUsageToWorkerClient(WebCore::ScriptExec
 }
 #endif
 
-void WebSWServerConnection::checkTopOrigin(const WebCore::SecurityOriginData& origin)
+bool WebSWServerConnection::checkTopOrigin(const WebCore::SecurityOriginData& origin)
 {
-    MESSAGE_CHECK(!origin.isNull());
+    MESSAGE_CHECK_WITH_RETURN_VALUE(!origin.isNull(), false);
     RefPtr networkConnectionToWebProcess = m_networkConnectionToWebProcess.get();
     if (!networkConnectionToWebProcess)
-        return;
+        return false;
 
-    Ref networkProcess = networkConnectionToWebProcess->networkProcess();
-    MESSAGE_CHECK(networkProcess->allowsFirstPartyForCookies(networkConnectionToWebProcess->webProcessIdentifier(), WebCore::RegistrableDomain::uncheckedCreateFromHost(origin.host())) != NetworkProcess::AllowCookieAccess::Terminate);
+    RefPtr networkProcess = networkConnectionToWebProcess->networkProcess();
+    MESSAGE_CHECK_WITH_RETURN_VALUE(networkProcess->allowsFirstPartyForCookies(networkConnectionToWebProcess->webProcessIdentifier(), WebCore::RegistrableDomain::uncheckedCreateFromHost(origin.host())) != NetworkProcess::AllowCookieAccess::Terminate, false);
+    return true;
 }
 
 } // namespace WebKit
 
 #undef MESSAGE_CHECK
+#undef MESSAGE_CHECK_WITH_RETURN_VALUE
 #undef SWSERVERCONNECTION_RELEASE_LOG
 #undef SWSERVERCONNECTION_RELEASE_LOG_ERROR

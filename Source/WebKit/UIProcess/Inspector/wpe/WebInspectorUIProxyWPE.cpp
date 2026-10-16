@@ -33,6 +33,7 @@
 #include "APIPageConfiguration.h"
 #include "WPEWebViewPlatform.h"
 #include "WebFramePolicyListenerProxy.h"
+#include "WebInspectorUIProxyGLib.h"
 #include "WebPageGroup.h"
 #include "WebPageProxy.h"
 #include "WebPreferences.h"
@@ -44,8 +45,10 @@
 #include <WebCore/NotImplemented.h>
 #include <wpe/wpe-platform.h>
 #include <wtf/FileSystem.h>
+#include <wtf/glib/GMallocString.h>
 #include <wtf/glib/GRefPtr.h>
 #include <wtf/glib/GUniquePtr.h>
+#include <wtf/text/MakeString.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebKit {
@@ -117,15 +120,16 @@ RefPtr<WebPageProxy> WebInspectorUIProxy::platformCreateFrontendPage()
     preferences->setDeveloperExtrasEnabled(true);
     preferences->setLogsPageMessagesToSystemConsoleEnabled(true);
 #endif
+    // The Find banner and Search sidebar use the legacy results=N attribute for recent searches.
+    preferences->setSearchInputResultsAttributeEnabled(true);
     preferences->setAllowTopNavigationToDataURLs(true);
     preferences->setJavaScriptRuntimeFlags({ });
     preferences->setAcceleratedCompositingEnabled(true);
     preferences->setForceCompositingMode(true);
     preferences->setThreadedScrollingEnabled(true);
-    if (m_underTest)
-        preferences->setHiddenPageDOMTimerThrottlingEnabled(false);
+    preferences->setHiddenPageDOMTimerThrottlingEnabled(false);
 
-    auto pageGroup = WebPageGroup::create(WebKit::defaultInspectorPageGroupIdentifierForPage(protectedInspectedPage().get()));
+    auto pageGroup = WebPageGroup::create(WebKit::defaultInspectorPageGroupIdentifierForPage(protect(inspectedPage()).get()));
     auto websiteDataStore = inspectorWebsiteDataStore();
     auto& processPool = WebKit::defaultInspectorProcessPool(inspectionLevel());
 
@@ -221,8 +225,8 @@ void WebInspectorUIProxy::platformInspectedURLChanged(const String& url)
     if (!m_inspectorWindow)
         return;
 
-    GUniquePtr<char> title(g_strdup_printf("Web Inspector — %s", url.utf8().data()));
-    wpe_toplevel_set_title(m_inspectorWindow.get(), title.get());
+    auto title = makeString(u8"Web Inspector — "_span, url).utf8();
+    wpe_toplevel_set_title(m_inspectorWindow.get(), title.legacyCStringPointer());
 }
 
 void WebInspectorUIProxy::platformShowCertificate(const WebCore::CertificateInfo&)
@@ -230,9 +234,46 @@ void WebInspectorUIProxy::platformShowCertificate(const WebCore::CertificateInfo
     notImplemented();
 }
 
-void WebInspectorUIProxy::platformSave(Vector<WebCore::InspectorFrontendClient::SaveData>&&, bool /* forceSaveAs */)
+static String computeContentHash(const String& content, bool base64Encoded)
 {
-    notImplemented();
+    GMallocString digest;
+    if (base64Encoded) {
+        auto decoded = base64Decode(content);
+        if (decoded)
+            digest = GMallocString::unsafeAdoptFromUTF8(g_compute_checksum_for_data(G_CHECKSUM_SHA256, decoded->span().data(), decoded->size()));
+    } else {
+        auto utf8 = content.utf8();
+        auto characters = byteCast<char>(utf8.span());
+        digest = GMallocString::unsafeAdoptFromUTF8(g_compute_checksum_for_string(G_CHECKSUM_SHA256, characters.data(), characters.size()));
+    }
+
+    return String::fromUTF8(digest.span());
+}
+
+void WebInspectorUIProxy::platformSave(Vector<WebCore::InspectorFrontendClient::SaveData>&& saveDatas, bool forceSaveAs)
+{
+    ASSERT(saveDatas.size() == 1);
+    UNUSED_PARAM(forceSaveAs);
+
+    // Some inspector views (Audits for instance) use a custom URI scheme, such
+    // as web-inspector. So we can't rely on the URL being a valid file:/// URL
+    // unfortunately.
+    URL url { saveDatas[0].url };
+    auto filename = url.path().substring(1).utf8();
+
+    const gchar* downloadsDir = g_get_user_special_dir(G_USER_DIRECTORY_DOWNLOAD);
+    if (!downloadsDir) {
+        // If we don't have XDG user dirs info, set just to HOME.
+        downloadsDir = g_get_home_dir();
+    }
+
+    auto hash = computeContentHash(saveDatas[0].content, saveDatas[0].base64Encoded);
+
+    auto updatedFilename = makeString(filename, "-"_s, hash.left(8)).utf8();
+
+    GRefPtr<GFile> file = adoptGRef(g_file_new_build_filename(downloadsDir, updatedFilename.legacyCStringPointer(), nullptr));
+
+    platformSaveDataToFile(WTF::move(file), saveDatas[0].content, saveDatas[0].base64Encoded);
 }
 
 void WebInspectorUIProxy::platformLoad(const String&, CompletionHandler<void(const String&)>&& completionHandler)

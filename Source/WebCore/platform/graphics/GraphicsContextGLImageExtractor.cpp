@@ -30,11 +30,44 @@
 
 namespace WebCore {
 
-GraphicsContextGLImageExtractor::GraphicsContextGLImageExtractor(Image& image, DOMSource imageHtmlDomSource, bool premultiplyAlpha, bool ignoreGammaAndColorProfile, bool ignoreNativeImageAlphaPremultiplication)
-    : m_image(image)
-    , m_imageHtmlDomSource(imageHtmlDomSource)
+// Returns whether uploading an image in format reads the alpha of the image.
+static bool formatUsesAlpha(GCGLenum format)
 {
-    m_extractSucceeded = extractImage(premultiplyAlpha, ignoreGammaAndColorProfile, ignoreNativeImageAlphaPremultiplication);
+    switch (format) {
+    case GraphicsContextGL::RED:
+    case GraphicsContextGL::RED_INTEGER:
+    case GraphicsContextGL::RG:
+    case GraphicsContextGL::RG_INTEGER:
+    case GraphicsContextGL::RGB:
+    case GraphicsContextGL::RGB_INTEGER:
+    case GraphicsContextGL::LUMINANCE:
+    case GraphicsContextGL::DEPTH_COMPONENT:
+    case GraphicsContextGL::DEPTH_STENCIL:
+        return false;
+    default:
+        // ALPHA, LUMINANCE_ALPHA, RGBA, RGBA_INTEGER and any unexpected value.
+        return true;
+    }
+}
+
+GraphicsContextGLImageExtractor::GraphicsContextGLImageExtractor(NativeImage& image, std::optional<AlphaPremultiplication> sourceAlphaPremultiplication, bool premultiplyAlpha, GCGLenum destinationFormat)
+    : m_image(image)
+    , m_destinationUsesAlpha(formatUsesAlpha(destinationFormat))
+{
+    m_extractSucceeded = extractImage(sourceAlphaPremultiplication, premultiplyAlpha);
+}
+
+auto GraphicsContextGLImageExtractor::alphaOpForPremultiplication(std::optional<AlphaPremultiplication> sourceAlphaPremultiplication, bool premultiplyAlpha) -> AlphaOp
+{
+    // Contents that were decoded for this upload already hold the premultiplication it asked for.
+    if (!sourceAlphaPremultiplication)
+        return AlphaOp::DoNothing;
+    if (*sourceAlphaPremultiplication == AlphaPremultiplication::Premultiplied) {
+        if (!premultiplyAlpha)
+            return AlphaOp::DoUnmultiply;
+    } else if (premultiplyAlpha)
+        return AlphaOp::DoPremultiply;
+    return AlphaOp::DoNothing;
 }
 
 }

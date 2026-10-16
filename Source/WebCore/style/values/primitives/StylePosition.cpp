@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024-2025 Samuel Weinig <sam@webkit.org>
+ * Copyright (C) 2024-2026 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,9 +26,9 @@
 #include "StylePosition.h"
 
 #include "CSSPositionValue.h"
-#include "RenderStyle.h"
 #include "StyleBuilderChecking.h"
 #include "StyleCalculationTree.h"
+#include "StyleComputedStyle.h"
 #include "StylePrimitiveNumericTypes+Conversions.h"
 #include "StylePrimitiveNumericTypes+Evaluation.h"
 
@@ -39,7 +39,7 @@ using namespace CSS::Literals;
 
 // MARK: Core Keyword Resolution
 
-static auto resolveKeyword(CSS::Keyword::Top, const BuilderState&) -> LengthPercentage<>
+static LengthPercentage<> LEGACY_NODELETE resolveKeyword(CSS::Keyword::Top, const BuilderState&)
 {
     return 0_css_percentage;
 }
@@ -49,7 +49,7 @@ static auto resolveKeyword(CSS::Keyword::Top, const BuilderState& state, const C
     return toStyle(length, state);
 }
 
-static auto resolveKeyword(CSS::Keyword::Right, const BuilderState&) -> LengthPercentage<>
+static LengthPercentage<> LEGACY_NODELETE resolveKeyword(CSS::Keyword::Right, const BuilderState&)
 {
     return 100_css_percentage;
 }
@@ -59,7 +59,7 @@ static auto resolveKeyword(CSS::Keyword::Right, const BuilderState& state, const
     return reflect(toStyle(length, state));
 }
 
-static auto resolveKeyword(CSS::Keyword::Bottom, const BuilderState&) -> LengthPercentage<>
+static LengthPercentage<> LEGACY_NODELETE resolveKeyword(CSS::Keyword::Bottom, const BuilderState&)
 {
     return 100_css_percentage;
 }
@@ -69,7 +69,7 @@ static auto resolveKeyword(CSS::Keyword::Bottom, const BuilderState& state, cons
     return reflect(toStyle(length, state));
 }
 
-static auto resolveKeyword(CSS::Keyword::Left, const BuilderState&) -> LengthPercentage<>
+static LengthPercentage<> LEGACY_NODELETE resolveKeyword(CSS::Keyword::Left, const BuilderState&)
 {
     return 0_css_percentage;
 }
@@ -79,7 +79,7 @@ static auto resolveKeyword(CSS::Keyword::Left, const BuilderState& state, const 
     return toStyle(length, state);
 }
 
-static auto resolveKeyword(CSS::Keyword::Center, const BuilderState&) -> LengthPercentage<>
+static LengthPercentage<> LEGACY_NODELETE resolveKeyword(CSS::Keyword::Center, const BuilderState&)
 {
     return 50_css_percentage;
 }
@@ -176,7 +176,7 @@ static auto resolve(const CSS::FourComponentPositionVertical& value, const Build
     );
 }
 
-auto ToCSS<TwoComponentPositionHorizontal>::operator()(const TwoComponentPositionHorizontal& value, const RenderStyle& style) -> CSS::TwoComponentPositionHorizontal
+auto ToCSS<TwoComponentPositionHorizontal>::operator()(const TwoComponentPositionHorizontal& value, const Style::ComputedStyle& style) -> CSS::TwoComponentPositionHorizontal
 {
     return WTF::switchOn(value.offset,
         [&](const auto& value) {
@@ -190,7 +190,7 @@ auto ToStyle<CSS::TwoComponentPositionHorizontal>::operator()(const CSS::TwoComp
     return { PositionX { resolve(value, state) } };
 }
 
-auto ToCSS<TwoComponentPositionVertical>::operator()(const TwoComponentPositionVertical& value, const RenderStyle& style) -> CSS::TwoComponentPositionVertical
+auto ToCSS<TwoComponentPositionVertical>::operator()(const TwoComponentPositionVertical& value, const Style::ComputedStyle& style) -> CSS::TwoComponentPositionVertical
 {
     return WTF::switchOn(value.offset,
         [&](const auto& value) {
@@ -206,7 +206,7 @@ auto ToStyle<CSS::TwoComponentPositionVertical>::operator()(const CSS::TwoCompon
 
 // MARK: <position> conversion
 
-auto ToCSS<Position>::operator()(const Position& value, const RenderStyle& style) -> CSS::Position
+auto ToCSS<Position>::operator()(const Position& value, const Style::ComputedStyle& style) -> CSS::Position
 {
     return CSS::TwoComponentPositionHorizontalVertical {
         WTF::switchOn(value.x,
@@ -236,7 +236,7 @@ auto ToStyle<CSS::Position>::operator()(const CSS::Position& position, const Bui
 
 // MARK: <position-x> conversion
 
-auto ToCSS<PositionX>::operator()(const PositionX& value, const RenderStyle& style) -> CSS::PositionX
+auto ToCSS<PositionX>::operator()(const PositionX& value, const Style::ComputedStyle& style) -> CSS::PositionX
 {
     return WTF::switchOn(value,
         [&](const auto& value) {
@@ -256,7 +256,7 @@ auto ToStyle<CSS::PositionX>::operator()(const CSS::PositionX& positionX, const 
 
 // MARK: <position-y> conversion
 
-auto ToCSS<PositionY>::operator()(const PositionY& value, const RenderStyle& style) -> CSS::PositionY
+auto ToCSS<PositionY>::operator()(const PositionY& value, const Style::ComputedStyle& style) -> CSS::PositionY
 {
     return WTF::switchOn(value,
         [&](const auto& value) {
@@ -300,11 +300,11 @@ auto CSSValueConversion<PositionY>::operator()(BuilderState& state, const CSSVal
 
 // MARK: - Evaluation
 
-auto Evaluation<Position, FloatPoint>::operator()(const Position& position, FloatSize referenceBox, ZoomNeeded token) -> FloatPoint
+auto Evaluation<Position, FloatPoint>::operator()(const Position& position, FloatSize referenceBox, ZoomFactor zoom) -> FloatPoint
 {
     return {
-        evaluate<float>(position.x, referenceBox.width(), token),
-        evaluate<float>(position.y, referenceBox.height(), token)
+        evaluate<float>(position.x, referenceBox.width(), zoom),
+        evaluate<float>(position.y, referenceBox.height(), zoom)
     };
 }
 

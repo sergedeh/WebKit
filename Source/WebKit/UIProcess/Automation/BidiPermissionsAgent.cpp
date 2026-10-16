@@ -37,6 +37,7 @@
 #include "WebPageProxy.h"
 #include "WebProcessPool.h"
 #include <WebCore/RegistrableDomain.h>
+#include <wtf/Borrow.h>
 #include <wtf/CallbackAggregator.h>
 
 namespace WebKit {
@@ -56,7 +57,8 @@ BidiPermissionsAgent::~BidiPermissionsAgent() = default;
 static Vector<Ref<WebPageProxy>> allPageProxiesFor(const WebAutomationSession& session)
 {
     Vector<Ref<WebPageProxy>> pages;
-    for (Ref process : protect(session.processPool())->processes()) {
+    RefPtr processPool = session.processPool();
+    for (Ref process : borrow(processPool->processes()).get()) {
         for (Ref page : process->pages()) {
             if (!page->isControlledByAutomation())
                 continue;
@@ -86,7 +88,7 @@ void BidiPermissionsAgent::setPermission(Ref<JSON::Object>&& descriptor, const S
         });
 
         for (auto page : allPageProxiesFor(*session)) {
-            auto pageOrigin = RegistrableDomain { protect(page->pageLoadState())->origin() };
+            auto pageOrigin = RegistrableDomain { page->pageLoadState().origin() };
             if (pageOrigin != topFrameOrigin)
                 continue;
 

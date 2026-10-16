@@ -27,6 +27,7 @@
 #pragma once
 
 #include "LiveNodeList.h"
+#include <wtf/text/AtomString.h>
 
 namespace WebCore {
 
@@ -49,3 +50,5 @@ private:
 };
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_LIVENODELIST(RadioNodeList)

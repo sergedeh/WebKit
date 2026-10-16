@@ -45,8 +45,10 @@ namespace WebCore {
 
 class MediaStream;
 class RTCDTMFSender;
+class RTCDtlsTransportBackend;
 class RTCEncodedStreamProducer;
 class RTCPeerConnection;
+class RTCRtpTransformBackend;
 
 struct RTCEncodedStreams;
 struct RTCRtpCapabilities;
@@ -71,13 +73,13 @@ public:
     RTCDtlsTransport* transport() { return m_transport.get(); }
     void setTransport(RefPtr<RTCDtlsTransport>&& transport) { m_transport = WTF::move(transport); }
 
-    const String& trackId() const { return m_trackId; }
-    const String& trackKind() const { return m_trackKind; }
+    const String& trackId() const LIFETIME_BOUND { return m_trackId; }
+    const String& trackKind() const LIFETIME_BOUND { return m_trackKind; }
 
     ExceptionOr<void> setMediaStreamIds(const FixedVector<String>&);
     ExceptionOr<void> setStreams(const FixedVector<std::reference_wrapper<MediaStream>>&);
 
-    bool isStopped() const { return !m_backend; }
+    bool isStopped() const { return m_isStopped; }
     void stop();
     void setTrack(Ref<MediaStreamTrack>&&);
     void setTrackToNull();
@@ -85,18 +87,20 @@ public:
     void replaceTrack(RefPtr<MediaStreamTrack>&&, Ref<DeferredPromise>&&);
 
     RTCRtpSendParameters getParameters();
-    void setParameters(const RTCRtpSendParameters&, DOMPromiseDeferred<void>&&);
+    void setParameters(RTCRtpSendParameters&&, DOMPromiseDeferred<void>&&);
 
-    RTCRtpSenderBackend* backend() { return m_backend.get(); }
+    RTCRtpSenderBackend& backend() { return m_backend.get(); }
+    std::unique_ptr<RTCDtlsTransportBackend> dtlsTransportBackend();
+    Ref<RTCRtpTransformBackend> rtcRtpTransformBackend();
 
     void getStats(Ref<DeferredPromise>&&);
 
-    bool isCreatedBy(const RTCPeerConnection&) const;
+    bool LEGACY_NODELETE isCreatedBy(const RTCPeerConnection&) const;
 
     RTCDTMFSender* dtmf();
     std::optional<RTCRtpTransceiverDirection> currentTransceiverDirection() const;
 
-    std::optional<RTCRtpTransform::Internal> transform();
+    RefPtr<RTCRtpScriptTransform> transform();
     ExceptionOr<void> setTransform(std::unique_ptr<RTCRtpTransform>&&);
 
     ExceptionOr<RTCEncodedStreams> createEncodedStreams(ScriptExecutionContext&);
@@ -108,16 +112,17 @@ private:
     const Logger& logger() const final { return m_logger.get(); }
     uint64_t logIdentifier() const final { return m_logIdentifier; }
     ASCIILiteral logClassName() const final { return "RTCRtpSender"_s; }
-    WTFLogChannel& logChannel() const final;
+    WTFLogChannel& LEGACY_NODELETE logChannel() const final;
 #endif
 
+    bool m_isStopped { false };
     RefPtr<MediaStreamTrack> m_track;
     RefPtr<RTCDtlsTransport> m_transport;
     String m_trackId;
     String m_trackKind;
-    RefPtr<RTCRtpSenderBackend> m_backend;
+    const Ref<RTCRtpSenderBackend> m_backend;
     WeakPtr<RTCPeerConnection, WeakPtrImplWithEventTargetData> m_connection;
-    RefPtr<RTCDTMFSender> m_dtmfSender;
+    const RefPtr<RTCDTMFSender> m_dtmfSender;
     std::unique_ptr<RTCRtpTransform> m_transform;
     const RefPtr<RTCEncodedStreamProducer> m_encodedStreamProducer;
 #if !RELEASE_LOG_DISABLED

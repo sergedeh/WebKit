@@ -22,6 +22,7 @@
 
 #include "config.h"
 #include "RenderSVGForeignObject.h"
+#include "RenderObjectNode.h"
 
 #include "GraphicsContext.h"
 #include "HitTestResult.h"
@@ -34,6 +35,7 @@
 #include "SVGElementTypeHelpers.h"
 #include "SVGForeignObjectElement.h"
 #include "SVGRenderSupport.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "TransformState.h"
 #include <wtf/StackStats.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -42,7 +44,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderSVGForeignObject);
 
-RenderSVGForeignObject::RenderSVGForeignObject(SVGForeignObjectElement& element, RenderStyle&& style)
+RenderSVGForeignObject::RenderSVGForeignObject(SVGForeignObjectElement& element, Style::ComputedStyle&& style)
     : RenderSVGBlock(Type::SVGForeignObject, element, WTF::move(style))
 {
     ASSERT(isRenderSVGForeignObject());
@@ -55,14 +57,13 @@ SVGForeignObjectElement& RenderSVGForeignObject::foreignObjectElement() const
     return downcast<SVGForeignObjectElement>(RenderSVGBlock::graphicsElement());
 }
 
-Ref<SVGForeignObjectElement> RenderSVGForeignObject::protectedForeignObjectElement() const
-{
-    return foreignObjectElement();
-}
-
 void RenderSVGForeignObject::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
 {
-    if (!shouldPaintSVGRenderer(paintInfo))
+    // No visibility check: each CSS box checks its own visibility.
+    if (paintInfo.context().paintingDisabled() || !paintInfo.shouldPaintWithinRoot(*this))
+        return;
+
+    if (style().display() == Style::DisplayType::None)
         return;
 
     if (paintInfo.phase == PaintPhase::ClippingMask) {
@@ -83,7 +84,7 @@ void RenderSVGForeignObject::paint(PaintInfo& paintInfo, const LayoutPoint& pain
 
 void RenderSVGForeignObject::updateLogicalWidth()
 {
-    setWidth(enclosingLayoutRect(m_viewport).width());
+    setBorderBoxWidth(enclosingLayoutRect(m_viewport).width());
 }
 
 RenderBox::LogicalExtentComputedValues RenderSVGForeignObject::computeLogicalHeight(LayoutUnit, LayoutUnit logicalTop) const
@@ -100,12 +101,14 @@ void RenderSVGForeignObject::layout()
 
     Ref useForeignObjectElement = foreignObjectElement();
     SVGLengthContext lengthContext(useForeignObjectElement.ptr());
+    CheckedRef usedStyle = style();
+    auto usedZoom = usedStyle->usedZoomForLength();
 
     // Cache viewport boundaries
-    auto x = useForeignObjectElement->x().value(lengthContext);
-    auto y = useForeignObjectElement->y().value(lengthContext);
-    auto width = useForeignObjectElement->width().value(lengthContext);
-    auto height = useForeignObjectElement->height().value(lengthContext);
+    auto x = lengthContext.valueForLength(usedStyle->x(), usedZoom, SVGLengthMode::Width);
+    auto y = lengthContext.valueForLength(usedStyle->y(), usedZoom, SVGLengthMode::Height);
+    auto width = std::max(0.0f, lengthContext.valueForLength(usedStyle->width(), usedZoom, SVGLengthMode::Width));
+    auto height = std::max(0.0f, lengthContext.valueForLength(usedStyle->height(), usedZoom, SVGLengthMode::Height));
     m_viewport = { x, y, width, height };
 
     RenderSVGBlock::layout();
@@ -130,9 +133,9 @@ void RenderSVGForeignObject::updateFromStyle()
         setHasNonVisibleOverflow();
 }
 
-void RenderSVGForeignObject::applyTransform(TransformationMatrix& transform, const RenderStyle& style, const FloatRect& boundingBox, OptionSet<Style::TransformResolverOption> options) const
+void RenderSVGForeignObject::applyTransform(TransformationMatrix& transform, const Style::ComputedStyle& style, const FloatRect& boundingBox, OptionSet<Style::TransformResolverOption> options) const
 {
-    applySVGTransform(transform, protectedForeignObjectElement(), style, boundingBox, std::nullopt, std::nullopt, options);
+    applySVGTransform(transform, protect(foreignObjectElement()), style, boundingBox, std::nullopt, std::nullopt, options);
 }
 
 }

@@ -30,17 +30,17 @@
 #include "config.h"
 #include "CSSTokenizerInputStream.h"
 
-#include "CSSTokenizer.h"
+#include "CSSParserIdioms.h"
 
 #include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(CSSTokenizerInputStream);
 
-CSSTokenizerInputStream::CSSTokenizerInputStream(const String& input)
+CSSTokenizerInputStream::CSSTokenizerInputStream(StringView string)
     : m_offset(0)
-    , m_stringLength(input.length())
-    , m_string(input.impl())
+    , m_stringLength(string.length())
+    , m_string(string)
 {
 }
 
@@ -52,26 +52,26 @@ void CSSTokenizerInputStream::advanceUntilNonWhitespace()
             ++m_offset;
     };
 
-    if (m_string->is8Bit())
-        advance(m_string->span8());
+    if (m_string.is8Bit())
+        advance(m_string.span8());
     else
-        advance(m_string->span16());
+        advance(m_string.span16());
 }
 
 void CSSTokenizerInputStream::advanceUntilNewlineOrNonWhitespace()
 {
     auto advance = [this](auto characters) {
         while (m_offset < m_stringLength && isASCIIWhitespace(characters[m_offset])) {
-            if (CSSTokenizer::isNewline(characters[m_offset]))
+            if (isCSSNewline(characters[m_offset]))
                 return;
             ++m_offset;
         }
     };
 
-    if (m_string->is8Bit())
-        advance(m_string->span8());
+    if (m_string.is8Bit())
+        advance(m_string.span8());
     else
-        advance(m_string->span16());
+        advance(m_string.span16());
 }
 
 double CSSTokenizerInputStream::getDouble(unsigned start, unsigned end) const
@@ -80,10 +80,10 @@ double CSSTokenizerInputStream::getDouble(unsigned start, unsigned end) const
     bool isResultOK = false;
     double result = 0.0;
     if (start < end) {
-        if (m_string->is8Bit())
-            result = charactersToDouble(m_string->span8().subspan(m_offset + start, end - start), &isResultOK);
+        if (m_string.is8Bit())
+            result = charactersToDouble(m_string.span8().subspan(m_offset + start, end - start), &isResultOK);
         else
-            result = charactersToDouble(m_string->span16().subspan(m_offset + start, end - start), &isResultOK);
+            result = charactersToDouble(m_string.span16().subspan(m_offset + start, end - start), &isResultOK);
     }
     // FIXME: It looks like callers ensure we have a valid number
     return isResultOK ? result : 0.0;

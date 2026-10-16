@@ -23,30 +23,28 @@
 
 #include <WebCore/CSSPropertyNames.h>
 #include <WebCore/CSSValue.h>
-#include <WebCore/CSSValueKeywords.h>
 #include <WebCore/IsImportant.h>
-#include <WebCore/WritingMode.h>
 #include <wtf/BitSet.h>
-#include <wtf/RefPtr.h>
 
 namespace WebCore {
 
 class CSSValueList;
 class Settings;
+class WritingMode;
 struct CSSParserContext;
 
 enum class IsImplicit : bool { No, Yes };
 
 struct StylePropertyMetadata {
     StylePropertyMetadata(CSSPropertyID propertyID, bool isSetFromShorthand, int indexInShorthandsVector, IsImportant important, IsImplicit implicit)
-        : m_propertyID(propertyID)
+        : m_propertyID(std::to_underlying(propertyID))
         , m_isSetFromShorthand(isSetFromShorthand)
         , m_indexInShorthandsVector(indexInShorthandsVector)
         , m_important(important == IsImportant::Yes)
         , m_implicit(implicit == IsImplicit::Yes)
     {
-        ASSERT(propertyID != CSSPropertyInvalid);
-        ASSERT_WITH_MESSAGE(propertyID < firstShorthandProperty, "unexpected property: %d", propertyID);
+        ASSERT(propertyID != CSSPropertyID::Invalid);
+        ASSERT_WITH_MESSAGE(propertyID < firstShorthandProperty, "unexpected property: %d", std::to_underlying(propertyID));
     }
 
     CSSPropertyID shorthandID() const;
@@ -81,7 +79,6 @@ public:
     bool isImportant() const { return m_metadata.m_important; }
 
     CSSValue* value() const { return m_value.ptr(); }
-    Ref<CSSValue> protectedValue() const { return m_value; }
 
     static CSSPropertyID resolveDirectionAwareProperty(CSSPropertyID, WritingMode);
     static CSSPropertyID unresolvePhysicalProperty(CSSPropertyID, WritingMode);
@@ -92,7 +89,7 @@ public:
     static bool areInSameLogicalPropertyGroupWithDifferentMappingLogic(CSSPropertyID, CSSPropertyID);
     static bool isDescriptorOnly(CSSPropertyID);
     static char16_t listValuedPropertySeparator(CSSPropertyID);
-    static bool isListValuedProperty(CSSPropertyID propertyID) { return !!listValuedPropertySeparator(propertyID) || propertyID == CSSPropertyCustom; }
+    static bool isListValuedProperty(CSSPropertyID propertyID) { return !!listValuedPropertySeparator(propertyID) || propertyID == CSSPropertyID::Custom; }
     static bool allowsNumberOrIntegerInput(CSSPropertyID);
 
     static bool animationUsesNonAdditiveOrCumulativeInterpolation(CSSPropertyID);
@@ -142,6 +139,10 @@ public:
 
     static bool disablesNativeAppearance(CSSPropertyID);
 
+    // Properties that apply to the highlight pseudo-elements.
+    // https://drafts.csswg.org/css-pseudo-4/#highlight-styling
+    static bool LEGACY_NODELETE appliesToHighlightPseudoElements(CSSPropertyID);
+
     // Returns the valid keyword values for a property from CSSProperties.json.
     // This is used by the Inspector to provide completions for properties
     // that aren't keyword-fast-path eligible but still have enumerated values.
@@ -151,10 +152,10 @@ public:
     // This is used by the Inspector to filter keywords based on enabled settings.
     static bool isKeywordValidForPropertyValues(CSSPropertyID, CSSValueID, const CSSParserContext&);
 
-    const StylePropertyMetadata& metadata() const { return m_metadata; }
+    const StylePropertyMetadata& metadata() const LIFETIME_BOUND { return m_metadata; }
     static bool isColorProperty(CSSPropertyID propertyId)
     {
-        return colorProperties.get(propertyId);
+        return colorProperties.get(std::to_underlying(propertyId));
     }
 
     static const WEBCORE_EXPORT WTF::BitSet<cssPropertyIDEnumValueCount> colorProperties;
@@ -164,7 +165,7 @@ public:
     {
         if (!(m_metadata == other.m_metadata))
             return false;
-        return m_value->equals(other.m_value);
+        return protect(m_value)->equals(other.m_value);
     }
 
 private:

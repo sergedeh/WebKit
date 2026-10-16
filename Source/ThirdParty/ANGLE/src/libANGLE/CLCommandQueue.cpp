@@ -6,22 +6,19 @@
 // CLCommandQueue.cpp: Implements the cl::CommandQueue class.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
+#include "common/unsafe_buffers.h"
 
-#include "libANGLE/CLCommandQueue.h"
+#include <angle_cl.h>
 
-#include "CL/cl.h"
-#include "common/angleutils.h"
+#include "libANGLE/CLBitField.h"
 #include "libANGLE/CLBuffer.h"
+#include "libANGLE/CLCommandQueue.h"
 #include "libANGLE/CLContext.h"
 #include "libANGLE/CLDevice.h"
 #include "libANGLE/CLEvent.h"
 #include "libANGLE/CLImage.h"
 #include "libANGLE/CLKernel.h"
 #include "libANGLE/CLMemory.h"
-#include "libANGLE/Error.h"
 #include "libANGLE/cl_types.h"
 #include "libANGLE/cl_utils.h"
 
@@ -125,7 +122,7 @@ angle::Result CommandQueue::getInfo(CommandQueueInfo name,
         }
         if (copyValue != nullptr)
         {
-            std::memcpy(value, copyValue, copySize);
+            ANGLE_UNSAFE_TODO(std::memcpy(value, copyValue, copySize));
         }
     }
     if (valueSizeRet != nullptr)
@@ -345,7 +342,7 @@ angle::Result CommandQueue::enqueueMapBuffer(cl_mem buffer,
                                              cl_event *event,
                                              void *&mapPtr)
 {
-    const Buffer &buf          = buffer->cast<Buffer>();
+    Buffer &buf                = buffer->cast<Buffer>();
     const bool blocking        = blockingMap != CL_FALSE;
     const EventPtrs waitEvents = Event::Cast(numEventsInWaitList, eventWaitList);
 
@@ -355,6 +352,11 @@ angle::Result CommandQueue::enqueueMapBuffer(cl_mem buffer,
     ANGLE_CL_ENQUEUE_TRY(mImpl->enqueueMapBuffer(buf, blocking, mapFlags, offset, size, waitEvents,
                                                  eventPtr, mapPtr),
                          event);
+
+    // Add region to a list of active mapped regions, to detect on any overlapping regions.
+    // The region is in sub-buffer-local coordinates; addMappedRegion translates to the parent
+    // coordinate space when forwarding to a sub-buffer's parent.
+    ANGLE_TRY(buf.addMappedRegion(mapFlags, mapPtr, cl::MemoryRegion(offset, size)));
 
     return angle::Result::Continue;
 }
@@ -510,7 +512,7 @@ angle::Result CommandQueue::enqueueMapImage(cl_mem image,
                                             cl_event *event,
                                             void *&mapPtr)
 {
-    const Image &img           = image->cast<Image>();
+    Image &img                 = image->cast<Image>();
     const bool blocking        = blockingMap != CL_FALSE;
     const EventPtrs waitEvents = Event::Cast(numEventsInWaitList, eventWaitList);
 
@@ -522,6 +524,8 @@ angle::Result CommandQueue::enqueueMapImage(cl_mem image,
                                imageSlicePitch, waitEvents, eventPtr, mapPtr),
         event);
 
+    ANGLE_TRY(img.addMappedRegion(mapFlags, mapPtr, cl::MemoryRegion(origin, region)));
+
     return angle::Result::Continue;
 }
 
@@ -531,13 +535,16 @@ angle::Result CommandQueue::enqueueUnmapMemObject(cl_mem memobj,
                                                   const cl_event *eventWaitList,
                                                   cl_event *event)
 {
-    const Memory &memory       = memobj->cast<Memory>();
+    Memory &memory             = memobj->cast<Memory>();
     const EventPtrs waitEvents = Event::Cast(numEventsInWaitList, eventWaitList);
 
     ANGLE_TRY(CreateEvent(event, *this, CL_COMMAND_UNMAP_MEM_OBJECT));
     EventPtr eventPtr(event != nullptr ? &(*event)->cast<Event>() : nullptr);
 
-    ANGLE_CL_ENQUEUE_TRY(mImpl->enqueueUnmapMemObject(memory, mappedPtr, waitEvents, eventPtr),
+    // Pass in the cl::MappedRegionInfo to the backend
+    const cl::MappedRegionInfo<const void *> mappedInfo = memory.popMappedRegion(mappedPtr);
+
+    ANGLE_CL_ENQUEUE_TRY(mImpl->enqueueUnmapMemObject(memory, mappedInfo, waitEvents, eventPtr),
                          event);
 
     return angle::Result::Continue;
@@ -554,7 +561,7 @@ angle::Result CommandQueue::enqueueMigrateMemObjects(cl_uint numMemObjects,
     memories.reserve(numMemObjects);
     while (numMemObjects-- != 0u)
     {
-        memories.emplace_back(&(*memObjects++)->cast<Memory>());
+        memories.emplace_back(&(*ANGLE_UNSAFE_TODO(memObjects++))->cast<Memory>());
     }
     const EventPtrs waitEvents = Event::Cast(numEventsInWaitList, eventWaitList);
 
@@ -617,16 +624,16 @@ angle::Result CommandQueue::enqueueNativeKernel(UserFunc userFunc,
     {
         // If argument memory block contains memory objects, make a copy.
         funcArgs.resize(cbArgs);
-        std::memcpy(funcArgs.data(), args, cbArgs);
+        ANGLE_UNSAFE_TODO(std::memcpy(funcArgs.data(), args, cbArgs));
         buffers.reserve(numMemObjects);
         offsets.reserve(numMemObjects);
 
         while (numMemObjects-- != 0u)
         {
-            buffers.emplace_back(&(*memList++)->cast<Buffer>());
+            buffers.emplace_back(&(*ANGLE_UNSAFE_TODO(memList++))->cast<Buffer>());
 
             // Calc memory offset of cl_mem object in args.
-            offsets.emplace_back(static_cast<const char *>(*argsMemLoc++) -
+            offsets.emplace_back(static_cast<const char *>(*ANGLE_UNSAFE_TODO(argsMemLoc++)) -
                                  static_cast<const char *>(args));
 
             // Fetch location of cl_mem object in copied function argument memory block.
@@ -720,7 +727,7 @@ angle::Result CommandQueue::enqueueAcquireExternalMemObjectsKHR(cl_uint numMemOb
     memories.reserve(numMemObjects);
     for (cl_uint index = 0; index < numMemObjects; ++index)
     {
-        memories.emplace_back(&memObjects[index]->cast<Memory>());
+        memories.emplace_back(&ANGLE_UNSAFE_TODO(memObjects[index])->cast<Memory>());
     }
     const EventPtrs waitEvents = Event::Cast(numEventsInWaitList, eventWaitList);
 
@@ -743,7 +750,7 @@ angle::Result CommandQueue::enqueueReleaseExternalMemObjectsKHR(cl_uint numMemOb
     memories.reserve(numMemObjects);
     for (cl_uint index = 0; index < numMemObjects; ++index)
     {
-        memories.emplace_back(&memObjects[index]->cast<Memory>());
+        memories.emplace_back(&ANGLE_UNSAFE_TODO(memObjects[index])->cast<Memory>());
     }
     const EventPtrs waitEvents = Event::Cast(numEventsInWaitList, eventWaitList);
 

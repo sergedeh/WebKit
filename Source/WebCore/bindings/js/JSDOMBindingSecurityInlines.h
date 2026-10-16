@@ -25,8 +25,8 @@
 
 #pragma once
 
-#include <WebCore/JSDOMBindingSecurity.h>
-#include <WebCore/JSDOMWindow.h>
+#include "JSDOMBindingSecurity.h"
+#include "JSDOMWindow.h"
 
 namespace WebCore {
 namespace BindingSecurity {
@@ -35,7 +35,8 @@ inline bool shouldAllowAccessToDOMWindow(JSC::JSGlobalObject* lexicalGlobalObjec
 {
     if (lexicalGlobalObject == &target) [[likely]]
         return true;
-    return shouldAllowAccessToDOMWindow(lexicalGlobalObject, target.wrapped(), reportingOption);
+    // target keeps its wrapped window alive.
+    SUPPRESS_UNCOUNTED_ARG return shouldAllowAccessToDOMWindow(lexicalGlobalObject, target.wrapped(), reportingOption);
 }
 
 } // namespace BindingSecurity

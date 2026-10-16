@@ -28,7 +28,6 @@
 #include "AudioIOCallback.h"
 #include "AudioUtilities.h"
 #include "GStreamerCommon.h"
-#include "GStreamerQuirks.h"
 #include <gst/app/gstappsrc.h>
 #include <gst/audio/audio-info.h>
 #include <gst/pbutils/missing-plugins.h>
@@ -76,6 +75,7 @@ struct _WebKitWebAudioSrcPrivate {
     GstPad* sourcePad;
 
     guint64 numberOfSamples;
+    bool runningTimeReset { false };
 
     GRefPtr<GstBufferPool> pool;
 
@@ -282,14 +282,9 @@ static void webKitWebAudioSrcRenderAndPushFrames(const GRefPtr<GstElement>& elem
     GST_BUFFER_TIMESTAMP(buffer.get()) = timestamp;
     GST_BUFFER_DURATION(buffer.get()) = duration;
 
-    if (bus->isSilent()) {
-        auto& quirksManager = GStreamerQuirksManager::singleton();
-        if (quirksManager.isEnabled())
-            quirksManager.processWebAudioSilentBuffer(buffer.get());
-        else {
-            GST_BUFFER_FLAG_SET(buffer.get(), GST_BUFFER_FLAG_GAP);
-            GST_BUFFER_FLAG_SET(buffer.get(), GST_BUFFER_FLAG_DROPPABLE);
-        }
+    if (priv->runningTimeReset) {
+        priv->runningTimeReset = false;
+        gst_pad_set_offset(priv->sourcePad, -timestamp);
     }
 
     // Leak the buffer ref, because gst_app_src_push_buffer steals it.
@@ -394,6 +389,7 @@ static GstStateChangeReturn webKitWebAudioSrcChangeState(GstElement* element, Gs
         gst_buffer_pool_set_active(priv->pool.get(), FALSE);
         priv->pool = nullptr;
         priv->hasRenderedAudibleFrame = false;
+        priv->runningTimeReset = true;
         break;
     default:
         break;

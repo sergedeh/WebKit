@@ -49,18 +49,19 @@ public:
     RenderBoxModelObject* firstLetter() const { return m_firstLetter.get(); }
     void setFirstLetter(RenderBoxModelObject& firstLetter) { m_firstLetter = firstLetter; }
     
-    RenderBlock* blockForAccompanyingFirstLetter();
+    CheckedPtr<RenderBlock> blockForAccompanyingFirstLetter();
 
     void setContentString(const String& text);
     StringImpl* contentString() const { return m_contentString.impl(); }
 
-    const String& altText() const { return m_altText; }
+    const String& altText() const LIFETIME_BOUND { return m_altText; }
     void setAltText(const String& altText) { m_altText = altText; }
     
 private:
     void setTextInternal(const String&, bool force) override;
-
-    Vector<char16_t> previousCharacter() const override;
+    void setTextWithOffset(const String&, unsigned offset) override;
+    Node* nodeForHitTest() const override;
+    char32_t previousCharacter() const override;
 
     unsigned m_start;
     unsigned m_end;

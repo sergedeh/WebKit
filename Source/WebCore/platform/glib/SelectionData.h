@@ -18,7 +18,7 @@
 
 #pragma once
 
-#include "Image.h"
+#include "ShareableBitmap.h"
 #include "SharedBuffer.h"
 #include <wtf/HashMap.h>
 #include <wtf/TZoneMalloc.h>
@@ -31,38 +31,38 @@ class SelectionData {
     WTF_MAKE_TZONE_ALLOCATED(SelectionData);
 public:
     void setText(const String&);
-    const String& text() const { return m_text; }
+    const String& text() const LIFETIME_BOUND { return m_text; }
     bool hasText() const { return !m_text.isEmpty(); }
     void clearText() { m_text = emptyString(); }
 
     void setMarkup(const String& newMarkup) { m_markup = newMarkup; }
-    const String& markup() const { return m_markup; }
+    const String& markup() const LIFETIME_BOUND { return m_markup; }
     bool hasMarkup() const { return !m_markup.isEmpty(); }
     void clearMarkup() { m_markup = emptyString(); }
 
     void setURL(const URL&, const String&);
-    const URL& url() const { return m_url; }
-    const String& urlLabel() const;
+    const URL& url() const LIFETIME_BOUND { return m_url; }
+    const String& urlLabel() const LIFETIME_BOUND;
     bool hasURL() const { return !m_url.isEmpty() && m_url.isValid(); }
     void clearURL() { m_url = URL(); }
 
     void setURIList(const String&);
-    const String& uriList() const { return m_uriList; }
-    const Vector<String>& filenames() const { return m_filenames; }
+    const String& uriList() const LIFETIME_BOUND { return m_uriList; }
+    const Vector<String>& filenames() const LIFETIME_BOUND { return m_filenames; }
     bool hasURIList() const { return !m_uriList.isEmpty(); }
     bool hasFilenames() const { return !m_filenames.isEmpty(); }
     void clearURIList() { m_uriList = emptyString(); }
 
-    void setImage(RefPtr<Image>&& newImage) { m_image = WTF::move(newImage); }
-    const RefPtr<Image>& image() const { return m_image; }
-    bool hasImage() const { return m_image; }
+    void setImage(RefPtr<ShareableBitmap>&& newImage) { m_image = WTF::move(newImage); }
+    const RefPtr<ShareableBitmap>& image() const { return m_image; }
+    bool hasImage() const { return !!m_image; }
     void clearImage() { m_image = nullptr; }
 
     void setCanSmartReplace(bool canSmartReplace) { m_canSmartReplace = canSmartReplace; }
     bool canSmartReplace() const { return m_canSmartReplace; }
 
     void addBuffer(const String& type, const Ref<SharedBuffer>& buffer) { m_buffers.add(type, buffer.get()); }
-    const HashMap<String, Ref<SharedBuffer>>& buffers() const { return m_buffers; }
+    const HashMap<String, Ref<SharedBuffer>>& buffers() const LIFETIME_BOUND { return m_buffers; }
     SharedBuffer* buffer(const String& type) { return m_buffers.get(type); }
     void clearBuffers() { m_buffers.clear(); }
 
@@ -74,7 +74,7 @@ public:
     void clearAll();
     void clearAllExceptFilenames();
 
-    SelectionData(const String& text, const String& markup, const URL&, const String& uriList, RefPtr<WebCore::Image>&&, RefPtr<WebCore::SharedBuffer>&&, bool);
+    SelectionData(const String& text, const String& markup, const URL&, const String& uriList, RefPtr<ShareableBitmap>&&, RefPtr<WebCore::SharedBuffer>&&, bool);
     SelectionData() = default;
 
 private:
@@ -83,7 +83,7 @@ private:
     URL m_url;
     String m_uriList;
     Vector<String> m_filenames;
-    RefPtr<Image> m_image;
+    RefPtr<ShareableBitmap> m_image;
     bool m_canSmartReplace { false };
     RefPtr<SharedBuffer> m_customData;
     HashMap<String, Ref<SharedBuffer>> m_buffers;

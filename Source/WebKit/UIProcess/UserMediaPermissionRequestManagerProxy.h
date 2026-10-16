@@ -78,8 +78,7 @@ public:
     static Ref<UserMediaPermissionRequestManagerProxy> create(WebPageProxy&);
     ~UserMediaPermissionRequestManagerProxy();
 
-    WebPageProxy* page() const;
-    RefPtr<WebPageProxy> protectedPage() const;
+    WebPageProxy* LEGACY_NODELETE page() const;
 
     void disconnectFromPage();
 
@@ -173,9 +172,9 @@ private:
 
     RequestAction getRequestAction(const UserMediaPermissionRequestProxy&);
 
-    bool wasGrantedVideoOrAudioAccess(WebCore::FrameIdentifier);
-    bool wasGrantedAudioAccess(WebCore::FrameIdentifier);
-    bool wasGrantedVideoAccess(WebCore::FrameIdentifier);
+    bool LEGACY_NODELETE wasGrantedVideoOrAudioAccess(WebCore::FrameIdentifier);
+    bool LEGACY_NODELETE wasGrantedAudioAccess(WebCore::FrameIdentifier);
+    bool LEGACY_NODELETE wasGrantedVideoAccess(WebCore::FrameIdentifier);
 
     void computeFilteredDeviceList(WebCore::FrameIdentifier, WebCore::PermissionState, WebCore::PermissionState, CompletionHandler<void(Vector<WebCore::CaptureDeviceWithCapabilities>&&)>&&);
     void platformGetMediaStreamDevices(bool revealIdsAndLabels, CompletionHandler<void(Vector<WebCore::CaptureDeviceWithCapabilities>&&)>&&);
@@ -232,8 +231,7 @@ private:
     HashSet<WebCore::FrameIdentifier> m_grantedAudioFrames;
     HashSet<WebCore::FrameIdentifier> m_grantedVideoFrames;
 #if PLATFORM(COCOA)
-    HashCountedSet<String> m_monitoredDeviceIds;
-    RetainPtr<WKRotationCoordinatorObserver> m_objcObserver;
+    const RetainPtr<WKRotationCoordinatorObserver> m_objcObserver;
 #endif
     std::optional<MonotonicTime> m_lastCaptureTime;
 };

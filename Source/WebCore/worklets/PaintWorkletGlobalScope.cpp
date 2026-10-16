@@ -26,11 +26,15 @@
 #include "config.h"
 #include "PaintWorkletGlobalScope.h"
 
+#include "ContentSecurityPolicy.h"
 #include "Document.h"
 #include "JSCSSPaintCallback.h"
-#include "JSDOMConvert.h"
+#include "JSDOMConvertCallbacks.h"
+#include "JSDOMConvertSequences.h"
+#include "JSDOMConvertStrings.h"
 #include "LocalDOMWindow.h"
 #include "RenderView.h"
+#include <JavaScriptCore/JSObjectInlines.h>
 #include <wtf/SetForScope.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -46,6 +50,7 @@ RefPtr<PaintWorkletGlobalScope> PaintWorkletGlobalScope::tryCreate(Document& doc
         return nullptr;
     auto scope = adoptRef(*new PaintWorkletGlobalScope(document, vm.releaseNonNull(), WTF::move(code)));
     scope->addToContextsMap();
+    scope->applyContentSecurityPolicyResponseHeaders(protect(document.contentSecurityPolicy())->responseHeaders());
     return scope;
 }
 
@@ -56,9 +61,10 @@ PaintWorkletGlobalScope::PaintWorkletGlobalScope(Document& document, Ref<VM>&& v
 
 double PaintWorkletGlobalScope::devicePixelRatio() const
 {
-    if (!responsibleDocument() || !responsibleDocument()->window())
+    RefPtr document = responsibleDocument();
+    if (!document || !document->window())
         return 1.0;
-    return responsibleDocument()->window()->devicePixelRatio();
+    return protect(document->window())->devicePixelRatio();
 }
 
 PaintDefinition::PaintDefinition(const AtomString& name, JSC::JSObject* paintConstructor, Ref<CSSPaintCallback>&& paintCallback, Vector<AtomString>&& inputProperties, Vector<String>&& inputArguments)
@@ -137,7 +143,7 @@ ExceptionOr<void> PaintWorkletGlobalScope::registerPaint(JSC::JSGlobalObject& gl
         if (paintValue.isUndefined())
             return Exception { ExceptionCode::TypeError, "The class must have a paint method"_s };
 
-        auto paintCallback = convert<IDLCallbackFunction<JSCSSPaintCallback>>(globalObject, paintValue, *jsCast<JSDOMGlobalObject*>(&globalObject));
+        auto paintCallback = convert<IDLCallbackFunction<JSCSSPaintCallback>>(globalObject, paintValue, downcast<JSDOMGlobalObject>(globalObject));
         if (paintCallback.hasException(scope)) [[unlikely]]
             return Exception { ExceptionCode::ExistingExceptionError };
 
@@ -151,8 +157,10 @@ ExceptionOr<void> PaintWorkletGlobalScope::registerPaint(JSC::JSGlobalObject& gl
     // FIXME: construct documentDefinition (step 22).
 
     // FIXME: we should only repaint affected custom paint images <https://bugs.webkit.org/show_bug.cgi?id=192322>.
-    if (responsibleDocument() && responsibleDocument()->renderView())
-        responsibleDocument()->renderView()->repaintRootContents();
+    if (RefPtr document = responsibleDocument()) {
+        if (CheckedPtr renderView = document->renderView())
+            renderView->repaintRootContents();
+    }
 
     return { };
 }

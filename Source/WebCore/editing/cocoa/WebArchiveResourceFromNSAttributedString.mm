@@ -29,7 +29,7 @@
 #import "ArchiveResource.h"
 #import "MIMETypeRegistry.h"
 
-using namespace WebCore;
+#import <wtf/cocoa/TypeCastsCocoa.h>
 
 @implementation WebArchiveResourceFromNSAttributedString
 
@@ -46,12 +46,12 @@ using namespace WebCore;
     RetainPtr updatedMIMEType = MIMEType;
     if ([MIMEType isEqualToString:@"application/octet-stream"]) {
         // FIXME: This is a workaround for <rdar://problem/36074429>, and can be removed once that is fixed.
-        auto mimeTypeFromURL = MIMETypeRegistry::mimeTypeForExtension(String(URL.pathExtension));
+        auto mimeTypeFromURL = WebCore::MIMETypeRegistry::mimeTypeForExtension(String(URL.pathExtension));
         if (!mimeTypeFromURL.isEmpty())
             updatedMIMEType = mimeTypeFromURL.createNSString();
     }
 
-    resource = ArchiveResource::create(SharedBuffer::create(adoptNS([data copy]).get()), URL, updatedMIMEType.get(), textEncodingName, frameName, { });
+    resource = WebCore::ArchiveResource::create(WebCore::SharedBuffer::create(checked_objc_cast<NSData>(adoptNS([data copy]).get())), URL, updatedMIMEType.get(), textEncodingName, frameName, { });
     if (!resource) {
         [self release];
         return nil;

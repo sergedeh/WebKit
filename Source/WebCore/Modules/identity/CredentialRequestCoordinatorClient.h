@@ -28,6 +28,8 @@
 #if ENABLE(WEB_AUTHN)
 
 #include <WebCore/DigitalCredentialsProtocols.h>
+#include <WebCore/DigitalCredentialsRequestData.h>
+#include <WebCore/FrameIdentifier.h>
 #include <WebCore/UnvalidatedDigitalCredentialRequest.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/TZoneMalloc.h>
@@ -39,8 +41,6 @@ class SecurityOrigin;
 class SecurityOriginData;
 class Document;
 template<typename T> class ExceptionOr;
-
-struct DigitalCredentialsRequestData;
 struct DigitalCredentialsResponseData;
 struct DigitalCredentialsRevalidationResult;
 struct ExceptionData;
@@ -53,9 +53,9 @@ class CredentialRequestCoordinatorClient : public RefCounted<CredentialRequestCo
 public:
     CredentialRequestCoordinatorClient() = default;
     virtual ~CredentialRequestCoordinatorClient() = default;
-    virtual void showDigitalCredentialsPicker(Vector<UnvalidatedDigitalCredentialRequest>&&, const DigitalCredentialsRequestData&, CompletionHandler<void(Expected<DigitalCredentialsResponseData, ExceptionData>&&)>&&) = 0;
-    virtual void dismissDigitalCredentialsPicker(CompletionHandler<void(bool)>&&) = 0;
-    virtual ExceptionOr<Vector<ValidatedDigitalCredentialRequest>> validateAndParseDigitalCredentialRequests(const SecurityOrigin&, const Document&, const Vector<UnvalidatedDigitalCredentialRequest>&) = 0;
+    virtual void showDigitalCredentialsChooser(std::optional<FrameIdentifier>, DigitalCredentialsRawRequests&&, const DigitalCredentialsRequestData&, CompletionHandler<void(std::expected<DigitalCredentialsResponseData, ExceptionData>&&)>&&) = 0;
+    virtual void dismissDigitalCredentialsChooser(CompletionHandler<void(bool)>&&) = 0;
+    virtual ExceptionOr<Vector<std::optional<ValidatedDigitalCredentialRequest>>> validateAndParseDigitalCredentialRequests(const SecurityOrigin&, const Document&, const Vector<UnvalidatedDigitalCredentialRequest>&) = 0;
 
     void ref() const { RefCounted::ref(); }
     void deref() const { RefCounted::deref(); }

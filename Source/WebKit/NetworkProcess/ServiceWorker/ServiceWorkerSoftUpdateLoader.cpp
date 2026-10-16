@@ -62,31 +62,32 @@ ServiceWorkerSoftUpdateLoader::ServiceWorkerSoftUpdateLoader(NetworkSession& ses
 
         OptionSet<AdvancedPrivacyProtections> advancedPrivacyProtections;
         bool allowPrivacyProxy { true };
-        cache->retrieve(request, std::nullopt, NavigatingToAppBoundDomain::No, allowPrivacyProxy, advancedPrivacyProtections, [this, weakThis = WeakPtr { *this }, request, shouldRefreshCache](auto&& entry, auto&&) mutable {
-            if (!weakThis)
+        cache->retrieve(request, std::nullopt, NavigatingToAppBoundDomain::No, allowPrivacyProxy, advancedPrivacyProtections, [weakThis = WeakPtr { *this }, request, shouldRefreshCache](auto&& entry, auto&&) mutable {
+            RefPtr protectedThis = weakThis;
+            if (!protectedThis)
                 return;
-            if (!m_session) {
-                fail(ResourceError { ResourceError::Type::Cancellation });
+            if (!protectedThis->m_session) {
+                protectedThis->fail(ResourceError { ResourceError::Type::Cancellation });
                 return;
             }
             if (!shouldRefreshCache && entry && !entry->needsValidation()) {
-                loadWithCacheEntry(*entry);
+                protectedThis->loadWithCacheEntry(*entry);
                 return;
             }
 
             request.setCachePolicy(ResourceRequestCachePolicy::RefreshAnyCacheData);
             if (entry) {
-                m_cacheEntry = WTF::move(entry);
+                lazyInitialize(protectedThis->m_cacheEntry, WTF::move(entry));
 
-                String eTag = m_cacheEntry->response().httpHeaderField(HTTPHeaderName::ETag);
+                String eTag = protectedThis->m_cacheEntry->response().httpHeaderField(HTTPHeaderName::ETag);
                 if (!eTag.isEmpty())
                     request.setHTTPHeaderField(HTTPHeaderName::IfNoneMatch, eTag);
 
-                String lastModified = m_cacheEntry->response().httpHeaderField(HTTPHeaderName::LastModified);
+                String lastModified = protectedThis->m_cacheEntry->response().httpHeaderField(HTTPHeaderName::LastModified);
                 if (!lastModified.isEmpty())
                     request.setHTTPHeaderField(HTTPHeaderName::IfModifiedSince, lastModified);
             }
-            loadFromNetwork(CheckedRef { *m_session }.get(), WTF::move(request));
+            protectedThis->loadFromNetwork(CheckedRef { *protectedThis->m_session }.get(), WTF::move(request));
         });
         return;
     }
@@ -175,7 +176,7 @@ ResourceError ServiceWorkerSoftUpdateLoader::processResponse(const ResourceRespo
 
     m_contentSecurityPolicy = ContentSecurityPolicyResponseHeaders { response };
     // Service workers are always secure contexts.
-    m_crossOriginEmbedderPolicy = obtainCrossOriginEmbedderPolicy(response, nullptr);
+    m_crossOriginEmbedderPolicy = obtainCrossOriginEmbedderPolicy(response, IsSecureContext::Yes, nullptr);
     m_referrerPolicy = response.httpHeaderField(HTTPHeaderName::ReferrerPolicy);
     m_responseEncoding = response.textEncodingName();
 
@@ -186,9 +187,9 @@ void ServiceWorkerSoftUpdateLoader::didReceiveBuffer(const WebCore::FragmentedSh
 {
     if (!m_decoder) {
         if (!m_responseEncoding.isEmpty())
-            m_decoder = TextResourceDecoder::create("text/javascript"_s, m_responseEncoding);
+            lazyInitialize(m_decoder, TextResourceDecoder::create("text/javascript"_s, m_responseEncoding));
         else
-            m_decoder = TextResourceDecoder::create("text/javascript"_s, "UTF-8"_s);
+            lazyInitialize(m_decoder, TextResourceDecoder::create("text/javascript"_s, "UTF-8"_s));
     }
 
     buffer.forEachSegment([&](auto segment) {
@@ -199,8 +200,8 @@ void ServiceWorkerSoftUpdateLoader::didReceiveBuffer(const WebCore::FragmentedSh
 
 void ServiceWorkerSoftUpdateLoader::didFinishLoading(const WebCore::NetworkLoadMetrics&)
 {
-    if (RefPtr decoder = m_decoder)
-        m_script.append(decoder->flush());
+    if (m_decoder)
+        m_script.append(m_decoder->flush());
     m_completionHandler({ ScriptBuffer { m_script.toString() }, m_jobData.scriptURL, m_certificateInfo, m_contentSecurityPolicy, m_crossOriginEmbedderPolicy, m_referrerPolicy, { } });
     didComplete();
 }

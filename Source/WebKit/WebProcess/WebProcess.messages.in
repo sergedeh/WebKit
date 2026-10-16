@@ -79,9 +79,15 @@ messages -> WebProcess : AuxiliaryProcess WantsAsyncDispatchMessage {
     SetTextCheckerState(OptionSet<WebKit::TextCheckerState> textCheckerState)
 
     SetEnhancedAccessibility(bool flag)
+    SetAccessibilityMode(enum:uint8_t WebCore::AccessibilityMode mode)
     BindAccessibilityFrameWithData(WebCore::FrameIdentifier frameID, std::span<const uint8_t> data);
 
+#if ENABLE(GPU_PROCESS)
+    DrawFrameToSnapshot(WebCore::FrameIdentifier frameID, WebCore::IntRect rect, WebKit::RemoteSnapshotIdentifier snapshotIdentifier, WebCore::RenderingMode renderingMode) AllowedWhenWaitingForSyncReplyDuringUnboundedIPC
+#endif
+
     GarbageCollectJavaScriptObjects()
+    GetStorageAreaMapCountForTesting() -> (uint64_t storageAreaMapCount)
     SetJavaScriptGarbageCollectorTimerEnabled(bool enable)
 
     SetInjectedBundleParameter(String parameter, std::span<const uint8_t> value);
@@ -117,7 +123,7 @@ messages -> WebProcess : AuxiliaryProcess WantsAsyncDispatchMessage {
     GamepadDisconnected(unsigned index)
 #endif
 
-    EstablishRemoteWorkerContextConnectionToNetworkProcess(enum:uint8_t WebKit::RemoteWorkerType workerType, WebKit::PageGroupIdentifier pageGroupID, WebKit::WebPageProxyIdentifier webPageProxyID, WebCore::PageIdentifier pageID, struct WebKit::WebPreferencesStore store, WebCore::Site site, std::optional<WebCore::ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, struct WebKit::RemoteWorkerInitializationData initializationData) -> ()
+    EstablishRemoteWorkerContextConnectionToNetworkProcess(enum:uint8_t WebKit::RemoteWorkerType workerType, WebKit::PageGroupIdentifier pageGroupID, WebKit::WebPageProxyIdentifier webPageProxyID, WebCore::PageIdentifier pageID, struct WebKit::WebPreferencesStore store, WebCore::Site site, std::optional<WebCore::ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, struct WebKit::RemoteWorkerInitializationData initializationData, enum:bool WebCore::CrossOriginEmbedderPolicyValue workerCrossOriginEmbedderPolicy) -> ()
 
     RegisterServiceWorkerClients() -> (bool isSuccess)
 
@@ -127,7 +133,7 @@ messages -> WebProcess : AuxiliaryProcess WantsAsyncDispatchMessage {
     GetActivePagesOriginsForTesting() -> (Vector<String> activeOrigins)
 
 #if PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE)
-    SetScreenProperties(struct WebCore::ScreenProperties screenProperties)
+    [DeferSendingIfSuspended] SetScreenProperties(struct WebCore::ScreenProperties screenProperties)
 #endif
 #if PLATFORM(MAC)
     ScrollerStylePreferenceChanged(bool useOvelayScrollbars)
@@ -171,7 +177,7 @@ messages -> WebProcess : AuxiliaryProcess WantsAsyncDispatchMessage {
     ClearCurrentModifierStateForTesting()
 
     SetBackForwardCacheCapacity(unsigned capacity);
-    ClearCachedPage(WebCore::BackForwardItemIdentifier backForwardItemID) -> ()
+    ClearCachedPage(WebCore::BackForwardFrameItemIdentifier backForwardFrameItemID) -> ()
 
 #if PLATFORM(GTK) || PLATFORM(WPE)
     SendMessageToWebProcessExtension(struct WebKit::UserMessage userMessage)
@@ -186,19 +192,17 @@ messages -> WebProcess : AuxiliaryProcess WantsAsyncDispatchMessage {
 
     UpdateDomainsWithStorageAccessQuirks(HashSet<WebCore::RegistrableDomain> domainsWithStorageAccessQuirks);
     UpdateScriptTrackingPrivacyFilter(struct WebKit::ScriptTrackingPrivacyRules rules)
+    UpdateConsistentPrivacyQuirkFilter(struct WebKit::ScriptTrackingPrivacyRules rules)
 
     GrantAccessToAssetServices(Vector<WebKit::SandboxExtensionHandle> assetServicesHandles)
     RevokeAccessToAssetServices()
+#if !ENABLE(REMOVE_XPC_AND_MACH_SANDBOX_EXTENSIONS_IN_WEBCONTENT)
     SwitchFromStaticFontRegistryToUserFontRegistry(Vector<WebKit::SandboxExtensionHandle> fontMachExtensionHandles)
-
+#endif
 #if PLATFORM(COCOA)
     DisableURLSchemeCheckInDataDetectors()
     UnblockServicesRequiredByAccessibility(Vector<WebKit::SandboxExtensionHandle> handleArray)
     PowerSourceDidChange(bool hasAC)
-#endif
-
-#if PLATFORM(GTK) && !USE(GTK4) && USE(CAIRO)
-    SetUseSystemAppearanceForScrollbars(bool useSystemAppearanceForScrollbars)
 #endif
 
 #if PLATFORM(COCOA)
@@ -225,6 +229,8 @@ messages -> WebProcess : AuxiliaryProcess WantsAsyncDispatchMessage {
 
 #if HAVE(MEDIA_ACCESSIBILITY_FRAMEWORK)
     SetMediaAccessibilityPreferences(enum:uint8_t WebCore::CaptionUserPreferencesDisplayMode displayMode, Vector<String> languages)
+    SetMediaAccessibilityPreferredLanguages(Vector<String> languages)
+    SetMediaAccessibilityPreferredCaptionDisplayMode(enum:uint8_t WebCore::CaptionUserPreferencesDisplayMode displayMode)
 #endif
 
 #if PLATFORM(MAC)
@@ -256,4 +262,8 @@ messages -> WebProcess : AuxiliaryProcess WantsAsyncDispatchMessage {
 #endif
 
     ContentWorldDestroyed(WebKit::ContentWorldIdentifier identifier)
+
+#if ENABLE(OFFSCREEN_CANVAS) && ENABLE(GPU_PROCESS)
+    CommitOffscreenCanvasPlaceholderFrame(WebCore::PlaceholderRenderingContextIdentifier identifier, struct WebCore::ImageBufferTransferHandle transferHandle, WebCore::PlaceholderFrameIdentifier frame, bool originClean, bool opaque) -> (bool handled)
+#endif
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2004, 2006, 2007, 2009 Apple Inc. All rights reserved.
+ * Copyright (C) 2004-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,30 +25,58 @@
 
 #pragma once
 
+#include "RenderBlock.h"
 #include "RenderReplaced.h"
+#include <wtf/HashMap.h>
+#include <wtf/WeakRef.h>
 
 namespace WebCore {
 
 class HTMLCanvasElement;
+struct CanvasElementSnapshot;
+
+namespace DisplayList {
+class RecorderImpl;
+}
 
 class RenderHTMLCanvas final : public RenderReplaced {
     WTF_MAKE_TZONE_ALLOCATED(RenderHTMLCanvas);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderHTMLCanvas);
 public:
-    RenderHTMLCanvas(HTMLCanvasElement&, RenderStyle&&);
+    RenderHTMLCanvas(HTMLCanvasElement&, Style::ComputedStyle&&);
     virtual ~RenderHTMLCanvas();
 
-    HTMLCanvasElement& canvasElement() const;
+    HTMLCanvasElement& LEGACY_NODELETE canvasElement() const;
 
     void canvasSizeChanged();
 
+    RenderBlock* innerRenderer() const { return m_innerRenderer.get(); }
+    void setInnerRenderer(RenderBlock*);
+
+    bool hasDrawableContent() const final;
+
+    DisplayList::RecorderImpl* canvasDrawableRecorder(RenderElement&, GraphicsContext&, const IntRect& elementRelativeBounds) const;
+    std::optional<CanvasElementSnapshot> canvasDrawableSnapshot(RenderElement&) const;
+
 private:
     void element() const = delete;
+
     bool requiresLayer() const override;
     ASCIILiteral renderName() const override { return "RenderHTMLCanvas"_s; }
+
+    NaturalDimensions zoomedNaturalDimensions() const final;
+
+    bool canHaveChildren() const override;
+
+    void layout() override;
     void paintReplaced(PaintInfo&, const LayoutPoint&) override;
+    bool nodeAtPoint(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction) override;
+
     void intrinsicSizeChanged() override { canvasSizeChanged(); }
-    void styleDidChange(Style::Difference, const RenderStyle* oldStyle) override;
+    void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) override;
+
+    SingleThreadWeakPtr<RenderBlock> m_innerRenderer;
+    mutable HashMap<SingleThreadWeakRef<RenderElement>, Ref<DisplayList::RecorderImpl>> m_canvasDrawableRecorderMap;
 };
 
 } // namespace WebCore

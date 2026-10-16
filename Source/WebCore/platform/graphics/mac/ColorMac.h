@@ -36,8 +36,8 @@ namespace WebCore {
 
 Color semanticColorFromNSColor(NSColor *);
 
-WEBCORE_EXPORT bool usesTestModeFocusRingColor();
-WEBCORE_EXPORT void setUsesTestModeFocusRingColor(bool);
+WEBCORE_EXPORT bool LEGACY_NODELETE usesTestModeFocusRingColor();
+WEBCORE_EXPORT void LEGACY_NODELETE setUsesTestModeFocusRingColor(bool);
 
 // Focus ring color used for testing purposes.
 Color oldAquaFocusRingColor();

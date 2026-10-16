@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include <WebCore/CSSRule.h>
+#include "CSSRule.h"
 
 namespace WebCore {
 
@@ -37,17 +37,17 @@ public:
 
     virtual ~CSSNamespaceRule();
 
-    AtomString namespaceURI() const;
-    AtomString prefix() const;
+    AtomString LEGACY_NODELETE namespaceURI() const;
+    AtomString LEGACY_NODELETE prefix() const;
 
 private:
     CSSNamespaceRule(StyleRuleNamespace&, CSSStyleSheet*);
 
     StyleRuleType styleRuleType() const final { return StyleRuleType::Namespace; }
     String cssText() const final;
-    void reattach(StyleRuleBase&) final;
+    void LEGACY_NODELETE reattach(StyleRuleBase&) final;
 
-    Ref<StyleRuleNamespace> m_namespaceRule;
+    const Ref<StyleRuleNamespace> m_namespaceRule;
 };
 
 } // namespace WebCore

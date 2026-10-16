@@ -29,9 +29,7 @@
 #include "JSBasics.h"
 #include "JSUIScriptController.h"
 #include "UIScriptContext.h"
-#include <JavaScriptCore/JSRetainPtr.h>
 #include <JavaScriptCore/JSValueRef.h>
-#include <JavaScriptCore/OpaqueJSString.h>
 
 namespace WTR {
 
@@ -74,10 +72,18 @@ TextExtractionTestOptions* toTextExtractionTestOptions(JSContextRef context, JSV
     options.clipToBounds = booleanProperty(context, (JSObjectRef)argument, "clipToBounds", false);
     options.includeRects = booleanProperty(context, (JSObjectRef)argument, "includeRects", false);
     options.includeURLs = booleanProperty(context, (JSObjectRef)argument, "includeURLs", false);
+    options.includeSelectOptions = booleanProperty(context, (JSObjectRef)argument, "includeSelectOptions", false);
     options.shortenURLs = booleanProperty(context, (JSObjectRef)argument, "shortenURLs", false);
-    options.includeEventListeners = booleanProperty(context, (JSObjectRef)argument, "includeEventListeners", false);
+    options.eventListenerCategories = [&] -> JSValueRef {
+        auto value = property(context, (JSObjectRef)argument, "eventListenerCategories");
+        if (isValidValue(context, value))
+            return value;
+
+        return nullptr;
+    }();
     options.includeAccessibilityAttributes = booleanProperty(context, (JSObjectRef)argument, "includeAccessibilityAttributes", false);
     options.includeTextInAutoFilledControls = booleanProperty(context, (JSObjectRef)argument, "includeTextInAutoFilledControls", false);
+    options.includeOffscreenPasswordFields = booleanProperty(context, (JSObjectRef)argument, "includeOffscreenPasswordFields", false);
     options.wordLimit = static_cast<unsigned>(numericProperty(context, (JSObjectRef)argument, "wordLimit"));
     options.mergeParagraphs = booleanProperty(context, (JSObjectRef)argument, "mergeParagraphs", false);
     options.skipNearlyTransparentContent = booleanProperty(context, (JSObjectRef)argument, "skipNearlyTransparentContent", false);
@@ -90,6 +96,7 @@ TextExtractionTestOptions* toTextExtractionTestOptions(JSContextRef context, JSV
     }();
     options.nodeIdentifierInclusion = stringProperty(context, (JSObjectRef)argument, "nodeIdentifierInclusion");
     options.outputFormat = stringProperty(context, (JSObjectRef)argument, "outputFormat");
+    options.wordLimitPolicy = stringProperty(context, (JSObjectRef)argument, "wordLimitPolicy");
     return &options;
 }
 
@@ -259,6 +266,16 @@ void UIScriptController::setWillStartInputSessionCallback(JSValueRef callback)
 JSValueRef UIScriptController::willStartInputSessionCallback() const
 {
     return m_context->callbackWithID(CallbackTypeWillStartInputSession);
+}
+
+void UIScriptController::setDidStartInputSessionCallback(JSValueRef callback)
+{
+    m_context->registerCallback(callback, CallbackTypeDidStartInputSession);
+}
+
+JSValueRef UIScriptController::didStartInputSessionCallback() const
+{
+    return m_context->callbackWithID(CallbackTypeDidStartInputSession);
 }
 
 void UIScriptController::setDidShowMenuCallback(JSValueRef callback)

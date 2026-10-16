@@ -28,7 +28,8 @@
 #include "GPUIntegralTypes.h"
 #include "GPUQuerySet.h"
 #include "WebGPUComputePassTimestampWrites.h"
-#include <wtf/RefPtr.h>
+#include <wtf/Forward.h>
+#include <wtf/Ref.h>
 #include <wtf/Vector.h>
 
 namespace WebCore {
@@ -37,15 +38,17 @@ struct GPUComputePassTimestampWrites {
     WebGPU::ComputePassTimestampWrites convertToBacking() const
     {
         return {
-            querySet ? &querySet->backing() : nullptr,
-            beginningOfPassWriteIndex,
-            endOfPassWriteIndex,
+            querySet->backing(),
+            beginningOfPassWriteIndex.value_or(WebGPU::kQuerySetIndexUndefined),
+            endOfPassWriteIndex.value_or(WebGPU::kQuerySetIndexUndefined),
         };
     }
 
-    WeakPtr<GPUQuerySet> querySet;
-    GPUSize32 beginningOfPassWriteIndex { WebGPU::kQuerySetIndexUndefined };
-    GPUSize32 endOfPassWriteIndex { WebGPU::kQuerySetIndexUndefined };
+    Ref<JSON::Object> toJSON() const;
+
+    Ref<GPUQuerySet> querySet;
+    std::optional<GPUSize32> beginningOfPassWriteIndex { WebGPU::kQuerySetIndexUndefined };
+    std::optional<GPUSize32> endOfPassWriteIndex { WebGPU::kQuerySetIndexUndefined };
 };
 
 }

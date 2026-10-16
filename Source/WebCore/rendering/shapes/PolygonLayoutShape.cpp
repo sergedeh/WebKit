@@ -34,20 +34,15 @@
 
 namespace WebCore {
 
-static inline FloatSize inwardEdgeNormal(const FloatPolygonEdge& edge)
+static inline FloatSize inwardEdgeNormal(const FloatPoint& vertex1, const FloatPoint& vertex2)
 {
-    FloatSize edgeDelta = edge.vertex2() - edge.vertex1();
+    FloatSize edgeDelta = vertex2 - vertex1;
     if (!edgeDelta.width())
         return FloatSize((edgeDelta.height() > 0 ? -1 : 1), 0);
     if (!edgeDelta.height())
         return FloatSize(0, (edgeDelta.width() > 0 ? 1 : -1));
     float edgeLength = edgeDelta.diagonalLength();
     return FloatSize(-edgeDelta.height() / edgeLength, edgeDelta.width() / edgeLength);
-}
-
-static inline FloatSize outwardEdgeNormal(const FloatPolygonEdge& edge)
-{
-    return -inwardEdgeNormal(edge);
 }
 
 float OffsetPolygonEdge::xIntercept(float y) const
@@ -89,13 +84,13 @@ FloatShapeInterval OffsetPolygonEdge::clippedEdgeXRange(float y1, float y2) cons
     return FloatShapeInterval(std::min(xForY1, xForY2), std::max(xForY1, xForY2));
 }
 
-static float circleXIntercept(float y, float radius)
+static float LEGACY_NODELETE circleXIntercept(float y, float radius)
 {
     ASSERT(radius > 0);
     return radius * sqrt(1 - (y * y) / (radius * radius));
 }
 
-static FloatShapeInterval clippedCircleXRange(const FloatPoint& center, float radius, float y1, float y2)
+static FloatShapeInterval LEGACY_NODELETE clippedCircleXRange(const FloatPoint& center, float radius, float y1, float y2)
 {
     if (y1 >= center.y() + radius || y2 <= center.y() - radius)
         return FloatShapeInterval();
@@ -117,6 +112,23 @@ LayoutRect PolygonLayoutShape::shapeMarginLogicalBoundingBox() const
     return LayoutRect(box);
 }
 
+void uniteEdgeExcludedInterval(FloatShapeInterval& excludedInterval, const FloatPoint& vertex1, const FloatPoint& vertex2, float y1, float y2, float shapeMargin)
+{
+    if (std::max(vertex1.y(), vertex2.y()) + shapeMargin < y1 || std::min(vertex1.y(), vertex2.y()) - shapeMargin > y2)
+        return;
+
+    if (!shapeMargin) {
+        excludedInterval.unite(OffsetPolygonEdge(vertex1, vertex2, FloatSize()).clippedEdgeXRange(y1, y2));
+        return;
+    }
+
+    auto normal = inwardEdgeNormal(vertex1, vertex2);
+    excludedInterval.unite(OffsetPolygonEdge(vertex1, vertex2, -normal * shapeMargin).clippedEdgeXRange(y1, y2));
+    excludedInterval.unite(OffsetPolygonEdge(vertex1, vertex2, normal * shapeMargin).clippedEdgeXRange(y1, y2));
+    excludedInterval.unite(clippedCircleXRange(vertex1, shapeMargin, y1, y2));
+    excludedInterval.unite(clippedCircleXRange(vertex2, shapeMargin, y1, y2));
+}
+
 LineSegment PolygonLayoutShape::getExcludedInterval(LayoutUnit logicalTop, LayoutUnit logicalHeight) const
 {
     float y1 = logicalTop;
@@ -129,21 +141,14 @@ LineSegment PolygonLayoutShape::getExcludedInterval(LayoutUnit logicalTop, Layou
     for (const FloatPolygonEdge& edge : m_polygon.overlappingEdges(y1 - shapeMargin(), y2 + shapeMargin())) {
         if (edge.maxY() == edge.minY())
             continue;
-        if (!shapeMargin())
-            excludedInterval.unite(OffsetPolygonEdge(edge, FloatSize()).clippedEdgeXRange(y1, y2));
-        else {
-            excludedInterval.unite(OffsetPolygonEdge(edge, outwardEdgeNormal(edge) * shapeMargin()).clippedEdgeXRange(y1, y2));
-            excludedInterval.unite(OffsetPolygonEdge(edge, inwardEdgeNormal(edge) * shapeMargin()).clippedEdgeXRange(y1, y2));
-            excludedInterval.unite(clippedCircleXRange(edge.vertex1(), shapeMargin(), y1, y2));
-            excludedInterval.unite(clippedCircleXRange(edge.vertex2(), shapeMargin(), y1, y2));
-        }
+        uniteEdgeExcludedInterval(excludedInterval, edge.vertex1(), edge.vertex2(), y1, y2, shapeMargin());
     }
 
     if (excludedInterval.isEmpty())
         return { };
 
     if (shouldFlipStartAndEndPoints(writingMode()))
-        return { std::max(0.f, m_boxLogicalWidth - excludedInterval.x2()), std::max(0.f, m_boxLogicalWidth - excludedInterval.x1()) };
+        return { std::max(0.f, m_borderBoxLogicalWidth - excludedInterval.x2()), std::max(0.f, m_borderBoxLogicalWidth - excludedInterval.x1()) };
 
     return { excludedInterval.x1(), excludedInterval.x2() };
 }

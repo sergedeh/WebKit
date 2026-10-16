@@ -209,6 +209,7 @@ const aliases = {
     'int': 'uint32_t',
     'unsigned': 'uint32_t',
     'char': 'uint8_t',
+    'char8_t': 'uint8_t',
     'pid_t': 'uint32_t',
     'unsigned short': 'uint16_t',
     'unsigned char': 'uint8_t',
@@ -224,27 +225,38 @@ const aliases = {
     'GCGLenum': 'uint32_t',
     'GCGLint': 'int32_t',
     'GCGLErrorCodeSet': 'OptionSet<GCGLErrorCode>',
-    // these RetainPtr<T> should not be treated as optionnal because
-    // of the 'Ref wrapped by' in Source/WebKit/Shared/cf/CFTypes.serialization.in
-    // see generated code in WebKitBuild/Debug/DerivedSources/WebKit/WebKitPlatformGeneratedSerializers.mm
-    'RetainPtr<CFTypeRef>': 'WebKit::CoreIPCCFType',
-    'RetainPtr<CFDataRef>': 'WebKit::CoreIPCData',
-    'RetainPtr<CFStringRef>': 'String',
-    'RetainPtr<CFArrayRef>': 'WebKit::CoreIPCCFArray',
-    'RetainPtr<CFDictionaryRef>': 'WebKit::CoreIPCCFDictionary',
-    'RetainPtr<CFBooleanRef>': 'WebKit::CoreIPCBoolean',
-    'RetainPtr<CFNumberRef>': 'WebKit::CoreIPCNumber',
-    'RetainPtr<CFDateRef>': 'WebKit::CoreIPCDate',
-    'RetainPtr<CFURLRef>': 'WebKit::CoreIPCCFURL',
-    'RetainPtr<CFNullRef>': 'WebKit::CoreIPCNull',
-    'RetainPtr<SecAccessControlRef>': 'WebKit::CoreIPCSecAccessControl',
-    'RetainPtr<SecCertificateRef>': 'WebKit::CoreIPCSecCertificate',
-    'RetainPtr<SecKeychainItemRef>': 'WebKit::CoreIPCSecKeychainItem',
-    'RetainPtr<CVPixelBufferRef>': 'WebKit::CoreIPCCVPixelBufferRef',
-    'RetainPtr<SecTrustRef>': 'WebKit::CoreIPCSecTrust',
-    'RetainPtr<CFCharacterSetRef>': 'WebKit::CoreIPCCFCharacterSet',
-    'RetainPtr<CGColorRef>': 'WebCore::Color',
-    'RetainPtr<CGColorSpaceRef>': 'WebKit::CoreIPCCGColorSpace'
+    // Encoder serializes bare CF/CG/CV/Sec refs as their CoreIPC wrapper types
+    'CFTypeRef': 'WebKit::CoreIPCCFType',
+    'CFDataRef': 'WebKit::CoreIPCData',
+    'CFStringRef': 'String',
+    'CFArrayRef': 'WebKit::CoreIPCCFArray',
+    'CFDictionaryRef': 'WebKit::CoreIPCCFDictionary',
+    'CFBooleanRef': 'WebKit::CoreIPCBoolean',
+    'CFNumberRef': 'WebKit::CoreIPCNumber',
+    'CFDateRef': 'WebKit::CoreIPCDate',
+    'CFURLRef': 'WebKit::CoreIPCCFURL',
+    'CFNullRef': 'WebKit::CoreIPCNull',
+    'SecAccessControlRef': 'WebKit::CoreIPCSecAccessControl',
+    'SecCertificateRef': 'WebKit::CoreIPCSecCertificate',
+    'SecKeychainItemRef': 'WebKit::CoreIPCSecKeychainItem',
+    'CVPixelBufferRef': 'WebKit::CoreIPCCVPixelBufferRef',
+    'SecTrustRef': 'WebKit::CoreIPCSecTrust',
+    'CFCharacterSetRef': 'WebKit::CoreIPCCFCharacterSet',
+    'CGColorRef': 'WebCore::Color',
+    'CGColorSpaceRef': 'WebKit::CoreIPCCGColorSpace'
+}
+
+// A ColorSpace holding sRGB. Under USE(CG) it is a structured variant; under
+// USE(SKIA) sk_sp<SkColorSpace> crosses IPC as the bytes SkColorSpace::serialize() produces,
+// which IPC.serializedSRGBColorSpace() obtains from the real serializer.
+export function sRGBColorSpace() {
+    if ('WebKit::CoreIPCCGColorSpace' in CoreIPC.typeInfo)
+        return { serializableColorSpace: { alias: { optionalValue: { m_cgColorSpace: { alias: { variantType: 'WebCore::ColorSpaceName', variant: 19 } } } } } }; // WebCore::ColorSpaceName::SRGB
+
+    if ('sk_sp<SkColorSpace>' in CoreIPC.typeInfo)
+        return { serializableColorSpace: { alias: { dataReference: IPC.serializedSRGBColorSpace() } } };
+
+    throw new SerializationError('sRGBColorSpace() supports only the CG and Skia serialization formats');
 }
 
 export function resolveAlias(argumentType) {
@@ -254,13 +266,13 @@ export function resolveAlias(argumentType) {
 
     // remove any 'const ' prefix
     if (argumentType.startsWith("const ")) {
-        argumentType = argumentType.slice("const ".length);
+        return resolveAlias(argumentType.slice("const ".length));
     }
 
     return argumentType;
 }
 
-function isPrimtiveType(type) {
+function isPrimitiveType(type) {
     return ["double", "float", "bool","String","uint8_t", "int8_t","uint16_t", "int16_t","uint32_t", "int32_t","uint64_t", "int64_t",].includes(type);
 }
 
@@ -547,6 +559,7 @@ export class ArgumentSerializer {
         if (argumentType.includes("<")) {
             const [ templateType, innerType ] = ArgumentSerializer.parseTemplate(argumentType);
             switch (templateType) {
+                case 'Box':
                 case 'RefPtr':
                 case 'std::unique_ptr':
                 case 'RetainPtr':
@@ -583,8 +596,13 @@ export class ArgumentSerializer {
                     return ArgumentSerializer.serializeHashMap(innerType, argument);
                 case 'Ref':
                 case 'UniqueRef':
+                case 'IPC::Untrusted':
                     return ArgumentSerializer.serializeArgument({type: innerType, name: argumentDefinition.name}, argument);
                 default:
+                    // A wrapper class such as sk_sp<SkColorSpace> is a template, but the
+                    // generator describes it like any other struct.
+                    if (argumentDefinition.type in CoreIPC.typeInfo)
+                        break;
                     throw new SerializationError(`Don't know how to serialize template '${ templateType }'`);
             }
         }
@@ -729,6 +747,8 @@ export class ArgumentSerializer {
                 }
                 throw new SerializationError(`Primitive value of type ${ argumentDefinition.type } is neither a number nor a bigint`);
             case 'String':
+                if (argument === null)
+                    return {value: null, type: 'String'};
                 if (typeof argument != 'string') {
                     throw new SerializationError(`Primitive value is not a string`);
                 }
@@ -758,6 +778,10 @@ export class ArgumentSerializer {
                 if (argument === null) {
                     return [];
                 } else throw new SerializationError(`std::nullptr_t is not null`);
+            case 'std::monostate':
+                if (argument === null) {
+                    return [];
+                } else throw new SerializationError(`std::monostate is not null`);
             case 'WebCore::SharedMemory::Handle':
             case 'WebCore::SharedMemoryHandle':
             case 'MachSendRight':
@@ -1050,6 +1074,7 @@ export class ArgumentParser {
         if (argumentType.includes("<")) {
             const [ templateType, innerType ] = ArgumentSerializer.parseTemplate(argumentType);
             switch (templateType) {
+                case 'Box':
                 case 'RefPtr':
                 case 'std::unique_ptr':
                 case 'RetainPtr':
@@ -1065,6 +1090,7 @@ export class ArgumentParser {
                 case 'std::vector':
                 case 'ArrayReference':
                 case 'Span':
+                case 'FixedVector':
                 case 'Vector': {
                     const [newPosition, values] = ArgumentParser.parseVector(buffer, position, innerType, false);
                     return [newPosition, {parsedType: argumentDefinition.type, parsedValue: values}];
@@ -1100,7 +1126,8 @@ export class ArgumentParser {
                     return [newPosition, {parsedType: argumentDefinition.type, parsedValue: value}]
                 }
                 case 'Ref':
-                case 'UniqueRef': {
+                case 'UniqueRef':
+                case 'IPC::Untrusted': {
                     return ArgumentParser.parseArgument(buffer, position, {type: innerType, name: argumentDefinition.name});
                 }
                 case 'HashMap':
@@ -1197,7 +1224,11 @@ export class ArgumentParser {
                 return [position, {parsedValue: result, parsedType: 'String'}];
             }
             case 'std::nullptr_t':
-                return [position, {parsedValue: 'null', parsedType: 'std::nullptr_t'}];
+                return [position, {parsedValue: null, parsedType: 'std::nullptr_t'}];
+            case 'std::monostate':
+                return [position, {parsedValue: null, parsedType: 'std::monostate'}];
+            case 'MachSendRight':
+                return [position, {parsedValue: null, parsedType: 'MachSendRight'}];
         }
         return undefined;
     }
@@ -1254,7 +1285,7 @@ export class ArgumentParser {
     static untypeResult(typedResult) {
         if (typeof(typedResult)=='object') {
             if ('parsedType' in typedResult) {
-                if (isEnum(typedResult.parsedType) || isPrimtiveType(typedResult.parsedType) || isIdentifier(typedResult.parsedType)) {
+                if (isEnum(typedResult.parsedType) || isPrimitiveType(typedResult.parsedType) || isIdentifier(typedResult.parsedType)) {
                     return typedResult.parsedValue;
                 }
                 return ArgumentParser.untypeResult(typedResult.parsedValue);

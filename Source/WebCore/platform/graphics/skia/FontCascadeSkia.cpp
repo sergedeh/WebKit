@@ -24,7 +24,7 @@
  */
 
 #include "config.h"
-#include "FontCascade.h"
+#include "FontCascadeInlines.h"
 
 #if USE(SKIA)
 #include "FontCache.h"
@@ -34,7 +34,7 @@
 
 namespace WebCore {
 
-void FontCascade::drawGlyphs(GraphicsContext& graphicsContext, const Font& font, std::span<const GlyphBufferGlyph> glyphs, std::span<const GlyphBufferAdvance> advances, const FloatPoint& position, FontSmoothingMode smoothingMode)
+void FontCascade::drawGlyphs(GraphicsContext& graphicsContext, const FontBase& font, std::span<const GlyphBufferGlyph> glyphs, std::span<const GlyphBufferAdvance> advances, const FloatPoint& position, FontSmoothingMode smoothingMode)
 {
     auto blob = font.buildTextBlob(glyphs, advances, smoothingMode);
     if (!blob)
@@ -44,7 +44,7 @@ void FontCascade::drawGlyphs(GraphicsContext& graphicsContext, const Font& font,
         font.enableAntialiasing(smoothingMode), font.platformData().orientation() == FontOrientation::Vertical);
 }
 
-bool FontCascade::canUseGlyphDisplayList(const RenderStyle&)
+bool FontCascade::canUseGlyphDisplayList(const Style::ComputedStyle&)
 {
     return true;
 }
@@ -72,8 +72,9 @@ ResolvedEmojiPolicy FontCascade::resolveEmojiPolicy(FontVariantEmoji fontVariant
     return ResolvedEmojiPolicy::NoPreference;
 }
 
-RefPtr<const Font> FontCascade::fontForCombiningCharacterSequence(StringView stringView) const
+RefPtr<const Font> FontCascade::fontForCombiningCharacterSequence(StringView stringView, std::optional<char32_t>& matchedPrecomposedCharacter) const
 {
+    matchedPrecomposedCharacter = std::nullopt;
     ASSERT(!stringView.isEmpty());
     auto codePoints = stringView.codePoints();
     auto codePointsIterator = codePoints.begin();
@@ -100,7 +101,7 @@ RefPtr<const Font> FontCascade::fontForCombiningCharacterSequence(StringView str
         // the base character with the cat emoji to try to force an emoji font.
         baseCharacterForBaseFont = emojiCat;
     }
-    GlyphData baseCharacterGlyphData = glyphDataForCharacter(baseCharacterForBaseFont, false, NormalVariant, emojiPolicy);
+    GlyphData baseCharacterGlyphData = glyphDataForCharacter(baseCharacterForBaseFont, false, FontVariant::Normal, emojiPolicy);
     if (!baseCharacterGlyphData.glyph)
         return nullptr;
 
@@ -122,6 +123,22 @@ RefPtr<const Font> FontCascade::fontForCombiningCharacterSequence(StringView str
     if (isOnlySingleCodePoint && !shouldForceEmojiFont && fontMatchesEmojiPolicy(baseCharacterGlyphData.font.get(), emojiPolicy))
         return baseCharacterGlyphData.font.get();
 
+    // Computed once, and only when a font fails the first rule, because most clusters never need it.
+    std::optional<std::optional<char32_t>> cachedPrecomposedCharacter;
+    auto clusterPrecomposedCharacter = [&] {
+        if (!cachedPrecomposedCharacter)
+            cachedPrecomposedCharacter = stringView.precomposedCharacter();
+        return *cachedPrecomposedCharacter;
+    };
+
+    // https://drafts.csswg.org/css-fonts-4/#cluster-matching: "If a sequence of multiple codepoints is canonically equivalent to a single character and the font supports that character, select this font for the sequence". HarfBuzz composes the cluster when shaping.
+    auto fontForPrecomposedCharacter = [&](const FontRanges& fontRanges, char32_t character) -> const Font* {
+        auto* font = fontRanges.fontForCharacter(character);
+        if (!fontMatchesEmojiPolicy(font, emojiPolicy) || !font->supportsCodePoint(character))
+            return nullptr;
+        return font;
+    };
+
     bool triedBaseCharacterFont = false;
     for (unsigned i = 0; !fallbackRangesAt(i).isNull(); ++i) {
         auto& fontRanges = fallbackRangesAt(i);
@@ -140,10 +157,23 @@ RefPtr<const Font> FontCascade::fontForCombiningCharacterSequence(StringView str
 
         if (font->canRenderCombiningCharacterSequence(stringView))
             return font;
+
+        if (auto character = clusterPrecomposedCharacter()) {
+            if (auto* precomposedCharacterFont = fontForPrecomposedCharacter(fontRanges, *character)) {
+                matchedPrecomposedCharacter = character;
+                return precomposedCharacterFont;
+            }
+        }
     }
 
-    if (!triedBaseCharacterFont && baseCharacterGlyphData.font && baseCharacterGlyphData.font->canRenderCombiningCharacterSequence(stringView))
-        return baseCharacterGlyphData.font.get();
+    if (!triedBaseCharacterFont && baseCharacterGlyphData.font) {
+        if (baseCharacterGlyphData.font->canRenderCombiningCharacterSequence(stringView))
+            return baseCharacterGlyphData.font.get();
+        if (auto character = clusterPrecomposedCharacter(); character && baseCharacterGlyphData.font->supportsCodePoint(*character)) {
+            matchedPrecomposedCharacter = character;
+            return baseCharacterGlyphData.font.get();
+        }
+    }
 
     bool clusterContainsOtherNonDefaultIgnorableCodePoints = [&] -> bool {
         if (isOnlySingleCodePoint)
@@ -161,13 +191,13 @@ RefPtr<const Font> FontCascade::fontForCombiningCharacterSequence(StringView str
     // Try a system fallback for the whole cluster if needed.
     if (clusterContainsOtherNonDefaultIgnorableCodePoints) {
         auto preferColoredFont = emojiPolicy == ResolvedEmojiPolicy::RequireEmoji ? FontCache::PreferColoredFont::Yes : FontCache::PreferColoredFont::No;
-        if (auto systemFallback = FontCache::forCurrentThread()->systemFallbackForCharacterCluster(m_fontDescription, fallbackRangesAt(0).fontForFirstRange(), IsForPlatformFont::No, preferColoredFont, stringView)) {
+        if (auto systemFallback = FontCache::forCurrentThread().systemFallbackForCharacterCluster(m_fontDescription, fallbackRangesAt(0).fontForFirstRange(), IsForPlatformFont::No, preferColoredFont, stringView)) {
             if (systemFallback->canRenderCombiningCharacterSequence(stringView))
                 return systemFallback.get();
         }
     }
 
-    return nullptr;
+    return baseCharacterGlyphData.font.get();
 }
 
 } // namespace WebCore

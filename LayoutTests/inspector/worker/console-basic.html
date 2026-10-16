@@ -65,6 +65,19 @@ function test()
         })
     }
 
+    suite.addTestCase({
+        name: "Worker.Console.LoggingChannels",
+        description: "Logging channel commands should only exist for supported targets.",
+        test(resolve) {
+            InspectorTest.expectTrue(mainTarget.hasCommand("Console.getLoggingChannels"), "Page target should expose Console.getLoggingChannels.");
+            InspectorTest.expectTrue(mainTarget.hasCommand("Console.setLoggingChannelLevel"), "Page target should expose Console.setLoggingChannelLevel.");
+
+            InspectorTest.expectFalse(workerTarget.hasCommand("Console.getLoggingChannels"), "Worker target should not expose Console.getLoggingChannels.");
+            InspectorTest.expectFalse(workerTarget.hasCommand("Console.setLoggingChannelLevel"), "Worker target should not expose Console.setLoggingChannelLevel.");
+            resolve();
+        },
+    });
+
     addConsoleTestCase({
         name: "Worker.Console.log",
         description: "console.log with multiple values should work.",
@@ -105,6 +118,42 @@ function test()
         name: "Worker.Console.count",
         description: "console.count should produce a count message.",
         message: "count",
+    });
+
+    suite.addTestCase({
+        name: "Worker.Console.SingleToStringInvocation",
+        async test() {
+            for (let {name, source} of [
+                {
+                    name: "Date",
+                    source: `let value = new (class extends Date {
+                        toString() {
+                            ++count;
+                            return "worker-date";
+                        }
+                    });`,
+                },
+                {
+                    name: "Function",
+                    source: `let value = function() {};
+                    value.toString = function() {
+                        ++count;
+                        return "worker-function";
+                    };`,
+                },
+            ]) {
+                let {result} = await workerTarget.RuntimeAgent.evaluate.invoke({
+                    expression: `(function() {
+                        let count = 0;
+                        ${source}
+                        console.log(value);
+                        return count;
+                    })()`,
+                    returnByValue: true,
+                });
+                InspectorTest.expectEqual(result.value, 1, `Worker ${name} toString should be invoked exactly once.`);
+            }
+        },
     });
 
     suite.runTestCasesAndFinish();

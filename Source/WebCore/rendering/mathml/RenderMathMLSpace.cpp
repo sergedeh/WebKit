@@ -38,7 +38,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderMathMLSpace);
 
-RenderMathMLSpace::RenderMathMLSpace(MathMLSpaceElement& element, RenderStyle&& style)
+RenderMathMLSpace::RenderMathMLSpace(MathMLSpaceElement& element, Style::ComputedStyle&& style)
     : RenderMathMLBlock(Type::MathMLSpace, element, WTF::move(style))
 {
     ASSERT(isRenderMathMLSpace());
@@ -48,35 +48,37 @@ RenderMathMLSpace::~RenderMathMLSpace() = default;
 
 MathMLSpaceElement& RenderMathMLSpace::element() const
 {
-    return static_cast<MathMLSpaceElement&>(nodeForNonAnonymous());
+    return downcast<MathMLSpaceElement>(nodeForNonAnonymous());
 }
 
-void RenderMathMLSpace::computePreferredLogicalWidths()
+void RenderMathMLSpace::computeIntrinsicLogicalWidthContributions()
 {
-    ASSERT(needsPreferredLogicalWidthsUpdate());
+    ASSERT(hasInvalidContentLogicalWidths());
 
-    m_minPreferredLogicalWidth = m_maxPreferredLogicalWidth = spaceWidth();
+    m_maxContentLogicalWidthContribution = spaceWidth();
+    m_minContentLogicalWidthContribution = m_maxContentLogicalWidthContribution;
 
     auto sizes = sizeAppliedToMathContent(LayoutPhase::CalculatePreferredLogicalWidth);
     applySizeToMathContent(LayoutPhase::CalculatePreferredLogicalWidth, sizes);
 
-    adjustPreferredLogicalWidthsForBorderAndPadding();
+    adjustContentLogicalWidthsForBorderAndPadding();
 
-    clearNeedsPreferredWidthsUpdate();
+    clearContentLogicalWidthsInvalidation();
 }
 
 LayoutUnit RenderMathMLSpace::spaceWidth() const
 {
     Ref spaceElement = element();
     // FIXME: Negative width values are not supported yet.
-    return std::max<LayoutUnit>(0, toUserUnits(spaceElement->width(), style(), 0));
+    return std::max<LayoutUnit>(0, toUserUnits(spaceElement->width(), protect(style()), 0));
 }
 
 void RenderMathMLSpace::getSpaceHeightAndDepth(LayoutUnit& height, LayoutUnit& depth) const
 {
     Ref spaceElement = element();
-    height = toUserUnits(spaceElement->height(), style(), 0);
-    depth = toUserUnits(spaceElement->depth(), style(), 0);
+    CheckedRef style = this->style();
+    height = toUserUnits(spaceElement->height(), style, 0);
+    depth = toUserUnits(spaceElement->depth(), style, 0);
 
     // If the total height is negative, set vertical dimensions to 0.
     if (height + depth < 0) {
@@ -107,6 +109,8 @@ void RenderMathMLSpace::layoutBlock(RelayoutChildren relayoutChildren, LayoutUni
     applySizeToMathContent(LayoutPhase::Layout, sizes);
 
     adjustLayoutForBorderAndPadding();
+
+    updateLogicalHeight();
 }
 
 std::optional<LayoutUnit> RenderMathMLSpace::firstLineBaseline() const

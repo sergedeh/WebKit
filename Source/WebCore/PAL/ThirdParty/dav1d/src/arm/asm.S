@@ -34,6 +34,50 @@
 #define x18 do_not_use_x18
 #define w18 do_not_use_w18
 
+#if HAVE_AS_ARCH_DIRECTIVE
+        .arch AS_ARCH_LEVEL
+#endif
+
+#if HAVE_AS_ARCHEXT_DOTPROD_DIRECTIVE
+#define ENABLE_DOTPROD  .arch_extension dotprod
+#define DISABLE_DOTPROD .arch_extension nodotprod
+#else
+#define ENABLE_DOTPROD
+#define DISABLE_DOTPROD
+#endif
+#if HAVE_AS_ARCHEXT_I8MM_DIRECTIVE
+#define ENABLE_I8MM  .arch_extension i8mm
+#define DISABLE_I8MM .arch_extension noi8mm
+#else
+#define ENABLE_I8MM
+#define DISABLE_I8MM
+#endif
+#if HAVE_AS_ARCHEXT_SVE_DIRECTIVE
+#define ENABLE_SVE  .arch_extension sve
+#define DISABLE_SVE .arch_extension nosve
+#else
+#define ENABLE_SVE
+#define DISABLE_SVE
+#endif
+#if HAVE_AS_ARCHEXT_SVE2_DIRECTIVE
+#define ENABLE_SVE2  .arch_extension sve2
+#define DISABLE_SVE2 .arch_extension nosve2
+#else
+#define ENABLE_SVE2
+#define DISABLE_SVE2
+#endif
+
+/* If we do support the .arch_extension directives, disable support for all
+ * the extensions that we may use, in case they were implicitly enabled by
+ * the .arch level. This makes it clear if we try to assemble an instruction
+ * from an unintended extension set; we only allow assmbling such instructions
+ * within regions where we explicitly enable those extensions. */
+DISABLE_DOTPROD
+DISABLE_I8MM
+DISABLE_SVE
+DISABLE_SVE2
+
+
 /* Support macros for
  *   - Armv8.3-A Pointer Authentication and
  *   - Armv8.5-A Branch Target Identification
@@ -103,7 +147,7 @@
  *
  * References:
  * - "ELF for the Arm® 64-bit Architecture"
- *   https: *github.com/ARM-software/abi-aa/blob/master/aaelf64/aaelf64.rst
+ *   https://github.com/ARM-software/abi-aa/blob/master/aaelf64/aaelf64.rst
  * - "Providing protection for complex software"
  *   https://developer.arm.com/architectures/learn-the-architecture/providing-protection-for-complex-software
  */
@@ -135,6 +179,12 @@
 #endif
 #define GNU_PROPERTY_AARCH64_PAC (1 << 1)
 
+#elif defined(__APPLE__) && defined(__arm64e__)
+
+#define GNU_PROPERTY_AARCH64_PAC 0
+#define AARCH64_SIGN_LINK_REGISTER      pacibsp
+#define AARCH64_VALIDATE_LINK_REGISTER  autibsp
+
 #else /* __ARM_FEATURE_PAC_DEFAULT */
 
 #define GNU_PROPERTY_AARCH64_PAC 0
@@ -143,8 +193,14 @@
 
 #endif /* !__ARM_FEATURE_PAC_DEFAULT */
 
+#if defined(__ARM_FEATURE_GCS_DEFAULT) && __ARM_FEATURE_GCS_DEFAULT == 1
+#define GNU_PROPERTY_AARCH64_GCS (1 << 2)
+#else
+#define GNU_PROPERTY_AARCH64_GCS 0 /* No GCS */
+#endif
 
-#if (GNU_PROPERTY_AARCH64_BTI != 0 || GNU_PROPERTY_AARCH64_PAC != 0) && defined(__ELF__)
+
+#if (GNU_PROPERTY_AARCH64_BTI != 0 || GNU_PROPERTY_AARCH64_PAC != 0 || GNU_PROPERTY_AARCH64_GCS != 0) && defined(__ELF__)
         .pushsection .note.gnu.property, "a"
         .balign 8
         .long 4
@@ -153,10 +209,10 @@
         .asciz "GNU"
         .long 0xc0000000 /* GNU_PROPERTY_AARCH64_FEATURE_1_AND */
         .long 4
-        .long (GNU_PROPERTY_AARCH64_BTI | GNU_PROPERTY_AARCH64_PAC)
+        .long (GNU_PROPERTY_AARCH64_BTI | GNU_PROPERTY_AARCH64_PAC | GNU_PROPERTY_AARCH64_GCS)
         .long 0
         .popsection
-#endif /* (GNU_PROPERTY_AARCH64_BTI != 0 || GNU_PROPERTY_AARCH64_PAC != 0) && defined(__ELF__) */
+#endif /* (GNU_PROPERTY_AARCH64_BTI != 0 || GNU_PROPERTY_AARCH64_PAC != 0 || GNU_PROPERTY_AARCH64_GCS != 0) && defined(__ELF__) */
 #endif /* ARCH_AARCH64 */
 
 #if ARCH_ARM
@@ -206,6 +262,94 @@
 #define EXTERN PRIVATE_PREFIX
 #endif
 
+#if ARCH_AARCH64
+#define SEQ_15 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15
+#define SEQ_30 SEQ_15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30
+#define SEQ_GPR SEQ_30,zr
+#define SEQ_VPR SEQ_30,31
+
+#define x(r) CONCAT(as_x_, r)
+#define w(r) CONCAT(as_w_, r)
+#define b(r) CONCAT(as_b_, r)
+#define h(r) CONCAT(as_h_, r)
+#define s(r) CONCAT(as_s_, r)
+#define d(r) CONCAT(as_d_, r)
+#define q(r) CONCAT(as_q_, r)
+#define v(r) CONCAT(as_v_, r)
+#if HAVE_SVE
+#define z(r) CONCAT(as_z_, r)
+#endif
+
+.macro alias_gpr name, type, i
+    \name .req \type\i
+    as_w_\name .req w\i
+    as_x_\name .req x\i
+.endm
+
+.macro alias_vpr name, type, i
+    \name .req \type\i
+    as_b_\name .req b\i
+    as_h_\name .req h\i
+    as_s_\name .req s\i
+    as_d_\name .req d\i
+    as_q_\name .req q\i
+    as_v_\name .req v\i
+#if HAVE_SVE
+    as_z_\name .req z\i
+#endif
+.endm
+
+.macro unalias_gpr name, names:vararg
+    .unreq \name
+    .unreq as_w_\name
+    .unreq as_x_\name
+    .ifnb \names
+        unalias_gpr \names
+    .endif
+.endm
+
+.macro unalias_vpr name, names:vararg
+    .unreq \name
+    .unreq as_b_\name
+    .unreq as_h_\name
+    .unreq as_s_\name
+    .unreq as_d_\name
+    .unreq as_q_\name
+    .unreq as_v_\name
+#if HAVE_SVE
+    .unreq as_z_\name
+#endif
+    .ifnb \names
+        unalias_vpr \names
+    .endif
+.endm
+
+.irpc r,xw
+    .irp i,SEQ_GPR
+        as_\r\()_x\i .req \r\i
+        as_\r\()_w\i .req \r\i
+    .endr
+.endr
+
+#if HAVE_SVE
+.irpc r,bhsdqvz
+#else
+.irpc r,bhsdqv
+#endif
+    .irp i,SEQ_VPR
+        as_\r\()_b\i .req \r\i
+        as_\r\()_h\i .req \r\i
+        as_\r\()_s\i .req \r\i
+        as_\r\()_d\i .req \r\i
+        as_\r\()_q\i .req \r\i
+        as_\r\()_v\i .req \r\i
+#if HAVE_SVE
+        as_\r\()_z\i .req \r\i
+#endif
+    .endr
+.endr
+#endif /* ARCH_AARCH64 */
+
 .macro function name, export=0, align=2
     .macro endfunc
 #ifdef __ELF__
@@ -241,7 +385,7 @@ EXTERN\name:
 \name:
 #if ARCH_AARCH64
     .if \export
-         AARCH64_VALID_CALL_TARGET
+        AARCH64_VALID_CALL_TARGET
     .endif
 #endif
 .endm
@@ -271,6 +415,32 @@ EXTERN\name:
 EXTERN\name:
     .endif
 \name:
+.endm
+
+.macro jumptable name
+#ifdef _WIN32
+// MS armasm64 doesn't seem to be able to create relocations for subtraction
+// of labels in different sections; for armasm64 (and all of Windows for
+// simplicity), write the jump table in the text section, to allow calculating
+// differences at assembly time. See
+// https://developercommunity.visualstudio.com/t/armasm64-unable-to-create-cross-section/10722340
+// for reference. (LLVM can create such relocations, but checking for _WIN32
+// for simplicity, as execute-only memory isn't relevant on Windows at the
+// moment.)
+        function        \name
+#else
+// For other platforms, write jump tables in a const data section, to allow
+// working in environments where executable memory isn't readable.
+        const           \name
+#endif
+.endm
+
+.macro endjumptable
+#ifdef _WIN32
+        endfunc
+#else
+        endconst
+#endif
 .endm
 
 #ifdef __APPLE__

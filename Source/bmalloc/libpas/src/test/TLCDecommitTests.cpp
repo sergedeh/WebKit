@@ -56,23 +56,39 @@ size_t numCommittedPagesInTLC()
         &allocationConfig);
 }
 
+struct ExpectedPages {
+    unsigned at4KiBPages;
+    unsigned at16KiBPages;
+
+    unsigned forThisSystem() const
+    {
+        size_t pageSize = pas_page_malloc_alignment();
+        if (pageSize == 4096)
+            return at4KiBPages;
+        if (pageSize == 16384)
+            return at16KiBPages;
+        PAS_ASSERT(!"unsupported native page size for TLCDecommitTests; add a calibration");
+        return 0;
+    }
+};
+
 void testTLCDecommit(unsigned numHeaps,
                      function<bool(unsigned)> shouldStopAllocatorAtIndex,
                      bool commitWithFree,
-                     unsigned numCommittedPagesInitially,
-                     unsigned numCommittedPagesAfterDecommit,
-                     unsigned numCommittedPagesAfterRecommit)
+                     ExpectedPages numCommittedPagesInitially,
+                     ExpectedPages numCommittedPagesAfterDecommit,
+                     ExpectedPages numCommittedPagesAfterRecommit)
 {
     pas_scavenger_suspend();
     pas_local_allocator_should_stop_count_for_suspend = 100; /* request_stop should not actually stop. */
 
     pas_heap_ref* heaps = new pas_heap_ref[numHeaps];
     for (size_t index = numHeaps; index--;)
-        heaps[index] = BMALLOC_HEAP_REF_INITIALIZER(new bmalloc_type(BMALLOC_TYPE_INITIALIZER(42, 2, "test")), pas_bmalloc_heap_ref_kind_non_compact);
+        heaps[index] = BMALLOC_HEAP_REF_INITIALIZER(new bmalloc_type(BMALLOC_TYPE_INITIALIZER(42, 2, "test")));
 
     vector<void*> objects;
     for (size_t index = 0; index < numHeaps; ++index) {
-        void* ptr = bmalloc_iso_allocate(heaps + index, pas_non_compact_allocation_mode);
+        void* ptr = bmalloc_iso_allocate(heaps + index);
         CHECK(ptr);
         CHECK_EQUAL(pas_get_heap(ptr, BMALLOC_HEAP_CONFIG),
                     bmalloc_heap_ref_get_heap(heaps + index));
@@ -134,7 +150,7 @@ void testTLCDecommit(unsigned numHeaps,
         CHECK(pas_bitvector_get(hasAllocator, index));
     }
 
-    CHECK_EQUAL(numCommittedPagesInTLC(), numCommittedPagesInitially);
+    CHECK_EQUAL(numCommittedPagesInTLC(), numCommittedPagesInitially.forThisSystem());
 
     pas_heap_lock_lock();
     cache = pas_thread_local_cache_try_get();
@@ -160,7 +176,7 @@ void testTLCDecommit(unsigned numHeaps,
                                    pas_deallocator_scavenge_no_action,
                                    pas_thread_local_cache_decommit_if_possible_action);
 
-    CHECK_EQUAL(numCommittedPagesInTLC(), numCommittedPagesAfterDecommit);
+    CHECK_EQUAL(numCommittedPagesInTLC(), numCommittedPagesAfterDecommit.forThisSystem());
 
     if (commitWithFree) {
         for (void* object : objects)
@@ -172,7 +188,7 @@ void testTLCDecommit(unsigned numHeaps,
         pas_lock_is_not_held);
 
     for (size_t index = 0; index < numHeaps; ++index) {
-        void* ptr = bmalloc_iso_allocate(heaps + index, pas_non_compact_allocation_mode);
+        void* ptr = bmalloc_iso_allocate(heaps + index);
         CHECK(ptr);
         CHECK_EQUAL(pas_get_heap(ptr, BMALLOC_HEAP_CONFIG),
                     bmalloc_heap_ref_get_heap(heaps + index));
@@ -180,7 +196,7 @@ void testTLCDecommit(unsigned numHeaps,
             CHECK_EQUAL(ptr, objects[index]);
     }
 
-    CHECK_EQUAL(numCommittedPagesInTLC(), numCommittedPagesAfterRecommit);
+    CHECK_EQUAL(numCommittedPagesInTLC(), numCommittedPagesAfterRecommit.forThisSystem());
 }
 
 void testChaosThenDecommit(unsigned numHeaps, unsigned typeSize, unsigned maxObjectsAtATime,
@@ -191,8 +207,7 @@ void testChaosThenDecommit(unsigned numHeaps, unsigned typeSize, unsigned maxObj
     pas_heap_ref* heapRefs = new pas_heap_ref[numHeaps];
     for (unsigned index = numHeaps; index--;) {
         heapRefs[index] = BMALLOC_HEAP_REF_INITIALIZER(
-            new bmalloc_type(BMALLOC_TYPE_INITIALIZER(typeSize, 1, "test")),
-            pas_bmalloc_heap_ref_kind_non_compact);
+            new bmalloc_type(BMALLOC_TYPE_INITIALIZER(typeSize, 1, "test")));
     }
     
     vector<vector<void*>> objects;
@@ -226,7 +241,7 @@ void testChaosThenDecommit(unsigned numHeaps, unsigned typeSize, unsigned maxObj
             while (numObjectsNow--) {
                 if (!deterministicRandomNumber(maxFromSameHeap))
                     selectNextHeap();
-                void* ptr = bmalloc_iso_allocate(heapRef, pas_non_compact_allocation_mode);
+                void* ptr = bmalloc_iso_allocate(heapRef);
                 CHECK(ptr);
                 CHECK_EQUAL(pas_get_heap(ptr, BMALLOC_HEAP_CONFIG),
                             bmalloc_heap_ref_get_heap(heapRef));
@@ -262,16 +277,15 @@ vector<void*> prepareToTestDLCDecommitThenStuff(unsigned numHeaps)
     pas_heap_ref* heaps = new pas_heap_ref[numHeaps];
     for (size_t index = numHeaps; index--;)
         heaps[index] = BMALLOC_HEAP_REF_INITIALIZER(
-            new bmalloc_type(BMALLOC_TYPE_INITIALIZER(512, 512, "test")),
-            pas_bmalloc_heap_ref_kind_non_compact);
+            new bmalloc_type(BMALLOC_TYPE_INITIALIZER(512, 512, "test")));
 
     vector<void*> objects;
     for (size_t index = 0; index < numHeaps; ++index) {
         pas_page_base* page = nullptr;
         for (size_t objectIndex = pas_segregated_page_number_of_objects(
-                 512, BMALLOC_HEAP_CONFIG.small_segregated_config, pas_segregated_page_exclusive_role);
+                 512, BMALLOC_HEAP_CONFIG.small_segregated_config);
              objectIndex--;) {
-            void* ptr = bmalloc_iso_allocate(heaps + index, pas_non_compact_allocation_mode);
+            void* ptr = bmalloc_iso_allocate(heaps + index);
             CHECK(ptr);
             CHECK_EQUAL(pas_get_heap(ptr, BMALLOC_HEAP_CONFIG),
                         bmalloc_heap_ref_get_heap(heaps + index));
@@ -363,10 +377,9 @@ void testAllocateFromStoppedBaselineImpl()
     }
 
     pas_heap_ref heapRef = BMALLOC_HEAP_REF_INITIALIZER(
-        new bmalloc_type(BMALLOC_TYPE_INITIALIZER(32, 1, "test")),
-        pas_bmalloc_heap_ref_kind_non_compact);
+        new bmalloc_type(BMALLOC_TYPE_INITIALIZER(32, 1, "test")));
 
-    void* ptr = bmalloc_iso_allocate(&heapRef, pas_non_compact_allocation_mode);
+    void* ptr = bmalloc_iso_allocate(&heapRef);
     CHECK(ptr);
     pas_segregated_view view = pas_segregated_view_for_object(
         reinterpret_cast<uintptr_t>(ptr), &bmalloc_heap_config);
@@ -392,7 +405,7 @@ void testAllocateFromStoppedBaselineImpl()
     if (verbose)
         cout << "TLC = " << pas_thread_local_cache_try_get() << "\n";
 
-    ptr = bmalloc_iso_allocate(&heapRef, pas_non_compact_allocation_mode);
+    ptr = bmalloc_iso_allocate(&heapRef);
     CHECK(ptr);
 }
 
@@ -445,35 +458,33 @@ void addTLCDecommitTests()
                     pas_heap_runtime_config_aggressive_view_cache_capacity;
             });
     
+        /* Calibrations: {4 KiB-page count, 16 KiB-page count}. */
         ADD_TEST(testTLCDecommit(10000, [] (unsigned index) { return index < 10000; }, false,
-                                 588, 300, 304));
+                                 { 2349, 588 }, { 1196, 300 }, { 1213, 304 }));
         ADD_TEST(testTLCDecommit(10000, [] (unsigned index) { return index < 10000; }, true,
-                                 588, 300, 304));
+                                 { 2349, 588 }, { 1196, 300 }, { 1213, 304 }));
         ADD_TEST(testTLCDecommit(10000, [] (unsigned index) { return index > 10000; }, false,
-                                 588, 6, 304));
+                                 { 2349, 588 }, { 20, 6 }, { 1214, 304 }));
         ADD_TEST(testTLCDecommit(10000, [] (unsigned index) { return index > 10000; }, true,
-                                 588, 6, 304));
+                                 { 2349, 588 }, { 20, 6 }, { 1214, 304 }));
         ADD_TEST(testTLCDecommit(10000, [] (unsigned index) { return index < 100000; }, false,
-                                 588, 256, 304));
+                                 { 2349, 588 }, { 1020, 256 }, { 1213, 304 }));
         ADD_TEST(testTLCDecommit(10000, [] (unsigned index) { return index < 100000; }, true,
-                                 588, 256, 304));
+                                 { 2349, 588 }, { 1020, 256 }, { 1213, 304 }));
         ADD_TEST(testTLCDecommit(10000, [] (unsigned index) { return index > 100000; }, false,
-                                 588, 50, 304));
+                                 { 2349, 588 }, { 196, 50 }, { 1214, 304 }));
         ADD_TEST(testTLCDecommit(10000, [] (unsigned index) { return index > 100000; }, true,
-                                 588, 50, 304));
+                                 { 2349, 588 }, { 196, 50 }, { 1214, 304 }));
         ADD_TEST(testChaosThenDecommit(10000, 16, 1000, 100, 400000000, 500000));
         ADD_TEST(testChaosThenDecommit(10000, 16, 1000, 10000, 400000000, 1000000));
         ADD_TEST(testChaosThenDecommit(10000, 512, 10, 50, 500000000, 3000000));
         ADD_TEST(testChaosThenDecommit(10000, 48, 100, 1000, 600000000, 3000000));
         ADD_TEST(testChaosThenDecommit(10000, 48, 100, 10000, 600000000, 3000000));
 
-        {
-            ForceExclusives forceExclusives;
-            ADD_TEST(testTLCDecommitThenDeallocate(6666));
-            ADD_TEST(testTLCDecommitThenFlush(6666));
-            ADD_TEST(testTLCDecommitThenDestroy(6666));
-            ADD_TEST(testTLCDecommitThenDestroyInThread(6666));
-        }
+        ADD_TEST(testTLCDecommitThenDeallocate(6666));
+        ADD_TEST(testTLCDecommitThenFlush(6666));
+        ADD_TEST(testTLCDecommitThenDestroy(6666));
+        ADD_TEST(testTLCDecommitThenDestroyInThread(6666));
     }
 
     {

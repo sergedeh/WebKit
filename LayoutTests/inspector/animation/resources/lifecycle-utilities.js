@@ -35,7 +35,9 @@ function destroyAnimations() {
 
     // Force GC to make sure the animation and it's target are both destroyed, as otherwise the
     // frontend will not receive Animation.animationDestroyed events.
-    setTimeout(() => {
+    // Use requestAnimationFrame to ensure any pending style changes (such as removing a class
+    // that triggers animation cancellation) are fully processed before forcing GC.
+    requestAnimationFrame(() => {
         GCController.collect();
     });
 }
@@ -66,10 +68,10 @@ TestPage.registerInitializer(() => {
                 let traceText = `  ${i}: `;
                 traceText += callFrame.functionName || "(anonymous function)";
 
-                if (callFrame.nativeCode)
-                    traceText += " - [native code]";
-                else if (callFrame.programCode)
+                if (callFrame.programCode)
                     traceText += " - [program code]";
+                else if (callFrame.nativeCode)
+                    traceText += " - [native code]";
                 else if (callFrame.sourceCodeLocation) {
                     let location = callFrame.sourceCodeLocation;
                     traceText += " - " + sanitizeURL(location.sourceCode.url) + `:${location.lineNumber}:${location.columnNumber}`;

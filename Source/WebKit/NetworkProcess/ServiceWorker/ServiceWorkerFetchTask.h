@@ -83,9 +83,12 @@ public:
 
     void continueDidReceiveFetchResponse();
     void continueFetchTaskWith(WebCore::ResourceRequest&&);
+    void cancelPendingStreamUpload();
 
     WebCore::FetchIdentifier fetchIdentifier() const { return m_fetchIdentifier; }
     std::optional<WebCore::ServiceWorkerIdentifier> serviceWorkerIdentifier() const { return m_serviceWorkerIdentifier; }
+
+    NetworkResourceLoader* loader() const;
 
     WebCore::ResourceRequest takeRequest() { return WTF::move(m_currentRequest); }
 
@@ -94,9 +97,9 @@ public:
 
     bool convertToDownload(DownloadManager&, DownloadID, const WebCore::ResourceRequest&, const WebCore::ResourceResponse&);
 
-    MonotonicTime startTime() const;
+    MonotonicTime LEGACY_NODELETE startTime() const;
 
-    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
+    std::optional<SharedPreferencesForWebProcess> LEGACY_NODELETE sharedPreferencesForWebProcess() const;
 
 private:
     ServiceWorkerFetchTask(WebSWServerConnection&, NetworkResourceLoader&, WebCore::ResourceRequest&&, WebCore::SWServerConnectionIdentifier, WebCore::ServiceWorkerIdentifier, WebCore::SWServerRegistration&, NetworkSession*, bool isWorkerReady, bool shouldRaceNetworkAndFetchHandler);
@@ -108,7 +111,7 @@ private:
     void didReceiveResponse(WebCore::ResourceResponse&&, bool needsContinueDidReceiveResponseMessage);
     void didReceiveData(const IPC::SharedBufferReference&);
     void didReceiveDataFromPreloader(const WebCore::FragmentedSharedBuffer&);
-    void didReceiveFormData(const IPC::FormDataReference&);
+    void LEGACY_NODELETE didReceiveFormData(const IPC::FormDataReference&);
     void didFinish(const WebCore::NetworkLoadMetrics&);
     void didFail(const WebCore::ResourceError&);
     void didNotHandle();
@@ -134,13 +137,10 @@ private:
     void finishLoadingWithCacheResponse(WebCore::DOMCacheEngine::Record&&);
     void sendData(Ref<WebCore::SharedBuffer>&&);
 
-    RefPtr<IPC::Connection> serviceWorkerConnection();
+    RefPtr<IPC::Connection> LEGACY_NODELETE serviceWorkerConnection();
     template<typename Message> bool sendToClient(Message&&);
 
-    RefPtr<NetworkResourceLoader> protectedLoader() const;
     void sendNavigationPreloadUpdate();
-
-    RefPtr<ServiceWorkerNavigationPreloader> protectedPreloader();
     void processPreloadResponse();
 
     WeakPtr<WebSWServerConnection> m_swServerConnection;
@@ -150,7 +150,7 @@ private:
     Markable<WebCore::SWServerConnectionIdentifier> m_serverConnectionIdentifier;
     Markable<WebCore::ServiceWorkerIdentifier> m_serviceWorkerIdentifier;
     WebCore::ResourceRequest m_currentRequest;
-    std::unique_ptr<WebCore::Timer> m_timeoutTimer;
+    const std::unique_ptr<WebCore::Timer> m_timeoutTimer;
     Markable<WebCore::ServiceWorkerRegistrationIdentifier> m_serviceWorkerRegistrationIdentifier;
     RefPtr<ServiceWorkerNavigationPreloader> m_preloader;
     const bool m_shouldRaceNetworkAndFetchHandler { false };

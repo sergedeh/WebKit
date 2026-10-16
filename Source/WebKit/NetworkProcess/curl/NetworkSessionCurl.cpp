@@ -29,11 +29,11 @@
 #include "AuthenticationManager.h"
 #include "NetworkProcess.h"
 #include "NetworkSessionCreationParameters.h"
+#include "NetworkStorageSession.h"
 #include "WebCookieManager.h"
 #include "WebSocketTaskCurl.h"
 #include <WebCore/CookieJarDB.h>
 #include <WebCore/CurlContext.h>
-#include <WebCore/NetworkStorageSession.h>
 
 namespace WebKit {
 
@@ -55,10 +55,7 @@ NetworkSessionCurl::NetworkSessionCurl(NetworkProcess& networkProcess, const Net
     setTrackingPreventionEnabled(parameters.resourceLoadStatisticsParameters.enabled);
 }
 
-NetworkSessionCurl::~NetworkSessionCurl()
-{
-
-}
+NetworkSessionCurl::~NetworkSessionCurl() = default;
 
 void NetworkSessionCurl::clearAlternativeServices(WallTime)
 {
@@ -66,14 +63,14 @@ void NetworkSessionCurl::clearAlternativeServices(WallTime)
         storageSession->clearAlternativeServices();
 }
 
-RefPtr<WebSocketTask> NetworkSessionCurl::createWebSocketTask(WebPageProxyIdentifier webPageProxyID, std::optional<FrameIdentifier>, std::optional<PageIdentifier>, NetworkSocketChannel& channel, const WebCore::ResourceRequest& request, const String& protocol, const WebCore::ClientOrigin& clientOrigin, bool, bool, OptionSet<WebCore::AdvancedPrivacyProtections>, StoredCredentialsPolicy)
+RefPtr<WebSocketTask> NetworkSessionCurl::createWebSocketTask(WebPageProxyIdentifier webPageProxyID, std::optional<FrameIdentifier>, std::optional<PageIdentifier>, NetworkSocketChannel& channel, const WebCore::ResourceRequest& request, const String& protocol, const WebCore::ClientOrigin& clientOrigin, bool, bool, OptionSet<WebCore::AdvancedPrivacyProtections>, StoredCredentialsPolicy, IsInitiatedByDedicatedWorker)
 {
     return WebSocketTask::create(channel, webPageProxyID, request, protocol, clientOrigin);
 }
 
 void NetworkSessionCurl::didReceiveChallenge(WebSocketTask& webSocketTask, WebCore::AuthenticationChallenge&& challenge, CompletionHandler<void(WebKit::AuthenticationChallengeDisposition, const WebCore::Credential&)>&& challengeCompletionHandler)
 {
-    networkProcess().protectedAuthenticationManager()->didReceiveAuthenticationChallenge(sessionID(), webSocketTask.webPageProxyID(), !webSocketTask.topOrigin().isNull() ? &webSocketTask.topOrigin() : nullptr, challenge, NegotiatedLegacyTLS::No, WTF::move(challengeCompletionHandler));
+    protect(networkProcess().authenticationManager())->didReceiveAuthenticationChallenge(sessionID(), webSocketTask.webPageProxyID(), !webSocketTask.topOrigin().isNull() ? &webSocketTask.topOrigin() : nullptr, challenge, NegotiatedLegacyTLS::No, WTF::move(challengeCompletionHandler));
 }
 
 } // namespace WebKit

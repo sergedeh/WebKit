@@ -38,7 +38,7 @@ namespace WebCore {
 class PlatformSpeechSynthesisUtteranceClient : public CanMakeWeakPtr<PlatformSpeechSynthesisUtteranceClient>, public AbstractRefCounted {
 public:
     virtual ~PlatformSpeechSynthesisUtteranceClient() = default;
-    virtual void eventOccurred(const AtomString& type, unsigned long charIndex, unsigned long charLength, const String& name) = 0;
+    virtual void eventOccurred(const AtomString& type, uint32_t charIndex, uint32_t charLength, const String& name) = 0;
 
     virtual bool isSpeechSynthesisUtterance() const { return false; }
 
@@ -50,10 +50,10 @@ class PlatformSpeechSynthesisUtterance : public RefCounted<PlatformSpeechSynthes
 public:
     WEBCORE_EXPORT static Ref<PlatformSpeechSynthesisUtterance> create(PlatformSpeechSynthesisUtteranceClient*);
 
-    const String& text() const { return m_text; }
+    const String& text() const LIFETIME_BOUND { return m_text; }
     void setText(const String& text) { m_text = text; }
     
-    const String& lang() const { return m_lang; }
+    const String& lang() const LIFETIME_BOUND { return m_lang; }
     void setLang(const String& lang) { m_lang = lang; }
     
     PlatformSpeechSynthesisVoice* voice() const { return m_voice.get(); }

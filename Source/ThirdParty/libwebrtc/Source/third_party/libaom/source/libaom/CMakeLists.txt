@@ -23,7 +23,7 @@ endif()
 
 # VERSION is the release version of the library. It should be updated at the
 # same time as the LT_* variables.
-project(AOM LANGUAGES C CXX VERSION 3.13.1)
+project(AOM LANGUAGES C CXX VERSION 3.15.1)
 
 # GENERATED source property global visibility.
 if(POLICY CMP0118)
@@ -58,9 +58,9 @@ endif()
 # We set SO_FILE_VERSION = [c-a].a.r
 #
 # The VERSION number in project() should be updated when these variables are.
-set(LT_CURRENT 16)
+set(LT_CURRENT 18)
 set(LT_REVISION 1)
-set(LT_AGE 13)
+set(LT_AGE 15)
 math(EXPR SO_VERSION "${LT_CURRENT} - ${LT_AGE}")
 set(SO_FILE_VERSION "${SO_VERSION}.${LT_AGE}.${LT_REVISION}")
 unset(LT_CURRENT)
@@ -70,7 +70,7 @@ unset(LT_AGE)
 # Enable generators like Xcode and Visual Studio to place projects in folders.
 set_property(GLOBAL PROPERTY USE_FOLDERS TRUE)
 
-include("${AOM_ROOT}/build/cmake/aom_configure.cmake")
+include("${AOM_ROOT}/cmake/aom_configure.cmake")
 if(CONFIG_THREE_PASS)
   include("${AOM_ROOT}/common/ivf_dec.cmake")
 endif()
@@ -80,9 +80,9 @@ include("${AOM_ROOT}/aom_ports/aom_ports.cmake")
 include("${AOM_ROOT}/aom_scale/aom_scale.cmake")
 include("${AOM_ROOT}/aom_util/aom_util.cmake")
 include("${AOM_ROOT}/av1/av1.cmake")
-include("${AOM_ROOT}/build/cmake/aom_install.cmake")
-include("${AOM_ROOT}/build/cmake/sanitizers.cmake")
-include("${AOM_ROOT}/build/cmake/util.cmake")
+include("${AOM_ROOT}/cmake/aom_install.cmake")
+include("${AOM_ROOT}/cmake/sanitizers.cmake")
+include("${AOM_ROOT}/cmake/util.cmake")
 include("${AOM_ROOT}/test/test.cmake")
 
 list(APPEND AOM_RTCD_SOURCES
@@ -95,7 +95,7 @@ list(APPEND AOM_RTCD_SOURCES
             "${AOM_ROOT}/aom_scale/aom_scale_rtcd.c"
             "${AOM_ROOT}/av1/common/av1_rtcd_defs.pl"
             "${AOM_ROOT}/av1/common/av1_rtcd.c"
-            "${AOM_ROOT}/build/cmake/rtcd.pl")
+            "${AOM_ROOT}/cmake/rtcd.pl")
 
 list(APPEND AOM_LIBWEBM_SOURCES
             "${AOM_ROOT}/third_party/libwebm/common/hdr_util.cc"
@@ -230,29 +230,27 @@ add_custom_command(OUTPUT "${AOM_CONFIG_DIR}/config/aom_version.h"
                            -DAOM_ROOT=${AOM_ROOT}
                            -DGIT_EXECUTABLE=${GIT_EXECUTABLE}
                            -DPERL_EXECUTABLE=${PERL_EXECUTABLE} -P
-                           "${AOM_ROOT}/build/cmake/version.cmake"
+                           "${AOM_ROOT}/cmake/version.cmake"
                    COMMENT "Writing aom_version.h"
                    VERBATIM)
 
 add_custom_target(aom_version_check
-                  COMMAND ${CMAKE_COMMAND}
-                          -DAOM_CONFIG_DIR=${AOM_CONFIG_DIR}
-                          -DAOM_ROOT=${AOM_ROOT}
-                          -DGIT_EXECUTABLE=${GIT_EXECUTABLE}
-                          -DPERL_EXECUTABLE=${PERL_EXECUTABLE} -P
-                          "${AOM_ROOT}/build/cmake/version.cmake"
+                  COMMAND ${CMAKE_COMMAND} -DAOM_CONFIG_DIR=${AOM_CONFIG_DIR}
+                                           -DAOM_ROOT=${AOM_ROOT}
+                                           -DGIT_EXECUTABLE=${GIT_EXECUTABLE}
+                                           -DPERL_EXECUTABLE=${PERL_EXECUTABLE}
+                                           -P "${AOM_ROOT}/cmake/version.cmake"
                   COMMENT "Updating version info if necessary."
                   VERBATIM)
 
 if(BUILD_SHARED_LIBS AND NOT MSVC)
   # Generate version file immediately for non-MSVC shared builds: The version
   # string is needed for the aom target.
-  execute_process(COMMAND ${CMAKE_COMMAND}
-                          -DAOM_CONFIG_DIR=${AOM_CONFIG_DIR}
-                          -DAOM_ROOT=${AOM_ROOT}
-                          -DGIT_EXECUTABLE=${GIT_EXECUTABLE}
-                          -DPERL_EXECUTABLE=${PERL_EXECUTABLE} -P
-                          "${AOM_ROOT}/build/cmake/version.cmake")
+  execute_process(COMMAND ${CMAKE_COMMAND} -DAOM_CONFIG_DIR=${AOM_CONFIG_DIR}
+                                           -DAOM_ROOT=${AOM_ROOT}
+                                           -DGIT_EXECUTABLE=${GIT_EXECUTABLE}
+                                           -DPERL_EXECUTABLE=${PERL_EXECUTABLE}
+                                           -P "${AOM_ROOT}/cmake/version.cmake")
 endif()
 
 add_dependencies(aom_version aom_version_check)
@@ -307,10 +305,12 @@ if(CONFIG_HIGHWAY)
               "${AOM_ROOT}/third_party/highway/hwy/contrib/math/math-inl.h")
   add_definitions(-DHWY_HEADER_ONLY)
   add_library(aom_hwy OBJECT ${AOM_HIGHWAY_SOURCES})
+  set_target_properties(aom_hwy PROPERTIES LINKER_LANGUAGE CXX)
   set(AOM_LIB_TARGETS ${AOM_LIB_TARGETS} aom_hwy)
 endif()
 
-if(ENABLE_EXAMPLES)
+if(ENABLE_APPS)
+  # Only used by aomenc.
   add_library(aom_encoder_stats OBJECT ${AOM_ENCODER_STATS_SOURCES})
   set(AOM_LIB_TARGETS ${AOM_LIB_TARGETS} aom_encoder_stats)
 endif()
@@ -361,9 +361,11 @@ if(BUILD_SHARED_LIBS)
 endif()
 
 if(NOT WIN32 AND NOT APPLE)
-  target_link_libraries(aom ${AOM_LIB_LINK_TYPE} m)
   if(BUILD_SHARED_LIBS)
+    target_link_libraries(aom PRIVATE m)
     target_link_libraries(aom_static ${AOM_LIB_LINK_TYPE} m)
+  else()
+    target_link_libraries(aom ${AOM_LIB_LINK_TYPE} m)
   endif()
 endif()
 
@@ -439,26 +441,31 @@ file(WRITE "${AOM_GEN_SRC_DIR}/usage_exit.c"
 #
 # Application and application support targets.
 #
-if(ENABLE_EXAMPLES OR ENABLE_TESTS OR ENABLE_TOOLS)
+if(ENABLE_APPS OR ENABLE_EXAMPLES OR ENABLE_TESTS OR ENABLE_TOOLS)
   add_library(aom_common_app_util OBJECT ${AOM_COMMON_APP_UTIL_SOURCES})
+  set_property(TARGET aom_common_app_util PROPERTY FOLDER examples)
   add_library(aom_usage_exit OBJECT "${AOM_GEN_SRC_DIR}/usage_exit.c")
-  set_property(TARGET ${example} PROPERTY FOLDER examples)
+  set_property(TARGET aom_usage_exit PROPERTY FOLDER examples)
   if(CONFIG_AV1_DECODER)
     add_library(aom_decoder_app_util OBJECT ${AOM_DECODER_APP_UTIL_SOURCES})
-    set_property(TARGET ${example} PROPERTY FOLDER examples)
+    set_property(TARGET aom_decoder_app_util PROPERTY FOLDER examples)
     # obudec depends on internal headers that require *rtcd.h
     add_dependencies(aom_decoder_app_util aom_rtcd)
   endif()
   if(CONFIG_AV1_ENCODER)
     add_library(aom_encoder_app_util OBJECT ${AOM_ENCODER_APP_UTIL_SOURCES})
-    set_property(TARGET ${example} PROPERTY FOLDER examples)
+    set_property(TARGET aom_encoder_app_util PROPERTY FOLDER examples)
   endif()
 endif()
 
-if(CONFIG_AV1_DECODER AND ENABLE_EXAMPLES)
+if(CONFIG_AV1_DECODER AND ENABLE_APPS)
   add_executable(aomdec "${AOM_ROOT}/apps/aomdec.c"
                         $<TARGET_OBJECTS:aom_common_app_util>
                         $<TARGET_OBJECTS:aom_decoder_app_util>)
+  list(APPEND AOM_APP_TARGETS aomdec)
+endif()
+
+if(CONFIG_AV1_DECODER AND ENABLE_EXAMPLES)
   add_executable(decode_to_md5 "${AOM_ROOT}/examples/decode_to_md5.c"
                                $<TARGET_OBJECTS:aom_common_app_util>
                                $<TARGET_OBJECTS:aom_decoder_app_util>)
@@ -511,7 +518,7 @@ if(CONFIG_AV1_DECODER AND ENABLE_EXAMPLES)
   endif()
 
   # Maintain a list of decoder example targets.
-  list(APPEND AOM_DECODER_EXAMPLE_TARGETS aomdec decode_to_md5 decode_with_drops
+  list(APPEND AOM_DECODER_EXAMPLE_TARGETS decode_to_md5 decode_with_drops
               scalable_decoder simple_decoder)
 
   # Add decoder examples to the app targets list.
@@ -538,11 +545,15 @@ if(CONFIG_LIBYUV OR CONFIG_TUNE_BUTTERAUGLI)
 endif()
 
 if(CONFIG_AV1_ENCODER)
-  if(ENABLE_EXAMPLES)
+  if(ENABLE_APPS)
     add_executable(aomenc "${AOM_ROOT}/apps/aomenc.c"
                           $<TARGET_OBJECTS:aom_common_app_util>
                           $<TARGET_OBJECTS:aom_encoder_app_util>
                           $<TARGET_OBJECTS:aom_encoder_stats>)
+    list(APPEND AOM_APP_TARGETS aomenc)
+  endif()
+
+  if(ENABLE_EXAMPLES)
     add_executable(lossless_encoder "${AOM_ROOT}/examples/lossless_encoder.c"
                                     $<TARGET_OBJECTS:aom_common_app_util>
                                     $<TARGET_OBJECTS:aom_encoder_app_util>)
@@ -573,7 +584,7 @@ if(CONFIG_AV1_ENCODER)
     target_link_libraries(svc_encoder_rtc ${AOM_LIB_LINK_TYPE} aom_av1_rc)
 
     # Maintain a list of encoder example targets.
-    list(APPEND AOM_ENCODER_EXAMPLE_TARGETS aomenc lossless_encoder set_maps
+    list(APPEND AOM_ENCODER_EXAMPLE_TARGETS lossless_encoder set_maps
                 simple_encoder scalable_encoder svc_encoder_rtc twopass_encoder)
     if(NOT BUILD_SHARED_LIBS AND NOT CONFIG_REALTIME_ONLY)
       list(APPEND AOM_ENCODER_EXAMPLE_TARGETS noise_model photon_noise_table)
@@ -750,8 +761,8 @@ if(ENABLE_TOOLS)
     list(APPEND AOM_TOOL_TARGETS dump_obu)
     list(APPEND AOM_APP_TARGETS dump_obu)
 
-    # Maintain a separate variable listing only the examples to facilitate
-    # installation of example programs into an tools sub directory of
+    # Maintain a separate variable listing only the tools to facilitate
+    # installation of tool programs into a tools sub directory of
     # $AOM_DIST_DIR/bin when building the dist target.
     list(APPEND AOM_TOOL_TARGETS ${AOM_DECODER_TOOL_TARGETS}
                 ${AOM_ENCODER_TOOL_TARGETS})
@@ -801,11 +812,20 @@ if(ENABLE_EXAMPLES AND CONFIG_AV1_ENCODER AND CONFIG_AV1_DECODER)
   list(APPEND AOM_APP_TARGETS lightfield_bitstream_parsing)
 endif()
 
+if(ENABLE_EXAMPLES AND CONFIG_AV1_ENCODER)
+  add_executable(low_complexity_mode_encoder
+                 "${AOM_ROOT}/examples/low_complexity_mode_encoder.c"
+                 $<TARGET_OBJECTS:aom_common_app_util>
+                 $<TARGET_OBJECTS:aom_encoder_app_util>)
+  list(APPEND AOM_EXAMPLE_TARGETS low_complexity_mode_encoder)
+  list(APPEND AOM_APP_TARGETS low_complexity_mode_encoder)
+endif()
+
 foreach(aom_app ${AOM_APP_TARGETS})
   target_link_libraries(${aom_app} ${AOM_LIB_LINK_TYPE} aom)
 endforeach()
 
-if(ENABLE_EXAMPLES OR ENABLE_TESTS OR ENABLE_TOOLS)
+if(ENABLE_APPS OR ENABLE_EXAMPLES OR ENABLE_TESTS OR ENABLE_TOOLS)
   if(CONFIG_LIBYUV)
     # Add to existing targets.
     foreach(aom_app ${AOM_APP_TARGETS})
@@ -848,9 +868,11 @@ endif()
 
 if(HAVE_PTHREAD_H AND CONFIG_MULTITHREAD)
   find_package(Threads)
-  target_link_libraries(aom ${AOM_LIB_LINK_TYPE} Threads::Threads)
   if(BUILD_SHARED_LIBS)
+    target_link_libraries(aom PRIVATE Threads::Threads)
     target_link_libraries(aom_static ${AOM_LIB_LINK_TYPE} Threads::Threads)
+  else()
+    target_link_libraries(aom ${AOM_LIB_LINK_TYPE} Threads::Threads)
   endif()
 endif()
 
@@ -877,15 +899,14 @@ endif()
 
 if(ENABLE_EXAMPLES AND "${CMAKE_GENERATOR}" MATCHES "Makefiles$")
 
-  # For historical purposes place the example binaries in the example directory.
+  # For historical purposes place the example binaries in the examples
+  # directory.
   file(MAKE_DIRECTORY "${AOM_CONFIG_DIR}/examples")
 
   foreach(target ${AOM_EXAMPLE_TARGETS})
-    if(NOT "${target}" MATCHES "aomdec\|aomenc")
-      set_target_properties(${target}
-                            PROPERTIES RUNTIME_OUTPUT_DIRECTORY
-                                       "${AOM_CONFIG_DIR}/examples")
-    endif()
+    set_target_properties(${target}
+                          PROPERTIES RUNTIME_OUTPUT_DIRECTORY
+                                     "${AOM_CONFIG_DIR}/examples")
   endforeach()
 
   if(ENABLE_TOOLS AND AOM_TOOL_TARGETS)
@@ -919,7 +940,7 @@ if(BUILD_SHARED_LIBS)
     endif()
   endif()
 
-  include("${AOM_ROOT}/build/cmake/exports.cmake")
+  include("${AOM_ROOT}/cmake/exports.cmake")
   setup_exports_target()
 endif()
 
@@ -970,10 +991,10 @@ if(ENABLE_DOCS)
 endif()
 
 # Aomedia dist rule.
-if(CONFIG_AV1_DECODER AND ENABLE_EXAMPLES)
+if(CONFIG_AV1_DECODER AND ENABLE_APPS)
   list(APPEND AOM_DIST_APPS $<TARGET_FILE:aomdec>)
 endif()
-if(CONFIG_AV1_ENCODER AND ENABLE_EXAMPLES)
+if(CONFIG_AV1_ENCODER AND ENABLE_APPS)
   list(APPEND AOM_DIST_APPS $<TARGET_FILE:aomenc>)
 endif()
 
@@ -1006,7 +1027,7 @@ add_custom_target(dist
                           -DAOM_DIST_INCLUDES="${AOM_INSTALL_INCS}"
                           -DAOM_DIST_LIBS=$<TARGET_FILE:aom>
                           -DENABLE_DOCS=${ENABLE_DOCS} -P
-                          "${AOM_ROOT}/build/cmake/dist.cmake"
+                          "${AOM_ROOT}/cmake/dist.cmake"
                   DEPENDS ${AOM_INSTALL_BINS} ${AOM_INSTALL_LIBS}
                           ${AOM_INSTALL_INCS} ${AOM_EXAMPLE_TARGETS}
                           ${AOM_TOOL_TARGETS})

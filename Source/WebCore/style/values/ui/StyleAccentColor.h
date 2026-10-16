@@ -40,17 +40,17 @@ struct AccentColor : ValueOrKeyword<Color, CSS::Keyword::Auto> {
     bool isColor() const { return isValue(); }
     std::optional<Color> tryColor() const { return tryValue(); }
 
-    // Returns the color or a `currentColor` singleton if `auto`.
-    const Color& colorOrCurrentColor() const;
+    // Returns the color or the default accent color (equivalent to CSS `AccentColor`) if `auto`.
+    const Color& colorOrDefaultColor() const;
 };
 
 // MARK: - Blending
 
 template<> struct Blending<AccentColor> {
-    auto equals(const AccentColor&, const AccentColor&, const RenderStyle&, const RenderStyle&) -> bool;
+    auto equals(const AccentColor&, const AccentColor&, const Style::ComputedStyle&, const Style::ComputedStyle&) -> bool;
     auto canBlend(const AccentColor&, const AccentColor&) -> bool;
     constexpr auto requiresInterpolationForAccumulativeIteration(const AccentColor&, const AccentColor&) -> bool { return true; }
-    auto blend(const AccentColor&, const AccentColor&, const RenderStyle&, const RenderStyle&, const BlendingContext&) -> AccentColor;
+    auto blend(const AccentColor&, const AccentColor&, const Style::ComputedStyle&, const Style::ComputedStyle&, const BlendingContext&) -> AccentColor;
 };
 
 } // namespace Style

@@ -36,7 +36,7 @@ const ClassInfo GetterSetter::s_info = { "GetterSetter"_s, nullptr, nullptr, nul
 template<typename Visitor>
 void GetterSetter::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    GetterSetter* thisObject = jsCast<GetterSetter*>(cell);
+    GetterSetter* thisObject = uncheckedDowncast<GetterSetter>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
@@ -70,13 +70,13 @@ bool GetterSetter::callSetter(JSGlobalObject* globalObject, JSValue thisValue, J
     if (setter->type() == NullSetterFunctionType)
         return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
 
-    MarkedArgumentBuffer args;
-    args.append(value);
-    ASSERT(!args.hasOverflowed());
+    auto args = WTF::toArray<EncodedJSValue>({
+        JSValue::encode(value),
+    });
 
     auto callData = JSC::getCallDataInline(setter);
     scope.release();
-    call(globalObject, setter, callData, thisValue, args);
+    call(globalObject, setter, callData, thisValue, ArgList { args.data(), args.size() });
     return true;
 }
 

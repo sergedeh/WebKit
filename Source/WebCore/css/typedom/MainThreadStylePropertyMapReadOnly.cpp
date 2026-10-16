@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2026 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,10 +27,10 @@
 #include "config.h"
 #include "MainThreadStylePropertyMapReadOnly.h"
 
-#include "CSSPendingSubstitutionValue.h"
 #include "CSSProperty.h"
 #include "CSSPropertyNames.h"
 #include "CSSPropertyParser.h"
+#include "CSSShorthandSubstitutionValue.h"
 #include "CSSStyleValue.h"
 #include "CSSStyleValueFactory.h"
 #include "CSSTokenizer.h"
@@ -62,8 +63,8 @@ ExceptionOr<MainThreadStylePropertyMapReadOnly::CSSStyleValueOrUndefined> MainTh
         return { std::monostate { } };
 
     if (isCustomPropertyName(property)) {
-        if (auto value = reifyValue(*document, customPropertyValue(property), CSSPropertyCustom))
-            return { WTF::move(value) };
+        if (RefPtr value = reifyValue(*document, customPropertyValue(property), property))
+            return { value.releaseNonNull() };
 
         return { std::monostate { } };
     }
@@ -73,14 +74,14 @@ ExceptionOr<MainThreadStylePropertyMapReadOnly::CSSStyleValueOrUndefined> MainTh
         return Exception { ExceptionCode::TypeError, makeString("Invalid property "_s, property) };
 
     if (isShorthand(propertyID)) {
-        if (auto value = CSSStyleValueFactory::constructStyleValueForShorthandSerialization(*document, shorthandPropertySerialization(propertyID)))
-            return { WTF::move(value) };
+        if (RefPtr value = CSSStyleValueFactory::constructStyleValueForShorthandSerialization(*document, shorthandPropertySerialization(propertyID), propertyID))
+            return { value.releaseNonNull() };
 
         return { std::monostate { } };
     }
 
-    if (auto value = reifyValue(*document, propertyValue(propertyID), propertyID))
-        return { WTF::move(value) };
+    if (RefPtr value = reifyValue(*document, propertyValue(propertyID), propertyID))
+        return { value.releaseNonNull() };
 
     return { std::monostate { } };
 }
@@ -93,14 +94,14 @@ ExceptionOr<Vector<RefPtr<CSSStyleValue>>> MainThreadStylePropertyMapReadOnly::g
         return Vector<RefPtr<CSSStyleValue>> { };
 
     if (isCustomPropertyName(property))
-        return reifyValueToVector(*document, customPropertyValue(property), CSSPropertyCustom);
+        return reifyValueToVector(*document, customPropertyValue(property), AtomString { property });
 
     auto propertyID = cssPropertyID(property);
     if (!isExposed(propertyID, &document->settings()))
         return Exception { ExceptionCode::TypeError, makeString("Invalid property "_s, property) };
 
     if (isShorthand(propertyID)) {
-        if (RefPtr value = CSSStyleValueFactory::constructStyleValueForShorthandSerialization(*document, shorthandPropertySerialization(propertyID)))
+        if (RefPtr value = CSSStyleValueFactory::constructStyleValueForShorthandSerialization(*document, shorthandPropertySerialization(propertyID), propertyID))
             return Vector<RefPtr<CSSStyleValue>> { WTF::move(value) };
         return Vector<RefPtr<CSSStyleValue>> { };
     }
@@ -116,9 +117,8 @@ ExceptionOr<bool> MainThreadStylePropertyMapReadOnly::has(ScriptExecutionContext
         return result.releaseException();
 
     return WTF::switchOn(result.returnValue(),
-        [](const RefPtr<CSSStyleValue>& value) {
-            ASSERT(value);
-            return !!value;
+        [](const Ref<CSSStyleValue>&) {
+            return true;
         },
         [](std::monostate) {
             return false;

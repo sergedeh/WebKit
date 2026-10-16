@@ -109,10 +109,12 @@ public:
     WEBCORE_EXPORT virtual void setVP9HardwareSupportForTesting(std::optional<bool> value) { m_supportsVP9VTBForTesting = value; }
     virtual bool isSupportingVP9HardwareDecoder() const { return m_supportsVP9VTBForTesting.value_or(false); }
 
-    WEBCORE_EXPORT void disableEnumeratingAllNetworkInterfaces();
-    WEBCORE_EXPORT void enableEnumeratingAllNetworkInterfaces();
-    bool isEnumeratingAllNetworkInterfacesEnabled() const;
-    WEBCORE_EXPORT void enableEnumeratingVisibleNetworkInterfaces();
+    virtual bool isSupportingAV1HardwareDecoder() const { return false; }
+
+    WEBCORE_EXPORT void LEGACY_NODELETE disableEnumeratingAllNetworkInterfaces();
+    WEBCORE_EXPORT void LEGACY_NODELETE enableEnumeratingAllNetworkInterfaces();
+    bool LEGACY_NODELETE isEnumeratingAllNetworkInterfacesEnabled() const;
+    WEBCORE_EXPORT void LEGACY_NODELETE enableEnumeratingVisibleNetworkInterfaces();
     bool isEnumeratingVisibleNetworkInterfacesEnabled() const { return m_enableEnumeratingVisibleNetworkInterfaces; }
 
     class SuspendableSocketFactory : public webrtc::PacketSocketFactory {
@@ -124,6 +126,8 @@ public:
         virtual bool shouldEnableServiceClass() { return true; }
     };
     virtual std::unique_ptr<SuspendableSocketFactory> createSocketFactory(String&& /* userAgent */, ScriptExecutionContextIdentifier, bool /* isFirstParty */, RegistrableDomain&&, bool /* enableServiceClass */);
+
+    virtual void clearCodecsConnectionForTesting() { }
 
 protected:
     LibWebRTCProvider();
@@ -153,8 +157,8 @@ private:
 
     virtual void willCreatePeerConnectionFactory();
 
-    std::optional<MediaCapabilitiesDecodingInfo> videoDecodingCapabilitiesOverride(const VideoConfiguration&) final;
-    std::optional<MediaCapabilitiesEncodingInfo> videoEncodingCapabilitiesOverride(const VideoConfiguration&) final;
+    std::optional<PlatformMediaCapabilitiesDecodingInfo> videoDecodingCapabilitiesOverride(const PlatformMediaCapabilitiesVideoConfiguration&) final;
+    std::optional<PlatformMediaCapabilitiesEncodingInfo> videoEncodingCapabilitiesOverride(const PlatformMediaCapabilitiesVideoConfiguration&) final;
 
     bool m_useL4S { false };
     std::optional<bool> m_supportsVP9VTBForTesting { false };

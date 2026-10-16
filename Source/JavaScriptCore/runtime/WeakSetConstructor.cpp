@@ -84,17 +84,17 @@ JSC_DEFINE_HOST_FUNCTION(constructWeakSet, (JSGlobalObject* globalObject, CallFr
     forEachInIterable(globalObject, iterable, [&](VM&, JSGlobalObject* globalObject, JSValue nextValue) {
         if (canPerformFastAdd) {
             if (!canBeHeldWeakly(nextValue)) [[unlikely]] {
-                throwTypeError(asObject(adderFunction)->globalObject(), scope, WeakSetInvalidValueError);
+                throwTypeError(asObject(adderFunction)->realm(), scope, WeakSetInvalidValueError);
                 return;
             }
             weakSet->add(vm, nextValue.asCell());
             return;
         }
 
-        MarkedArgumentBuffer arguments;
-        arguments.append(nextValue);
-        ASSERT(!arguments.hasOverflowed());
-        call(globalObject, adderFunction, adderFunctionCallData, weakSet, arguments);
+        auto arguments = WTF::toArray<EncodedJSValue>({
+            JSValue::encode(nextValue),
+        });
+        call(globalObject, adderFunction, adderFunctionCallData, weakSet, ArgList { arguments.data(), arguments.size() });
     });
 
     return JSValue::encode(weakSet);

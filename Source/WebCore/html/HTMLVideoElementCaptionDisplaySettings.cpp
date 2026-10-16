@@ -37,10 +37,21 @@
 #include "CSSTokenizer.h"
 #include "CSSValuePair.h"
 #include "CaptionDisplaySettingsOptions.h"
+#include "Document.h"
+#include "DocumentPage.h"
+#include "DocumentView.h"
 #include "Element.h"
+#include "EventHandler.h"
+#include "FrameDestructionObserverInlines.h"
 #include "HTMLVideoElement.h"
 #include "JSDOMPromiseDeferred.h"
+#include "JSDOMWindow.h"
+#include "LocalFrameInlines.h"
+#include "LocalFrameView.h"
+#include "MouseEvent.h"
+#include "NodeDocument.h"
 #include "ResolvedCaptionDisplaySettingsOptions.h"
+#include "TouchEvent.h"
 
 namespace WebCore {
 
@@ -63,33 +74,33 @@ static void parsePositionAreaString(const String& positionArea, ResolvedCaptionD
     if (!valuePair)
         return;
 
-    RefPtr firstValue = valuePair->first();
-    RefPtr secondValue = valuePair->second();
+    RefPtr firstValue = dynamicDowncast<CSSKeywordValue>(valuePair->first());
+    RefPtr secondValue = dynamicDowncast<CSSKeywordValue>(valuePair->second());
 
-    if (!firstValue->isValueID() || !secondValue->isValueID())
+    if (!firstValue || !secondValue)
         return;
 
     using XPositionArea = ResolvedCaptionDisplaySettingsOptions::XPositionArea;
     switch (firstValue->valueID()) {
-    case CSSValueLeft:
-    case CSSValueSpanLeft:
-    case CSSValueXStart:
-    case CSSValueSpanXStart:
-    case CSSValueSelfXStart:
-    case CSSValueSpanSelfXStart:
+    case CSSValueID::Left:
+    case CSSValueID::SpanLeft:
+    case CSSValueID::XStart:
+    case CSSValueID::SpanXStart:
+    case CSSValueID::SelfXStart:
+    case CSSValueID::SpanSelfXStart:
         options.xPositionArea = XPositionArea::Left;
         break;
 
-    case CSSValueCenter:
+    case CSSValueID::Center:
         options.xPositionArea = XPositionArea::Center;
         break;
 
-    case CSSValueRight:
-    case CSSValueSpanRight:
-    case CSSValueXEnd:
-    case CSSValueSpanXEnd:
-    case CSSValueSelfXEnd:
-    case CSSValueSpanSelfXEnd:
+    case CSSValueID::Right:
+    case CSSValueID::SpanRight:
+    case CSSValueID::XEnd:
+    case CSSValueID::SpanXEnd:
+    case CSSValueID::SelfXEnd:
+    case CSSValueID::SpanSelfXEnd:
         options.xPositionArea = XPositionArea::Right;
         break;
 
@@ -99,25 +110,25 @@ static void parsePositionAreaString(const String& positionArea, ResolvedCaptionD
 
     using YPositionArea = ResolvedCaptionDisplaySettingsOptions::YPositionArea;
     switch (secondValue->valueID()) {
-    case CSSValueTop:
-    case CSSValueSpanTop:
-    case CSSValueYStart:
-    case CSSValueSpanYStart:
-    case CSSValueSelfYStart:
-    case CSSValueSpanSelfYStart:
+    case CSSValueID::Top:
+    case CSSValueID::SpanTop:
+    case CSSValueID::YStart:
+    case CSSValueID::SpanYStart:
+    case CSSValueID::SelfYStart:
+    case CSSValueID::SpanSelfYStart:
         options.yPositionArea = YPositionArea::Top;
         break;
 
-    case CSSValueCenter:
+    case CSSValueID::Center:
         options.yPositionArea = YPositionArea::Center;
         break;
 
-    case CSSValueBottom:
-    case CSSValueSpanBottom:
-    case CSSValueYEnd:
-    case CSSValueSpanYEnd:
-    case CSSValueSelfYEnd:
-    case CSSValueSpanSelfYEnd:
+    case CSSValueID::Bottom:
+    case CSSValueID::SpanBottom:
+    case CSSValueID::YEnd:
+    case CSSValueID::SpanYEnd:
+    case CSSValueID::SelfYEnd:
+    case CSSValueID::SpanSelfYEnd:
         options.yPositionArea = YPositionArea::Bottom;
         break;
 
@@ -140,6 +151,48 @@ void HTMLVideoElementCaptionDisplaySettings::showCaptionDisplaySettings(HTMLVide
             resolvedOptions.anchorBounds = anchorElement->boundingBoxInRootViewCoordinates();
         if (!options->positionArea.isEmpty())
             parsePositionAreaString(options->positionArea, resolvedOptions);
+    }
+
+    if (!resolvedOptions.anchorBounds) {
+        resolvedOptions.anchorBounds = [&] -> std::optional<FloatRect> {
+            // In the absense of an explicit anchor element, provide a
+            // default anchor using the current window event, if present,
+            // or the last known mouse position, if not.
+            RefPtr frame = element.document().frame();
+            if (!frame)
+                return std::nullopt;
+
+            auto* JSDOMWindowBase = toJSDOMWindow(frame, mainThreadNormalWorldSingleton());
+            if (!JSDOMWindowBase)
+                return std::nullopt;
+
+            constexpr auto locationToRect = [](const DoublePoint& point) {
+                return FloatRect::narrowPrecision(point.x(), point.y(), 0, 0);
+            };
+
+            if (RefPtr currentEvent = JSDOMWindowBase->currentEvent()) {
+                if (RefPtr mouseEvent = dynamicDowncast<MouseEvent>(currentEvent))
+                    return locationToRect(mouseEvent->locationInRootViewCoordinates());
+
+#if ENABLE(IOS_TOUCH_EVENTS) || ENABLE(TOUCH_EVENTS)
+                if (RefPtr touchEvent = dynamicDowncast<TouchEvent>(currentEvent))
+                    return locationToRect(touchEvent->locationInRootViewCoordinates());
+#endif
+
+                if (RefPtr currentElement = downcast<Element>(currentEvent->currentTarget()))
+                    return currentElement->boundingBoxInRootViewCoordinates();
+            }
+
+            RefPtr frameView = frame->view();
+            if (!frameView)
+                return std::nullopt;
+
+            auto position = frame->eventHandler().lastKnownMousePosition();
+            if (!position.isZero())
+                return locationToRect(position);
+
+            return std::nullopt;
+        }();
     }
 
     element.showCaptionDisplaySettingsPreview();

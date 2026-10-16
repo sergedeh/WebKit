@@ -55,10 +55,6 @@
 
 namespace WebCore {
 
-const ASCIILiteral WebArchivePboardType = "Apple Web Archive pasteboard type"_s;
-const ASCIILiteral WebURLNamePboardType = "public.url-name"_s;
-const ASCIILiteral WebURLsWithTitlesPboardType = "WebURLsWithTitlesPboardType"_s;
-
 const ASCIILiteral WebSmartPastePboardType = "NeXT smart paste pasteboard type"_s;
 const ASCIILiteral WebURLPboardType = "public.url"_s;
 
@@ -277,14 +273,14 @@ static void writeFileWrapperAsRTFDAttachment(NSFileWrapper *wrapper, const Strin
     newChangeCount = platformStrategies()->pasteboardStrategy()->setBufferForType(SharedBuffer::create(RTFDData.get()).ptr(), legacyRTFDPasteboardTypeSingleton(), pasteboardName, context);
 }
 
-void Pasteboard::write(const PasteboardImage& pasteboardImage)
+void Pasteboard::write(PasteboardImage&& pasteboardImage)
 {
-    RetainPtr imageData = Ref { *pasteboardImage.image }->adapter().tiffRepresentation();
-    if (!imageData)
+    RefPtr tiffData = WTF::move(pasteboardImage.dataInTIFFFormat);
+    if (!tiffData)
         return;
 
     // FIXME: Why can we assert this? It doesn't seem like it's guaranteed.
-    ASSERT(MIMETypeRegistry::isSupportedImageMIMEType(pasteboardImage.resourceMIMEType));
+    ASSERT(MIMETypeRegistry::isSupportedImageVideoOrSVGMIMEType(pasteboardImage.resourceMIMEType));
 
     auto types = writableTypesForImage();
     if (pasteboardImage.dataInWebArchiveFormat) {
@@ -293,7 +289,7 @@ void Pasteboard::write(const PasteboardImage& pasteboardImage)
     }
 
     m_changeCount = writeURLForTypes(types, m_pasteboardName, pasteboardImage.url, context());
-    m_changeCount = platformStrategies()->pasteboardStrategy()->setBufferForType(SharedBuffer::create(imageData.get()).ptr(), legacyTIFFPasteboardTypeSingleton(), m_pasteboardName, context());
+    m_changeCount = platformStrategies()->pasteboardStrategy()->setBufferForType(tiffData.get(), legacyTIFFPasteboardTypeSingleton(), m_pasteboardName, context());
     if (auto archiveData = pasteboardImage.dataInWebArchiveFormat) {
         m_changeCount = platformStrategies()->pasteboardStrategy()->setBufferForType(archiveData.get(), WebArchivePboardType, m_pasteboardName, context());
         m_changeCount = platformStrategies()->pasteboardStrategy()->setBufferForType(archiveData.get(), UTTypeWebArchive.identifier, m_pasteboardName, context());
@@ -666,7 +662,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     return String();
 }
 
-void Pasteboard::addHTMLClipboardTypesForCocoaType(ListHashSet<String>& resultTypes, const String& cocoaType)
+void Pasteboard::addHTMLClipboardTypesForCocoaType(OrderedHashSet<String>& resultTypes, const String& cocoaType)
 {
     if (cocoaType == "NeXT plain ascii pasteboard type"_s)
         return; // Skip this ancient type that gets auto-supplied by some system conversion.
@@ -792,7 +788,8 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     if (flipImage)
         flipImageSpec(&imageSpec);
 
-    CGSRegionObj imageShape;
+    // This is an out-parameter which is explicitly released below.
+    SUPPRESS_UNRETAINED_LOCAL CGSRegionObj imageShape;
     OSStatus error = CGSNewRegionWithRect(&imageRect, &imageShape);
     ASSERT(error == kCGErrorSuccess);
     if (error != kCGErrorSuccess)

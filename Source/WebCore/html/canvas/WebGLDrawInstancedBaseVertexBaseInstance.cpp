@@ -39,7 +39,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(WebGLDrawInstancedBaseVertexBaseInstance);
 WebGLDrawInstancedBaseVertexBaseInstance::WebGLDrawInstancedBaseVertexBaseInstance(WebGLRenderingContextBase& context)
     : WebGLExtension(context, WebGLExtensionName::WebGLDrawInstancedBaseVertexBaseInstance)
 {
-    context.graphicsContextGL()->enableExtension(GCGLExtension::ANGLE_base_vertex_base_instance);
+    protect(context.graphicsContextGL())->enableExtension(GCGLExtension::ANGLE_base_vertex_base_instance);
 }
 
 WebGLDrawInstancedBaseVertexBaseInstance::~WebGLDrawInstancedBaseVertexBaseInstance() = default;
@@ -61,15 +61,18 @@ void WebGLDrawInstancedBaseVertexBaseInstance::drawArraysInstancedBaseInstanceWE
     if (RefPtr currentProgram = context->m_currentProgram; currentProgram && InspectorInstrumentation::isWebGLProgramDisabled(context.get(), *currentProgram))
         return;
 
-    context->clearIfComposited(WebGLRenderingContextBase::CallerTypeDrawOrClear);
+    context->willUpdateDrawingBufferContents();
+    if (!context->m_framebufferBinding) {
+        if (!context->ensureDefaultFramebufferSize())
+            return;
+        context->clearIfComposited(WebGLRenderingContextBase::CallerTypeDrawOrClear);
+    }
 
     {
         ScopedInspectorShaderProgramHighlight scopedHighlight { context.get() };
 
-        context->graphicsContextGL()->drawArraysInstancedBaseInstanceANGLE(mode, first, count, instanceCount, baseInstance);
+        protect(context->graphicsContextGL())->drawArraysInstancedBaseInstanceANGLE(mode, first, count, instanceCount, baseInstance);
     }
-
-    context->markContextChangedAndNotifyCanvasObserver();
 }
 
 void WebGLDrawInstancedBaseVertexBaseInstance::drawElementsInstancedBaseVertexBaseInstanceWEBGL(GCGLenum mode, GCGLsizei count, GCGLenum type, GCGLintptr offset, GCGLsizei instanceCount, GCGLint baseVertex, GCGLuint baseInstance)
@@ -84,15 +87,18 @@ void WebGLDrawInstancedBaseVertexBaseInstance::drawElementsInstancedBaseVertexBa
     if (RefPtr currentProgram = context->m_currentProgram; currentProgram && InspectorInstrumentation::isWebGLProgramDisabled(context.get(), *currentProgram))
         return;
 
-    context->clearIfComposited(WebGLRenderingContextBase::CallerTypeDrawOrClear);
+    context->willUpdateDrawingBufferContents();
+    if (!context->m_framebufferBinding) {
+        if (!context->ensureDefaultFramebufferSize())
+            return;
+        context->clearIfComposited(WebGLRenderingContextBase::CallerTypeDrawOrClear);
+    }
 
     {
         ScopedInspectorShaderProgramHighlight scopedHighlight { context.get() };
 
-        context->graphicsContextGL()->drawElementsInstancedBaseVertexBaseInstanceANGLE(mode, count, type, offset, instanceCount, baseVertex, baseInstance);
+        protect(context->graphicsContextGL())->drawElementsInstancedBaseVertexBaseInstanceANGLE(mode, count, type, offset, instanceCount, baseVertex, baseInstance);
     }
-
-    context->markContextChangedAndNotifyCanvasObserver();
 }
 
 } // namespace WebCore

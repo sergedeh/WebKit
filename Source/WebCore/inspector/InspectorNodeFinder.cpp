@@ -41,6 +41,7 @@
 #include "NodeTraversal.h"
 #include "XPathNSResolver.h"
 #include "XPathResult.h"
+#include <wtf/text/StringBuilder.h>
 
 namespace WebCore {
 
@@ -82,17 +83,19 @@ void InspectorNodeFinder::searchUsingDOMTreeTraversal(Node& parentNode)
     // Manual plain text search.
     for (RefPtr node = &parentNode; node; node = NodeTraversal::next(*node, &parentNode)) {
         switch (node->nodeType()) {
-        case Node::TEXT_NODE:
-        case Node::COMMENT_NODE:
-        case Node::CDATA_SECTION_NODE:
+        case NodeType::Text:
+        case NodeType::Comment:
+        case NodeType::CDATASection:
             if (checkContains(node->nodeValue(), m_query))
                 m_results.add(node);
             break;
-        case Node::ELEMENT_NODE:
+        case NodeType::Element:
             if (matchesElement(downcast<Element>(*node)))
                 m_results.add(node);
             if (RefPtr frameOwner = dynamicDowncast<HTMLFrameOwnerElement>(*node))
-                performSearch(frameOwner->protectedContentDocument().get());
+                performSearch(protect(frameOwner->contentDocument()).get());
+            if (RefPtr shadowRoot = downcast<Element>(*node).shadowRoot())
+                performSearch(shadowRoot.get());
             break;
         default:
             break;
@@ -149,17 +152,20 @@ bool InspectorNodeFinder::matchesElement(const Element& element)
     if (!element.hasAttributes())
         return false;
 
+    StringBuilder openTagMarkup;
+    openTagMarkup.append(nodeName);
     for (auto& attribute : element.attributes()) {
         if (matchesAttribute(attribute))
             return true;
+        openTagMarkup.append(' ', attribute.name().toString(), "=\""_s, attribute.value(), '"');
     }
 
-    return false;
+    return checkContains(openTagMarkup.toString(), m_query);
 }
 
 void InspectorNodeFinder::searchUsingXPath(Node& parentNode)
 {
-    auto evaluateResult = parentNode.document().evaluate(m_query, parentNode, nullptr, XPathResult::ORDERED_NODE_SNAPSHOT_TYPE, nullptr);
+    auto evaluateResult = protect(parentNode.document())->evaluate(m_query, parentNode, nullptr, XPathResult::ORDERED_NODE_SNAPSHOT_TYPE, nullptr);
     if (evaluateResult.hasException())
         return;
     auto result = evaluateResult.releaseReturnValue();
@@ -175,7 +181,7 @@ void InspectorNodeFinder::searchUsingXPath(Node& parentNode)
             return;
         RefPtr node = snapshotItemResult.releaseReturnValue();
 
-        if (auto* attr = dynamicDowncast<Attr>(*node))
+        if (RefPtr attr = dynamicDowncast<Attr>(*node))
             node = attr->ownerElement();
 
         // XPath can get out of the context node that we pass as the starting point to evaluate, so we need to filter for just the nodes we care about.

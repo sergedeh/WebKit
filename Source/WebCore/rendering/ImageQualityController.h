@@ -34,11 +34,15 @@ namespace WebCore {
 
 class GraphicsContext;
 class Image;
+class IntSize;
 class LayoutSize;
 class RenderBoxModelObject;
 class RenderElement;
 class RenderView;
-class RenderStyle;
+
+namespace Style {
+class ComputedStyle;
+}
 
 class ImageQualityController {
     WTF_MAKE_TZONE_ALLOCATED(ImageQualityController);
@@ -46,13 +50,15 @@ class ImageQualityController {
 public:
     explicit ImageQualityController(const RenderView&);
 
-    static std::optional<InterpolationQuality> interpolationQualityFromStyle(const RenderStyle&);
-    static InterpolationQuality chooseInterpolationQualityForSVG(GraphicsContext&, const RenderElement&, Image&);
-    InterpolationQuality chooseInterpolationQuality(GraphicsContext&, RenderBoxModelObject*, Image&, const void* layer, const LayoutSize&);
+    static std::optional<InterpolationQuality> LEGACY_NODELETE interpolationQualityFromStyle(const Style::ComputedStyle&);
+    static InterpolationQuality chooseInterpolationQuality(GraphicsContext&, const RenderElement&, Image&, const void* layer, const LayoutSize&);
+    static InterpolationQuality chooseInterpolationQualityForBitmapOfSize(GraphicsContext&, const RenderElement&, const IntSize& imageSize, const void* layer, const LayoutSize&);
 
     void rendererWillBeDestroyed(RenderBoxModelObject& renderer) { removeObject(&renderer); }
 
 private:
+    InterpolationQuality chooseInterpolationQualityForBitmapOfSize(GraphicsContext&, RenderBoxModelObject&, const IntSize& imageSize, const void* layer, const LayoutSize&);
+
     using LayerSizeMap = HashMap<const void*, LayoutSize>;
     using ObjectLayerSizeMap = HashMap<SingleThreadWeakRef<RenderBoxModelObject>, LayerSizeMap>;
 

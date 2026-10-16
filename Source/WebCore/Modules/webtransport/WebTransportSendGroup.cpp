@@ -26,7 +26,9 @@
 #include "config.h"
 #include "WebTransportSendGroup.h"
 
+#include "JSDOMConvertDictionary.h"
 #include "JSDOMPromiseDeferred.h"
+#include "ScriptExecutionContextInlines.h"
 #include "JSWebTransportSendStreamStats.h"
 #include "WebTransportSendStreamStats.h"
 #include "WebTransportSession.h"
@@ -50,10 +52,7 @@ void WebTransportSendGroup::getStats(ScriptExecutionContext& context, Ref<Deferr
     RefPtr transport = m_transport.get();
     if (!transport)
         return promise->reject(ExceptionCode::InvalidStateError);
-    RefPtr session = transport->session();
-    if (!session)
-        return promise->reject(ExceptionCode::InvalidStateError);
-    context.enqueueTaskWhenSettled(session->getSendGroupStats(m_identifier), WebCore::TaskSource::Networking, [promise = WTF::move(promise)] (auto&& stats) mutable {
+    context.enqueueTaskWhenSettled(transport->session()->getSendGroupStats(m_identifier), WebCore::TaskSource::Networking, [promise = WTF::move(promise)] (auto&& stats) mutable {
         if (!stats)
             return promise->reject(ExceptionCode::InvalidStateError);
         promise->resolve<IDLDictionary<WebTransportSendStreamStats>>(*stats);

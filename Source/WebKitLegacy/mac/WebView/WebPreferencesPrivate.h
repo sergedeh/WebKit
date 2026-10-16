@@ -73,10 +73,10 @@ typedef enum {
     WebKitPitchCorrectionAlgorithmBestForSpeech,
 } WebKitPitchCorrectionAlgorithm;
 
-extern NSString *WebPreferencesChangedNotification WEBKIT_DEPRECATED_MAC(10_3, 10_14);
-extern NSString *WebPreferencesRemovedNotification WEBKIT_DEPRECATED_MAC(10_3, 10_14);
-extern NSString *WebPreferencesChangedInternalNotification WEBKIT_DEPRECATED_MAC(10_3, 10_14);
-extern NSString *WebPreferencesCacheModelChangedInternalNotification WEBKIT_DEPRECATED_MAC(10_5, 10_14);
+extern NSString * const WebPreferencesChangedNotification WEBKIT_DEPRECATED_MAC(10_3, 10_14);
+extern NSString * const WebPreferencesRemovedNotification WEBKIT_DEPRECATED_MAC(10_3, 10_14);
+extern NSString * const WebPreferencesChangedInternalNotification WEBKIT_DEPRECATED_MAC(10_3, 10_14);
+extern NSString * const WebPreferencesCacheModelChangedInternalNotification WEBKIT_DEPRECATED_MAC(10_5, 10_14);
 
 @interface WebPreferences (WebPrivate)
 
@@ -137,8 +137,6 @@ extern NSString *WebPreferencesCacheModelChangedInternalNotification WEBKIT_DEPR
 @property (nonatomic, setter=_setUseSiteSpecificSpoofing:) BOOL _useSiteSpecificSpoofing;
 // WARNING: Allowing paste through the DOM API opens a security hole. We only use it for testing purposes.
 @property (nonatomic, getter=isDOMPasteAllowed) BOOL DOMPasteAllowed;
-@property (nonatomic, setter=_setFTPDirectoryTemplatePath:) NSString *_ftpDirectoryTemplatePath;
-@property (nonatomic, setter=_setForceFTPDirectoryListings:) BOOL _forceFTPDirectoryListings;
 @property (nonatomic, setter=_setLocalStorageDatabasePath:) NSString *_localStorageDatabasePath;
 @property (nonatomic) BOOL acceleratedDrawingEnabled;
 @property (nonatomic) BOOL resourceLoadStatisticsEnabled;

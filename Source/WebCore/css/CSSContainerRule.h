@@ -40,8 +40,14 @@ public:
     String containerName() const;
     String containerQuery() const;
 
+    struct Condition {
+        String name;
+        String query;
+    };
+    Vector<Condition> conditions() const;
+
 private:
-    const StyleRuleContainer& styleRuleContainer() const;
+    const StyleRuleContainer& LEGACY_NODELETE styleRuleContainer() const;
 
     CSSContainerRule(StyleRuleContainer&, CSSStyleSheet*);
     StyleRuleType styleRuleType() const final { return StyleRuleType::Container; }

@@ -31,21 +31,25 @@
 #include "GPUTexture.h"
 #include "GPUTextureView.h"
 #include "WebGPURenderPassDepthStencilAttachment.h"
+#include <wtf/Forward.h>
 #include <wtf/RefPtr.h>
 
 namespace WebCore {
 
-using GPURenderPassDepthAttachmentView = Variant<RefPtr<GPUTexture>, RefPtr<GPUTextureView>>;
+using GPURenderPassDepthAttachmentView = Variant<Ref<GPUTexture>, Ref<GPUTextureView>>;
 
 struct GPURenderPassDepthStencilAttachment {
     WebGPU::RenderPassDepthStencilAttachment convertToBacking() const
     {
         return {
-            WTF::switchOn(view, [&](const RefPtr<GPUTexture>& texture) -> WebGPU::RenderPassDepthAttachmentView {
-                return texture->backing();
-            }, [&](const RefPtr<GPUTextureView>& view) -> WebGPU::RenderPassDepthAttachmentView {
-                return view->backing();
-            }),
+            WTF::switchOn(view,
+                [](const Ref<GPUTexture>& texture) -> WebGPU::RenderPassDepthAttachmentView {
+                    return texture->backing();
+                },
+                [](const Ref<GPUTextureView>& view) -> WebGPU::RenderPassDepthAttachmentView {
+                    return view->backing();
+                }
+            ),
             depthClearValue.value_or(-1.f),
             depthLoadOp ? std::optional { WebCore::convertToBacking(*depthLoadOp) } : std::nullopt,
             depthStoreOp ? std::optional { WebCore::convertToBacking(*depthStoreOp) } : std::nullopt,
@@ -56,6 +60,8 @@ struct GPURenderPassDepthStencilAttachment {
             stencilReadOnly,
         };
     }
+
+    Ref<JSON::Object> toJSON() const;
 
     GPURenderPassDepthAttachmentView view;
 

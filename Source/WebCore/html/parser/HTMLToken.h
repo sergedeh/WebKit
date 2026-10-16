@@ -28,6 +28,7 @@
 
 #include "Attribute.h"
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/unicode/CharacterNames.h>
 
 namespace WebCore {
 
@@ -74,7 +75,7 @@ public:
 
     // StartTag, EndTag, DOCTYPE.
 
-    const DataVector& name() const;
+    const DataVector& name() const LIFETIME_BOUND;
 
     void appendToName(char16_t);
 
@@ -96,7 +97,7 @@ public:
     // StartTag, EndTag.
 
     bool selfClosing() const;
-    const AttributeList& attributes() const;
+    const AttributeList& attributes() const LIFETIME_BOUND;
 
     void beginStartTag(Latin1Character);
 
@@ -118,17 +119,20 @@ public:
     // other types of tokens because we want to save a per-character branch.
     // There is no beginCharacters, and appending a character sets the type.
 
-    const DataVector& characters() const;
+    const DataVector& characters() const LIFETIME_BOUND;
     bool charactersIsAll8BitData() const;
+    bool isReplacedNullCharacter() const;
 
     void appendToCharacter(Latin1Character);
     void appendToCharacter(char16_t);
     void appendToCharacter(const Vector<Latin1Character, 32>&);
     template<typename CharacterType> void appendToCharacter(std::span<const CharacterType>);
 
+    void makeReplacedNullCharacter();
+
     // Comment.
 
-    const DataVector& comment() const;
+    const DataVector& comment() const LIFETIME_BOUND;
     bool commentIsAll8BitData() const;
 
     void beginComment();
@@ -137,9 +141,14 @@ public:
     void appendToComment(char16_t);
 
 private:
+    static constexpr size_t maximumRetainedDataCapacity = 16 * 1024;
+
     DataVector m_data;
     char16_t m_data8BitCheck { 0 };
     Type m_type { Type::Uninitialized };
+
+    // For Character
+    bool m_isReplacedNullCharacter { false };
 
     // For StartTag and EndTag
     bool m_selfClosing;
@@ -155,8 +164,13 @@ const HTMLToken::Attribute* findAttribute(const Vector<HTMLToken::Attribute>&, S
 inline void HTMLToken::clear()
 {
     m_type = Type::Uninitialized;
-    m_data.clear();
+    // Keep the buffer for the next token, unless an unusually large token grew it.
+    if (m_data.capacity() > maximumRetainedDataCapacity)
+        m_data.clear();
+    else
+        m_data.shrink(0);
     m_data8BitCheck = 0;
+    m_isReplacedNullCharacter = false;
 }
 
 inline HTMLToken::Type HTMLToken::type() const
@@ -359,6 +373,12 @@ inline bool HTMLToken::charactersIsAll8BitData() const
     return m_data8BitCheck <= 0xFF;
 }
 
+inline bool HTMLToken::isReplacedNullCharacter() const
+{
+    ASSERT(m_type == Type::Character);
+    return m_isReplacedNullCharacter;
+}
+
 inline void HTMLToken::appendToCharacter(Latin1Character character)
 {
     ASSERT(m_type == Type::Uninitialized || m_type == Type::Character);
@@ -392,6 +412,13 @@ inline void HTMLToken::appendToCharacter(std::span<const CharacterType> characte
         for (auto character : characters)
             m_data8BitCheck |= character;
     }
+}
+
+inline void HTMLToken::makeReplacedNullCharacter()
+{
+    ASSERT(m_type == Type::Uninitialized);
+    appendToCharacter(replacementCharacter);
+    m_isReplacedNullCharacter = true;
 }
 
 inline const HTMLToken::DataVector& HTMLToken::comment() const

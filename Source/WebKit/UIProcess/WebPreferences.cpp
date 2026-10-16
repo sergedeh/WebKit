@@ -45,6 +45,11 @@ namespace WebKit {
 
 static bool forceSiteIsolationAlwaysOnForTesting;
 
+bool WebPreferences::forcedSiteIsolationAlwaysOnForTesting()
+{
+    return WebKit::forceSiteIsolationAlwaysOnForTesting;
+}
+
 Ref<WebPreferences> WebPreferences::create(const String& identifier, const String& keyPrefix, const String& globalDebugKeyPrefix)
 {
     return adoptRef(*new WebPreferences(identifier, keyPrefix, globalDebugKeyPrefix));
@@ -90,6 +95,13 @@ WebPreferences::~WebPreferences()
 void WebPreferences::forceSiteIsolationAlwaysOnForTesting()
 {
     WebKit::forceSiteIsolationAlwaysOnForTesting = true;
+}
+
+bool WebPreferences::shouldUseUIProcessForBackForwardItemLoading() const
+{
+    // Site Isolation spreads a page's frames across Web processes, so no single Web process can
+    // coordinate a back/forward traversal by itself; the UI process must always drive it.
+    return useUIProcessForBackForwardItemLoading() || siteIsolationEnabled();
 }
 
 const Vector<RefPtr<API::Object>>& WebPreferences::experimentalFeatures()
@@ -254,7 +266,7 @@ void WebPreferences::registerDefaultUInt32ValueForKey(const String& key, uint32_
         m_store.setUInt32ValueForKey(key, userValue);
 }
 
-#if !PLATFORM(COCOA) && !PLATFORM(GTK) && !PLATFORM(WPE)
+#if !PLATFORM(COCOA) && !PLATFORM(GTK) && !PLATFORM(WPE) && !PLATFORM(PLAYSTATION)
 void WebPreferences::platformInitializeStore()
 {
     notImplemented();

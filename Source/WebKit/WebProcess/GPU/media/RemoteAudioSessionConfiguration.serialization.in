@@ -31,10 +31,10 @@ struct WebKit::RemoteAudioSessionConfiguration {
     uint64_t preferredBufferSize;
     uint64_t outputLatency;
     bool isMuted;
-    bool isActive;
     String sceneIdentifier;
     WebCore::AudioSessionSoundStageSize soundStageSize;
     WebCore::AudioSessionCategory categoryOverride;
+    bool isActive;
 };
 
 #endif
@@ -46,6 +46,4 @@ enum class WebCore::HasAvailableTargets : bool
 enum class WebCore::SupportsAirPlayVideo : bool
 enum class WebCore::PlayingToAutomotiveHeadUnit : bool
 enum class WebCore::SuspendedUnderLock : bool
-enum class WebCore::SupportsSpatialAudioPlayback : bool
-enum class WebKit::RespectSelectionAnchor : bool
 #endif

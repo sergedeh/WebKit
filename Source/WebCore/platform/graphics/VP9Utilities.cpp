@@ -35,14 +35,14 @@
 
 namespace WebCore {
 
-static bool isValidVPProfile(uint8_t profile)
+static bool LEGACY_NODELETE isValidVPProfile(uint8_t profile)
 {
     return profile <= 3;
 }
 
 static bool isValidVPLevel(uint8_t level)
 {
-    constexpr auto validLevels = std::to_array<uint8_t>({
+    constexpr auto validLevels = WTF::toArray<uint8_t>({
         VPConfigurationLevel::Level_1,
         VPConfigurationLevel::Level_1_1,
         VPConfigurationLevel::Level_2,
@@ -63,20 +63,20 @@ static bool isValidVPLevel(uint8_t level)
     return std::binary_search(std::begin(validLevels), std::end(validLevels), level);
 }
 
-static bool isValidBitDepth(uint8_t bitDepth)
+static bool LEGACY_NODELETE isValidBitDepth(uint8_t bitDepth)
 {
     return bitDepth == 8
         || bitDepth == 10
         || bitDepth == 12;
 }
 
-static bool isValidRange(uint8_t range)
+static bool LEGACY_NODELETE isValidRange(uint8_t range)
 {
     return range == VPConfigurationRange::VideoRange
         || range == VPConfigurationRange::FullRange;
 }
 
-static bool isValidChromaSubsampling(uint8_t subsampling)
+static bool LEGACY_NODELETE isValidChromaSubsampling(uint8_t subsampling)
 {
     return subsampling >= VPConfigurationChromaSubsampling::Subsampling_420_Vertical
         && subsampling <= VPConfigurationChromaSubsampling::Subsampling_444;
@@ -84,7 +84,7 @@ static bool isValidChromaSubsampling(uint8_t subsampling)
 
 static bool isValidVPColorPrimaries(uint8_t colorPrimaries)
 {
-    constexpr auto validColorPrimaries = std::to_array<uint8_t>({
+    constexpr auto validColorPrimaries = WTF::toArray<uint8_t>({
         VPConfigurationColorPrimaries::BT_709_6,
         VPConfigurationColorPrimaries::Unspecified,
         VPConfigurationColorPrimaries::BT_470_6_M,
@@ -105,7 +105,7 @@ static bool isValidVPColorPrimaries(uint8_t colorPrimaries)
 
 static bool isValidVPTransferCharacteristics(uint8_t transferCharacteristics)
 {
-    constexpr auto validTransferCharacteristics = std::to_array<uint8_t>({
+    constexpr auto validTransferCharacteristics = WTF::toArray<uint8_t>({
         VPConfigurationTransferCharacteristics::BT_709_6,
         VPConfigurationTransferCharacteristics::Unspecified,
         VPConfigurationTransferCharacteristics::BT_470_6_M,
@@ -130,7 +130,7 @@ static bool isValidVPTransferCharacteristics(uint8_t transferCharacteristics)
 
 static bool isValidVPMatrixCoefficients(uint8_t matrixCoefficients)
 {
-    constexpr auto validMatrixCoefficients = std::to_array<uint8_t>({
+    constexpr auto validMatrixCoefficients = WTF::toArray<uint8_t>({
         VPConfigurationMatrixCoefficients::Identity,
         VPConfigurationMatrixCoefficients::BT_709_6,
         VPConfigurationMatrixCoefficients::Unspecified,
@@ -271,6 +271,33 @@ std::optional<VPCodecConfigurationRecord> parseVPCodecParameters(StringView code
     return configuration;
 }
 
+std::optional<VPCodecConfigurationRecord> parseVPCodecParametersIgnoringColorFields(StringView codecView)
+{
+    unsigned mandatoryFieldsEnd = 0;
+    unsigned searchStart = 0;
+    for (unsigned separators = 0; separators < 4; ++separators) {
+        auto separator = codecView.find('.', searchStart);
+        if (separator == notFound)
+            return parseVPCodecParameters(codecView);
+        mandatoryFieldsEnd = static_cast<unsigned>(separator);
+        searchStart = mandatoryFieldsEnd + 1;
+    }
+
+    auto configuration = parseVPCodecParameters(codecView.left(mandatoryFieldsEnd));
+    if (!configuration)
+        return std::nullopt;
+
+    auto chromaSubsamplingField = codecView.substring(searchStart);
+    if (auto separator = chromaSubsamplingField.find('.'); separator != notFound)
+        chromaSubsamplingField = chromaSubsamplingField.left(static_cast<unsigned>(separator));
+    auto chromaSubsampling = parseInteger<uint8_t>(chromaSubsamplingField);
+    if (!chromaSubsampling || !isValidChromaSubsampling(*chromaSubsampling))
+        return std::nullopt;
+    configuration->chromaSubsampling = *chromaSubsampling;
+
+    return configuration;
+}
+
 String createVPCodecParametersString(const VPCodecConfigurationRecord& configuration)
 {
     // The format of the 'vp09' codec string is specified in the webm GitHub repo:
@@ -299,7 +326,7 @@ String createVPCodecParametersString(const VPCodecConfigurationRecord& configura
         return resultBuilder.toString();
 
     resultBuilder.append(".0"_s, numberToStringUnsigned<String>(configuration.profile), '.', numberToStringUnsigned<String>(configuration.level), '.');
-    if (configuration.transferCharacteristics < 10)
+    if (configuration.bitDepth < 10)
         resultBuilder.append('0');
     resultBuilder.append(numberToStringUnsigned<String>(configuration.bitDepth));
 
@@ -497,7 +524,7 @@ void setConfigurationColorSpaceFromVP9ColorSpace(VPCodecConfigurationRecord& rec
     }
 }
 
-std::optional<VPCodecConfigurationRecord> vPCodecConfigurationRecordFromVPXByteStream(VPXCodec codec, std::span<const uint8_t> data)
+std::optional<VPCodecConfigurationRecord> vpCodecConfigurationRecordFromVPXByteStream(VPXCodec codec, std::span<const uint8_t> data)
 {
     if (data.size() < 11)
         return { };
@@ -593,10 +620,17 @@ std::optional<VPCodecConfigurationRecord> vPCodecConfigurationRecordFromVPXByteS
 
     setConfigurationColorSpaceFromVP9ColorSpace(record, colorSpace);
 
+    auto width = br.read(16);
+    auto height = br.read(16);
+    if (width && height) {
+        record.frameWidth = *width + 1;
+        record.frameHeight = *height + 1;
+    }
+
     return record;
 }
 
-static PlatformVideoColorPrimaries convertToPlatformVideoColorPrimaries(uint8_t primaries)
+static PlatformVideoColorPrimaries LEGACY_NODELETE convertToPlatformVideoColorPrimaries(uint8_t primaries)
 {
     switch (primaries) {
     case VPConfigurationColorPrimaries::BT_709_6:
@@ -627,7 +661,7 @@ static PlatformVideoColorPrimaries convertToPlatformVideoColorPrimaries(uint8_t 
     }
 }
 
-static PlatformVideoTransferCharacteristics convertToPlatformVideoTransferCharacteristics(uint8_t characteristics)
+static PlatformVideoTransferCharacteristics LEGACY_NODELETE convertToPlatformVideoTransferCharacteristics(uint8_t characteristics)
 {
     switch (characteristics) {
     case VPConfigurationTransferCharacteristics::BT_709_6:
@@ -668,7 +702,7 @@ static PlatformVideoTransferCharacteristics convertToPlatformVideoTransferCharac
     }
 }
 
-static PlatformVideoMatrixCoefficients convertToPlatformVideoMatrixCoefficients(uint8_t coefficients)
+static PlatformVideoMatrixCoefficients LEGACY_NODELETE convertToPlatformVideoMatrixCoefficients(uint8_t coefficients)
 {
     switch (coefficients) {
     case VPConfigurationMatrixCoefficients::Identity:

@@ -38,6 +38,7 @@ struct VideoFrameMetadataPrivate {
     VideoFrameContentHint contentHint { VideoFrameContentHint::None };
     Lock lock;
     HashMap<GstElement*, std::pair<GstClockTime, GstClockTime>> processingTimes WTF_GUARDED_BY_LOCK(lock);
+    PlatformVideoColorSpace nativeColorSpace;
 };
 
 WEBKIT_DEFINE_ASYNC_DATA_STRUCT(VideoFrameMetadataPrivate);
@@ -71,8 +72,12 @@ static std::pair<GRefPtr<GstBuffer>, VideoFrameMetadataGStreamer*> ensureVideoFr
         return { WTF::move(buffer), meta };
 
     IGNORE_WARNINGS_BEGIN("cast-align");
-    auto modifiedBuffer = adoptGRef(gst_buffer_make_writable(buffer.leakRef()));
+    GRefPtr modifiedBuffer = adoptGRef(gst_buffer_make_writable(buffer.leakRef()));
     IGNORE_WARNINGS_END;
+    if (!modifiedBuffer) {
+        GST_ERROR("Failed to make buffer writable");
+        return { nullptr, nullptr };
+    }
     meta = VIDEO_FRAME_METADATA_CAST(gst_buffer_add_meta(modifiedBuffer.get(), videoFrameMetadataGetInfo(), nullptr));
     return { WTF::move(modifiedBuffer), meta };
 }
@@ -102,6 +107,7 @@ const GstMetaInfo* videoFrameMetadataGetInfo()
                 copyMeta->priv->rotation = frameMeta->priv->rotation;
                 copyMeta->priv->isMirrored = frameMeta->priv->isMirrored;
                 copyMeta->priv->contentHint = frameMeta->priv->contentHint;
+                copyMeta->priv->nativeColorSpace = frameMeta->priv->nativeColorSpace;
 
                 Locker frameMetaLocker { frameMeta->priv->lock };
                 Locker copyMetaLocker { copyMeta->priv->lock };
@@ -114,7 +120,7 @@ const GstMetaInfo* videoFrameMetadataGetInfo()
 
 // NOTE: The buffer here cannot be a const GRefPtr<>&, that would mean its refcount would be greater
 // than 1, hence it wouldn't be writable.
-void webkitGstBufferAddVideoFrameMetadata(GstBuffer* buffer, std::optional<WebCore::VideoFrameTimeMetadata> metadata, VideoFrame::Rotation rotation, bool isMirrored, VideoFrameContentHint hint)
+void webkitGstBufferAddVideoFrameMetadata(GstBuffer* buffer, std::optional<WebCore::VideoFrameTimeMetadata> metadata, VideoFrame::Rotation rotation, bool isMirrored, VideoFrameContentHint hint, std::optional<WebCore::PlatformVideoColorSpace> colorSpace)
 {
     if (!gst_buffer_is_writable(buffer)) {
         GST_ERROR("Unable to add video frame metadata on read-only buffer");
@@ -129,6 +135,8 @@ void webkitGstBufferAddVideoFrameMetadata(GstBuffer* buffer, std::optional<WebCo
         meta->priv->rotation = rotation;
         meta->priv->isMirrored = isMirrored;
         meta->priv->contentHint = hint;
+        if (colorSpace)
+            meta->priv->nativeColorSpace = *colorSpace;
         return;
     }
 
@@ -137,14 +145,20 @@ void webkitGstBufferAddVideoFrameMetadata(GstBuffer* buffer, std::optional<WebCo
     meta->priv->rotation = rotation;
     meta->priv->isMirrored = isMirrored;
     meta->priv->contentHint = hint;
+    if (colorSpace)
+        meta->priv->nativeColorSpace = *colorSpace;
 }
 
-GRefPtr<GstBuffer> webkitGstBufferSetVideoFrameMetadata(GRefPtr<GstBuffer>&& buffer, std::optional<WebCore::VideoFrameTimeMetadata> metadata, VideoFrame::Rotation rotation, bool isMirrored, VideoFrameContentHint hint)
+GRefPtr<GstBuffer> webkitGstBufferSetVideoFrameMetadata(GRefPtr<GstBuffer>&& buffer, std::optional<WebCore::VideoFrameTimeMetadata> metadata, VideoFrame::Rotation rotation, bool isMirrored, VideoFrameContentHint hint, std::optional<WebCore::PlatformVideoColorSpace> colorSpace)
 {
     IGNORE_WARNINGS_BEGIN("cast-align");
-    auto modifiedBuffer = adoptGRef(gst_buffer_make_writable(buffer.leakRef()));
+    GRefPtr modifiedBuffer = adoptGRef(gst_buffer_make_writable(buffer.leakRef()));
     IGNORE_WARNINGS_END;
-    webkitGstBufferAddVideoFrameMetadata(modifiedBuffer.get(), metadata, rotation, isMirrored, hint);
+    if (!modifiedBuffer) {
+        GST_ERROR("Failed to make buffer writable");
+        return nullptr;
+    }
+    webkitGstBufferAddVideoFrameMetadata(modifiedBuffer.get(), metadata, rotation, isMirrored, hint, colorSpace);
     return modifiedBuffer;
 }
 
@@ -155,8 +169,8 @@ void webkitGstTraceProcessingTimeForElement(GstElement* element)
         GST_DEBUG_CATEGORY_INIT(webkit_video_frame_meta_debug, "webkitvideoframemeta", 0, "Video frame processing metrics");
     });
 
-    auto sinkPad = adoptGRef(gst_element_get_static_pad(element, "sink"));
-    auto srcPad = adoptGRef(gst_element_get_static_pad(element, "src"));
+    GRefPtr sinkPad = adoptGRef(gst_element_get_static_pad(element, "sink"));
+    GRefPtr srcPad = adoptGRef(gst_element_get_static_pad(element, "src"));
     if (!sinkPad || !srcPad) {
         GST_WARNING("Can't add the processing time probes for %s", GST_OBJECT_NAME(element));
         ASSERT_NOT_REACHED();
@@ -165,17 +179,30 @@ void webkitGstTraceProcessingTimeForElement(GstElement* element)
 
     GST_DEBUG("Tracing processing time for %" GST_PTR_FORMAT, element);
 
+    // The pad probes life cycles are tied to their pad, they will be removed during the pad
+    // disposal. No need for PadProbeHandle here.
     static auto probeType = static_cast<GstPadProbeType>(GST_PAD_PROBE_TYPE_PUSH | GST_PAD_PROBE_TYPE_BUFFER);
 
-    gst_pad_add_probe(sinkPad.get(), probeType, [](GstPad*, GstPadProbeInfo* info, gpointer userData) -> GstPadProbeReturn {
-        auto [modifiedBuffer, meta] = ensureVideoFrameMetadata(GRefPtr(GST_PAD_PROBE_INFO_BUFFER(info)));
-        gst_pad_probe_info_set_buffer(info, modifiedBuffer.leakRef());
-        Locker locker { meta->priv->lock };
-        meta->priv->processingTimes.set(GST_ELEMENT_CAST(userData), std::make_pair(gst_util_get_timestamp(), GST_CLOCK_TIME_NONE));
-        return GST_PAD_PROBE_OK;
-    }, element, nullptr);
+    gst_pad_add_probe(sinkPad.get(), probeType, [](GstPad* pad, GstPadProbeInfo* info, gpointer) -> GstPadProbeReturn {
+        GRefPtr element = adoptGRef(gst_pad_get_parent_element(pad));
+        if (!element) [[unlikely]]
+            return GST_PAD_PROBE_REMOVE;
 
-    gst_pad_add_probe(srcPad.get(), probeType, [](GstPad*, GstPadProbeInfo* info, gpointer userData) -> GstPadProbeReturn {
+        auto [modifiedBuffer, meta] = ensureVideoFrameMetadata(GRefPtr(GST_PAD_PROBE_INFO_BUFFER(info)));
+        if (!modifiedBuffer || !meta)
+            return GST_PAD_PROBE_OK;
+        gst_pad_probe_info_set_buffer(info, modifiedBuffer.leakRef());
+
+        Locker locker { meta->priv->lock };
+        meta->priv->processingTimes.set(element.get(), std::make_pair(gst_util_get_timestamp(), GST_CLOCK_TIME_NONE));
+        return GST_PAD_PROBE_OK;
+    }, nullptr, nullptr);
+
+    gst_pad_add_probe(srcPad.get(), probeType, [](GstPad* pad, GstPadProbeInfo* info, gpointer) -> GstPadProbeReturn {
+        GRefPtr element = adoptGRef(gst_pad_get_parent_element(pad));
+        if (!element) [[unlikely]]
+            return GST_PAD_PROBE_REMOVE;
+
         auto* meta = getInternalVideoFrameMetadata(GST_PAD_PROBE_INFO_BUFFER(info));
         // Some decoders (such as theoradec) do not always copy the input meta to the output frame,
         // so we need to check the meta is valid here before accessing it.
@@ -183,11 +210,10 @@ void webkitGstTraceProcessingTimeForElement(GstElement* element)
             return GST_PAD_PROBE_OK;
 
         Locker locker { meta->priv->lock };
-        auto* key = GST_ELEMENT_CAST(userData);
-        auto [startTime, oldStopTime] = meta->priv->processingTimes.get(key);
-        meta->priv->processingTimes.set(key, std::make_pair(startTime, gst_util_get_timestamp()));
+        auto [startTime, oldStopTime] = meta->priv->processingTimes.get(element.get());
+        meta->priv->processingTimes.set(element.get(), std::make_pair(startTime, gst_util_get_timestamp()));
         return GST_PAD_PROBE_OK;
-    }, element, nullptr);
+    }, nullptr, nullptr);
 }
 
 VideoFrameMetadata webkitGstBufferGetVideoFrameMetadata(GstBuffer* buffer)
@@ -202,8 +228,11 @@ VideoFrameMetadata webkitGstBufferGetVideoFrameMetadata(GstBuffer* buffer)
         return videoFrameMetadata;
 
     auto processingDuration = MediaTime::zeroTime();
-    for (auto& [startTime, stopTime] : meta->priv->processingTimes.values())
-        processingDuration += fromGstClockTime(GST_CLOCK_DIFF(startTime, stopTime));
+    {
+        Locker locker { meta->priv->lock };
+        for (auto& [startTime, stopTime] : meta->priv->processingTimes.values())
+            processingDuration += fromGstClockTime(GST_CLOCK_DIFF(startTime, stopTime));
+    }
 
     if (processingDuration != MediaTime::zeroTime())
         videoFrameMetadata.processingDuration = processingDuration.toDouble();
@@ -244,6 +273,17 @@ VideoFrameContentHint webkitGstBufferGetContentHint(GstBuffer* buffer)
     return VideoFrameContentHint::None;
 }
 
+PlatformVideoColorSpace webkitGstBufferGetNativeColorSpace(GstBuffer* buffer)
+{
+    if (!GST_IS_BUFFER(buffer))
+        return { };
+
+    if (auto meta = getInternalVideoFrameMetadata(buffer))
+        return meta->priv->nativeColorSpace;
+
+    return { };
+}
+
 MediaTime webkitGstBufferGetProcessingTime(GstBuffer* buffer, GstElement* element)
 {
     if (!GST_IS_BUFFER(buffer))
@@ -253,6 +293,7 @@ MediaTime webkitGstBufferGetProcessingTime(GstBuffer* buffer, GstElement* elemen
     if (!meta)
         return MediaTime::invalidTime();
 
+    Locker locker { meta->priv->lock };
     auto [startTime, stopTime] = meta->priv->processingTimes.get(element);
     return fromGstClockTime(GST_CLOCK_DIFF(startTime, stopTime));
 }

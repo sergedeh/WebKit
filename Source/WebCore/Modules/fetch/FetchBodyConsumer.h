@@ -69,7 +69,7 @@ public:
     RefPtr<JSC::ArrayBuffer> takeAsArrayBuffer();
     String takeAsText();
 
-    bool hasPendingActivity() const;
+    bool LEGACY_NODELETE hasPendingActivity() const;
 
     void setType(Type type) { m_type = type; }
 
@@ -86,6 +86,7 @@ public:
 
     void setConsumePromise(Ref<DeferredPromise>&&);
     void setSource(Ref<FetchBodySource>&&);
+    void cancelReadableStream();
 
     void setAsLoading() { m_isLoading = true; }
 
@@ -94,9 +95,6 @@ public:
 private:
     Ref<Blob> takeAsBlob(ScriptExecutionContext*, const String& contentType);
     void resetConsumePromise();
-
-    RefPtr<ReadableStreamToSharedBufferSink> protectedSink() { return m_sink; }
-    RefPtr<FormDataConsumer> protectedFormDataConsumer() { return m_formDataConsumer; }
 
     Type m_type;
     SharedBufferBuilder m_buffer;

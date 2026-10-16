@@ -77,7 +77,7 @@ Inspector::Protocol::ErrorStringOr<std::tuple<Ref<Inspector::Protocol::Runtime::
     if (injectedScript.hasNoValue())
         return makeUnexpected("Missing injected script for given callFrameId"_s);
 
-    UserGestureEmulationScope userGestureScope(m_inspectedPage, emulateUserGesture.value_or(false), dynamicDowncast<Document>(executionContext(injectedScript.globalObject())));
+    UserGestureEmulationScope userGestureScope(protect(m_inspectedPage), emulateUserGesture.value_or(false), protect(dynamicDowncast<Document>(executionContext(injectedScript.globalObject()))));
     return WebDebuggerAgent::evaluateOnCallFrame(injectedScript, callFrameId, expression, objectGroup, WTF::move(includeCommandLineAPI), WTF::move(doNotPauseOnExceptionsAndMuteConsole), WTF::move(returnByValue), WTF::move(generatePreview), WTF::move(saveResult), WTF::move(emulateUserGesture));
 }
 
@@ -105,7 +105,7 @@ String PageDebuggerAgent::sourceMapURLForScript(const JSC::Debugger::Script& scr
         if (!localMainFrame)
             return String();
 
-        CachedResource* resource = ResourceUtilities::cachedResource(localMainFrame.get(), URL({ }, script.url));
+        RefPtr resource = ResourceUtilities::cachedResource(localMainFrame.get(), URL({ }, script.url));
         if (resource) {
             String sourceMapHeader = resource->response().httpHeaderField(StringView { sourceMapHTTPHeader });
             if (!sourceMapHeader.isEmpty())
@@ -157,7 +157,7 @@ InjectedScript PageDebuggerAgent::injectedScriptForEval(Inspector::Protocol::Err
     if (!executionContextId)
         return injectedScriptManager().injectedScriptFor(&mainWorldGlobalObject(*localMainFrame));
 
-    InjectedScript injectedScript = injectedScriptManager().injectedScriptForId(*executionContextId);
+    auto injectedScript = injectedScriptManager().injectedScriptForId(*executionContextId);
     if (injectedScript.hasNoValue())
         errorString = "Missing injected script for given executionContextId."_s;
 

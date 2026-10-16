@@ -76,6 +76,9 @@ WI.Frame = class Frame extends WI.Object
         this._mainResource = mainResource;
         this._mainResource._parentFrame = this;
 
+        this._domContentReadyEventTimestamp = NaN;
+        this._loadEventTimestamp = NaN;
+
         if (oldMainResource && this._mainResource !== oldMainResource)
             this._disassociateWithResource(oldMainResource);
 
@@ -94,6 +97,38 @@ WI.Frame = class Frame extends WI.Object
             this.dispatchEventToListeners(WI.Frame.Event.NameDidChange, {oldName});
     }
 
+    // Correct a placeholder description of the frame's current document. Unlike `initialize`, nothing is torn
+    // down: the frame has not navigated, so its subresources, child frames and execution contexts all still
+    // describe this same load.
+    //
+    // FIXME: <https://webkit.org/b/324918> Once Page and Network fully move to the WebPage target, there is
+    // no longer a placeholder to correct, and this method can be deleted.
+    updateInitialPlaceholderMainResource(url, {mimeType, loaderIdentifier, name, securityOrigin} = {})
+    {
+        console.assert(this._mainResource, "Tried to correct a placeholder main resource on a frame that has none.", this);
+        if (!this._mainResource)
+            return;
+
+        console.assert(!this._loaderIdentifier || this._loaderIdentifier === loaderIdentifier, this._loaderIdentifier, loaderIdentifier);
+
+        if (loaderIdentifier)
+            this._loaderIdentifier = loaderIdentifier;
+
+        this._mainResource.updateInitialPlaceholderURL(url, {mimeType, loaderIdentifier});
+
+        if (name && name !== this._name) {
+            let oldName = this._name;
+            this._name = name;
+            this.dispatchEventToListeners(WI.Frame.Event.NameDidChange, {oldName});
+        }
+
+        if (securityOrigin && securityOrigin !== this._securityOrigin) {
+            let oldSecurityOrigin = this._securityOrigin;
+            this._securityOrigin = securityOrigin;
+            this.dispatchEventToListeners(WI.Frame.Event.SecurityOriginDidChange, {oldSecurityOrigin});
+        }
+    }
+
     startProvisionalLoad(provisionalMainResource)
     {
         console.assert(provisionalMainResource);
@@ -108,16 +143,18 @@ WI.Frame = class Frame extends WI.Object
         this.dispatchEventToListeners(WI.Frame.Event.ProvisionalLoadStarted);
     }
 
-    commitProvisionalLoad(securityOrigin)
+    commitProvisionalLoad(name, securityOrigin)
     {
         console.assert(this._provisionalMainResource);
         console.assert(this._provisionalLoaderIdentifier);
         if (!this._provisionalLoaderIdentifier)
             return;
 
+        var oldName = this._name;
         var oldSecurityOrigin = this._securityOrigin;
         var oldMainResource = this._mainResource;
 
+        this._name = name || null;
         this._securityOrigin = securityOrigin || null;
         this._loaderIdentifier = this._provisionalLoaderIdentifier;
         this._mainResource = this._provisionalMainResource;
@@ -145,6 +182,9 @@ WI.Frame = class Frame extends WI.Object
 
         if (this._securityOrigin !== oldSecurityOrigin)
             this.dispatchEventToListeners(WI.Frame.Event.SecurityOriginDidChange, {oldSecurityOrigin});
+
+        if (this._name !== oldName)
+            this.dispatchEventToListeners(WI.Frame.Event.NameDidChange, {oldName});
     }
 
     clearProvisionalLoad(skipProvisionalLoadClearedEvent)
@@ -219,16 +259,54 @@ WI.Frame = class Frame extends WI.Object
             this._executionContextList.clear();
             this.dispatchEventToListeners(WI.Frame.Event.ExecutionContextsCleared, {committingProvisionalLoad: !!committingProvisionalLoad, contexts});
         }
+        this._executionContextPromise = null;
     }
 
     addExecutionContext(context)
     {
-        this._executionContextList.add(context);
+        let contexts = this._executionContextList.contexts;
+
+        // Adopting a frame target's already-reported realms can offer the same context more than
+        // once. Bail before anything below can clear the list or fire a second added event.
+        if (contexts.includes(context))
+            return;
+
+        let isFrameTargetContext = context.target instanceof WI.FrameTarget;
+        let hasFrameTargetContext = contexts.some((existing) => existing.target instanceof WI.FrameTarget);
+
+        // The page target and the frame's own frame target can each announce the frame's main-world
+        // realm, with an identifier minted by their own agent, and the protocol cannot retract
+        // either one. The frame target owns the frame, so its report wins. Reading the current list
+        // rather than latching keeps that order-independent, and lets the page target back in if the
+        // list is cleared before the frame target reports again -- a latch would leave such a frame
+        // with no context at all, which is worse than a duplicate.
+        if (!isFrameTargetContext && hasFrameTargetContext)
+            return;
+
+        if (isFrameTargetContext && !hasFrameTargetContext && contexts.length)
+            this.clearExecutionContexts();
+
+        let pageExecutionContext = this._executionContextList.pageExecutionContext;
+        // The target is part of a context's identity: every target numbers its realms from 1, so
+        // comparing ids alone would mistake a replacement target's realm for the existing one.
+        if (context.type === WI.ExecutionContext.Type.Normal && pageExecutionContext && (pageExecutionContext.target !== context.target || pageExecutionContext.id !== context.id))
+            this.clearExecutionContexts();
+
+        if (!this._executionContextList.add(context))
+            return;
 
         this.dispatchEventToListeners(WI.Frame.Event.ExecutionContextAdded, {context});
 
         if (this._executionContextList.pageExecutionContext === context)
             this.dispatchEventToListeners(WI.Frame.Event.PageExecutionContextChanged);
+    }
+
+    ensurePageExecutionContext()
+    {
+        this._executionContextPromise ||= this.pageExecutionContext 
+            ? Promise.resolve() 
+            : this.awaitEvent(WI.Frame.Event.PageExecutionContextChanged);
+        return this._executionContextPromise;
     }
 
     get mainResource()
@@ -350,10 +428,10 @@ WI.Frame = class Frame extends WI.Object
 
     removeAllChildFrames()
     {
-        this._detachFromParentFrame();
-
-        for (let childFrame of this._childFrameCollection)
+        for (let childFrame of this._childFrameCollection) {
             childFrame.removeAllChildFrames();
+            childFrame._detachFromParentFrame();
+        }
 
         this._childFrameCollection.clear();
         this._childFrameIdentifierMap.clear();

@@ -26,8 +26,6 @@
 #import "config.h"
 #import "WKTextExtractionUtilities.h"
 
-#if USE(APPLE_INTERNAL_SDK) || (!PLATFORM(WATCHOS) && !PLATFORM(APPLETV))
-
 #import "SafeBrowsingUtilities.h"
 #import "WKWebViewInternal.h"
 #import "_WKTextExtractionInternal.h"
@@ -40,11 +38,9 @@
 namespace WebKit {
 using namespace WebCore;
 
-inline static WKTextExtractionContainer containerType(TextExtraction::ContainerType type)
+inline static WKTextExtractionContainer LEGACY_NODELETE containerType(TextExtraction::ContainerType type)
 {
     switch (type) {
-    case TextExtraction::ContainerType::Root:
-        return WKTextExtractionContainerRoot;
     case TextExtraction::ContainerType::ViewportConstrained:
         return WKTextExtractionContainerViewportConstrained;
     case TextExtraction::ContainerType::List:
@@ -74,7 +70,7 @@ inline static WKTextExtractionContainer containerType(TextExtraction::ContainerT
     }
 }
 
-static WKTextExtractionEventListenerTypes eventListenerTypes(OptionSet<TextExtraction::EventListenerCategory> eventListeners)
+static WKTextExtractionEventListenerTypes LEGACY_NODELETE eventListenerTypes(OptionSet<TextExtraction::EventListenerCategory> eventListeners)
 {
     WKTextExtractionEventListenerTypes result = WKTextExtractionEventListenerTypeNone;
     if (eventListeners.contains(TextExtraction::EventListenerCategory::Click))
@@ -148,6 +144,16 @@ inline static RetainPtr<WKTextExtractionItem> createItemWithChildren(const TextE
                 accessibilityRole:accessibilityRole.get()
                 nodeIdentifier:nodeIdentifier.get()]);
         }, [&](const TextExtraction::ScrollableItemData& data) -> RetainPtr<WKTextExtractionItem> {
+            if (data.isRoot) {
+                return adoptNS([[WKTextExtractionContainerItem alloc]
+                    initWithContainer:WKTextExtractionContainerRoot
+                    rectInWebView:rectInWebView
+                    children:children
+                    eventListeners:eventListeners
+                    ariaAttributes:ariaAttributes.get()
+                    accessibilityRole:accessibilityRole.get()
+                    nodeIdentifier:nodeIdentifier.get()]);
+            }
             return adoptNS([[WKTextExtractionScrollableItem alloc]
                 initWithContentSize:data.contentSize
                 rectInWebView:rectInWebView
@@ -157,8 +163,13 @@ inline static RetainPtr<WKTextExtractionItem> createItemWithChildren(const TextE
                 accessibilityRole:accessibilityRole.get()
                 nodeIdentifier:nodeIdentifier.get()]);
         }, [&](const TextExtraction::SelectData& data) -> RetainPtr<WKTextExtractionItem> {
+            auto selectedValues = WTF::compactMap(data.options, [](auto& option) -> std::optional<String> {
+                if (option.isSelected)
+                    return { option.value };
+                return { };
+            });
             return adoptNS([[WKTextExtractionSelectItem alloc]
-                initWithSelectedValues:createNSArray(data.selectedValues).get()
+                initWithSelectedValues:createNSArray(selectedValues).get()
                 supportsMultiple:data.isMultiple
                 rectInWebView:rectInWebView
                 children:children
@@ -230,6 +241,15 @@ inline static RetainPtr<WKTextExtractionItem> createItemWithChildren(const TextE
                 ariaAttributes:ariaAttributes.get()
                 accessibilityRole:accessibilityRole.get()
                 nodeIdentifier:nodeIdentifier.get()]);
+        }, [&](const TextExtraction::MediaItemData& data) -> RetainPtr<WKTextExtractionItem> {
+            return adoptNS([[WKTextExtractionContainerItem alloc]
+                initWithContainer:data.type == TextExtraction::MediaType::Video ? WKTextExtractionContainerVideo : WKTextExtractionContainerAudio
+                rectInWebView:rectInWebView
+                children:children
+                eventListeners:eventListeners
+                ariaAttributes:ariaAttributes.get()
+                accessibilityRole:accessibilityRole.get()
+                nodeIdentifier:nodeIdentifier.get()]);
         }, [&](TextExtraction::ContainerType type) -> RetainPtr<WKTextExtractionItem> {
             return adoptNS([[WKTextExtractionContainerItem alloc]
                 initWithContainer:containerType(type)
@@ -252,12 +272,7 @@ static RetainPtr<WKTextExtractionItem> createItemRecursive(const TextExtraction:
 
 RetainPtr<WKTextExtractionItem> createItem(const TextExtraction::Item& item, RootViewToWebViewConverter&& converter)
 {
-    if (!std::holds_alternative<TextExtraction::ContainerType>(item.data)) {
-        ASSERT_NOT_REACHED();
-        return nil;
-    }
-
-    if (std::get<TextExtraction::ContainerType>(item.data) != TextExtraction::ContainerType::Root) {
+    if (auto data = item.dataAs<TextExtraction::ScrollableItemData>(); !data || !data->isRoot) {
         ASSERT_NOT_REACHED();
         return nil;
     }
@@ -265,61 +280,20 @@ RetainPtr<WKTextExtractionItem> createItem(const TextExtraction::Item& item, Roo
     return createItemRecursive(item, WTF::move(converter));
 }
 
-std::optional<double> computeSimilarity(NSString *stringA, NSString *stringB, unsigned minimumLength)
-{
-    if (stringA == stringB || [stringA isEqualToString:stringB])
-        return 1;
-
-    if (!stringA || !stringB)
-        return 0;
-
-    auto lengthA = [stringA length];
-    auto lengthB = [stringB length];
-    if (lengthA < minimumLength && lengthB < minimumLength)
-        return std::nullopt;
-
-    double maxLength = std::max(lengthA, lengthB);
-    if (!lengthA || !lengthB)
-        return 0;
-
-    Vector<Vector<size_t>> matrix(lengthA + 1, Vector<size_t>(lengthB + 1, 0));
-
-    for (size_t i = 0; i <= lengthA; i++)
-        matrix[i][0] = i;
-
-    for (size_t j = 0; j <= lengthB; j++)
-        matrix[0][j] = j;
-
-    for (size_t i = 1; i <= lengthA; i++) {
-        auto characterA = [stringA characterAtIndex:i - 1];
-        for (size_t j = 1; j <= lengthB; j++) {
-            auto characterB = [stringB characterAtIndex:j - 1];
-
-            auto cost = (characterA == characterB) ? 0 : 1;
-            auto deletion = matrix[i - 1][j] + 1;
-            auto insertion = matrix[i][j - 1] + 1;
-            auto substitution = matrix[i - 1][j - 1] + cost;
-
-            matrix[i][j] = std::min({ deletion, insertion, substitution });
-        }
-    }
-
-    return 1.0 - (matrix[lengthA][lengthB] / maxLength);
-}
-
 void requestTextExtractionFilterRuleData(CompletionHandler<void(Vector<TextExtraction::FilterRuleData>&&)>&& completion)
 {
 #if HAVE(SAFE_BROWSING)
     using namespace WebKit::SafeBrowsingUtilities;
 
-    listsForNamespace(namespacedCollectionForTextExtraction(), [completion = WTF::move(completion)](NSDictionary<NSString *, NSArray<NSString *> *> *data, NSError *error) mutable {
+    listsForNamespace({ "ab"_s, "context-filtering-rules"_s }, [completion = WTF::move(completion)](NSDictionary<NSString *, NSArray<NSString *> *> *data, NSError *error) mutable {
         if (error) {
             RELEASE_LOG_ERROR(TextExtraction, "Failed to request filtering rules: %@", error.localizedDescription);
             return completion({ });
         }
 
         HashMap<String, TextExtraction::FilterRuleData> allData;
-        for (NSString *nsKeyIdentifier : data) {
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL NSString *nsKeyIdentifier : data) {
             auto keyIdentifier = String { nsKeyIdentifier };
             auto keyIdentifierComponents = keyIdentifier.split('/');
             if (keyIdentifierComponents.size() != 2)
@@ -368,6 +342,50 @@ void requestTextExtractionFilterRuleData(CompletionHandler<void(Vector<TextExtra
 #endif
 }
 
-} // namespace WebKit
+#if ENABLE(TEXT_EXTRACTION_FILTER)
 
-#endif // USE(APPLE_INTERNAL_SDK) || (!PLATFORM(WATCHOS) && !PLATFORM(APPLETV))
+std::optional<double> computeSimilarity(NSString *stringA, NSString *stringB, unsigned minimumLength)
+{
+    if (stringA == stringB || [stringA isEqualToString:stringB])
+        return 1;
+
+    if (!stringA || !stringB)
+        return 0;
+
+    auto lengthA = [stringA length];
+    auto lengthB = [stringB length];
+    if (lengthA < minimumLength && lengthB < minimumLength)
+        return std::nullopt;
+
+    double maxLength = std::max(lengthA, lengthB);
+    if (!lengthA || !lengthB)
+        return 0;
+
+    Vector<Vector<size_t>> matrix(FillWith { }, lengthA + 1, Vector<size_t>(FillWith { }, lengthB + 1, 0));
+
+    for (size_t i = 0; i <= lengthA; i++)
+        matrix[i][0] = i;
+
+    for (size_t j = 0; j <= lengthB; j++)
+        matrix[0][j] = j;
+
+    for (size_t i = 1; i <= lengthA; i++) {
+        auto characterA = [stringA characterAtIndex:i - 1];
+        for (size_t j = 1; j <= lengthB; j++) {
+            auto characterB = [stringB characterAtIndex:j - 1];
+
+            auto cost = (characterA == characterB) ? 0 : 1;
+            auto deletion = matrix[i - 1][j] + 1;
+            auto insertion = matrix[i][j - 1] + 1;
+            auto substitution = matrix[i - 1][j - 1] + cost;
+
+            matrix[i][j] = std::min({ deletion, insertion, substitution });
+        }
+    }
+
+    return 1.0 - (matrix[lengthA][lengthB] / maxLength);
+}
+
+#endif // ENABLE(TEXT_EXTRACTION_FILTER)
+
+} // namespace WebKit

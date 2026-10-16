@@ -33,6 +33,7 @@ from webkitcorepy.mocks import Terminal as MockTerminal
 from webkitcorepy.mocks import Time as MockTime
 
 from webkitscmpy import Commit, Contributor, local, mocks, program
+from webkitscmpy.program.canonicalize import IdentifierTrailer
 
 
 def repository(path, has_oops=True, remote=None, remotes=None, git_svn=False, issue_url=None):
@@ -68,6 +69,9 @@ class TestLand(testing.PathTestCase):
         super(TestLand, self).setUp()
         os.mkdir(os.path.join(self.path, '.git'))
         os.mkdir(os.path.join(self.path, '.svn'))
+        patcher = patch.object(Tracker, '_trackers', [])
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_none(self):
         with OutputCapture(level=logging.INFO) as captured, mocks.local.Git(), mocks.local.Svn():
@@ -208,6 +212,32 @@ class TestLand(testing.PathTestCase):
             '1 commit successfully canonicalized!\n'
             'Landed https://commits.webkit.org/6@main (a5fe8afe9bf7)!\n'
             "Delete branch 'eng/example'? ([Yes]/No): \n",
+        )
+
+    def test_canonicalize_with_identifier_trailer(self):
+        with OutputCapture(level=logging.INFO) as captured, repository(self.path, has_oops=False), mocks.local.Svn(), MockTerminal.input('n'):
+            self.assertEqual(0, program.main(
+                args=('land', '-v'),
+                path=self.path,
+                identifier_template=IdentifierTrailer(
+                    name='Canonical link',
+                    value_template='https://commits.webkit.org/{}',
+                    aliases=('Canonical-link',),
+                ),
+            ))
+
+            commit = local.Git(self.path).commit(branch='main')
+            self.assertEqual(str(commit), '6@main')
+            self.assertEqual(
+                commit.message,
+                'To Be Committed\n\n'
+                'Reviewed by Ricky Reviewer.\n\n'
+                'Canonical link: https://commits.webkit.org/6@main',
+            )
+
+        self.assertIn(
+            'Landed https://commits.webkit.org/6@main (a5fe8afe9bf7)!\n',
+            captured.stdout.getvalue(),
         )
 
     def test_no_svn_canonical_svn(self):
@@ -392,6 +422,9 @@ class TestLandGitHub(testing.PathTestCase):
         super(TestLandGitHub, self).setUp()
         os.mkdir(os.path.join(self.path, '.git'))
         os.mkdir(os.path.join(self.path, '.svn'))
+        patcher = patch.object(Tracker, '_trackers', [])
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     @classmethod
     def webserver(cls, approved=None, labels=None, environment=None):
@@ -620,6 +653,9 @@ class TestLandBitBucket(testing.PathTestCase):
         super(TestLandBitBucket, self).setUp()
         os.mkdir(os.path.join(self.path, '.git'))
         os.mkdir(os.path.join(self.path, '.svn'))
+        patcher = patch.object(Tracker, '_trackers', [])
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     @classmethod
     def webserver(cls, approved=None):

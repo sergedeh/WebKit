@@ -24,10 +24,11 @@
  */
 
 #import <WebKitLegacy/DOMXPathResult.h>
+#import <wtf/Compiler.h>
 
 namespace WebCore {
 class XPathResult;
 }
 
 WebCore::XPathResult* core(DOMXPathResult *);
-DOMXPathResult *kit(WebCore::XPathResult*);
+DOMXPathResult * LEGACY_NODELETE kit(WebCore::XPathResult*);

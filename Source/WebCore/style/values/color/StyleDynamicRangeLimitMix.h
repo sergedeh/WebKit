@@ -46,7 +46,7 @@ struct DynamicRangeLimitMixParameters {
 
     bool operator==(const DynamicRangeLimitMixParameters&) const = default;
 };
-using DynamicRangeLimitMixFunction = FunctionNotation<CSSValueDynamicRangeLimitMix, DynamicRangeLimitMixParameters>;
+using DynamicRangeLimitMixFunction = FunctionNotation<CSSValueID::DynamicRangeLimitMix, DynamicRangeLimitMixParameters>;
 
 template<size_t I> const auto& get(const DynamicRangeLimitMixParameters& value)
 {
@@ -70,7 +70,7 @@ void addWeightedLimitTo(DynamicRangeLimitMixFunction&, const DynamicRangeLimit&,
 
 // MARK: Conversion
 
-template<> struct ToCSS<DynamicRangeLimitMixFunction> { auto operator()(const DynamicRangeLimitMixFunction&, const RenderStyle&) -> CSS::DynamicRangeLimitMixFunction; };
+template<> struct ToCSS<DynamicRangeLimitMixFunction> { auto operator()(const DynamicRangeLimitMixFunction&, const Style::ComputedStyle&) -> CSS::DynamicRangeLimitMixFunction; };
 template<> struct ToStyle<CSS::DynamicRangeLimitMixFunction> { auto operator()(const CSS::DynamicRangeLimitMixFunction&, const BuilderState&) -> DynamicRangeLimitMixFunction; };
 
 // MARK: Logging

@@ -141,6 +141,8 @@ WI.TreeOutline = class TreeOutline extends WI.Object
 
     set hidden(x)
     {
+        console.assert(false, "not expected to be called");
+
         if (this._hidden === x)
             return;
 
@@ -568,7 +570,7 @@ WI.TreeOutline = class TreeOutline extends WI.Object
                         this.selectedTreeElement.parent.collapse();
                 }
             } else if (event.keyIdentifier === expandKeyIdentifier) {
-                if (!this.selectedTreeElement.revealed()) {
+                if (!this.selectedTreeElement.revealed) {
                     this.selectedTreeElement.reveal();
                     handled = true;
                 } else if (this.selectedTreeElement.expandable) {
@@ -635,7 +637,7 @@ WI.TreeOutline = class TreeOutline extends WI.Object
         // this is the root, do nothing
     }
 
-    revealed()
+    get revealed()
     {
         return true;
     }
@@ -692,6 +694,7 @@ WI.TreeOutline = class TreeOutline extends WI.Object
         this._virtualizedVisibleTreeElements = new Set;
         this._virtualizedAttachedTreeElements = new Set;
         this._virtualizedScrollContainer = scrollContainer;
+        this._virtualizedScrollContainer.style.setProperty("overflow-anchor", "none");
         this._virtualizedTreeItemHeight = treeItemHeight;
 
         this._virtualizedTopSpacer = document.createElement("div");
@@ -778,7 +781,7 @@ WI.TreeOutline = class TreeOutline extends WI.Object
         const stayWithin = null;
         const dontPopulate = true;
 
-        while (treeElement = treeElement.traversePreviousTreeElement(skipUnrevealed, stayWithin, dontPopulate)) {
+        while ((treeElement = treeElement.traversePreviousTreeElement(skipUnrevealed, stayWithin, dontPopulate))) {
             if (this.canSelectTreeElement(treeElement))
                 return this.objectForSelection(treeElement);
         }
@@ -797,7 +800,7 @@ WI.TreeOutline = class TreeOutline extends WI.Object
         const stayWithin = null;
         const dontPopulate = true;
 
-        while (treeElement = treeElement.traverseNextTreeElement(skipUnrevealed, stayWithin, dontPopulate)) {
+        while ((treeElement = treeElement.traverseNextTreeElement(skipUnrevealed, stayWithin, dontPopulate))) {
             if (this.canSelectTreeElement(treeElement))
                 return this.objectForSelection(treeElement);
         }
@@ -867,7 +870,7 @@ WI.TreeOutline = class TreeOutline extends WI.Object
         // and seeing if we hit the same element each time.
         let elementUnderMouse = this.treeElementFromPoint(x, y);
         let elementAboveMouse = this.treeElementFromPoint(x, y - 2);
-        let element = null;
+        let element;
         if (elementUnderMouse === elementAboveMouse)
             element = elementUnderMouse;
         else
@@ -936,14 +939,13 @@ WI.TreeOutline = class TreeOutline extends WI.Object
         const skipUnrevealed = true;
         const stayWithin = null;
         const dontPopulate = true;
-        const ignoreHidden = true;
 
         let firstChild = this.children[0];
-        if (firstChild && !firstChild.revealed(ignoreHidden))
+        if (firstChild && !firstChild.revealed)
             firstChild = firstChild.traverseNextTreeElement(skipUnrevealed, stayWithin, dontPopulate);
 
         let shouldScroll = false;
-        if (focusedTreeElement && focusedTreeElement.revealed(false)) {
+        if (focusedTreeElement?.revealed) {
             let index = 0;
             for (let child = firstChild; child && child !== focusedTreeElement; child = child.traverseNextTreeElement(skipUnrevealed, stayWithin, dontPopulate))
                 ++index;

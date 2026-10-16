@@ -36,6 +36,7 @@
 #import <WebKit/WebNSURLExtras.h>
 #import <wtf/RetainPtr.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
+#import <wtf/text/MakeString.h>
 
 using namespace WebKit;
 
@@ -147,15 +148,15 @@ static NSString * const portsKey = @"ports";
         break;
 
     case PredicateTypeURLMatches:
-    case PredicateTypeOriginAndPathMatches:
-        ASSERT([rawValue isKindOfClass:NSString.class]);
-
-        if (!(_value = [NSRegularExpression regularExpressionWithPattern:rawValue options:0 error:nil])) {
-            *outErrorMessage = toErrorString(nullString(), originAndPathMatchesKey, @"'%@' is not a valid regular expression", rawValue).createNSString().autorelease();
+    case PredicateTypeOriginAndPathMatches: {
+        NSString *pattern = checked_objc_cast<NSString>(rawValue);
+        if (!(_value = [NSRegularExpression regularExpressionWithPattern:pattern options:0 error:nil])) {
+            *outErrorMessage = toErrorString(nullString(), originAndPathMatchesKey, makeString("'"_s, String(pattern), "' is not a valid regular expression"_s)).createNSString().autorelease();
             return nil;
         }
 
         break;
+    }
 
     case PredicateTypeSchemes:
         ASSERT([rawValue isKindOfClass:[NSArray class]]);
@@ -173,13 +174,13 @@ static NSString * const portsKey = @"ports";
         NSUInteger count = dynamic_objc_cast<NSArray>(rawValue).count;
         for (NSUInteger i = 0; i < count; ++i) {
             id portOrRange = rawValue[i];
-            if (!validateObject(portOrRange, adoptNS([[NSString alloc] initWithFormat:@"%@[%lu]", portsKey, i]).get(), expectedPortOrRangeTypes, outErrorMessage))
+            if (!validateObject(dynamic_objc_cast<NSObject>(portOrRange), adoptNS([[NSString alloc] initWithFormat:@"%@[%lu]", portsKey, i]).get(), expectedPortOrRangeTypes, outErrorMessage))
                 return nil;
 
             if (NSNumber *number = dynamic_objc_cast<NSNumber>(portOrRange)) {
                 NSInteger integerValue = number.integerValue;
                 if (integerValue < 0 || integerValue > maximumPortNumber) {
-                    *outErrorMessage = toErrorString(nullString(), portsKey, @"'%zd' is not a valid port", integerValue).createNSString().autorelease();
+                    *outErrorMessage = toErrorString(nullString(), portsKey, makeString("'"_s, integerValue, "' is not a valid port"_s)).createNSString().autorelease();
                     return nil;
                 }
 
@@ -193,7 +194,7 @@ static NSString * const portsKey = @"ports";
                 for (NSNumber *number in rangeArray) {
                     NSInteger integerValue = number.integerValue;
                     if (integerValue < 0 || integerValue > maximumPortNumber) {
-                        *outErrorMessage = toErrorString(nullString(), portsKey, @"'%zd' is not a valid port", integerValue).createNSString().autorelease();
+                        *outErrorMessage = toErrorString(nullString(), portsKey, makeString("'"_s, integerValue, "' is not a valid port"_s)).createNSString().autorelease();
                         return nil;
                     }
                 }
@@ -201,7 +202,7 @@ static NSString * const portsKey = @"ports";
                 NSUInteger firstPort = rangeArray[0].unsignedIntegerValue;
                 NSUInteger lastPort = rangeArray[1].unsignedIntegerValue;
                 if (firstPort >= lastPort) {
-                    *outErrorMessage = toErrorString(nullString(), portsKey, @"'%zd-%zd' is not a valid port range", firstPort, lastPort).createNSString().autorelease();
+                    *outErrorMessage = toErrorString(nullString(), portsKey, makeString("'"_s, firstPort, "-"_s, lastPort, "' is not a valid port range"_s)).createNSString().autorelease();
                     return nil;
                 }
 

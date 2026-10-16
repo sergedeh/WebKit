@@ -286,7 +286,7 @@ ObjectPropertyCondition generateCondition(
 }
 
 template<typename Functor>
-ObjectPropertyConditionSet generateConditions(JSGlobalObject* globalObject, Structure* structure, JSObject* prototype, UniquedStringImpl* uid, const Functor& functor)
+ObjectPropertyConditionSet generateConditions(JSGlobalObject* globalObject, Structure* structure, JSObject* prototype, UniquedStringImpl* uid, NOESCAPE const Functor& functor)
 {
     Vector<ObjectPropertyCondition, 8> conditions;
     
@@ -328,7 +328,7 @@ ObjectPropertyConditionSet generateConditions(JSGlobalObject* globalObject, Stru
             return ObjectPropertyConditionSet::invalid();
         }
         
-        JSObject* object = jsCast<JSObject*>(value);
+        JSObject* object = uncheckedDowncast<JSObject>(value);
         structure = object->structure();
         
         if (structure->isDictionary()) {
@@ -479,7 +479,16 @@ ObjectPropertyConditionSet generateConditionsForInstanceOf(
             if (ObjectPropertyConditionSetInternal::verbose)
                 dataLog("Encountered object: ", RawPointer(object), "\n");
             if (object == prototype) {
-                RELEASE_ASSERT(shouldHit);
+                // The prototype chain can be mutated by user code (e.g. a Proxy
+                // getPrototypeOf trap or a getter) that runs while defaultHasInstance
+                // computes the instanceof result. When that happens, the chain we walk
+                // here may no longer match the result we observed, so we can reach the
+                // prototype even though the operation reported a miss (shouldHit is
+                // false). In that case there is no consistent IC to build, so bail out
+                // and let the caller fall back to the megamorphic case instead of
+                // caching a stale condition set.
+                if (!shouldHit) [[unlikely]]
+                    return false;
                 didHit = true;
                 return true;
             }
@@ -494,7 +503,8 @@ ObjectPropertyConditionSet generateConditionsForInstanceOf(
     if (result.isValid()) {
         if (ObjectPropertyConditionSetInternal::verbose)
             dataLog("didHit = ", didHit, ", shouldHit = ", shouldHit, "\n");
-        RELEASE_ASSERT(didHit == shouldHit);
+        if (didHit != shouldHit) [[unlikely]]
+            return ObjectPropertyConditionSet::invalid();
     }
     return result;
 }

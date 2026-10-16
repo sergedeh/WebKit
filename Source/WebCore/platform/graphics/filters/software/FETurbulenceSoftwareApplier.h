@@ -78,17 +78,16 @@ private:
     struct ApplyParameters {
         IntRect filterRegion;
         FloatSize filterScale;
-        PixelBuffer* pixelBuffer;
+        RefPtr<PixelBuffer> pixelBuffer;
         PaintingData* paintingData;
         StitchData stitchData;
         int startY;
         int endY;
     };
 
-    static long random(long& seed);
+    static long LEGACY_NODELETE random(long& seed);
 
     static inline float smoothCurve(float t) { return t * t * (3 - 2 * t); }
-    static inline float linearInterpolation(float t, float a, float b) { return a + t * (b - a); }
 
     static ColorComponents<float, 4> noise2D(const PaintingData&, const StitchData&, const FloatPoint& noiseVector);
     static ColorComponents<uint8_t, 4> toIntBasedColorComponents(const ColorComponents<float, 4>& floatComponents);

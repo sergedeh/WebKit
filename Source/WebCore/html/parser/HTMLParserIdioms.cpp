@@ -131,7 +131,7 @@ double parseToDoubleForNumberType(StringView string)
 }
 
 template <typename CharacterType>
-static Expected<int, HTMLIntegerParsingError> parseHTMLIntegerInternal(std::span<const CharacterType> data)
+static std::expected<int, HTMLIntegerParsingError> parseHTMLIntegerInternal(std::span<const CharacterType> data)
 {
     skipWhile<isASCIIWhitespace>(data);
 
@@ -165,7 +165,7 @@ static Expected<int, HTMLIntegerParsingError> parseHTMLIntegerInternal(std::span
 }
 
 // https://html.spec.whatwg.org/multipage/infrastructure.html#rules-for-parsing-integers
-Expected<int, HTMLIntegerParsingError> parseHTMLInteger(StringView input)
+std::expected<int, HTMLIntegerParsingError> parseHTMLInteger(StringView input)
 {
     if (input.isEmpty())
         return makeUnexpected(HTMLIntegerParsingError::Other);
@@ -177,7 +177,7 @@ Expected<int, HTMLIntegerParsingError> parseHTMLInteger(StringView input)
 }
 
 // https://html.spec.whatwg.org/multipage/infrastructure.html#rules-for-parsing-non-negative-integers
-Expected<unsigned, HTMLIntegerParsingError> parseHTMLNonNegativeInteger(StringView input)
+std::expected<unsigned, HTMLIntegerParsingError> parseHTMLNonNegativeInteger(StringView input)
 {
     auto optionalSignedResult = parseHTMLInteger(input);
     if (!optionalSignedResult)
@@ -256,6 +256,9 @@ static double parseHTMLFloatingPointNumberValueInternal(std::span<const Characte
     size_t parsedLength;
     double number = parseDouble(position.first(length - leadingSpacesLength), parsedLength);
 
+    if (!parsedLength)
+        return fallbackValue;
+
     // The following expression converts -0 to +0.
     return number ? number : 0;
 }
@@ -270,18 +273,18 @@ double parseHTMLFloatingPointNumberValue(StringView input, double fallbackValue)
 }
 
 template<typename CharacterType>
-static inline bool isHTMLSpaceOrDelimiter(CharacterType character)
+static inline bool LEGACY_NODELETE isHTMLSpaceOrDelimiter(CharacterType character)
 {
     return isASCIIWhitespace(character) || character == ',' || character == ';';
 }
 
-static inline bool isNumberStart(char16_t character)
+static inline bool LEGACY_NODELETE isNumberStart(char16_t character)
 {
     return isASCIIDigit(character) || character == '.' || character == '-';
 }
 
 template<typename CharacterType>
-static inline bool isHTMLSpaceOrDelimiterOrNumberStart(CharacterType character)
+static inline bool LEGACY_NODELETE isHTMLSpaceOrDelimiterOrNumberStart(CharacterType character)
 {
     return isHTMLSpaceOrDelimiter(character) || isNumberStart(character);
 }
@@ -344,13 +347,13 @@ String parseCORSSettingsAttribute(const AtomString& value)
 }
 
 template<typename CharacterType>
-static bool isASCIIDigitOrPeriod(CharacterType character)
+static bool LEGACY_NODELETE isASCIIDigitOrPeriod(CharacterType character)
 {
     return isASCIIDigit(character) || character == '.';
 }
 
 template<typename CharacterType>
-static bool isSemicolonOrComma(CharacterType character)
+static bool LEGACY_NODELETE isSemicolonOrComma(CharacterType character)
 {
     return character == ';' || character == ',';
 }
@@ -454,7 +457,10 @@ AtomString parseHTMLHashNameReference(StringView usemap)
     size_t numberSignIndex = usemap.find('#');
     if (numberSignIndex == notFound)
         return nullAtom();
-    return usemap.substring(numberSignIndex + 1).toAtomString();
+    auto result = usemap.substring(numberSignIndex + 1);
+    if (result.isEmpty())
+        return nullAtom();
+    return result.toAtomString();
 }
 
 struct HTMLDimensionParsingResult {
@@ -526,7 +532,7 @@ std::optional<HTMLDimension> parseHTMLMultiLength(StringView multiLengthString)
 }
 
 template<typename CharacterType>
-static unsigned countCommas(StringParsingBuffer<CharacterType> rawInput)
+static unsigned LEGACY_NODELETE countCommas(StringParsingBuffer<CharacterType> rawInput)
 {
     unsigned count = 0;
     while (rawInput.hasCharactersRemaining())

@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2004, 2005, 2007, 2008 Nikolas Zimmermann <zimmermann@kde.org>
  * Copyright (C) 2004, 2005, 2006, 2007, 2008 Rob Buis <buis@kde.org>
- * Copyright (C) 2018-2019 Apple Inc. All rights reserved.
+ * Copyright (C) 2018-2026 Apple Inc. All rights reserved.
  * Copyright (C) 2015 Google Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
@@ -30,7 +30,7 @@
 #include "FrameSelection.h"
 #include "LegacyRenderSVGResource.h"
 #include "LocalFrame.h"
-#include "NodeInlines.h"
+#include "PositionInlines.h"
 #include "RenderObjectInlines.h"
 #include "RenderSVGText.h"
 #include "SVGElementTypeHelpers.h"
@@ -41,6 +41,7 @@
 #include "SVGRect.h"
 #include "SVGTextQuery.h"
 #include "XMLNames.h"
+#include <wtf/MathExtras.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -48,8 +49,8 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGTextContentElement);
  
-SVGTextContentElement::SVGTextContentElement(const QualifiedName& tagName, Document& document, UniqueRef<SVGPropertyRegistry>&& propertyRegistry)
-    : SVGGraphicsElement(tagName, document, WTF::move(propertyRegistry))
+SVGTextContentElement::SVGTextContentElement(const QualifiedName& tagName, Document& document, const SVGPropertyRegistry& propertyRegistry)
+    : SVGGraphicsElement(tagName, document, propertyRegistry)
 {
     static bool didRegistration = false;
     if (!didRegistration) [[unlikely]] {
@@ -59,70 +60,75 @@ SVGTextContentElement::SVGTextContentElement(const QualifiedName& tagName, Docum
     }
 }
 
-unsigned SVGTextContentElement::getNumberOfChars()
+int SVGTextContentElement::numberOfCharsForBindings()
 {
-    protectedDocument()->updateLayoutIgnorePendingStylesheets({ LayoutOptions::TreatContentVisibilityHiddenAsVisible, LayoutOptions::TreatContentVisibilityAutoAsVisible }, this);
-    return SVGTextQuery(checkedRenderer().get()).numberOfCharacters();
+    return clampTo<int>(numberOfChars());
+}
+
+unsigned SVGTextContentElement::numberOfChars()
+{
+    protect(document())->updateLayoutIgnorePendingStylesheets({ LayoutOptions::TreatContentVisibilityHiddenAsVisible, LayoutOptions::TreatContentVisibilityAutoAsVisible }, this);
+    return SVGTextQuery(protect(renderer()).get()).numberOfCharacters();
 }
 
 float SVGTextContentElement::getComputedTextLength()
 {
-    protectedDocument()->updateLayoutIgnorePendingStylesheets({ LayoutOptions::TreatContentVisibilityHiddenAsVisible, LayoutOptions::TreatContentVisibilityAutoAsVisible }, this);
-    return SVGTextQuery(checkedRenderer().get()).textLength();
+    protect(document())->updateLayoutIgnorePendingStylesheets({ LayoutOptions::TreatContentVisibilityHiddenAsVisible, LayoutOptions::TreatContentVisibilityAutoAsVisible }, this);
+    return SVGTextQuery(protect(renderer()).get()).textLength();
 }
 
 ExceptionOr<float> SVGTextContentElement::getSubStringLength(unsigned charnum, unsigned nchars)
 {
-    unsigned numberOfChars = getNumberOfChars();
+    unsigned numberOfChars = this->numberOfChars();
     if (charnum >= numberOfChars)
         return Exception { ExceptionCode::IndexSizeError };
 
     nchars = std::min(nchars, numberOfChars - charnum);
-    return SVGTextQuery(checkedRenderer().get()).subStringLength(charnum, nchars);
+    return SVGTextQuery(protect(renderer()).get()).subStringLength(charnum, nchars);
 }
 
 ExceptionOr<Ref<SVGPoint>> SVGTextContentElement::getStartPositionOfChar(unsigned charnum)
 {
-    if (charnum >= getNumberOfChars())
+    if (charnum >= numberOfChars())
         return Exception { ExceptionCode::IndexSizeError };
 
-    return SVGPoint::create(SVGTextQuery(checkedRenderer().get()).startPositionOfCharacter(charnum));
+    return SVGPoint::create(SVGTextQuery(protect(renderer()).get()).startPositionOfCharacter(charnum));
 }
 
 ExceptionOr<Ref<SVGPoint>> SVGTextContentElement::getEndPositionOfChar(unsigned charnum)
 {
-    if (charnum >= getNumberOfChars())
+    if (charnum >= numberOfChars())
         return Exception { ExceptionCode::IndexSizeError };
 
-    return SVGPoint::create(SVGTextQuery(checkedRenderer().get()).endPositionOfCharacter(charnum));
+    return SVGPoint::create(SVGTextQuery(protect(renderer()).get()).endPositionOfCharacter(charnum));
 }
 
 ExceptionOr<Ref<SVGRect>> SVGTextContentElement::getExtentOfChar(unsigned charnum)
 {
-    if (charnum >= getNumberOfChars())
+    if (charnum >= numberOfChars())
         return Exception { ExceptionCode::IndexSizeError };
 
-    return SVGRect::create(SVGTextQuery(checkedRenderer().get()).extentOfCharacter(charnum));
+    return SVGRect::create(SVGTextQuery(protect(renderer()).get()).extentOfCharacter(charnum));
 }
 
 ExceptionOr<float> SVGTextContentElement::getRotationOfChar(unsigned charnum)
 {
-    if (charnum >= getNumberOfChars())
+    if (charnum >= numberOfChars())
         return Exception { ExceptionCode::IndexSizeError };
 
-    return SVGTextQuery(checkedRenderer().get()).rotationOfCharacter(charnum);
+    return SVGTextQuery(protect(renderer()).get()).rotationOfCharacter(charnum);
 }
 
 int SVGTextContentElement::getCharNumAtPosition(DOMPointInit&& pointInit)
 {
-    protectedDocument()->updateLayoutIgnorePendingStylesheets({ LayoutOptions::TreatContentVisibilityHiddenAsVisible, LayoutOptions::TreatContentVisibilityAutoAsVisible }, this);
+    protect(document())->updateLayoutIgnorePendingStylesheets({ LayoutOptions::TreatContentVisibilityHiddenAsVisible, LayoutOptions::TreatContentVisibilityAutoAsVisible }, this);
     FloatPoint transformPoint {static_cast<float>(pointInit.x), static_cast<float>(pointInit.y)};
-    return SVGTextQuery(checkedRenderer().get()).characterNumberAtPosition(transformPoint);
+    return SVGTextQuery(protect(renderer()).get()).characterNumberAtPosition(transformPoint);
 }
 
 ExceptionOr<void> SVGTextContentElement::selectSubString(unsigned charnum, unsigned nchars)
 {
-    unsigned numberOfChars = getNumberOfChars();
+    unsigned numberOfChars = this->numberOfChars();
     if (charnum >= numberOfChars)
         return Exception { ExceptionCode::IndexSizeError };
 
@@ -133,7 +139,7 @@ ExceptionOr<void> SVGTextContentElement::selectSubString(unsigned charnum, unsig
     CheckedRef selection = frame->selection();
 
     // Find selection start
-    VisiblePosition start(firstPositionInNode(const_cast<SVGTextContentElement*>(this)));
+    VisiblePosition start(firstPositionInNode(const_cast<SVGTextContentElement&>(*this)));
     for (unsigned i = 0; i < charnum; ++i)
         start = start.next();
 
@@ -158,10 +164,10 @@ void SVGTextContentElement::collectPresentationalHintsForAttribute(const Qualifi
 {
     if (name.matches(XMLNames::spaceAttr)) {
         if (value == "preserve"_s)
-            addPropertyToPresentationalHintStyle(style, CSSPropertyWhiteSpaceCollapse, CSSValuePreserve);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::WhiteSpaceCollapse, CSSValueID::Preserve);
         else
-            addPropertyToPresentationalHintStyle(style, CSSPropertyWhiteSpaceCollapse, CSSValueCollapse);
-        addPropertyToPresentationalHintStyle(style, CSSPropertyTextWrapMode, CSSValueNowrap);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::WhiteSpaceCollapse, CSSValueID::Collapse);
+        addPropertyToPresentationalHintStyle(style, CSSPropertyID::TextWrapMode, CSSValueID::Nowrap);
         return;
     }
 
@@ -172,11 +178,9 @@ void SVGTextContentElement::attributeChanged(const QualifiedName& name, const At
 {
     auto parseError = SVGParsingError::None;
 
-    if (name == SVGNames::lengthAdjustAttr) {
-        auto propertyValue = SVGPropertyTraits<SVGLengthAdjustType>::fromString(*this, newValue);
-        if (propertyValue > 0)
-            m_lengthAdjust->setBaseValInternal<SVGLengthAdjustType>(propertyValue);
-    } else if (name == SVGNames::textLengthAttr)
+    if (name == SVGNames::lengthAdjustAttr)
+        protect(m_lengthAdjust)->parseBaseVal<SVGLengthAdjustType>(*this, newValue);
+    else if (name == SVGNames::textLengthAttr)
         m_textLength->setBaseValInternal(SVGLengthValue::construct(SVGLengthMode::Other, newValue, parseError, SVGLengthNegativeValuesMode::Forbid));
 
     reportAttributeParsingError(parseError, name, newValue);

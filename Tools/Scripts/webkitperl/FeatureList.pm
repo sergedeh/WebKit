@@ -54,6 +54,7 @@ my (
     $accessibilityIsolatedTreeSupport,
     $applePaySupport,
     $applicationManifestSupport,
+    $assertsEnabled,
     $asyncScrollingSupport,
     $attachmentElementSupport,
     $autocapitalizeSupport,
@@ -78,7 +79,6 @@ my (
     $encryptedMediaSupport,
     $fatalWarnings,
     $ftlJITSupport,
-    $ftpDirSupport,
     $fullscreenAPISupport,
     $gamepadSupport,
     $geolocationSupport,
@@ -114,6 +114,7 @@ my (
     $paymentRequestSupport,
     $pdfJS,
     $pdfkitPluginSupport,
+    $phoneNumberPossessionSupport,
     $pictureInPictureAPISupport,
     $pointerLockSupport,
     $quotaSupport,
@@ -129,7 +130,7 @@ my (
     $speechSynthesisSupport,
     $spellcheckSupport,
     $svgFontsSupport,
-    $swiftDemoUriScheme,
+    $swiftBackForwardList,
     $isoMallocSupport,
     $systemMallocSupport,
     $mimallocSupport,
@@ -165,8 +166,12 @@ my (
 );
 
 my @features = (
+
+    { option => "asserts", desc => "Toggle assertions (CMake only). Defaults to disable on Release, enable on Debug.",
+      define => "ENABLE_ASSERTS", value => \$assertsEnabled, },
+
     { option => "fatal-warnings", desc => "Toggle warnings as errors (CMake only)",
-      define => "DEVELOPER_MODE_FATAL_WARNINGS", value => \$fatalWarnings },
+      define => "CMAKE_COMPILE_WARNING_AS_ERROR", value => \$fatalWarnings },
 
     { option => "accessibility-isolated-tree", desc => "Toggle accessibility isolated tree support",
       define => "ENABLE_ACCESSIBILITY_ISOLATED_TREE", value => \$accessibilityIsolatedTreeSupport },
@@ -230,9 +235,6 @@ my @features = (
 
     { option => "ftl-jit", desc => "Toggle FTL JIT support",
       define => "ENABLE_FTL_JIT", value => \$ftlJITSupport },
-
-    { option => "ftpdir", desc => "Toggle FTP Directory support",
-      define => "ENABLE_FTPDIR", value => \$ftpDirSupport },
 
     { option => "fullscreen-api", desc => "Toggle Fullscreen API support",
       define => "ENABLE_FULLSCREEN_API", value => \$fullscreenAPISupport },
@@ -327,6 +329,9 @@ my @features = (
     { option => "pdfkit-plugin", desc => "Toggle PDFKit plugin support",
       define => "ENABLE_PDFKIT_PLUGIN", value => \$pdfkitPluginSupport },
 
+    { option => "phone-number-possession", desc => "Toggle Phone Number Possession API support",
+      define => "ENABLE_PHONE_NUMBER_POSSESSION", value => \$phoneNumberPossessionSupport },
+
     { option => "picture-in-picture-api", desc => "Toggle Picture-in-Picture API support",
       define => "ENABLE_PICTURE_IN_PICTURE_API", value => \$pictureInPictureAPISupport },
 
@@ -363,14 +368,11 @@ my @features = (
     { option => "spellcheck", desc => "Toggle Spellchecking support (requires Enchant)",
       define => "ENABLE_SPELLCHECK", value => \$spellcheckSupport },
 
-    { option => "swift-demo-uri-scheme", desc => "Toggle demo Swift x-swift-demo: URI handler",
-      define => "ENABLE_SWIFT_DEMO_URI_SCHEME", value => \$swiftDemoUriScheme},
+    { option => "swift-back-forward-list", desc => "Use Swift version of WebBackForwardList",
+      define => "ENABLE_BACK_FORWARD_LIST_SWIFT", value => \$swiftBackForwardList},
 
     { option => "telephone-number-detection", desc => "Toggle telephone number detection support",
       define => "ENABLE_TELEPHONE_NUMBER_DETECTION", value => \$telephoneNumberDetectionSupport },
-
-    { option => "text-autosizing", desc => "Toggle automatic text size adjustment support",
-      define => "ENABLE_TEXT_AUTOSIZING", value => \$textAutosizingSupport },
 
     { option => "touch-events", desc => "Toggle Touch Events support",
       define => "ENABLE_TOUCH_EVENTS", value => \$touchEventsSupport },

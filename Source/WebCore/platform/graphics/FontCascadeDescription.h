@@ -41,13 +41,23 @@ class TextStream;
 
 namespace WebCore {
 
+enum class FontFamilyKind : bool { Specified, Generic };
+
+struct FontFamily {
+    AtomString name;
+    FontFamilyKind kind { FontFamilyKind::Generic };
+
+    bool isGeneric() const { return kind == FontFamilyKind::Generic; }
+    bool operator==(const FontFamily&) const = default;
+};
+
 #if PLATFORM(COCOA)
 typedef FontFamilySpecificationCoreText FontFamilyPlatformSpecification;
 #else
 typedef FontFamilySpecificationNull FontFamilyPlatformSpecification;
 #endif
 
-typedef Variant<AtomString, FontFamilyPlatformSpecification> FontFamilySpecification;
+typedef Variant<FontFamily, FontFamilyPlatformSpecification> FontFamilySpecification;
 
 class Font;
 
@@ -58,18 +68,18 @@ public:
     bool operator==(const FontCascadeDescription&) const;
 
     unsigned familyCount() const { return m_families->size(); }
-    const AtomString& firstFamily() const { return familyAt(0); }
-    const AtomString& familyAt(unsigned i) const { return m_families.get()[i]; }
-    RefCountedFixedVector<AtomString>& families() const { return m_families.get(); }
+    const FontFamily& firstFamily() const { return familyAt(0); }
+    const FontFamily& familyAt(unsigned i) const { return m_families.get()[i]; }
+    RefCountedFixedVector<FontFamily>& families() const { return m_families.get(); }
 
-    static bool familyNamesAreEqual(const AtomString&, const AtomString&);
+    static bool LEGACY_NODELETE familyNamesAreEqual(const AtomString&, const AtomString&);
     static unsigned familyNameHash(const AtomString&);
     static String foldedFamilyName(const String&);
 
     unsigned effectiveFamilyCount() const;
     FontFamilySpecification effectiveFamilyAt(unsigned) const;
 
-    float specifiedSize() const { return m_specifiedSize; }
+    float computedSize() const { return m_computedSize; }
     bool isAbsoluteSize() const { return m_isAbsoluteSize; }
     FontSelectionValue lighterWeight() const { return lighterWeight(weight()); }
     FontSelectionValue bolderWeight() const { return bolderWeight(weight()); }
@@ -77,25 +87,33 @@ public:
     static FontSelectionValue bolderWeight(FontSelectionValue);
 
     // only use fixed default size when there is only one font family, and that family is "monospace"
-    bool useFixedDefaultSize() const { return familyCount() == 1 && firstFamily() == monospaceFamily; }
+    bool useFixedDefaultSize() const { return familyCount() == 1 && firstFamily().name == monospaceFamily; }
 
     Kerning kerning() const { return static_cast<Kerning>(m_kerning); }
     unsigned keywordSize() const { return m_keywordSize; }
     CSSValueID keywordSizeAsIdentifier() const
     {
-        CSSValueID identifier = m_keywordSize ? static_cast<CSSValueID>(CSSValueXxSmall + m_keywordSize - 1) : CSSValueInvalid;
-        ASSERT(identifier == CSSValueInvalid || (identifier >= CSSValueXxSmall && identifier <= CSSValueXxxLarge));
+        CSSValueID identifier = m_keywordSize ? static_cast<CSSValueID>(std::to_underlying(CSSValueID::XxSmall) + m_keywordSize - 1) : CSSValueID::Invalid;
+        ASSERT(identifier == CSSValueID::Invalid || (identifier >= CSSValueID::XxSmall && identifier <= CSSValueID::XxxLarge));
         return identifier;
     }
     FontSmoothingMode fontSmoothing() const { return static_cast<FontSmoothingMode>(m_fontSmoothing); }
-    FontSmoothingMode usedFontSmoothing() const;
-    bool isSpecifiedFont() const { return m_isSpecifiedFont; }
+    FontSmoothingMode LEGACY_NODELETE usedFontSmoothing() const;
+    // Used by RenderText::computeUseBackslashAsYenSymbol. In Japanese encodings
+    // (EUC-JP, Shift_JIS, etc.), the backslash byte (0x5C) maps to the yen sign.
+    // When the CSS author (or canvas font string) explicitly chose a non-generic
+    // primary font, WebKit respects that font's backslash glyph rather than
+    // substituting yen. Only the primary font matters because it represents the
+    // author's primary typographic choice.
+    bool hasAuthorSpecifiedNonGenericPrimaryFont() const { return m_hasAuthorSpecifiedNonGenericPrimaryFont; }
 
-    void setOneFamily(const AtomString& family) { ASSERT(m_families->size() == 1); m_families.get()[0] = family; }
-    void setFamilies(const Vector<AtomString>& families) { m_families = RefCountedFixedVector<AtomString>::createFromVector(families); }
-    void setFamilies(RefCountedFixedVector<AtomString>& families) { m_families = families; }
-    void setFamilies(Ref<RefCountedFixedVector<AtomString>>&& families) { m_families = WTF::move(families); }
-    void setSpecifiedSize(float s) { m_specifiedSize = clampToFloat(s); }
+    void setOneFamily(FontFamily&& family) { ASSERT(m_families->size() == 1); m_families.get()[0] = WTF::move(family); }
+    void setOneFamily(const FontFamily& family) { ASSERT(m_families->size() == 1); m_families.get()[0] = family; }
+    void setOneFamily(const AtomString& familyName) { setOneFamily(FontFamily { familyName, FontFamilyKind::Specified }); }
+    void setFamilies(const Vector<FontFamily>& families) { m_families = RefCountedFixedVector<FontFamily>::createFromVector(families); }
+    void setFamilies(RefCountedFixedVector<FontFamily>& families) { m_families = families; }
+    void setFamilies(Ref<RefCountedFixedVector<FontFamily>>&& families) { m_families = WTF::move(families); }
+    void setComputedSize(float s) { m_computedSize = clampToFloat(s); }
     void setIsAbsoluteSize(bool s) { m_isAbsoluteSize = s; }
     void setKerning(Kerning kerning) { m_kerning = static_cast<unsigned>(kerning); }
     void setKeywordSize(unsigned size)
@@ -106,32 +124,30 @@ public:
     }
     void setKeywordSizeFromIdentifier(CSSValueID identifier)
     {
-        ASSERT(!identifier || (identifier >= CSSValueXxSmall && identifier <= CSSValueXxxLarge));
-        static_assert(CSSValueXxxLarge - CSSValueXxSmall + 1 == 8, "Maximum keyword size should be 8.");
-        setKeywordSize(identifier ? identifier - CSSValueXxSmall + 1 : 0);
+        ASSERT(identifier == CSSValueID::Invalid || (identifier >= CSSValueID::XxSmall && identifier <= CSSValueID::XxxLarge));
+        static_assert(std::to_underlying(CSSValueID::XxxLarge) - std::to_underlying(CSSValueID::XxSmall) + 1 == 8, "Maximum keyword size should be 8.");
+        setKeywordSize(identifier != CSSValueID::Invalid ? std::to_underlying(identifier) - std::to_underlying(CSSValueID::XxSmall) + 1 : 0);
     }
     void setFontSmoothing(FontSmoothingMode smoothing) { m_fontSmoothing = static_cast<unsigned>(smoothing); }
-    void setIsSpecifiedFont(bool isSpecifiedFont) { m_isSpecifiedFont = isSpecifiedFont; }
+    void setHasAuthorSpecifiedNonGenericPrimaryFont(bool value) { m_hasAuthorSpecifiedNonGenericPrimaryFont = value; }
 
-#if ENABLE(TEXT_AUTOSIZING)
-    bool familiesEqualForTextAutoSizing(const FontCascadeDescription& other) const;
+    bool LEGACY_NODELETE familiesEqualForTextAutoSizing(const FontCascadeDescription& other) const;
 
     bool equalForTextAutoSizing(const FontCascadeDescription& other) const
     {
         return familiesEqualForTextAutoSizing(other)
-            && m_specifiedSize == other.m_specifiedSize
+            && m_computedSize == other.m_computedSize
             && variantSettings() == other.variantSettings()
             && m_isAbsoluteSize == other.m_isAbsoluteSize;
     }
-#endif
 
-    WEBCORE_EXPORT void resolveFontSizeAdjustFromFontIfNeeded(const Font&);
+    WEBCORE_EXPORT void LEGACY_NODELETE resolveFontSizeAdjustFromFontIfNeeded(const Font&);
 
 private:
-    Ref<RefCountedFixedVector<AtomString>> m_families;
+    Ref<RefCountedFixedVector<FontFamily>> m_families;
 
-    // Specified CSS value. Independent of rendering issues such as integer rounding, minimum font sizes, and zooming.
-    float m_specifiedSize { 0 };
+    // Computed CSS value. Independent of rendering issues such as integer rounding, minimum font sizes, and zooming. Used for "em" and "rem" units and CSS inheritance.
+    float m_computedSize { 0 };
     // Whether or not CSS specified an explicit size (logical sizes like "medium" don't count).
     unsigned m_isAbsoluteSize : 1;
     unsigned m_kerning : 2; // Kerning
@@ -141,21 +157,22 @@ private:
     unsigned m_keywordSize : 4;
     unsigned m_fontSmoothing : 2; // FontSmoothingMode
     // True if a web page specifies a non-generic font family as the first font family.
-    unsigned m_isSpecifiedFont : 1;
+    unsigned m_hasAuthorSpecifiedNonGenericPrimaryFont : 1;
 };
 
 inline bool FontCascadeDescription::operator==(const FontCascadeDescription& other) const
 {
     return static_cast<const FontDescription&>(*this) == static_cast<const FontDescription&>(other)
         && arePointingToEqualData(m_families, other.m_families)
-        && m_specifiedSize == other.m_specifiedSize
+        && m_computedSize == other.m_computedSize
         && m_isAbsoluteSize == other.m_isAbsoluteSize
         && m_kerning == other.m_kerning
         && m_keywordSize == other.m_keywordSize
         && m_fontSmoothing == other.m_fontSmoothing
-        && m_isSpecifiedFont == other.m_isSpecifiedFont;
+        && m_hasAuthorSpecifiedNonGenericPrimaryFont == other.m_hasAuthorSpecifiedNonGenericPrimaryFont;
 }
 
+WTF::TextStream& operator<<(WTF::TextStream&, const FontFamily&);
 WTF::TextStream& operator<<(WTF::TextStream&, const FontCascadeDescription&);
 
 }

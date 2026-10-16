@@ -109,8 +109,6 @@ RefPtr<AudioMediaStreamTrackRendererUnit::Unit> AudioMediaStreamTrackRendererUni
 
 void AudioMediaStreamTrackRendererUnit::addSource(const String& deviceID, Ref<AudioSampleDataSource>&& source)
 {
-    setLastDeviceUsed(deviceID);
-
     Ref unit = ensureDeviceUnit(deviceID);
     unit->addSource(WTF::move(source));
 }
@@ -142,6 +140,14 @@ void AudioMediaStreamTrackRendererUnit::retrieveFormatDescription(CompletionHand
     unit->retrieveFormatDescription(WTF::move(callback));
 }
 
+void AudioMediaStreamTrackRendererUnit::deleteUnitForTesting()
+{
+    assertIsMainThread();
+
+    Ref unit = ensureDeviceUnit(AudioMediaStreamTrackRenderer::defaultDeviceID());
+    unit->deleteUnitForTesting();
+}
+
 AudioMediaStreamTrackRendererUnit::Unit::Unit(const String& deviceID)
     : m_internalUnit(AudioMediaStreamTrackRendererInternalUnit::create(deviceID, *this))
     , m_isDefaultUnit(deviceID == AudioMediaStreamTrackRenderer::defaultDeviceID())
@@ -162,7 +168,7 @@ void AudioMediaStreamTrackRendererUnit::Unit::close()
 void AudioMediaStreamTrackRendererUnit::Unit::addSource(Ref<AudioSampleDataSource>&& source)
 {
 #if !RELEASE_LOG_DISABLED
-    source->protectedLogger()->logAlways(LogWebRTC, "AudioMediaStreamTrackRendererUnit::addSource ", source->logIdentifier());
+    protect(source->logger())->logAlways(LogWebRTC, "AudioMediaStreamTrackRendererUnit::addSource ", source->logIdentifier());
 #endif
     assertIsMainThread();
 
@@ -183,7 +189,7 @@ void AudioMediaStreamTrackRendererUnit::Unit::addSource(Ref<AudioSampleDataSourc
 bool AudioMediaStreamTrackRendererUnit::Unit::removeSource(AudioSampleDataSource& source)
 {
 #if !RELEASE_LOG_DISABLED
-    source.protectedLogger()->logAlways(LogWebRTC, "AudioMediaStreamTrackRendererUnit::removeSource ", source.logIdentifier());
+    protect(source.logger())->logAlways(LogWebRTC, "AudioMediaStreamTrackRendererUnit::removeSource ", source.logIdentifier());
 #endif
     assertIsMainThread();
 
@@ -212,6 +218,12 @@ void AudioMediaStreamTrackRendererUnit::Unit::setLastDeviceUsed(const String& de
 {
     assertIsMainThread();
     m_internalUnit->setLastDeviceUsed(deviceID);
+}
+
+void AudioMediaStreamTrackRendererUnit::Unit::deleteUnitForTesting()
+{
+    assertIsMainThread();
+    m_internalUnit->deleteUnitForTesting();
 }
 
 void AudioMediaStreamTrackRendererUnit::Unit::retrieveFormatDescription(CompletionHandler<void(std::optional<CAAudioStreamDescription>)>&& callback)

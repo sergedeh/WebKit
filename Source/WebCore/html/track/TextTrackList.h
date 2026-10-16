@@ -46,13 +46,15 @@ public:
     }
     virtual ~TextTrackList();
 
+    void setOpaqueRoot(TrackOpaqueRoot&) final;
+
     bool isSupportedPropertyIndex(unsigned index) const { return index < length(); }
     unsigned length() const final;
     int getTrackIndex(TextTrack&);
-    int getTrackIndexRelativeToRenderedTracks(TextTrack&);
+    int LEGACY_NODELETE getTrackIndexRelativeToRenderedTracks(TextTrack&);
     bool contains(TrackBase&) const final;
 
-    TextTrack* item(unsigned index) const;
+    TextTrack* LEGACY_NODELETE item(unsigned index) const;
     RefPtr<TextTrack> getTrackById(const AtomString&) const;
     RefPtr<TextTrack> getTrackById(TrackID) const;
     TextTrack* lastItem() const { return item(length() - 1); }
@@ -61,7 +63,7 @@ public:
     void remove(TrackBase&, bool scheduleEvent = true) final;
 
     void setDuration(MediaTime duration) { m_duration = duration; }
-    const MediaTime& duration() const { return m_duration; }
+    const MediaTime& duration() const LIFETIME_BOUND { return m_duration; }
 
     // EventTarget
     enum EventTargetInterfaceType eventTargetInterface() const final;

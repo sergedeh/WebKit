@@ -27,6 +27,7 @@
 #include <wtf/AutomaticThread.h>
 
 #include <wtf/DataLog.h>
+#include <wtf/PageBlock.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Threading.h>
 
@@ -109,10 +110,16 @@ AutomaticThread::AutomaticThread(const AbstractLocker& locker, Box<Lock> lock, R
 }
 
 AutomaticThread::AutomaticThread(const AbstractLocker& locker, Box<Lock> lock, Ref<AutomaticThreadCondition>&& condition, ThreadType type, Seconds timeout)
+    : AutomaticThread(locker, lock, WTF::move(condition), type, Thread::defaultQOS, timeout)
+{
+}
+
+AutomaticThread::AutomaticThread(const AbstractLocker& locker, Box<Lock> lock, Ref<AutomaticThreadCondition>&& condition, ThreadType type, ThreadQOS qos, Seconds timeout)
     : m_lock(lock)
     , m_condition(WTF::move(condition))
     , m_timeout(timeout)
     , m_threadType(type)
+    , m_qos(qos)
 {
     if (verbose)
         dataLog(RawPointer(this), ": Allocated AutomaticThread.\n");
@@ -166,7 +173,19 @@ void AutomaticThread::start(const AbstractLocker&)
     RefPtr<AutomaticThread> preserveThisForThread = this;
     
     m_hasUnderlyingThread = true;
-    
+
+    auto stackSpec = stackSpecification();
+    switch (stackSpec.kind()) {
+    case StackAllocationSpecification::Kind::Default:
+        break;
+    case StackAllocationSpecification::Kind::SizeAndLocation:
+        RELEASE_ASSERT(!(reinterpret_cast<uintptr_t>(stackSpec.stackSpan().data()) % pageSize()));
+        [[fallthrough]];
+    case StackAllocationSpecification::Kind::SizeOnly:
+        RELEASE_ASSERT(!(stackSpec.sizeBytes() % pageSize()));
+        break;
+    }
+
     Thread::create(
         name(),
         [=, this] () {
@@ -232,7 +251,7 @@ void AutomaticThread::start(const AbstractLocker&)
                 }
                 RELEASE_ASSERT(result == WorkResult::Continue);
             }
-        }, m_threadType)->detach();
+        }, m_threadType, m_qos, Thread::defaultSchedulingPolicy, stackSpec)->detach();
 }
 
 void AutomaticThread::threadDidStart()
@@ -244,4 +263,3 @@ void AutomaticThread::threadIsStopping(const AbstractLocker&)
 }
 
 } // namespace WTF
-

@@ -28,6 +28,7 @@
 
 #if USE(LIBWEBRTC) && ENABLE(AV1)
 
+#include "Dav1dSPI.h"
 #include "LibWebRTCMacros.h"
 #include "Logging.h"
 #include <algorithm>
@@ -37,7 +38,6 @@
 
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 
-#include <dav1d/dav1d.h>
 #include <webrtc/api/scoped_refptr.h>
 #include <webrtc/api/video/encoded_image.h>
 #include <webrtc/api/video/i420_buffer.h>
@@ -88,7 +88,7 @@ private:
 class ScopedDav1dData {
 public:
     ~ScopedDav1dData() { dav1d_data_unref(&m_data); }
-    Dav1dData& Data() { return m_data; }
+    Dav1dData& LEGACY_NODELETE Data() { return m_data; }
 
 private:
     Dav1dData m_data;
@@ -97,18 +97,13 @@ private:
 class ScopedDav1dPicture {
 public:
     ~ScopedDav1dPicture() { dav1d_picture_unref(&m_picture); }
-    Dav1dPicture& Picture() { return m_picture; }
+    Dav1dPicture& LEGACY_NODELETE Picture() { return m_picture; }
 
 private:
     Dav1dPicture m_picture;
 };
 
 constexpr char kDav1dName[] = "dav1d";
-
-// Calling `dav1d_data_wrap` requires a `free_callback` to be registered.
-static void NullFreeCallback(const uint8_t*, void*)
-{
-}
 
 Dav1dDecoder::Dav1dDecoder()
     : m_bufferPool(false, 150)
@@ -177,7 +172,23 @@ int32_t Dav1dDecoder::Decode(const webrtc::EncodedImage& encodedImage, bool /*mi
         RELEASE_LOG_ERROR(WebRTC, "Dav1dDecoder::Decode decoding failed as data is empty");
         return WEBRTC_VIDEO_CODEC_ERROR;
     }
-    dav1d_data_wrap(&dav1dData, data, size, &NullFreeCallback, nullptr);
+
+    auto* bitstreamBuffer =
+        encodedImage.GetEncodedData().release();
+    int error = dav1d_data_wrap(
+        &dav1dData, encodedImage.data(), encodedImage.size(),
+        /* free callback= */
+        [](const uint8_t* /* buffer */, void* userData) {
+            auto* buffer = static_cast<webrtc::EncodedImageBufferInterface*>(userData);
+            buffer->Release();
+        },
+        /*user_data=*/bitstreamBuffer);
+
+    if (error) {
+        bitstreamBuffer->Release();
+        RELEASE_LOG_ERROR(WebRTC, "Dav1dDecoder::Decode dav1d_data_wrap failed with error code %d", error);
+        return WEBRTC_VIDEO_CODEC_ERROR;
+    }
 
     if (int res = dav1d_send_data(m_context, &dav1dData)) {
         RELEASE_LOG_ERROR(WebRTC, "Dav1dDecoder::Decode decoding failed with error code %d", res);

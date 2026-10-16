@@ -126,9 +126,7 @@ void MathObject::finishCreation(VM& vm, JSGlobalObject* globalObject)
     putDirectNativeFunctionWithoutTransition(vm, globalObject, Identifier::fromString(vm, "trunc"_s), 1, mathProtoFuncTrunc, ImplementationVisibility::Public, TruncIntrinsic, static_cast<unsigned>(PropertyAttribute::DontEnum));
     putDirectNativeFunctionWithoutTransition(vm, globalObject, Identifier::fromString(vm, "imul"_s), 2, mathProtoFuncIMul, ImplementationVisibility::Public, IMulIntrinsic, static_cast<unsigned>(PropertyAttribute::DontEnum));
     putDirectNativeFunctionWithoutTransition(vm, globalObject, Identifier::fromString(vm, "f16round"_s), 1, mathProtoFuncF16Round, ImplementationVisibility::Public, F16RoundIntrinsic, static_cast<unsigned>(PropertyAttribute::DontEnum));
-
-    if (Options::useMathSumPreciseMethod())
-        putDirectNativeFunctionWithoutTransition(vm, globalObject, Identifier::fromString(vm, "sumPrecise"_s), 1, mathProtoFuncSumPrecise, ImplementationVisibility::Public, NoIntrinsic, static_cast<unsigned>(PropertyAttribute::DontEnum));
+    putDirectNativeFunctionWithoutTransition(vm, globalObject, Identifier::fromString(vm, "sumPrecise"_s), 1, mathProtoFuncSumPrecise, ImplementationVisibility::Public, NoIntrinsic, static_cast<unsigned>(PropertyAttribute::DontEnum));
 }
 
 // ------------------------------ Functions --------------------------------
@@ -229,7 +227,7 @@ JSC_DEFINE_HOST_FUNCTION(mathProtoFuncHypot, (JSGlobalObject* globalObject, Call
         // For libc++ versions before 20.1 (commit 72825fd, "Fix undue
         // overflowing of std::hypot(x,y,z)"), use hypot2. Unfortunately, that
         // introduces an LSB difference in the result when using libstdc++ on at
-        // least x86_64 and ARMv7.
+        // least x86_64.
         return JSValue::encode(jsDoubleNumber(std::hypotl(std::hypotl(arg0, arg1), arg2)));
 #else
         if (std::isnan(arg0) || std::isnan(arg1) || std::isnan(arg2))
@@ -463,7 +461,7 @@ JSC_DEFINE_HOST_FUNCTION(mathProtoFuncSumPrecise, (JSGlobalObject* globalObject,
     scope.release();
 
     const std::optional<uint64_t> length = isJSArray(iterable) ?
-        std::make_optional(static_cast<uint64_t>(jsCast<JSArray*>(iterable)->length()))
+        std::make_optional(static_cast<uint64_t>(uncheckedDowncast<JSArray>(iterable)->length()))
         : std::nullopt;
 
     auto calculatePreciseSum = [&](auto& sum) {

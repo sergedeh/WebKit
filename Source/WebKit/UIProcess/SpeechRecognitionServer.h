@@ -28,6 +28,7 @@
 #include "MessageReceiver.h"
 #include "MessageSender.h"
 #include "SpeechRecognitionPermissionRequest.h"
+#include "Untrusted.h"
 #include <WebCore/PageIdentifier.h>
 #include <WebCore/SpeechRecognitionError.h>
 #include <WebCore/SpeechRecognitionRequest.h>
@@ -57,7 +58,7 @@ using SpeechRecognitionCheckIfMockSpeechRecognitionEnabled = Function<bool()>;
 class SpeechRecognitionServer : public IPC::MessageReceiver, private IPC::MessageSender, public RefCounted<SpeechRecognitionServer> {
     WTF_MAKE_TZONE_ALLOCATED(SpeechRecognitionServer);
 public:
-    using RealtimeMediaSourceCreateFunction = Function<WebCore::CaptureSourceOrError()>;
+    using RealtimeMediaSourceCreateFunction = Function<WebCore::CaptureSourceOrError(WebCore::SpeechRecognitionConnectionClientIdentifier)>;
     static Ref<SpeechRecognitionServer> create(WebProcessProxy&, SpeechRecognitionServerIdentifier, SpeechRecognitionPermissionChecker&&, SpeechRecognitionCheckIfMockSpeechRecognitionEnabled&&
 #if ENABLE(MEDIA_STREAM)
         , RealtimeMediaSourceCreateFunction&&
@@ -67,13 +68,15 @@ public:
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 
-    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
+    std::optional<SharedPreferencesForWebProcess> LEGACY_NODELETE sharedPreferencesForWebProcess() const;
 
-    void start(WebCore::SpeechRecognitionConnectionClientIdentifier, String&& lang, bool continuous, bool interimResults, uint64_t maxAlternatives, WebCore::ClientOrigin&&, WebCore::FrameIdentifier, FrameInfoData&&);
+    void start(WebCore::SpeechRecognitionConnectionClientIdentifier, String&& lang, bool continuous, bool interimResults, uint64_t maxAlternatives, IPC::Untrusted<WebCore::ClientOrigin>&&, WebCore::FrameIdentifier, FrameInfoData&&);
     void stop(WebCore::SpeechRecognitionConnectionClientIdentifier);
     void abort(WebCore::SpeechRecognitionConnectionClientIdentifier);
     void invalidate(WebCore::SpeechRecognitionConnectionClientIdentifier);
     void mute();
+
+    ~SpeechRecognitionServer();
 
 private:
     SpeechRecognitionServer(WebProcessProxy&, SpeechRecognitionServerIdentifier, SpeechRecognitionPermissionChecker&&, SpeechRecognitionCheckIfMockSpeechRecognitionEnabled&&
@@ -86,8 +89,6 @@ private:
     void handleRequest(Ref<WebCore::SpeechRecognitionRequest>&&);
     void sendUpdate(WebCore::SpeechRecognitionConnectionClientIdentifier, WebCore::SpeechRecognitionUpdateType, std::optional<WebCore::SpeechRecognitionError> = std::nullopt, std::optional<Vector<WebCore::SpeechRecognitionResultData>> = std::nullopt);
     void sendUpdate(const WebCore::SpeechRecognitionUpdate&);
-
-    CheckedPtr<WebCore::SpeechRecognizer> checkedRecognizer() const;
 
     // IPC::MessageReceiver.
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
@@ -102,7 +103,6 @@ private:
     SpeechRecognitionPermissionChecker m_permissionChecker;
     std::unique_ptr<WebCore::SpeechRecognizer> m_recognizer;
     SpeechRecognitionCheckIfMockSpeechRecognitionEnabled m_checkIfMockSpeechRecognitionEnabled;
-    bool m_isResetting { false };
 
 #if ENABLE(MEDIA_STREAM)
     RealtimeMediaSourceCreateFunction m_realtimeMediaSourceCreateFunction;

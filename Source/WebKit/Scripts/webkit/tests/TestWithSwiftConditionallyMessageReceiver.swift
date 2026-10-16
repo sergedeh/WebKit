@@ -23,20 +23,134 @@
 //
 
 #if ENABLE_SWIFT_TEST_CONDITION
-internal import WebKit_Internal
+import WebKit_Internal
 #endif
 
-#if compiler(>=6.2)
-
 #if ENABLE_SWIFT_TEST_CONDITION
-final class TestWithSwiftConditionallyWeakRef {
+// Safety: target is only written in init, assumeIsolated asserts the main thread, and weak loads are atomic in the Swift runtime
+final class TestWithSwiftConditionallyWeakRef: @unchecked Sendable {
     private weak var target: TestWithSwiftConditionally?
     init(target: TestWithSwiftConditionally) {
         self.target = target
     }
 
+    @used
     func getMessageTarget() -> TestWithSwiftConditionally? {
         target
+    }
+
+    @used
+    func dispatchTestAsyncMessage(
+        connection: sending IPC.Connection,
+        param: sending UInt32,
+        completionHandler: sending CompletionHandlers.TestWithSwiftConditionally.TestAsyncMessageCompletionHandler
+    ) {
+        MainActor.assumeIsolated {
+            guard let target else {
+                return
+            }
+            Task.immediateOnMainActor {
+                await TestAsyncMessageInvocation(
+                    target: target,
+                    connection: connection,
+                    param: param,
+                    completionHandler: completionHandler
+                )
+                .run()
+            }
+        }
+    }
+
+    private final class TestAsyncMessageInvocation {
+        private let target: TestWithSwiftConditionally
+        private let connection: IPC.Connection
+        private let param: UInt32
+        private let completionHandler: CompletionHandlers.TestWithSwiftConditionally.TestAsyncMessageCompletionHandler
+
+        init(
+            target: TestWithSwiftConditionally,
+            connection: IPC.Connection,
+            param: UInt32,
+            completionHandler: CompletionHandlers.TestWithSwiftConditionally.TestAsyncMessageCompletionHandler
+        ) {
+            self.target = target
+            self.connection = connection
+            self.param = param
+            self.completionHandler = completionHandler
+        }
+
+        @MainActor
+        func run() async {
+            do {
+                let reply = try await mayThrowInvalidMessage(
+                    target.testAsyncMessage(
+                        connection: connection,
+                        param: param
+                    )
+                )
+                completionHandler.pointee(reply)
+            } catch {
+                markMessageInvalid(error, on: connection)
+                CompletionHandlers.TestWithSwiftConditionally.completeWithDefaultReply(completionHandler)
+            }
+        }
+    }
+
+    @used
+    func dispatchTestSyncMessage(
+        connection: sending IPC.Connection,
+        param: sending UInt32,
+        completionHandler: sending CompletionHandlers.TestWithSwiftConditionally.TestSyncMessageCompletionHandler
+    ) {
+        MainActor.assumeIsolated {
+            guard let target else {
+                return
+            }
+            Task.immediateOnMainActor {
+                await TestSyncMessageInvocation(
+                    target: target,
+                    connection: connection,
+                    param: param,
+                    completionHandler: completionHandler
+                )
+                .run()
+            }
+        }
+    }
+
+    private final class TestSyncMessageInvocation {
+        private let target: TestWithSwiftConditionally
+        private let connection: IPC.Connection
+        private let param: UInt32
+        private let completionHandler: CompletionHandlers.TestWithSwiftConditionally.TestSyncMessageCompletionHandler
+
+        init(
+            target: TestWithSwiftConditionally,
+            connection: IPC.Connection,
+            param: UInt32,
+            completionHandler: CompletionHandlers.TestWithSwiftConditionally.TestSyncMessageCompletionHandler
+        ) {
+            self.target = target
+            self.connection = connection
+            self.param = param
+            self.completionHandler = completionHandler
+        }
+
+        @MainActor
+        func run() async {
+            do {
+                let reply = try await mayThrowInvalidMessage(
+                    target.testSyncMessage(
+                        connection: connection,
+                        param: param
+                    )
+                )
+                completionHandler.pointee(reply)
+            } catch {
+                markMessageInvalid(error, on: connection)
+                CompletionHandlers.TestWithSwiftConditionally.completeWithDefaultReply(completionHandler)
+            }
+        }
     }
 }
 
@@ -53,35 +167,4 @@ extension WebKit.TestWithSwiftConditionallyMessageForwarder {
         )
     }
 }
-#endif
-
-#else
-
-#if ENABLE_SWIFT_TEST_CONDITION
-final class TestWithSwiftConditionallyWeakRef {
-    private weak var target: TestWithSwiftConditionally?
-    init(target: TestWithSwiftConditionally) {
-        self.target = target
-    }
-
-    func getMessageTarget() -> TestWithSwiftConditionally? {
-        target
-    }
-}
-
-extension WebKit.TestWithSwiftConditionallyMessageForwarder {
-    static func create(target: TestWithSwiftConditionally) -> RefTestWithSwiftConditionallyMessageForwarder {
-        let weakRefContainer = TestWithSwiftConditionallyWeakRef(target: target)
-        // Safety: we're creating a pointer which will immediately be stored in a
-        // proper ref-counted reference on the C++ side before this call returns.
-        // Workaround for rdar://163107752.
-        return WebKit.TestWithSwiftConditionallyMessageForwarder.createFromWeak(
-            OpaquePointer(
-                Unmanaged.passRetained(weakRefContainer).toOpaque()
-            )
-        )
-    }
-}
-#endif
-
 #endif

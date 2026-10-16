@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,8 +28,8 @@
 #include <wtf/Platform.h>
 #if ENABLE(ATTACHMENT_ELEMENT)
 
+#include <WebCore/BitmapImage.h>
 #include <WebCore/HTMLElement.h>
-#include <WebCore/Image.h>
 
 namespace WebCore {
 
@@ -52,36 +52,36 @@ public:
     static URL archiveResourceURL(const String&);
 
     WEBCORE_EXPORT URL blobURL() const;
-    WEBCORE_EXPORT File* file() const;
+    WEBCORE_EXPORT File* LEGACY_NODELETE file() const;
 
     enum class UpdateDisplayAttributes : bool { No, Yes };
     void setFile(RefPtr<File>&&, UpdateDisplayAttributes = UpdateDisplayAttributes::No);
 
-    const String& uniqueIdentifier() const { return m_uniqueIdentifier; }
+    const String& uniqueIdentifier() const LIFETIME_BOUND { return m_uniqueIdentifier; }
     void setUniqueIdentifier(const String&);
 
     void copyNonAttributePropertiesFromElement(const Element&) final;
 
     WEBCORE_EXPORT void updateAttributes(std::optional<uint64_t>&& newFileSize, const AtomString& newContentType, const AtomString& newFilename);
     WEBCORE_EXPORT void updateAssociatedElementWithData(const String& contentType, Ref<FragmentedSharedBuffer>&& data);
-    WEBCORE_EXPORT void updateIconForNarrowLayout(const RefPtr<Image>& icon, const WebCore::FloatSize&);
+    WEBCORE_EXPORT void updateIconForNarrowLayout(const RefPtr<BitmapImage>& icon, const WebCore::FloatSize&);
     WEBCORE_EXPORT void updateIconForWideLayout(Vector<uint8_t>&&);
 
-    InsertedIntoAncestorResult insertedIntoAncestor(InsertionType, ContainerNode&) final;
-    void removedFromAncestor(RemovalType, ContainerNode&) final;
+    NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode&) final;
+    void removingSteps(RemovalType, ContainerNode&) final;
 
     String ensureUniqueIdentifier();
-    AttachmentAssociatedElement* associatedElement() const;
+    AttachmentAssociatedElement* LEGACY_NODELETE associatedElement() const;
     AttachmentAssociatedElementType associatedElementType() const;
 
-    WEBCORE_EXPORT String attachmentTitle() const;
-    const AtomString& attachmentSubtitle() const;
-    const AtomString& attachmentActionForDisplay() const;
+    WEBCORE_EXPORT String LEGACY_NODELETE attachmentTitle() const;
+    const AtomString& LEGACY_NODELETE attachmentSubtitle() const;
+    const AtomString& LEGACY_NODELETE attachmentActionForDisplay() const;
     String attachmentTitleForDisplay() const;
-    const AtomString& attachmentSubtitleForDisplay() const;
-    WEBCORE_EXPORT String attachmentType() const;
-    String attachmentPath() const;
-    RefPtr<Image> icon() const { return m_icon; }
+    const AtomString& LEGACY_NODELETE attachmentSubtitleForDisplay() const;
+    WEBCORE_EXPORT String LEGACY_NODELETE attachmentType() const;
+    String LEGACY_NODELETE attachmentPath() const;
+    RefPtr<BitmapImage> icon() const { return m_icon; }
     void requestIconIfNeededWithSize(const FloatSize&);
     void requestWideLayoutIconIfNeeded();
     FloatSize iconSize() const { return m_iconSize; }
@@ -95,7 +95,7 @@ public:
 
     bool isWideLayout() const { return m_implementation == Implementation::WideLayout; }
     HTMLElement* wideLayoutShadowContainer() const { return m_containerElement.get(); }
-    HTMLElement* wideLayoutImageElement() const;
+    HTMLElement* LEGACY_NODELETE wideLayoutImageElement() const;
     WEBCORE_EXPORT static String shadowUserAgentStyleSheetText();
 
     enum class HighlightState : uint8_t {
@@ -119,10 +119,10 @@ private:
     void updateSaveButton(bool);
     void updateImage();
 
-    void setNeedsIconRequest();
+    void LEGACY_NODELETE setNeedsIconRequest();
 
-    RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) final;
-    bool isReplaced(const RenderStyle* = nullptr) const final { return true; }
+    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
+    bool isReplaced(const Style::ComputedStyle* = nullptr) const final { return true; }
     bool shouldSelectOnMouseDown() final {
 #if PLATFORM(IOS_FAMILY)
         return false;
@@ -138,11 +138,10 @@ private:
 #endif
 
     enum class Implementation: uint8_t { NarrowLayout, WideLayout };
-    Implementation m_implementation { Implementation::NarrowLayout };
 
     RefPtr<File> m_file;
     String m_uniqueIdentifier;
-    RefPtr<Image> m_icon;
+    RefPtr<BitmapImage> m_icon;
     FloatSize m_iconSize;
 
     Vector<uint8_t> m_iconForWideLayout;
@@ -159,6 +158,7 @@ private:
     RefPtr<HTMLElement> m_saveButton;
     mutable RefPtr<DOMRectReadOnly> m_saveButtonClientRect;
 
+    Implementation m_implementation { Implementation::NarrowLayout };
     bool m_needsIconRequest { true };
 
 #if ENABLE(SERVICE_CONTROLS)

@@ -190,7 +190,6 @@ enum FullScreenState : NSInteger {
 @interface WKFullScreenWindowController (Private) <NSAnimationDelegate>
 - (void)_replaceView:(NSView *)view with:(NSView *)otherView;
 - (WebKit::WebFullScreenManagerProxy *)_manager;
-- (RefPtr<WebKit::WebFullScreenManagerProxy>)_protectedManager;
 - (void)_startEnterFullScreenAnimationWithDuration:(NSTimeInterval)duration;
 - (void)_startExitFullScreenAnimationWithDuration:(NSTimeInterval)duration;
 @end
@@ -565,8 +564,8 @@ ALLOW_DEPRECATED_DECLARATIONS_END
             eventNumber:0
             clickCount:0
             pressure:0];
-        WebKit::NativeWebMouseEvent webEvent(fakeEvent.get(), nil, webView.get());
-        page->handleMouseEvent(webEvent);
+        Ref webEvent = WebKit::NativeWebMouseEvent::create(fakeEvent.get(), nil, webView.get(), WebKit::WebEventInputSource::UserDriven);
+        page->handleMouseEvent(WTF::move(webEvent));
     }
     page->flushDeferredResizeEvents();
     page->flushDeferredScrollEvents();
@@ -637,6 +636,28 @@ ALLOW_DEPRECATED_DECLARATIONS_END
         manager->requestExitFullScreen();
 }
 
+- (std::optional<WebCore::IntRect>)convertMainFrameCoordinatesInFullscreenPlaceholderViewToScreen:(WebCore::IntRect)mainFrameCoordinates
+{
+    // This is like PageClientImpl::rootViewToScreen but with two important differences:
+    // 1. We use _webViewPlaceholder instead of the WKWebView because at this point the
+    //    WKWebView has been put at the screen origin, which can't be used for coordinate
+    //    transformations.
+    // 2. _webViewPlaceholder is non-flipped so we need to flip the Y coordinate before
+    //    converting to window coordinates.
+
+    NSRect tempRect = mainFrameCoordinates;
+    RetainPtr view = _webViewPlaceholder;
+    if (![view window])
+        return std::nullopt;
+
+    tempRect.origin.y = NSHeight([view bounds]) - NSMaxY(tempRect);
+
+    tempRect = [view convertRect:tempRect toView:nil];
+    tempRect.origin = [retainPtr([view window]) convertPointToScreen:tempRect.origin];
+
+    return WebCore::enclosingIntRect(tempRect);
+}
+
 - (void)beganExitFullScreenWithInitialFrame:(NSRect)initialFrame finalFrame:(NSRect)finalFrame completionHandler:(CompletionHandler<void()>&&)completionHandler
 {
     if (_fullScreenState != WaitingToExitFullScreen)
@@ -653,8 +674,6 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
     [window exitFullScreenMode:self];
 }
-
-WTF_DECLARE_CF_TYPE_TRAIT(CGImage);
 
 static RetainPtr<CGImageRef> takeWindowSnapshot(CGSWindowID windowID, bool captureAtNominalResolution)
 {
@@ -926,12 +945,6 @@ static RetainPtr<CGImageRef> takeWindowSnapshot(CGSWindowID windowID, bool captu
     return page ? page->fullScreenManager() : nullptr;
 }
 
-- (RefPtr<WebKit::WebFullScreenManagerProxy>)_protectedManager
-{
-    RefPtr page = _page.get();
-    return page ? page->fullScreenManager() : nullptr;
-}
-
 - (WebKit::VideoPresentationManagerProxy*)_videoPresentationManager
 {
     RefPtr page = _page.get();
@@ -954,8 +967,7 @@ static RetainPtr<CGImageRef> takeWindowSnapshot(CGSWindowID windowID, bool captu
 {
     RetainPtr<NSArray<NSLayoutConstraint *>> constraints = view.constraints;
     RetainPtr<NSIndexSet> validConstraints = [constraints indexesOfObjectsPassingTest:^BOOL(NSLayoutConstraint *constraint, NSUInteger, BOOL *) {
-        // FIXME: isKindOfClass call can cause a static analysis false positive (https://github.com/llvm/llvm-project/issues/162979).
-        SUPPRESS_UNRETAINED_ARG return ![constraint isKindOfClass:objc_getClass("NSAutoresizingMaskLayoutConstraint")];
+        return ![constraint isKindOfClass:protect(objc_getClass("NSAutoresizingMaskLayoutConstraint"))];
     }];
     self.savedConstraints = [constraints objectsAtIndexes:validConstraints.get()];
 }

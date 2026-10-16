@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <JavaScriptCore/JSGlobalObject.h>
 #include <WebCore/CustomElementFormValue.h>
 #include <WebCore/Element.h>
 #include <WebCore/GCReachableRef.h>
@@ -38,7 +39,6 @@
 
 namespace JSC {
 
-class JSGlobalObject;
 class CallFrame;
 
 }
@@ -60,6 +60,7 @@ public:
         ElementUpgrade,
         Connected,
         Disconnected,
+        ConnectedMove,
         Adopted,
         AttributeChanged,
         FormAssociated,
@@ -126,9 +127,10 @@ public:
     ~CustomElementReactionQueue();
 
     static void enqueueElementUpgrade(Element&, bool alreadyScheduledToUpgrade);
-    static void tryToUpgradeElement(Element&);
+    static bool tryToUpgradeElement(Element&);
     static void enqueueConnectedCallbackIfNeeded(Element&);
     static void enqueueDisconnectedCallbackIfNeeded(Element&);
+    static void enqueueConnectedMoveCallbackIfNeeded(Element&);
     static void enqueueAdoptedCallbackIfNeeded(Element&, Document& oldDocument, Document& newDocument);
     static void enqueueAttributeChangedCallbackIfNeeded(Element&, const QualifiedName&, const AtomString& oldValue, const AtomString& newValue);
     static void enqueueFormAssociatedCallbackIfNeeded(Element&, HTMLFormElement*);
@@ -137,12 +139,12 @@ public:
     static void enqueueFormStateRestoreCallbackIfNeeded(Element&, CustomElementFormValue&&);
     static void enqueuePostUpgradeReactions(Element&);
 
-    bool observesStyleAttribute() const;
-    bool isElementInternalsDisabled() const;
-    bool isElementInternalsAttached() const;
-    void setElementInternalsAttached();
-    bool isFormAssociated() const;
-    bool hasFormStateRestoreCallback() const;
+    bool LEGACY_NODELETE observesStyleAttribute() const;
+    bool LEGACY_NODELETE isElementInternalsDisabled() const;
+    bool isElementInternalsAttached() const { return m_elementInternalsAttached; }
+    void LEGACY_NODELETE setElementInternalsAttached();
+    bool LEGACY_NODELETE isFormAssociated() const;
+    bool LEGACY_NODELETE hasFormStateRestoreCallback() const;
 
     void invokeAll(Element&);
     void clear();

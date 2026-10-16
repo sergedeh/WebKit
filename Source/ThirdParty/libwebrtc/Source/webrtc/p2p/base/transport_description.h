@@ -29,6 +29,21 @@ namespace webrtc {
 // Whether our side of the call is driving the negotiation, or the other side.
 enum IceRole { ICEROLE_CONTROLLING = 0, ICEROLE_CONTROLLED, ICEROLE_UNKNOWN };
 
+template <typename Sink>
+void AbslStringify(Sink& sink, IceRole role) {
+  switch (role) {
+    case ICEROLE_CONTROLLING:
+      sink.Append("ICEROLE_CONTROLLING");
+      break;
+    case ICEROLE_CONTROLLED:
+      sink.Append("ICEROLE_CONTROLLED");
+      break;
+    case ICEROLE_UNKNOWN:
+      sink.Append("ICEROLE_UNKNOWN");
+      break;
+  }
+}
+
 // ICE RFC 5245 implementation type.
 enum IceMode {
   ICEMODE_FULL,  // As defined in http://tools.ietf.org/html/rfc5245#section-4.1
@@ -79,8 +94,11 @@ struct IceParameters {
   RTCError Validate() const;
 };
 
-constexpr auto* ICE_OPTION_TRICKLE = "trickle";
-constexpr auto* ICE_OPTION_RENOMINATION = "renomination";
+inline constexpr absl::string_view ICE_OPTION_TRICKLE = "trickle";
+inline constexpr absl::string_view ICE_OPTION_RENOMINATION = "renomination";
+inline constexpr absl::string_view ICE_OPTION_GOOG_SPED_V1 = "googspedv1";
+// STUN Protocol for Embedding DTLS.
+inline constexpr absl::string_view ICE_OPTION_SPED = "sped";
 
 std::optional<ConnectionRole> StringToConnectionRole(
     absl::string_view role_str);
@@ -104,9 +122,7 @@ struct TransportDescription {
   bool HasOption(absl::string_view option) const {
     return absl::c_linear_search(transport_options, option);
   }
-  void AddOption(absl::string_view option) {
-    transport_options.emplace_back(option);
-  }
+  void AddOption(absl::string_view option);
   bool secure() const { return identity_fingerprint != nullptr; }
 
   IceParameters GetIceParameters() const {
@@ -131,6 +147,8 @@ struct TransportDescription {
   ConnectionRole connection_role;
 
   std::unique_ptr<SSLFingerprint> identity_fingerprint;
+
+  bool cryptex;
 };
 
 }  //  namespace webrtc

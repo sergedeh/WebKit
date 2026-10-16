@@ -33,22 +33,27 @@ namespace WebCore {
 
 bool SVGNumberList::parse(StringView value)
 {
-    clearItems();
+    Vector<float> numbers;
 
-    return readCharactersForParsing(value, [&](auto buffer) {
+    bool parsingSucceeded = readCharactersForParsing(value, [&](auto buffer) {
         skipOptionalSVGSpaces(buffer);
 
         while (buffer.hasCharactersRemaining()) {
             auto number = parseNumber(buffer);
             if (!number)
                 break;
-            append(SVGNumber::create(*number));
+            numbers.append(*number);
         }
-
-        // FIXME: Should this clearItems() on failure like SVGTransformList does?
 
         return buffer.atEnd();
     });
+    if (!parsingSucceeded) {
+        clearItems();
+        return false;
+    }
+
+    updateItems(numbers);
+    return true;
 }
 
 String SVGNumberList::valueAsString() const

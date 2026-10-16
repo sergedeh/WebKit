@@ -7,12 +7,11 @@
 //   Performance tests for glBlitFramebuffer and glInvalidateFramebuffer where the framebuffer is
 //   multisampled.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
+#include <array>
 
 #include "ANGLEPerfTest.h"
-
+#include "common/unsafe_buffers.h"
+#include "test_utils/ANGLETest.h"
 #include "util/shader_utils.h"
 
 namespace
@@ -89,8 +88,8 @@ class MultisampleResolvePerf : public ANGLERenderTest,
     GLuint mMSAAFramebuffer       = 0;
     GLuint mMSAAColor[2]          = {};
     GLuint mMSAADepthStencil      = 0;
-    GLuint mResolveFramebuffer[2] = {};
-    GLuint mResolveColor[2]       = {};
+    std::array<GLuint, 2> mResolveFramebuffer = {};
+    std::array<GLuint, 2> mResolveColor       = {};
     GLuint mResolveDepthStencil   = 0;
     GLuint mReferenceFramebuffer  = 0;
     GLuint mProgram               = 0;
@@ -101,13 +100,13 @@ void MultisampleResolvePerf::initializeBenchmark()
     const MultisampleResolveParams &param = GetParam();
 
     glGenFramebuffers(1, &mMSAAFramebuffer);
-    glGenFramebuffers(2, mResolveFramebuffer);
+    glGenFramebuffers(2, mResolveFramebuffer.data());
     glGenFramebuffers(1, &mReferenceFramebuffer);
 
     // Create source and destination Renderbuffers.
     glGenRenderbuffers(2, mMSAAColor);
     glGenRenderbuffers(1, &mMSAADepthStencil);
-    glGenRenderbuffers(2, mResolveColor);
+    glGenRenderbuffers(2, mResolveColor.data());
     glGenRenderbuffers(1, &mResolveDepthStencil);
 
     ASSERT_GL_NO_ERROR();
@@ -122,7 +121,7 @@ void MultisampleResolvePerf::initializeBenchmark()
         glBindFramebuffer(GL_FRAMEBUFFER, mResolveFramebuffer[i]);
         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER,
                                   mResolveColor[i]);
-        ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+        ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
     }
 
     if (param.withDepthStencil)
@@ -131,7 +130,7 @@ void MultisampleResolvePerf::initializeBenchmark()
         glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, size, size);
         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER,
                                   mResolveDepthStencil);
-        ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+        ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
     }
 
     if (param.samples > 0)
@@ -156,7 +155,7 @@ void MultisampleResolvePerf::initializeBenchmark()
                                       mMSAADepthStencil);
         }
 
-        ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+        ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
     }
     else
     {
@@ -172,7 +171,7 @@ void MultisampleResolvePerf::initializeBenchmark()
                                       mResolveDepthStencil);
         }
 
-        ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+        ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
     }
 
     GLenum bufs[3] = {GL_COLOR_ATTACHMENT0, GL_NONE, GL_COLOR_ATTACHMENT2};
@@ -223,12 +222,12 @@ void main()
 void MultisampleResolvePerf::destroyBenchmark()
 {
     glDeleteFramebuffers(1, &mMSAAFramebuffer);
-    glDeleteFramebuffers(2, mResolveFramebuffer);
+    glDeleteFramebuffers(2, mResolveFramebuffer.data());
     glDeleteFramebuffers(1, &mReferenceFramebuffer);
 
     glDeleteRenderbuffers(2, mMSAAColor);
     glDeleteRenderbuffers(1, &mMSAADepthStencil);
-    glDeleteRenderbuffers(2, mResolveColor);
+    glDeleteRenderbuffers(2, mResolveColor.data());
     glDeleteRenderbuffers(1, &mResolveDepthStencil);
 
     glDeleteProgram(mProgram);
@@ -250,11 +249,11 @@ void MultisampleResolvePerf::drawBenchmark()
 
     for (unsigned int iteration = 0; iteration < param.iterationsPerStep; ++iteration)
     {
-        const GLenum discards[] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT2,
-                                   GL_DEPTH_STENCIL_ATTACHMENT};
+        static constexpr std::array<GLenum, 3> discards = {
+            GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT2, GL_DEPTH_STENCIL_ATTACHMENT};
 
         glBindFramebuffer(GL_FRAMEBUFFER, singleSampled ? mReferenceFramebuffer : mMSAAFramebuffer);
-        glInvalidateFramebuffer(GL_FRAMEBUFFER, param.withDepthStencil ? 3 : 2, discards);
+        glInvalidateFramebuffer(GL_FRAMEBUFFER, param.withDepthStencil ? 3 : 2, discards.data());
 
         // Start a render pass, then resolve each attachment + invalidate them.  Every render pass
         // should thus start with LOAD_OP_DONT_CARE and end in STORE_OP_DONT_CARE (for the

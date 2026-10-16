@@ -38,7 +38,7 @@ class WebProcess;
 
 class RemoteMediaSessionHelper final
     : public WebCore::MediaSessionHelper
-#if HAVE(AVROUTING_FRAMEWORK)
+#if ENABLE(WIRELESS_PLAYBACK_MEDIA_PLAYER)
     , public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<RemoteMediaSessionHelper>
 #endif
     , public IPC::MessageReceiver
@@ -48,7 +48,6 @@ public:
     virtual ~RemoteMediaSessionHelper() = default;
 
     IPC::Connection& ensureConnection();
-    Ref<IPC::Connection> ensureProtectedConnection();
 
     using HasAvailableTargets = WebCore::MediaSessionHelperClient::HasAvailableTargets;
     using PlayingToAutomotiveHeadUnit = WebCore::MediaSessionHelperClient::PlayingToAutomotiveHeadUnit;
@@ -68,10 +67,12 @@ private:
     // MediaSessionHelper
     void startMonitoringWirelessRoutesInternal() final;
     void stopMonitoringWirelessRoutesInternal() final;
+#if ENABLE(WIRELESS_PLAYBACK_MEDIA_PLAYER)
+    void ensureMediaDeviceRouteControllerMonitoring() final;
+#endif
 
     // Messages
     void activeVideoRouteDidChange(SupportsAirPlayVideo, MediaPlaybackTargetContextSerialized&&);
-    void activeAudioRouteSupportsSpatialPlaybackDidChange(SupportsSpatialAudioPlayback);
 
     ThreadSafeWeakPtr<GPUProcessConnection> m_gpuProcessConnection;
 };

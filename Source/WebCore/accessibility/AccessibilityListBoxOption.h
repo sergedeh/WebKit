@@ -28,25 +28,25 @@
 
 #pragma once
 
-#include "AccessibilityNodeObject.h"
+#include "AccessibilityRenderObject.h"
 
 namespace WebCore {
 
 class HTMLElement;
 class HTMLSelectElement;
 
-class AccessibilityListBoxOption final : public AccessibilityNodeObject {
+class AccessibilityListBoxOption final : public AccessibilityRenderObject {
 public:
     static Ref<AccessibilityListBoxOption> create(AXID, HTMLElement&, AXObjectCache&);
     virtual ~AccessibilityListBoxOption();
 
     bool isSelected() const final;
-    void setSelected(bool) final;
 
 private:
+    explicit AccessibilityListBoxOption(AXID, RenderObject&, AXObjectCache&);
     explicit AccessibilityListBoxOption(AXID, HTMLElement&, AXObjectCache&);
 
-    AccessibilityRole determineAccessibilityRole() final { return AccessibilityRole::ListBoxOption; }
+    AccessibilityRole determineAccessibilityRole() final;
     bool isEnabled() const final;
     bool isSelectedOptionActive() const final;
     String stringValue() const final;
@@ -57,14 +57,9 @@ private:
     AccessibilityObject* parentObject() const final;
 
     bool isAccessibilityListBoxOptionInstance() const final { return true; }
-    void addChildren() final
-    {
-        m_childrenInitialized = true;
-        m_childrenDirty = false;
-        m_subtreeDirty = false;
-    }
-    bool canHaveChildren() const final { return false; }
-    HTMLSelectElement* listBoxOptionParentNode() const;
+    void addChildren() final;
+    bool canHaveChildren() const final;
+    HTMLSelectElement* LEGACY_NODELETE listBoxOptionParentNode() const;
     int listBoxOptionIndex() const;
     IntRect listBoxOptionRect() const;
     AccessibilityObject* listBoxOptionAccessibilityObject(HTMLElement*) const;

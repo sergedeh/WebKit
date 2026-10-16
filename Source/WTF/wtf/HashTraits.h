@@ -191,7 +191,7 @@ template<typename T> struct HashTraits<UniqueRef<T>> : SimpleClassHashTraits<Uni
     typedef std::nullptr_t EmptyValueType;
     static EmptyValueType emptyValue() { return nullptr; }
 
-    template <typename>
+    template<typename>
     static void constructEmptyValue(UniqueRef<T>& slot)
     {
         new (NotNull, std::addressof(slot)) UniqueRef<T>(HashTableEmptyValue);
@@ -242,7 +242,7 @@ template<typename P> struct RefHashTraits : SimpleClassHashTraits<Ref<P>> {
     static constexpr bool emptyValueIsZero = true;
     static Ref<P> emptyValue() { return HashTableEmptyValue; }
 
-    template <typename>
+    template<typename>
     static void constructEmptyValue(Ref<P>& slot)
     {
         new (NotNull, std::addressof(slot)) Ref<P>(HashTableEmptyValue);
@@ -347,13 +347,28 @@ struct PairHashTraits : GenericHashTraits<std::pair<typename FirstTraitsArg::Tra
     typedef std::pair<typename FirstTraits::EmptyValueType, typename SecondTraits::EmptyValueType> EmptyValueType;
 
     static constexpr bool emptyValueIsZero = FirstTraits::emptyValueIsZero && SecondTraits::emptyValueIsZero;
+    // Always use isEmptyValue() to avoid constructing emptyValue() which may not be safe for move-only types like Ref.
+    static constexpr bool hasIsEmptyValueFunction = true;
     static EmptyValueType emptyValue() { return std::make_pair(FirstTraits::emptyValue(), SecondTraits::emptyValue()); }
+
+    // Override constructEmptyValue to construct elements individually, avoiding move-construction from emptyValue().
+    template<typename>
+    static void constructEmptyValue(TraitType& slot)
+    {
+        FirstTraits::template constructEmptyValue<FirstTraits>(*std::launder(&slot.first));
+        SecondTraits::template constructEmptyValue<SecondTraits>(*std::launder(&slot.second));
+    }
+
     static bool isEmptyValue(const TraitType& value) { return isHashTraitsEmptyValue<FirstTraits>(value.first) && isHashTraitsEmptyValue<SecondTraits>(value.second); }
 
     static constexpr unsigned minimumTableSize = FirstTraits::minimumTableSize;
 
     static void constructDeletedValue(TraitType& slot) { FirstTraits::constructDeletedValue(slot.first); }
     static bool isDeletedValue(const TraitType& value) { return FirstTraits::isDeletedValue(value.first); }
+
+    using TakeType = std::pair<typename FirstTraits::TakeType, typename SecondTraits::TakeType>;
+    static TakeType take(TraitType&& value) { return { FirstTraits::take(WTF::move(value.first)), SecondTraits::take(WTF::move(value.second)) }; }
+    static TakeType emptyTakeValue() { return { FirstTraits::take(FirstTraits::emptyValue()), SecondTraits::take(SecondTraits::emptyValue()) }; }
 };
 
 template<typename First, typename Second>
@@ -365,12 +380,41 @@ struct TupleHashTraits : GenericHashTraits<std::tuple<typename FirstTrait::Trait
     typedef std::tuple<typename FirstTrait::EmptyValueType, typename Traits::EmptyValueType...> EmptyValueType;
 
     static constexpr bool emptyValueIsZero = FirstTrait::emptyValueIsZero && (Traits::emptyValueIsZero && ...);
+    // Always use isEmptyValue() to avoid constructing emptyValue() which may not be safe for move-only types like Ref.
+    static constexpr bool hasIsEmptyValueFunction = true;
     static EmptyValueType emptyValue() { return std::make_tuple(FirstTrait::emptyValue(), Traits::emptyValue()...); }
+
+    static bool isEmptyValue(const TraitType& value)
+    {
+        return isEmptyValueImpl(value, std::make_index_sequence<1 + sizeof...(Traits)> { });
+    }
+
+    // Override constructEmptyValue to construct elements individually, avoiding move-construction from emptyValue().
+    template<typename>
+    static void constructEmptyValue(TraitType& slot)
+    {
+        constructEmptyValueImpl(slot, std::make_index_sequence<1 + sizeof...(Traits)> { });
+    }
 
     static constexpr unsigned minimumTableSize = FirstTrait::minimumTableSize;
 
     static void constructDeletedValue(TraitType& slot) { FirstTrait::constructDeletedValue(std::get<0>(slot)); }
     static bool isDeletedValue(const TraitType& value) { return FirstTrait::isDeletedValue(std::get<0>(value)); }
+
+private:
+    using TraitsTuple = std::tuple<FirstTrait, Traits...>;
+
+    template<std::size_t... Is>
+    static bool isEmptyValueImpl(const TraitType& value, std::index_sequence<Is...>)
+    {
+        return (isHashTraitsEmptyValue<std::tuple_element_t<Is, TraitsTuple>>(std::get<Is>(value)) && ...);
+    }
+
+    template<std::size_t... Is>
+    static void constructEmptyValueImpl(TraitType& slot, std::index_sequence<Is...>)
+    {
+        (..., std::tuple_element_t<Is, TraitsTuple>::template constructEmptyValue<std::tuple_element_t<Is, TraitsTuple>>(*std::launder(&std::get<Is>(slot))));
+    }
 };
 
 template<typename... Traits>
@@ -400,7 +444,7 @@ struct KeyValuePairHashTraits : GenericHashTraits<KeyValuePair<typename KeyTrait
 
     static bool isEmptyValue(const TraitType& value) { return isHashTraitsEmptyValue<KeyTraits>(value.key) && isHashTraitsEmptyValue<ValueTraits>(value.value); }
 
-    template <typename>
+    template<typename>
     static void constructEmptyValue(TraitType& slot)
     {
         KeyTraits::template constructEmptyValue<KeyTraits>(slot.key);

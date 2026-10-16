@@ -32,6 +32,7 @@
 #include <WebCore/LayoutSize.h>
 #include <WebCore/ModelPlayerAccessibilityChildren.h>
 #include <WebCore/ModelPlayerIdentifier.h>
+#include <WebCore/NodeIdentifier.h>
 #include <optional>
 #include <wtf/Forward.h>
 #include <wtf/MonotonicTime.h>
@@ -45,49 +46,76 @@
 #include <WebCore/StageModeOperations.h>
 #endif
 
+#if ENABLE(SPATIAL_PORTAL)
+#include <WebCore/PortalAction.h>
+#include <WebCore/PortalTransform.h>
+#endif
+
+#if HAVE(SUPPORT_HDR_DISPLAY) && ENABLE(PIXEL_FORMAT_RGBA16F)
+#include <WebCore/PlatformDynamicRangeLimit.h>
+#endif
+
 namespace WebCore {
 
 class FloatPoint3D;
 class GraphicsLayer;
+class ImageBuffer;
 class Model;
 class ModelPlayerAnimationState;
 class ModelPlayerTransformState;
 class SharedBuffer;
 class TransformationMatrix;
 
+class ColorSpace;
+class FloatSize;
 struct ModelPlayerGraphicsLayerConfiguration;
 
-class WEBCORE_EXPORT ModelPlayer : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<ModelPlayer> {
+#if ENABLE(MODEL_ELEMENT_ENVIRONMENT_MAP)
+enum class EnvironmentMapKind : uint8_t { None, Default, Custom };
+#endif
+
+#if ENABLE(MODEL_PROCESS)
+struct ModelSceneGraphAsTextOptions {
+    bool includeAssetEntities { false };
+};
+#endif
+
+class WEBCORE_EXPORT ModelPlayer : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<ModelPlayer, WTF::DestructionThread::Main> {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(ModelPlayer, WEBCORE_EXPORT);
 public:
     virtual ~ModelPlayer();
 
     virtual ModelPlayerIdentifier identifier() const = 0;
-    virtual bool isPlaceholder() const;
+    virtual bool LEGACY_NODELETE isPlaceholder() const;
+    virtual bool LEGACY_NODELETE isWebModelPlayerInstance() const;
 
     // Loading.
-    virtual void load(Model&, LayoutSize) = 0;
-    virtual void reload(Model&, LayoutSize, ModelPlayerAnimationState&, std::unique_ptr<ModelPlayerTransformState>&&);
+    virtual void load(NodeIdentifier, Model&, LayoutSize, bool) = 0;
+    virtual void unload(NodeIdentifier);
+    virtual void LEGACY_NODELETE reload(NodeIdentifier, Model&, LayoutSize, ModelPlayerAnimationState&, std::unique_ptr<ModelPlayerTransformState>&&);
 
     // Graphics.
     virtual void configureGraphicsLayer(GraphicsLayer&, ModelPlayerGraphicsLayerConfiguration&&) = 0;
+    virtual void LEGACY_NODELETE adoptContentsDisplayDelegateFrom(ModelPlayer&);
+
+    virtual RefPtr<ImageBuffer> snapshotCurrentFrame(const FloatSize& deviceSize, const ColorSpace&);
 
     // State changes.
-    virtual void visibilityStateDidChange();
+    virtual void LEGACY_NODELETE visibilityStateDidChange();
     virtual void sizeDidChange(LayoutSize) = 0;
 
     // State accessors.
-    virtual std::optional<ModelPlayerAnimationState> currentAnimationState() const;
-    virtual std::optional<std::unique_ptr<ModelPlayerTransformState>> currentTransformState() const;
+    virtual std::optional<ModelPlayerAnimationState> currentAnimationState(NodeIdentifier) const;
+    virtual std::optional<std::unique_ptr<ModelPlayerTransformState>> currentTransformState(NodeIdentifier) const;
 
 #if ENABLE(MODEL_ELEMENT_BOUNDING_BOX)
-    virtual std::optional<FloatPoint3D> boundingBoxCenter() const;
-    virtual std::optional<FloatPoint3D> boundingBoxExtents() const;
+    virtual std::optional<FloatPoint3D> boundingBoxCenter(NodeIdentifier) const;
+    virtual std::optional<FloatPoint3D> boundingBoxExtents(NodeIdentifier) const;
 #endif
 
 #if ENABLE(MODEL_ELEMENT_ENTITY_TRANSFORM)
-    virtual std::optional<TransformationMatrix> entityTransform() const;
-    virtual void setEntityTransform(TransformationMatrix);
+    virtual std::optional<TransformationMatrix> entityTransform(NodeIdentifier) const;
+    virtual void setEntityTransform(NodeIdentifier, TransformationMatrix);
     virtual bool supportsTransform(TransformationMatrix);
 #endif
 
@@ -95,9 +123,9 @@ public:
     virtual void enterFullscreen() = 0;
 
     // Interaction.
-    virtual bool supportsMouseInteraction();
-    virtual bool supportsDragging();
-    virtual void setInteractionEnabled(bool);
+    virtual bool LEGACY_NODELETE supportsMouseInteraction();
+    virtual bool LEGACY_NODELETE supportsDragging();
+    virtual void LEGACY_NODELETE setInteractionEnabled(bool);
     virtual void handleMouseDown(const LayoutPoint&, MonotonicTime) = 0;
     virtual void handleMouseMove(const LayoutPoint&, MonotonicTime) = 0;
     virtual void handleMouseUp(const LayoutPoint&, MonotonicTime) = 0;
@@ -111,41 +139,44 @@ public:
 
     virtual void getCamera(CompletionHandler<void(std::optional<HTMLModelElementCamera>&&)>&&) = 0;
     virtual void setCamera(HTMLModelElementCamera, CompletionHandler<void(bool success)>&&) = 0;
-    virtual void isPlayingAnimation(CompletionHandler<void(std::optional<bool>&&)>&&) = 0;
-    virtual void setAnimationIsPlaying(bool, CompletionHandler<void(bool success)>&&) = 0;
-    virtual void isLoopingAnimation(CompletionHandler<void(std::optional<bool>&&)>&&) = 0;
-    virtual void setIsLoopingAnimation(bool, CompletionHandler<void(bool success)>&&) = 0;
-    virtual void animationDuration(CompletionHandler<void(std::optional<Seconds>&&)>&&) = 0;
-    virtual void animationCurrentTime(CompletionHandler<void(std::optional<Seconds>&&)>&&) = 0;
-    virtual void setAnimationCurrentTime(Seconds, CompletionHandler<void(bool success)>&&) = 0;
-
-    virtual void hasAudio(CompletionHandler<void(std::optional<bool>&&)>&&) = 0;
-    virtual void isMuted(CompletionHandler<void(std::optional<bool>&&)>&&) = 0;
-    virtual void setIsMuted(bool, CompletionHandler<void(bool success)>&&) = 0;
-
-    virtual String inlinePreviewUUIDForTesting() const;
+    virtual void isPlayingAnimation(NodeIdentifier, CompletionHandler<void(std::optional<bool>&&)>&&) = 0;
+    virtual void setAnimationIsPlaying(NodeIdentifier, bool, CompletionHandler<void(bool success)>&&) = 0;
+    virtual void isLoopingAnimation(NodeIdentifier, CompletionHandler<void(std::optional<bool>&&)>&&) = 0;
+    virtual void setIsLoopingAnimation(NodeIdentifier, bool, CompletionHandler<void(bool success)>&&) = 0;
+    virtual void animationDuration(NodeIdentifier, CompletionHandler<void(std::optional<Seconds>&&)>&&) = 0;
+    virtual void animationCurrentTime(NodeIdentifier, CompletionHandler<void(std::optional<Seconds>&&)>&&) = 0;
+    virtual void setAnimationCurrentTime(NodeIdentifier, Seconds, CompletionHandler<void(bool success)>&&) = 0;
 
 #if ENABLE(MODEL_ELEMENT_ACCESSIBILITY)
     virtual ModelPlayerAccessibilityChildren accessibilityChildren() = 0;
 #endif
 
 #if ENABLE(MODEL_ELEMENT_ANIMATIONS_CONTROL)
-    virtual void setAutoplay(bool);
-    virtual void setLoop(bool);
-    virtual void setPlaybackRate(double, CompletionHandler<void(double effectivePlaybackRate)>&&);
-    virtual double duration() const;
-    virtual bool paused() const;
-    virtual void setPaused(bool, CompletionHandler<void(bool succeeded)>&&);
-    virtual Seconds currentTime() const;
-    virtual void setCurrentTime(Seconds, CompletionHandler<void()>&&);
+    virtual void setAutoplay(NodeIdentifier, bool);
+    virtual void setLoop(NodeIdentifier, bool);
+    virtual void setPlaybackRate(NodeIdentifier, double, CompletionHandler<void(double effectivePlaybackRate)>&&);
+    virtual double duration(NodeIdentifier) const;
+    virtual bool paused(NodeIdentifier) const;
+    virtual void setPaused(NodeIdentifier, bool, CompletionHandler<void(bool succeeded)>&&);
+    virtual Seconds currentTime(NodeIdentifier) const;
+    virtual void setCurrentTime(NodeIdentifier, Seconds, CompletionHandler<void()>&&);
 #endif
 
 #if ENABLE(MODEL_ELEMENT_ENVIRONMENT_MAP)
-    virtual void setEnvironmentMap(Ref<SharedBuffer>&& data);
+    virtual void setEnvironmentMap(Ref<SharedBuffer>&& data, const URL& sourceURL);
+    virtual void disableEnvironmentMap();
+    virtual void enableSystemEnvironmentMap();
+    virtual String environmentMapForTesting() const;
 #endif
 
 #if ENABLE(MODEL_ELEMENT_PORTAL)
     virtual void setHasPortal(bool);
+#endif
+
+#if ENABLE(SPATIAL_PORTAL)
+    virtual void setPortalTransform(const UsedPortalTransform&);
+    virtual void setPortalAction(PortalActionKind);
+    virtual void setAnchor(NodeIdentifier, std::optional<NodeIdentifier> anchorNode, const String& placement);
 #endif
 
 #if ENABLE(MODEL_ELEMENT_STAGE_MODE)
@@ -155,6 +186,21 @@ public:
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
     virtual void ensureImmersivePresentation(CompletionHandler<void(std::optional<LayerHostingContextIdentifier>)>&&);
     virtual void exitImmersivePresentation(CompletionHandler<void()>&&);
+#endif
+
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    virtual void enterVolumetricPresentation(CompletionHandler<void(std::optional<LayerHostingContextIdentifier>)>&&);
+    virtual void exitVolumetricPresentation();
+    virtual void updateVolumetricPresentationSize(const FloatSize&);
+#endif
+
+#if HAVE(SUPPORT_HDR_DISPLAY) && ENABLE(PIXEL_FORMAT_RGBA16F)
+    virtual void setDynamicRangeLimit(PlatformDynamicRangeLimit, float, bool);
+    virtual std::optional<double> getEffectiveDynamicRangeLimitValue() const;
+#endif
+
+#if ENABLE(MODEL_PROCESS)
+    virtual void sceneGraphAsTextForTesting(std::optional<NodeIdentifier> rootNode, Vector<std::pair<NodeIdentifier, String>>&& modelLabels, const ModelSceneGraphAsTextOptions&, CompletionHandler<void(String&&)>&&);
 #endif
 };
 

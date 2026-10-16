@@ -28,6 +28,8 @@
 #include "StyleImageOrNone.h"
 
 #include "AnimationUtilities.h"
+#include "CSSImageOrNone.h"
+#include "CSSKeywordValue.h"
 #include "StyleBuilderState.h"
 
 namespace WebCore {
@@ -35,10 +37,41 @@ namespace Style {
 
 // MARK: - Conversion
 
+auto ToCSS<ImageOrNone>::operator()(const ImageOrNone& value, const Style::ComputedStyle& style) -> CSS::ImageOrNone
+{
+    return value.switchOn(
+        [](CSS::Keyword::None keyword) -> CSS::ImageOrNone {
+            return keyword;
+        },
+        [&](const ImageWrapper& image) -> CSS::ImageOrNone {
+            return toCSS(image, style);
+        }
+    );
+}
+
+auto ToStyle<CSS::ImageOrNone>::operator()(const CSS::ImageOrNone& value, const BuilderState& state) -> ImageOrNone
+{
+    return value.switchOn(
+        [](CSS::Keyword::None keyword) -> ImageOrNone {
+            return keyword;
+        },
+        [&](const CSS::ImageWrapper& image) -> ImageOrNone {
+            return toStyle(image, state);
+        }
+    );
+}
+
 auto CSSValueConversion<ImageOrNone>::operator()(BuilderState& state, const CSSValue& value) -> ImageOrNone
 {
-    if (value.valueID() == CSSValueNone)
-        return CSS::Keyword::None { };
+    if (auto* keywordValue = dynamicDowncast<CSSKeywordValue>(value)) {
+        switch (keywordValue->valueID()) {
+        case CSSValueID::None:
+            return CSS::Keyword::None { };
+        default:
+            state.setCurrentPropertyInvalidAtComputedValueTime();
+            return CSS::Keyword::None { };
+        }
+    }
 
     RefPtr image = state.createStyleImage(value);
     if (!image)
@@ -49,12 +82,12 @@ auto CSSValueConversion<ImageOrNone>::operator()(BuilderState& state, const CSSV
 
 // MARK: - Blending
 
-auto Blending<ImageOrNone>::canBlend(const ImageOrNone& a, const ImageOrNone& b) -> bool
+auto Blending<ImageOrNone>::canBlend(const ImageOrNone&, const ImageOrNone&) -> bool
 {
-    return !a.isNone() && !b.isNone();
+    return false;
 }
 
-auto Blending<ImageOrNone>::blend(const ImageOrNone& a, const ImageOrNone& b, const RenderStyle& aStyle, const RenderStyle& bStyle, const BlendingContext& context) -> ImageOrNone
+auto Blending<ImageOrNone>::blend(const ImageOrNone& a, const ImageOrNone& b, const Style::ComputedStyle& aStyle, const Style::ComputedStyle& bStyle, const BlendingContext& context) -> ImageOrNone
 {
     if (context.isDiscrete) {
         ASSERT(!context.progress || context.progress == 1.0);

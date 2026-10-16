@@ -48,7 +48,7 @@ public:
 
     void dump(PrintStream& out) const;
 
-    const String& message() const { return m_message; }
+    const String& message() const LIFETIME_BOUND { return m_message; }
     unsigned lineNumber() const { return m_span.line; }
     unsigned lineOffset() const { return m_span.lineOffset; }
     unsigned offset() const { return m_span.offset; }
@@ -62,6 +62,6 @@ private:
 using Warning = CompilationMessage;
 using Error = CompilationMessage;
 template <typename T>
-using Result = Expected<T, Error>;
+using Result = std::expected<T, Error>;
 
 } // namespace WGSL

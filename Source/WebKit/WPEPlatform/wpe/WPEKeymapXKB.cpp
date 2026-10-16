@@ -37,6 +37,12 @@
 /**
  * WPEKeymapXKB:
  *
+ * A [class@Keymap] implementation based on XKB.
+ *
+ * [class@KeymapXKB] is the [class@Keymap] implementation used by the built-in
+ * platforms. It is backed by libxkbcommon; use
+ * [method@KeymapXKB.get_xkb_keymap] and [method@KeymapXKB.get_xkb_state]
+ * to access the underlying `xkb_keymap` and `xkb_state`.
  */
 struct _WPEKeymapXKBPrivate {
     struct xkb_keymap* xkbKeymap;
@@ -69,8 +75,8 @@ static gboolean wpeKeymapXKBGetEntriesForKeyval(WPEKeymap* keymap, guint keyval,
             for (int level = 0; level < numLevels; ++level) {
                 const xkb_keysym_t* syms;
                 int numSyms = xkb_keymap_key_get_syms_by_level(priv->xkbKeymap, keycode, layout, level, &syms);
-                for (int sym = 0; sym < numSyms; ++sym) {
-                    if (syms[sym] != keyval)
+                for (auto sym : unsafeMakeSpan(syms, numSyms)) {
+                    if (sym != keyval)
                         continue;
 
                     WPEKeymapEntry entry = { keycode, layout, level };

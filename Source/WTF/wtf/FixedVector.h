@@ -53,7 +53,7 @@ public:
     FixedVector(const FixedVector& other)
         : m_storage(other.m_storage ? other.m_storage->clone().moveToUniquePtr() : nullptr)
     { }
-    FixedVector(FixedVector&& other) = default;
+    FixedVector(FixedVector&&) = default;
 
     FixedVector(std::initializer_list<T> initializerList)
         : m_storage(initializerList.size() ? Storage::create(initializerList).moveToUniquePtr() : nullptr)
@@ -80,22 +80,15 @@ public:
         return *this;
     }
 
-    FixedVector& operator=(FixedVector&& other)
-    {
-        FixedVector tmp(WTF::move(other));
-        swap(tmp);
-        return *this;
-    }
+    FixedVector& operator=(FixedVector&&) = default;
 
     explicit FixedVector(size_t size)
         : m_storage(size ? Storage::create(size).moveToUniquePtr() : nullptr)
     { }
 
-    FixedVector(size_t size, const T& value)
-        : m_storage(size ? Storage::create(size).moveToUniquePtr() : nullptr)
-    {
-        fill(value);
-    }
+    FixedVector(FillWith, size_t size, const T& value)
+        : m_storage(size ? Storage::createFilled(size, value).moveToUniquePtr() : nullptr)
+    { }
 
     template<size_t inlineCapacity, typename OverflowHandler, size_t minCapacity, typename VectorMalloc>
     explicit FixedVector(const Vector<T, inlineCapacity, OverflowHandler, minCapacity, VectorMalloc>& other)
@@ -113,18 +106,15 @@ public:
 
     template<size_t inlineCapacity, typename OverflowHandler, size_t minCapacity, typename VectorMalloc>
     explicit FixedVector(Vector<T, inlineCapacity, OverflowHandler, minCapacity, VectorMalloc>&& other)
-    {
-        auto target = WTF::move(other);
-        m_storage = target.isEmpty() ? nullptr : Storage::createFromVector(WTF::move(target)).moveToUniquePtr();
-    }
+        : m_storage(other.isEmpty() ? nullptr : Storage::createFromVector(WTF::move(other)).moveToUniquePtr())
+    { }
 
     // FIXME: Should we remove this now that it's not required for HashTable::add? This assignment is non-trivial and
     // should probably go through the explicit constructor.
     template<size_t inlineCapacity, typename OverflowHandler, size_t minCapacity, typename VectorMalloc>
     FixedVector& operator=(Vector<T, inlineCapacity, OverflowHandler, minCapacity, VectorMalloc>&& other)
     {
-        auto target = WTF::move(other);
-        m_storage = target.isEmpty() ? nullptr : Storage::createFromVector(WTF::move(target)).moveToUniquePtr();
+        m_storage = other.isEmpty() ? nullptr : Storage::createFromVector(WTF::move(other)).moveToUniquePtr();
         return *this;
     }
 
@@ -135,26 +125,26 @@ public:
     }
 
     template<std::invocable<size_t> Generator>
-    static FixedVector createWithSizeFromGenerator(size_t size, NOESCAPE Generator&& generator)
+    static FixedVector createWithSizeFromGenerator(size_t size, NOESCAPE const Generator& generator)
     {
-        return Self { size ? Storage::createWithSizeFromGenerator(size, std::forward<Generator>(generator)).moveToUniquePtr() : std::unique_ptr<Storage> { nullptr } };
+        return Self { size ? Storage::createWithSizeFromGenerator(size, generator).moveToUniquePtr() : std::unique_ptr<Storage> { nullptr } };
     }
 
     template<std::invocable<size_t> FailableGenerator>
-    static FixedVector createWithSizeFromFailableGenerator(size_t size, NOESCAPE FailableGenerator&& generator)
+    static FixedVector createWithSizeFromFailableGenerator(size_t size, NOESCAPE const FailableGenerator& generator)
     {
-        return Self { size ? Storage::createWithSizeFromFailableGenerator(size, std::forward<FailableGenerator>(generator)) : std::unique_ptr<Storage> { nullptr } };
+        return Self { size ? Storage::createWithSizeFromFailableGenerator(size, generator) : std::unique_ptr<Storage> { nullptr } };
     }
 
     template<typename SizedRange, typename Mapper>
-    static FixedVector map(SizedRange&& range, NOESCAPE Mapper&& mapper)
+    static FixedVector map(SizedRange&& range, NOESCAPE const Mapper& mapper)
     {
         auto size = std::size(range);
-        return Self { size ? Storage::map(size, std::forward<SizedRange>(range), std::forward<Mapper>(mapper)).moveToUniquePtr() : std::unique_ptr<Storage> { nullptr } };
+        return Self { size ? Storage::map(size, std::forward<SizedRange>(range), mapper).moveToUniquePtr() : std::unique_ptr<Storage> { nullptr } };
     }
 
     size_t size() const { return m_storage ? m_storage->size() : 0; }
-    bool isEmpty() const { return m_storage ? m_storage->isEmpty() : true; }
+    bool isEmpty() const { return !m_storage || m_storage->isEmpty(); }
     size_t byteSize() const { return m_storage ? m_storage->byteSize() : 0; }
 
     iterator begin() LIFETIME_BOUND { return m_storage ? m_storage->begin() : nullptr; }
@@ -191,12 +181,12 @@ public:
     bool operator==(const Self& other) const
     {
         if (!m_storage) {
-            if (!other.m_storage)
-                return true;
-            return other.m_storage->isEmpty();
+            ASSERT(!other.m_storage || !other.m_storage->isEmpty());
+            return !other.m_storage;
         }
+        ASSERT(!m_storage->isEmpty());
         if (!other.m_storage)
-            return m_storage->isEmpty();
+            return false;
         return *m_storage == *other.m_storage;
     }
 
@@ -303,10 +293,10 @@ inline void swap(FixedVector<T, Malloc>& a, FixedVector<T, Malloc>& b)
     a.swap(b);
 }
 
-template<typename T, typename Mapper, typename Malloc, typename ReturnType = typename std::invoke_result<Mapper, const T&>::type>
-FixedVector<ReturnType, Malloc> map(const FixedVector<T, Malloc>& source, Mapper&& mapper)
+template<typename T, typename Mapper, typename Malloc, typename ReturnType = typename std::invoke_result<const Mapper&, const T&>::type>
+FixedVector<ReturnType, Malloc> map(const FixedVector<T, Malloc>& source, NOESCAPE const Mapper& mapper)
 {
-    return FixedVector<ReturnType, Malloc>::map(source, std::forward<Mapper>(mapper));
+    return FixedVector<ReturnType, Malloc>::map(source, mapper);
 }
 
 } // namespace WTF

@@ -41,6 +41,7 @@
 #import <WebCore/FocusController.h>
 #import <WebCore/KeyboardEvent.h>
 #import <WebCore/LocalFrame.h>
+#import <WebCore/LocalFrameInlines.h>
 #import <WebCore/NotImplemented.h>
 #import <WebCore/Page.h>
 #import <wtf/cocoa/NSURLExtras.h>
@@ -72,7 +73,7 @@ void WebEditorClient::setInsertionPasteboard(const String&)
     notImplemented();
 }
 
-static void changeWordCase(WebPage& page, NSString *(*changeCase)(NSString *))
+static void applyTextTransformation(WebPage& page, NSString *(*transform)(NSString *))
 {
     RefPtr frame = page.corePage()->focusController().focusedOrMainFrame();
     if (!frame)
@@ -85,7 +86,7 @@ static void changeWordCase(WebPage& page, NSString *(*changeCase)(NSString *))
     editor->command("selectWord"_s).execute();
 
     RetainPtr selectedString = frame->displayStringModifiedByEncoding(editor->selectedText()).createNSString();
-    page.replaceSelectionWithText(frame.get(), changeCase(selectedString.get()));
+    page.replaceSelectionWithText(frame.get(), transform(selectedString.get()), WebCore::EditAction::Insert);
 }
 
 void WebEditorClient::uppercaseWord()
@@ -93,7 +94,7 @@ void WebEditorClient::uppercaseWord()
     RefPtr page = m_page.get();
     if (!page)
         return;
-    changeWordCase(*page, [] (NSString *string) {
+    applyTextTransformation(*page, [] (NSString *string) {
         return [string uppercaseString];
     });
 }
@@ -103,7 +104,7 @@ void WebEditorClient::lowercaseWord()
     RefPtr page = m_page.get();
     if (!page)
         return;
-    changeWordCase(*page, [] (NSString *string) {
+    applyTextTransformation(*page, [] (NSString *string) {
         return [string lowercaseString];
     });
 }
@@ -113,8 +114,55 @@ void WebEditorClient::capitalizeWord()
     RefPtr page = m_page.get();
     if (!page)
         return;
-    changeWordCase(*page, [] (NSString *string) {
+    applyTextTransformation(*page, [] (NSString *string) {
         return [string capitalizedString];
+    });
+}
+
+bool WebEditorClient::canApplyCaseTransformations(const String& selection)
+{
+    RetainPtr selectedText = selection.createNSString();
+    return [selectedText rangeOfCharacterFromSet:[NSCharacterSet lowercaseLetterCharacterSet]].location != NSNotFound
+        || [selectedText rangeOfCharacterFromSet:[NSCharacterSet uppercaseLetterCharacterSet]].location != NSNotFound;
+}
+
+bool WebEditorClient::canConvertToTraditionalChinese(const String& selection)
+{
+    RetainPtr untransformed = selection.createNSString();
+    RetainPtr transformed = [untransformed stringByApplyingTransform:@"Hans-Hant" reverse:NO];
+    if ([transformed isEqualToString:untransformed.get()])
+        return false;
+
+    return true;
+}
+
+bool WebEditorClient::canConvertToSimplifiedChinese(const String& selection)
+{
+    RetainPtr untransformed = selection.createNSString();
+    RetainPtr transformed = [untransformed stringByApplyingTransform:@"Hant-Hans" reverse:NO];
+    if ([transformed isEqualToString:untransformed.get()])
+        return false;
+
+    return true;
+}
+
+void WebEditorClient::convertToTraditionalChinese()
+{
+    RefPtr page = m_page.get();
+    if (!page)
+        return;
+    applyTextTransformation(*page, [] (NSString *string) {
+        return [string stringByApplyingTransform:@"Hans-Hant" reverse:NO];
+    });
+}
+
+void WebEditorClient::convertToSimplifiedChinese()
+{
+    RefPtr page = m_page.get();
+    if (!page)
+        return;
+    applyTextTransformation(*page, [] (NSString *string) {
+        return [string stringByApplyingTransform:@"Hant-Hans" reverse:NO];
     });
 }
 
@@ -135,6 +183,13 @@ bool WebEditorClient::substitutionsPanelIsShowing()
     return isShowing;
 }
 
+static void toggleTextCheckerState(TextCheckerState flag)
+{
+    auto state = WebProcess::singleton().textCheckerState();
+    state.set(flag, !state.contains(flag));
+    WebProcess::singleton().setTextCheckerState(state);
+}
+
 void WebEditorClient::toggleSmartInsertDelete()
 {
     if (RefPtr page = m_page.get())
@@ -143,7 +198,7 @@ void WebEditorClient::toggleSmartInsertDelete()
 
 bool WebEditorClient::isAutomaticQuoteSubstitutionEnabled()
 {
-    if (RefPtr page = m_page.get(); page && page->isControlledByAutomation())
+    if (auto* page = m_page.get(); page && page->isControlledByAutomation())
         return false;
 
     return WebProcess::singleton().textCheckerState().contains(TextCheckerState::AutomaticQuoteSubstitutionEnabled);
@@ -151,6 +206,7 @@ bool WebEditorClient::isAutomaticQuoteSubstitutionEnabled()
 
 void WebEditorClient::toggleAutomaticQuoteSubstitution()
 {
+    toggleTextCheckerState(TextCheckerState::AutomaticQuoteSubstitutionEnabled);
     if (RefPtr page = m_page.get())
         page->send(Messages::WebPageProxy::toggleAutomaticQuoteSubstitution());
 }
@@ -162,13 +218,14 @@ bool WebEditorClient::isAutomaticLinkDetectionEnabled()
 
 void WebEditorClient::toggleAutomaticLinkDetection()
 {
+    toggleTextCheckerState(TextCheckerState::AutomaticLinkDetectionEnabled);
     if (RefPtr page = m_page.get())
         page->send(Messages::WebPageProxy::toggleAutomaticLinkDetection());
 }
 
 bool WebEditorClient::isAutomaticDashSubstitutionEnabled()
 {
-    if (RefPtr page = m_page.get(); page && page->isControlledByAutomation())
+    if (auto* page = m_page.get(); page && page->isControlledByAutomation())
         return false;
 
     return WebProcess::singleton().textCheckerState().contains(TextCheckerState::AutomaticDashSubstitutionEnabled);
@@ -176,13 +233,14 @@ bool WebEditorClient::isAutomaticDashSubstitutionEnabled()
 
 void WebEditorClient::toggleAutomaticDashSubstitution()
 {
+    toggleTextCheckerState(TextCheckerState::AutomaticDashSubstitutionEnabled);
     if (RefPtr page = m_page.get())
         page->send(Messages::WebPageProxy::toggleAutomaticDashSubstitution());
 }
 
 bool WebEditorClient::isAutomaticTextReplacementEnabled()
 {
-    if (RefPtr page = m_page.get(); page && page->isControlledByAutomation())
+    if (auto* page = m_page.get(); page && page->isControlledByAutomation())
         return false;
 
     return WebProcess::singleton().textCheckerState().contains(TextCheckerState::AutomaticTextReplacementEnabled);
@@ -190,13 +248,14 @@ bool WebEditorClient::isAutomaticTextReplacementEnabled()
 
 void WebEditorClient::toggleAutomaticTextReplacement()
 {
+    toggleTextCheckerState(TextCheckerState::AutomaticTextReplacementEnabled);
     if (RefPtr page = m_page.get())
         page->send(Messages::WebPageProxy::toggleAutomaticTextReplacement());
 }
 
 bool WebEditorClient::isSmartListsEnabled()
 {
-    if (RefPtr page = m_page.get(); page && page->isControlledByAutomation())
+    if (auto* page = m_page.get(); page && page->isControlledByAutomation())
         return false;
 
     return WebProcess::singleton().textCheckerState().contains(TextCheckerState::SmartListsEnabled);
@@ -204,13 +263,14 @@ bool WebEditorClient::isSmartListsEnabled()
 
 void WebEditorClient::toggleSmartLists()
 {
+    toggleTextCheckerState(TextCheckerState::SmartListsEnabled);
     if (RefPtr page = m_page.get())
         page->send(Messages::WebPageProxy::toggleSmartLists());
 }
 
 bool WebEditorClient::isAutomaticSpellingCorrectionEnabled()
 {
-    if (RefPtr page = m_page.get(); page && page->isControlledByAutomation())
+    if (auto* page = m_page.get(); page && page->isControlledByAutomation())
         return false;
 
     return WebProcess::singleton().textCheckerState().contains(TextCheckerState::AutomaticSpellingCorrectionEnabled);

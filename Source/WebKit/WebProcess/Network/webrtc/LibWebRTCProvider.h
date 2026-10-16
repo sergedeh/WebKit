@@ -25,12 +25,6 @@
 
 #pragma once
 
-// FIXME: We should likely rename this header file to WebRTCProvider.h because depending on the
-// build configuration we create either a LibWebRTCProvider, or a GStreamerWebRTCProvider or
-// fallback to WebRTCProvider. This rename would open another can of worms though, leading to the
-// renaming of more LibWebRTC-prefixed files in WebKit.
-// https://bugs.webkit.org/show_bug.cgi?id=243774
-
 #include <wtf/Compiler.h>
 
 #if USE(LIBWEBRTC)
@@ -43,9 +37,7 @@
 #elif USE(GSTREAMER)
 #include <WebCore/LibWebRTCProviderGStreamer.h>
 #endif
-#elif USE(GSTREAMER_WEBRTC)
-#include <WebCore/GStreamerWebRTCProvider.h>
-#else // !USE(LIBWEBRTC) && !USE(GSTREAMER_WEBRTC)
+#else // !USE(LIBWEBRTC)
 #include <WebCore/WebRTCProvider.h>
 #endif
 
@@ -72,6 +64,8 @@ public:
 private:
     bool isLibWebRTCProvider() const final { return true; }
 
+    void clearCodecsConnectionForTesting() final;
+
     std::unique_ptr<SuspendableSocketFactory> createSocketFactory(String&& /* userAgent */, WebCore::ScriptExecutionContextIdentifier, bool /* isFirstParty */, WebCore::RegistrableDomain&&, bool /* enableServiceClass */) final;
 
     webrtc::scoped_refptr<webrtc::PeerConnectionInterface> createPeerConnection(WebCore::ScriptExecutionContextIdentifier, webrtc::PeerConnectionObserver&, webrtc::PacketSocketFactory*, webrtc::PeerConnectionInterface::RTCConfiguration&&) final;
@@ -79,7 +73,9 @@ private:
 #if PLATFORM(COCOA) && USE(LIBWEBRTC)
     bool isSupportingVP9HardwareDecoder() const final;
     void setVP9HardwareSupportForTesting(std::optional<bool>) final;
+    bool isSupportingAV1HardwareDecoder() const final;
 #endif
+
     void disableNonLocalhostConnections() final;
     void startedNetworkThread() final;
     RefPtr<WebCore::RTCDataChannelRemoteHandlerConnection> createRTCDataChannelRemoteHandlerConnection() final;
@@ -95,14 +91,6 @@ inline UniqueRef<LibWebRTCProvider> createLibWebRTCProvider(WebPage& page)
     return makeUniqueRef<LibWebRTCProvider>(page);
 }
 
-#elif USE(GSTREAMER_WEBRTC)
-using LibWebRTCProvider = WebCore::GStreamerWebRTCProvider;
-
-inline UniqueRef<LibWebRTCProvider> createLibWebRTCProvider(WebPage&)
-{
-    return makeUniqueRef<LibWebRTCProvider>();
-}
-
 #else
 using LibWebRTCProvider = WebCore::WebRTCProvider;
 
@@ -114,6 +102,8 @@ inline UniqueRef<LibWebRTCProvider> createLibWebRTCProvider(WebPage&)
 
 } // namespace WebKit
 
+#if USE(LIBWEBRTC)
 SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::LibWebRTCProvider) \
 static bool isType(const WebCore::WebRTCProvider& provider) { return provider.isLibWebRTCProvider(); } \
 SPECIALIZE_TYPE_TRAITS_END()
+#endif

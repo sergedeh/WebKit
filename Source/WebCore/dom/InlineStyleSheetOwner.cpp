@@ -27,7 +27,6 @@
 #include "Logging.h"
 #include "MediaList.h"
 #include "MediaQueryParser.h"
-#include "MediaQueryParserContext.h"
 #include "PluginDocument.h"
 #include "ScriptableDocumentParser.h"
 #include "ShadowRoot.h"
@@ -46,7 +45,7 @@ static CSSParserContext parserContextForElement(const Element& element)
     // User agent shadow trees can't contain document-relative URLs. Use blank URL as base allowing cross-document sharing.
     auto& baseURL = shadowRoot && shadowRoot->mode() == ShadowRootMode::UserAgent ? aboutBlankURL() : element.document().baseURL();
 
-    CSSParserContext result = CSSParserContext { element.document(), baseURL, element.document().characterSetWithUTF8Fallback() };
+    CSSParserContext result = CSSParserContext { element.document(), baseURL, protect(element.document())->characterSetWithUTF8Fallback() };
     if (shadowRoot && shadowRoot->mode() == ShadowRootMode::UserAgent)
         result.setUASheetMode();
     return result;
@@ -57,8 +56,10 @@ InlineStyleSheetOwner::InlineStyleSheetOwner(Document& document, bool createdByP
     , m_loading(false)
     , m_startTextPosition()
 {
-    if (createdByParser && document.scriptableDocumentParser() && !document.isInDocumentWrite())
-        m_startTextPosition = document.scriptableDocumentParser()->textPosition();
+    if (!createdByParser)
+        return;
+    if (RefPtr parser = document.scriptableDocumentParser(); parser && !document.isInDocumentWrite())
+        m_startTextPosition = parser->textPosition();
 }
 
 InlineStyleSheetOwner::~InlineStyleSheetOwner()
@@ -70,7 +71,7 @@ InlineStyleSheetOwner::~InlineStyleSheetOwner()
 void InlineStyleSheetOwner::insertedIntoDocument(Element& element)
 {
     m_styleScope = Style::Scope::forNode(element);
-    m_styleScope->addStyleSheetCandidateNode(element, m_isParsingChildren);
+    protect(m_styleScope)->addStyleSheetCandidateNode(element, m_isParsingChildren);
 
     if (m_isParsingChildren)
         return;
@@ -115,7 +116,7 @@ void InlineStyleSheetOwner::finishParsingChildren(Element& element)
 
 void InlineStyleSheetOwner::createSheetFromTextContents(Element& element)
 {
-    createSheet(element, TextNodeTraversal::contentsAsString(element));
+    createSheet(element, TextNodeTraversal::childTextContent(element));
 }
 
 void InlineStyleSheetOwner::clearSheet()
@@ -147,7 +148,7 @@ void InlineStyleSheetOwner::createSheet(Element& element, const String& text)
         return;
 
     ASSERT(document->contentSecurityPolicy());
-    if (!document->checkedContentSecurityPolicy()->allowInlineStyle(document->url().string(), m_startTextPosition.m_line, text, CheckUnsafeHashes::No, element, element.nonce(), element.isInUserAgentShadowTree() || is<PluginDocument>(document))) {
+    if (!protect(document->contentSecurityPolicy())->allowInlineStyle(document->url().string(), m_startTextPosition.m_line, text, CheckUnsafeHashes::No, element, element.nonce(), element.isInUserAgentShadowTree() || is<PluginDocument>(document))) {
         element.notifyLoadedSheetAndAllCriticalSubresources(true);
         return;
     }
@@ -166,6 +167,9 @@ void InlineStyleSheetOwner::createSheet(Element& element, const String& text)
         if (!element.isInShadowTree())
             sheet->setTitle(element.title());
 
+        if (CheckedPtr scope = m_styleScope.get())
+            scope->establishPreferredStylesheetSetName(element, sheet.get());
+
         sheetLoaded(element);
         element.notifyLoadedSheetAndAllCriticalSubresources(false);
         return;
@@ -181,6 +185,9 @@ void InlineStyleSheetOwner::createSheet(Element& element, const String& text)
     if (!element.isInShadowTree())
         sheet->setTitle(element.title());
 
+    if (CheckedPtr scope = m_styleScope.get())
+        scope->establishPreferredStylesheetSetName(element, sheet.get());
+
     contents->parseString(text);
 
     m_loading = false;
@@ -195,7 +202,7 @@ bool InlineStyleSheetOwner::isLoading() const
 {
     if (m_loading)
         return true;
-    return m_sheet && m_sheet->isLoading();
+    return m_sheet && protect(m_sheet)->isLoading();
 }
 
 bool InlineStyleSheetOwner::sheetLoaded(Element& element)

@@ -41,9 +41,10 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include <JavaScriptCore/WasmHandlerInfo.h>
 #include <JavaScriptCore/WasmIPIntGenerator.h>
 #include <JavaScriptCore/WasmIPIntTierUpCounter.h>
-#include <JavaScriptCore/WasmOps.h>
-#include <wtf/BitVector.h>
+#include <array>
+#include <limits>
 #include <wtf/HashMap.h>
+#include <wtf/RefCountedFixedVector.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 
@@ -57,7 +58,6 @@ class BytecodeGeneratorBase;
 namespace Wasm {
 
 class IPIntCallee;
-class TypeDefinition;
 struct IPIntGeneratorTraits;
 struct JumpTableEntry;
 
@@ -82,18 +82,11 @@ public:
     }
 
     FunctionCodeIndex functionIndex() const { return m_functionIndex; }
-    bool hasTailCallSuccessors() const { return m_hasTailCallSuccessors; }
-    const BitVector& tailCallSuccessors() const { return m_tailCallSuccessors; }
-    bool tailCallClobbersInstance() const { return m_tailCallClobbersInstance ; }
-    void setTailCall(uint32_t, bool);
-    void setTailCallClobbersInstance() { m_tailCallClobbersInstance = true; }
 
-    const uint8_t* getBytecode() const { return m_bytecode.data(); }
-    const uint8_t* getMetadata() const { return m_metadata.span().data(); }
+    const uint8_t* getBytecode() const LIFETIME_BOUND { return m_bytecode.data(); }
+    const uint8_t* getMetadata() const LIFETIME_BOUND { return m_metadata.span().data(); }
 
-    UncheckedKeyHashMap<IPIntPC, IPIntTierUpCounter::OSREntryData>& tierUpCounter() { return m_tierUpCounter; }
-
-    const RTT* addSignature(const TypeDefinition&);
+    UncheckedKeyHashMap<IPIntPC, IPIntTierUpCounter::OSREntryData>& tierUpCounter() LIFETIME_BOUND { return m_tierUpCounter; }
 
     void addCallTarget(unsigned callProfileIndex, FunctionSpaceIndex target)
     {
@@ -101,6 +94,37 @@ public:
             m_callTargets.insertFill(m_callTargets.size(), FunctionSpaceIndex { }, callProfileIndex - m_callTargets.size() + 1);
         m_callTargets[callProfileIndex] = target;
     }
+
+    static constexpr unsigned numTrackedHotLocals = 6;
+    using HotLocals = std::array<uint32_t, numTrackedHotLocals>;
+    static constexpr uint32_t noHotLocal = std::numeric_limits<uint32_t>::max();
+
+    static constexpr int32_t minimumHotLocalScore = 4;
+
+    // Both a pinned local and a cached one store through to the slot. Pinning still costs
+    // a move on a write from a temp, because that temp's register cannot be stolen. A
+    // non-pinned local can take the temp's register.
+    void recordLocalRead(uint32_t index) { adjustLocalScore(index, 1); }
+    void recordLocalWrite(uint32_t index) { adjustLocalScore(index, -1); }
+
+    void enterLoop() { ++m_loopDepth; }
+    void exitLoop()
+    {
+        ASSERT(m_loopDepth);
+        --m_loopDepth;
+    }
+    unsigned loopDepth() const { return m_loopDepth; }
+
+    void adjustLocalScore(uint32_t index, int32_t delta)
+    {
+        if (!m_loopDepth)
+            return;
+        if (index >= m_localScores.size())
+            m_localScores.insertFill(m_localScores.size(), 0, index + 1 - m_localScores.size());
+        m_localScores[index] += delta;
+    }
+
+    HotLocals hotLocals() const;
 
 private:
     struct MetadataBufferMalloc final : public FastMalloc {
@@ -119,31 +143,34 @@ private:
     };
 
     void addLength(size_t length);
-    void addLEB128ConstantInt32AndLength(uint32_t value, size_t length);
-    void addLEB128ConstantInt64AndLength(uint64_t value, size_t length);
-    void addLEB128ConstantAndLengthForType(Type, uint64_t value, size_t length);
-    void addLEB128V128Constant(v128_t value, size_t length);
-    void addReturnData(const FunctionSignature&, const CallInformation&);
+    void addMemorySize(uint8_t memoryIndex, size_t length);
+    void addMemoryGrow(uint8_t memoryIndex, size_t length);
+    void addTableAccess(uint32_t index, size_t length);
+    void addRefFunc(uint32_t index, size_t length);
+    void addElemDrop(uint32_t index, size_t length);
+    void addDataAccess(uint32_t index, size_t length);
+    void addMemoryInit(uint8_t memoryIndex, uint32_t dataIndex, size_t length);
+    void addMemoryFill(uint8_t memoryIndex, size_t length);
+    void addMemoryCopy(uint8_t dstMemoryIndex, uint8_t srcMemoryIndex, size_t length);
+    void addAtomicMemoryAccess(uint8_t memoryIndex, uint64_t offset, size_t length);
 
     FunctionCodeIndex m_functionIndex;
-    bool m_hasTailCallSuccessors { false };
-    bool m_tailCallClobbersInstance { false };
-    BitVector m_tailCallSuccessors;
 
     std::span<const uint8_t> m_bytecode;
     MetadataBuffer m_metadata { };
-    Vector<uint8_t, 8> m_uINTBytecode { };
-    unsigned m_topOfReturnStackFPOffset;
 
     uint32_t m_bytecodeOffset { 0 };
     unsigned m_maxFrameSizeInV128 { 0 };
+    unsigned m_maxCalleeStackSize { 0 };
     unsigned m_numLocals { 0 };
     unsigned m_numAlignedRethrowSlots { 0 };
     unsigned m_numArguments { 0 };
     unsigned m_numArgumentsOnStack { 0 };
     unsigned m_nonArgLocalOffset { 0 };
     Vector<FunctionSpaceIndex> m_callTargets { };
-    Vector<uint8_t, 16> m_argumINTBytecode { };
+    Vector<uint8_t, 8> m_localInitBytecode { };
+    Vector<int32_t, 8> m_localScores { };
+    unsigned m_loopDepth { 0 };
 
     UncheckedKeyHashMap<IPIntPC, IPIntTierUpCounter::OSREntryData> m_tierUpCounter;
     Vector<UnlinkedHandlerInfo> m_exceptionHandlers;

@@ -56,12 +56,12 @@ public:
     void deref() const final { RefCounted::deref(); }
 
     void reset();
-    void setController(GeolocationController*);
+    void LEGACY_NODELETE setController(GeolocationController*);
 
     void setPosition(GeolocationPositionData&&);
     void setPositionUnavailableError(const String& errorMessage);
     void setPermission(bool allowed);
-    int numberOfPendingPermissionRequests() const;
+    int LEGACY_NODELETE numberOfPendingPermissionRequests() const;
 
     // GeolocationClient
     void geolocationDestroyed() override;
@@ -97,7 +97,7 @@ private:
         PermissionStateDenied,
     } m_permissionState { PermissionStateUnset };
 
-    using GeolocationSet = HashSet<RefPtr<Geolocation>>;
+    using GeolocationSet = HashSet<Ref<Geolocation>>;
     GeolocationSet m_pendingPermission;
 };
 

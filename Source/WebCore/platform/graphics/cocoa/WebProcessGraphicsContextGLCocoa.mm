@@ -40,8 +40,6 @@
 
 namespace WebCore {
 
-constexpr Seconds frameFinishedTimeout = 5_s;
-
 namespace {
 
 class DisplayBufferFence final : public PlatformCALayerDelegatedContentsFence {
@@ -116,7 +114,7 @@ public:
         }
         if (m_displayBuffer && displayBuffer->surface() == m_displayBuffer->surface())
             return;
-        m_displayBuffer = IOSurface::createFromSurface(displayBuffer->protectedSurface().get(), { });
+        m_displayBuffer = IOSurface::createFromSurface(protect(displayBuffer->surface()).get(), { });
         m_finishedFence = WTF::move(finishedFence);
     }
 

@@ -28,8 +28,8 @@
 
 #if ENABLE(VIDEO)
 
-#include <WebCore/TrackBase.h>
-#include <WebCore/VideoTrackPrivateClient.h>
+#include "TrackBase.h"
+#include "VideoTrackPrivateClient.h"
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakHashSet.h>
 
@@ -39,7 +39,6 @@ class MediaDescription;
 class VideoTrack;
 class VideoTrackClient;
 class VideoTrackConfiguration;
-class VideoTrackList;
 class VideoTrackPrivate;
 
 class VideoTrack final : public MediaTrackBase, private VideoTrackPrivateClient {
@@ -101,9 +100,6 @@ private:
     ASCIILiteral logClassName() const final { return "VideoTrack"_s; }
 #endif
 
-    Ref<VideoTrackPrivate> protectedPrivate() const;
-
-    WeakPtr<VideoTrackList> m_videoTrackList;
     WeakHashSet<VideoTrackClient> m_clients;
     Ref<VideoTrackPrivate> m_private;
     const Ref<VideoTrackConfiguration> m_configuration;

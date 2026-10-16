@@ -64,8 +64,8 @@ public:
 
     friend bool operator==(const IDBDatabaseIdentifier&, const IDBDatabaseIdentifier&) = default;
 
-    const String& databaseName() const { return m_databaseName; }
-    const ClientOrigin& origin() const { return m_origin; }
+    const String& databaseName() const LIFETIME_BOUND { return m_databaseName; }
+    const ClientOrigin& origin() const LIFETIME_BOUND { return m_origin; }
     bool isTransient() const { return m_isTransient; }
 
     String databaseDirectoryRelativeToRoot(const String& rootDirectory, ASCIILiteral versionString = "v1"_s) const;
@@ -75,8 +75,6 @@ public:
 #if !LOG_DISABLED
     String loggingString() const;
 #endif
-
-    bool isRelatedToOrigin(const SecurityOriginData& other) const { return m_origin.isRelated(other); }
 
 private:
     friend struct IPC::ArgumentCoder<IDBDatabaseIdentifier>;

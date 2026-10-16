@@ -22,13 +22,18 @@
 #pragma once
 
 #include <JavaScriptCore/Exception.h>
+#include <JavaScriptCore/ScriptFetchParameters.h>
 #include <wtf/Forward.h>
+#include <wtf/RefPtr.h>
+
+#if ENABLE(WEBASSEMBLY)
+#include <JavaScriptCore/WebAssemblyCompileOptions.h>
+#endif
 
 namespace JSC {
 
 class Identifier;
 class JSGlobalObject;
-class JSInternalPromise;
 class JSModuleLoader;
 class JSModuleRecord;
 class JSObject;
@@ -37,6 +42,7 @@ class JSString;
 class JSValue;
 class Microtask;
 class RuntimeFlags;
+class ScriptFetcher;
 class SourceOrigin;
 class Structure;
 class QueuedTask;
@@ -53,14 +59,18 @@ struct GlobalObjectMethodTable {
     bool (*supportsRichSourceInfo)(const JSGlobalObject*);
     bool (*shouldInterruptScript)(const JSGlobalObject*);
     RuntimeFlags (*javaScriptRuntimeFlags)(const JSGlobalObject*);
-    void (*queueMicrotaskToEventLoop)(JSGlobalObject&, QueuedTask&&);
     bool (*shouldInterruptScriptBeforeTimeout)(const JSGlobalObject*);
 
-    JSInternalPromise* (*moduleLoaderImportModule)(JSGlobalObject*, JSModuleLoader*, JSString*, JSValue, const SourceOrigin&);
-    Identifier (*moduleLoaderResolve)(JSGlobalObject*, JSModuleLoader*, JSValue, JSValue, JSValue);
-    JSInternalPromise* (*moduleLoaderFetch)(JSGlobalObject*, JSModuleLoader*, JSValue, JSValue, JSValue);
-    JSObject* (*moduleLoaderCreateImportMetaProperties)(JSGlobalObject*, JSModuleLoader*, JSValue, JSModuleRecord*, JSValue);
-    JSValue (*moduleLoaderEvaluate)(JSGlobalObject*, JSModuleLoader*, JSValue key, JSValue moduleRecordValue, JSValue scriptFetcher, JSValue awaitedValue, JSValue resumeMode);
+    // Allows the host to define which module type is allowed (can be handled by the host)
+    // besides JS/WASM/JSON/text, which are handled by JSC.
+    // https://html.spec.whatwg.org/multipage/webappapis.html#module-type-allowed
+    bool (*moduleTypeIsAllowed)(ScriptFetchParameters::Type);
+
+    JSPromise* (*moduleLoaderImportModule)(JSGlobalObject*, JSModuleLoader*, JSString*, RefPtr<ScriptFetchParameters>, const SourceOrigin&, bool deferred);
+    Identifier (*moduleLoaderResolve)(JSGlobalObject*, JSModuleLoader*, JSValue, JSValue, RefPtr<ScriptFetcher>, bool useImportMap);
+    JSPromise* (*moduleLoaderFetch)(JSGlobalObject*, JSModuleLoader*, JSValue key, const String& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>);
+    JSObject* (*moduleLoaderCreateImportMetaProperties)(JSGlobalObject*, JSModuleLoader*, JSValue, JSModuleRecord*, RefPtr<ScriptFetcher>);
+    JSValue (*moduleLoaderEvaluate)(JSGlobalObject*, JSModuleLoader*, JSValue key, JSValue moduleRecordValue, RefPtr<ScriptFetcher>, JSValue awaitedValue, JSValue resumeMode);
 
     void (*promiseRejectionTracker)(JSGlobalObject*, JSPromise*, JSPromiseRejectionOperation);
     void (*reportUncaughtExceptionAtEventLoop)(JSGlobalObject*, Exception*);
@@ -71,9 +81,13 @@ struct GlobalObjectMethodTable {
     ScriptExecutionStatus (*scriptExecutionStatus)(JSGlobalObject*, JSObject* scriptExecutionOwner);
     void (*reportViolationForUnsafeEval)(JSGlobalObject*, const String&);
     String (*defaultLanguage)();
-    JSPromise* (*compileStreaming)(JSGlobalObject*, JSValue);
-    JSPromise* (*instantiateStreaming)(JSGlobalObject*, JSValue, JSObject*);
-    JSGlobalObject* (*deriveShadowRealmGlobalObject)(JSGlobalObject*);
+#if ENABLE(WEBASSEMBLY)
+    void (*compileStreaming)(JSGlobalObject*, JSPromise*, JSValue, std::optional<WebAssemblyCompileOptions>&&);
+    void (*instantiateStreaming)(JSGlobalObject*, JSPromise*, JSValue, JSObject* importObject, std::optional<WebAssemblyCompileOptions>&&);
+#else
+    void* compileStreamingPlaceholder; // placeholders to make positional initializers consistent
+    void* instantiateStreamingPlaceholder;
+#endif
     String (*codeForEval)(JSGlobalObject*, JSValue);
     bool (*canCompileStrings)(JSGlobalObject*, CompilationType, String, const ArgList&);
     Structure* (*trustedScriptStructure)(JSGlobalObject*);

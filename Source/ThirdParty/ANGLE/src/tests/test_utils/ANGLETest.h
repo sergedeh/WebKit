@@ -10,13 +10,10 @@
 #ifndef ANGLE_TESTS_ANGLE_TEST_H_
 #define ANGLE_TESTS_ANGLE_TEST_H_
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <array>
+#include "common/unsafe_buffers.h"
 
 #include "RenderDoc.h"
 #include "angle_test_configs.h"
@@ -106,6 +103,9 @@ struct GLColorRGB
     static const GLColorRGB green;
     static const GLColorRGB red;
     static const GLColorRGB yellow;
+    static const GLColorRGB magenta;
+    static const GLColorRGB cyan;
+    static const GLColorRGB white;
 };
 
 struct GLColorRG
@@ -142,9 +142,9 @@ struct GLColor
 
     angle::Vector4 toNormalizedVector() const;
 
-    GLubyte &operator[](size_t index) { return (&R)[index]; }
+    GLubyte &operator[](size_t index) { return ANGLE_UNSAFE_TODO((&R)[index]); }
 
-    const GLubyte &operator[](size_t index) const { return (&R)[index]; }
+    const GLubyte &operator[](size_t index) const { return ANGLE_UNSAFE_TODO((&R)[index]); }
 
     const GLubyte *data() const { return &R; }
     GLubyte *data() { return &R; }
@@ -243,6 +243,7 @@ GPUTestConfig::API GetTestConfigAPIFromRenderer(angle::GLESDriverType driverType
                                                 EGLenum deviceType);
 
 EGLenum GetEglPlatform();
+EGLenum GetPbufferOnlyDefaultPlatformType();
 }  // namespace angle
 
 #define EXPECT_PIXEL_EQ(x, y, r, g, b, a) \
@@ -515,17 +516,20 @@ class ANGLETestBase : public ::testing::Test
     void setConfigAlphaBits(int bits);
     void setConfigDepthBits(int bits);
     void setConfigStencilBits(int bits);
+    void setConfigColorSpace(EGLenum colorSpace);
     void setConfigComponentType(EGLenum componentType);
     void setMultisampleEnabled(bool enabled);
     void setSamples(EGLint samples);
     void setDebugEnabled(bool enabled);
     void setNoErrorEnabled(bool enabled);
     void setWebGLCompatibilityEnabled(bool webglCompatibility);
+    void setHardenedContextEnabled(bool hardenedContext);
     void setExtensionsEnabled(bool extensionsEnabled);
     void setRobustAccess(bool enabled);
     void setBindGeneratesResource(bool bindGeneratesResource);
     void setClientArraysEnabled(bool enabled);
     void setRobustResourceInit(bool enabled);
+    void setPbuffer(bool enabled);
     void setMutableRenderBuffer(bool enabled);
     void setContextProgramCacheEnabled(bool enabled);
     void setContextResetStrategy(EGLenum resetStrategy);
@@ -536,6 +540,7 @@ class ANGLETestBase : public ::testing::Test
 
     int getClientMajorVersion() const;
     int getClientMinorVersion() const;
+    bool isAtLeastClientVersion(int major, int minor) const;
 
     GLWindowBase *getGLWindow() const;
     EGLWindow *getEGLWindow() const;
@@ -589,6 +594,13 @@ class ANGLETestBase : public ::testing::Test
         return mCurrentParams->getRenderer() == EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE &&
                mCurrentParams->isSwiftshader();
     }
+
+    bool isMetalRenderer() const
+    {
+        return mCurrentParams->getRenderer() == EGL_PLATFORM_ANGLE_TYPE_METAL_ANGLE;
+    }
+
+    bool shouldShowWindow() const;
 
     bool isDriverSystemEgl() const
     {

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2008-2026 Apple Inc. All rights reserved.
  * Copyright (C) 2013 Google Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -28,6 +28,7 @@
 #include "SMILTimeContainer.h"
 
 #include "DocumentPage.h"
+#include "ElementAncestorIteratorInlines.h"
 #include "ElementIterator.h"
 #include "Page.h"
 #include "SVGElementTypeHelpers.h"
@@ -85,7 +86,7 @@ void SMILTimeContainer::notifyIntervalsChanged()
 
 Seconds SMILTimeContainer::animationFrameDelay() const
 {
-    RefPtr page = m_ownerSVGElement->document().page();
+    auto* page = m_ownerSVGElement->document().page();
     if (!page)
         return SMILAnimationFrameDelay;
     return (page->isLowPowerModeEnabled() || page->isAggressiveThermalMitigationEnabled()) ? SMILAnimationFrameThrottledDelay : SMILAnimationFrameDelay;
@@ -108,6 +109,15 @@ bool SMILTimeContainer::isActive() const
 bool SMILTimeContainer::isPaused() const
 {
     return !!m_pauseTime;
+}
+
+bool SMILTimeContainer::hasAnimations() const
+{
+    for (auto& animations : m_scheduledAnimations.values()) {
+        if (!animations.isEmpty())
+            return true;
+    }
+    return false;
 }
 
 bool SMILTimeContainer::isStarted() const
@@ -220,15 +230,15 @@ void SMILTimeContainer::updateDocumentOrderIndexes()
 {
     unsigned timingElementCount = 0;
 
-    for (Ref smilElement : descendantsOfType<SVGSMILElement>(Ref { m_ownerSVGElement.get() }))
-        smilElement->setDocumentOrderIndex(timingElementCount++);
+    for (auto& smilElement : descendantsOfType<SVGSMILElement>(m_ownerSVGElement.get()))
+        smilElement.setDocumentOrderIndex(timingElementCount++);
 
     m_documentOrderIndexesDirty = false;
 }
 
 struct PriorityCompare {
     PriorityCompare(SMILTime elapsed) : m_elapsed(elapsed) {}
-    bool operator()(auto& a, auto& b)
+    bool LEGACY_NODELETE operator()(auto& a, auto& b)
     {
         // FIXME: This should also consider possible timing relations between the elements.
         SMILTime aBegin = a->intervalBegin();
@@ -254,7 +264,7 @@ void SMILTimeContainer::processScheduledAnimations(NOESCAPE const Function<void(
 {
     for (auto& animations : copyToVector(m_scheduledAnimations.values())) {
         for (auto& weakAnimation : animations)
-            callback(Ref { weakAnimation.get() });
+            callback(protect(weakAnimation));
     }
 }
 
@@ -267,15 +277,40 @@ void SMILTimeContainer::updateAnimations(SMILTime elapsed, bool seekToTime)
     // Don't mutate the DOM while updating the animations.
     EventQueueScope scope;
 
-    processScheduledAnimations([](auto& animation) {
-        if (!animation.hasConditionsConnected())
-            animation.connectConditions();
-    });
+    // One snapshot for the whole frame: progressing an animation can run script, which may
+    // schedule() or unschedule() and invalidate m_scheduledAnimations. See webkit.org/b/212192.
+    auto scheduledAnimations = copyToVector(m_scheduledAnimations.values());
+
+    // Connect every animation before progressing any of them; connectConditions() can add instance
+    // times to another animation, but cannot run script, so the snapshot stays valid.
+    for (auto& animations : scheduledAnimations) {
+        for (Ref animation : animations) {
+            if (!animation->hasConditionsConnected())
+                animation->connectConditions();
+        }
+    }
 
     Vector<Ref<SVGSMILElement>> animationsToApply;
     SMILTime earliestFireTime = SMILTime::unresolved();
 
-    for (auto& animations : copyToVector(m_scheduledAnimations.values())) {
+    // https://w3c.github.io/svgwg/svg2-draft/struct.html#ConditionalProcessing
+    auto isDisabledByConditionalProcessing = [](const SVGSMILElement& animation) {
+        for (Ref element : lineageOfType<SVGElement>(animation)) {
+            if (!element->isValid())
+                return true;
+        }
+        return false;
+    };
+
+    for (auto& animations : scheduledAnimations) {
+        // Advance every animation's current interval to `elapsed` before sorting. An animation
+        // whose interval only restarts at (or before) the current time -- e.g. a sync-base
+        // dependent that just gained a new, later begin time -- must be sorted using that new
+        // interval, otherwise a lower-priority animation could incorrectly win the sandwich and
+        // its result would be applied last.
+        for (Ref animation : animations)
+            animation->updateIntervalForProgress(elapsed, seekToTime);
+
         // Sort according to priority. Elements with later begin time have higher priority.
         // In case of a tie, document order decides.
         // FIXME: This should also consider timing relationships between the elements. Dependents
@@ -283,16 +318,18 @@ void SMILTimeContainer::updateAnimations(SMILTime elapsed, bool seekToTime)
         sortByPriority(animations, elapsed);
 
         RefPtr<SVGSMILElement> firstAnimation;
-        for (auto& weakAnimation : animations) {
-            Ref animation = weakAnimation.get();
+        for (Ref animation : animations) {
             ASSERT(animation->timeContainer() == this);
             ASSERT(animation->targetElement());
             ASSERT(animation->hasValidAttributeName());
 
+            if (isDisabledByConditionalProcessing(animation))
+                continue;
+
             // Results are accumulated to the first animation that animates and contributes to a particular element/attribute pair.
             if (!firstAnimation) {
                 if (!animation->hasValidAttributeType())
-                    return;
+                    continue;
                 firstAnimation = animation.copyRef();
             }
 

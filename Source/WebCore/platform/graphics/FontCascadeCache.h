@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2006-2026 Apple Inc. All rights reserved.
  * Copyright (C) 2007-2008 Torch Mobile, Inc.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -111,17 +111,17 @@ struct FontDescriptionKey {
     FontDescriptionKey() = default;
 
     FontDescriptionKey(const FontDescription& description)
-        : m_size(description.computedSize())
+        : m_size(description.usedSize())
         , m_fontSelectionRequest(description.fontSelectionRequest())
         , m_flags(makeFlagsKey(description))
-        , m_locale(description.computedLocale())
+        , m_locale(description.usedLocale())
     {
         auto featureSettings = description.featureSettings();
         auto variationSettings = description.variationSettings();
         auto variantAlternates = description.variantAlternates();
         auto fontPalette = description.fontPalette();
         auto fontSizeAdjust = description.fontSizeAdjust();
-        if (!featureSettings.isEmpty() || !variationSettings.isEmpty() || !variantAlternates.isNormal() || fontPalette.type != FontPalette::Type::Normal || !fontSizeAdjust.isNone())
+        if (!featureSettings.isEmpty() || !variationSettings.isEmpty() || !variantAlternates.isNormal() || !fontPalette.isNormal() || !fontSizeAdjust.isNone())
             lazyInitialize(m_rareData, FontDescriptionKeyRareData::create(WTF::move(featureSettings), WTF::move(variationSettings), WTF::move(variantAlternates), WTF::move(fontPalette), WTF::move(fontSizeAdjust)));
     }
 
@@ -147,18 +147,17 @@ struct FontDescriptionKey {
 private:
     static std::array<unsigned, 2> makeFlagsKey(const FontDescription& description)
     {
-        unsigned first = static_cast<unsigned>(description.script()) << 15
-            | static_cast<unsigned>(description.shouldDisableLigaturesForSpacing()) << 14
-            | static_cast<unsigned>(description.shouldAllowUserInstalledFonts()) << 13
-            | static_cast<unsigned>(description.fontStyleAxis() == FontStyleAxis::slnt) << 12
-            | static_cast<unsigned>(description.opticalSizing()) << 11
-            | static_cast<unsigned>(description.textRenderingMode()) << 9
-            | static_cast<unsigned>(description.fontSynthesisSmallCaps()) << 8
-            | static_cast<unsigned>(description.fontSynthesisStyle()) << 7
-            | static_cast<unsigned>(description.fontSynthesisWeight()) << 6
-            | static_cast<unsigned>(description.widthVariant()) << 4
-            | static_cast<unsigned>(description.nonCJKGlyphOrientation()) << 3
-            | static_cast<unsigned>(description.orientation()) << 2;
+        unsigned first = static_cast<unsigned>(description.script()) << 13
+            | static_cast<unsigned>(description.shouldDisableLigaturesForSpacing()) << 12
+            | static_cast<unsigned>(description.shouldAllowUserInstalledFonts()) << 11
+            | static_cast<unsigned>(description.opticalSizing()) << 10
+            | static_cast<unsigned>(description.textRenderingMode()) << 8
+            | static_cast<unsigned>(description.fontSynthesisSmallCaps()) << 7
+            | static_cast<unsigned>(description.fontSynthesisStyle()) << 5
+            | static_cast<unsigned>(description.fontSynthesisWeight()) << 4
+            | static_cast<unsigned>(description.widthVariant()) << 2
+            | static_cast<unsigned>(description.nonCJKGlyphOrientation()) << 1
+            | static_cast<unsigned>(description.orientation()) << 0;
         unsigned second = static_cast<unsigned>(description.variantEmoji()) << 27
             | static_cast<unsigned>(description.variantEastAsianRuby()) << 26
             | static_cast<unsigned>(description.variantEastAsianWidth()) << 24
@@ -209,20 +208,20 @@ class FontFamilyName {
 public:
     FontFamilyName();
     FontFamilyName(const AtomString&);
-    const AtomString& string() const;
+    const AtomString& LEGACY_NODELETE string() const;
     friend void add(Hasher&, const FontFamilyName&);
 
 private:
     AtomString m_name;
 };
 
-bool operator==(const FontFamilyName&, const FontFamilyName&);
+bool LEGACY_NODELETE operator==(const FontFamilyName&, const FontFamilyName&);
 
 struct FontCascadeCacheKey {
     FontDescriptionKey fontDescriptionKey; // Shared with the lower level FontCache (caching Font objects)
     Vector<FontFamilyName, 3> families;
-    unsigned fontSelectorId;
-    unsigned fontSelectorVersion;
+    unsigned fontSelectorId { 0 };
+    unsigned fontSelectorVersion { 0 };
     bool hasComplexFontSelector { true };
 
 
@@ -233,6 +232,8 @@ inline void add(Hasher& hasher, const FontCascadeCacheKey& key)
 {
     add(hasher, key.fontDescriptionKey, key.families, key.fontSelectorId, key.fontSelectorVersion);
 }
+
+FontCascadeCacheKey makeFontCascadeCacheKey(const FontCascadeDescription&, FontSelector*);
 
 struct FontCascadeCacheEntry {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(FontCascadeCacheEntry);
@@ -250,6 +251,9 @@ struct FontCascadeCacheKeyHashTraits : HashTraits<FontCascadeCacheKey> {
 class FontCascadeCache {
     WTF_MAKE_TZONE_ALLOCATED(FontCascadeCache);
     WTF_MAKE_NONCOPYABLE(FontCascadeCache);
+#if USE(SKIA)
+    friend class FontCache;
+#endif
 public:
     FontCascadeCache() = default;
 
@@ -257,6 +261,7 @@ public:
 
     void invalidate();
     void clearMeasurementCaches();
+    void clearShapedTextCaches();
     void pruneUnreferencedEntries();
     void pruneSystemFallbackFonts();
     Ref<FontCascadeFonts> retrieveOrAddCachedFonts(const FontCascadeDescription&, FontSelector*);

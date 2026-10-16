@@ -82,7 +82,7 @@ String Navigator::appVersion() const
     if (!frame)
         return String();
     if (frame->settings().webAPIStatisticsEnabled())
-        ResourceLoadObserver::singleton().logNavigatorAPIAccessed(*frame->protectedDocument(), NavigatorAPIsAccessed::AppVersion);
+        ResourceLoadObserver::singleton().logNavigatorAPIAccessed(*protect(frame->document()), NavigatorAPIsAccessed::AppVersion);
     return NavigatorBase::appVersion();
 }
 
@@ -92,7 +92,7 @@ const String& Navigator::userAgent() const
     if (!frame || !frame->page())
         return m_userAgent;
     if (frame->settings().webAPIStatisticsEnabled())
-        ResourceLoadObserver::singleton().logNavigatorAPIAccessed(*frame->protectedDocument(), NavigatorAPIsAccessed::UserAgent);
+        ResourceLoadObserver::singleton().logNavigatorAPIAccessed(*protect(frame->document()), NavigatorAPIsAccessed::UserAgent);
 
 #if PLATFORM(IOS_FAMILY)
     if (RefPtr document = frame->document(); document && document->quirks().needsChromeOSNavigatorUserAgentQuirk(*document)) {
@@ -102,7 +102,7 @@ const String& Navigator::userAgent() const
 #endif
 
     if (m_userAgent.isNull())
-        m_userAgent = frame->loader().userAgent(frame->document()->url());
+        m_userAgent = frame->loader().userAgent(protect(frame->document())->url());
     return m_userAgent;
 }
 
@@ -135,7 +135,7 @@ static std::optional<URL> shareableURLForShareData(ScriptExecutionContext& conte
     if (data.url.isNull())
         return std::nullopt;
 
-    auto url = context.completeURL(data.url);
+    auto url = context.encodingParseURL(data.url);
     if (!url.isValid())
         return std::nullopt;
     if (!url.protocolIsInHTTPFamily())
@@ -270,10 +270,10 @@ void Navigator::initializePluginAndMimeTypeArrays()
         return;
 
     RefPtr frame = this->frame();
-    bool needsEmptyNavigatorPluginsQuirk = frame && frame->document() && frame->protectedDocument()->quirks().shouldNavigatorPluginsBeEmpty();
+    bool needsEmptyNavigatorPluginsQuirk = frame && frame->document() && protect(frame->document())->quirks().shouldNavigatorPluginsBeEmpty();
     if (!frame || !frame->page() || needsEmptyNavigatorPluginsQuirk) {
         if (needsEmptyNavigatorPluginsQuirk)
-            frame->protectedDocument()->addConsoleMessage(MessageSource::Other, MessageLevel::Info, "QUIRK: Navigator plugins / mimeTypes empty on marcus.com. More information at https://bugs.webkit.org/show_bug.cgi?id=248798"_s);
+            protect(frame->document())->addConsoleMessage(MessageSource::Other, MessageLevel::Info, "QUIRK: Navigator plugins / mimeTypes empty on marcus.com. More information at https://bugs.webkit.org/show_bug.cgi?id=248798"_s);
         m_plugins = DOMPluginArray::create(*this);
         m_mimeTypes = DOMMimeTypeArray::create(*this);
         return;
@@ -288,7 +288,7 @@ void Navigator::initializePluginAndMimeTypeArrays()
 
     // macOS uses a PDF Plugin (which may be disabled). Other ports handle PDF's through native
     // platform views outside the engine, or use pdf.js.
-    PluginInfo pdfPluginInfo = frame->protectedPage()->pluginData().builtInPDFPlugin().value_or(PluginData::dummyPDFPluginInfo());
+    PluginInfo pdfPluginInfo = protect(frame->page())->pluginData().builtInPDFPlugin().value_or(PluginData::dummyPDFPluginInfo());
 
     Vector<Ref<DOMPlugin>> domPlugins;
     Vector<Ref<DOMMimeType>> domMimeTypes;
@@ -316,7 +316,7 @@ void Navigator::initializePluginAndMimeTypeArrays()
 DOMPluginArray& Navigator::plugins()
 {
     if (RefPtr frame = this->frame(); frame && frame->settings().webAPIStatisticsEnabled())
-        ResourceLoadObserver::singleton().logNavigatorAPIAccessed(*frame->protectedDocument(), NavigatorAPIsAccessed::Plugins);
+        ResourceLoadObserver::singleton().logNavigatorAPIAccessed(*protect(frame->document()), NavigatorAPIsAccessed::Plugins);
 
     initializePluginAndMimeTypeArrays();
     return *m_plugins;
@@ -325,7 +325,7 @@ DOMPluginArray& Navigator::plugins()
 DOMMimeTypeArray& Navigator::mimeTypes()
 {
     if (RefPtr frame = this->frame(); frame && frame->settings().webAPIStatisticsEnabled())
-        ResourceLoadObserver::singleton().logNavigatorAPIAccessed(*frame->protectedDocument(), NavigatorAPIsAccessed::MimeTypes);
+        ResourceLoadObserver::singleton().logNavigatorAPIAccessed(*protect(frame->document()), NavigatorAPIsAccessed::MimeTypes);
 
     initializePluginAndMimeTypeArrays();
     return *m_mimeTypes;
@@ -345,7 +345,7 @@ bool Navigator::cookieEnabled() const
         return false;
 
     if (frame->settings().webAPIStatisticsEnabled())
-        ResourceLoadObserver::singleton().logNavigatorAPIAccessed(*frame->protectedDocument(), NavigatorAPIsAccessed::CookieEnabled);
+        ResourceLoadObserver::singleton().logNavigatorAPIAccessed(*protect(frame->document()), NavigatorAPIsAccessed::CookieEnabled);
 
     RefPtr page = frame->page();
     if (!page)
@@ -365,7 +365,7 @@ bool Navigator::cookieEnabled() const
 
 bool Navigator::standalone() const
 {
-    RefPtr frame = this->frame();
+    auto* frame = this->frame();
     return frame && frame->settings().standalone();
 }
 
@@ -387,7 +387,7 @@ GPU* Navigator::gpu()
         if (!gpu)
             return nullptr;
 
-        m_gpuForWebGPU = GPU::create(*gpu);
+        lazyInitialize(m_gpuForWebGPU, GPU::create(*gpu));
     }
 #endif
 
@@ -396,33 +396,23 @@ GPU* Navigator::gpu()
 
 Page* Navigator::page()
 {
-    RefPtr frame = this->frame();
+    auto* frame = this->frame();
     return frame ? frame->page() : nullptr;
-}
-
-RefPtr<Page> Navigator::protectedPage()
-{
-    return page();
 }
 
 const Document* Navigator::document() const
 {
-    RefPtr frame = this->frame();
+    auto* frame = this->frame();
     return frame ? frame->document() : nullptr;
 }
 
 Document* Navigator::document()
 {
-    RefPtr frame = this->frame();
+    auto* frame = this->frame();
     return frame ? frame->document() : nullptr;
 }
 
-RefPtr<Document> Navigator::protectedDocument()
-{
-    return document();
-}
-
-void Navigator::setAppBadge(std::optional<unsigned long long> badge, Ref<DeferredPromise>&& promise)
+void Navigator::setAppBadge(ScriptExecutionContext& callingContext, std::optional<unsigned long long> badge, Ref<DeferredPromise>&& promise)
 {
     RefPtr frame = this->frame();
     if (!frame) {
@@ -442,24 +432,38 @@ void Navigator::setAppBadge(std::optional<unsigned long long> badge, Ref<Deferre
         return;
     }
 
-    page->badgeClient().setAppBadge(frame.get(), SecurityOriginData::fromFrame(frame.get()), badge);
+    RefPtr callingOrigin = callingContext.securityOrigin();
+    if (!callingOrigin) {
+        promise->reject(ExceptionCode::InvalidStateError);
+        return;
+    }
+
+    Ref topOrigin = callingContext.topOrigin();
+    if (!callingOrigin->isSameOriginAs(topOrigin.get())) {
+        promise->reject(ExceptionCode::SecurityError);
+        return;
+    }
+
+    page->badgeClient().setAppBadge(frame.get(), SecurityOriginData::fromFrame(*frame), badge);
     promise->resolve();
 }
 
-void Navigator::clearAppBadge(Ref<DeferredPromise>&& promise)
+void Navigator::clearAppBadge(ScriptExecutionContext& callingContext, Ref<DeferredPromise>&& promise)
 {
-    setAppBadge(0, WTF::move(promise));
+    setAppBadge(callingContext, 0, WTF::move(promise));
 }
 
 int Navigator::maxTouchPoints() const
 {
 #if ENABLE(IOS_TOUCH_EVENTS) && !PLATFORM(MACCATALYST)
     RefPtr document = this->document();
-    if (!document || !document->quirks().needsZeroMaxTouchPointsQuirk())
-        return 5;
-#endif
+    if (document && (document->quirks().needsZeroMaxTouchPointsQuirk() || document->settings().shouldReportZeroMaxTouchPoints()))
+        return 0;
 
+    return 5;
+#else
     return 0;
+#endif
 }
 
 NavigatorUAData& Navigator::userAgentData() const
@@ -467,7 +471,7 @@ NavigatorUAData& Navigator::userAgentData() const
     RefPtr frame = this->frame();
     if (frame && frame->page()) {
         RefPtr client = frame->loader().client();
-        if (client->hasCustomUserAgent() || (frame->document() && frame->protectedDocument()->quirks().needsCustomUserAgentData())) {
+        if (client->hasCustomUserAgent() || (frame->document() && protect(frame->document())->quirks().needsCustomUserAgentData())) {
             auto userAgentString = frame->loader().userAgent({ });
             Ref parser = UserAgentStringParser::create(userAgentString);
             std::optional userAgentStringData = parser->parse();

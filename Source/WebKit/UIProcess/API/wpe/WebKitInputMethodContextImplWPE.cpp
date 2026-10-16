@@ -50,6 +50,8 @@ static WPEInputPurpose toWPEInputPurpose(WebKitInputPurpose purpose)
         return WPE_INPUT_PURPOSE_EMAIL;
     case WEBKIT_INPUT_PURPOSE_PASSWORD:
         return WPE_INPUT_PURPOSE_PASSWORD;
+    case WEBKIT_INPUT_PURPOSE_SEARCH:
+        return WPE_INPUT_PURPOSE_SEARCH;
     }
 
     RELEASE_ASSERT_NOT_REACHED();
@@ -70,6 +72,8 @@ static WPEInputHints toWPEInputHints(WebKitInputHints hints)
         wpeHints |= WPE_INPUT_HINT_UPPERCASE_SENTENCES;
     if (hints & WEBKIT_INPUT_HINT_INHIBIT_OSK)
         wpeHints |= WPE_INPUT_HINT_INHIBIT_OSK;
+    if (hints & WEBKIT_INPUT_HINT_PRIVATE)
+        wpeHints |= WPE_INPUT_HINT_PRIVATE;
     return static_cast<WPEInputHints>(wpeHints);
 }
 

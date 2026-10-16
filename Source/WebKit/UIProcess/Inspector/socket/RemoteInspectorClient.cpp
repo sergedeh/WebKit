@@ -108,22 +108,20 @@ RemoteInspectorClient::RemoteInspectorClient(URL url, RemoteInspectorObserver& o
     : m_observer(observer)
 {
     if (!url.host() || !url.port()) {
-        LOG_ERROR("Invalid inspector url: %s", url.string().utf8().data());
+        LOG_ERROR("Invalid inspector url: %s", url.string().utf8());
         return;
     }
 
-    m_connectionID = connectInet(url.host().utf8().data(), url.port().value());
+    m_connectionID = connectInet(url.host().utf8(), url.port().value());
     if (!m_connectionID) {
-        LOG_ERROR("Inspector client could not connect to %s", url.string().utf8().data());
+        LOG_ERROR("Inspector client could not connect to %s", url.string().utf8());
         return;
     }
 
     startInitialCommunication();
 }
 
-RemoteInspectorClient::~RemoteInspectorClient()
-{
-}
+RemoteInspectorClient::~RemoteInspectorClient() = default;
 
 void RemoteInspectorClient::sendWebInspectorEvent(const String& event)
 {

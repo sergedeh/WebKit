@@ -26,11 +26,13 @@
 #import "config.h"
 #import "IOSurface.h"
 
-#import "DestinationColorSpace.h"
+#import "ColorSpace.h"
+#import "ColorSpaceCG.h"
 #import "HostWindow.h"
 #import "IOSurfacePool.h"
 #import "ImageBufferBackend.h"
 #import "Logging.h"
+#import "NativeImage.h"
 #import "PlatformScreen.h"
 #import "ProcessCapabilities.h"
 #import "ProcessIdentity.h"
@@ -38,6 +40,7 @@
 #import <pal/spi/cf/CoreVideoSPI.h>
 #import <pal/spi/cg/CoreGraphicsSPI.h>
 #import <wtf/Assertions.h>
+#import <wtf/CheckedArithmetic.h>
 #import <wtf/EnumTraits.h>
 #import <wtf/MachSendRight.h>
 #import <wtf/MathExtras.h>
@@ -49,6 +52,10 @@
 #import "CoreVideoSoftLink.h"
 #import <pal/cg/CoreGraphicsSoftLink.h>
 #import <pal/cocoa/QuartzCoreSoftLink.h>
+
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/IOSurfaceAdditionsBefore.mm>)
+#import <WebKitAdditions/IOSurfaceAdditionsBefore.mm>
+#endif
 
 namespace WebCore {
 
@@ -84,7 +91,8 @@ static RetainPtr<NSString> surfaceNameToNSString(IOSurface::Name name)
     }
 }
 
-std::unique_ptr<IOSurface> IOSurface::create(IOSurfacePool* pool, IntSize size, const DestinationColorSpace& colorSpace, IOSurface::Name name, Format pixelFormat, UseLosslessCompression useLosslessCompression)
+std::unique_ptr<IOSurface> IOSurface::create(IOSurfacePool* pool, IntSize size, const ColorSpace& colorSpace, IOSurface::Name name, Format pixelFormat, UseLosslessCompression useLosslessCompression,
+IOSurfaceOptions options)
 {
     ASSERT(ProcessCapabilities::canUseAcceleratedBuffers());
 
@@ -92,15 +100,18 @@ std::unique_ptr<IOSurface> IOSurface::create(IOSurfacePool* pool, IntSize size, 
         if (auto cachedSurface = pool->takeSurface(size, colorSpace, pixelFormat, useLosslessCompression)) {
             LOG_WITH_STREAM(IOSurface, stream << "IOSurface::create took from pool: " << *cachedSurface);
             if (cachedSurface->name() != name) {
-                IOSurfaceSetValue(cachedSurface->protectedSurface().get(), kIOSurfaceName, surfaceNameToNSString(name).get());
+                IOSurfaceSetValue(protect(cachedSurface->surface()).get(), kIOSurfaceName, surfaceNameToNSString(name).get());
                 cachedSurface->setName(name);
             }
+#if HAVE(IOSURFACE_ALPHA_CHANNEL_MODE)
+            cachedSurface->setContentsAlphaPremultiplication(options.alphaPremultiplication);
+#endif
             return cachedSurface;
         }
     }
 
     bool success = false;
-    auto surface = std::unique_ptr<IOSurface>(new IOSurface(size, colorSpace, name, pixelFormat, useLosslessCompression, success));
+    auto surface = std::unique_ptr<IOSurface>(new IOSurface(size, colorSpace, name, pixelFormat, useLosslessCompression, options, success));
     if (!success) {
         LOG(IOSurface, "IOSurface::create failed to create %dx%d surface", size.width(), size.height());
         return nullptr;
@@ -118,7 +129,63 @@ std::unique_ptr<IOSurface> IOSurface::createFromSendRight(const MachSendRight&& 
     return IOSurface::createFromSurface(surface.get(), { });
 }
 
-std::unique_ptr<IOSurface> IOSurface::createFromSurface(IOSurfaceRef surface, std::optional<DestinationColorSpace>&& colorSpace)
+template <unsigned bytesPerElement>
+static std::unique_ptr<IOSurface> validateAndCreateFromUntrustedSurface(IOSurfaceRef surface)
+{
+    static_assert(bytesPerElement > 0);
+    auto width = IOSurfaceGetWidth(surface);
+    auto height = IOSurfaceGetHeight(surface);
+    auto bytesPerRow = IOSurfaceGetBytesPerRow(surface);
+    if (!width || !height || !bytesPerRow)
+        return nullptr;
+    auto maxSize = IOSurface::maximumSize();
+    if (width > size_t(maxSize.width()) || height > size_t(maxSize.height()))
+        return nullptr;
+    auto rowBytes = CheckedSize { width } * bytesPerElement;
+    if (rowBytes.hasOverflowed() || rowBytes.value() > bytesPerRow)
+        return nullptr;
+    auto totalBytes = CheckedSize { bytesPerRow } * height;
+    auto allocSize = IOSurfaceGetAllocSize(surface);
+    if (totalBytes.hasOverflowed() || totalBytes.value() > allocSize)
+        return nullptr;
+
+    return IOSurface::createFromSurface(surface, { });
+}
+
+std::unique_ptr<IOSurface> IOSurface::createFromUntrustedUncompressedWebKitSendRight(const MachSendRight&& sendRight)
+{
+    ASSERT(ProcessCapabilities::canUseAcceleratedBuffers());
+
+    auto surface = adoptCF(IOSurfaceLookupFromMachPort(sendRight.sendRight()));
+    if (!surface)
+        return nullptr;
+
+    unsigned pixelFormat = IOSurfaceGetPixelFormat(surface.get());
+    switch (pixelFormat) {
+    case kCVPixelFormatType_32BGRA:
+    case kCVPixelFormatType_32RGBA:
+#if ENABLE(PIXEL_FORMAT_RGB10)
+    case kCVPixelFormatType_30RGBLEPackedWideGamut:
+#endif
+        return validateAndCreateFromUntrustedSurface<4>(surface.get());
+
+#if ENABLE(PIXEL_FORMAT_RGBA16F)
+    case kCVPixelFormatType_64RGBAHalf:
+        return validateAndCreateFromUntrustedSurface<8>(surface.get());
+#endif
+#if ENABLE(PIXEL_FORMAT_RGBA16)
+    case kCVPixelFormatType_64RGBALE:
+        return validateAndCreateFromUntrustedSurface<8>(surface.get());
+#endif
+
+    default:
+        break;
+    }
+
+    return { };
+}
+
+std::unique_ptr<IOSurface> IOSurface::createFromSurface(IOSurfaceRef surface, std::optional<ColorSpace>&& colorSpace)
 {
     if (!surface)
         return nullptr;
@@ -134,7 +201,7 @@ std::unique_ptr<IOSurface> IOSurface::createFromImage(IOSurfacePool* pool, CGIma
     size_t width = CGImageGetWidth(image);
     size_t height = CGImageGetHeight(image);
 
-    auto surface = IOSurface::create(pool, IntSize(width, height), DestinationColorSpace { CGImageGetColorSpace(image) }, Name::ImageBuffer);
+    auto surface = IOSurface::create(pool, IntSize(width, height), ColorSpace { CGImageGetColorSpace(image) }, Name::ImageBuffer);
     if (!surface)
         return nullptr;
     auto context = surface->createPlatformContext();
@@ -150,7 +217,7 @@ void IOSurface::moveToPool(std::unique_ptr<IOSurface>&& surface, IOSurfacePool* 
 
 // MARK: -
 
-static OSType coreVideoFormatFromIOSurfaceFormat(IOSurface::Format format, UseLosslessCompression useLosslessCompression)
+static OSType LEGACY_NODELETE coreVideoFormatFromIOSurfaceFormat(IOSurface::Format format, UseLosslessCompression useLosslessCompression)
 {
     switch (format) {
     case IOSurface::Format::BGRX:
@@ -175,11 +242,23 @@ static OSType coreVideoFormatFromIOSurfaceFormat(IOSurface::Format format, UseLo
     case IOSurface::Format::RGBA16F:
         return useLosslessCompression == UseLosslessCompression::Yes ? static_cast<OSType>(kCVPixelFormatType_Lossless_64RGBAHalf) : static_cast<OSType>(kCVPixelFormatType_64RGBAHalf);
 #endif
+#if ENABLE(PIXEL_FORMAT_RGBA16)
+    case IOSurface::Format::RGBA16:
+        // CoreVideo has no lossless counterpart to kCVPixelFormatType_64RGBALE.
+        return static_cast<OSType>(kCVPixelFormatType_64RGBALE);
+#endif
     }
 
     ASSERT_NOT_REACHED();
     return 0;
 }
+
+#if HAVE(IOSURFACE_ALPHA_CHANNEL_MODE)
+static CFStringRef alphaChannelModeValue(AlphaPremultiplication alphaPremultiplication)
+{
+    return alphaPremultiplication == AlphaPremultiplication::Premultiplied ? kIOSurfaceAlphaChannelMode_PremultipliedAlpha : kIOSurfaceAlphaChannelMode_StraightAlpha;
+}
+#endif
 
 static RetainPtr<IOSurfaceRef> createSurfaceViaCoreVideo(IntSize size, IOSurface::Name name, IOSurface::Format format, UseLosslessCompression useLosslessCompression)
 {
@@ -207,7 +286,7 @@ static RetainPtr<IOSurfaceRef> createSurfaceViaCoreVideo(IntSize size, IOSurface
     CVPixelBufferRef rawPixelBuffer = nullptr;
     CVReturn status = CVPixelBufferCreate(kCFAllocatorDefault, size.width(), size.height(), coreVideoFormat, (CFDictionaryRef)additionalProperties.get(), &rawPixelBuffer);
     if (status != kCVReturnSuccess) {
-        RELEASE_LOG_ERROR(Layers, "IOSurface creation via CVPixelBufferCreate failed for size: (%d %d) and format: (%d) - error %d", size.width(), size.height(), enumToUnderlyingType(format), status);
+        RELEASE_LOG_ERROR(Layers, "IOSurface creation via CVPixelBufferCreate failed for size: (%d %d) and format: (%d) - error %d", size.width(), size.height(), std::to_underlying(format), status);
         return nullptr;
     }
 
@@ -293,7 +372,7 @@ static NSDictionary *optionsFor32BitSurface(IntSize size, unsigned pixelFormat, 
     return optionsForSurface(size, 32, pixelFormat, name);
 }
 
-#if ENABLE(PIXEL_FORMAT_RGBA16F)
+#if ENABLE(PIXEL_FORMAT_RGBA16F) || ENABLE(PIXEL_FORMAT_RGBA16)
 static NSDictionary *optionsFor64BitSurface(IntSize size, unsigned pixelFormat, IOSurface::Name name)
 {
     return optionsForSurface(size, 64, pixelFormat, name);
@@ -331,6 +410,11 @@ static RetainPtr<IOSurfaceRef> createSurface(IntSize size, IOSurface::Name name,
         options = optionsFor64BitSurface(size, kCVPixelFormatType_64RGBAHalf, name);
         break;
 #endif
+#if ENABLE(PIXEL_FORMAT_RGBA16)
+    case IOSurface::Format::RGBA16:
+        options = optionsFor64BitSurface(size, kCVPixelFormatType_64RGBALE, name);
+        break;
+#endif
     }
 
     return adoptCF(IOSurfaceCreate((CFDictionaryRef)options.get()));
@@ -338,14 +422,18 @@ static RetainPtr<IOSurfaceRef> createSurface(IntSize size, IOSurface::Name name,
 
 // MARK: -
 
-IOSurface::IOSurface(IntSize size, const DestinationColorSpace& colorSpace, IOSurface::Name name, Format format, UseLosslessCompression useLosslessCompression, bool& success)
+IOSurface::IOSurface(IntSize size, const ColorSpace& colorSpace, IOSurface::Name name, Format format, UseLosslessCompression useLosslessCompression, IOSurfaceOptions options, bool& success)
     : m_format({ format, useLosslessCompression })
     , m_colorSpace(colorSpace)
+    , m_knownIsVolatile(false)
     , m_size(size)
     , m_name(name)
 {
     ASSERT(!success);
     ASSERT(!size.isEmpty());
+#if !HAVE(IOSURFACE_ALPHA_CHANNEL_MODE)
+    UNUSED_PARAM(options);
+#endif
 
 #if !HAVE(COREVIDEO_COMPRESSED_PIXEL_FORMAT_TYPES)
     useLosslessCompression = UseLosslessCompression::No;
@@ -354,6 +442,12 @@ IOSurface::IOSurface(IntSize size, const DestinationColorSpace& colorSpace, IOSu
 #if ENABLE(PIXEL_FORMAT_RGBA16F)
     // FIXME: Remove when rdar://156761787 is resolved.
     if (format == IOSurface::Format::RGBA16F)
+        useLosslessCompression = UseLosslessCompression::No;
+#endif
+
+#if ENABLE(PIXEL_FORMAT_RGBA16)
+    // CoreVideo has no lossless counterpart to kCVPixelFormatType_64RGBALE.
+    if (format == IOSurface::Format::RGBA16)
         useLosslessCompression = UseLosslessCompression::No;
 #endif
 
@@ -370,9 +464,12 @@ IOSurface::IOSurface(IntSize size, const DestinationColorSpace& colorSpace, IOSu
     success = !!m_surface;
     if (success) {
         setColorSpaceProperty();
+#if HAVE(IOSURFACE_ALPHA_CHANNEL_MODE)
+        setContentsAlphaPremultiplication(options.alphaPremultiplication);
+#endif
         m_totalBytes = IOSurfaceGetAllocSize(m_surface.get());
     } else
-        RELEASE_LOG_ERROR(Layers, "IOSurface creation failed for size: (%d %d) and format: (%d)", size.width(), size.height(), enumToUnderlyingType(format));
+        RELEASE_LOG_ERROR(Layers, "IOSurface creation failed for size: (%d %d) and format: (%d)", size.width(), size.height(), std::to_underlying(format));
 }
 
 static std::optional<IOSurface::UsedFormat> formatFromSurface(IOSurfaceRef surface)
@@ -414,10 +511,15 @@ static std::optional<IOSurface::UsedFormat> formatFromSurface(IOSurfaceRef surfa
         return IOSurface::UsedFormat { IOSurface::Format::RGBA16F, UseLosslessCompression::Yes };
 #endif
 
+#if ENABLE(PIXEL_FORMAT_RGBA16)
+    if (pixelFormat == kCVPixelFormatType_64RGBALE)
+        return IOSurface::UsedFormat { IOSurface::Format::RGBA16, UseLosslessCompression::No };
+#endif
+
     return { };
 }
 
-IOSurface::IOSurface(IOSurfaceRef surface, std::optional<DestinationColorSpace>&& colorSpace)
+IOSurface::IOSurface(IOSurfaceRef surface, std::optional<ColorSpace>&& colorSpace)
     : m_format(formatFromSurface(surface))
     , m_colorSpace(WTF::move(colorSpace))
     , m_surface(surface)
@@ -431,7 +533,7 @@ IOSurface::IOSurface(IOSurfaceRef surface, std::optional<DestinationColorSpace>&
 
 IOSurface::~IOSurface() = default;
 
-static constexpr IntSize fallbackMaxSurfaceDimension()
+static constexpr IntSize LEGACY_NODELETE fallbackMaxSurfaceDimension()
 {
     // Match limits imposed by Core Animation. FIXME: should have API for this <rdar://problem/25454148>
 #if PLATFORM(WATCHOS)
@@ -446,7 +548,7 @@ static constexpr IntSize fallbackMaxSurfaceDimension()
 
 static IntSize computeMaximumSurfaceSize()
 {
-    auto maxSize = IntSize { clampToInteger(IOSurfaceGetPropertyMaximum(kIOSurfaceWidth)), clampToInteger(IOSurfaceGetPropertyMaximum(kIOSurfaceHeight)) };
+    auto maxSize = IntSize { clampTo<int>(IOSurfaceGetPropertyMaximum(kIOSurfaceWidth)), clampTo<int>(IOSurfaceGetPropertyMaximum(kIOSurfaceHeight)) };
 
     // On iOS, there's an additional 8K clamp in CA (rdar://101936907).
     // On some macOS VMs, IOSurfaceGetPropertyMaximum() returns INT_MAX (rdar://113661708).
@@ -458,7 +560,7 @@ static IntSize computeMaximumSurfaceSize()
     return maxSize;
 }
 
-static WTF::Atomic<IntSize>& surfaceMaximumSize()
+static WTF::Atomic<IntSize>& LEGACY_NODELETE surfaceMaximumSize()
 {
     static WTF::Atomic<IntSize> maximumSize;
     return maximumSize;
@@ -481,7 +583,7 @@ IntSize IOSurface::maximumSize()
     return size;
 }
 
-static WTF::Atomic<size_t>& surfaceBytesPerRowAlignment()
+static WTF::Atomic<size_t>& LEGACY_NODELETE surfaceBytesPerRowAlignment()
 {
     static WTF::Atomic<size_t> alignment = 0;
     return alignment;
@@ -530,7 +632,7 @@ RetainPtr<id> IOSurface::asCAIOSurfaceLayerContents() const
         if (m_contentEDRHeadroom && *m_contentEDRHeadroom != 1 && PAL::canLoad_QuartzCore_CAIOSurfaceReloadColorAttributes())
             CAIOSurfaceReloadColorAttributes(result.get());
 #endif
-        return bridge_id_cast(result);
+        return bridge_id_cast(WTF::move(result));
     }
     return asLayerContents();
 }
@@ -539,6 +641,50 @@ RetainPtr<CGImageRef> IOSurface::createImage(CGContextRef context)
 {
     ASSERT(CGIOSurfaceContextGetSurface(context) == m_surface);
     return adoptCF(CGIOSurfaceContextCreateImage(context));
+}
+
+static std::optional<CGImageAlphaInfo> alphaInfoForNativeImage(const IOSurface& surface, IOSurface::ShouldForceOpaque shouldForceOpaque)
+{
+#if ENABLE(PIXEL_FORMAT_RGBA16F) || ENABLE(PIXEL_FORMAT_RGBA16)
+    // A 64-bit surface always uses IOSurface::Format::RGBA16F or RGBA16 regardless of whether
+    // its contents are opaque, so bitmapConfiguration() assumes premultiplied alpha.
+    // Callers presenting opaque contents must force the alpha channel to be ignored;
+    // otherwise (e.g. a premultiplied WebGPU canvas) the alpha must be preserved so
+    // the contents composite transparently.
+    bool formatCannotEncodeOpacity = false;
+#if ENABLE(PIXEL_FORMAT_RGBA16F)
+    formatCannotEncodeOpacity = formatCannotEncodeOpacity || surface.pixelFormat() == IOSurface::Format::RGBA16F;
+#endif
+#if ENABLE(PIXEL_FORMAT_RGBA16)
+    formatCannotEncodeOpacity = formatCannotEncodeOpacity || surface.pixelFormat() == IOSurface::Format::RGBA16;
+#endif
+    if (shouldForceOpaque == IOSurface::ShouldForceOpaque::Yes && formatCannotEncodeOpacity)
+        return kCGImageAlphaNoneSkipLast;
+#else
+    UNUSED_PARAM(surface);
+    UNUSED_PARAM(shouldForceOpaque);
+#endif
+    return std::nullopt;
+}
+
+RefPtr<NativeImage> IOSurface::createNativeImage(ShouldForceOpaque shouldForceOpaque)
+{
+    RetainPtr<CGContextRef> cgContext { createPlatformContext(0, alphaInfoForNativeImage(*this, shouldForceOpaque)) };
+    if (!cgContext)
+        return nullptr;
+
+    return NativeImage::create(createImage(cgContext.get()));
+}
+
+void IOSurface::withNativeImage(ShouldForceOpaque shouldForceOpaque, NOESCAPE const Function<void(NativeImage*)>& function)
+{
+    RetainPtr<CGContextRef> cgContext { createPlatformContext(0, alphaInfoForNativeImage(*this, shouldForceOpaque)) };
+    if (!cgContext)
+        return function(nullptr);
+
+    RefPtr image = NativeImage::create(createImage(cgContext.get()));
+    function(image.get());
+    image = nullptr;
 }
 
 RetainPtr<CGImageRef> IOSurface::sinkIntoImage(std::unique_ptr<IOSurface> surface, RetainPtr<CGContextRef> context)
@@ -588,6 +734,12 @@ IOSurface::BitmapConfiguration IOSurface::bitmapConfiguration() const
         bitmapInfo = static_cast<CGBitmapInfo>(kCGImageAlphaPremultipliedLast) | static_cast<CGBitmapInfo>(kCGBitmapByteOrder16Host) | static_cast<CGBitmapInfo>(kCGBitmapFloatComponents);
         break;
 #endif
+#if ENABLE(PIXEL_FORMAT_RGBA16)
+    case Format::RGBA16:
+        bitsPerComponent = 16;
+        bitmapInfo = static_cast<CGBitmapInfo>(kCGImageAlphaPremultipliedLast) | static_cast<CGBitmapInfo>(kCGBitmapByteOrder16Little);
+        break;
+#endif
 #if ENABLE(PIXEL_FORMAT_RGBA16F)
     case Format::RGBA16F:
         bitsPerComponent = 16;
@@ -606,18 +758,25 @@ RetainPtr<CGContextRef> IOSurface::createCompatibleBitmap(unsigned width, unsign
     auto bytesPerRow = roundUpToMultipleOfNonPowerOfTwo(bytesPerRowAlignment(), width * (bitsPerPixel / 8));
 
     ensureColorSpace();
-    return adoptCF(CGBitmapContextCreate(NULL, width, height, configuration.bitsPerComponent, bytesPerRow, m_colorSpace->protectedPlatformColorSpace().get(), configuration.bitmapInfo));
+    return adoptCF(CGBitmapContextCreate(NULL, width, height, configuration.bitsPerComponent, bytesPerRow, protect(m_colorSpace->platformColorSpace()).get(), configuration.bitmapInfo));
 }
 
-RetainPtr<CGContextRef> IOSurface::createPlatformContext(PlatformDisplayID displayID, std::optional<CGImageAlphaInfo> overrideAlphaInfo)
+RetainPtr<CGContextRef> IOSurface::createPlatformContext(PlatformDisplayID displayID, std::optional<CGImageAlphaInfo> overrideAlphaInfo, bool useWebKitBehavior)
 {
     auto configuration = bitmapConfiguration();
     if (overrideAlphaInfo)
         configuration.bitmapInfo = (configuration.bitmapInfo & ~kCGBitmapAlphaInfoMask) | *overrideAlphaInfo;
     auto bitsPerPixel = configuration.bitsPerComponent * 4;
 
+    RetainPtr<CFDictionaryRef> options;
+    if (useWebKitBehavior) {
+        const void* keys[] = { CFSTR("useWebKitBehavior") };
+        const void* values[] = { kCFBooleanTrue };
+        options = adoptCF(CFDictionaryCreate(kCFAllocatorDefault, keys, values, std::size(keys), &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
+    }
+
     ensureColorSpace();
-    auto cgContext = adoptCF(CGIOSurfaceContextCreate(m_surface.get(), m_size.width(), m_size.height(), configuration.bitsPerComponent, bitsPerPixel, m_colorSpace->protectedPlatformColorSpace().get(), configuration.bitmapInfo));
+    RetainPtr cgContext = adoptCF(CGIOSurfaceContextCreateWithOptions(m_surface.get(), m_size.width(), m_size.height(), configuration.bitsPerComponent, bitsPerPixel, protect(m_colorSpace->platformColorSpace()).get(), configuration.bitmapInfo, options.get()));
 
 #if PLATFORM(MAC)
     if (auto displayMask = primaryOpenGLDisplayMask()) {
@@ -645,7 +804,7 @@ std::optional<IOSurface::LockAndContext> IOSurface::createBitmapPlatformContext(
     auto configuration = bitmapConfiguration();
     auto size = this->size();
 
-    auto context = adoptCF(CGBitmapContextCreate(locker->surfaceBaseAddress(), size.width(), size.height(), configuration.bitsPerComponent, bytesPerRow(), colorSpace().protectedPlatformColorSpace().get(), configuration.bitmapInfo));
+    auto context = adoptCF(CGBitmapContextCreate(locker->surfaceBaseAddress(), size.width(), size.height(), configuration.bitsPerComponent, bytesPerRow(), protect(colorSpace().platformColorSpace()).get(), configuration.bitmapInfo));
     if (!context) {
         RELEASE_LOG_ERROR(IOSurface, "IOSurface::createBitmapPlatformContext: Failed to create bitmap context for IOSurface %x (size %d x %d), bitsPerComponent %lu, bytesPerRow %lu", surfaceID(), size.width(), size.height(), configuration.bitsPerComponent, bytesPerRow());
         return std::nullopt;
@@ -655,10 +814,17 @@ std::optional<IOSurface::LockAndContext> IOSurface::createBitmapPlatformContext(
 
 SetNonVolatileResult IOSurface::state() const
 {
-    uint32_t previousState = 0;
-    IOReturn ret = IOSurfaceSetPurgeable(m_surface.get(), kIOSurfacePurgeableKeepCurrent, &previousState);
-    ASSERT_UNUSED(ret, ret == kIOReturnSuccess);
-    return previousState == kIOSurfacePurgeableEmpty ? SetNonVolatileResult::Empty : SetNonVolatileResult::Valid;
+    if (m_knownIsVolatile.has_value() && !*m_knownIsVolatile)
+        return SetNonVolatileResult::Valid;
+    uint32_t currentState = 0;
+    IOReturn ret = IOSurfaceSetPurgeable(m_surface.get(), kIOSurfacePurgeableKeepCurrent, &currentState);
+    if (ret != kIOReturnSuccess) {
+        ASSERT_NOT_REACHED();
+        m_knownIsVolatile = std::nullopt;
+        return SetNonVolatileResult::Valid;
+    }
+    m_knownIsVolatile = currentState != kIOSurfacePurgeableNonVolatile;
+    return currentState == kIOSurfacePurgeableEmpty ? SetNonVolatileResult::Empty : SetNonVolatileResult::Valid;
 }
 
 IOSurfaceSeed IOSurface::seed() const
@@ -668,25 +834,27 @@ IOSurfaceSeed IOSurface::seed() const
 
 bool IOSurface::isVolatile() const
 {
-    uint32_t previousState = 0;
-    IOReturn ret = IOSurfaceSetPurgeable(m_surface.get(), kIOSurfacePurgeableKeepCurrent, &previousState);
-    ASSERT_UNUSED(ret, ret == kIOReturnSuccess);
-    return previousState != kIOSurfacePurgeableNonVolatile;
+    if (!m_knownIsVolatile)
+        (void) state();
+    return m_knownIsVolatile.value_or(false);
 }
 
 SetNonVolatileResult IOSurface::setVolatile(bool isVolatile)
 {
+    if (!isVolatile && m_knownIsVolatile.has_value() && !*m_knownIsVolatile)
+        return SetNonVolatileResult::Valid;
     uint32_t previousState = 0;
     IOReturn ret = IOSurfaceSetPurgeable(m_surface.get(), isVolatile ? kIOSurfacePurgeableVolatile : kIOSurfacePurgeableNonVolatile, &previousState);
-    ASSERT_UNUSED(ret, ret == kIOReturnSuccess);
-
-    if (previousState == kIOSurfacePurgeableEmpty)
-        return SetNonVolatileResult::Empty;
-
-    return SetNonVolatileResult::Valid;
+    if (ret != kIOReturnSuccess) {
+        ASSERT_NOT_REACHED();
+        m_knownIsVolatile = std::nullopt;
+        return SetNonVolatileResult::Valid;
+    }
+    m_knownIsVolatile = isVolatile;
+    return previousState == kIOSurfacePurgeableEmpty ? SetNonVolatileResult::Empty : SetNonVolatileResult::Valid;
 }
 
-DestinationColorSpace IOSurface::colorSpace()
+ColorSpace IOSurface::colorSpace()
 {
     ensureColorSpace();
     return *m_colorSpace;
@@ -727,15 +895,26 @@ void IOSurface::convertToFormat(IOSurfacePool* pool, std::unique_ptr<IOSurface>&
 {
     static IOSurfaceAcceleratorRef accelerator;
     if (!accelerator) {
-        IOSurfaceAcceleratorCreate(nullptr, nullptr, &accelerator);
+        IOSurfaceAcceleratorRef newAccelerator = nullptr;
+        IOSurfaceAcceleratorCreate(nullptr, nullptr, &newAccelerator);
 
-        if (!accelerator) {
+        if (!newAccelerator) {
             callback(nullptr);
             return;
         }
 
-        auto runLoopSource = IOSurfaceAcceleratorGetRunLoopSource(accelerator);
+        // Without a run loop source, the accelerator can never deliver a completion, so
+        // don't cache it; every subsequent transform would silently never complete.
+        auto runLoopSource = IOSurfaceAcceleratorGetRunLoopSource(newAccelerator);
+        if (!runLoopSource) {
+            RELEASE_LOG_ERROR(IOSurface, "IOSurface::convertToFormat: failed to get a run loop source for the accelerator");
+            CFRelease(newAccelerator);
+            callback(nullptr);
+            return;
+        }
+
         CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, kCFRunLoopDefaultMode);
+        accelerator = newAccelerator;
     }
 
     if (inSurface->pixelFormat() == format) {
@@ -753,21 +932,39 @@ void IOSurface::convertToFormat(IOSurfacePool* pool, std::unique_ptr<IOSurface>&
     IOSurfaceAcceleratorCompletion completion;
     completion.completionRefCon = new WTF::Function<void(std::unique_ptr<IOSurface>)> (WTF::move(callback));
     completion.completionRefCon2 = destinationSurface.release();
-    completion.completionCallback = [](void *completionRefCon, IOReturn, void * completionRefCon2) {
+    completion.completionCallback = [](void *completionRefCon, IOReturn result, void * completionRefCon2) {
         auto* callback = static_cast<WTF::Function<void(std::unique_ptr<IOSurface>)>*>(completionRefCon);
         auto destinationSurface = std::unique_ptr<IOSurface>(static_cast<IOSurface*>(completionRefCon2));
-        
-        (*callback)(WTF::move(destinationSurface));
+
+        (*callback)(result == kIOReturnSuccess ? WTF::move(destinationSurface) : nullptr);
         delete callback;
     };
 
     NSDictionary *options = @{ (id)kIOSurfaceAcceleratorUnwireSurfaceKey : @YES };
 
     IOReturn ret = IOSurfaceAcceleratorTransformSurface(accelerator, inSurface->surface(), destinationIOSurfaceRef, (CFDictionaryRef)options, nullptr, &completion, nullptr, nullptr);
-    ASSERT_UNUSED(ret, ret == kIOReturnSuccess);
+    if (ret != kIOReturnSuccess) {
+        RELEASE_LOG_ERROR(IOSurface, "IOSurface::convertToFormat: IOSurfaceAcceleratorTransformSurface failed for size (%d, %d), error %d", inSurface->size().width(), inSurface->size().height(), ret);
+        completion.completionCallback(completion.completionRefCon, ret, completion.completionRefCon2);
+        return;
+    }
 }
 
 #endif // HAVE(IOSURFACE_ACCELERATOR)
+
+#if HAVE(IOSURFACE_ALPHA_CHANNEL_MODE)
+void IOSurface::setContentsAlphaPremultiplication(std::optional<AlphaPremultiplication> alphaPremultiplication)
+{
+    if (m_contentsAlphaPremultiplication == alphaPremultiplication)
+        return;
+    m_contentsAlphaPremultiplication = alphaPremultiplication;
+    if (!alphaPremultiplication) {
+        IOSurfaceRemoveValue(m_surface.get(), kIOSurfaceAlphaChannelMode);
+        return;
+    }
+    IOSurfaceSetValue(m_surface.get(), kIOSurfaceAlphaChannelMode, alphaChannelModeValue(*alphaPremultiplication));
+}
+#endif
 
 void IOSurface::setOwnershipIdentity(const ProcessIdentity& resourceOwner)
 {
@@ -800,7 +997,7 @@ void IOSurface::setOwnershipIdentity(IOSurfaceRef surface, const ProcessIdentity
 void IOSurface::setColorSpaceProperty()
 {
     ASSERT(m_colorSpace);
-    auto colorSpaceProperties = adoptCF(CGColorSpaceCopyPropertyList(m_colorSpace->protectedPlatformColorSpace().get()));
+    auto colorSpaceProperties = adoptCF(CGColorSpaceCopyPropertyList(protect(m_colorSpace->platformColorSpace()).get()));
     IOSurfaceSetValue(m_surface.get(), kIOSurfaceColorSpace, colorSpaceProperties.get());
 }
 
@@ -809,7 +1006,7 @@ void IOSurface::ensureColorSpace()
     if (m_colorSpace)
         return;
 
-    m_colorSpace = surfaceColorSpace().value_or(DestinationColorSpace::SRGB());
+    m_colorSpace = surfaceColorSpace().value_or(ColorSpace::SRGB());
 }
 
 #if HAVE(SUPPORT_HDR_DISPLAY)
@@ -836,7 +1033,7 @@ void IOSurface::loadContentEDRHeadroom()
 }
 #endif
 
-std::optional<DestinationColorSpace> IOSurface::surfaceColorSpace() const
+std::optional<ColorSpace> IOSurface::surfaceColorSpace() const
 {
     auto propertyList = adoptCF(IOSurfaceCopyValue(m_surface.get(), kIOSurfaceColorSpace));
     if (!propertyList)
@@ -846,7 +1043,7 @@ std::optional<DestinationColorSpace> IOSurface::surfaceColorSpace() const
     if (!colorSpaceCF)
         return { };
     
-    return DestinationColorSpace { colorSpaceCF };
+    return ColorSpace { colorSpaceCF };
 }
 
 IOSurface::Name IOSurface::nameForRenderingPurpose(RenderingPurpose purpose)
@@ -913,19 +1110,11 @@ TextStream& operator<<(TextStream& ts, IOSurface::Format format)
         ts << "RGBA16F"_s;
         break;
 #endif
-    }
-    return ts;
-}
-
-static TextStream& operator<<(TextStream& ts, SetNonVolatileResult state)
-{
-    switch (state) {
-    case SetNonVolatileResult::Valid:
-        ts << "valid"_s;
+#if ENABLE(PIXEL_FORMAT_RGBA16)
+    case IOSurface::Format::RGBA16:
+        ts << "RGBA16"_s;
         break;
-    case SetNonVolatileResult::Empty:
-        ts << "empty"_s;
-        break;
+#endif
     }
     return ts;
 }
@@ -937,3 +1126,7 @@ TextStream& operator<<(TextStream& ts, const IOSurface& surface)
 }
 
 } // namespace WebCore
+
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/IOSurfaceAdditionsAfter.mm>)
+#import <WebKitAdditions/IOSurfaceAdditionsAfter.mm>
+#endif

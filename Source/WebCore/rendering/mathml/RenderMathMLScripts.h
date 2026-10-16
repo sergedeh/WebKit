@@ -39,26 +39,26 @@ class RenderMathMLScripts : public RenderMathMLRow {
     WTF_MAKE_TZONE_ALLOCATED(RenderMathMLScripts);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderMathMLScripts);
 public:
-    RenderMathMLScripts(Type, MathMLScriptsElement&, RenderStyle&&);
+    RenderMathMLScripts(Type, MathMLScriptsElement&, Style::ComputedStyle&&);
     virtual ~RenderMathMLScripts();
 
-    RenderMathMLOperator* unembellishedOperator() const final;
+    CheckedPtr<RenderMathMLOperator> unembellishedOperator() const final;
 
 protected:
     bool isRenderMathMLScripts() const override { return true; }
     ASCIILiteral renderName() const override { return "RenderMathMLScripts"_s; }
-    MathMLScriptsElement::ScriptType scriptType() const;
-    void computePreferredLogicalWidths() override;
+    MathMLScriptsElement::ScriptType LEGACY_NODELETE scriptType() const;
+    void computeIntrinsicLogicalWidthContributions() override;
     void layoutBlock(RelayoutChildren, LayoutUnit pageLogicalHeight = 0_lu) override;
 
 private:
-    MathMLScriptsElement& element() const;
+    MathMLScriptsElement& LEGACY_NODELETE element() const;
     std::optional<LayoutUnit> firstLineBaseline() const final;
     struct ReferenceChildren {
-        RenderBox* base;
-        RenderBox* prescriptDelimiter;
-        RenderBox* firstPostScript;
-        RenderBox* firstPreScript;
+        const CheckedPtr<RenderBox> base;
+        const CheckedPtr<RenderBox> prescriptDelimiter;
+        const CheckedPtr<RenderBox> firstPostScript;
+        const CheckedPtr<RenderBox> firstPreScript;
     };
     std::optional<ReferenceChildren> validateAndGetReferenceChildren() const;
     LayoutUnit spaceAfterScript();

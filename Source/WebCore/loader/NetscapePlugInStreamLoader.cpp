@@ -32,6 +32,7 @@
 #include "DocumentLoader.h"
 #include "LoaderStrategy.h"
 #include "PlatformStrategies.h"
+#include <WebCore/HTTPStatusCodes.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/Ref.h>
 
@@ -41,10 +42,9 @@
 
 namespace WebCore {
 
-// FIXME: Skip Content Security Policy check when associated plugin element is in a user agent shadow tree.
-// See <https://bugs.webkit.org/show_bug.cgi?id=146663>.
-NetscapePlugInStreamLoader::NetscapePlugInStreamLoader(LocalFrame& frame, NetscapePlugInStreamLoaderClient& client)
-    : ResourceLoader(frame, ResourceLoaderOptions(
+static ResourceLoaderOptions plugInStreamLoaderOptions(FetchOptions::Destination destination)
+{
+    ResourceLoaderOptions options(
         SendCallbackPolicy::SendCallbacks,
         ContentSniffingPolicy::SniffContent,
         DataBufferingPolicy::DoNotBufferData,
@@ -56,7 +56,17 @@ NetscapePlugInStreamLoader::NetscapePlugInStreamLoader(LocalFrame& frame, Netsca
         CertificateInfoPolicy::DoNotIncludeCertificateInfo,
         ContentSecurityPolicyImposition::DoPolicyCheck,
         DefersLoadingPolicy::AllowDefersLoading,
-        CachingPolicy::AllowCaching))
+        CachingPolicy::AllowCaching);
+
+    options.destination = destination;
+
+    return options;
+}
+
+// FIXME: Skip Content Security Policy check when associated plugin element is in a user agent shadow tree.
+// See <https://bugs.webkit.org/show_bug.cgi?id=146663>.
+NetscapePlugInStreamLoader::NetscapePlugInStreamLoader(LocalFrame& frame, NetscapePlugInStreamLoaderClient& client, FetchOptions::Destination destination)
+    : ResourceLoader(frame, plugInStreamLoaderOptions(destination))
     , m_client(client)
 {
 #if ENABLE(CONTENT_EXTENSIONS)
@@ -66,12 +76,12 @@ NetscapePlugInStreamLoader::NetscapePlugInStreamLoader(LocalFrame& frame, Netsca
 
 NetscapePlugInStreamLoader::~NetscapePlugInStreamLoader() = default;
 
-void NetscapePlugInStreamLoader::create(LocalFrame& frame, NetscapePlugInStreamLoaderClient& client, ResourceRequest&& request, CompletionHandler<void(RefPtr<NetscapePlugInStreamLoader>&&)>&& completionHandler)
+void NetscapePlugInStreamLoader::create(LocalFrame& frame, NetscapePlugInStreamLoaderClient& client, ResourceRequest&& request, FetchOptions::Destination destination, CompletionHandler<void(RefPtr<NetscapePlugInStreamLoader>&&)>&& completionHandler)
 {
     if (request.isNull())
         return completionHandler(nullptr);
 
-    Ref loader = adoptRef(*new NetscapePlugInStreamLoader(frame, client));
+    Ref loader = adoptRef(*new NetscapePlugInStreamLoader(frame, client, destination));
     loader->init(WTF::move(request), [loader, completionHandler = WTF::move(completionHandler)] (bool initialized) mutable {
         if (!initialized)
             return completionHandler(nullptr);
@@ -96,7 +106,7 @@ void NetscapePlugInStreamLoader::init(ResourceRequest&& request, CompletionHandl
         if (!success)
             return completionHandler(false);
         ASSERT(!reachedTerminalState());
-        protectedDocumentLoader()->addPlugInStreamLoader(*this);
+        protect(documentLoader())->addPlugInStreamLoader(*this);
         m_isInitialized = true;
         completionHandler(true);
     });
@@ -108,7 +118,7 @@ void NetscapePlugInStreamLoader::willSendRequest(ResourceRequest&& request, cons
     if (!client)
         return;
 
-    client->willSendRequest(this, WTF::move(request), redirectResponse, [protectedThis = Ref { *this }, redirectResponse, callback = WTF::move(callback)] (ResourceRequest&& request) mutable {
+    client->willSendRequest(*this, WTF::move(request), redirectResponse, [protectedThis = Ref { *this }, redirectResponse, callback = WTF::move(callback)](ResourceRequest&& request) mutable {
         if (!request.isNull())
             protectedThis->willSendRequestInternal(WTF::move(request), redirectResponse, WTF::move(callback));
         else
@@ -118,18 +128,17 @@ void NetscapePlugInStreamLoader::willSendRequest(ResourceRequest&& request, cons
 
 void NetscapePlugInStreamLoader::didReceiveResponse(ResourceResponse&& response, CompletionHandler<void()>&& policyCompletionHandler)
 {
-    Ref<NetscapePlugInStreamLoader> protectedThis(*this);
     CompletionHandlerCallingScope completionHandlerCaller(WTF::move(policyCompletionHandler));
 
     if (RefPtr client = m_client.get())
-        client->didReceiveResponse(this, response);
+        client->didReceiveResponse(*this, response);
 
     // Don't continue if the stream is cancelled
     if (!m_client)
         return;
 
     ResourceResponse responseForClosure = response;
-    ResourceLoader::didReceiveResponse(WTF::move(response), [this, protectedThis = WTF::move(protectedThis), response = WTF::move(responseForClosure), completionHandlerCaller = WTF::move(completionHandlerCaller)]() mutable {
+    ResourceLoader::didReceiveResponse(WTF::move(response), [this, protectedThis = Ref { *this }, response = WTF::move(responseForClosure), completionHandlerCaller = WTF::move(completionHandlerCaller)]() mutable {
         // Don't continue if the stream is cancelled
         RefPtr client = m_client.get();
         if (!client)
@@ -142,17 +151,15 @@ void NetscapePlugInStreamLoader::didReceiveResponse(ResourceResponse&& response,
             return;
 
         // Status code can be null when serving from a Web archive.
-        if (response.httpStatusCode() && (response.httpStatusCode() < 100 || response.httpStatusCode() >= 400))
+        if (response.httpStatusCode() && (response.httpStatusCode() < httpStatus100Continue || response.httpStatusCode() >= httpStatus400BadRequest))
             cancel(platformStrategies()->loaderStrategy()->fileDoesNotExistError(response));
     });
 }
 
 void NetscapePlugInStreamLoader::didReceiveBuffer(const FragmentedSharedBuffer& buffer, long long encodedDataLength, DataPayloadType dataPayloadType)
 {
-    Ref protectedThis { *this };
-
     if (RefPtr client = m_client.get())
-        client->didReceiveData(this, buffer.makeContiguous());
+        client->didReceiveData(*this, buffer.makeContiguous());
 
     ResourceLoader::didReceiveBuffer(buffer, encodedDataLength, dataPayloadType);
 }
@@ -164,7 +171,7 @@ void NetscapePlugInStreamLoader::didFinishLoading(const NetworkLoadMetrics& netw
     notifyDone();
 
     if (RefPtr client = m_client.get())
-        client->didFinishLoading(this);
+        client->didFinishLoading(*this);
     ResourceLoader::didFinishLoading(networkLoadMetrics);
 }
 
@@ -175,14 +182,14 @@ void NetscapePlugInStreamLoader::didFail(const ResourceError& error)
     notifyDone();
 
     if (RefPtr client = m_client.get())
-        client->didFail(this, error);
+        client->didFail(*this, error);
     ResourceLoader::didFail(error);
 }
 
 void NetscapePlugInStreamLoader::willCancel(const ResourceError& error)
 {
     if (RefPtr client = m_client.get())
-        client->didFail(this, error);
+        client->didFail(*this, error);
 }
 
 void NetscapePlugInStreamLoader::didCancel(LoadWillContinueInAnotherProcess)
@@ -197,6 +204,12 @@ void NetscapePlugInStreamLoader::notifyDone()
 
     if (RefPtr documentLoader = this->documentLoader())
         documentLoader->removePlugInStreamLoader(*this);
+
+    // Prevent double removal from DocumentLoader::m_plugInStreamLoaders.
+    // This can happen when re-entrant IPC during a sync print operation
+    // triggers layout that destroys the PluginView, causing stream
+    // cancellation while didFinishLoading is still on the stack.
+    m_isInitialized = false;
 }
 
 

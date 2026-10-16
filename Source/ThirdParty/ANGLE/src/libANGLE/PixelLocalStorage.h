@@ -11,11 +11,8 @@
 #ifndef LIBANGLE_PIXEL_LOCAL_STORAGE_H_
 #define LIBANGLE_PIXEL_LOCAL_STORAGE_H_
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #include "GLSLANG/ShaderLang.h"
+#include "common/unsafe_buffers.h"
 #include "libANGLE/Caps.h"
 #include "libANGLE/ImageIndex.h"
 #include "libANGLE/angletypes.h"
@@ -43,22 +40,32 @@ class PixelLocalStoragePlane : angle::NonCopyable, public angle::ObserverInterfa
     void onContextObjectsLost();
 
     void deinitialize(Context *);
-    void setMemoryless(Context *, GLenum internalformat);
-    void setTextureBacked(Context *, Texture *, int level, int layer);
+    void setMemoryless(Context *, GLenum internalformat, GLbitfield usage);
+    void setTextureBacked(Context *, Texture *, int level, int layer, GLbitfield usage);
     void onSubjectStateChange(angle::SubjectIndex, angle::SubjectMessage) override;
 
     // Returns true if the plane is deinitialized, either explicitly or implicitly via deleting the
     // texture that was attached to it.
     bool isDeinitialized() const;
 
+    // Getters for external queries
     GLenum getInternalformat() const { return mInternalformat; }
+    GLuint getTextureName() const { return mMemoryless ? 0 : mTextureID.value; }
+    GLuint getTextureLevel() const { return mMemoryless ? 0 : mTextureImageIndex.getLevelIndex(); }
+    GLint getTextureLayer() const
+    {
+        // GL uses layer 0 for 2D textures; ImageIndex represents them without a layer.
+        return mMemoryless || !mTextureImageIndex.hasLayer() ? 0
+                                                             : mTextureImageIndex.getLayerIndex();
+    }
+    GLbitfield getUsage() const { return mUsage; }
+
     bool isMemoryless() const { return mMemoryless; }
     TextureID getTextureID() const { return mTextureID; }
-
-    // Implements glGetIntegeri_v() for GL_PIXEL_LOCAL_FORMAT_ANGLE,
-    // GL_PIXEL_LOCAL_TEXTURE_NAME_ANGLE, GL_PIXEL_LOCAL_TEXTURE_LEVEL_ANGLE, and
-    // GL_PIXEL_LOCAL_TEXTURE_LAYER_ANGLE
-    GLint getIntegeri(GLenum target) const;
+    bool isAlwaysNoncoherent() const
+    {
+        return mUsage & GL_PIXEL_LOCAL_USAGE_ALWAYS_NONCOHERENT_BIT_ANGLE;
+    }
 
     // If this plane is texture backed, stores the bound texture image's {width, height, 0} to
     // Extents and returns true. Otherwise returns false, meaning the plane is either deinitialized
@@ -94,13 +101,31 @@ class PixelLocalStoragePlane : angle::NonCopyable, public angle::ObserverInterfa
     const ImageIndex &getTextureImageIndex() const { return mTextureImageIndex; }
     const Texture *getBackingTexture(const Context *context) const;
 
-    void setClearValuef(const GLfloat value[4]) { memcpy(mClearValuef.data(), value, 4 * 4); }
-    void setClearValuei(const GLint value[4]) { memcpy(mClearValuei.data(), value, 4 * 4); }
-    void setClearValueui(const GLuint value[4]) { memcpy(mClearValueui.data(), value, 4 * 4); }
+    void setClearValuef(const GLfloat value[4])
+    {
+        ANGLE_UNSAFE_TODO(memcpy(mClearValuef.data(), value, 4 * 4));
+    }
+    void setClearValuei(const GLint value[4])
+    {
+        ANGLE_UNSAFE_TODO(memcpy(mClearValuei.data(), value, 4 * 4));
+    }
+    void setClearValueui(const GLuint value[4])
+    {
+        ANGLE_UNSAFE_TODO(memcpy(mClearValueui.data(), value, 4 * 4));
+    }
 
-    void getClearValuef(GLfloat value[4]) const { memcpy(value, mClearValuef.data(), 4 * 4); }
-    void getClearValuei(GLint value[4]) const { memcpy(value, mClearValuei.data(), 4 * 4); }
-    void getClearValueui(GLuint value[4]) const { memcpy(value, mClearValueui.data(), 4 * 4); }
+    void getClearValuef(GLfloat value[4]) const
+    {
+        ANGLE_UNSAFE_TODO(memcpy(value, mClearValuef.data(), 4 * 4));
+    }
+    void getClearValuei(GLint value[4]) const
+    {
+        ANGLE_UNSAFE_TODO(memcpy(value, mClearValuei.data(), 4 * 4));
+    }
+    void getClearValueui(GLuint value[4]) const
+    {
+        ANGLE_UNSAFE_TODO(memcpy(value, mClearValueui.data(), 4 * 4));
+    }
 
     // True if PLS is currently active and this plane is enabled.
     bool isActive() const { return mActive; }
@@ -111,6 +136,7 @@ class PixelLocalStoragePlane : angle::NonCopyable, public angle::ObserverInterfa
     bool mMemoryless       = false;
     TextureID mTextureID   = TextureID();
     ImageIndex mTextureImageIndex;
+    GLbitfield mUsage = GL_NONE;
 
     // Clear value state.
     std::array<GLfloat, 4> mClearValuef{};
@@ -153,16 +179,22 @@ class PixelLocalStorage
     const PixelLocalStoragePlaneVector &getPlanes() { return mPlanes; }
 
     size_t interruptCount() const { return mInterruptCount; }
+    GLsizei activePlanesAtInterrupt() const { return mActivePlanesAtInterrupt; }
 
     // ANGLE_shader_pixel_local_storage API.
     void deinitialize(Context *context, GLint plane) { mPlanes[plane].deinitialize(context); }
-    void setMemoryless(Context *context, GLint plane, GLenum internalformat)
+    void setMemoryless(Context *context, GLint plane, GLenum internalformat, GLbitfield usage)
     {
-        mPlanes[plane].setMemoryless(context, internalformat);
+        mPlanes[plane].setMemoryless(context, internalformat, usage);
     }
-    void setTextureBacked(Context *context, GLint plane, Texture *tex, int level, int layer)
+    void setTextureBacked(Context *context,
+                          GLint plane,
+                          Texture *tex,
+                          int level,
+                          int layer,
+                          GLbitfield usage)
     {
-        mPlanes[plane].setTextureBacked(context, tex, level, layer);
+        mPlanes[plane].setTextureBacked(context, tex, level, layer, usage);
     }
     void setClearValuef(GLint plane, const GLfloat val[4]) { mPlanes[plane].setClearValuef(val); }
     void setClearValuei(GLint plane, const GLint val[4]) { mPlanes[plane].setClearValuei(val); }

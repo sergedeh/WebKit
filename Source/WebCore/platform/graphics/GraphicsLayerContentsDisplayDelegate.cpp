@@ -28,6 +28,8 @@
 
 #if USE(CA)
 #include "GraphicsLayerCA.h"
+#include "IOSurface.h"
+#include "PlatformCALayerDelegatedContents.h"
 #endif
 
 namespace WebCore {
@@ -43,6 +45,23 @@ GraphicsLayerCompositingCoordinatesOrientation GraphicsLayerContentsDisplayDeleg
 {
     return GraphicsLayerCA::defaultContentsOrientation;
 }
+
+std::optional<PlatformCALayerDelegatedContents> GraphicsLayerContentsDisplayDelegate::delegatedContents() const
+{
+    return std::nullopt;
+}
 #endif
 
+#if USE(COORDINATED_GRAPHICS) && USE(SKIA)
+void GraphicsLayerContentsDisplayDelegate::setThreadSafeGrContext(const sk_sp<GrContextThreadSafeProxy>& threadSafeGrContext)
+{
+    m_threadSafeGrContext = threadSafeGrContext;
 }
+
+const sk_sp<GrContextThreadSafeProxy>& GraphicsLayerContentsDisplayDelegate::threadSafeGrContext() const
+{
+    return m_threadSafeGrContext;
+}
+#endif
+
+} // namespace WebCore

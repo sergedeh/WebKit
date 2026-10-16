@@ -39,14 +39,13 @@ public:
     SharedStringHashTableReadOnly();
     ~SharedStringHashTableReadOnly();
 
-    bool contains(WebCore::SharedStringHash) const;
+    bool LEGACY_NODELETE contains(WebCore::SharedStringHash) const;
 
     WebCore::SharedMemory* sharedMemory() const { return m_sharedMemory.get(); }
-    RefPtr<WebCore::SharedMemory> protectedSharedMemory() const;
     void setSharedMemory(RefPtr<WebCore::SharedMemory>&&);
 
 protected:
-    WebCore::SharedStringHash* findSlot(WebCore::SharedStringHash) const;
+    WebCore::SharedStringHash* LEGACY_NODELETE findSlot(WebCore::SharedStringHash) const;
 
     RefPtr<WebCore::SharedMemory> m_sharedMemory;
     unsigned m_tableSizeMask { 0 };

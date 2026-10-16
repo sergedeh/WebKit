@@ -31,6 +31,7 @@
 
 #include "CachedRawResource.h"
 #include "CachedResourceRequest.h"
+#include "ContentType.h"
 #include "CrossOriginAccessControl.h"
 #include "DocumentQuirks.h"
 #include "DocumentResourceLoader.h"
@@ -40,8 +41,12 @@
 #include "HTTPHeaderNames.h"
 #include "InspectorInstrumentation.h"
 #include "LocalFrameLoaderClient.h"
+#include "NodeInlinesLight.h"
 #include "OriginAccessPatterns.h"
 #include "SecurityOrigin.h"
+#include "Settings.h"
+#include <JavaScriptCore/RegularExpression.h>
+#include <WebCore/HTTPStatusCodes.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/SortedArrayMap.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -84,14 +89,19 @@ void MediaResourceLoader::contextDestroyed()
     m_element = nullptr;
 }
 
-void MediaResourceLoader::sendH2Ping(const URL& url, CompletionHandler<void(Expected<Seconds, ResourceError>&&)>&& completionHandler)
+void MediaResourceLoader::sendH2Ping(const URL& url, CompletionHandler<void(std::expected<Seconds, ResourceError>&&)>&& completionHandler)
 {
     assertIsMainThread();
 
-    if (!m_document || !m_document->frame())
+    RefPtr document = this->document();
+    if (!document)
         return completionHandler(makeUnexpected(internalError(url)));
 
-    m_document->protectedFrame()->loader().client().sendH2Ping(url, WTF::move(completionHandler));
+    RefPtr frame = document->frame();
+    if (!frame)
+        return completionHandler(makeUnexpected(internalError(url)));
+
+    frame->loader().client().sendH2Ping(url, WTF::move(completionHandler));
 }
 
 static LoadedFromOpaqueSource computeLoadedFromOpaqueSource(const Document& document, const HashSet<URL>& nonOpaqueLoadURLs, const URL& url, const std::optional<LoadedFromOpaqueSource> loadedFromOpaqueSource)
@@ -149,16 +159,20 @@ RefPtr<PlatformMediaResource> MediaResourceLoader::requestResource(ResourceReque
         cachingPolicy };
     loaderOptions.sameOriginDataURLFlag = SameOriginDataURLFlag::Set;
     loaderOptions.destination = m_destination;
-    loaderOptions.loadedFromOpaqueSource = computeLoadedFromOpaqueSource(*m_document, m_nonOpaqueLoadURLs, request.url(), m_loadedFromOpaqueSource);
+    loaderOptions.loadedFromOpaqueSource = computeLoadedFromOpaqueSource(*document, m_nonOpaqueLoadURLs, request.url(), m_loadedFromOpaqueSource);
     auto cachedRequest = createPotentialAccessControlRequest(WTF::move(request), WTF::move(loaderOptions), *document, m_crossOriginMode);
     if (RefPtr element = m_element.get())
         cachedRequest.setInitiator(*element);
 
-    auto resource = m_document->protectedCachedResourceLoader()->requestMedia(WTF::move(cachedRequest)).value_or(nullptr);
+    RefPtr<CachedRawResource> resource;
+    if (auto result = protect(document->cachedResourceLoader())->requestMedia(WTF::move(cachedRequest)))
+        resource = WTF::move(result.value());
     if (!resource)
         return nullptr;
 
     Ref mediaResource = MediaResource::create(*this, WTF::move(resource));
+    if (document->quirks().shouldSuppressHLSSubtitles())
+        mediaResource->setShouldSuppressHLSSubtitles();
     m_resources.add(mediaResource.get());
 
     return mediaResource;
@@ -189,11 +203,6 @@ Document* MediaResourceLoader::document()
     return m_document.get();
 }
 
-RefPtr<Document> MediaResourceLoader::protectedDocument()
-{
-    return document();
-}
-
 const String& MediaResourceLoader::crossOriginMode() const
 {
     assertIsMainThread();
@@ -211,7 +220,7 @@ Vector<ResourceResponse> MediaResourceLoader::responsesForTesting() const
 
 static bool isManifestMIMEType(const URL& url, const String& mimeType)
 {
-    static constexpr SortedArraySet staticManifestMIMETypesSet { std::to_array<ComparableLettersLiteral>({
+    static constexpr SortedArraySet staticManifestMIMETypesSet { WTF::toArray<ComparableLettersLiteral>({
         "application/json"_s,
         "application/vnd.apple.mpegurl"_s,
         "application/vnd.apple.steering-list"_s,
@@ -235,7 +244,7 @@ bool MediaResourceLoader::verifyMediaResponse(const URL& requestURL, const Resou
         m_loadedFromOpaqueSource = LoadedFromOpaqueSource::Yes;
 
     // FIXME: We should probably implement https://html.spec.whatwg.org/multipage/media.html#verify-a-media-response
-    if (!requestURL.protocolIsInHTTPFamily() || response.httpStatusCode() != 206 || !response.contentRange().isValid() || !contextOrigin)
+    if (!requestURL.protocolIsInHTTPFamily() || response.httpStatusCode() != httpStatus206PartialContent || !response.contentRange().isValid() || !contextOrigin)
         return true;
 
     auto ensureResult = m_validationLoadInformations.ensure(requestURL, [&] () -> ValidationInformation {
@@ -250,7 +259,8 @@ bool MediaResourceLoader::verifyMediaResponse(const URL& requestURL, const Resou
 
     auto& validationInformation = ensureResult.iterator->value;
 
-    if (!validationInformation.origin->isOpaque() && !validationInformation.origin->canRequest(response.url(), OriginAccessPatternsForWebProcess::singleton()))
+    RefPtr origin = validationInformation.origin;
+    if (!origin->isOpaque() && !origin->canRequest(response.url(), OriginAccessPatternsForWebProcess::singleton()))
         validationInformation.origin = SecurityOrigin::createOpaque();
     if (response.tainting() == ResourceResponse::Tainting::Opaque)
         validationInformation.usedOpaqueResponse = true;
@@ -260,7 +270,7 @@ bool MediaResourceLoader::verifyMediaResponse(const URL& requestURL, const Resou
     if (!validationInformation.usedServiceWorker || !validationInformation.usedOpaqueResponse)
         return true;
 
-    return validationInformation.origin->canRequest(response.url(), OriginAccessPatternsForWebProcess::singleton());
+    return protect(validationInformation.origin)->canRequest(response.url(), OriginAccessPatternsForWebProcess::singleton());
 }
 
 void MediaResourceLoader::redirectReceived(const URL& url)
@@ -282,12 +292,7 @@ MediaResource::MediaResource(MediaResourceLoader& loader, CachedResourceHandle<C
     assertIsMainThread();
 
     ASSERT(resource);
-    protectedResource()->addClient(*this);
-}
-
-CachedResourceHandle<CachedRawResource> MediaResource::protectedResource() const
-{
-    return m_resource;
+    protect(m_resource)->addClient(*this);
 }
 
 MediaResource::~MediaResource()
@@ -295,7 +300,7 @@ MediaResource::~MediaResource()
     assertIsMainThread();
 
     if (m_resource)
-        protectedResource()->removeClient(*this);
+        protect(m_resource)->removeClient(*this);
     m_loader->removeResource(*this);
 }
 
@@ -305,7 +310,7 @@ void MediaResource::shutdown()
 
     setClient(nullptr);
 
-    if (CachedResourceHandle resource = std::exchange(m_resource, nullptr))
+    if (RefPtr resource = std::exchange(m_resource, nullptr))
         resource->removeClient(*this);
 }
 
@@ -322,7 +327,7 @@ void MediaResource::responseReceived(const CachedResource& resource, const Resou
     Ref protectedThis { *this };
     if (m_resource->resourceError().isAccessControl()) {
         static NeverDestroyed<const String> consoleMessage("Cross-origin media resource load denied by Cross-Origin Resource Sharing policy."_s);
-        m_loader->protectedDocument()->addConsoleMessage(MessageSource::Security, MessageLevel::Error, consoleMessage.get());
+        protect(m_loader->document())->addConsoleMessage(MessageSource::Security, MessageLevel::Error, consoleMessage.get());
         m_didPassAccessControlCheck.store(false);
         if (RefPtr client = this->client())
             client->accessControlCheckFailed(*this, ResourceError(errorDomainWebKitInternal, 0, response.url(), consoleMessage.get()));
@@ -330,9 +335,9 @@ void MediaResource::responseReceived(const CachedResource& resource, const Resou
         return;
     }
 
-    if (!m_loader->verifyMediaResponse(resource.url(), response, resource.protectedOrigin().get())) {
+    if (!m_loader->verifyMediaResponse(resource.url(), response, protect(resource.origin()).get())) {
         static NeverDestroyed<const String> consoleMessage("Media response origin validation failed."_s);
-        m_loader->protectedDocument()->addConsoleMessage(MessageSource::Security, MessageLevel::Error, consoleMessage.get());
+        protect(m_loader->document())->addConsoleMessage(MessageSource::Security, MessageLevel::Error, consoleMessage.get());
         if (RefPtr client = this->client())
             client->loadFailed(*this, ResourceError(errorDomainWebKitInternal, 0, response.url(), consoleMessage.get()));
         ensureShutdown();
@@ -390,11 +395,48 @@ void MediaResource::dataSent(CachedResource& resource, unsigned long long bytesS
         client->dataSent(*this, bytesSent, totalBytesToBeSent);
 }
 
+void MediaResource::sendPartialPlaylistLine(String& line)
+{
+    if (!line.length())
+        return;
+
+    if (line.contains("EXT-X-MEDIA:TYPE=SUBTITLES"_s))
+        return;
+
+    RefPtr client = protect(*this)->client();
+    if (!client)
+        return;
+
+    static NeverDestroyed<JSC::Yarr::RegularExpression> subtitlesAttr("SUBTITLES=\"[^\"]*\",?"_s);
+    replace(line, subtitlesAttr, ""_s);
+
+    if (auto lineBuffer = utf8Buffer(line)) {
+        client->dataReceived(*this, *lineBuffer);
+        m_partialPlaylistByteCount += lineBuffer->size();
+
+        client->dataReceived(*this, SharedBuffer::create(Vector<uint8_t> {  FillWith { }, 1, '\n' }));
+        ++m_partialPlaylistByteCount;
+    }
+}
+
 void MediaResource::dataReceived(CachedResource& resource, const SharedBuffer& buffer)
 {
     assertIsMainThread();
 
     ASSERT_UNUSED(resource, &resource == m_resource);
+
+    if (m_shouldSuppressHLSSubtitles && resource.response().mimeType() == "application/x-mpegurl"_s) {
+        String partialPlaylist = makeString(m_partialPlaylistLine, String::fromUTF8(byteCast<char>(buffer.span())));
+        auto lines = partialPlaylist.split('\n');
+        if (lines.isEmpty())
+            return;
+
+        m_partialPlaylistLine = lines.takeLast();
+
+        for (auto& line : lines)
+            sendPartialPlaylistLine(line);
+        return;
+    }
 
     Ref protectedThis { *this };
     if (RefPtr client = this->client())
@@ -408,12 +450,30 @@ void MediaResource::notifyFinished(CachedResource& resource, const NetworkLoadMe
     ASSERT_UNUSED(resource, &resource == m_resource);
 
     Ref protectedThis { *this };
-    if (RefPtr client = this->client()) {
-        if (m_resource->loadFailedOrCanceled())
-            client->loadFailed(*this, m_resource->resourceError());
-        else
-            client->loadFinished(*this, metrics);
+    RefPtr client = protect(*this)->client();
+    if (!client)
+        return ensureShutdown();
+
+    if (m_resource->loadFailedOrCanceled()) {
+        client->loadFailed(*this, m_resource->resourceError());
+        return ensureShutdown();
     }
+
+    if (m_shouldSuppressHLSSubtitles && (!m_partialPlaylistLine.isEmpty() || m_partialPlaylistByteCount)) {
+        sendPartialPlaylistLine(m_partialPlaylistLine);
+
+        long long expectedLength = resource.response().expectedContentLength();
+        if (expectedLength > 0 && static_cast<size_t>(expectedLength) > m_partialPlaylistByteCount) {
+            auto remainingBytes = static_cast<size_t>(expectedLength) - m_partialPlaylistByteCount;
+            auto remainingBuffer = SharedBuffer::create(Vector<uint8_t> { FillWith { }, remainingBytes, '\n' });
+            client->dataReceived(*this, remainingBuffer);
+        }
+
+        m_partialPlaylistLine = { };
+        m_partialPlaylistByteCount = 0;
+    }
+
+    client->loadFinished(*this, metrics);
     ensureShutdown();
 }
 

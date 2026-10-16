@@ -59,8 +59,8 @@ class WebXRWebGLLayer : public WebXRLayer, private CanvasObserver, public CanMak
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(WebXRWebGLLayer);
 public:
     using WebXRRenderingContext = Variant<
-        RefPtr<WebGLRenderingContext>,
-        RefPtr<WebGL2RenderingContext>
+        Ref<WebGLRenderingContext>,
+        Ref<WebGL2RenderingContext>
     >;
 
     static ExceptionOr<Ref<WebXRWebGLLayer>> create(WebXRSession&, WebXRRenderingContext&&, const XRWebGLLayerInit&);
@@ -80,7 +80,7 @@ public:
 
     static double getNativeFramebufferScaleFactor(const WebXRSession&);
 
-    const WebXRSession* session() { return m_session.get(); }
+    const WebXRSession* session();
 
     bool isCompositionEnabled() const { return m_isCompositionEnabled; }
 
@@ -90,7 +90,9 @@ public:
 
     // WebXRLayer
     void startFrame(PlatformXR::FrameData&) final;
-    PlatformXR::Device::Layer endFrame() final;
+    PlatformXR::DeviceLayer endFrame() final;
+    PlatformXR::LayerHandle layerHandle() const final;
+    bool supportsViewportScaling() const final;
 
 private:
     WebXRWebGLLayer(WebXRSession&, WebXRRenderingContext&&, std::unique_ptr<WebXROpaqueFramebuffer>&&, bool antialias, bool ignoreDepthValues, bool isCompositionEnabled);
@@ -101,7 +103,7 @@ private:
     static IntSize computeNativeWebGLFramebufferResolution();
     static IntSize computeRecommendedWebGLFramebufferResolution();
 
-    void canvasChanged(CanvasBase&, const FloatRect&) final { };
+    void canvasContentsWillChange(CanvasBase&, const FloatRect&) final { };
     void canvasResized(CanvasBase&) final;
     void canvasDestroyed(CanvasBase&) final { };
 
@@ -110,13 +112,8 @@ private:
     WeakPtr<WebXRSession> m_session;
     WebXRRenderingContext m_context;
 
-    struct ViewportData {
-        Ref<WebXRViewport> viewport;
-        double currentScale { 1.0 };
-    };
-
-    ViewportData m_leftViewportData;
-    ViewportData m_rightViewportData;
+    const Ref<WebXRViewport> m_leftViewport;
+    const Ref<WebXRViewport> m_rightViewport;
     std::unique_ptr<WebXROpaqueFramebuffer> m_framebuffer;
     bool m_antialias { false };
     bool m_ignoreDepthValues { false };

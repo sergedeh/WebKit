@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Google Inc.
+ * Copyright 2019 Google LLC
  *
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
@@ -56,6 +56,9 @@ bool Parse(const skjson::Value& jv, const internal::AnimationBuilder& abuilder, 
     v->fFontFamily = font->fFamily;
     v->fAscent     = font->fAscentPct * -0.01f * v->fTextSize; // negative ascent per SkFontMetrics
     v->fLineShift  = ParseDefault((*jtxt)["ls"], 0.0f);
+#if !defined(SK_DISABLE_SKOTTIE_TRACKING)
+    v->fTextTracking = ParseDefault((*jtxt)["tr"], 0.0f);
+#endif
 
     static constexpr SkTextUtils::Align gAlignMap[] = {
         SkTextUtils::kLeft_Align,  // 'j': 0

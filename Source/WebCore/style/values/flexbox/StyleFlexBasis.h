@@ -24,7 +24,7 @@
 
 #pragma once
 
-#include <WebCore/StyleLengthWrapper.h>
+#include <WebCore/StyleSizeOrKeyword.h>
 
 namespace WebCore {
 namespace Style {
@@ -33,7 +33,7 @@ struct PreferredSize;
 
 // <'flex-basis'> = content | <‘width’>
 // https://drafts.csswg.org/css-flexbox/#propdef-flex-basis
-struct FlexBasis : LengthWrapperBase<LengthPercentage<CSS::NonnegativeUnzoomed>, CSS::Keyword::Content, CSS::Keyword::Auto, CSS::Keyword::MinContent, CSS::Keyword::MaxContent, CSS::Keyword::FitContent, CSS::Keyword::WebkitFillAvailable, CSS::Keyword::Intrinsic, CSS::Keyword::MinIntrinsic> {
+struct FlexBasis : SizeOrKeyword<CSS::Keyword::Content, CSS::Keyword::Auto, CSS::Keyword::MinContent, CSS::Keyword::MaxContent, CSS::Keyword::FitContent, CSS::Keyword::Stretch, CSS::Keyword::WebkitFillAvailable, CSS::Keyword::Intrinsic, CSS::Keyword::MinIntrinsic> {
     using Base::Base;
 
     // `FlexBasis` is a superset of `PreferredSize` and therefore this conversion can fail when type is `content`.
@@ -44,6 +44,7 @@ struct FlexBasis : LengthWrapperBase<LengthPercentage<CSS::NonnegativeUnzoomed>,
     ALWAYS_INLINE bool isMinContent() const { return holdsAlternative<CSS::Keyword::MinContent>(); }
     ALWAYS_INLINE bool isMaxContent() const { return holdsAlternative<CSS::Keyword::MaxContent>(); }
     ALWAYS_INLINE bool isFitContent() const { return holdsAlternative<CSS::Keyword::FitContent>(); }
+    ALWAYS_INLINE bool isStretch() const { return holdsAlternative<CSS::Keyword::Stretch>() || holdsAlternative<CSS::Keyword::WebkitFillAvailable>(); }
     ALWAYS_INLINE bool isFillAvailable() const { return holdsAlternative<CSS::Keyword::WebkitFillAvailable>(); }
     ALWAYS_INLINE bool isIntrinsicKeyword() const { return holdsAlternative<CSS::Keyword::Intrinsic>(); }
     ALWAYS_INLINE bool isMinIntrinsic() const { return holdsAlternative<CSS::Keyword::MinIntrinsic>(); }
@@ -52,20 +53,12 @@ struct FlexBasis : LengthWrapperBase<LengthPercentage<CSS::NonnegativeUnzoomed>,
     {
         return holdsAlternative<CSS::Keyword::MinContent>()
             || holdsAlternative<CSS::Keyword::MaxContent>()
-            || holdsAlternative<CSS::Keyword::WebkitFillAvailable>()
             || holdsAlternative<CSS::Keyword::FitContent>();
     }
-    ALWAYS_INLINE bool isLegacyIntrinsic() const
+    ALWAYS_INLINE bool isIntrinsicOrStretch() const { return isIntrinsic() || isStretch(); }
+    ALWAYS_INLINE bool isSizingKeywordOrAuto() const // Excludes isContent().
     {
-        return holdsAlternative<CSS::Keyword::Intrinsic>()
-            || holdsAlternative<CSS::Keyword::MinIntrinsic>();
-    }
-    ALWAYS_INLINE bool isIntrinsicOrLegacyIntrinsicOrAuto() const
-    {
-        return holdsAlternative<CSS::Keyword::MinContent>()
-            || holdsAlternative<CSS::Keyword::MaxContent>()
-            || holdsAlternative<CSS::Keyword::WebkitFillAvailable>()
-            || holdsAlternative<CSS::Keyword::FitContent>()
+        return isIntrinsicOrStretch()
             || holdsAlternative<CSS::Keyword::Intrinsic>()
             || holdsAlternative<CSS::Keyword::MinIntrinsic>()
             || holdsAlternative<CSS::Keyword::Auto>();

@@ -26,9 +26,8 @@
 #include "config.h"
 #include "ImageBufferAllocator.h"
 
-#include "ByteArrayPixelBuffer.h"
-#include "Float16ArrayPixelBuffer.h"
 #include "ImageBuffer.h"
+#include "TypedArrayPixelBuffer.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -38,7 +37,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(ImageBufferAllocator);
 ImageBufferAllocator::ImageBufferAllocator() = default;
 ImageBufferAllocator::~ImageBufferAllocator() = default;
 
-RefPtr<ImageBuffer> ImageBufferAllocator::createImageBuffer(const FloatSize& size, const DestinationColorSpace& colorSpace, RenderingMode renderingMode) const
+RefPtr<ImageBuffer> ImageBufferAllocator::createImageBuffer(const FloatSize& size, const ColorSpace& colorSpace, RenderingMode renderingMode) const
 {
     return ImageBuffer::create(size, renderingMode, RenderingPurpose::Unspecified, 1, colorSpace, PixelFormat::BGRA8);
 }
@@ -48,6 +47,10 @@ RefPtr<PixelBuffer> ImageBufferAllocator::createPixelBuffer(const PixelBufferFor
 #if ENABLE(PIXEL_FORMAT_RGBA16F)
     if (format.pixelFormat == PixelFormat::RGBA16F)
         return Float16ArrayPixelBuffer::tryCreate(format, size);
+#endif
+#if ENABLE(PIXEL_FORMAT_RGBA16)
+    if (format.pixelFormat == PixelFormat::RGBA16)
+        return Uint16ArrayPixelBuffer::tryCreate(format, size);
 #endif
     return ByteArrayPixelBuffer::tryCreate(format, size);
 }

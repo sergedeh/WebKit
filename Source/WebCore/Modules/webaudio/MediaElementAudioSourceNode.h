@@ -59,11 +59,12 @@ public:
     void ref() const final { AudioNode::ref(); }
     void deref() const final { AudioNode::deref(); }
 
-    Lock& processLock() WTF_RETURNS_LOCK(m_processLock) { return m_processLock; }
+    Lock& processLock() LIFETIME_BOUND WTF_RETURNS_LOCK(m_processLock) { return m_processLock; }
 
 private:
     MediaElementAudioSourceNode(BaseAudioContext&, Ref<HTMLMediaElement>&&);
     void provideInput(AudioBus&, size_t framesToProcess);
+    void updateResamplerIfNeeded() WTF_REQUIRES_LOCK(m_processLock);
 
     double tailTime() const override { return 0; }
     double latencyTime() const override { return 0; }

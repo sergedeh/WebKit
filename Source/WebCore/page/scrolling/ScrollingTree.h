@@ -36,6 +36,7 @@
 #include <WebCore/PlatformWheelEvent.h>
 #include <WebCore/RectEdges.h>
 #include <WebCore/Region.h>
+#include <WebCore/RubberbandingState.h>
 #include <WebCore/ScrollTypes.h>
 #include <WebCore/ScrollingCoordinatorTypes.h>
 #include <WebCore/ScrollingTreeGestureState.h>
@@ -46,6 +47,7 @@
 #include <wtf/MonotonicTime.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/ThreadSafeRefCounted.h>
+#include <wtf/ThreadSafeWeakHashSet.h>
 #include <wtf/TypeCasts.h>
 
 namespace WebCore {
@@ -65,6 +67,12 @@ using FramesPerSecond = unsigned;
 using PlatformDisplayID = uint32_t;
 
 enum class EventTargeting : uint8_t { NodeOnly, Propagate };
+
+enum class RequestsScrollHandling : uint8_t {
+    Unhandled,
+    Handled,
+    Delayed
+};
 
 class ScrollingTree : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<ScrollingTree> {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(ScrollingTree, WEBCORE_EXPORT);
@@ -96,6 +104,11 @@ public:
     bool isRubberBandInProgressForNode(std::optional<ScrollingNodeID>);
     WEBCORE_EXPORT virtual void setRubberBandingInProgressForNode(ScrollingNodeID, bool);
 
+#if HAVE(RUBBER_BANDING)
+    void LEGACY_NODELETE setPendingMainFrameRubberbandingState(std::optional<RubberbandingState>&&) WTF_REQUIRES_LOCK(m_treeLock);
+    std::optional<RubberbandingState> LEGACY_NODELETE takePendingMainFrameRubberbandingState() WTF_REQUIRES_LOCK(m_treeLock);
+#endif
+
     bool isUserScrollInProgressForNode(std::optional<ScrollingNodeID>);
     void setUserScrollInProgressForNode(ScrollingNodeID, bool);
     WEBCORE_EXPORT virtual void clearNodesWithUserScrollInProgress();
@@ -113,7 +126,7 @@ public:
     bool commitTreeStateInternal(std::unique_ptr<ScrollingStateTree>&&, std::optional<LayerHostingContextIdentifier>) WTF_REQUIRES_LOCK(m_treeLock);
 
     WEBCORE_EXPORT virtual void applyLayerPositions();
-    WEBCORE_EXPORT void applyLayerPositionsAfterCommit();
+    void setNeedsApplyLayerPositions() { m_needsApplyLayerPositions = true; }
 
     virtual Ref<ScrollingTreeNode> createScrollingTreeNode(ScrollingNodeType, ScrollingNodeID) = 0;
     
@@ -129,16 +142,15 @@ public:
     virtual void scrollingTreeNodeDidStopAnimatedScroll(ScrollingTreeScrollingNode&) { }
     virtual void scrollingTreeNodeWillStartWheelEventScroll(ScrollingTreeScrollingNode&) { }
     virtual void scrollingTreeNodeDidStopWheelEventScroll(ScrollingTreeScrollingNode&) { }
-    virtual void scrollingTreeNodeDidStopProgrammaticScroll(ScrollingTreeScrollingNode&) { }
 
     // Called for requested scroll position updates. Returns true if handled.
-    virtual bool scrollingTreeNodeRequestsScroll(ScrollingNodeID, const RequestedScrollData&) { return false; }
+    virtual RequestsScrollHandling scrollingTreeNodeRequestsScroll(ScrollingNodeID, const RequestedScrollData&) { return RequestsScrollHandling::Unhandled; }
     virtual bool scrollingTreeNodeRequestsKeyboardScroll(ScrollingNodeID, const RequestedKeyboardScrollData&) { return false; }
+
+    virtual void didHandleScrollRequestForNode(ScrollingNodeID, ScrollRequestType, FloatPoint, ShouldFireScrollEnd, Markable<ScrollRequestIdentifier>) { }
 
     // Delegated scrolling/zooming has caused the viewport to change, so update viewport-constrained layers
     WEBCORE_EXPORT void mainFrameViewportChangedViaDelegatedScrolling(const FloatPoint& scrollPosition, const WebCore::FloatRect& layoutViewport, double scale);
-
-    void setNeedsApplyLayerPositionsAfterCommit() { m_needsApplyLayerPositionsAfterCommit = true; }
 
     void notifyRelatedNodesAfterScrollPositionChange(ScrollingTreeScrollingNode& changedNode);
 
@@ -155,8 +167,14 @@ public:
     virtual void scrollingTreeNodeDidEndScrollSnapping(ScrollingNodeID) { }
 
     virtual void stickyScrollingTreeNodeBeganSticking(ScrollingNodeID) { }
+#if ENABLE(OVERLAY_REGIONS_REMOTE_EFFECT)
+    virtual void stickyScrollingTreeNodeEndedSticking(ScrollingNodeID) { }
+    virtual void scrollingTreeNodeWillBeRemoved(ScrollingNodeID) { }
+#endif
 
     WEBCORE_EXPORT TrackingType eventTrackingTypeForPoint(EventTrackingRegions::EventType, IntPoint);
+
+    WEBCORE_EXPORT WebCore::RectEdges<bool> pinnedStateIncludingAncestorsAtPoint(FloatPoint);
 
     virtual void receivedWheelEventWithPhases(PlatformWheelEventPhase /* phase */, PlatformWheelEventPhase /* momentumPhase */) { }
     virtual void deferWheelEventTestCompletionForReason(ScrollingNodeID, WheelEventTestMonitor::DeferReason) { }
@@ -182,7 +200,7 @@ public:
 
     bool isHandlingProgrammaticScroll() const { return m_isHandlingProgrammaticScroll; }
     void setIsHandlingProgrammaticScroll(bool isHandlingProgrammaticScroll) { m_isHandlingProgrammaticScroll = isHandlingProgrammaticScroll; }
-    
+
     void setScrollPinningBehavior(ScrollPinningBehavior);
     WEBCORE_EXPORT ScrollPinningBehavior scrollPinningBehavior();
 
@@ -198,12 +216,14 @@ public:
     // A map of overflow scrolling nodes to positioned nodes which need to be updated
     // when the scroller changes, but are not descendants.
     using RelatedNodesMap = HashMap<ScrollingNodeID, Vector<ScrollingNodeID>>;
-    RelatedNodesMap& overflowRelatedNodes() { return m_overflowRelatedNodesMap; }
+    RelatedNodesMap& overflowRelatedNodes() LIFETIME_BOUND { return m_overflowRelatedNodesMap; }
 
-    HashSet<Ref<ScrollingTreeOverflowScrollProxyNode>>& activeOverflowScrollProxyNodes() { return m_activeOverflowScrollProxyNodes; }
-    HashSet<Ref<ScrollingTreePositionedNode>>& activePositionedNodes() { return m_activePositionedNodes; }
+    HashSet<Ref<ScrollingTreeOverflowScrollProxyNode>>& activeOverflowScrollProxyNodes() LIFETIME_BOUND { return m_activeOverflowScrollProxyNodes; }
+    HashSet<Ref<ScrollingTreePositionedNode>>& activePositionedNodes() LIFETIME_BOUND { return m_activePositionedNodes; }
 
     WEBCORE_EXPORT String scrollingTreeAsText(OptionSet<ScrollingStateTreeAsTextBehavior> = { });
+
+    WEBCORE_EXPORT float rubberbandHyperbolicCoefficientForTesting();
 
     bool isMonitoringWheelEvents() const { return m_isMonitoringWheelEvents; }
     void setIsMonitoringWheelEvents(bool b) { m_isMonitoringWheelEvents = b; }
@@ -216,9 +236,24 @@ public:
     virtual void lockLayersForHitTesting() { }
     virtual void unlockLayersForHitTesting() { }
 
+    class HitTestLocker {
+    public:
+        HitTestLocker(ScrollingTree& tree)
+            : m_tree(tree)
+        {
+            m_tree->lockLayersForHitTesting();
+        }
+        ~HitTestLocker()
+        {
+            m_tree->unlockLayersForHitTesting();
+        }
+    private:
+        const Ref<ScrollingTree> m_tree;
+    };
+
     virtual bool isScrollingSynchronizedWithMainThread() WTF_REQUIRES_LOCK(m_treeLock) { return true; }
 
-    Lock& treeLock() WTF_RETURNS_LOCK(m_treeLock) { return m_treeLock; }
+    Lock& treeLock() LIFETIME_BOUND WTF_RETURNS_LOCK(m_treeLock) { return m_treeLock; }
 
     WEBCORE_EXPORT void windowScreenDidChange(PlatformDisplayID, std::optional<FramesPerSecond> nominalFramesPerSecond);
     PlatformDisplayID displayID();
@@ -226,13 +261,21 @@ public:
 
     WEBCORE_EXPORT void willProcessWheelEvent();
 
-    WEBCORE_EXPORT void addPendingScrollUpdate(ScrollUpdate&&);
     WEBCORE_EXPORT Vector<ScrollUpdate> takePendingScrollUpdates();
     WEBCORE_EXPORT bool hasPendingScrollUpdates();
 
     virtual void removePendingScrollAnimationForNode(ScrollingNodeID) { }
 
     WEBCORE_EXPORT FloatBoxExtent mainFrameObscuredContentInsets() const;
+
+#if HAVE(NSREFRESHCONTROLLER)
+    virtual float topScrollStretchForRefreshController() const { return 0; }
+    virtual float refreshControllerSnappingThreshold() const { return 0; }
+    virtual bool hasRefreshController() const { return false; }
+#endif
+
+    virtual void triggerMainFrameRubberBandSnapBack() { }
+    virtual void mainFrameRubberBandTargetOffsetDidChange() { }
 
     WEBCORE_EXPORT FloatPoint mainFrameScrollPosition() const;
 
@@ -246,9 +289,14 @@ public:
     WEBCORE_EXPORT int mainFrameHeaderHeight() const;
     WEBCORE_EXPORT int mainFrameFooterHeight() const;
     WEBCORE_EXPORT float mainFrameScaleFactor() const;
+    // Used when the UI process owns the page scale but isn't sending a delegated viewport update.
+    WEBCORE_EXPORT void setMainFrameDelegatedPageScaleFactor(float);
     WEBCORE_EXPORT FloatSize totalContentsSize() const;
     WEBCORE_EXPORT FloatRect layoutViewport() const;
-    
+    // The view size less the space the scrollbars take, in view coordinates, so it doesn't track the zoom.
+    // See ScrollView::sizeForVisibleContent().
+    WEBCORE_EXPORT FloatSize mainFrameSizeForVisibleContent() const;
+
     WEBCORE_EXPORT void viewWillStartLiveResize();
     WEBCORE_EXPORT void viewWillEndLiveResize();
     WEBCORE_EXPORT void viewSizeDidChange();
@@ -262,6 +310,8 @@ public:
     void addScrollingNodeToHostedSubtreeMap(WebCore::LayerHostingContextIdentifier, Ref<ScrollingTreeFrameHostingNode>);
     void removeNode(ScrollingNodeID, ScrollingTreeFrameHostingNode* = nullptr);
     void removeFrameHostingNode(LayerHostingContextIdentifier);
+
+    virtual void hostedSubtreeNeedsFullCommit(FrameIdentifier) { }
 
     WEBCORE_EXPORT std::optional<FrameIdentifier> frameIDForScrollingNodeID(ScrollingNodeID);
 
@@ -277,13 +327,22 @@ protected:
 
     WEBCORE_EXPORT virtual void applyLayerPositionsInternal() WTF_REQUIRES_LOCK(m_treeLock);
     WEBCORE_EXPORT void removeAllNodes() WTF_REQUIRES_LOCK(m_treeLock);
-    
+    void removeFromActiveNodes(ScrollingTreeNode&);
+
     virtual void hasNodeWithAnimatedScrollChanged(bool /* hasNodeWithAnimatedScroll */) { }
 
     bool hasProcessedWheelEventsRecently();
 
     HashSet<ScrollingNodeID> nodesWithActiveScrollAnimations();
     WEBCORE_EXPORT void serviceScrollAnimations(MonotonicTime) WTF_REQUIRES_LOCK(m_treeLock);
+
+#if ENABLE(COORDINATED_TOUCH_EVENTS)
+    std::optional<FloatSize> mainFrameScrollOffset() const;
+#endif
+
+    void addPendingScrollUpdateInternal(ScrollUpdate&&);
+    WEBCORE_EXPORT void addPendingScrollUpdate(ScrollUpdate&&);
+    virtual void didAddPendingScrollUpdate() { }
 
     mutable Lock m_treeLock; // Protects the scrolling tree.
 
@@ -295,8 +354,8 @@ private:
     void notifyRelatedNodesRecursive(ScrollingTreeNode&);
     void traverseScrollingTreeRecursive(ScrollingTreeNode&, NOESCAPE const VisitorFunction&) WTF_REQUIRES_LOCK(m_treeLock);
     
-    void setOverlayScrollbarsEnabled(bool);
-    
+    void LEGACY_NODELETE setOverlayScrollbarsEnabled(bool);
+
     virtual void didCommitTree() { }
 
     WEBCORE_EXPORT virtual RefPtr<ScrollingTreeNode> scrollingNodeForPoint(FloatPoint);
@@ -349,6 +408,10 @@ private:
     Lock m_pendingScrollUpdatesLock;
     Vector<ScrollUpdate> m_pendingScrollUpdates WTF_GUARDED_BY_LOCK(m_pendingScrollUpdatesLock);
 
+#if HAVE(RUBBER_BANDING)
+    std::optional<RubberbandingState> m_pendingMainFrameRubberbandingState WTF_GUARDED_BY_LOCK(m_treeLock);
+#endif
+
     Lock m_lastWheelEventTimeLock;
     MonotonicTime m_lastWheelEventTime WTF_GUARDED_BY_LOCK(m_lastWheelEventTimeLock);
 
@@ -361,12 +424,12 @@ protected:
 private:
     ThreadSafeWeakHashSet<ScrollingTreeNode> m_fixedOrStickyNodes;
     std::atomic<bool> m_isHandlingProgrammaticScroll { false };
+    std::atomic<bool> m_needsApplyLayerPositions { false };
     bool m_isMonitoringWheelEvents { false };
     bool m_scrollingPerformanceTestingEnabled { false };
     bool m_overlayScrollbarsEnabled { false };
     bool m_asyncFrameOrOverflowScrollingEnabled { false };
     bool m_wheelEventGesturesBecomeNonBlocking { false };
-    bool m_needsApplyLayerPositionsAfterCommit { false };
     bool m_inCommitTreeState { false };
 };
 

@@ -114,8 +114,8 @@ void CaptionUserPreferences::setCaptionDisplayMode(CaptionUserPreferences::Capti
 
 RefPtr<Page> CaptionUserPreferences::currentPage() const
 {
-    for (Ref page : m_pageGroup->pages())
-        return page;
+    for (auto& page : m_pageGroup->pages())
+        return &page;
     return nullptr;
 }
 
@@ -179,7 +179,7 @@ void CaptionUserPreferences::setUserPrefersTextDescriptions(bool preference)
 
 void CaptionUserPreferences::captionPreferencesChanged()
 {
-    CheckedRef { m_pageGroup.get() }->captionPreferencesChanged();
+    CheckedRef { m_pageGroup }->captionPreferencesChanged();
 }
 
 Vector<String> CaptionUserPreferences::preferredLanguages() const
@@ -205,6 +205,9 @@ void CaptionUserPreferences::setPreferredAudioCharacteristic(const String& chara
 
 Vector<String> CaptionUserPreferences::preferredAudioCharacteristics() const
 {
+    if (testingMode() && !m_preferredAudioCharacteristicsForTesting.isEmpty())
+        return m_preferredAudioCharacteristicsForTesting;
+
     Vector<String> characteristics;
     if (!m_userPreferredAudioCharacteristic.isEmpty())
         characteristics.append(m_userPreferredAudioCharacteristic);
@@ -220,7 +223,7 @@ static String trackDisplayName(const TextTrack& track)
     if (&track == &TextTrack::captionMenuAutomaticItemSingleton())
         return textTrackAutomaticMenuItemText();
 
-    if (auto label = track.label().string().trim(isASCIIWhitespace); !label.isEmpty())
+    if (!track.label().string().containsOnly<isASCIIWhitespace>())
         return track.label();
     if (auto languageIdentifier = track.validBCP47Language(); !languageIdentifier.isEmpty())
         return languageIdentifier;
@@ -237,6 +240,8 @@ MediaSelectionOption CaptionUserPreferences::mediaSelectionOptionForTrack(const 
     auto legibleType = MediaSelectionOption::LegibleType::Regular;
     if (&track == &TextTrack::captionMenuOffItemSingleton())
         legibleType = MediaSelectionOption::LegibleType::LegibleOff;
+    else if (&track == &TextTrack::captionMenuOnItemSingleton())
+        legibleType = MediaSelectionOption::LegibleType::LegibleOn;
     else if (&track == &TextTrack::captionMenuAutomaticItemSingleton())
         legibleType = MediaSelectionOption::LegibleType::LegibleAuto;
 
@@ -258,7 +263,7 @@ MediaSelectionOption CaptionUserPreferences::mediaSelectionOptionForTrack(const 
         break;
     }
 
-    return { mediaType, displayNameForTrack(track), legibleType };
+    return { mediaType, displayNameForTrack(track), legibleType, track.validBCP47Language() };
 }
     
 Vector<Ref<TextTrack>> CaptionUserPreferences::sortedTrackListForMenu(TextTrackList* trackList, HashSet<TextTrack::Kind> kinds)
@@ -289,7 +294,7 @@ Vector<Ref<TextTrack>> CaptionUserPreferences::sortedTrackListForMenu(TextTrackL
 
 static String trackDisplayName(const AudioTrack& track)
 {
-    if (auto label = track.label().string().trim(isASCIIWhitespace); !label.isEmpty())
+    if (!track.label().string().containsOnly<isASCIIWhitespace>())
         return track.label();
     if (auto languageIdentifier = track.validBCP47Language(); !languageIdentifier.isEmpty())
         return languageIdentifier;
@@ -303,7 +308,7 @@ String CaptionUserPreferences::displayNameForTrack(const AudioTrack& track) cons
 
 MediaSelectionOption CaptionUserPreferences::mediaSelectionOptionForTrack(const AudioTrack& track) const
 {
-    return { MediaSelectionOption::MediaType::Audio, displayNameForTrack(track), MediaSelectionOption::LegibleType::Regular };
+    return { MediaSelectionOption::MediaType::Audio, displayNameForTrack(track), MediaSelectionOption::LegibleType::Regular, track.validBCP47Language() };
 }
 
 Vector<Ref<AudioTrack>> CaptionUserPreferences::sortedTrackListForMenu(AudioTrackList* trackList)
@@ -433,6 +438,21 @@ int CaptionUserPreferences::textTrackLanguageSelectionScore(TextTrack& track, co
     // greater than the maximum value returned by textTrackSelectionScore.
     int bonus = exactMatch ? 1 : 0;
     return (preferredLanguages.size() + bonus - languageMatchIndex) * 10;
+}
+
+RefPtr<TextTrack> CaptionUserPreferences::bestTextTrackToEnable(const TextTrackList& trackList) const
+{
+    RefPtr<TextTrack> best;
+    int bestScore = 0;
+    for (unsigned i = 0, length = trackList.length(); i < length; ++i) {
+        Ref track = *trackList.item(i);
+        int score = textTrackSelectionScore(track, CaptionDisplayMode::AlwaysOn);
+        if (score > bestScore) {
+            bestScore = score;
+            best = track.ptr();
+        }
+    }
+    return best;
 }
 
 void CaptionUserPreferences::setCaptionsStyleSheetOverride(const String& override)

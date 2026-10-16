@@ -6,15 +6,14 @@
 // span_unittests.cpp: Unit tests for the angle::Span class.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #include "common/span.h"
+#include "common/unsafe_buffers.h"
 
 #include <gtest/gtest.h>
 
 #include <array>
+#include <string>
+#include <string_view>
 #include <type_traits>
 #include <vector>
 
@@ -29,6 +28,13 @@ constexpr unsigned int kSpanData[kSpanDataSize]                  = {0, 1, 2,  3,
 constexpr std::array<const unsigned int, kSpanDataSize> kSpanArr = {
     {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}};
 
+class FakeRange
+{
+  public:
+    size_t size() const { return kSpanDataSize; }
+    const unsigned int *data() { return kSpanData; }
+};
+
 // Test that comparing spans work
 TEST(SpanTest, Comparison)
 {
@@ -37,22 +43,26 @@ TEST(SpanTest, Comparison)
                                                                  8, 9, 10, 11, 12, 13, 14, 15};
 
     // Don't use ASSERT_EQ at first because the == is more hidden
-    ASSERT_TRUE(Span<const unsigned int>() == Span(kSpanData, 0));
-    ASSERT_TRUE(Span(kSpanData + 3, 4) != Span(kSpanDataDup + 5, 4));
+    ANGLE_UNSAFE_TODO({
+        ASSERT_TRUE(Span<const unsigned int>() == Span(kSpanData, 0));
+        ASSERT_TRUE(Span(kSpanData + 3, 4) != Span(kSpanDataDup + 5, 4));
+    })
 
     // Check ASSERT_EQ and ASSERT_NE work correctly
-    ASSERT_EQ(Span(kSpanData, kSpanDataSize), Span(kSpanDataDup, kSpanDataSize));
-    ASSERT_NE(Span(kSpanData, kSpanDataSize - 1), Span(kSpanDataDup + 1, kSpanDataSize - 1));
-    ASSERT_NE(Span(kSpanData, kSpanDataSize), Span(kSpanDataDup, kSpanDataSize - 1));
-    ASSERT_NE(Span(kSpanData, kSpanDataSize - 1), Span(kSpanDataDup, kSpanDataSize));
-    ASSERT_NE(Span(kSpanData, 0), Span(kSpanDataDup, 1));
-    ASSERT_NE(Span(kSpanData, 1), Span(kSpanDataDup, 0));
+    ANGLE_UNSAFE_TODO({
+        ASSERT_EQ(Span(kSpanData, kSpanDataSize), Span(kSpanDataDup, kSpanDataSize));
+        ASSERT_NE(Span(kSpanData, kSpanDataSize - 1), Span(kSpanDataDup + 1, kSpanDataSize - 1));
+        ASSERT_NE(Span(kSpanData, kSpanDataSize), Span(kSpanDataDup, kSpanDataSize - 1));
+        ASSERT_NE(Span(kSpanData, kSpanDataSize - 1), Span(kSpanDataDup, kSpanDataSize));
+        ASSERT_NE(Span(kSpanData, 0), Span(kSpanDataDup, 1));
+        ASSERT_NE(Span(kSpanData, 1), Span(kSpanDataDup, 0));
+    })
 }
 
 // Test indexing
 TEST(SpanTest, Indexing)
 {
-    constexpr Span sp(kSpanData, kSpanDataSize);
+    constexpr auto sp = ANGLE_UNSAFE_TODO(Span(kSpanData, kSpanDataSize));
 
     for (size_t i = 0; i < kSpanDataSize; ++i)
     {
@@ -60,7 +70,7 @@ TEST(SpanTest, Indexing)
     }
 
     unsigned int storage[kSpanDataSize] = {};
-    angle::Span<unsigned int> writableSpan(storage, kSpanDataSize);
+    auto writableSpan = ANGLE_UNSAFE_TODO(angle::Span<unsigned int>(storage, kSpanDataSize));
 
     for (size_t i = 0; i < kSpanDataSize; ++i)
     {
@@ -72,7 +82,7 @@ TEST(SpanTest, Indexing)
     }
     for (size_t i = 0; i < kSpanDataSize; ++i)
     {
-        ASSERT_EQ(storage[i], i);
+        ANGLE_UNSAFE_TODO(ASSERT_EQ(storage[i], i));
     }
 }
 
@@ -89,7 +99,7 @@ TEST(SpanTest, Constructors)
 
     // Constexpr construct from pointer and size
     {
-        constexpr Span sp(kSpanData, kSpanDataSize);
+        constexpr auto sp = ANGLE_UNSAFE_TODO(Span(kSpanData, kSpanDataSize));
         static_assert(std::is_same_v<decltype(sp), const Span<const unsigned int, dynamic_extent>>);
         ASSERT_EQ(sp.data(), kSpanData);
         ASSERT_EQ(sp.size(), kSpanDataSize);
@@ -105,7 +115,7 @@ TEST(SpanTest, Constructors)
         ASSERT_FALSE(sp.empty());
     }
 
-    // Constexpr construct from std::array
+    // Constexpr construct from constexpr std::array<const>
     {
         constexpr Span sp(kSpanArr);
         static_assert(std::is_same_v<decltype(sp), const Span<const unsigned int, kSpanDataSize>>);
@@ -114,7 +124,37 @@ TEST(SpanTest, Constructors)
         ASSERT_FALSE(sp.empty());
     }
 
-    // Construct from container providing data() and size()
+    // Construct from const std::array<non-const>.
+    {
+        const std::array<int, 2> kArr = {1, 2};
+        Span sp(kArr);
+        static_assert(std::is_same_v<decltype(sp), Span<const int, 2u>>);
+        ASSERT_EQ(sp.data(), kArr.data());
+        ASSERT_EQ(sp.size(), kArr.size());
+        ASSERT_FALSE(sp.empty());
+    }
+
+    // Construct from std::array<const>.
+    {
+        std::array<const int, 2> arr = {1, 2};
+        Span sp(arr);
+        static_assert(std::is_same_v<decltype(sp), Span<const int, 2u>>);
+        ASSERT_EQ(sp.data(), arr.data());
+        ASSERT_EQ(sp.size(), arr.size());
+        ASSERT_FALSE(sp.empty());
+    }
+
+    // Construct from std::array<non-const>.
+    {
+        std::array<int, 2> arr = {1, 2};
+        Span sp(arr);
+        static_assert(std::is_same_v<decltype(sp), Span<int, 2u>>);
+        ASSERT_EQ(sp.data(), arr.data());
+        ASSERT_EQ(sp.size(), arr.size());
+        ASSERT_FALSE(sp.empty());
+    }
+
+    // Construct from std::vector
     {
         std::vector<unsigned int> vec({0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15});
         Span sp(vec);
@@ -122,6 +162,54 @@ TEST(SpanTest, Constructors)
         ASSERT_EQ(sp.data(), vec.data());
         ASSERT_EQ(sp.size(), vec.size());
         ASSERT_FALSE(sp.empty());
+    }
+
+    // Construct from const std::vector
+    {
+        const std::vector<unsigned int> vec({0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15});
+        Span sp(vec);
+        static_assert(std::is_same_v<decltype(sp), Span<const unsigned int, dynamic_extent>>);
+        ASSERT_EQ(sp.data(), vec.data());
+        ASSERT_EQ(sp.size(), vec.size());
+        ASSERT_FALSE(sp.empty());
+    }
+
+    // Construct from std::string
+    {
+        std::string str = "hooray";
+        Span sp(str);
+        static_assert(std::is_same_v<decltype(sp), Span<char, dynamic_extent>>);
+        ASSERT_EQ(sp.data(), str.data());
+        ASSERT_EQ(sp.size(), str.size());
+        ASSERT_FALSE(sp.empty());
+    }
+
+    // Construct from const std::string
+    {
+        const std::string str = "hooray";
+        Span sp(str);
+        static_assert(std::is_same_v<decltype(sp), Span<const char, dynamic_extent>>);
+        ASSERT_EQ(sp.data(), str.data());
+        ASSERT_EQ(sp.size(), str.size());
+        ASSERT_FALSE(sp.empty());
+    }
+
+    // Construct from std::string_view
+    {
+        std::string_view view = "hooray";
+        Span sp(view);
+        static_assert(std::is_same_v<decltype(sp), Span<const char, dynamic_extent>>);
+        ASSERT_EQ(sp.data(), view.data());
+        ASSERT_EQ(sp.size(), view.size());
+        ASSERT_FALSE(sp.empty());
+    }
+
+    // Construction from any class that provides data() and size().
+    {
+        FakeRange range;
+        Span sp(range);
+        ASSERT_EQ(sp.data(), kSpanData);
+        ASSERT_EQ(sp.size(), kSpanDataSize);
     }
 
     // Copy constructor and copy assignment
@@ -147,19 +235,19 @@ TEST(SpanTest, Constructors)
 // Test accessing the data directly
 TEST(SpanTest, DataAccess)
 {
-    constexpr Span sp(kSpanData, kSpanDataSize);
+    constexpr auto sp        = ANGLE_UNSAFE_TODO(Span(kSpanData, kSpanDataSize));
     const unsigned int *data = sp.data();
 
     for (size_t i = 0; i < kSpanDataSize; ++i)
     {
-        ASSERT_EQ(data[i], i);
+        ANGLE_UNSAFE_TODO(ASSERT_EQ(data[i], i));
     }
 }
 
 // Test front and back
 TEST(SpanTest, FrontAndBack)
 {
-    constexpr Span sp(kSpanData, kSpanDataSize);
+    constexpr auto sp = ANGLE_UNSAFE_TODO(Span(kSpanData, kSpanDataSize));
     ASSERT_TRUE(sp.front() == 0);
     ASSERT_EQ(sp.back(), kSpanDataSize - 1);
 }
@@ -167,7 +255,7 @@ TEST(SpanTest, FrontAndBack)
 // Test begin and end
 TEST(SpanTest, BeginAndEnd)
 {
-    constexpr Span sp(kSpanData, kSpanDataSize);
+    constexpr auto sp = ANGLE_UNSAFE_TODO(Span(kSpanData, kSpanDataSize));
 
     size_t currentIndex = 0;
     for (unsigned int value : sp)
@@ -180,7 +268,7 @@ TEST(SpanTest, BeginAndEnd)
 // Test reverse begin and end
 TEST(SpanTest, RbeginAndRend)
 {
-    constexpr Span sp(kSpanData, kSpanDataSize);
+    constexpr auto sp = ANGLE_UNSAFE_TODO(Span(kSpanData, kSpanDataSize));
 
     size_t currentIndex = 0;
     for (auto iter = sp.rbegin(); iter != sp.rend(); ++iter)
@@ -193,7 +281,7 @@ TEST(SpanTest, RbeginAndRend)
 // Test first and last
 TEST(SpanTest, FirstAndLast)
 {
-    constexpr Span sp(kSpanData, kSpanDataSize);
+    constexpr auto sp           = ANGLE_UNSAFE_TODO(Span(kSpanData, kSpanDataSize));
     constexpr size_t kSplitSize = kSpanDataSize / 4;
     {
         constexpr Span first = sp.first(kSplitSize);
@@ -201,14 +289,16 @@ TEST(SpanTest, FirstAndLast)
 
         static_assert(
             std::is_same_v<decltype(first), const Span<const unsigned int, dynamic_extent>>);
-        ASSERT_EQ(first, Span(kSpanData, kSplitSize));
+        ANGLE_UNSAFE_TODO(ASSERT_EQ(first, Span(kSpanData, kSplitSize)));
         ASSERT_EQ(first.data(), kSpanData);
         ASSERT_EQ(first.size(), kSplitSize);
 
         static_assert(
             std::is_same_v<decltype(last), const Span<const unsigned int, dynamic_extent>>);
-        ASSERT_EQ(last, Span(kSpanData + kSpanDataSize - kSplitSize, kSplitSize));
-        ASSERT_EQ(last.data(), kSpanData + kSpanDataSize - kSplitSize);
+        ANGLE_UNSAFE_TODO({
+            ASSERT_EQ(last, Span(kSpanData + kSpanDataSize - kSplitSize, kSplitSize));
+            ASSERT_EQ(last.data(), kSpanData + kSpanDataSize - kSplitSize);
+        })
         ASSERT_EQ(last.size(), kSplitSize);
     }
 
@@ -217,13 +307,15 @@ TEST(SpanTest, FirstAndLast)
         constexpr Span last  = sp.last<kSplitSize>();
 
         static_assert(std::is_same_v<decltype(first), const Span<const unsigned int, kSplitSize>>);
-        ASSERT_EQ(first, Span(kSpanData, kSplitSize));
+        ANGLE_UNSAFE_TODO(ASSERT_EQ(first, Span(kSpanData, kSplitSize)));
         ASSERT_EQ(first.data(), kSpanData);
         ASSERT_EQ(first.size(), kSplitSize);
 
         static_assert(std::is_same_v<decltype(last), const Span<const unsigned int, kSplitSize>>);
-        ASSERT_EQ(last, Span(kSpanData + kSpanDataSize - kSplitSize, kSplitSize));
-        ASSERT_EQ(last.data(), kSpanData + kSpanDataSize - kSplitSize);
+        ANGLE_UNSAFE_TODO({
+            ASSERT_EQ(last, Span(kSpanData + kSpanDataSize - kSplitSize, kSplitSize));
+            ASSERT_EQ(last.data(), kSpanData + kSpanDataSize - kSplitSize);
+        })
         ASSERT_EQ(last.size(), kSplitSize);
     }
 }
@@ -231,7 +323,7 @@ TEST(SpanTest, FirstAndLast)
 // Test subspan
 TEST(SpanTest, Subspan)
 {
-    constexpr Span sp(kSpanData, kSpanDataSize);
+    constexpr auto sp             = ANGLE_UNSAFE_TODO(Span(kSpanData, kSpanDataSize));
     constexpr size_t kSplitOffset = kSpanDataSize / 4;
     constexpr size_t kSplitSize   = kSpanDataSize / 2;
 
@@ -240,8 +332,10 @@ TEST(SpanTest, Subspan)
         constexpr Span subspan = sp.subspan(kSplitOffset);
         static_assert(
             std::is_same_v<decltype(subspan), const Span<const unsigned int, dynamic_extent>>);
-        ASSERT_EQ(subspan, Span(kSpanData + kSplitOffset, kSpanDataSize - kSplitOffset));
-        ASSERT_EQ(subspan.data(), kSpanData + kSplitOffset);
+        ANGLE_UNSAFE_TODO({
+            ASSERT_EQ(subspan, Span(kSpanData + kSplitOffset, kSpanDataSize - kSplitOffset));
+            ASSERT_EQ(subspan.data(), kSpanData + kSplitOffset);
+        })
         ASSERT_EQ(subspan.size(), kSpanDataSize - kSplitOffset);
     }
 
@@ -250,8 +344,10 @@ TEST(SpanTest, Subspan)
         constexpr Span subspan = sp.subspan(kSplitOffset, kSplitSize);
         static_assert(
             std::is_same_v<decltype(subspan), const Span<const unsigned int, dynamic_extent>>);
-        ASSERT_EQ(subspan, Span(kSpanData + kSplitOffset, kSplitSize));
-        ASSERT_EQ(subspan.data(), kSpanData + kSplitOffset);
+        ANGLE_UNSAFE_TODO({
+            ASSERT_EQ(subspan, Span(kSpanData + kSplitOffset, kSplitSize));
+            ASSERT_EQ(subspan.data(), kSpanData + kSplitOffset);
+        })
         ASSERT_EQ(subspan.size(), kSplitSize);
     }
 
@@ -260,8 +356,10 @@ TEST(SpanTest, Subspan)
         constexpr Span subspan = sp.subspan<kSplitOffset>();
         static_assert(
             std::is_same_v<decltype(subspan), const Span<const unsigned int, dynamic_extent>>);
-        ASSERT_EQ(subspan, Span(kSpanData + kSplitOffset, kSpanDataSize - kSplitOffset));
-        ASSERT_EQ(subspan.data(), kSpanData + kSplitOffset);
+        ANGLE_UNSAFE_TODO({
+            ASSERT_EQ(subspan, Span(kSpanData + kSplitOffset, kSpanDataSize - kSplitOffset));
+            ASSERT_EQ(subspan.data(), kSpanData + kSplitOffset);
+        })
         ASSERT_EQ(subspan.size(), kSpanDataSize - kSplitOffset);
     }
 
@@ -270,8 +368,10 @@ TEST(SpanTest, Subspan)
         constexpr Span subspan = sp.subspan<kSplitOffset, kSplitSize>();
         static_assert(
             std::is_same_v<decltype(subspan), const Span<const unsigned int, dynamic_extent>>);
-        ASSERT_EQ(subspan, Span(kSpanData + kSplitOffset, kSplitSize));
-        ASSERT_EQ(subspan.data(), kSpanData + kSplitOffset);
+        ANGLE_UNSAFE_TODO({
+            ASSERT_EQ(subspan, Span(kSpanData + kSplitOffset, kSplitSize));
+            ASSERT_EQ(subspan.data(), kSpanData + kSplitOffset);
+        })
         ASSERT_EQ(subspan.size(), kSplitSize);
     }
 }
@@ -282,8 +382,8 @@ TEST(SpanTest, ConstConversions)
     const unsigned int kStorage[kSpanDataSize] = {0, 1, 2,  3,  4,  5,  6,  7,
                                                   8, 9, 10, 11, 12, 13, 14, 15};
     unsigned int storage[kSpanDataSize] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
-    angle::Span readable_span(kStorage, kSpanDataSize);
-    angle::Span writable_span(storage, kSpanDataSize);
+    auto readable_span = ANGLE_UNSAFE_TODO(angle::Span(kStorage, kSpanDataSize));
+    auto writable_span = ANGLE_UNSAFE_TODO(angle::Span(storage, kSpanDataSize));
 
     static_assert(
         std::is_same_v<decltype(readable_span), Span<const unsigned int, dynamic_extent>>);
@@ -399,6 +499,139 @@ TEST(SpanTest, Helpers)
         auto byte_span  = as_writable_byte_span(kMutArray);
         EXPECT_EQ(byte_span.data(), reinterpret_cast<uint8_t *>(kMutArray));
         EXPECT_EQ(byte_span.size(), sizeof(kMutArray));
+    }
+
+    // Test copy_from.
+    {
+        unsigned int data1[4] = {1, 2, 3, 4};
+        unsigned int data2[4] = {0, 0, 0, 0};
+
+        Span<unsigned int> sp1(data1);
+        Span<unsigned int> sp2(data2);
+
+        sp2.copy_from(sp1);
+        for (size_t i = 0; i < 4; ++i)
+        {
+            ANGLE_UNSAFE_TODO(EXPECT_EQ(data2[i], data1[i]));
+        }
+    }
+
+    // Test copy_from with container.
+    {
+        std::vector<unsigned int> vec = {10, 20, 30, 40};
+        unsigned int data[4]          = {0, 0, 0, 0};
+        Span<unsigned int, 4> sp(data);
+
+        sp.copy_from(vec);
+        EXPECT_EQ(data[0], 10u);
+        EXPECT_EQ(data[1], 20u);
+        EXPECT_EQ(data[2], 30u);
+        EXPECT_EQ(data[3], 40u);
+    }
+
+    // Test copy_from with overlapping memory (forward move).
+    {
+        unsigned int data[4] = {1, 2, 3, 4};
+        Span<unsigned int> sp(data);
+
+        // Copy [1, 2, 3] to [2, 3, 4] -> Result should be [1, 1, 2, 3]
+        // This exercises the std::copy_backward path in the overlap logic.
+        sp.subspan(1).copy_from(sp.first(3));
+        EXPECT_EQ(data[0], 1u);
+        EXPECT_EQ(data[1], 1u);
+        EXPECT_EQ(data[2], 2u);
+        EXPECT_EQ(data[3], 3u);
+    }
+
+    // Test copy_from with overlapping memory (backward move).
+    {
+        unsigned int data[4] = {1, 2, 3, 4};
+        Span<unsigned int> sp(data);
+
+        // Copy [2, 3, 4] to [1, 2, 3] -> Result should be [2, 3, 4, 4]
+        // This exercises the std::copy path in the overlap logic.
+        sp.first(3).copy_from(sp.subspan(1));
+        EXPECT_EQ(data[0], 2u);
+        EXPECT_EQ(data[1], 3u);
+        EXPECT_EQ(data[2], 4u);
+        EXPECT_EQ(data[3], 4u);
+    }
+
+    // Verify Extent Safety (Compile-time)
+    {
+        using FixedSpan   = Span<int, 4>;
+        using DynamicSpan = Span<int, dynamic_extent>;
+
+        // Identical fixed extents are allowed.
+        static_assert(std::is_invocable_v<decltype(&FixedSpan::copy_from<int, 4, int *>), FixedSpan,
+                                          const FixedSpan &>);
+        // Const sources are allowed.
+        static_assert(
+            std::is_invocable_v<decltype(&FixedSpan::copy_from<const int, 4, const int *>),
+                                FixedSpan, const Span<const int, 4> &>);
+        // Fixed from Dynamic is allowed (runtime CHECK handles mismatch).
+        static_assert(
+            std::is_invocable_v<decltype(&FixedSpan::copy_from<int, dynamic_extent, int *>),
+                                FixedSpan, const DynamicSpan &>);
+        // Dynamic from Fixed is allowed.
+        static_assert(std::is_invocable_v<decltype(&DynamicSpan::copy_from<int, 4, int *>),
+                                          DynamicSpan, const FixedSpan &>);
+        // Containers are allowed.
+        static_assert(std::is_invocable_v<decltype(&FixedSpan::copy_from<std::vector<int>>),
+                                          FixedSpan, const std::vector<int> &>);
+    }
+
+    // Test to_fixed_extent.
+    {
+        unsigned int data[4] = {1, 2, 3, 4};
+        Span<unsigned int> sp(data);
+
+        auto fixed_sp = sp.to_fixed_extent<4>();
+        ASSERT_TRUE(fixed_sp.has_value());
+        EXPECT_EQ(fixed_sp->size(), 4u);
+        EXPECT_EQ((*fixed_sp)[0], 1u);
+
+        auto fixed_sp_wrong = sp.to_fixed_extent<5>();
+        ASSERT_FALSE(fixed_sp_wrong.has_value());
+    }
+
+    // Test split_at.
+    {
+        unsigned int data[4] = {1, 2, 3, 4};
+        Span<unsigned int> sp(data);
+
+        {
+            auto [front, back] = sp.split_at<2>();
+            static_assert(std::is_same_v<decltype(front), Span<unsigned int, 2>>);
+            EXPECT_EQ(front.size(), 2u);
+            EXPECT_EQ(back.size(), 2u);
+            EXPECT_EQ(front[0], 1u);
+            EXPECT_EQ(back[0], 3u);
+        }
+
+        {
+            auto [front, back] = sp.split_at(1);
+            EXPECT_EQ(front.size(), 1u);
+            EXPECT_EQ(back.size(), 3u);
+            EXPECT_EQ(front[0], 1u);
+            EXPECT_EQ(back[0], 2u);
+        }
+    }
+
+    // Test copy_from on a const Span handle.
+    {
+        unsigned int data1[4] = {1, 2, 3, 4};
+        unsigned int data2[4] = {0, 0, 0, 0};
+
+        const Span<unsigned int> sp1(data1);
+        const Span<unsigned int> sp2(data2);
+
+        sp2.copy_from(sp1);
+
+        for (size_t i = 0; i < 4; ++i)
+        {
+            ANGLE_UNSAFE_TODO(EXPECT_EQ(data2[i], data1[i]));
+        }
     }
 }
 

@@ -30,10 +30,12 @@
 #include "GeneratedSerializers.h"
 #include "Logging.h"
 #include "MessageFlags.h"
+#include "MessageLog.h"
 #include "MessageReceiveQueues.h"
 #include "WorkQueueMessageReceiver.h"
 #include <memory>
 #include <wtf/ArgumentCoder.h>
+#include <wtf/Borrow.h>
 #include <wtf/HashCountedSet.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
@@ -43,6 +45,7 @@
 #include <wtf/RuntimeApplicationChecks.h>
 #include <wtf/Scope.h>
 #include <wtf/SystemTracing.h>
+#include <wtf/Threading.h>
 #include <wtf/WTFProcess.h>
 #include <wtf/text/WTFString.h>
 #include <wtf/threads/BinarySemaphore.h>
@@ -67,6 +70,8 @@ constexpr size_t maxPendingIncomingMessagesKillingThreshold { 50000 };
 constexpr Seconds largeOutgoingMessageQueueTimeThreshold { 20_s };
 
 std::atomic<unsigned> UnboundedSynchronousIPCScope::unboundedSynchronousIPCCount = 0;
+
+thread_local Connection::MessageDispatchScope* Connection::MessageDispatchScope::s_current { nullptr };
 
 #if ENABLE(UNFAIR_LOCK)
 static UnfairLock s_connectionMapLock;
@@ -95,7 +100,7 @@ public:
     bool processIncomingMessage(Connection& connectionForLockCheck, UniqueRef<Decoder>&) WTF_REQUIRES_LOCK(connectionForLockCheck.m_incomingMessagesLock);
 
     // Dispatch pending messages that should be dispatched while waiting for a sync reply.
-    void dispatchMessages(Function<void(MessageName, uint64_t)>&& willDispatchMessage = { });
+    void dispatchMessages(NOESCAPE const Function<void(MessageName, uint64_t)>& willDispatchMessage = { });
 
     // Dispatch pending messages that should be dispatched while waiting for a sync reply,
     // up until the message with the provided identifier.
@@ -115,9 +120,9 @@ private:
     {
     }
     static Lock syncMessageStateMapLock;
-    static HashMap<RefPtr<SerialFunctionDispatcher>, ThreadSafeWeakPtr<SyncMessageState>>& syncMessageStateMap() WTF_REQUIRES_LOCK(syncMessageStateMapLock)
+    static HashMap<Ref<SerialFunctionDispatcher>, ThreadSafeWeakPtr<SyncMessageState>>& LEGACY_NODELETE syncMessageStateMap() WTF_REQUIRES_LOCK(syncMessageStateMapLock)
     {
-        static NeverDestroyed<HashMap<RefPtr<SerialFunctionDispatcher>, ThreadSafeWeakPtr<SyncMessageState>>> map;
+        static NeverDestroyed<HashMap<Ref<SerialFunctionDispatcher>, ThreadSafeWeakPtr<SyncMessageState>>> map;
         return map;
     }
 
@@ -127,8 +132,8 @@ private:
     Lock m_lock;
 
     // The set of connections for which we've scheduled a call to dispatchMessageAndResetDidScheduleDispatchMessagesForConnection.
-    HashSet<RefPtr<Connection>> m_didScheduleDispatchMessagesWorkSet WTF_GUARDED_BY_LOCK(m_lock);
-    HashSet<RefPtr<Connection>> m_allMessagesShouldBeDispatchedWhileWaitingForSyncReplySet WTF_GUARDED_BY_LOCK(m_lock);
+    HashSet<Ref<Connection>> m_didScheduleDispatchMessagesWorkSet WTF_GUARDED_BY_LOCK(m_lock);
+    HashSet<Ref<Connection>> m_allMessagesShouldBeDispatchedWhileWaitingForSyncReplySet WTF_GUARDED_BY_LOCK(m_lock);
 
     struct ConnectionAndIncomingMessage {
         Ref<Connection> connection;
@@ -151,7 +156,7 @@ Lock Connection::SyncMessageState::syncMessageStateMapLock;
 Ref<Connection::SyncMessageState> Connection::SyncMessageState::getOrCreate(SerialFunctionDispatcher& dispatcher)
 {
     Locker locker { syncMessageStateMapLock };
-    auto addResult = syncMessageStateMap().add(&dispatcher, nullptr);
+    auto addResult = syncMessageStateMap().add(dispatcher, nullptr);
     if (!addResult.isNewEntry)
         return addResult.iterator->value.get().releaseNonNull();
     Ref newState = adoptRef(*new SyncMessageState(dispatcher));
@@ -164,7 +169,7 @@ Connection::SyncMessageState::~SyncMessageState()
     Ref dispatcher = this->dispatcher();
 
     Locker locker { syncMessageStateMapLock };
-    syncMessageStateMap().remove(dispatcher.ptr());
+    syncMessageStateMap().remove(dispatcher);
 }
 
 void Connection::SyncMessageState::enqueueMatchingMessages(Connection& connection, MessageReceiveQueue& receiveQueue, const ReceiverMatcher& receiverMatcher)
@@ -203,10 +208,10 @@ bool Connection::SyncMessageState::processIncomingMessage(Connection& connection
             }
         }
 
-        shouldDispatch = m_didScheduleDispatchMessagesWorkSet.add(&connection).isNewEntry;
+        shouldDispatch = m_didScheduleDispatchMessagesWorkSet.add(connection).isNewEntry;
         connection.m_incomingMessagesLock.assertIsOwner();
         if (message->shouldMaintainOrderingWithAsyncMessages()) {
-            m_allMessagesShouldBeDispatchedWhileWaitingForSyncReplySet.add(&connection);
+            m_allMessagesShouldBeDispatchedWhileWaitingForSyncReplySet.add(connection);
             // This sync message should maintain ordering with async messages so we need to process the pending async messages first.
             while (!connection.m_incomingMessages.isEmpty())
                 m_messagesToDispatchWhileWaitingForSyncReply.append(ConnectionAndIncomingMessage { connection, connection.m_incomingMessages.takeFirst() });
@@ -225,7 +230,7 @@ bool Connection::SyncMessageState::processIncomingMessage(Connection& connection
     return true;
 }
 
-void Connection::SyncMessageState::dispatchMessages(Function<void(MessageName, uint64_t)>&& willDispatchMessage)
+void Connection::SyncMessageState::dispatchMessages(NOESCAPE const Function<void(MessageName, uint64_t)>& willDispatchMessage)
 {
     assertIsCurrent(m_dispatcher.get());
     {
@@ -311,12 +316,12 @@ Ref<Connection> Connection::createServerConnection(Identifier&& identifier, Thre
     return adoptRef(*new Connection(WTF::move(identifier), true, receiveQueueQOS));
 }
 
-Ref<Connection> Connection::createClientConnection(Identifier&& identifier)
+Ref<Connection> Connection::createClientConnection(Identifier&& identifier, Thread::QOS receiveQueueQOS)
 {
-    return adoptRef(*new Connection(WTF::move(identifier), false));
+    return adoptRef(*new Connection(WTF::move(identifier), false, receiveQueueQOS));
 }
 
-static HashMap<IPC::Connection::UniqueID, ThreadSafeWeakPtr<Connection>>& connectionMap() WTF_REQUIRES_LOCK(s_connectionMapLock)
+static HashMap<IPC::Connection::UniqueID, ThreadSafeWeakPtr<Connection>>& LEGACY_NODELETE connectionMap() WTF_REQUIRES_LOCK(s_connectionMapLock)
 {
     static NeverDestroyed<HashMap<IPC::Connection::UniqueID, ThreadSafeWeakPtr<Connection>>> map;
     return map;
@@ -434,24 +439,25 @@ void Connection::removeMessageReceiver(ReceiverName receiverName, uint64_t desti
 template<typename MessageReceiverType>
 void Connection::dispatchMessageReceiverMessage(MessageReceiverType& messageReceiver, UniqueRef<Decoder>&& decoder)
 {
-#if ASSERT_ENABLED
-    ++m_inDispatchMessageCount;
-#endif
+    bool didReceiveInvalidMessage = false;
+    {
+        MessageDispatchScope dispatchScope { *this };
 
-    if (decoder->isSyncMessage()) {
-        auto replyEncoder = makeUniqueRef<Encoder>(MessageName::SyncMessageReply, decoder->syncRequestID().toUInt64());
-        messageReceiver.didReceiveSyncMessage(*this, decoder.get(), replyEncoder);
-        // If the message was not handled or handler tried to decode and marked it invalid, reply with
-        // cancel message. For more info, see Connection:dispatchSyncMessage.
-        std::unique_ptr remainingReplyEncoder = replyEncoder.moveToUniquePtr();
-        if (remainingReplyEncoder)
-            sendMessageImpl(makeUniqueRef<Encoder>(MessageName::CancelSyncMessageReply, decoder->syncRequestID().toUInt64()), { });
-    } else
-        messageReceiver.didReceiveMessage(*this, decoder.get());
+        messageLog().add(decoder->messageName());
 
-#if ASSERT_ENABLED
-    --m_inDispatchMessageCount;
-#endif
+        if (decoder->isSyncMessage()) {
+            auto replyEncoder = makeUniqueRef<Encoder>(MessageName::SyncMessageReply, decoder->syncRequestID().toUInt64());
+            messageReceiver.didReceiveSyncMessage(*this, decoder.get(), replyEncoder);
+            // If the message was not handled or handler tried to decode and marked it invalid, reply with
+            // cancel message. For more info, see Connection:dispatchSyncMessage.
+            std::unique_ptr remainingReplyEncoder = replyEncoder.moveToUniquePtr();
+            if (remainingReplyEncoder)
+                sendMessageImpl(makeUniqueRef<Encoder>(MessageName::CancelSyncMessageReply, decoder->syncRequestID().toUInt64()), { });
+        } else
+            messageReceiver.didReceiveMessage(*this, decoder.get());
+
+        didReceiveInvalidMessage = dispatchScope.didReceiveInvalidMessage() || !decoder->isValid();
+    }
 
 #if ENABLE(IPC_TESTING_API)
     if (decoder->hasErrorString())
@@ -460,8 +466,10 @@ void Connection::dispatchMessageReceiverMessage(MessageReceiverType& messageRece
     if (m_ignoreInvalidMessageForTesting)
         return;
 #endif
+    // A failing message check is a legitimate runtime condition, but a decode failure here means
+    // the encoder and decoder disagree, which is our own bug.
     ASSERT(decoder->isValid());
-    if (!decoder->isValid())
+    if (didReceiveInvalidMessage && isValid())
         dispatchDidReceiveInvalidMessage(decoder->messageName(), decoder->indicesOfObjectsFailingDecoding());
 }
 
@@ -477,7 +485,8 @@ void Connection::setDidCloseOnConnectionWorkQueueCallback(DidCloseOnConnectionWo
 
 void Connection::setOutgoingMessageQueueIsGrowingLargeCallback(OutgoingMessageQueueIsGrowingLargeCallback&& callback)
 {
-    m_outgoingMessageQueueIsGrowingLargeCallback = WTF::move(callback);
+    Locker locker { m_outgoingMessagesLock };
+    m_outgoingMessageQueueIsGrowingLargeCallback = Box<OutgoingMessageQueueIsGrowingLargeCallback>::create(WTF::move(callback));
 }
 
 bool Connection::open(Client& client, SerialFunctionDispatcher& dispatcher)
@@ -519,11 +528,14 @@ void Connection::invalidate()
         return;
     assertIsCurrent(dispatcher());
     m_client = nullptr;
-    m_outgoingMessageQueueIsGrowingLargeCallback = nullptr;
-    [this] {
+    {
+        Locker locker { m_outgoingMessagesLock };
+        m_outgoingMessageQueueIsGrowingLargeCallback = nullptr;
+    }
+    {
         Locker locker { m_incomingMessagesLock };
-        return WTF::move(m_syncState);
-    }();
+        m_syncState = nullptr;
+    }
 
     cancelAsyncReplyHandlers();
 
@@ -592,7 +604,7 @@ Error Connection::sendMessageImpl(UniqueRef<Encoder>&& encoder, OptionSet<SendOp
 #if ENABLE(IPC_TESTING_API)
     if (isMainRunLoop()) {
         bool hasDeadObservers = false;
-        for (auto& observerWeakPtr : m_messageObservers) {
+        for (WeakPtr observerWeakPtr : borrow(m_messageObservers)) {
             if (RefPtr observer = observerWeakPtr.get())
                 observer->willSendMessage(encoder.get(), sendOptions);
             else
@@ -634,6 +646,7 @@ Error Connection::sendMessageImpl(UniqueRef<Encoder>&& encoder, OptionSet<SendOp
     bool shouldDispatchMessageSend;
     size_t outgoingMessagesCount;
     bool shouldNotifyOfQueueGrowingLarge;
+    Box<OutgoingMessageQueueIsGrowingLargeCallback> outgoingMessageQueueIsGrowingLargeCallback;
     unsigned maxOutgoingMessageNameCount = 0;
     ASCIILiteral maxOutgoingMessageName;
     {
@@ -643,6 +656,7 @@ Error Connection::sendMessageImpl(UniqueRef<Encoder>&& encoder, OptionSet<SendOp
         outgoingMessagesCount = m_outgoingMessages.size();
         shouldNotifyOfQueueGrowingLarge = m_outgoingMessageQueueIsGrowingLargeCallback && outgoingMessagesCount > largeOutgoingMessageQueueCountThreshold && (MonotonicTime::now() - m_lastOutgoingMessageQueueIsGrowingLargeCallbackCallTime) >= largeOutgoingMessageQueueTimeThreshold;
         if (shouldNotifyOfQueueGrowingLarge) {
+            outgoingMessageQueueIsGrowingLargeCallback = m_outgoingMessageQueueIsGrowingLargeCallback;
             HashCountedSet<ASCIILiteral> outgoingMessageNameCounts;
             for (auto& encoder : m_outgoingMessages) {
                 auto name = description(encoder->messageName());
@@ -663,7 +677,7 @@ Error Connection::sendMessageImpl(UniqueRef<Encoder>&& encoder, OptionSet<SendOp
 #else
         RELEASE_LOG_ERROR(IPC, "Connection::sendMessage(): Too many messages (%zu) in the queue, notifying client (most common: %u %" PUBLIC_LOG_STRING " messages)", outgoingMessagesCount, maxOutgoingMessageNameCount, maxOutgoingMessageName.characters());
 #endif
-        m_outgoingMessageQueueIsGrowingLargeCallback();
+        (*outgoingMessageQueueIsGrowingLargeCallback)();
     }
 
     // It's not clear if calling dispatchWithQOS() will do anything if Connection::sendOutgoingMessages() is already running.
@@ -812,7 +826,7 @@ auto Connection::waitForMessage(MessageName messageName, uint64_t destinationID,
     while (true) {
         // Handle any messages that are blocked on a response from us.
         bool wasMessageToWaitForAlreadyDispatched = false;
-        protectedSyncState()->dispatchMessages([&](auto nameOfMessageToDispatch, uint64_t destinationOfMessageToDispatch) {
+        protect(m_syncState)->dispatchMessages([&](auto nameOfMessageToDispatch, uint64_t destinationOfMessageToDispatch) {
             wasMessageToWaitForAlreadyDispatched |= messageName == nameOfMessageToDispatch && destinationID == destinationOfMessageToDispatch;
         });
 
@@ -906,21 +920,26 @@ auto Connection::sendSyncMessage(SyncRequestID syncRequestID, UniqueRef<Encoder>
     }
 #endif
 
+    auto cleanup = makeScopeExit([&] {
+#if ENABLE(CORE_IPC_SIGNPOSTS)
+        if (signpostIdentifier) [[unlikely]]
+            WTFEndSignpost(signpostIdentifier, IPCConnection);
+#endif
+        popPendingSyncRequestID(syncRequestID);
+    });
+
     // Since sync IPC is blocking the current thread, make sure we use the same priority for the IPC sending thread
     // as the current thread.
-    sendMessageImpl(WTF::move(encoder), sendOptions, Thread::currentThreadQOS());
+    auto sendError = sendMessageImpl(WTF::move(encoder), sendOptions, Thread::currentThreadQOS());
+    if (sendError != Error::NoError) {
+        didFailToSendSyncMessage(sendError);
+        return makeUnexpected(sendError);
+    }
 
     // Then wait for a reply. Waiting for a reply could involve dispatching incoming sync messages, so
     // keep an extra reference to the connection here in case it's invalidated.
     Ref<Connection> protect(*this);
     auto replyOrError = waitForSyncReply(syncRequestID, messageName, timeout, sendSyncOptions);
-
-#if ENABLE(CORE_IPC_SIGNPOSTS)
-    if (signpostIdentifier) [[unlikely]]
-        WTFEndSignpost(signpostIdentifier, IPCConnection);
-#endif
-
-    popPendingSyncRequestID(syncRequestID);
 
     if (!replyOrError.has_value()) {
         if (replyOrError.error() == Error::NoError)
@@ -938,7 +957,7 @@ auto Connection::waitForSyncReply(SyncRequestID syncRequestID, MessageName messa
     bool timedOut = false;
     while (!timedOut) {
         // First, check if we have any messages that we need to process.
-        protectedSyncState()->dispatchMessages();
+        protect(m_syncState)->dispatchMessages();
 
         {
             Locker locker { m_syncReplyStateLock };
@@ -946,18 +965,17 @@ auto Connection::waitForSyncReply(SyncRequestID syncRequestID, MessageName messa
             // Second, check if there is a sync reply at the top of the stack.
             ASSERT(!m_pendingSyncReplies.isEmpty());
 
-            auto& pendingSyncReply = m_pendingSyncReplies.last();
-            ASSERT_UNUSED(syncRequestID, pendingSyncReply.syncRequestID == syncRequestID);
+            ASSERT_UNUSED(syncRequestID, m_pendingSyncReplies.last().syncRequestID == syncRequestID);
 
             // We found the sync reply.
-            if (pendingSyncReply.replyDecoder) {
-                auto replyDecoder = std::exchange(pendingSyncReply.replyDecoder, nullptr);
-                if (auto identifierOfLastMessageToDispatchBeforeSyncReply = pendingSyncReply.identifierOfLastMessageToDispatchBeforeSyncReply) {
+            if (m_pendingSyncReplies.last().replyDecoder) {
+                auto replyDecoder = std::exchange(m_pendingSyncReplies.last().replyDecoder, nullptr);
+                if (auto identifierOfLastMessageToDispatchBeforeSyncReply = m_pendingSyncReplies.last().identifierOfLastMessageToDispatchBeforeSyncReply) {
                     locker.unlockEarly();
 
                     // Dispatch messages (that return true for shouldDispatchMessageWhenWaitingForSyncReply()) that
                     // were received before this sync reply, in order to maintain ordering.
-                    protectedSyncState()->dispatchMessagesUntil(*identifierOfLastMessageToDispatchBeforeSyncReply);
+                    protect(m_syncState)->dispatchMessagesUntil(*identifierOfLastMessageToDispatchBeforeSyncReply);
                 }
 
                 return makeUniqueRefFromNonNullUniquePtr(WTF::move(replyDecoder));
@@ -980,7 +998,7 @@ auto Connection::waitForSyncReply(SyncRequestID syncRequestID, MessageName messa
         // We didn't find a sync reply yet, keep waiting.
         // This allows the WebProcess to still serve clients while waiting for the message to return.
         // Notably, it can continue to process accessibility requests, which are on the main thread.
-        timedOut = !protectedSyncState()->wait(timeout);
+        timedOut = !protect(m_syncState)->wait(timeout);
     }
 
 #if OS(DARWIN)
@@ -999,8 +1017,9 @@ void Connection::processIncomingSyncReply(UniqueRef<Decoder> decoder)
 
         // Go through the stack of sync requests that have pending replies and see which one
         // this reply is for.
+        Borrow borrowedPendingSyncReplies = m_pendingSyncReplies;
         for (size_t i = m_pendingSyncReplies.size(); i > 0; --i) {
-            PendingSyncReply& pendingSyncReply = m_pendingSyncReplies[i - 1];
+            PendingSyncReply& pendingSyncReply = borrowedPendingSyncReplies[i - 1];
 
             if (pendingSyncReply.syncRequestID->toUInt64() != decoder->destinationID())
                 continue;
@@ -1009,16 +1028,18 @@ void Connection::processIncomingSyncReply(UniqueRef<Decoder> decoder)
 
             pendingSyncReply.replyDecoder = decoder.moveToUniquePtr();
 
-            // Keep track of the last message (that returns true for shouldDispatchMessageWhenWaitingForSyncReply())
-            // we've received before this sync reply. This is to make sure that we dispatch all messages up to this
-            // one, before the sync reply, to maintain ordering.
-            pendingSyncReply.identifierOfLastMessageToDispatchBeforeSyncReply = protectedSyncState()->identifierOfLastMessageToDispatchWhileWaitingForSyncReply();
+            {
+                Locker incomingMessagesLocker { m_incomingMessagesLock };
+                if (RefPtr syncState = m_syncState) {
+                    // Keep track of the last message (that returns true for shouldDispatchMessageWhenWaitingForSyncReply())
+                    // we've received before this sync reply. This is to make sure that we dispatch all messages up to this
+                    // one, before the sync reply, to maintain ordering.
+                    pendingSyncReply.identifierOfLastMessageToDispatchBeforeSyncReply = syncState->identifierOfLastMessageToDispatchWhileWaitingForSyncReply();
 
-            // We got a reply to the last send message, wake up the client run loop so it can be processed.
-            if (i == m_pendingSyncReplies.size()) {
-                Locker locker { m_incomingMessagesLock };
-                if (RefPtr syncState = m_syncState)
-                    syncState->wakeUpClientRunLoop();
+                    // We got a reply to the last send message, wake up the client run loop so it can be processed.
+                    if (i == m_pendingSyncReplies.size())
+                        syncState->wakeUpClientRunLoop();
+                }
             }
             return;
         }
@@ -1066,6 +1087,10 @@ void Connection::processIncomingMessage(UniqueRef<Decoder> message)
     if (message->isAsyncReplyMessage()) {
         // Disallow async replies with invalid destinationIDs to be sent
         if (!AtomicObjectIdentifier<AsyncReplyIDType>::isValidIdentifier(message->destinationID())) {
+            // Drop our SyncMessageState reference while still holding m_incomingMessagesLock. Otherwise the
+            // ~SyncMessageState triggered by this last deref would run without the lock and could race with
+            // invalidate() dropping its own reference (both under m_incomingMessagesLock) on the dispatcher thread.
+            syncState = nullptr;
             incomingMessagesLocker.unlockEarly();
             waitForMessagesLocker.unlockEarly();
 #if ENABLE(IPC_TESTING_API)
@@ -1077,6 +1102,13 @@ void Connection::processIncomingMessage(UniqueRef<Decoder> message)
             return;
         }
         if (auto replyHandlerWithDispatcher = takeAsyncReplyHandlerWithDispatcherWithLockHeld(AtomicObjectIdentifier<AsyncReplyIDType>(message->destinationID()))) {
+            // Drop our SyncMessageState reference while still holding m_incomingMessagesLock, before unlocking to
+            // run the reply handler. Otherwise the ~SyncMessageState triggered by this last deref would run without
+            // the lock and could race with invalidate() dropping its own reference on the dispatcher thread.
+            syncState = nullptr;
+            incomingMessagesLocker.unlockEarly();
+            waitForMessagesLocker.unlockEarly();
+
             replyHandlerWithDispatcher(this, message.moveToUniquePtr());
             return;
         }
@@ -1087,7 +1119,7 @@ void Connection::processIncomingMessage(UniqueRef<Decoder> message)
         Locker locker { m_incomingSyncMessageCallbackLock };
 
         for (auto& callback : m_incomingSyncMessageCallbacks.values())
-            RefPtr { m_incomingSyncMessageCallbackQueue }->dispatch(WTF::move(callback));
+            m_incomingSyncMessageCallbackQueue->dispatch(WTF::move(callback));
 
         m_incomingSyncMessageCallbacks.clear();
     }
@@ -1135,7 +1167,7 @@ uint64_t Connection::installIncomingSyncMessageCallback(WTF::Function<void ()>&&
     m_nextIncomingSyncMessageCallbackID++;
 
     if (!m_incomingSyncMessageCallbackQueue)
-        m_incomingSyncMessageCallbackQueue = WorkQueue::create("com.apple.WebKit.IPC.IncomingSyncMessageCallbackQueue"_s);
+        lazyInitialize(m_incomingSyncMessageCallbackQueue, WorkQueue::create("com.apple.WebKit.IPC.IncomingSyncMessageCallbackQueue"_s));
 
     m_incomingSyncMessageCallbacks.add(m_nextIncomingSyncMessageCallbackID, WTF::move(callback));
 
@@ -1271,12 +1303,12 @@ void Connection::dispatchSyncMessage(Decoder& decoder)
             std::unique_ptr<Decoder> unwrappedDecoder = Decoder::unwrapForTesting(decoder);
             RELEASE_ASSERT(unwrappedDecoder);
             processIncomingMessage(makeUniqueRefFromNonNullUniquePtr(WTF::move(unwrappedDecoder)));
-            protectedSyncState()->dispatchMessages();
+            protect(m_syncState)->dispatchMessages();
             sendMessageImpl(WTF::move(replyEncoder), { });
         } else
             decoder.markInvalid();
     } else
-        protectedClient()->didReceiveSyncMessage(*this, decoder, replyEncoder);
+        protect(client())->didReceiveSyncMessage(*this, decoder, replyEncoder);
 
     // If the message was not handled, i.e. replyEncoder was not consumed, reply with cancel
     // message. We do not distinquish between a decode failure and failure to find a
@@ -1294,7 +1326,7 @@ void Connection::dispatchDidReceiveInvalidMessage(MessageName messageName, const
     dispatchToClient([protectedThis = Ref { *this }, messageName, indicesOfObjectsFailingDecoding] {
         if (!protectedThis->isValid())
             return;
-        protectedThis->protectedClient()->didReceiveInvalidMessage(protectedThis, messageName, indicesOfObjectsFailingDecoding);
+        protect(protectedThis->client())->didReceiveInvalidMessage(protectedThis, messageName, indicesOfObjectsFailingDecoding);
     });
 }
 
@@ -1396,7 +1428,7 @@ void Connection::dispatchMessage(Decoder& decoder)
 #if ENABLE(IPC_TESTING_API)
     if (isMainRunLoop()) {
         bool hasDeadObservers = false;
-        for (auto& observerWeakPtr : m_messageObservers) {
+        for (WeakPtr observerWeakPtr : borrow(m_messageObservers)) {
             if (RefPtr observer = observerWeakPtr.get())
                 observer->didReceiveMessage(decoder);
             else
@@ -1443,15 +1475,11 @@ void Connection::dispatchMessage(UniqueRef<Decoder> message)
             if (m_ignoreInvalidMessageForTesting)
                 return;
 #endif
-            protectedClient()->didReceiveInvalidMessage(*this, message->messageName(), message->indicesOfObjectsFailingDecoding());
+            protect(client())->didReceiveInvalidMessage(*this, message->messageName(), message->indicesOfObjectsFailingDecoding());
             return;
         }
         m_inDispatchMessageMarkedToUseFullySynchronousModeForTesting++;
     }
-
-#if ASSERT_ENABLED
-    ++m_inDispatchMessageCount;
-#endif
 
     bool isDispatchingMessageWhileWaitingForSyncReply = (message->shouldDispatchMessageWhenWaitingForSyncReply() == ShouldDispatchWhenWaitingForSyncReply::Yes)
         || (message->shouldDispatchMessageWhenWaitingForSyncReply() == ShouldDispatchWhenWaitingForSyncReply::YesDuringUnboundedIPC && UnboundedSynchronousIPCScope::hasOngoingUnboundedSyncIPC());
@@ -1459,19 +1487,19 @@ void Connection::dispatchMessage(UniqueRef<Decoder> message)
     if (isDispatchingMessageWhileWaitingForSyncReply)
         m_inDispatchMessageMarkedDispatchWhenWaitingForSyncReplyCount++;
 
-    bool oldDidReceiveInvalidMessage = m_didReceiveInvalidMessage;
-    m_didReceiveInvalidMessage = false;
+    bool didReceiveInvalidMessage = false;
+    {
+        MessageDispatchScope dispatchScope { *this };
 
-    if (message->isSyncMessage())
-        dispatchSyncMessage(message.get());
-    else
-        dispatchMessage(message.get());
+        messageLog().add(message->messageName());
 
-    m_didReceiveInvalidMessage |= !message->isValid();
+        if (message->isSyncMessage())
+            dispatchSyncMessage(message.get());
+        else
+            dispatchMessage(message.get());
 
-#if ASSERT_ENABLED
-    --m_inDispatchMessageCount;
-#endif
+        didReceiveInvalidMessage = dispatchScope.didReceiveInvalidMessage() || !message->isValid();
+    }
 
     // FIXME: For synchronous messages, we should not decrement the counter until we send a response.
     // Otherwise, we would deadlock if processing the message results in a sync message back after we exit this function.
@@ -1481,15 +1509,12 @@ void Connection::dispatchMessage(UniqueRef<Decoder> message)
     if (message->shouldUseFullySynchronousModeForTesting())
         m_inDispatchMessageMarkedToUseFullySynchronousModeForTesting--;
 
-    bool didReceiveInvalidMessage = m_didReceiveInvalidMessage;
-    m_didReceiveInvalidMessage = oldDidReceiveInvalidMessage;
-
 #if ENABLE(IPC_TESTING_API)
     if (m_ignoreInvalidMessageForTesting)
         return;
 #endif
     if (didReceiveInvalidMessage && isValid())
-        protectedClient()->didReceiveInvalidMessage(*this, message->messageName(), message->indicesOfObjectsFailingDecoding());
+        protect(client())->didReceiveInvalidMessage(*this, message->messageName(), message->indicesOfObjectsFailingDecoding());
 }
 
 size_t Connection::numberOfMessagesToProcess(size_t totalMessages)
@@ -1731,9 +1756,15 @@ void Connection::setShouldCrashOnMessageCheckFailure(bool shouldCrash)
     s_shouldCrashOnMessageCheckFailure = shouldCrash;
 }
 
-auto Connection::protectedSyncState() const -> RefPtr<SyncMessageState>
+void Connection::logFailedMessageCheck(const String& reason, const String& function, const String& file, unsigned line)
 {
-    return m_syncState;
+    RELEASE_LOG_FAULT_WITH_PAYLOAD(IPC, "%s %u: Invalid message dispatched %s: %s", file.utf8(), line, function.utf8(), reason.utf8());
+    CRASH_IF_TESTING
 }
 
 } // namespace IPC
+
+#if ENABLE(SWIFT_BASE_CLASS_ANNOTATIONS)
+// Workaround for rdar://188816334
+template void WTF::ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<IPC::Connection, WTF::DestructionThread::MainRunLoop>::operator delete(void*);
+#endif

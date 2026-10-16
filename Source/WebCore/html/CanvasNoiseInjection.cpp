@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023 Apple Inc. All rights reserved.
+ * Copyright (c) 2023-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,10 +26,10 @@
 #include "config.h"
 #include "CanvasNoiseInjection.h"
 
-#include "ByteArrayPixelBuffer.h"
 #include "FloatRect.h"
 #include "ImageBuffer.h"
 #include "PixelBuffer.h"
+#include "TypedArrayPixelBuffer.h"
 #include <algorithm>
 
 namespace WebCore {
@@ -44,7 +44,7 @@ void CanvasNoiseInjection::clearDirtyRect()
     m_postProcessDirtyRect = { };
 }
 
-static inline bool isIndexInBounds(int size, int index)
+static inline bool LEGACY_NODELETE isIndexInBounds(int size, int index)
 {
     ASSERT(index <= size);
     return index < size;
@@ -96,7 +96,7 @@ static std::pair<std::array<int, 4>, std::array<int, 4>> boundingNeighbors(int i
     auto bufferSize = bytes.size_bytes();
     auto pixelIndex = index / bytesPerPixel;
     bool isInTopRow = pixelIndex < static_cast<size_t>(size.width());
-    bool isInBottomRow = pixelIndex > static_cast<size_t>((size.height() - 1) * size.width());
+    bool isInBottomRow = pixelIndex >= static_cast<size_t>((size.height() - 1) * size.width());
     bool isInLeftColumn = !(pixelIndex % size.width());
     bool isInRightColumn = (pixelIndex % size.width()) == static_cast<unsigned>(size.width()) - 1;
     bool isInTopLeftCorner = isInTopRow && isInLeftColumn;
@@ -202,13 +202,13 @@ void CanvasNoiseInjection::postProcessDirtyCanvasBuffer(ImageBuffer* imageBuffer
     if (!is<ByteArrayPixelBuffer>(pixelBuffer))
         return;
 
-    if (postProcessPixelBufferResults(*pixelBuffer, salt)) {
+    if (postProcessPixelBufferResults(*pixelBuffer, salt))
         imageBuffer->putPixelBuffer(*pixelBuffer, { IntPoint::zero(), dirtyRect.size() }, dirtyRect.location());
-        m_postProcessDirtyRect = { };
-    }
+
+    m_postProcessDirtyRect = { };
 }
 
-static std::pair<int, int> lowerAndUpperBound(int component1, int component2, int component3)
+static std::pair<int, int> LEGACY_NODELETE lowerAndUpperBound(int component1, int component2, int component3)
 {
     if (component1 <= component3) {
         if (component1 == component2 || component2 == component3)
@@ -220,7 +220,7 @@ static std::pair<int, int> lowerAndUpperBound(int component1, int component2, in
         if (component1 <= component2 && component2 >= component3)
             return { component3, component2 };
     } else if (component1 > component3) {
-        if (component1 < component2 && component2 > component3)
+        if (component1 >= component2 && component2 >= component3)
             return { component3, component1 };
         if (component1 > component2 && component2 < component3)
             return { component2, component3 };
@@ -230,7 +230,7 @@ static std::pair<int, int> lowerAndUpperBound(int component1, int component2, in
     return { component2, component2 };
 }
 
-static void adjustNeighborColorBounds(std::array<int, 4>& neighborColor1, const std::array<int, 4>& color, std::array<int, 4>& neighborColor2)
+static void LEGACY_NODELETE adjustNeighborColorBounds(std::array<int, 4>& neighborColor1, const std::array<int, 4>& color, std::array<int, 4>& neighborColor2)
 {
     auto [redLowerBound, redUpperBound] = lowerAndUpperBound(neighborColor1[0], color[0], neighborColor2[0]);
     auto [greenLowerBound, greenUpperBound] = lowerAndUpperBound(neighborColor1[1], color[1], neighborColor2[1]);

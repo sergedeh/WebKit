@@ -19,7 +19,7 @@
 #include "include/core/SkYUVAPixmaps.h"
 #include "include/private/SkEncodedInfo.h"
 #include "include/private/SkHdrMetadata.h"
-#include "include/private/base/SkNoncopyable.h"
+#include "include/private/SkNoncopyable.h"
 #include "modules/skcms/skcms.h"
 
 #include <cstddef>
@@ -311,12 +311,6 @@ public:
      *  Format of the encoded data.
      */
     SkEncodedImageFormat getEncodedFormat() const { return this->onGetEncodedFormat(); }
-
-    /**
-     *  Return the underlying encoded data stream. This may be nullptr if the original
-     *  stream could not be duplicated.
-     */
-    virtual std::unique_ptr<SkStream> getEncodedData() const;
 
     /**
      *  Whether or not the memory passed to getPixels is zero initialized.
@@ -840,14 +834,6 @@ public:
     };
     IsAnimated isAnimated() { return this->onIsAnimated(); }
 
-    // Register a decoder at runtime by passing two function pointers:
-    //    - peek() to return true if the span of bytes appears to be your encoded format;
-    //    - make() to attempt to create an SkCodec from the given stream.
-    // Not thread safe.
-    static void Register(
-            bool                     (*peek)(const void*, size_t),
-            std::unique_ptr<SkCodec> (*make)(std::unique_ptr<SkStream>, SkCodec::Result*));
-
 protected:
     const SkEncodedInfo& getEncodedInfo() const { return fEncodedInfo; }
 
@@ -1085,6 +1071,13 @@ private:
         return kUnimplemented;
     }
 
+    /**
+     *  Checks whether the implementation supports incremental decoding for the given info.
+     *
+     *  Note that onStartIncrementalDecode can stil fail regardless of this result.
+     */
+    virtual bool onSupportsIncrementalDecode(const SkImageInfo&) { return false; }
+
     virtual Result onStartIncrementalDecode(const SkImageInfo& /*dstInfo*/, void*, size_t,
             const Options&) {
         return kUnimplemented;
@@ -1126,11 +1119,18 @@ private:
      */
     virtual SkSampler* getSampler(bool /*createIfNecessary*/) { return nullptr; }
 
+    /**
+     *  Return the underlying encoded data. This may be nullptr if the original
+     *  stream could not be duplicated/read.
+     */
+    virtual sk_sp<const SkData> getEncodedData() const;
+
     friend class DM::CodecSrc;  // for fillIncompleteImage
     friend class PNGCodecGM;    // for fillIncompleteImage
     friend class SkSampledCodec;
     friend class SkIcoCodec;
-    friend class SkPngCodec;     // for onGetGainmapCodec
+    friend class SkIcoRustCodec;  // for getEncodedInfo and getSampler
+    friend class SkPngCodecBase;  // for onGetGainmapCodec
     friend class SkAndroidCodec;  // for handleFrameIndex
     friend class SkCodecPriv;     // for fEncodedInfo
 };

@@ -35,7 +35,6 @@
 #include "JSHTMLBodyElement.h"
 #include "LocalDOMWindow.h"
 #include "MutableStyleProperties.h"
-#include "NodeInlines.h"
 #include "NodeName.h"
 #include "ResourceLoaderOptions.h"
 #include <wtf/NeverDestroyed.h>
@@ -88,24 +87,24 @@ void HTMLBodyElement::collectPresentationalHintsForAttribute(const QualifiedName
     case AttributeNames::backgroundAttr: {
         auto url = value.string().trim(isASCIIWhitespace);
         if (!url.isEmpty())
-            style.setProperty(CSSProperty(CSSPropertyBackgroundImage, CSSImageValue::create(protectedDocument()->completeURL(url), localName())));
+            style.setProperty(CSSProperty(CSSPropertyID::BackgroundImage, CSSImageValue::create(protect(document())->encodingParseURL(url), localName())));
         break;
     }
     case AttributeNames::marginwidthAttr:
     case AttributeNames::leftmarginAttr:
-        addHTMLLengthToStyle(style, CSSPropertyMarginRight, value);
-        addHTMLLengthToStyle(style, CSSPropertyMarginLeft, value);
+        addHTMLPixelLengthToStyle(style, CSSPropertyID::MarginRight, value);
+        addHTMLPixelLengthToStyle(style, CSSPropertyID::MarginLeft, value);
         break;
     case AttributeNames::marginheightAttr:
     case AttributeNames::topmarginAttr:
-        addHTMLLengthToStyle(style, CSSPropertyMarginBottom, value);
-        addHTMLLengthToStyle(style, CSSPropertyMarginTop, value);
+        addHTMLPixelLengthToStyle(style, CSSPropertyID::MarginBottom, value);
+        addHTMLPixelLengthToStyle(style, CSSPropertyID::MarginTop, value);
         break;
     case AttributeNames::bgcolorAttr:
-        addHTMLColorToStyle(style, CSSPropertyBackgroundColor, value);
+        addHTMLColorToStyle(style, CSSPropertyID::BackgroundColor, value);
         break;
     case AttributeNames::textAttr:
-        addHTMLColorToStyle(style, CSSPropertyColor, value);
+        addHTMLColorToStyle(style, CSSPropertyID::Color, value);
         break;
     default:
         HTMLElement::collectPresentationalHintsForAttribute(name, value, style);
@@ -167,20 +166,20 @@ void HTMLBodyElement::attributeChanged(const QualifiedName& name, const AtomStri
     HTMLElement::attributeChanged(name, oldValue, newValue, attributeModificationReason);
 }
 
-Node::InsertedIntoAncestorResult HTMLBodyElement::insertedIntoAncestor(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
+Node::NeedsPostConnectionSteps HTMLBodyElement::insertionSteps(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
 {
-    HTMLElement::insertedIntoAncestor(insertionType, parentOfInsertedTree);
+    HTMLElement::insertionSteps(insertionType, parentOfInsertedTree);
     if (!insertionType.connectedToDocument)
-        return InsertedIntoAncestorResult::Done;
-    if (!is<HTMLFrameElementBase>(protectedDocument()->ownerElement()))
-        return InsertedIntoAncestorResult::Done;
-    return InsertedIntoAncestorResult::NeedsPostInsertionCallback;
+        return NeedsPostConnectionSteps::No;
+    if (!is<HTMLFrameElementBase>(document().ownerElement()))
+        return NeedsPostConnectionSteps::No;
+    return NeedsPostConnectionSteps::Yes;
 }
 
-void HTMLBodyElement::didFinishInsertingNode()
+void HTMLBodyElement::postConnectionSteps()
 {
-    // A DOM mutation could have happened in between the call to insertedIntoAncestor() and the
-    // call to didFinishInsertingNode().
+    // A DOM mutation could have happened in between the call to insertionSteps() and the
+    // call to postConnectionSteps().
     Ref document = this->document();
     if (!is<HTMLFrameElementBase>(document->ownerElement()))
         return;
@@ -210,11 +209,11 @@ bool HTMLBodyElement::supportsFocus() const
     return hasEditableStyle() || HTMLElement::supportsFocus();
 }
 
-void HTMLBodyElement::addSubresourceAttributeURLs(ListHashSet<URL>& urls) const
+void HTMLBodyElement::addSubresourceAttributeURLs(OrderedHashSet<URL>& urls) const
 {
     HTMLElement::addSubresourceAttributeURLs(urls);
 
-    addSubresourceURL(urls, protectedDocument()->completeURL(attributeWithoutSynchronization(backgroundAttr)));
+    addSubresourceURL(urls, protect(document())->encodingParseURL(attributeWithoutSynchronization(backgroundAttr)));
 }
 
 } // namespace WebCore

@@ -29,7 +29,7 @@
 
 #include <wtf/Observer.h>
 #include <wtf/Ref.h>
-#include <wtf/RefCounted.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/RetainPtr.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/URL.h>
@@ -39,7 +39,7 @@ OBJC_CLASS WKGroupSession;
 
 namespace WebKit {
 
-class GroupActivitiesSession : public RefCounted<GroupActivitiesSession> {
+class GroupActivitiesSession : public RefCountedAndCanMakeWeakPtr<GroupActivitiesSession> {
     WTF_MAKE_TZONE_ALLOCATED(GroupActivitiesSession);
 public:
     static Ref<GroupActivitiesSession> create(RetainPtr<WKGroupSession>&&);
@@ -69,9 +69,8 @@ private:
     friend class GroupActivitiesCoordinator;
     GroupActivitiesSession(RetainPtr<WKGroupSession>&&);
     WKGroupSession* groupSession() { return m_groupSession.get(); }
-    RetainPtr<WKGroupSession> protectedGroupSession() { return m_groupSession; }
 
-    RetainPtr<WKGroupSession> m_groupSession;
+    const RetainPtr<WKGroupSession> m_groupSession;
     WeakHashSet<StateChangeObserver> m_stateChangeObservers;
     WeakHashSet<FallbackURLObserver> m_fallbackURLObservers;
 };

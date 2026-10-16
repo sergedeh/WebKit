@@ -54,12 +54,12 @@ public:
 
     void initializeB3Code(CodeRef<JSEntryPtrTag>);
     void initializeB3Byproducts(std::unique_ptr<OpaqueByproducts>);
-    void initializeAddressForCall(CodePtr<JSEntryPtrTag>);
-    void initializeAddressForArityCheck(CodePtr<JSEntryPtrTag>);
+    void LEGACY_NODELETE initializeAddressForCall(CodePtr<JSEntryPtrTag>);
+    void LEGACY_NODELETE initializeAddressForArityCheck(CodePtr<JSEntryPtrTag>);
     
     void validateReferences(const TrackedReferences&) override;
 
-    RegisterSetBuilder liveRegistersToPreserveAtExceptionHandlingCallSite(CodeBlock*, CallSiteIndex) override;
+    RegisterSet liveRegistersToPreserveAtExceptionHandlingCallSite(CodeBlock*, CallSiteIndex) override;
 
     std::optional<CodeOrigin> findPC(CodeBlock*, void* pc) override;
 
@@ -75,7 +75,26 @@ public:
 
     PCToCodeOriginMap* pcToCodeOriginMap() override { return common.m_pcToCodeOriginMap.get(); }
 
-    const RegisterAtOffsetList* calleeSaveRegisters() const { return &m_calleeSaveRegisters; }
+    const RegisterAtOffsetList* calleeSaveRegisters() const LIFETIME_BOUND { return &m_calleeSaveRegisters; }
+
+    int osrExitLocalsOffset() const { return m_osrExitLocalsOffset; }
+    void setOSRExitLocalsOffset(int offset) { m_osrExitLocalsOffset = offset; }
+
+    OSRExit osrExit(unsigned index) const { return m_osrExits.at(index, *this); }
+    CodeLocationLabel<JSInternalPtrTag> osrExitEntrance(const OSRExit& exit) const
+    {
+        return CodeLocationLabel<JSEntryPtrTag>(m_b3Code.code()).labelAtOffset<JSInternalPtrTag>(exit.m_entranceOffset);
+    }
+    unsigned osrExitIndexForReturnPC(void* returnPC) const
+    {
+        uintptr_t entrance = reinterpret_cast<uintptr_t>(returnPC) - DFG::osrExitEntranceSize;
+        return m_osrExits.indexForEntranceOffset(entrance - m_b3Code.code().dataLocation<uintptr_t>(), *this);
+    }
+
+    OSRExitDescriptor& appendOSRExitDescriptor(DataFormat profileDataFormat, MethodOfGettingAValueProfile valueProfile)
+    {
+        return osrExitDescriptors.alloc(osrExitDescriptors.size(), profileDataFormat, valueProfile);
+    }
 
     unsigned numberOfCompiledDFGNodes() const { return m_numberOfCompiledDFGNodes; }
     void setNumberOfCompiledDFGNodes(unsigned numberOfCompiledDFGNodes)
@@ -84,9 +103,11 @@ public:
     }
     
     DFG::CommonData common;
-    Vector<OSRExit> m_osrExit;
+    OSRExitStream m_osrExits;
+    DFG::OSRExitStubs m_osrExitStubs;
     RegisterAtOffsetList m_calleeSaveRegisters;
     SegmentedVector<OSRExitDescriptor, 8> osrExitDescriptors;
+    Vector<EncodedJSValue> osrExitConstants;
     Vector<std::unique_ptr<LazySlowPath>> lazySlowPaths;
     
 private:
@@ -95,6 +116,7 @@ private:
     CodePtr<JSEntryPtrTag> m_addressForArityCheck;
     size_t m_size { 1000 };
     unsigned m_numberOfCompiledDFGNodes { 0 };
+    int m_osrExitLocalsOffset { 0 };
 };
 
 } } // namespace JSC::FTL

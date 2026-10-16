@@ -21,12 +21,16 @@
 
 #pragma once
 
+#include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/JSDestructibleObject.h>
-#include <JavaScriptCore/StructureInlines.h>
+#include <JavaScriptCore/JSEmbedderArrayLike.h>
 #include <WebCore/JSDOMGlobalObject.h>
-#include <WebCore/NodeConstants.h>
-#include <wtf/Compiler.h>
+#include <WebCore/NodeType.h>
 #include <wtf/SignedPtr.h>
+
+namespace JSC {
+class Structure;
+}
 
 namespace WebCore {
 
@@ -40,22 +44,26 @@ class ScriptExecutionContext;
 // offset | 7 | 6 | 5 | 4 | 3   2   1   0  |
 // value  | 1 | 1 | 1 | 1 |    NodeType    |
 
-static const uint8_t JSDOMWrapperType                = 0b11101110;
-static const uint8_t JSEventType                     = 0b11101111;
-static const uint8_t JSNodeType                      = 0b11110000;
-static const uint8_t JSNodeTypeMask                  = 0b00001111;
-static const uint8_t JSTextNodeType                  = JSNodeType | NodeConstants::TEXT_NODE;
-static const uint8_t JSProcessingInstructionNodeType = JSNodeType | NodeConstants::PROCESSING_INSTRUCTION_NODE;
-static const uint8_t JSDocumentTypeNodeType          = JSNodeType | NodeConstants::DOCUMENT_TYPE_NODE;
-static const uint8_t JSDocumentFragmentNodeType      = JSNodeType | NodeConstants::DOCUMENT_FRAGMENT_NODE;
-static const uint8_t JSDocumentWrapperType           = JSNodeType | NodeConstants::DOCUMENT_NODE;
-static const uint8_t JSCommentNodeType               = JSNodeType | NodeConstants::COMMENT_NODE;
-static const uint8_t JSCDATASectionNodeType          = JSNodeType | NodeConstants::CDATA_SECTION_NODE;
-static const uint8_t JSAttrNodeType                  = JSNodeType | NodeConstants::ATTRIBUTE_NODE;
-static const uint8_t JSElementType                   = 0b11110000 | NodeConstants::ELEMENT_NODE;
+static constexpr uint8_t JSEmbedderArrayLikeType        = JSC::EmbedderArrayLikeType;
+static constexpr uint8_t JSDOMWrapperType                = 0b11101110;
+static constexpr uint8_t JSEventType                     = 0b11101111;
+static constexpr uint8_t JSNodeType                      = 0b11110000;
+static constexpr uint8_t JSNodeTypeMask                  = 0b00001111;
+static constexpr uint8_t JSTextNodeType                  = JSNodeType | std::to_underlying(NodeType::Text);
+static constexpr uint8_t JSProcessingInstructionNodeType = JSNodeType | std::to_underlying(NodeType::ProcessingInstruction);
+static constexpr uint8_t JSDocumentTypeNodeType          = JSNodeType | std::to_underlying(NodeType::DocumentType);
+static constexpr uint8_t JSDocumentFragmentNodeType      = JSNodeType | std::to_underlying(NodeType::DocumentFragment);
+static constexpr uint8_t JSDocumentWrapperType           = JSNodeType | std::to_underlying(NodeType::Document);
+static constexpr uint8_t JSCommentNodeType               = JSNodeType | std::to_underlying(NodeType::Comment);
+static constexpr uint8_t JSCDATASectionNodeType          = JSNodeType | std::to_underlying(NodeType::CDATASection);
+static constexpr uint8_t JSAttrNodeType                  = JSNodeType | std::to_underlying(NodeType::Attribute);
+static constexpr uint8_t JSElementType                   = 0b11110000 | std::to_underlying(NodeType::Element);
 
 static_assert(JSDOMWrapperType > JSC::LastJSCObjectType, "JSC::JSType offers the highest bit.");
-static_assert(NodeConstants::LastNodeType <= JSNodeTypeMask, "NodeType should be represented in 4bit.");
+static_assert(JSEmbedderArrayLikeType > JSC::LastJSCObjectType, "EmbedderArrayLikeType must be above LastJSCObjectType.");
+static_assert(JSEmbedderArrayLikeType != JSDOMWrapperType && JSC::EmbedderArrayLikeType != JSEventType, "EmbedderArrayLikeType must not collide with other WebCore types.");
+static_assert(JSEmbedderArrayLikeType < JSNodeType, "EmbedderArrayLikeType must be below JSNodeType to avoid breaking node range checks.");
+static_assert(lastNodeType <= JSNodeTypeMask, "NodeType should be represented in 4bit.");
 
 class JSDOMObject : public JSC::JSDestructibleObject {
 public:
@@ -64,11 +72,12 @@ public:
     template<typename, JSC::SubspaceAccess>
     static void subspaceFor(JSC::VM&) { RELEASE_ASSERT_NOT_REACHED(); }
 
-    JSDOMGlobalObject* globalObject() const { return JSC::jsCast<JSDOMGlobalObject*>(JSC::JSNonFinalObject::globalObject()); }
-    ScriptExecutionContext* scriptExecutionContext() const { return globalObject()->scriptExecutionContext(); }
+    JSDOMGlobalObject* realm() const { return uncheckedDowncast<JSDOMGlobalObject>(JSC::JSNonFinalObject::realm()); }
+    ScriptExecutionContext* scriptExecutionContext() const { return realm()->scriptExecutionContext(); }
 
 protected:
     WEBCORE_EXPORT JSDOMObject(JSC::Structure*, JSC::JSGlobalObject&);
+    WEBCORE_EXPORT void finishCreation(JSC::VM&);
 };
 
 template<typename ImplementationClass, typename PtrTraits = RawPtrTraits<ImplementationClass>>
@@ -77,8 +86,7 @@ public:
     using Base = JSDOMObject;
     using DOMWrapped = ImplementationClass;
 
-    ImplementationClass& wrapped() const { return m_wrapped; }
-    Ref<ImplementationClass> protectedWrapped() const { return m_wrapped; }
+    ImplementationClass& wrapped() const LIFETIME_BOUND { return m_wrapped; }
     static constexpr ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(JSDOMWrapper, m_wrapped); }
     constexpr static bool hasCustomPtrTraits() { return !std::is_same_v<PtrTraits, RawPtrTraits<ImplementationClass>>; };
     
@@ -88,11 +96,68 @@ protected:
         , m_wrapped(WTF::move(impl)) { }
 
 private:
-    Ref<ImplementationClass, PtrTraits> m_wrapped;
+    const Ref<ImplementationClass, PtrTraits> m_wrapped;
 };
 
 template<typename ImplementationClass> struct JSDOMWrapperConverterTraits;
 
 JSC::JSValue cloneAcrossWorlds(JSC::JSGlobalObject&, const JSDOMObject& owner, JSC::JSValue);
+
+template<typename ImplementationClass>
+class JSDOMEmbedderArrayLikeWrapper : public JSC::JSEmbedderArrayLike {
+public:
+    using Base = JSC::JSEmbedderArrayLike;
+    using DOMWrapped = ImplementationClass;
+
+    template<typename, JSC::SubspaceAccess>
+    static void subspaceFor(JSC::VM&) { RELEASE_ASSERT_NOT_REACHED(); }
+
+    JSDOMGlobalObject* realm() const { return uncheckedDowncast<JSDOMGlobalObject>(JSC::JSNonFinalObject::realm()); }
+    ScriptExecutionContext* scriptExecutionContext() const { return realm()->scriptExecutionContext(); }
+
+    ImplementationClass& wrapped() const { return downcast<ImplementationClass>(embeddedArrayLike()); }
+    constexpr static bool hasCustomPtrTraits() { return false; };
+
+protected:
+    JSDOMEmbedderArrayLikeWrapper(JSC::Structure* structure, JSC::JSGlobalObject& globalObject, Ref<ImplementationClass>&& impl)
+        : Base(globalObject.vm(), structure, WTF::move(impl)) { }
+};
+
+// Wrapper base for IDL [Exception] interfaces (e.g. DOMException). It is a genuine
+// JSC::ErrorInstance, so it has the [[ErrorData]] internal slot (Error.isError() returns
+// true, Object.prototype.toString reports "Error"). It deliberately does not capture a JS
+// stack trace: DOMException's WebIDL attributes and Error.prototype provide its surface.
+template<typename ImplementationClass>
+class JSDOMErrorWrapper : public JSC::ErrorInstance {
+public:
+    using Base = JSC::ErrorInstance;
+    using DOMWrapped = ImplementationClass;
+
+    template<typename, JSC::SubspaceAccess>
+    static void subspaceFor(JSC::VM&) { RELEASE_ASSERT_NOT_REACHED(); }
+
+    JSDOMGlobalObject* realm() const { return uncheckedDowncast<JSDOMGlobalObject>(JSC::JSNonFinalObject::realm()); }
+    ScriptExecutionContext* scriptExecutionContext() const { return realm()->scriptExecutionContext(); }
+
+    ImplementationClass& wrapped() const LIFETIME_BOUND { return m_wrapped; }
+    static constexpr ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(JSDOMErrorWrapper, m_wrapped); }
+    constexpr static bool hasCustomPtrTraits() { return false; }
+
+protected:
+    JSDOMErrorWrapper(JSC::Structure* structure, JSC::JSGlobalObject& globalObject, Ref<ImplementationClass>&& impl)
+        : Base(globalObject.vm(), structure, JSC::ErrorType::Error)
+        , m_wrapped(WTF::move(impl)) { }
+
+    void finishCreation(JSC::VM& vm)
+    {
+        // Capture a stack trace (so "stack" behaves as it does on a plain Error) but add no own
+        // "message" property; DOMException exposes its name/message through WebIDL getters on
+        // the prototype.
+        Base::finishCreationForEmbedderError(vm);
+    }
+
+private:
+    const Ref<ImplementationClass> m_wrapped;
+};
 
 } // namespace WebCore

@@ -5,27 +5,42 @@ import sys
 
 PARAMETER_LIST_INCLUDE_TYPE = 1
 PARAMETER_LIST_INCLUDE_NAME = 2
-PARAMETER_LIST_MODIFY_CSTRING = 4
+
+# How a UTF8CStringView parameter is rendered. The sender can pass a non-owning view, but the receiver must
+# not: over streaming IPC the decoded bytes live in shared memory that the sending process can still
+# modify, so the message and the receiver take an owning UTF8CString instead. See 315201@main.
+STRING_AS_VIEW = 0      # UTF8CStringView arg0
+STRING_AS_OWNED = 1     # UTF8CString arg0
+STRING_AS_RECEIVED = 2  # UTF8CString&& arg0
+STRING_AS_SENT = 3      # UTF8CString { arg0.span() }
+
+STRING_PARAMETER_TYPE = "UTF8CStringView"
 
 
 def get_argument_list(parameter_string):
     return re.findall(r'(\w+)\s*,?', parameter_string)
 
 
-def get_arguments_string(parameter_string, flags):
+def get_arguments_string(parameter_string, flags, string_mode=STRING_AS_VIEW):
     arguments = get_argument_list(parameter_string)
     arguments_string = ""
     for index, argument in enumerate(arguments):
+        name = "arg" + str(index)
+        decorated_name = name
+        if argument == STRING_PARAMETER_TYPE:
+            if string_mode == STRING_AS_OWNED:
+                argument = "UTF8CString"
+            elif string_mode == STRING_AS_RECEIVED:
+                argument = "UTF8CString&&"
+            elif string_mode == STRING_AS_SENT:
+                decorated_name = "UTF8CString { " + name + ".span() }"
         if flags & PARAMETER_LIST_INCLUDE_TYPE:
-            if flags & PARAMETER_LIST_MODIFY_CSTRING and argument == "CString":
-                argument = "CString&&"
             arguments_string += argument
         if flags & PARAMETER_LIST_INCLUDE_NAME:
             if flags & PARAMETER_LIST_INCLUDE_TYPE:
-                arguments_string += " "
-            arguments_string += "arg" + str(index)
-            if (flags & PARAMETER_LIST_MODIFY_CSTRING) and (argument == "CString") and (not flags & PARAMETER_LIST_INCLUDE_TYPE):
-                arguments_string += ".data()"
+                arguments_string += " " + name
+            else:
+                arguments_string += decorated_name
         if index < len(arguments) - 1:
             arguments_string += ", "
     return arguments_string
@@ -36,7 +51,11 @@ def generate_log_client_declarations_file(log_messages, log_client_declarations_
 
         file.write("#pragma once\n\n")
         for log_message in log_messages:
-            file.write("#define MESSAGE_" + log_message[0] + " " + log_message[1] + "\n")
+            message_name = log_message[0]
+            message_format = log_message[1]
+            file.write("#define MESSAGE_" + message_name + " " + message_format + "\n")
+            message_format_without_public_string_modifier = message_format.replace("%\" PUBLIC_LOG_STRING \"", "%s")
+            file.write("#define MESSAGE_WITHOUT_PUBLIC_STRING_MODIFIER_" + message_name + " " + message_format_without_public_string_modifier + "\n")
 
         file.close()
 
@@ -73,6 +92,7 @@ def generate_log_client_virtual_functions(log_messages, log_client_virtual_funct
 
 #include <os/log.h>
 #include <wtf/ThreadSafeRefCounted.h>
+#include <wtf/text/UTF8CStringView.h>
 
 namespace WebCore {
 
@@ -82,7 +102,7 @@ public:
     LogClient() = default;
     virtual ~LogClient() { }
 
-    virtual void log(std::span<const uint8_t> logChannel, std::span<const uint8_t> logCategory, std::span<const uint8_t> logString, os_log_type_t) = 0;
+    virtual void log(std::span<const char8_t> logChannel, std::span<const char8_t> logCategory, std::span<const char8_t> logString, os_log_type_t) = 0;
     virtual bool isWebKitLogClient() const { return false; }
 
 """)
@@ -90,7 +110,7 @@ public:
         for log_message in log_messages:
             function_name = log_message[0]
             parameters = log_message[2]
-            arguments_string = get_arguments_string(parameters, PARAMETER_LIST_INCLUDE_TYPE | PARAMETER_LIST_MODIFY_CSTRING)
+            arguments_string = get_arguments_string(parameters, PARAMETER_LIST_INCLUDE_TYPE)
             file.write("    virtual void " + function_name + "(" + arguments_string + ") { }\n")
 
         file.write("""
@@ -112,7 +132,7 @@ def get_log_messages(log_messages_input_file):
     log_messages = []
     with open(log_messages_input_file) as input_file:
         input_file_lines = input_file.readlines()
-        identifier_regexp = r'(?P<identifier>[A-Z_0-9]*)'
+        identifier_regexp = r'(?P<identifier>[A-Z_a-z0-9]*)'
         inner_format_string_regexp = r'((\"[\w:;%~\'\-\[\]=,\.\(\)\{\} ]*\")\s*(PRI[A-Za-z0-9]+|PUBLIC_LOG_STRING|PRIVATE_LOG_STRING)?)'
         parameter_list_regexp = r'\((?P<parameter_list>.*)\)'
         log_type_regexp = r'(?P<log_type>DEFAULT|INFO|ERROR|FAULT)'

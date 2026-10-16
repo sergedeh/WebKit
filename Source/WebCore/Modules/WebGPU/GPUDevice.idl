@@ -29,13 +29,16 @@
     EnabledBySetting=WebGPUEnabled,
     ActiveDOMObject,
     Exposed=(Window,Worker),
-    SecureContext
+    SecureContext,
+    CallTracer=InspectorCanvasCallTracer,
 ] interface GPUDevice : EventTarget {
     [SameObject] readonly attribute GPUSupportedFeatures features;
     [SameObject] readonly attribute GPUSupportedLimits limits;
     [SameObject] readonly attribute GPUAdapterInfo adapterInfo;
 
     [SameObject] readonly attribute GPUQueue queue;
+
+    attribute EventHandler onuncapturederror;
 
     [CallWith=CurrentScriptExecutionContext] undefined destroy();
 

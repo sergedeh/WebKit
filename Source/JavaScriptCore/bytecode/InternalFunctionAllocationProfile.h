@@ -26,7 +26,6 @@
 #pragma once
 
 #include <JavaScriptCore/JSGlobalObject.h>
-#include <JavaScriptCore/SlotVisitor.h>
 #include <JavaScriptCore/WriteBarrier.h>
 
 namespace JSC {
@@ -47,7 +46,7 @@ private:
 
 inline Structure* InternalFunctionAllocationProfile::createAllocationStructureFromBase(VM& vm, JSGlobalObject* baseGlobalObject, JSCell* owner, JSObject* prototype, Structure* baseStructure, InlineWatchpointSet& watchpointSet)
 {
-    ASSERT(!m_structureID || m_structureID.get()->classInfoForCells() != baseStructure->classInfoForCells() || m_structureID->globalObject() != baseStructure->globalObject());
+    ASSERT(!m_structureID || m_structureID.get()->classInfoForCells() != baseStructure->classInfoForCells() || m_structureID->realm() != baseStructure->realm());
     ASSERT(baseStructure->hasMonoProto());
 
     Structure* structure;
@@ -55,8 +54,12 @@ inline Structure* InternalFunctionAllocationProfile::createAllocationStructureFr
     // https://bugs.webkit.org/show_bug.cgi?id=177318
     if (prototype == baseStructure->storedPrototype())
         structure = baseStructure;
-    else
-        structure = baseGlobalObject->structureCache().emptyStructureForPrototypeFromBaseStructure(baseGlobalObject, prototype, baseStructure);
+    else {
+        // A structure already here means this profile keeps rotating between bases, so our own
+        // memoization is not working for this function and only the global cache bounds the churn.
+        auto shouldCacheStructure = m_structureID ? StructureCache::ShouldCacheStructure::Yes : StructureCache::ShouldCacheStructure::No;
+        structure = baseGlobalObject->structureCache().emptyStructureForPrototypeFromBaseStructure(baseGlobalObject, prototype, baseStructure, shouldCacheStructure);
+    }
 
     // Ensure that if another thread sees the structure, it will see it properly created.
     WTF::storeStoreFence();

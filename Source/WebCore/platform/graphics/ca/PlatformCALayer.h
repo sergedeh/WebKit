@@ -29,6 +29,7 @@
 #include <WebCore/FloatPoint3D.h>
 #include <WebCore/FloatRoundedRect.h>
 #include <WebCore/LayerHostingContextIdentifier.h>
+#include <WebCore/PlatformCALayerClient.h>
 #include <WebCore/PlatformLayer.h>
 #include <WebCore/PlatformLayerIdentifier.h>
 #include <WebCore/ScrollingNodeID.h>
@@ -49,10 +50,8 @@ class EventRegion;
 class FilterOperations;
 class GraphicsContext;
 class GraphicsLayer;
-class LayerPool;
 class PlatformCALayer;
 class PlatformCAAnimation;
-class PlatformCALayerClient;
 class TiledBacking;
 
 struct AppleVisualEffectData;
@@ -166,10 +165,9 @@ public:
 
     LayerType layerType() const { return m_layerType; }
     
-    bool canHaveBackingStore() const;
+    bool LEGACY_NODELETE canHaveBackingStore() const;
 
     virtual PlatformCALayer* superlayer() const = 0;
-    RefPtr<PlatformCALayer> protectedSuperlayer() const { return superlayer(); }
     virtual void removeFromSuperlayer() = 0;
     virtual void setSublayers(const PlatformCALayerList&) = 0;
     virtual PlatformCALayerList sublayersForLogging() const = 0;
@@ -195,7 +193,7 @@ public:
 #endif
 
     virtual void setMaskLayer(RefPtr<PlatformCALayer>&&);
-    PlatformCALayer* maskLayer() const;
+    PlatformCALayer* LEGACY_NODELETE maskLayer() const;
 
     virtual bool isOpaque() const = 0;
     virtual void setOpaque(bool) = 0;
@@ -313,7 +311,7 @@ public:
 
     virtual const EventRegion* eventRegion() const { return nullptr; }
     virtual void setEventRegion(const EventRegion&) { }
-    
+
 #if ENABLE(SCROLLING_THREAD)
     virtual std::optional<ScrollingNodeID> scrollingNodeID() const { return std::nullopt; }
     virtual void setScrollingNodeID(std::optional<ScrollingNodeID>) { }
@@ -363,7 +361,7 @@ public:
 #endif
 
     virtual Ref<PlatformCALayer> createCompatibleLayer(LayerType, PlatformCALayerClient*) const = 0;
-    Ref<PlatformCALayer> createCompatibleLayerOrTakeFromPool(LayerType, PlatformCALayerClient*, IntSize);
+    Ref<PlatformCALayer> createCompatibleLayerWithSize(LayerType, PlatformCALayerClient*, IntSize) const;
 
     virtual void enumerateRectsBeingDrawn(GraphicsContext&, void (^block)(FloatRect)) = 0;
 
@@ -381,7 +379,6 @@ public:
     static ContentsFormat contentsFormatForLayer(PlatformCALayerClient* = nullptr);
 
     virtual void markFrontBufferVolatileForTesting() { }
-    void moveToLayerPool();
 
     virtual void dumpAdditionalProperties(TextStream&, OptionSet<PlatformLayerTreeAsTextFlags>);
 
@@ -393,11 +390,9 @@ public:
 protected:
     PlatformCALayer(LayerType, PlatformCALayerClient* owner);
 
-    virtual LayerPool* layerPool();
-
     const LayerType m_layerType;
     const PlatformLayerIdentifier m_layerID;
-    RetainPtr<PlatformLayer> m_layer;
+    const RetainPtr<PlatformLayer> m_layer;
     RefPtr<PlatformCALayer> m_maskLayer;
     PlatformCALayerClient* m_owner;
 };

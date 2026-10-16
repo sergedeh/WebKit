@@ -19,7 +19,6 @@
 #include "config.h"
 #include "WebKitDOMDeprecated.h"
 
-#include <WebCore/AddEventListenerOptionsInlines.h>
 #include "ConvertToUTF8String.h"
 #include <WebCore/DOMException.h>
 #include <WebCore/Document.h>
@@ -158,7 +157,7 @@ WebKitDOMText* webkit_dom_text_replace_whole_text(WebKitDOMText* self, const gch
     g_return_val_if_fail(!error || !*error, nullptr);
 
     WebCore::JSMainThreadNullState state;
-    RefPtr { WebKit::core(self) }->replaceWholeText(WTF::String::fromUTF8(content));
+    protect(WebKit::core(self))->replaceWholeText(WTF::String::fromUTF8(content));
     return self;
 }
 
@@ -236,14 +235,6 @@ void webkit_dom_node_set_prefix(WebKitDOMNode* self, const gchar* value, GError*
     g_return_if_fail(!error || !*error);
 
     g_warning("%s: prefix is now a readonly property according to the DOM spec.", __func__);
-
-    WebCore::JSMainThreadNullState state;
-    WebCore::Node* item = WebKit::core(self);
-    auto result = item->setPrefix(WTF::AtomString::fromUTF8(value));
-    if (result.hasException()) {
-        auto description = WebCore::DOMException::description(result.releaseException().code());
-        g_set_error_literal(error, g_quark_from_string("WEBKIT_DOM"), description.legacyCode, description.name);
-    }
 }
 
 gchar* webkit_dom_node_get_local_name(WebKitDOMNode* self)
@@ -253,7 +244,9 @@ gchar* webkit_dom_node_get_local_name(WebKitDOMNode* self)
     return convertToUTF8String(WebKit::core(self)->localName());
 }
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GTK port
 G_DEFINE_TYPE(WebKitDOMEntityReference, webkit_dom_entity_reference, WEBKIT_DOM_TYPE_NODE)
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 static void webkit_dom_entity_reference_init(WebKitDOMEntityReference*)
 {
@@ -281,7 +274,9 @@ WebKitDOMEntityReference* webkit_dom_document_create_entity_reference(WebKitDOMD
     return nullptr;
 }
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GTK port
 G_DEFINE_TYPE(WebKitDOMHTMLBaseFontElement, webkit_dom_html_base_font_element, WEBKIT_DOM_TYPE_HTML_ELEMENT)
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 static void webkit_dom_html_base_font_element_init(WebKitDOMHTMLBaseFontElement*)
 {

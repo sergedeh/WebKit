@@ -7,11 +7,8 @@
 //    Implements the class methods for ContextWgpu.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_libc_calls
-#endif
-
 #include "libANGLE/renderer/wgpu/ContextWgpu.h"
+#include "common/unsafe_buffers.h"
 
 #include "common/PackedEnums.h"
 #include "common/debug.h"
@@ -19,7 +16,6 @@
 #include "compiler/translator/wgsl/OutputUniformBlocks.h"
 #include "libANGLE/Context.h"
 #include "libANGLE/Error.h"
-#include "libANGLE/renderer/OverlayImpl.h"
 #include "libANGLE/renderer/wgpu/BufferWgpu.h"
 #include "libANGLE/renderer/wgpu/CompilerWgpu.h"
 #include "libANGLE/renderer/wgpu/DisplayWgpu.h"
@@ -70,6 +66,8 @@ constexpr angle::PackedEnumMap<webgpu::RenderPassClosureReason, const char *>
         {webgpu::RenderPassClosureReason::CopyTextureToTexture,
          "Render pass closed to copy texture"},
         {webgpu::RenderPassClosureReason::CopyImage, "Render pass closed to copy image"},
+        {webgpu::RenderPassClosureReason::ClearWithDraw,
+         "Render pass closed to clear with a draw call (e.g. for scissored or masked clears)"},
     }};
 
 }  // namespace
@@ -81,6 +79,7 @@ ContextWgpu::ContextWgpu(const gl::State &state, gl::ErrorSet *errorSet, Display
         DIRTY_BIT_RENDER_PIPELINE_BINDING,  // The pipeline needs to be bound for each renderpass
         DIRTY_BIT_VIEWPORT,
         DIRTY_BIT_SCISSOR,
+        DIRTY_BIT_STENCIL_REF,
         DIRTY_BIT_BLEND_CONSTANT,
         DIRTY_BIT_VERTEX_BUFFERS,
         DIRTY_BIT_INDEX_BUFFER,
@@ -121,7 +120,7 @@ angle::Result ContextWgpu::initialize(const angle::ImageLoadContext &imageLoadCo
         wgpu->deviceCreateBindGroupLayout(getDevice().get(), &driverUniformsBindGroupLayoutDesc));
 
     // Driver uniforms should be set to 0 for later memcmp.
-    memset(&mDriverUniforms, 0, sizeof(mDriverUniforms));
+    ANGLE_UNSAFE_TODO(memset(&mDriverUniforms, 0, sizeof(mDriverUniforms)));
 
     return angle::Result::Continue;
 }
@@ -655,6 +654,7 @@ angle::Result ContextWgpu::syncState(const gl::Context *context,
                 // May modify framebuffer size, so invalidate driver uniforms which contain the
                 // framebuffer size.
                 invalidateDriverUniforms();
+                updatePipelineColorMasks();
                 ANGLE_TRY(endRenderPass(webgpu::RenderPassClosureReason::FramebufferBindingChange));
             }
             break;
@@ -722,14 +722,7 @@ angle::Result ContextWgpu::syncState(const gl::Context *context,
                 break;
             case gl::state::DIRTY_BIT_COLOR_MASK:
             {
-                const gl::BlendStateExt &blendStateExt = mState.getBlendStateExt();
-                for (size_t i = 0; i < blendStateExt.getDrawBufferCount(); i++)
-                {
-                    bool r, g, b, a;
-                    blendStateExt.getColorMaskIndexed(i, &r, &g, &b, &a);
-                    mRenderPipelineDesc.setColorWriteMask(i, r, g, b, a);
-                }
-                invalidateCurrentRenderPipeline();
+                updatePipelineColorMasks();
             }
             break;
             case gl::state::DIRTY_BIT_SAMPLE_ALPHA_TO_COVERAGE_ENABLED:
@@ -759,9 +752,14 @@ angle::Result ContextWgpu::syncState(const gl::Context *context,
             case gl::state::DIRTY_BIT_DEPTH_MASK:
                 break;
             case gl::state::DIRTY_BIT_STENCIL_TEST_ENABLED:
-                // Changing the state of stencil test affects both the front and back funcs.
+                // Changing the state of stencil test affects both the front and back funcs, which
+                // also dirties the stencil reference value (whcih won't be recorded in the render
+                // pass while stencil testing is disabled).
                 iter.setLaterBit(gl::state::DIRTY_BIT_STENCIL_FUNCS_FRONT);
                 iter.setLaterBit(gl::state::DIRTY_BIT_STENCIL_FUNCS_BACK);
+                // Disabling the stencil test is partially done by setting the writemask to 0, so it
+                // must be marked as dirty as well.
+                iter.setLaterBit(gl::state::DIRTY_BIT_STENCIL_WRITEMASK_FRONT);
                 break;
             case gl::state::DIRTY_BIT_STENCIL_FUNCS_FRONT:
                 if (mRenderPipelineDesc.setStencilFrontFunc(
@@ -770,6 +768,16 @@ angle::Result ContextWgpu::syncState(const gl::Context *context,
                 {
                     invalidateCurrentRenderPipeline();
                 }
+
+                if (mRenderPipelineDesc.setStencilReadMask(
+                        glState.getDepthStencilState().stencilTest
+                            ? glState.getDepthStencilState().stencilMask
+                            : 0))
+                {
+                    invalidateCurrentRenderPipeline();
+                }
+
+                mDirtyBits.set(DIRTY_BIT_STENCIL_REF);
                 break;
             case gl::state::DIRTY_BIT_STENCIL_FUNCS_BACK:
                 if (mRenderPipelineDesc.setStencilBackFunc(
@@ -778,6 +786,13 @@ angle::Result ContextWgpu::syncState(const gl::Context *context,
                 {
                     invalidateCurrentRenderPipeline();
                 }
+
+                // Stencil back read mask and ref value are ignored here. WebGL and WebGPU do not
+                // support separate stencil read masks/write masks/ref values and so this backend
+                // sets `noSeparateStencilRefsAndMasks`, which will cause a validation error on draw
+                // if the stencil read masks/write masks/ref values differ between the front and the
+                // back. See https://registry.khronos.org/webgl/specs/latest/1.0/#6.12 and
+                // https://www.w3.org/TR/webgpu/#depth-stencil-state.
                 break;
             case gl::state::DIRTY_BIT_STENCIL_OPS_FRONT:
             {
@@ -809,12 +824,20 @@ angle::Result ContextWgpu::syncState(const gl::Context *context,
             break;
             case gl::state::DIRTY_BIT_STENCIL_WRITEMASK_FRONT:
                 if (mRenderPipelineDesc.setStencilWriteMask(
-                        glState.getDepthStencilState().stencilWritemask))
+                        glState.getDepthStencilState().stencilTest
+                            ? glState.getDepthStencilState().stencilWritemask
+                            : 0))
                 {
                     invalidateCurrentRenderPipeline();
                 }
                 break;
             case gl::state::DIRTY_BIT_STENCIL_WRITEMASK_BACK:
+                // Stencil back write mask is ignored here. WebGL and WebGPU do not support
+                // separate stencil read masks/write masks/ref values and so this backend sets
+                // `noSeparateStencilRefsAndMasks`, which will cause a validation error on draw if
+                // the stencil read masks/write masks/ref values differ between the front and the
+                // back. See https://registry.khronos.org/webgl/specs/latest/1.0/#6.12 and
+                // https://www.w3.org/TR/webgpu/#depth-stencil-state.
                 break;
             case gl::state::DIRTY_BIT_CULL_FACE_ENABLED:
             case gl::state::DIRTY_BIT_CULL_FACE:
@@ -887,8 +910,6 @@ angle::Result ContextWgpu::syncState(const gl::Context *context,
                 break;
             case gl::state::DIRTY_BIT_SAMPLE_ALPHA_TO_ONE:
                 break;
-            case gl::state::DIRTY_BIT_COVERAGE_MODULATION:
-                break;
             case gl::state::DIRTY_BIT_FRAMEBUFFER_SRGB_WRITE_CONTROL_MODE:
                 break;
             case gl::state::DIRTY_BIT_CURRENT_VALUES:
@@ -899,6 +920,10 @@ angle::Result ContextWgpu::syncState(const gl::Context *context,
                 break;
             case gl::state::DIRTY_BIT_PATCH_VERTICES:
                 break;
+            case gl::state::DIRTY_BIT_CLIP_CONTROL:
+                // Driver uniforms are calculated using the clip control state.
+                invalidateDriverUniforms();
+                break;
             case gl::state::DIRTY_BIT_EXTENDED:
             {
                 for (auto extendedIter    = extendedDirtyBits.begin(),
@@ -908,10 +933,6 @@ angle::Result ContextWgpu::syncState(const gl::Context *context,
                     const size_t extendedDirtyBit = *extendedIter;
                     switch (extendedDirtyBit)
                     {
-                        case gl::state::EXTENDED_DIRTY_BIT_CLIP_CONTROL:
-                            // Driver uniforms are calculated using the clip control state.
-                            invalidateDriverUniforms();
-                            break;
                         case gl::state::EXTENDED_DIRTY_BIT_CLIP_DISTANCES:
                             // Driver uniforms include the clip distances.
                             invalidateDriverUniforms();
@@ -954,6 +975,39 @@ angle::Result ContextWgpu::syncState(const gl::Context *context,
     }
 
     return angle::Result::Continue;
+}
+
+void ContextWgpu::updatePipelineColorMasks()
+{
+
+    FramebufferWgpu *framebufferWgpu      = webgpu::GetImpl(mState.getDrawFramebuffer());
+    gl::DrawBufferMask enabledDrawBuffers = framebufferWgpu->getState().getEnabledDrawBuffers();
+
+    bool changed = false;
+
+    const gl::BlendStateExt &blendStateExt = mState.getBlendStateExt();
+    for (size_t i = 0; i < blendStateExt.getDrawBufferCount(); i++)
+    {
+        bool r, g, b, a;
+        if (enabledDrawBuffers.test(i))
+        {
+            blendStateExt.getColorMaskIndexed(i, &r, &g, &b, &a);
+        }
+        else
+        {
+            // Disabled draw buffers just have their color mask set to 0.
+            r = 0;
+            g = 0;
+            b = 0;
+            a = 0;
+        }
+        changed = mRenderPipelineDesc.setColorWriteMask(i, r, g, b, a) || changed;
+    }
+
+    if (changed)
+    {
+        invalidateCurrentRenderPipeline();
+    }
 }
 
 GLint ContextWgpu::getGPUDisjoint()
@@ -1082,11 +1136,6 @@ SemaphoreImpl *ContextWgpu::createSemaphore()
 {
     UNREACHABLE();
     return nullptr;
-}
-
-OverlayImpl *ContextWgpu::createOverlay(const gl::OverlayState &state)
-{
-    return new OverlayImpl(state);
 }
 
 angle::Result ContextWgpu::dispatchCompute(const gl::Context *context,
@@ -1247,6 +1296,10 @@ angle::Result ContextWgpu::setupDraw(const gl::Context *context,
                     ANGLE_TRY(handleDirtyScissor(&dirtyBitIter));
                     break;
 
+                case DIRTY_BIT_STENCIL_REF:
+                    ANGLE_TRY(handleDirtyStencilRef(&dirtyBitIter));
+                    break;
+
                 case DIRTY_BIT_BLEND_CONSTANT:
                     ANGLE_TRY(handleDirtyBlendConstant(&dirtyBitIter));
                     break;
@@ -1371,16 +1424,7 @@ angle::Result ContextWgpu::handleDirtyScissor(DirtyBits::Iterator *dirtyBitsIter
     const gl::Extents &framebufferSize = framebuffer->getExtents();
     const gl::Rectangle framebufferRect(0, 0, framebufferSize.width, framebufferSize.height);
 
-    gl::Rectangle clampedScissor = framebufferRect;
-
-    // When the GL scissor test is disabled, set the scissor to the entire size of the framebuffer
-    if (mState.isScissorTestEnabled())
-    {
-        if (!ClipRectangle(mState.getScissor(), framebufferRect, &clampedScissor))
-        {
-            clampedScissor = gl::Rectangle(0, 0, 0, 0);
-        }
-    }
+    gl::Rectangle clampedScissor = ClipRectToScissor(mState, framebufferRect, false);
 
     bool isDefaultScissor = clampedScissor == framebufferRect;
     if (isDefaultScissor && !mCommandBuffer.hasSetScissorCommand())
@@ -1400,6 +1444,31 @@ angle::Result ContextWgpu::handleDirtyScissor(DirtyBits::Iterator *dirtyBitsIter
     ASSERT(mCurrentGraphicsPipeline);
     mCommandBuffer.setScissorRect(clampedScissor.x, clampedScissor.y, clampedScissor.width,
                                   clampedScissor.height);
+    return angle::Result::Continue;
+}
+
+angle::Result ContextWgpu::handleDirtyStencilRef(DirtyBits::Iterator *dirtyBitsIterator)
+{
+    if (!mState.getDepthStencilState().stencilTest)
+    {
+        // The stencil ref doesn't matter when stencil testing is disabled.
+        return angle::Result::Continue;
+    }
+
+    const int refVal = mState.getStencilRef();
+
+    // This backend sets `noSeparateStencilRefsAndMasks`, and WebGPU does not
+    // support different ref values for front and back.
+    ASSERT(refVal == mState.getStencilBackRef());
+
+    const bool isDefaultStencilValue = refVal == 0;
+    if (!mCommandBuffer.hasSetStencilRefCommand() && isDefaultStencilValue)
+    {
+        // Each render pass has a default stencil reference set to zero. We can skip setting it.
+        return angle::Result::Continue;
+    }
+
+    mCommandBuffer.setStencilReference(mState.getStencilRef());
     return angle::Result::Continue;
 }
 
@@ -1526,13 +1595,14 @@ angle::Result ContextWgpu::handleDirtyDriverUniforms(DirtyBits::Iterator *dirtyB
         (alphaToCoverage << sh::vk::kDriverUniformsMiscAlphaToCoverageOffset);
 
     // If no change to driver uniforms, return early.
-    if (memcmp(&newDriverUniforms, &mDriverUniforms, sizeof(DriverUniforms)) == 0)
+    if (ANGLE_UNSAFE_TODO(memcmp(&newDriverUniforms, &mDriverUniforms, sizeof(DriverUniforms))) ==
+        0)
     {
         return angle::Result::Continue;
     }
 
     // Cache the uniforms so we can check for changes later.
-    memcpy(&mDriverUniforms, &newDriverUniforms, sizeof(DriverUniforms));
+    ANGLE_UNSAFE_TODO(memcpy(&mDriverUniforms, &newDriverUniforms, sizeof(DriverUniforms)));
 
     // Upload the new driver uniforms to a new GPU buffer.
     webgpu::BufferHelper driverUniformBuffer;
@@ -1544,7 +1614,7 @@ angle::Result ContextWgpu::handleDirtyDriverUniforms(DirtyBits::Iterator *dirtyB
     ASSERT(driverUniformBuffer.valid());
 
     uint8_t *bufferData = driverUniformBuffer.getMapWritePointer(0, sizeof(DriverUniforms));
-    memcpy(bufferData, &mDriverUniforms, sizeof(DriverUniforms));
+    ANGLE_UNSAFE_TODO(memcpy(bufferData, &mDriverUniforms, sizeof(DriverUniforms)));
 
     ANGLE_TRY(driverUniformBuffer.unmap());
 

@@ -23,14 +23,18 @@
 #include <WebCore/CharacterData.h>
 #include <WebCore/Document.h>
 #include <WebCore/Element.h>
+#include <WebCore/EventLoop.h>
+#include <WebCore/EventTargetInlines.h>
+#include <WebCore/GCReachableRef.h>
 #include <WebCore/InspectorInstrumentationPublic.h>
 #include <WebCore/LayoutRect.h>
 #include <WebCore/Node.h>
+#include <WebCore/NodeDocument.h>
+#include <WebCore/NodeInlinesLight.h>
 #include <WebCore/PseudoElement.h>
 #include <WebCore/RenderBox.h>
 #include <WebCore/ShadowRoot.h>
 #include <WebCore/TreeScopeInlines.h>
-#include <WebCore/WebCoreOpaqueRoot.h>
 
 namespace WebCore {
 
@@ -48,39 +52,15 @@ inline ContainerNode* Node::parentOrShadowHostNode() const
     return parentNode();
 }
 
-inline RefPtr<ContainerNode> Node::protectedParentOrShadowHostNode() const
+inline Document* Node::ownerDocument() const
 {
-    return parentOrShadowHostNode();
-}
-
-inline RefPtr<ScriptExecutionContext> Node::protectedScriptExecutionContext() const
-{
-    return scriptExecutionContext();
-}
-
-inline WebCoreOpaqueRoot Node::opaqueRoot() const
-{
-    if (isConnected()) {
-        Locker locker { TreeScope::treeScopeMutationLock() };
-        return WebCoreOpaqueRoot { &treeScope().documentScope() };
-    }
-    // FIXME: Possible race?
-    return traverseToOpaqueRoot();
-}
-
-inline Ref<TreeScope> Node::protectedTreeScope() const
-{
-    return treeScope();
+    auto* document = &this->document();
+    return document == this ? nullptr : document;
 }
 
 inline RenderBox* Node::renderBox() const
 {
     return dynamicDowncast<RenderBox>(renderer());
-}
-
-inline CheckedPtr<RenderBox> Node::checkedRenderBox() const
-{
-    return renderBox();
 }
 
 inline RenderBoxModelObject* Node::renderBoxModelObject() const
@@ -101,11 +81,6 @@ inline NamedNodeMap* Node::attributesMap() const
     return nullptr;
 }
 
-CheckedPtr<RenderObject> Node::checkedRenderer() const
-{
-    return renderer();
-}
-
 inline void Node::setRenderer(RenderObject* renderer)
 {
     m_renderer = renderer;
@@ -117,11 +92,6 @@ inline void Node::setRenderer(RenderObject* renderer)
 inline Element* Node::parentElement() const
 {
     return dynamicDowncast<Element>(parentNode());
-}
-
-inline RefPtr<Element> Node::protectedParentElement() const
-{
-    return parentElement();
 }
 
 bool Node::isBeforePseudoElement() const
@@ -153,7 +123,7 @@ std::optional<Style::PseudoElementIdentifier> Node::pseudoElementIdentifier() co
 inline void Node::setTabIndexState(TabIndexState state)
 {
     auto bitfields = rareDataBitfields();
-    bitfields.tabIndexState = enumToUnderlyingType(state);
+    bitfields.tabIndexState = std::to_underlying(state);
     setRareDataBitfields(bitfields);
 }
 
@@ -182,20 +152,10 @@ inline Node* Node::firstChild() const
     return containerNode ? containerNode->firstChild() : nullptr;
 }
 
-inline RefPtr<Node> Node::protectedFirstChild() const
-{
-    return firstChild();
-}
-
 inline Node* Node::lastChild() const
 {
     auto* containerNode = dynamicDowncast<ContainerNode>(*this);
     return containerNode ? containerNode->lastChild() : nullptr;
-}
-
-inline RefPtr<Node> Node::protectedLastChild() const
-{
-    return lastChild();
 }
 
 inline bool Node::hasChildNodes() const
@@ -207,12 +167,7 @@ inline Node& Node::rootNode() const
 {
     if (isInTreeScope())
         return treeScope().rootNode();
-    return traverseToRootNode();
-}
-
-inline Ref<Node> Node::protectedRootNode() const
-{
-    return rootNode();
+    return *m_shadowIncludingRoot;
 }
 
 inline void Node::setParentNode(ContainerNode* parent)
@@ -220,11 +175,6 @@ inline void Node::setParentNode(ContainerNode* parent)
     ASSERT(isMainThread());
     m_parentNode = parent;
     m_refCountAndParentBit = (m_refCountAndParentBit & s_refCountMask) | !!parent;
-}
-
-inline RefPtr<ContainerNode> Node::protectedParentNode() const
-{
-    return parentNode();
 }
 
 ALWAYS_INLINE bool Node::hasOneRef() const
@@ -243,9 +193,8 @@ ALWAYS_INLINE void Node::clearStyleFlags(OptionSet<NodeStyleFlag> flags)
 
 inline void Node::clearChildNeedsStyleRecalc()
 {
-    auto bitfields = styleBitfields();
-    bitfields.clearDescendantsNeedStyleResolution();
-    setStyleBitfields(bitfields);
+    clearStateFlag(StateFlag::DescendantNeedsStyleResolution);
+    clearStateFlag(StateFlag::DirectChildNeedsStyleResolution);
 }
 
 inline void Node::setHasValidStyle()
@@ -266,6 +215,18 @@ inline void Node::setTreeScopeRecursively(TreeScope& newTreeScope)
         Ref oldTreeScope = *m_treeScope;
         moveTreeToNewScope(*this, oldTreeScope, newTreeScope);
     }
+}
+
+inline void Node::setTreeScopeRecursivelyToMatch(const Node& node)
+{
+    if (m_treeScope != &node.treeScope()) [[unlikely]]
+        setTreeScopeRecursively(protect(node.treeScope()));
+}
+
+inline void Node::setTreeScopeRecursivelyToDocument()
+{
+    if (m_treeScope != &document()) [[unlikely]]
+        setTreeScopeRecursively(protect(document()));
 }
 
 inline ContainerNode* Node::parentNodeGuaranteedHostFree() const
@@ -289,22 +250,13 @@ inline NodeClass& Node::traverseToRootNodeInternal(const NodeClass& node)
     return *current;
 }
 
-inline void Node::relaxAdoptionRequirement()
-{
-#if ASSERT_ENABLED
-    ASSERT_WITH_SECURITY_IMPLICATION(!deletionHasBegun());
-    ASSERT(m_adoptionIsRequired);
-    m_adoptionIsRequired = false;
-#endif
-}
-
 inline IntRect Node::pixelSnappedAbsoluteBoundingRect(bool* isReplaced)
 {
     return snappedIntRect(absoluteBoundingRect(isReplaced));
 }
 
 // Used in Node::addSubresourceAttributeURLs() and in addSubresourceStyleURLs()
-inline void addSubresourceURL(ListHashSet<URL>& urls, const URL& url)
+inline void addSubresourceURL(OrderedHashSet<URL>& urls, const URL& url)
 {
     if (!url.isNull())
         urls.add(url);
@@ -314,6 +266,16 @@ inline void collectChildNodes(Node& node, NodeVector& children)
 {
     for (SUPPRESS_UNCOUNTED_LOCAL Node* child = node.firstChild(); child; child = child->nextSibling())
         children.append(*child);
+}
+
+template<typename T, typename Task>
+void Node::queueTaskKeepingNodeAlive(T& node, TaskSource source, Task&& task)
+{
+    static_assert(!std::is_base_of_v<ActiveDOMObject, T>, "Use ActiveDOMObject::queueTaskKeepingObjectAlive instead");
+    protect(protect(node.document())->eventLoop())->queueTask(source, [protectedThis = GCReachableRef(node), task = std::forward<Task>(task)]() mutable {
+        // Static analyzer does not know about GCReachableRef.
+        SUPPRESS_UNCOUNTED_ARG task(protectedThis.get());
+    });
 }
 
 } // namespace WebCore

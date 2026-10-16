@@ -44,7 +44,7 @@ IdleCallbackController::IdleCallbackController(Document& document)
 
 }
 
-int IdleCallbackController::queueIdleCallback(Ref<IdleRequestCallback>&& callback, Seconds timeout)
+unsigned IdleCallbackController::queueIdleCallback(Ref<IdleRequestCallback>&& callback, Seconds timeout)
 {
     ++m_idleCallbackIdentifier;
     auto handle = m_idleCallbackIdentifier;
@@ -60,7 +60,7 @@ int IdleCallbackController::queueIdleCallback(Ref<IdleRequestCallback>&& callbac
             RefPtr document = checkedThis->m_document.get();
             if (!document)
                 return;
-            document->eventLoop().queueTask(TaskSource::IdleTask, [weakThis = WTF::move(weakThis), handle]() {
+            protect(document->eventLoop())->queueTask(TaskSource::IdleTask, [weakThis = WTF::move(weakThis), handle]() {
                 if (CheckedPtr checkedThis = weakThis.get())
                     checkedThis->invokeIdleCallbackTimeout(handle);
             });
@@ -68,16 +68,15 @@ int IdleCallbackController::queueIdleCallback(Ref<IdleRequestCallback>&& callbac
     }
 
     if (RefPtr document = m_document.get())
-        document->protectedWindowEventLoop()->scheduleIdlePeriod();
+        protect(document->windowEventLoop())->scheduleIdlePeriod();
 
     return handle;
 }
 
-void IdleCallbackController::removeIdleCallback(int signedIdentifier)
+void IdleCallbackController::removeIdleCallback(unsigned identifier)
 {
-    if (signedIdentifier <= 0)
+    if (!identifier)
         return;
-    unsigned identifier = signedIdentifier;
 
     m_idleRequestCallbacks.removeAllMatching([identifier](auto& request) {
         return request.identifier == identifier;
@@ -104,7 +103,7 @@ void IdleCallbackController::startIdlePeriod()
 void IdleCallbackController::queueTaskToInvokeIdleCallbacks()
 {
     Ref document = *m_document;
-    document->eventLoop().queueTask(TaskSource::IdleTask, [weakThis = WeakPtr { *this }, document] {
+    protect(document->eventLoop())->queueTask(TaskSource::IdleTask, [weakThis = WeakPtr { *this }, document] {
         CheckedPtr checkedThis = weakThis.get();
         if (!checkedThis)
             return;
@@ -130,7 +129,7 @@ bool IdleCallbackController::invokeIdleCallbacks()
 
     auto request = m_runnableIdleCallbacks.takeFirst();
     auto idleDeadline = IdleDeadline::create(request.timeout && *request.timeout < now ? IdleDeadline::DidTimeout::Yes : IdleDeadline::DidTimeout::No);
-    request.callback->invoke(idleDeadline.get());
+    protect(request.callback)->invoke(idleDeadline.get());
 
     return !m_runnableIdleCallbacks.isEmpty();
 }

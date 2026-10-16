@@ -23,6 +23,10 @@
             "values": ["*"],
             "supportsConjunction": true
         },
+        "Platform": {
+            "contextsAllowed": ["attribute"],
+            "values": ["*"]
+        },
         "CallbackHandler": {
             "contextsAllowed": ["argument"]
         },
@@ -106,7 +110,13 @@
         "NSArray": {
             "contextsAllowed": ["argument", "attribute", "operation"]
         },
+        "Vector": {
+            "contextsAllowed": ["argument", "attribute", "operation"]
+        },
         "NSDictionary": {
+            "contextsAllowed": ["argument", "attribute", "operation"]
+        },
+        "JSONValue": {
             "contextsAllowed": ["argument", "attribute", "operation"]
         },
         "NSObject": {
@@ -126,6 +136,9 @@
         },
         "ReturnsPromiseWhenCallbackIsOmitted": {
             "contextsAllowed": ["interface", "operation"]
+        },
+        "UseCPPAPI": {
+            "contextsAllowed": ["interface"]
         },
         "Serialization": {
             "contextsAllowed": ["argument"],

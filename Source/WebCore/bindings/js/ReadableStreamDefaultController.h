@@ -31,12 +31,11 @@
 
 #include "JSReadableStreamDefaultController.h"
 #include <JavaScriptCore/JSCJSValue.h>
-#include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/TypedArrays.h>
-#include <WebCore/JSDOMConvertBufferSource.h>
 
 namespace WebCore {
 
+class Exception;
 class ReadableStreamSource;
 
 class ReadableStreamDefaultController {
@@ -67,8 +66,9 @@ inline JSReadableStreamDefaultController& ReadableStreamDefaultController::jsCon
 inline JSDOMGlobalObject& ReadableStreamDefaultController::globalObject() const
 {
     ASSERT(m_jsController);
-    ASSERT(m_jsController->globalObject());
-    return *static_cast<JSDOMGlobalObject*>(m_jsController->globalObject());
+    ASSERT(m_jsController->realm());
+    // FIXME: Remove suppression once rdar://189998444 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST return *static_cast<JSDOMGlobalObject*>(m_jsController->realm());
 }
 
 } // namespace WebCore

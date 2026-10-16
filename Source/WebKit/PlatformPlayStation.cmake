@@ -1,8 +1,6 @@
 include(Headers.cmake)
 include(Platform/Curl.cmake)
 
-set(WebKit_USE_PREFIX_HEADER ON)
-
 WEBKIT_ADD_TARGET_CXX_FLAGS(WebKit -Wno-unused-lambda-capture)
 
 list(APPEND WebProcess_SOURCES
@@ -86,13 +84,14 @@ list(APPEND WebKit_SOURCES
     UIProcess/playstation/PageClientImpl.cpp
     UIProcess/playstation/PlayStationWebView.cpp
     UIProcess/playstation/WebPageProxyPlayStation.cpp
+    UIProcess/playstation/WebPreferencesPlayStation.cpp
     UIProcess/playstation/WebProcessPoolPlayStation.cpp
 
     WebProcess/GPU/media/playstation/VideoLayerRemotePlayStation.cpp
 
     WebProcess/InjectedBundle/playstation/InjectedBundlePlayStation.cpp
 
-    WebProcess/WebPage/CoordinatedGraphics/AcceleratedSurface.cpp
+    WebProcess/WebPage/CoordinatedGraphics/AcceleratedSurfacePlayStation.cpp
     WebProcess/WebPage/CoordinatedGraphics/DrawingAreaCoordinatedGraphics.cpp
 
     WebProcess/WebPage/playstation/WebPagePlayStation.cpp

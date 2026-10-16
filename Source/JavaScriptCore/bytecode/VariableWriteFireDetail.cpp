@@ -27,15 +27,22 @@
 #include "VariableWriteFireDetail.h"
 
 #include "JSCJSValueInlines.h"
+#include "VariableWriteFireDetailInlines.h"
 
 namespace JSC {
+
+VariableWriteFireDetail::VariableWriteFireDetail(ClangVTableWorkaroundTag, const PropertyName& name)
+    : m_object(nullptr)
+    , m_name(name)
+{
+}
 
 void VariableWriteFireDetail::dump(PrintStream& out) const
 {
     out.print("Write to ", m_name, " in ", JSValue(m_object));
 }
 
-void VariableWriteFireDetail::touch(VM& vm, WatchpointSet* set, JSObject* object, const PropertyName& name)
+void VariableWriteFireDetail::touch(VM& vm, InlineWatchpointSet* set, JSObject* object, const PropertyName& name)
 {
     set->touch(vm, VariableWriteFireDetail(object, name));
 }

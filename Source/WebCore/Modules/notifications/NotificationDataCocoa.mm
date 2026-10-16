@@ -27,7 +27,12 @@
 #import "NotificationData.h"
 
 #import "NotificationDirection.h"
+#import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/cocoa/VectorCocoa.h>
+
+namespace WebCore {
+
+namespace NotificationDataKeys {
 
 static NSString * const WebNotificationDefaultActionURLKey = @"WebNotificationDefaultActionURLKey";
 static NSString * const WebNotificationTitleKey = @"WebNotificationTitleKey";
@@ -41,10 +46,11 @@ static NSString * const WebNotificationServiceWorkerRegistrationURLKey = @"WebNo
 static NSString * const WebNotificationUUIDStringKey = @"WebNotificationUUIDStringKey";
 static NSString * const WebNotificationContextUUIDStringKey = @"WebNotificationContextUUIDStringKey";
 static NSString * const WebNotificationSessionIDKey = @"WebNotificationSessionIDKey";
+static NSString * const WebNotificationCreationTimeKey = @"WebNotificationCreationTimeKey";
 static NSString * const WebNotificationDataKey = @"WebNotificationDataKey";
 static NSString * const WebNotificationSilentKey = @"WebNotificationSilentKey";
 
-namespace WebCore {
+}
 
 static std::optional<bool> nsValueToOptionalBool(id value)
 {
@@ -56,24 +62,27 @@ static std::optional<bool> nsValueToOptionalBool(id value)
 
 std::optional<NotificationData> NotificationData::fromDictionary(NSDictionary *dictionary)
 {
-    RetainPtr<NSString> defaultActionURL = dictionary[WebNotificationDefaultActionURLKey];
-    RetainPtr<NSString> title = dictionary[WebNotificationTitleKey];
-    RetainPtr<NSString> body = dictionary[WebNotificationBodyKey];
-    RetainPtr<NSString> iconURL = dictionary[WebNotificationIconURLKey];
-    RetainPtr<NSString> tag = dictionary[WebNotificationTagKey];
-    RetainPtr<NSString> language = dictionary[WebNotificationLanguageKey];
-    RetainPtr<NSString> originString = dictionary[WebNotificationOriginKey];
-    RetainPtr<NSString> serviceWorkerRegistrationURL = dictionary[WebNotificationServiceWorkerRegistrationURLKey];
-    RetainPtr<NSNumber> sessionID = dictionary[WebNotificationSessionIDKey];
-    RetainPtr<NSData> notificationData = dictionary[WebNotificationDataKey];
+    using namespace NotificationDataKeys;
 
-    String uuidString = dictionary[WebNotificationUUIDStringKey];
+    RetainPtr defaultActionURL = dynamic_objc_cast<NSString>(dictionary[WebNotificationDefaultActionURLKey]);
+    RetainPtr title = dynamic_objc_cast<NSString>(dictionary[WebNotificationTitleKey]);
+    RetainPtr body = dynamic_objc_cast<NSString>(dictionary[WebNotificationBodyKey]);
+    RetainPtr iconURL = dynamic_objc_cast<NSString>(dictionary[WebNotificationIconURLKey]);
+    RetainPtr tag = dynamic_objc_cast<NSString>(dictionary[WebNotificationTagKey]);
+    RetainPtr language = dynamic_objc_cast<NSString>(dictionary[WebNotificationLanguageKey]);
+    RetainPtr originString = dynamic_objc_cast<NSString>(dictionary[WebNotificationOriginKey]);
+    RetainPtr serviceWorkerRegistrationURL = dynamic_objc_cast<NSString>(dictionary[WebNotificationServiceWorkerRegistrationURLKey]);
+    RetainPtr sessionID = dynamic_objc_cast<NSNumber>(dictionary[WebNotificationSessionIDKey]);
+    RetainPtr creationTime = dynamic_objc_cast<NSNumber>(dictionary[WebNotificationCreationTimeKey]);
+    RetainPtr notificationData = dynamic_objc_cast<NSData>(dictionary[WebNotificationDataKey]);
+
+    String uuidString = dynamic_objc_cast<NSString>(dictionary[WebNotificationUUIDStringKey]);
     auto uuid = WTF::UUID::parseVersion4(uuidString);
     if (!uuid)
         return std::nullopt;
 
     std::optional<ScriptExecutionContextIdentifier> contextIdentifier;
-    String contextUUIDString = dictionary[WebNotificationContextUUIDStringKey];
+    String contextUUIDString = dynamic_objc_cast<NSString>(dictionary[WebNotificationContextUUIDStringKey]);
     if (!contextUUIDString.isEmpty()) {
         auto contextUUID = WTF::UUID::parseVersion4(contextUUIDString);
         if (!contextUUID)
@@ -83,7 +92,7 @@ std::optional<NotificationData> NotificationData::fromDictionary(NSDictionary *d
     }
 
     NotificationDirection direction;
-    RetainPtr<NSNumber> directionNumber = dictionary[WebNotificationDirectionKey];
+    RetainPtr directionNumber = dynamic_objc_cast<NSNumber>(dictionary[WebNotificationDirectionKey]);
     switch ((NotificationDirection)(directionNumber.get().unsignedLongValue)) {
     case NotificationDirection::Auto:
     case NotificationDirection::Ltr:
@@ -94,12 +103,14 @@ std::optional<NotificationData> NotificationData::fromDictionary(NSDictionary *d
         return std::nullopt;
     }
 
-    NotificationData data { URL { String { defaultActionURL.get() } }, title.get(), body.get(), iconURL.get(), tag.get(), language.get(), direction, originString.get(), URL { String { serviceWorkerRegistrationURL.get() } }, *uuid, contextIdentifier, PAL::SessionID { sessionID.get().unsignedLongLongValue }, { }, makeVector(notificationData.get()), nsValueToOptionalBool(dictionary[WebNotificationSilentKey]) };
+    NotificationData data { URL { String { defaultActionURL.get() } }, title.get(), body.get(), iconURL.get(), tag.get(), language.get(), direction, originString.get(), URL { String { serviceWorkerRegistrationURL.get() } }, *uuid, contextIdentifier, PAL::SessionID { sessionID.get().unsignedLongLongValue }, WallTime::fromSecondsSinceEpoch(Seconds { creationTime.get().doubleValue }), makeVector(notificationData.get()), nsValueToOptionalBool(dictionary[WebNotificationSilentKey]) };
     return WTF::move(data);
 }
 
 NSDictionary *NotificationData::dictionaryRepresentation() const
 {
+    using namespace NotificationDataKeys;
+
     RetainPtr result = adoptNS(@{
         WebNotificationDefaultActionURLKey : navigateURL.string().createNSString().get(),
         WebNotificationTitleKey : title.createNSString().get(),
@@ -112,6 +123,7 @@ NSDictionary *NotificationData::dictionaryRepresentation() const
         WebNotificationServiceWorkerRegistrationURLKey : serviceWorkerRegistrationURL.string().createNSString().get(),
         WebNotificationUUIDStringKey : notificationID.toString().createNSString().get(),
         WebNotificationSessionIDKey : @(sourceSession.toUInt64()),
+        WebNotificationCreationTimeKey : @(creationTime.secondsSinceEpoch().value()),
         WebNotificationDataKey: toNSData(data).autorelease(),
     }.mutableCopy);
 
@@ -122,11 +134,6 @@ NSDictionary *NotificationData::dictionaryRepresentation() const
         result.get()[WebNotificationSilentKey] = @(*silent);
 
     return result.autorelease();
-}
-
-RetainPtr<NSDictionary> NotificationData::protectedDictionaryRepresentation() const
-{
-    return dictionaryRepresentation();
 }
 
 } // namespace WebKit

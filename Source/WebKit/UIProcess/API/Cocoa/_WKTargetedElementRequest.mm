@@ -28,11 +28,6 @@
 
 #import <WebCore/WebCoreObjCExtras.h>
 
-static Ref<API::TargetedElementRequest> protectedRequest(_WKTargetedElementRequest *request)
-{
-    return *request->_request;
-}
-
 @implementation _WKTargetedElementRequest {
     RetainPtr<NSString> _searchText;
 }
@@ -41,7 +36,7 @@ static Ref<API::TargetedElementRequest> protectedRequest(_WKTargetedElementReque
 {
     if (WebCoreObjCScheduleDeallocateOnMainRunLoop(_WKTargetedElementRequest.class, self))
         return;
-    _request->API::TargetedElementRequest::~TargetedElementRequest();
+    SUPPRESS_UNRETAINED_ARG _request->API::TargetedElementRequest::~TargetedElementRequest();
     [super dealloc];
 }
 
@@ -64,7 +59,7 @@ static Ref<API::TargetedElementRequest> protectedRequest(_WKTargetedElementReque
     if (!(self = [self init]))
         return nil;
 
-    protectedRequest(self)->setSearchText(searchText);
+    protect(*_request)->setSearchText(searchText);
     return self;
 }
 
@@ -73,7 +68,7 @@ static Ref<API::TargetedElementRequest> protectedRequest(_WKTargetedElementReque
     if (!(self = [self init]))
         return nil;
 
-    protectedRequest(self)->setPoint(point);
+    protect(*_request)->setPoint(point);
     return self;
 }
 
@@ -84,15 +79,17 @@ static Ref<API::TargetedElementRequest> protectedRequest(_WKTargetedElementReque
 
     WebCore::TargetedElementSelectors selectorsForElement;
     selectorsForElement.reserveInitialCapacity(nsSelectorsForElement.count);
-    for (NSSet<NSString *> *nsSelectors in nsSelectorsForElement) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSSet<NSString *> *nsSelectors in nsSelectorsForElement) {
         HashSet<String> selectors;
         selectors.reserveInitialCapacity(nsSelectors.count);
-        for (NSString *selector in nsSelectors)
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL NSString *selector in nsSelectors)
             selectors.add(selector);
         selectorsForElement.append(WTF::move(selectors));
     }
 
-    protectedRequest(self)->setSelectors(WTF::move(selectorsForElement));
+    protect(*_request)->setSelectors(WTF::move(selectorsForElement));
     return self;
 }
 

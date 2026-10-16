@@ -27,12 +27,12 @@
 #include "ComplexTextController.h"
 
 #include "CairoUtilities.h"
-#include "FontCascade.h"
+#include "FontCascadeInlines.h"
 #include "FontFeatureValues.h"
 #include "FontTaggedSettings.h"
 #include "HbUniquePtr.h"
 #include "SurrogatePairAwareTextIterator.h"
-#include "text/TextFlags.h"
+#include "TextFlags.h"
 #include <hb-ft.h>
 #include <hb-icu.h>
 #include <hb-ot.h>
@@ -308,8 +308,9 @@ static hb_script_t findScriptForVerticalGlyphSubstitution(hb_face_t* face)
     return HB_SCRIPT_INVALID;
 }
 
-void ComplexTextController::collectComplexTextRunsForCharacters(std::span<const char16_t> characters, unsigned stringLocation, const Font* font)
+void ComplexTextController::collectComplexTextRunsForCharacters(std::span<const char16_t> characters, unsigned stringLocation, const Font* font, std::span<const char16_t>, std::span<const unsigned> originalIndices)
 {
+    ASSERT_UNUSED(originalIndices, originalIndices.empty());
     if (!font) {
         // Create a run of missing glyphs from the primary font.
         m_complexTextRuns.append(ComplexTextRun::create(m_fontCascade->primaryFont(), characters, stringLocation, 0, characters.size(), m_run->ltr()));

@@ -47,6 +47,13 @@ inline bool isCSSSpace(CharacterType c)
     return c == ' ' || c == '\t' || c == '\n';
 }
 
+// https://drafts.csswg.org/css-syntax-3/#newline
+template<typename CharacterType>
+inline bool isCSSNewline(CharacterType c)
+{
+    return c == '\n' || c == '\r' || c == '\f';
+}
+
 // http://dev.w3.org/csswg/css-syntax/#name-start-code-point
 template <typename CharacterType>
 bool isNameStartCodePoint(CharacterType c)
@@ -64,17 +71,37 @@ bool isNameCodePoint(CharacterType c)
 inline bool isValidCustomIdentifier(CSSValueID valueID)
 {
     // "default" is obsolete as a CSS-wide keyword but is still not allowed as a custom identifier.
-    return !isCSSWideKeyword(valueID) && valueID != CSSValueDefault;
+    return !isCSSWideKeyword(valueID) && valueID != CSSValueID::Default;
+}
+
+// Unlike CSSPropertyParserHelpers::genericFontFamily, this does not access
+// NeverDestroyed objects that require main-thread access, making it
+// safe to call from OffscreenCanvas workers.
+inline bool isGenericFontFamilyKeyword(CSSValueID valueID)
+{
+    switch (valueID) {
+    case CSSValueID::Serif:
+    case CSSValueID::SansSerif:
+    case CSSValueID::Cursive:
+    case CSSValueID::Fantasy:
+    case CSSValueID::Monospace:
+    case CSSValueID::SystemUi:
+    case CSSValueID::WebkitPictograph:
+    case CSSValueID::Math:
+        return true;
+    default:
+        return false;
+    }
 }
 
 // https://drafts.csswg.org/css-conditional-5/#propdef-container-name
 inline bool isValidContainerNameIdentifier(CSSValueID valueID)
 {
     switch (valueID) {
-    case CSSValueNone:
-    case CSSValueAnd:
-    case CSSValueOr:
-    case CSSValueNot:
+    case CSSValueID::None:
+    case CSSValueID::And:
+    case CSSValueID::Or:
+    case CSSValueID::Not:
         return false;
     default:
         return isValidCustomIdentifier(valueID);

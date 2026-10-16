@@ -33,9 +33,9 @@
 #include <WebCore/PlatformLayerIdentifier.h>
 #include <WebCore/RenderingResourceIdentifier.h>
 #include <WebCore/ScrollTypes.h>
-#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/RetainPtr.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/ThreadSafeWeakPtr.h>
 #include <wtf/Vector.h>
 
 OBJC_CLASS CALayer;
@@ -49,7 +49,7 @@ namespace WebKit {
 class RemoteLayerTreeHost;
 class RemoteLayerTreeScrollbars;
 
-class RemoteLayerTreeNode final : public RefCountedAndCanMakeWeakPtr<RemoteLayerTreeNode> {
+class RemoteLayerTreeNode final : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<RemoteLayerTreeNode, WTF::DestructionThread::MainRunLoop> {
     WTF_MAKE_TZONE_ALLOCATED(RemoteLayerTreeNode);
 public:
     static Ref<RemoteLayerTreeNode> create(WebCore::PlatformLayerIdentifier, Markable<WebCore::LayerHostingContextIdentifier>, RetainPtr<CALayer>);
@@ -60,8 +60,7 @@ public:
 
     static Ref<RemoteLayerTreeNode> createWithPlainLayer(WebCore::PlatformLayerIdentifier);
 
-    CALayer *layer() const { return m_layer.get(); }
-    RetainPtr<CALayer> protectedLayer() const;
+    CALayer *layer() const LIFETIME_BOUND { return m_layer.get(); }
 #if ENABLE(GAZE_GLOW_FOR_INTERACTION_REGIONS) || HAVE(CORE_ANIMATION_SEPARATED_LAYERS)
     const Markable<WebCore::FloatRect> visibleRect() const { return m_visibleRect; }
     void setVisibleRect(const WebCore::FloatRect& value) { m_visibleRect = value; }
@@ -78,19 +77,35 @@ public:
     void setShouldBeSeparated(bool value) { m_shouldBeSeparated = value; }
 #endif
 
+#if ENABLE(OVERLAY_REGIONS_REMOTE_EFFECT)
+    bool isLookToScrollExclusion() const { return m_isLookToScrollExclusion; }
+    void setIsLookToScrollExclusion(bool);
+
+    bool isFixedSubtreeRoot() const { return m_isFixedSubtreeRoot; }
+    void setIsFixedSubtreeRoot(bool value) { m_isFixedSubtreeRoot = value; }
+
+    enum class EventRegionChanged : bool { No, Yes };
+    void updateExclusionRegion(EventRegionChanged = EventRegionChanged::No);
+
+    void updateExclusionRegionAndDescendants(bool isExclusion);
+
+    void visibleRectChangedForOverlayRegions();
+    void updateOverlayRegionAfterHierarchyChange();
+#endif
+
 #if PLATFORM(IOS_FAMILY)
     UIView *uiView() const { return m_uiView.get(); }
 #endif
 
     WebCore::PlatformLayerIdentifier layerID() const { return m_layerID; }
 
-    const WebCore::EventRegion& eventRegion() const { return m_eventRegion; }
+    const WebCore::EventRegion& eventRegion() const LIFETIME_BOUND { return m_eventRegion; }
     void setEventRegion(const WebCore::EventRegion&);
 
     // Non-ancestor scroller that controls positioning of the layer.
     std::optional<WebCore::PlatformLayerIdentifier> actingScrollContainerID() const { return m_actingScrollContainerID.asOptional(); }
     // Ancestor scrollers that don't affect positioning of the layer.
-    const Vector<WebCore::PlatformLayerIdentifier>& stationaryScrollContainerIDs() const { return m_stationaryScrollContainerIDs; }
+    const Vector<WebCore::PlatformLayerIdentifier>& stationaryScrollContainerIDs() const LIFETIME_BOUND { return m_stationaryScrollContainerIDs; }
 
     void setActingScrollContainerID(std::optional<WebCore::PlatformLayerIdentifier> value) { m_actingScrollContainerID = value; }
     void setStationaryScrollContainerIDs(Vector<WebCore::PlatformLayerIdentifier>&& value) { m_stationaryScrollContainerIDs = WTF::move(value); }
@@ -128,12 +143,12 @@ public:
         m_cachedContentsBuffers = WTF::move(buffers);
     }
 
-    std::optional<WebCore::RenderingResourceIdentifier> asyncContentsIdentifier() const
+    std::optional<WebCore::PlaceholderFrameIdentifier> asyncContentsIdentifier() const
     {
         return m_asyncContentsIdentifier;
     }
 
-    void setAsyncContentsIdentifier(std::optional<WebCore::RenderingResourceIdentifier> identifier)
+    void setAsyncContentsIdentifier(std::optional<WebCore::PlaceholderFrameIdentifier> identifier)
     {
         m_asyncContentsIdentifier = identifier;
     }
@@ -142,6 +157,7 @@ public:
     void setAcceleratedEffectsAndBaseValues(const WebCore::AcceleratedEffects&, const WebCore::AcceleratedEffectValues&, RemoteLayerTreeHost&);
     const RemoteAnimationStack* animationStack() const { return m_animationStack.get(); }
     RefPtr<RemoteAnimationStack> takeAnimationStack() { return std::exchange(m_animationStack, nullptr); }
+    bool hasHighImpactMonotonicAnimations() const { return m_hasHighImpactMonotonicAnimations; }
 #endif
 
     bool backdropRootIsOpaque() const { return m_backdropRootIsOpaque; }
@@ -182,8 +198,15 @@ private:
     bool m_shouldBeSeparated { false };
 #endif
 
+#if ENABLE(OVERLAY_REGIONS_REMOTE_EFFECT)
+    bool m_isLookToScrollExclusion { false };
+    bool m_isFixedSubtreeRoot { false };
+    bool m_hasLookToScrollExclusionEffect { false };
+    bool m_hasVisibleRect { false };
+#endif
+
 #if PLATFORM(IOS_FAMILY)
-    RetainPtr<UIView> m_uiView;
+    const RetainPtr<UIView> m_uiView;
 #endif
 
     WebCore::EventRegion m_eventRegion;
@@ -196,10 +219,11 @@ private:
     Vector<WebCore::PlatformLayerIdentifier> m_stationaryScrollContainerIDs;
 
     Vector<CachedContentsBuffer> m_cachedContentsBuffers;
-    std::optional<WebCore::RenderingResourceIdentifier> m_asyncContentsIdentifier;
+    std::optional<WebCore::PlaceholderFrameIdentifier> m_asyncContentsIdentifier;
 
 #if ENABLE(THREADED_ANIMATIONS)
     RefPtr<RemoteAnimationStack> m_animationStack;
+    bool m_hasHighImpactMonotonicAnimations { false };
 #endif
     bool m_backdropRootIsOpaque { false };
 };

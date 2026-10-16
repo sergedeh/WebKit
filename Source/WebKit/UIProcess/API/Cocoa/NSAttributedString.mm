@@ -143,13 +143,13 @@ constexpr NSUInteger maximumReadOnlyAccessPaths = 2;
     return s_cache.get().get();
 }
 
-static RetainPtr<WKWebViewConfiguration>& globalConfiguration()
+static RetainPtr<WKWebViewConfiguration>& LEGACY_NODELETE globalConfiguration()
 {
     static NeverDestroyed<RetainPtr<WKWebViewConfiguration>> configuration;
     return configuration;
 }
 
-static RetainPtr<NSString>& sourceApplicationBundleIdentifier()
+static RetainPtr<NSString>& LEGACY_NODELETE sourceApplicationBundleIdentifier()
 {
     static NeverDestroyed<RetainPtr<NSString>> identifier;
     return identifier;
@@ -298,7 +298,8 @@ static NSMutableArray<NSURL *> *readOnlyAccessPathsSingleton()
 
     [self clearConfigurationAndRaiseExceptionIfNecessary:errorMessage];
 
-    for (id fileURL in readAccessFileURLs)
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL id fileURL in readAccessFileURLs)
         [self validateEntry:fileURL];
 
     if ([readAccessFileURLs isEqualToArray:readOnlyAccessPathsSingleton()])
@@ -500,7 +501,7 @@ static NSMutableArray<NSURL *> *readOnlyAccessPathsSingleton()
 
         contentNavigation = loadWebContent(webView.get());
         if (!finished)
-            attributedStringActivity = protect([webView _protectedPage]->legacyMainFrameProcess())->protectedThrottler()->foregroundActivity("NSAttributedString serialization"_s);
+            attributedStringActivity = protect(protect(protect(*[webView _page])->legacyMainFrameProcess())->throttler())->foregroundActivity("NSAttributedString serialization"_s);
 
         ASSERT(contentNavigation);
         ASSERT(webView.get().loading);

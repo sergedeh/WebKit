@@ -27,50 +27,67 @@
 #include "config.h"
 #include "CSSCrossfadeValue.h"
 
+#include "CSSPrimitiveNumericTypes+CSSValueVisitation.h"
+#include "CSSPrimitiveNumericTypes+Serialization.h"
 #include "StyleBuilderState.h"
 #include "StyleCrossfadeImage.h"
-#include <wtf/text/MakeString.h>
+#include "StylePrimitiveNumericTypes+Conversions.h"
 
 namespace WebCore {
 
-inline CSSCrossfadeValue::CSSCrossfadeValue(Ref<CSSValue>&& fromValueOrNone, Ref<CSSValue>&& toValueOrNone, Ref<CSSPrimitiveValue>&& percentageValue, bool isPrefixed)
+inline CSSCrossfadeValue::CSSCrossfadeValue(CSS::CrossfadeFunction&& function)
     : CSSValue { ClassType::Crossfade }
-    , m_fromValueOrNone { WTF::move(fromValueOrNone) }
-    , m_toValueOrNone { WTF::move(toValueOrNone) }
-    , m_percentageValue { WTF::move(percentageValue) }
-    , m_isPrefixed { isPrefixed }
+    , m_function { WTF::move(function) }
 {
 }
 
-Ref<CSSCrossfadeValue> CSSCrossfadeValue::create(Ref<CSSValue>&& fromValueOrNone, Ref<CSSValue>&& toValueOrNone, Ref<CSSPrimitiveValue>&& percentageValue, bool isPrefixed)
+inline CSSCrossfadeValue::CSSCrossfadeValue(CSS::WebkitCrossfadeFunction&& function)
+    : CSSValue { ClassType::Crossfade }
+    , m_function { WTF::move(function) }
 {
-    return adoptRef(*new CSSCrossfadeValue(WTF::move(fromValueOrNone), WTF::move(toValueOrNone), WTF::move(percentageValue), isPrefixed));
+}
+
+Ref<CSSCrossfadeValue> CSSCrossfadeValue::create(CSS::CrossfadeFunction&& function)
+{
+    return adoptRef(*new CSSCrossfadeValue(WTF::move(function)));
+}
+
+Ref<CSSCrossfadeValue> CSSCrossfadeValue::create(CSS::WebkitCrossfadeFunction&& function)
+{
+    return adoptRef(*new CSSCrossfadeValue(WTF::move(function)));
 }
 
 CSSCrossfadeValue::~CSSCrossfadeValue() = default;
 
 bool CSSCrossfadeValue::equals(const CSSCrossfadeValue& other) const
 {
-    return equalInputImages(other) && compareCSSValue(m_percentageValue, other.m_percentageValue);
-}
-
-bool CSSCrossfadeValue::equalInputImages(const CSSCrossfadeValue& other) const
-{
-    return compareCSSValue(m_fromValueOrNone, other.m_fromValueOrNone) && compareCSSValue(m_toValueOrNone, other.m_toValueOrNone);
+    return m_function == other.m_function;
 }
 
 String CSSCrossfadeValue::customCSSText(const CSS::SerializationContext& context) const
 {
-    return makeString(m_isPrefixed ? "-webkit-"_s : ""_s, "cross-fade("_s, m_fromValueOrNone->cssText(context), ", "_s, m_toValueOrNone->cssText(context), ", "_s, m_percentageValue->cssText(context), ')');
+    return WTF::switchOn(m_function,
+        [&](const auto& function) {
+            return CSS::serializationForCSS(context, function);
+        }
+    );
 }
 
-RefPtr<StyleImage> CSSCrossfadeValue::createStyleImage(const Style::BuilderState& state) const
+IterationStatus CSSCrossfadeValue::customVisitChildren(NOESCAPE const Function<IterationStatus(CSSValue&)>& func) const
 {
-    return StyleCrossfadeImage::create(
-        state.createStyleImage(m_fromValueOrNone),
-        state.createStyleImage(m_toValueOrNone),
-        clampTo<double>(m_percentageValue->valueDividingBy100IfPercentage<double>(state.cssToLengthConversionData()), 0, 1),
-        m_isPrefixed
+    return WTF::switchOn(m_function,
+        [&](const auto& function) {
+            return CSS::visitCSSValueChildren(func, function);
+        }
+    );
+}
+
+RefPtr<Style::Image> CSSCrossfadeValue::createStyleImage(const Style::BuilderState& state) const
+{
+    return WTF::switchOn(m_function,
+        [&](const auto& function) -> RefPtr<Style::Image> {
+            return Style::CrossfadeImage::create(Style::toStyle(function, state));
+        }
     );
 }
 

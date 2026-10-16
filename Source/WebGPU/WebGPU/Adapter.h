@@ -27,13 +27,14 @@
 
 #import "HardwareCapabilities.h"
 #import <Metal/Metal.h>
+#import <WebGPU/WebGPUCpp.h>
 #import <bmalloc/CompactAllocationMode.h>
+#import <expected>
 #import <wtf/Assertions.h>
 #import <wtf/CompletionHandler.h>
 #import <wtf/FastMalloc.h>
 #import <wtf/HashSet.h>
 #import <wtf/Ref.h>
-#import <wtf/RefCounted.h>
 #import <wtf/RefPtr.h>
 #import <wtf/TZoneMalloc.h>
 #import <wtf/ThreadSafeWeakPtr.h>
@@ -42,13 +43,13 @@
 struct WGPUAdapterImpl {
 };
 
-namespace WebGPU {
+namespace WebGPU::Metal {
 
 class Device;
 class Instance;
 
 // https://gpuweb.github.io/gpuweb/#gpuadapter
-class Adapter : public WGPUAdapterImpl, public RefCounted<Adapter> {
+class Adapter final : public WebGPU::Adapter, public WGPUAdapterImpl {
     WTF_MAKE_TZONE_ALLOCATED(Adapter);
 public:
     static Ref<Adapter> create(id<MTLDevice> device, Instance& instance, bool xrCompatible, HardwareCapabilities&& capabilities)
@@ -62,15 +63,18 @@ public:
 
     ~Adapter();
 
-    size_t enumerateFeatures(WGPUFeatureName* features);
-    bool getLimits(WGPUSupportedLimits&);
-    void getProperties(WGPUAdapterProperties&);
+    Vector<WebGPU::FeatureName> features() const;
+    const WebGPU::Limits& limits() const LIFETIME_BOUND { return m_capabilities.limits; }
+    WebGPU::AdapterInfo info();
+    // The C API adapter info, which has members that WebGPU::AdapterInfo does not have.
+    void getInfo(WGPUAdapterInfo&);
     bool hasFeature(WGPUFeatureName);
-    void requestDevice(const WGPUDeviceDescriptor&, CompletionHandler<void(WGPURequestDeviceStatus, Ref<Device>&&, String&&)>&& callback);
+    void requestDevice(const WebGPU::DeviceDescriptor&, CompletionHandler<void(std::expected<Ref<Device>, String>&&)>&&);
 
-    bool isValid() const { return m_device; }
+    void setLabel(String&&) final { }
+    bool isValid() const final { return m_device; }
     void makeInvalid() { m_device = nil; }
-    bool isXRCompatible() const;
+    bool LEGACY_NODELETE isXRCompatible() const;
 
     RefPtr<Instance> instance() const { return m_instance.get(); }
     ThreadSafeWeakPtr<Instance> weakInstance() const { return m_instance; }
@@ -87,4 +91,4 @@ private:
     bool m_xrCompatible { false };
 };
 
-} // namespace WebGPU
+} // namespace WebGPU::Metal

@@ -68,7 +68,9 @@ std::shared_ptr<ShaderTranslateTask> ShaderMtl::compile(const gl::Context *conte
 
     options->separateCompoundStructDeclarations = true;
 
-    if (context->isWebGL() && mState.getShaderType() != gl::ShaderType::Compute)
+    options->forceDeferNonConstGlobalInitializers = true;
+
+    if (context->isHardenedContext() && mState.getShaderType() != gl::ShaderType::Compute)
     {
         options->initOutputVariables = true;
     }
@@ -87,6 +89,7 @@ std::shared_ptr<ShaderTranslateTask> ShaderMtl::compile(const gl::Context *conte
     }
 
     options->removeInactiveVariables = true;
+    options->retainInactiveFragmentOutputs = true;
 
     // Constants:
     options->metal.driverUniformsBindingIndex    = mtl::kDriverUniformsBindingIndex;

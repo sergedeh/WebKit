@@ -10,6 +10,7 @@
 #include "include/core/SkBlendMode.h"
 #include "include/core/SkImageFilter.h"
 #include "include/core/SkMatrix.h"
+#include "include/core/SkPoint.h"
 #include "include/core/SkPoint3.h"
 #include "include/core/SkRRect.h"
 #include "include/core/SkRSXform.h"
@@ -19,8 +20,7 @@
 #include "include/core/SkSurface.h"
 #include "include/core/SkTextBlob.h"
 #include "include/core/SkTileMode.h"
-#include "include/private/base/SkPoint_impl.h"
-#include "include/private/base/SkTo.h"
+#include "include/private/SkTo.h"
 #include "include/private/chromium/Slug.h"
 #include "src/core/SkCanvasPriv.h"
 #include "src/core/SkDrawShadowInfo.h"
@@ -36,8 +36,6 @@ struct SkISize;
 struct SkImageInfo;
 
 using namespace skia_private;
-
-#define HEAP_BLOCK_SIZE 4096
 
 enum {
     // just need a value that save or getSaveCount would never return

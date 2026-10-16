@@ -74,7 +74,7 @@ public:
     Output(State&);
     ~Output();
 
-    void initialize(AbstractHeapRepository&);
+    void LEGACY_NODELETE initialize(AbstractHeapRepository&);
 
     void setFrequency(double value)
     {
@@ -93,7 +93,7 @@ public:
     void applyBlockOrder();
 
     void probeDebugPrint(const String& str, LValue value);
-    LBasicBlock appendTo(LBasicBlock, LBasicBlock nextBlock);
+    LBasicBlock LEGACY_NODELETE appendTo(LBasicBlock, LBasicBlock nextBlock);
     void appendTo(LBasicBlock);
 
     void setOrigin(DFG::Node* node) { m_origin = node; }
@@ -103,7 +103,7 @@ public:
 
     B3::SlotBaseValue* lockedStackSlot(uint64_t bytes);
 
-    LValue constBool(bool value);
+    LValue LEGACY_NODELETE constBool(bool value);
     LValue constInt32(int32_t value);
 
     LValue alreadyRegisteredWeakPointer(DFG::Graph& graph, JSCell* cell)
@@ -145,7 +145,7 @@ public:
     LValue phi(LType, ValueFromBlock, Params... theRest);
     template<typename VectorType>
     LValue phi(LType, const VectorType&);
-    void addIncomingToPhi(LValue phi, ValueFromBlock);
+    void LEGACY_NODELETE addIncomingToPhi(LValue phi, ValueFromBlock);
     template<typename... Params>
     void addIncomingToPhi(LValue phi, ValueFromBlock, Params... theRest);
     template<typename... Params>
@@ -157,6 +157,7 @@ public:
     LValue add(LValue, LValue);
     LValue sub(LValue, LValue);
     LValue mul(LValue, LValue);
+    LValue uMulHigh(LValue, LValue);
     LValue div(LValue, LValue);
     LValue chillDiv(LValue, LValue);
     LValue mod(LValue, LValue);
@@ -432,6 +433,18 @@ public:
     template<typename VectorType>
     void switchInstruction(LValue value, const VectorType& cases, LBasicBlock fallThrough, Weight fallThroughWeight)
     {
+        if (value->hasInt()) {
+            LBasicBlock target = fallThrough;
+            for (const SwitchCase& switchCase : cases) {
+                if (switchCase.value()->asInt() == value->asInt()) {
+                    target = switchCase.target();
+                    break;
+                }
+            }
+            jump(target);
+            return;
+        }
+
         B3::SwitchValue* switchValue = m_block->appendNew<B3::SwitchValue>(m_proc, origin(), value);
         switchValue->setFallThrough(B3::FrequentedBlock(fallThrough));
         for (const SwitchCase& switchCase : cases) {

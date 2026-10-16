@@ -31,6 +31,7 @@
 #include "ScriptWrappable.h"
 #include "WebCoreOpaqueRoot.h"
 #include <wtf/Deque.h>
+#include <wtf/Lock.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/UniqueRef.h>
@@ -39,6 +40,7 @@ namespace WebCore {
 
 class DOMPromise;
 class DeferredPromise;
+class JSDOMGlobalObject;
 class ReadableStream;
 class ReadableStreamReadIntoRequest;
 
@@ -51,13 +53,13 @@ public:
     ~ReadableStreamBYOBReader();
 
     struct ReadOptions {
-        size_t min { 1 };
+        uint64_t min { 1 };
     };
 
     void readForBindings(JSDOMGlobalObject&, JSC::ArrayBufferView&, ReadOptions, Ref<DeferredPromise>&&);
     void releaseLock(JSDOMGlobalObject&);
 
-    DOMPromise& closedPromise();
+    DOMPromise& LEGACY_NODELETE closedPromise();
 
     Ref<DOMPromise> cancel(JSDOMGlobalObject&, JSC::JSValue);
 
@@ -72,10 +74,10 @@ public:
     using ClosedCallback = Function<void(JSDOMGlobalObject&, JSC::JSValue)>;
     void onClosedPromiseRejection(ClosedCallback&&);
 
-    void read(JSDOMGlobalObject&, JSC::ArrayBufferView&, size_t, Ref<ReadableStreamReadIntoRequest>&&);
+    void read(JSDOMGlobalObject&, JSC::ArrayBufferView&, uint64_t, Ref<ReadableStreamReadIntoRequest>&&);
 
     bool isReachableFromOpaqueRoots() const;
-    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    template<typename Visitor> void visitAdditionalChildrenInGCThread(Visitor&);
 
 private:
     explicit ReadableStreamBYOBReader(Ref<DOMPromise>&&, Ref<DeferredPromise>&&);
@@ -89,12 +91,13 @@ private:
 
     Ref<DOMPromise> m_closedPromise;
     Ref<DeferredPromise> m_closedDeferred;
-    RefPtr<ReadableStream> m_stream;
+    mutable Lock m_streamLock;
+    RefPtr<ReadableStream> m_stream WTF_GUARDED_BY_LOCK(m_streamLock);
     Deque<Ref<ReadableStreamReadIntoRequest>> m_readIntoRequests;
 
     ClosedCallback m_closedCallback;
 };
 
-WebCoreOpaqueRoot root(ReadableStreamBYOBReader*);
+WebCoreOpaqueRoot LEGACY_NODELETE root(ReadableStreamBYOBReader*);
 
 } // namespace WebCore

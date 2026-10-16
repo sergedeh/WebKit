@@ -21,7 +21,6 @@
 #include "config.h"
 #include "FEDropShadow.h"
 
-#include "ColorSerialization.h"
 #include "FEDropShadowSoftwareApplier.h"
 #include "FEGaussianBlur.h"
 #include "Filter.h"
@@ -38,12 +37,12 @@
 
 namespace WebCore {
 
-Ref<FEDropShadow> FEDropShadow::create(float stdX, float stdY, float dx, float dy, const Color& shadowColor, float shadowOpacity, DestinationColorSpace colorSpace)
+Ref<FEDropShadow> FEDropShadow::create(float stdX, float stdY, float dx, float dy, const Color& shadowColor, float shadowOpacity, ColorSpace colorSpace)
 {
     return adoptRef(*new FEDropShadow(stdX, stdY, dx, dy, shadowColor, shadowOpacity, colorSpace));
 }
 
-FEDropShadow::FEDropShadow(float stdX, float stdY, float dx, float dy, const Color& shadowColor, float shadowOpacity, DestinationColorSpace colorSpace)
+FEDropShadow::FEDropShadow(float stdX, float stdY, float dx, float dy, const Color& shadowColor, float shadowOpacity, ColorSpace colorSpace)
     : FilterEffect(FilterEffect::Type::FEDropShadow, colorSpace)
     , m_stdX(stdX)
     , m_stdY(stdY)
@@ -147,7 +146,7 @@ OptionSet<FilterRenderingMode> FEDropShadow::supportedFilterRenderingModes(Optio
 #if (USE(CORE_IMAGE)) || (USE(SKIA))
     modes.add(FilterRenderingMode::Accelerated);
 #endif
-#if USE(CG) && HAVE(FIX_FOR_RADAR_163968203)
+#if USE(CG) && HAVE(CGSTYLE_FIXES_DROP_SHADOW_BLUR)
     if (m_stdX == m_stdY)
         modes.add(FilterRenderingMode::GraphicsContext);
 #endif
@@ -191,7 +190,7 @@ TextStream& FEDropShadow::externalRepresentation(TextStream& ts, FilterRepresent
 
     ts << " stdDeviation=\""_s << m_stdX << ", "_s << m_stdY << '"';
     ts << " dx=\""_s << m_dx << "\" dy=\"" << m_dy << '"';
-    ts << " flood-color=\""_s << serializationForRenderTreeAsText(m_shadowColor) << '"';
+    ts << " flood-color=\""_s << m_shadowColor << '"';
     ts << " flood-opacity=\""_s << m_shadowOpacity << '"';
 
     ts << "]\n"_s;

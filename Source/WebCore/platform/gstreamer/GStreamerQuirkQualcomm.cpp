@@ -36,21 +36,24 @@ GStreamerQuirkQualcomm::GStreamerQuirkQualcomm()
 
 bool GStreamerQuirkQualcomm::isPlatformSupported() const
 {
-    auto factory = adoptGRef(gst_element_factory_find("qtic2vdec"));
+    GRefPtr factory = adoptGRef(gst_element_factory_find("qtic2vdec"));
     if (!factory)
         return false;
 
     // Make sure decodebin will not auto-plug any of these elements. The Qualcomm decoder already
     // has primary rank.
-    static const std::array<ASCIILiteral, 5> s_disabledDecoders {
+    static const std::array<ASCIILiteral, 8> s_disabledDecoders {
         "avdec_h264"_s,
         "avdec_h265"_s,
         "v4l2h264dec"_s,
         "v4l2h265dec"_s,
         "v4l2vp9dec"_s,
+        "vp9dec"_s,
+        "vp8alphadecodebin"_s,
+        "vp9alphadecodebin"_s,
     };
     for (const auto& factoryName : s_disabledDecoders) {
-        if (auto factory = adoptGRef(gst_element_factory_find(factoryName.characters())))
+        if (GRefPtr factory = adoptGRef(gst_element_factory_find(factoryName.characters())))
             gst_plugin_feature_set_rank(GST_PLUGIN_FEATURE_CAST(factory.get()), GST_RANK_NONE);
     }
 
@@ -60,6 +63,20 @@ bool GStreamerQuirkQualcomm::isPlatformSupported() const
 
     GST_DEBUG("Qualcomm quirk configured and enabled");
     return true;
+}
+
+bool GStreamerQuirkQualcomm::isVideoCapsGLCompatible(const GRefPtr<GstCaps>& caps) const
+{
+    return !gst_caps_features_contains(gst_caps_get_features(caps.get(), 0), "memory:GBM");
+}
+
+std::optional<bool> GStreamerQuirkQualcomm::isHardwareAccelerated(GstElementFactory* factory)
+{
+    auto view = StringView::fromLatin1(GST_OBJECT_NAME(factory));
+    if (view.startsWith("qtic2vdec"_s))
+        return true;
+
+    return std::nullopt;
 }
 
 #undef GST_CAT_DEFAULT

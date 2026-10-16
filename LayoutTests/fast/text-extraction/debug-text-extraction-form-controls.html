@@ -74,7 +74,32 @@
             <input name="username" placeholder="Username" minlength="3" maxlength="20" required />
             <input name="email" placeholder="Email" pattern="[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$" required />
             <input name="zipcode" placeholder="Zip Code" pattern="[0-9]{5}" minlength="5" maxlength="5" />
+            <input name="volume" type="range" min="0" max="100" value="42" />
+            <input name="cancel" type="button" value="Cancel" />
+            <input name="submit" type="submit" value="Sign Up Now" />
         </form>
+        <form autocomplete="on">
+            <button>Change</button>
+        </form>
+        <form autocomplete="on">
+            <div><button>Add passkey</button></div>
+        </form>
+        <form name="two-step" autocomplete="on">
+            <button>Turn on</button>
+        </form>
+        <form autocomplete="on" role="group" aria-label="Delete account">
+            <button>Delete</button>
+        </form>
+        <select>
+            <option value="one">Number 1</option>
+            <option value="two">Number 2</option>
+            <option selected value="three">Number 3</option>
+        </select>
+        <select multiple>
+            <option selected value="banana">Banana</option>
+            <option selected value="pear">Pear</option>
+            <option value="apple">Apple</option>
+        </select>
     </section>
 </main>
 <footer role="contentinfo">
@@ -103,9 +128,10 @@ addEventListener("load", async () => {
             includeRects: false,
             includeURLs: false,
             nodeIdentifierInclusion: "editableOnly",
-            includeEventListeners: false,
+            eventListenerCategories: ["none"],
             includeAccessibilityAttributes: true,
             includeTextInAutoFilledControls: true,
+            includeSelectOptions: true,
             outputFormat,
         });
 

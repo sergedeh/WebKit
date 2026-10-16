@@ -26,16 +26,23 @@
 #include "config.h"
 #include "WebKitNamespace.h"
 
+#include "DOMWrapperWorld.h"
 #include "Element.h"
 #include "ExceptionOr.h"
 #include "FrameLoader.h"
+#include "JSDOMGlobalObject.h"
 #include "LocalFrame.h"
 #include "LocalFrameLoaderClient.h"
 #include "Logging.h"
+#include "ScriptController.h"
+#include "ScriptSourceCode.h"
+#include "WebKitBuffer.h"
 #include "WebKitBufferNamespace.h"
 #include "WebKitJSHandle.h"
-#include "WebKitSerializedNode.h"
+#include "WebKitNodeSnapshot.h"
 #include <JavaScriptCore/JSCellInlines.h>
+#include <JavaScriptCore/JSGlobalObjectInlines.h>
+#include <wtf/SystemTracing.h>
 
 #define WEBKIT_NAMESPACE_RELEASE_LOG_ERROR(channel, fmt, ...) RELEASE_LOG_ERROR(channel, "%p - WebKitNamespace::" fmt, this, ##__VA_ARGS__)
 
@@ -48,8 +55,8 @@ namespace WebCore {
 
 WebKitNamespace::WebKitNamespace(LocalDOMWindow& window, UserContentProvider& userContentProvider)
     : LocalDOMWindowProperty(&window)
-    , m_messageHandlerNamespace(UserMessageHandlersNamespace::create(*window.protectedFrame(), userContentProvider))
-    , m_buffers(WebKitBufferNamespace::create(*window.protectedFrame(), userContentProvider))
+    , m_messageHandlerNamespace(UserMessageHandlersNamespace::create(*protect(window.frame()), userContentProvider))
+    , m_buffers(WebKitBufferNamespace::create(*protect(window.frame()), userContentProvider))
 {
     ASSERT(window.frame());
 }
@@ -76,16 +83,30 @@ WebKitBufferNamespace& WebKitNamespace::buffers()
     return m_buffers;
 }
 
+JSC::JSValue WebKitNamespace::evaluateScript(JSC::JSGlobalObject& globalObject, const String& source, const String& url)
+{
+    if (!globalObject.inherits<JSDOMGlobalObject>())
+        return JSC::jsNull();
+    Ref world = downcast<JSDOMGlobalObject>(&globalObject)->world();
+    RefPtr frame = this->frame();
+    if (!frame)
+        return JSC::jsNull();
+    WTFBeginSignpost(this, EvaluateJavaScriptFromBuffer, "evaluateScript(url: %" PRIVATE_LOG_STRING ")", url.utf8());
+    auto result = protect(frame->script())->evaluateInWorldIgnoringException(ScriptSourceCode { source, JSC::SourceTaintedOrigin::Untainted, URL { url } }, world);
+    WTFEndSignpost(this, EvaluateJavaScriptFromBuffer);
+    return result;
+}
+
 Ref<WebKitJSHandle> WebKitNamespace::createJSHandle(JSC::Strong<JSC::JSObject> object)
 {
     return WebKitJSHandle::create(object.get());
 }
 
-ExceptionOr<Ref<WebKitSerializedNode>> WebKitNamespace::serializeNode(Node& node, SerializedNodeInit&& init)
+ExceptionOr<Ref<WebKitNodeSnapshot>> WebKitNamespace::createNodeSnapshot(Node& node, NodeSnapshotInit&& init)
 {
     if (node.isShadowRoot()) [[unlikely]]
         return Exception { ExceptionCode::NotSupportedError };
-    return WebKitSerializedNode::create(node, init.deep);
+    return WebKitNodeSnapshot::create(node, init.deep);
 }
 
 } // namespace WebCore

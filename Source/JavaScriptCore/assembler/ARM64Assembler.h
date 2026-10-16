@@ -170,7 +170,7 @@ inline uint16_t getHalfword(uint64_t value, int which)
 
 namespace RegisterNames {
 
-typedef enum : int8_t {
+enum RegisterID : int8_t {
 #define REGISTER_ID(id, name, r, cs) id,
     FOR_EACH_GP_REGISTER(REGISTER_ID)
 #undef REGISTER_ID
@@ -180,22 +180,22 @@ typedef enum : int8_t {
 #undef REGISTER_ALIAS
 
     InvalidGPRReg = -1,
-} RegisterID;
+};
 
-typedef enum : int8_t {
+enum SPRegisterID : int8_t {
 #define REGISTER_ID(id, name) id,
     FOR_EACH_SP_REGISTER(REGISTER_ID)
 #undef REGISTER_ID
-} SPRegisterID;
+};
 
 // ARM64 always has 32 FPU registers 128-bits each. See http://llvm.org/devmtg/2012-11/Northover-AArch64.pdf
 // and Section 5.1.2 in http://infocenter.arm.com/help/topic/com.arm.doc.ihi0055b/IHI0055B_aapcs64.pdf.
-typedef enum : int8_t {
+enum FPRegisterID : int8_t {
 #define REGISTER_ID(id, name, r, cs) id,
     FOR_EACH_FP_REGISTER(REGISTER_ID)
 #undef REGISTER_ID                       
     InvalidFPRReg = -1,
-} FPRegisterID;
+};
 
 static constexpr bool isSp(RegisterID reg) { return reg == sp; }
 static constexpr bool isZr(RegisterID reg) { return reg == zr; }
@@ -264,9 +264,10 @@ public:
         : m_indexOfLastWatchpoint(INT_MIN)
         , m_indexOfTailOfLastWatchpoint(INT_MIN)
     {
+        m_jumpsToLink.reserveInitialCapacity(64);
     }
     
-    AssemblerBuffer& buffer() { return m_buffer; }
+    AssemblerBuffer& buffer() LIFETIME_BOUND { return m_buffer; }
 
     // (HS, LO, HI, LS) -> (AE, B, A, BE)
     // (VS, VC) -> (O, NO)
@@ -329,7 +330,7 @@ public:
         JumpCompareAndBranchFixedSize = JUMP_ENUM_WITH_SIZE(7, 2 * sizeof(uint32_t)),
         JumpTestBitFixedSize = JUMP_ENUM_WITH_SIZE(8, 2 * sizeof(uint32_t)),
     };
-    enum JumpLinkType {
+    enum JumpLinkType : uint8_t {
         LinkInvalid = JUMP_ENUM_WITH_SIZE(0, 0),
         LinkJumpNoCondition = JUMP_ENUM_WITH_SIZE(1, 1 * sizeof(uint32_t)),
         LinkJumpConditionDirect = JUMP_ENUM_WITH_SIZE(2, 1 * sizeof(uint32_t)),
@@ -465,9 +466,13 @@ public:
                 BranchType m_branchType : 2 { BranchType_JMP };
             } realTypes { };
             struct CopyTypes {
+#if OS(WINDOWS)
+                uint64_t content[5];
+#else
                 uint64_t content[3];
+#endif
             } copyTypes;
-            static_assert(sizeof(RealTypes) == sizeof(CopyTypes), "LinkRecord's CopyStruct size equals to RealStruct");
+            static_assert(sizeof(RealTypes) <= sizeof(CopyTypes), "LinkRecord's CopyStruct size must be <= CopyStruct");
         } data;
     };
 
@@ -1725,9 +1730,57 @@ public:
         insn(0b01'001110'00'0'00000'001110'00000'00000 | (sizeForIntegralSIMDOp(lane) << 22) | (vm << 16) | (vn << 5) | vd);
     }
 
+    ALWAYS_INLINE void zip2(FPRegisterID vd, FPRegisterID vn, FPRegisterID vm, SIMDLane lane)
+    {
+        // ZIP2 is the same encoding as ZIP1 but with op=1 (bit 14).
+        insn(0b01'001110'00'0'00000'011110'00000'00000 | (sizeForIntegralSIMDOp(lane) << 22) | (vm << 16) | (vn << 5) | vd);
+    }
+
     ALWAYS_INLINE void uzip1(FPRegisterID vd, FPRegisterID vn, FPRegisterID vm, SIMDLane lane)
     {
         insn(0b01'001110'00'0'00000'0'0'01'10'00000'00000 | (sizeForIntegralSIMDOp(lane) << 22) | (vm << 16) | (vn << 5) | vd);
+    }
+
+    ALWAYS_INLINE void uzip2(FPRegisterID vd, FPRegisterID vn, FPRegisterID vm, SIMDLane lane)
+    {
+        // UZP2 is the same encoding as UZP1 but with op=1 (bit 14).
+        insn(0b01'001110'00'0'00000'0'1'01'10'00000'00000 | (sizeForIntegralSIMDOp(lane) << 22) | (vm << 16) | (vn << 5) | vd);
+    }
+
+    ALWAYS_INLINE void trn1(FPRegisterID vd, FPRegisterID vn, FPRegisterID vm, SIMDLane lane)
+    {
+        insn(0b01'001110'00'0'00000'0'0'10'10'00000'00000 | (sizeForIntegralSIMDOp(lane) << 22) | (vm << 16) | (vn << 5) | vd);
+    }
+
+    ALWAYS_INLINE void trn2(FPRegisterID vd, FPRegisterID vn, FPRegisterID vm, SIMDLane lane)
+    {
+        // TRN2 is the same encoding as TRN1 but with op=1 (bit 14).
+        insn(0b01'001110'00'0'00000'0'1'10'10'00000'00000 | (sizeForIntegralSIMDOp(lane) << 22) | (vm << 16) | (vn << 5) | vd);
+    }
+
+    // REV16.16B: reverse bytes within 16-bit groups
+    // REV32.T: reverse elements within 32-bit groups (T = 16B or 8H)
+    // REV64.T: reverse elements within 64-bit groups (T = 16B, 8H, or 4S)
+    // The 'size' field in the encoding is the element size being reversed.
+    // 'op' selects the group size: 00=REV64, 01=REV32, 10=REV16.
+    ALWAYS_INLINE void rev64(FPRegisterID vd, FPRegisterID vn, SIMDLane lane)
+    {
+        // REV64: 01001110_ss_10000_0000_10_Rn_Rd, op=00
+        insn(0b01'001110'00'10000'00000'10'00000'00000 | (sizeForIntegralSIMDOp(lane) << 22) | (vn << 5) | vd);
+    }
+
+    ALWAYS_INLINE void rev32(FPRegisterID vd, FPRegisterID vn, SIMDLane lane)
+    {
+        // REV32: 01101110_ss_10000_0000_10_Rn_Rd, op=01
+        insn(0b01'101110'00'10000'00000'10'00000'00000 | (sizeForIntegralSIMDOp(lane) << 22) | (vn << 5) | vd);
+    }
+
+    ALWAYS_INLINE void rev16(FPRegisterID vd, FPRegisterID vn, SIMDLane lane)
+    {
+        // REV16: 01001110_ss_10000_0001_10_Rn_Rd, op=10
+        // Only valid with i8x16 element size.
+        ASSERT(lane == SIMDLane::i8x16);
+        insn(0b01'001110'00'10000'00001'10'00000'00000 | (sizeForIntegralSIMDOp(lane) << 22) | (vn << 5) | vd);
     }
 
     ALWAYS_INLINE void ext(FPRegisterID vd, FPRegisterID vn, FPRegisterID vm, uint8_t firstLane, SIMDLane lane)
@@ -1757,6 +1810,24 @@ public:
     ALWAYS_INLINE void smull2v(FPRegisterID vd, FPRegisterID vn, FPRegisterID vm, SIMDLane inputLane) { smullv(vd, vn, vm, inputLane, 1, 0); }
     ALWAYS_INLINE void umullv(FPRegisterID vd, FPRegisterID vn, FPRegisterID vm, SIMDLane inputLane) { smullv(vd, vn, vm, inputLane, 0, 1); }
     ALWAYS_INLINE void umull2v(FPRegisterID vd, FPRegisterID vn, FPRegisterID vm, SIMDLane inputLane) { smullv(vd, vn, vm, inputLane, 1, 1); }
+
+    ALWAYS_INLINE void smlalv(FPRegisterID vd, FPRegisterID vn, FPRegisterID vm, SIMDLane inputLane, bool Q = 0, bool U = 0)
+    {
+        // https://www.scs.stanford.edu/~zyedidia/arm64/smlal_advsimd_vec.html
+        RELEASE_ASSERT(inputLane != SIMDLane::i64x2 && scalarTypeIsIntegral(inputLane));
+        insn(0b00'0'01110'00'1'00000'10'0'000'00000'00000 | (Q << 30) | (U << 29) | (sizeForIntegralSIMDOp(inputLane) << 22) | (vm << 16) | (vn << 5) | vd);
+    }
+
+    ALWAYS_INLINE void smlal2v(FPRegisterID vd, FPRegisterID vn, FPRegisterID vm, SIMDLane inputLane) { smlalv(vd, vn, vm, inputLane, 1, 0); }
+    ALWAYS_INLINE void umlalv(FPRegisterID vd, FPRegisterID vn, FPRegisterID vm, SIMDLane inputLane) { smlalv(vd, vn, vm, inputLane, 0, 1); }
+    ALWAYS_INLINE void umlal2v(FPRegisterID vd, FPRegisterID vn, FPRegisterID vm, SIMDLane inputLane) { smlalv(vd, vn, vm, inputLane, 1, 1); }
+
+    // SDOT Vd.4S, Vn.16B, Vm.16B — signed dot product, accumulating into Vd
+    // Requires FEAT_DotProd (ARMv8.2-A optional, ARMv8.4-A mandatory)
+    ALWAYS_INLINE void sdotv(FPRegisterID vd, FPRegisterID vn, FPRegisterID vm)
+    {
+        insn(0b01001110'10'0'00000'10010'1'00000'00000 | (vm << 16) | (vn << 5) | vd);
+    }
 
     ALWAYS_INLINE void sqrdmlahv(FPRegisterID vd, FPRegisterID vn, FPRegisterID vm, SIMDLane lane)
     {
@@ -2040,6 +2111,53 @@ public:
         insn(0b010'011110'0000'000'000001'00000'00000 | (immh << 19) | (immb << 16) | (vn << 5) | vd);
     }
 
+    ALWAYS_INLINE void ushr_vi(FPRegisterID vd, FPRegisterID vn, uint8_t shift, SIMDLane lane)
+    {
+        uint8_t maxShift = elementByteSize(lane) * 8;
+        ASSERT(shift <= maxShift && shift);
+        shift = maxShift - shift;
+        unsigned immh = elementByteSize(lane) | ((shift & 0b0111000) >> 3);
+        unsigned immb = shift & 0b0111;
+        ASSERT(immh);
+        ASSERT(!(immh & (~0b1111)));
+        insn(0b011'011110'0000'000'000001'00000'00000 | (immh << 19) | (immb << 16) | (vn << 5) | vd);
+    }
+
+    ALWAYS_INLINE void shl_vi(FPRegisterID vd, FPRegisterID vn, uint8_t shift, SIMDLane lane)
+    {
+        uint8_t maxShift = elementByteSize(lane) * 8;
+        ASSERT_UNUSED(maxShift, shift < maxShift);
+        unsigned immh = elementByteSize(lane) | ((shift & 0b0111000) >> 3);
+        unsigned immb = shift & 0b0111;
+        ASSERT(immh);
+        ASSERT(!(immh & (~0b1111)));
+        insn(0b010'011110'0000'000'010101'00000'00000 | (immh << 19) | (immb << 16) | (vn << 5) | vd);
+    }
+
+    template<SIMDLane narrowedLane>
+    ALWAYS_INLINE void shrn(FPRegisterID vd, FPRegisterID vn, uint8_t shift)
+    {
+        static_assert(narrowedLane == SIMDLane::i8x16 || narrowedLane == SIMDLane::i16x8 || narrowedLane == SIMDLane::i32x4, "SHRN destination lane must be i8x16, i16x8, or i32x4");
+
+        // Calculate source element size in bits (2x destination)
+        constexpr uint8_t destBitSize = narrowedLane == SIMDLane::i8x16 ? 8 : (narrowedLane == SIMDLane::i16x8 ? 16 : 32);
+        constexpr uint8_t srcBitSize = destBitSize * 2;
+
+        ASSERT(shift > 0 && shift <= srcBitSize);
+
+        // immh:immb = (source_element_bits) - shift
+        unsigned immhb = srcBitSize - shift;
+        unsigned immh = immhb >> 3;
+        unsigned immb = immhb & 0b111;
+
+        insn(0b000'011110'0000'000'100001'00000'00000 | (immh << 19) | (immb << 16) | (vn << 5) | vd);
+    }
+
+    ALWAYS_INLINE void cmtst(FPRegisterID vd, FPRegisterID vn, FPRegisterID vm, SIMDLane lane)
+    {
+        insn(0b01001110'00'1'00000'10001'1'00000'00000 | (sizeForIntegralSIMDOp(lane) << 22) | (vm << 16) | (vn << 5) | vd);
+    }
+
     ALWAYS_INLINE void sqadd(FPRegisterID vd, FPRegisterID vn, FPRegisterID vm, SIMDLane lane)
     {
         insn(0b01001110001000000000110000000000 | (sizeForIntegralSIMDOp(lane) << 22) | (vm << 16) | (vn << 5) | vd);
@@ -2103,6 +2221,18 @@ public:
     ALWAYS_INLINE void vectorUaddlp(FPRegisterID vd, FPRegisterID vn, SIMDLane lane)
     {
         insn(0b011'01110'00'10000'00'0'10'10'00000'00000 | (sizeForIntegralSIMDOp(lane) << 22) | (vn << 5) | vd);
+    }
+
+    ALWAYS_INLINE void xar(FPRegisterID vd, FPRegisterID vn, FPRegisterID vm, uint8_t imm6)
+    {
+        ASSERT(imm6 < 64);
+        insn(0b11001110100'00000'000000'00000'00000 | (static_cast<uint32_t>(vm) << 16) | (static_cast<uint32_t>(imm6) << 10) | (static_cast<uint32_t>(vn) << 5) | static_cast<uint32_t>(vd));
+    }
+
+    ALWAYS_INLINE void eor3(FPRegisterID vd, FPRegisterID vn, FPRegisterID vm, FPRegisterID va)
+    {
+        // Three-way exclusive OR. Requires SHA3 (FEAT_SHA3) extension.
+        insn(0b110011100'00'00000'0'00000'00000'00000 | (static_cast<uint32_t>(vm) << 16) | (static_cast<uint32_t>(va) << 10) | (static_cast<uint32_t>(vn) << 5) | static_cast<uint32_t>(vd));
     }
 
     ALWAYS_INLINE void tbl(FPRegisterID vd, FPRegisterID vn, FPRegisterID vm)
@@ -3843,21 +3973,41 @@ public:
     // and jump patching as they're modifying existing (linked) code,
     // so the address being provided is correct for relative address
     // computation.
+    template<RepatchingInfo repatch = jitMemcpyRepatchFlush>
     static void relinkJump(void* from, void* to)
     {
-        relinkJumpOrCall<BranchType_JMP>(reinterpret_cast<int*>(from), reinterpret_cast<const int*>(from), to);
-        cacheFlush(from, sizeof(int));
+        relinkJumpOrCall<BranchType_JMP, noFlush(repatch)>(reinterpret_cast<int*>(from), reinterpret_cast<const int*>(from), to);
+        if constexpr ((*repatch).contains(RepatchingFlag::Flush))
+            flushJump(from);
     }
-    
+
+    template<RepatchingInfo repatch = jitMemcpyRepatchFlush>
     static void relinkCall(void* from, void* to)
     {
-        relinkJumpOrCall<BranchType_CALL>(reinterpret_cast<int*>(from) - 1, reinterpret_cast<const int*>(from) - 1, to);
+        relinkJumpOrCall<BranchType_CALL, noFlush(repatch)>(reinterpret_cast<int*>(from) - 1, reinterpret_cast<const int*>(from) - 1, to);
+        if constexpr ((*repatch).contains(RepatchingFlag::Flush))
+            flushCall(from);
+    }
+
+    template<RepatchingInfo repatch = jitMemcpyRepatchFlush>
+    static void relinkTailCall(void* from, void* to)
+    {
+        relinkJump<repatch>(from, to);
+    }
+
+    static void flushJump(void* from)
+    {
+        cacheFlush(from, sizeof(int));
+    }
+
+    static void flushCall(void* from)
+    {
         cacheFlush(reinterpret_cast<int*>(from) - 1, sizeof(int));
     }
 
-    static void relinkTailCall(void* from, void* to)
+    static void flushTailCall(void* from)
     {
-        relinkJump(from, to);
+        flushJump(from);
     }
 
 #if ENABLE(JUMP_ISLANDS)
@@ -3911,6 +4061,8 @@ public:
             linuxPageFlush(current, current + page);
 
         linuxPageFlush(current, end);
+#elif OS(WINDOWS)
+        FlushInstructionCache(GetCurrentProcess(), code, size);
 #else
 #error "The cacheFlush support is missing on this platform."
 #endif
@@ -4204,7 +4356,7 @@ protected:
         }
     }
 
-    template<BranchType type>
+    template<BranchType type, RepatchingInfo repatch = jitMemcpyRepatch>
     static void relinkJumpOrCall(int* from, const int* fromInstruction, void* to)
     {
         static_assert(type == BranchType_JMP || type == BranchType_CALL);
@@ -4221,7 +4373,7 @@ protected:
                 if (imm19 == 8)
                     condition = invert(condition);
 
-                linkConditionalBranch<IndirectBranch>(condition, from - 1, fromInstruction - 1, to);
+                linkConditionalBranch<IndirectBranch, repatch>(condition, from - 1, fromInstruction - 1, to);
                 return;
             }
 
@@ -4234,7 +4386,7 @@ protected:
                 if (imm19 == 8)
                     op = !op;
 
-                linkCompareAndBranch<IndirectBranch>(op ? ConditionNE : ConditionEQ, opSize == Datasize_64, rt, from - 1, fromInstruction - 1, to);
+                linkCompareAndBranch<IndirectBranch, repatch>(op ? ConditionNE : ConditionEQ, opSize == Datasize_64, rt, from - 1, fromInstruction - 1, to);
                 return;
             }
 
@@ -4246,12 +4398,12 @@ protected:
                 if (imm14 == 8)
                     op = !op;
 
-                linkTestAndBranch<IndirectBranch>(op ? ConditionNE : ConditionEQ, bitNumber, rt, from - 1, fromInstruction - 1, to);
+                linkTestAndBranch<IndirectBranch, repatch>(op ? ConditionNE : ConditionEQ, bitNumber, rt, from - 1, fromInstruction - 1, to);
                 return;
             }
         }
 
-        linkJumpOrCall<type>(from, fromInstruction, to);
+        linkJumpOrCall<type, repatch>(from, fromInstruction, to);
     }
 
     static int* addressOf(void* code, AssemblerLabel label)

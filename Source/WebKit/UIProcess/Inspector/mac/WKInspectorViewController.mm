@@ -34,6 +34,7 @@
 #import "WKInspectorResourceURLSchemeHandler.h"
 #import "WKInspectorWKWebView.h"
 #import "WKOpenPanelParameters.h"
+#import "WKPreferencesInternal.h"
 #import "WKProcessPoolInternal.h"
 #import "WKWebViewInternal.h"
 #import "WKWebsiteDataStoreInternal.h"
@@ -87,6 +88,7 @@ static void* const safeAreaInsetsKVOContext = (void*)&safeAreaInsetsKVOContext;
 - (void)dealloc
 {
     if (_webView) {
+        [_webView removeObserver:self forKeyPath:safeAreaInsetsKVOKey context:safeAreaInsetsKVOContext];
         [_webView setUIDelegate:nil];
         [_webView setNavigationDelegate:nil];
         [_webView setInspectorWKWebViewDelegate:nil];
@@ -150,7 +152,7 @@ static void* const safeAreaInsetsKVOContext = (void*)&safeAreaInsetsKVOContext;
 #if ENABLE(WK_WEB_EXTENSIONS) && ENABLE(INSPECTOR_EXTENSIONS)
     if (inspectedPage) {
         if (RefPtr webExtensionController = inspectedPage->webExtensionController())
-            configuration.get().webExtensionController = webExtensionController->protectedWrapper().get();
+            configuration.get().webExtensionController = protect(webExtensionController->wrapper()).get();
     }
 #endif
 
@@ -172,12 +174,16 @@ static void* const safeAreaInsetsKVOContext = (void*)&safeAreaInsetsKVOContext;
     // Disable Site Isolation for Web Inspector View.
     preferences.get()._siteIsolationEnabled = NO;
 
+    // The Find banner and Search sidebar use the legacy results=N attribute for recent searches.
+    protect(*preferences.get()->_preferences)->setSearchInputResultsAttributeEnabled(true);
+
+    preferences.get()._hiddenPageDOMTimerThrottlingEnabled = NO;
+
     [_configuration applyToWebViewConfiguration:configuration.get()];
 
     RetainPtr delegate = _delegate.get();
     if (!!delegate && [delegate respondsToSelector:@selector(inspectorViewControllerInspectorIsUnderTest:)]) {
         if ([delegate inspectorViewControllerInspectorIsUnderTest:self]) {
-            preferences.get()._hiddenPageDOMTimerThrottlingEnabled = NO;
             preferences.get()._pageVisibilityBasedProcessSuppressionEnabled = NO;
             preferences.get().inactiveSchedulingPolicy = WKInactiveSchedulingPolicyNone;
         }
@@ -196,7 +202,7 @@ static void* const safeAreaInsetsKVOContext = (void*)&safeAreaInsetsKVOContext;
 
     ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     if (useDefaultProcessPool)
-        [configuration setProcessPool:protectedWrapper(Ref { WebKit::defaultInspectorProcessPool(inspectorLevel) }.get()).get()];
+        [configuration setProcessPool:wrapper(protect(WebKit::defaultInspectorProcessPool(inspectorLevel))).get()];
     ALLOW_DEPRECATED_DECLARATIONS_END
 
     // Ensure that a page group identifier is set. This is for computing inspection levels.
@@ -321,8 +327,6 @@ static void* const safeAreaInsetsKVOContext = (void*)&safeAreaInsetsKVOContext;
 
 - (void)webViewWebContentProcessDidTerminate:(WKWebView *)webView
 {
-    [_webView removeObserver:self forKeyPath:safeAreaInsetsKVOKey];
-
     RetainPtr delegate = _delegate.get();
     if (!!delegate && [delegate respondsToSelector:@selector(inspectorViewControllerInspectorDidCrash:)])
         [delegate inspectorViewControllerInspectorDidCrash:self];

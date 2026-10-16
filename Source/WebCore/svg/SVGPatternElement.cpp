@@ -27,7 +27,6 @@
 #include "AffineTransform.h"
 #include "ContainerNodeInlines.h"
 #include "Document.h"
-#include "FloatConversion.h"
 #include "GraphicsContext.h"
 #include "ImageBuffer.h"
 #include "LegacyRenderSVGResourcePattern.h"
@@ -35,14 +34,15 @@
 #include "PatternAttributes.h"
 #include "RenderSVGResourcePattern.h"
 #include "SVGElementInlines.h"
+#include "SVGElementTypeHelpers.h"
 #include "SVGFitToViewBox.h"
 #include "SVGGraphicsElement.h"
 #include "SVGNames.h"
 #include "SVGParsingError.h"
 #include "SVGRenderSupport.h"
 #include "SVGStringList.h"
-#include "SVGTransformable.h"
 #include "Settings.h"
+#include <wtf/HashSet.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -51,7 +51,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGPatternElement);
 
 inline SVGPatternElement::SVGPatternElement(const QualifiedName& tagName, Document& document)
-    : SVGElement(tagName, document, makeUniqueRef<PropertyRegistry>(*this))
+    : SVGElement(tagName, document, PropertyRegistry::singleton())
     , SVGFitToViewBox(this)
     , SVGTests(this)
     , SVGURIReference(this)
@@ -80,20 +80,14 @@ void SVGPatternElement::attributeChanged(const QualifiedName& name, const AtomSt
 {
     auto parseError = SVGParsingError::None;
     switch (name.nodeName()) {
-    case AttributeNames::patternUnitsAttr: {
-        auto propertyValue = SVGPropertyTraits<SVGUnitTypes::SVGUnitType>::fromString(*this, newValue);
-        if (propertyValue > 0)
-            Ref { m_patternUnits }->setBaseValInternal<SVGUnitTypes::SVGUnitType>(propertyValue);
+    case AttributeNames::patternUnitsAttr:
+        protect(m_patternUnits)->parseBaseVal<SVGUnitTypes::SVGUnitType>(*this, newValue);
         break;
-    }
-    case AttributeNames::patternContentUnitsAttr: {
-        auto propertyValue = SVGPropertyTraits<SVGUnitTypes::SVGUnitType>::fromString(*this, newValue);
-        if (propertyValue > 0)
-            Ref { m_patternContentUnits }->setBaseValInternal<SVGUnitTypes::SVGUnitType>(propertyValue);
+    case AttributeNames::patternContentUnitsAttr:
+        protect(m_patternContentUnits)->parseBaseVal<SVGUnitTypes::SVGUnitType>(*this, newValue);
         break;
-    }
     case AttributeNames::patternTransformAttr: {
-        Ref { m_patternTransform }->baseVal()->parse(newValue);
+        protect(protect(m_patternTransform)->baseVal())->parse(newValue);
         break;
     }
     case AttributeNames::xAttr:
@@ -123,8 +117,6 @@ void SVGPatternElement::svgAttributeChanged(const QualifiedName& attrName)
 {
     if (PropertyRegistry::isKnownAttribute(attrName) || SVGFitToViewBox::isKnownAttribute(attrName) || SVGURIReference::isKnownAttribute(attrName)) {
         InstanceInvalidationGuard guard(*this);
-        if (PropertyRegistry::isAnimatedLengthAttribute(attrName))
-            setPresentationalHintStyleIsDirty();
         if (document().settings().layerBasedSVGEngineEnabled()) {
             if (CheckedPtr patternRenderer = dynamicDowncast<RenderSVGResourcePattern>(renderer()))
                 patternRenderer->invalidatePattern();
@@ -153,14 +145,51 @@ void SVGPatternElement::childrenChanged(const ChildChange& change)
     updateSVGRendererForElementChange();
 }
 
-RenderPtr<RenderElement> SVGPatternElement::createElementRenderer(RenderStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> SVGPatternElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
 {
     if (document().settings().layerBasedSVGEngineEnabled())
         return createRenderer<RenderSVGResourcePattern>(*this, WTF::move(style));
     return createRenderer<LegacyRenderSVGResourcePattern>(*this, WTF::move(style));
 }
 
-void SVGPatternElement::collectPatternAttributes(PatternAttributes& attributes) const
+bool SVGPatternElement::collectPatternAttributes(PatternAttributes& attributes)
+{
+    if (!renderer())
+        return false;
+
+    HashSet<Ref<SVGPatternElement>> processedPatterns;
+    RefPtr current { this };
+
+    while (current) {
+        current->collectOwnPatternAttributes(attributes);
+
+        auto target = SVGURIReference::targetElementFromIRIString(current->href(), protect(treeScopeForSVGReferences()));
+        RefPtr next = dynamicDowncast<SVGPatternElement>(target.element.get());
+        if (!next)
+            break;
+
+        processedPatterns.add(current.releaseNonNull());
+        if (processedPatterns.contains(*next))
+            break;
+
+        if (!next->renderer())
+            return false;
+
+        current = WTF::move(next);
+    }
+
+    // If we couldn't determine the pattern content element root, stop here.
+    if (!attributes.patternContentElement())
+        return false;
+
+    // An empty viewBox disables rendering.
+    if (attributes.hasViewBox() && attributes.viewBox().isEmpty())
+        return false;
+
+    return true;
+}
+
+void SVGPatternElement::collectOwnPatternAttributes(PatternAttributes& attributes) const
 {
     if (!attributes.hasX() && hasAttribute(SVGNames::xAttr))
         attributes.setX(x());
@@ -186,21 +215,18 @@ void SVGPatternElement::collectPatternAttributes(PatternAttributes& attributes) 
     if (!attributes.hasPatternContentUnits() && hasAttribute(SVGNames::patternContentUnitsAttr))
         attributes.setPatternContentUnits(patternContentUnits());
 
-    if (!attributes.hasPatternTransform() && hasAttribute(SVGNames::patternTransformAttr))
-        attributes.setPatternTransform(patternTransform().concatenate());
+    if (!attributes.hasPatternTransform()) {
+        if (auto transform = patternTransform().concatenate())
+            attributes.setPatternTransform(*transform);
+    }
 
     if (!attributes.hasPatternContentElement() && childElementCount())
         attributes.setPatternContentElement(this);
 }
 
-Ref<const SVGTransformList> SVGPatternElement::protectedPatternTransform() const
-{
-    return m_patternTransform->currentValue();
-}
-
 AffineTransform SVGPatternElement::localCoordinateSpaceTransform(CTMScope) const
 {
-    return protectedPatternTransform()->concatenate();
+    return protect(patternTransform())->concatenate().value_or(identity);
 }
 
 }

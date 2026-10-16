@@ -57,6 +57,12 @@ WK_SWIFT_UI_ACTOR
  */
 - (void)getAllCookies:(WK_SWIFT_UI_ACTOR void (^)(NSArray<NSHTTPCookie *> *))completionHandler;
 
+/*! @abstract Fetches stored cookies that match the passed in URL.
+ @param url The URL to fetch the matching cookies for.
+ @param completionHandler A block to invoke with the fetched cookies.
+ */
+- (void)getCookiesForURL:(NSURL *)url completionHandler:(NS_SWIFT_UI_ACTOR void (^)(NSArray<NSHTTPCookie *> *))completionHandler NS_SWIFT_NAME(getCookies(for:completionHandler:)) WK_SWIFT_ASYNC_NAME(cookies(for:)) WK_API_AVAILABLE(macos(27.0), ios(27.0), visionos(27.0));
+
 /*! @abstract Set a cookie.
  @param cookie The cookie to set.
  @param completionHandler A block to invoke once the cookie has been stored.

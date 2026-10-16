@@ -21,18 +21,18 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
 // THE POSSIBILITY OF SUCH DAMAGE.
 
-#if ENABLE_SWIFTUI && compiler(>=6.0)
+#if ENABLE_SWIFTUI
 
-import Foundation
-internal import WebKit_Internal
+public import Foundation
+import WebKit_Internal
 
 /// A type representing a valid URL scheme.
 ///
 /// Scheme names are case sensitive, must start with an ASCII letter, and may contain only ASCII letters,
 /// numbers, the “+” character, the “-” character, and the “.” character.
-@available(iOS 26.0, macOS 26.0, visionOS 26.0, *)
-@available(watchOS, unavailable)
-@available(tvOS, unavailable)
+@available(anyAppleOSAndDownlevels 26.0, *)
+@_spi_available(watchOSAndOpenSourceTBA, *)
+@_spi_available(tvOSAndOpenSourceTBA, *)
 public struct URLScheme: Hashable, Sendable {
     /// Creates a new `URLScheme` value from a valid scheme, which WebKit does not already handle.
     ///
@@ -54,9 +54,9 @@ public struct URLScheme: Hashable, Sendable {
 }
 
 /// A value used as part of a sequence of results from a ``URLSchemeHandler``, which can either be a `Data` or a `URLResponse`.
-@available(iOS 26.0, macOS 26.0, visionOS 26.0, *)
-@available(watchOS, unavailable)
-@available(tvOS, unavailable)
+@available(anyAppleOSAndDownlevels 26.0, *)
+@_spi_available(watchOSAndOpenSourceTBA, *)
+@_spi_available(tvOSAndOpenSourceTBA, *)
 public enum URLSchemeTaskResult: Sendable {
     /// The response to return to WebKit. The response value must include the MIME type of the request resource.
     ///
@@ -90,9 +90,9 @@ public enum URLSchemeTaskResult: Sendable {
 /// If WebKit determines that it no longer needs a resource that your handler is loading, it will cancel
 /// the Task responsible for the async sequence. Typically, this may happen when the user navigates to another
 /// page, but may happen for other reasons.
-@available(iOS 26.0, macOS 26.0, visionOS 26.0, *)
-@available(watchOS, unavailable)
-@available(tvOS, unavailable)
+@available(anyAppleOSAndDownlevels 26.0, *)
+@_spi_available(watchOSAndOpenSourceTBA, *)
+@_spi_available(tvOSAndOpenSourceTBA, *)
 public protocol URLSchemeHandler {
     /// The type of sequence produced by the handler.
     associatedtype TaskSequence: AsyncSequence<URLSchemeTaskResult, any Error>

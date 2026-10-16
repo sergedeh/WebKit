@@ -46,6 +46,7 @@
 #include "pc/session_description.h"
 #include "pc/transport_stats.h"
 #include "pc/usage_pattern.h"
+#include "rtc_base/containers/flat_map.h"
 #include "rtc_base/rtc_certificate.h"
 #include "rtc_base/ssl_certificate.h"
 #include "rtc_base/ssl_stream_adapter.h"
@@ -55,6 +56,7 @@ namespace webrtc {
 
 class DataChannelController;
 class LegacyStatsCollector;
+class PeerConnectionTracerInterface;
 
 // This interface defines the functions that are needed for
 // SdpOfferAnswerHandler to access PeerConnection internal state.
@@ -96,11 +98,12 @@ class PeerConnectionSdpMethods {
   virtual DataChannelController* data_channel_controller() = 0;
   virtual PortAllocator* port_allocator() = 0;
   virtual LegacyStatsCollector* legacy_stats() = 0;
+  virtual PeerConnectionTracerInterface* tracer() = 0;
+  virtual const PeerConnectionTracerInterface* tracer() const = 0;
   // Run lambda on the PeerConnectionObserver. Will crash on CHECK if the
   // observer is removed.
   virtual void RunWithObserver(
       absl::AnyInvocable<void(webrtc::PeerConnectionObserver*) &&>) = 0;
-  virtual std::optional<SSLRole> GetSctpSslRole_n() = 0;
   virtual PeerConnectionInterface::IceConnectionState
   ice_connection_state_internal() = 0;
   virtual void SetIceConnectionState(
@@ -116,7 +119,7 @@ class PeerConnectionSdpMethods {
   virtual bool IsUnifiedPlan() const = 0;
   virtual bool ValidateBundleSettings(
       const SessionDescription* desc,
-      const std::map<std::string, const ContentGroup*>&
+      const flat_map<std::string, const ContentGroup*>&
           bundle_groups_by_mid) = 0;
 
   // Internal implementation for AddTransceiver family of methods. If
@@ -126,20 +129,10 @@ class PeerConnectionSdpMethods {
       scoped_refptr<MediaStreamTrackInterface> track,
       const RtpTransceiverInit& init,
       bool fire_callback = true) = 0;
-  // Asynchronously calls SctpTransport::Start() on the network thread for
-  // `sctp_mid()` if set. Called as part of setting the local description.
+  // Synchronously calls SctpTransport::Start() on the network thread for
+  // `sctp_mid()` if set. Called as part of pushing down the media descriptions
+  // after a complete offer/answer.
   virtual RTCError StartSctpTransport(const SctpOptions& options) = 0;
-  [[deprecated("Call with SctpOptions")]]
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wmissing-designated-field-initializers"
-  virtual void StartSctpTransport(int local_port,
-                                  int remote_port,
-                                  int max_message_size) {
-    StartSctpTransport({.local_port = local_port,
-                        .remote_port = remote_port,
-                        .max_message_size = max_message_size});
-  }
-#pragma clang diagnostic pop
 
   // Asynchronously adds a remote candidate on the network thread.
   virtual void AddRemoteCandidate(absl::string_view mid,
@@ -164,6 +157,9 @@ class PeerConnectionSdpMethods {
   // Keeps track of assigned payload types and comes up with reasonable
   // suggestions when new PTs need to be assigned.
   virtual PayloadTypePicker& payload_type_picker() = 0;
+
+  // Determine whether DTLS-in-STUN is configured.
+  virtual bool CanAttemptDtlsStunPiggybacking() const = 0;
 };
 
 // Functions defined in this class are called by other objects,

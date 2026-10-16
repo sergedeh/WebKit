@@ -27,7 +27,7 @@
 
 #include "compiler/translator/Compiler.h"
 
-#if ANGLE_SH_VERSION != 383
+#if ANGLE_SH_VERSION != 424
 #    error Check if there are added options and update this check.
 #endif
 
@@ -41,11 +41,11 @@
     MACRO(sourcePath, 2, any, none)                                           \
     MACRO(intermediateTree, 3, any, none)                                     \
     MACRO(validateAST, 4, none, any)                                          \
-    MACRO(validateLoopIndexing, 5, any, none)                                 \
+    MACRO(limitOutputVaryingsTo256, 5, glsl, none)                            \
     MACRO(lineDirectives, 6, any, none)                                       \
     MACRO(removeInvariantAndCentroidForESSL3, 7, glsl, none)                  \
     MACRO(emulateAbsIntFunction, 8, glsl, none)                               \
-    MACRO(enforcePackingRestrictions, 9, any, none)                           \
+    MACRO(useDemoteToHelperInvocation, 9, spirvVk, none)                      \
     MACRO(clampIndirectArrayBounds, 10, glsl, none)                           \
     MACRO(limitExpressionComplexity, 11, none, any)                           \
     MACRO(limitCallStackDepth, 12, none, any)                                 \
@@ -74,10 +74,10 @@
     MACRO(rewriteRepeatedAssignToSwizzled, 37, glsl, none)                    \
     MACRO(emulateGLDrawID, 38, any, none)                                     \
     MACRO(initSharedVariables, 39, any, none)                                 \
-    MACRO(forceAtomicValueResolution, 40, hlsl, none)                         \
+    MACRO(forceDeferNonConstGlobalInitializers, 40, msl, none)                \
     MACRO(emulateGLBaseVertexBaseInstance, 41, any, none)                     \
     MACRO(wrapSwitchInIfTrue, 42, spirvVk, none)                              \
-    MACRO(takeVideoTextureAsExternalOES, 43, glsl, none)                      \
+    MACRO(unused4, 43, any, none)                                             \
     MACRO(addBaseVertexToVertexID, 44, any, none)                             \
     MACRO(removeDynamicIndexingOfSwizzledVector, 45, glsl, none)              \
     MACRO(allowTranslateUniformBlockToStructuredBuffer, 46, hlsl, none)       \
@@ -86,30 +86,35 @@
     MACRO(rewriteRowMajorMatrices, 49, appleGLSL, none)                       \
     MACRO(ignorePrecisionQualifiers, 50, spirvVk, none)                       \
     MACRO(addVulkanDepthCorrection, 51, spirvVk, none)                        \
-    MACRO(forceShaderPrecisionHighpToMediump, 52, spirvVk, none)              \
+    MACRO(validatePerStageMaxUniformBlocks, 52, glsl, none)                   \
     MACRO(addVulkanXfbEmulationSupportCode, 54, spirvVk, none)                \
     MACRO(addVulkanXfbExtensionSupportCode, 55, spirvVk, none)                \
-    MACRO(initFragmentOutputVariables, 56, glsl, none)                        \
-    MACRO(roundOutputAfterDithering, 58, spirvVk, none)                       \
-    MACRO(castMediumpFloatTo16Bit, 59, spirvVk, none)                         \
-    MACRO(passHighpToPackUnormSnormBuiltins, 60, glsl, none)                  \
-    MACRO(emulateClipDistanceState, 61, glsl, none)                           \
-    MACRO(emulateClipOrigin, 62, glsl, none)                                  \
-    MACRO(aliasedUnlessRestrict, 63, spirvVk, none)                           \
-    MACRO(emulateAlphaToCoverage, 64, msl, none)                              \
-    MACRO(rescopeGlobalVariables, 65, msl, none)                              \
-    MACRO(preTransformTextureCubeGradDerivatives, 66, appleGLSL || msl, none) \
-    MACRO(avoidOpSelectWithMismatchingRelaxedPrecision, 67, spirvVk, none)    \
-    MACRO(emitSPIRV14, 68, spirvVk, none)                                     \
-    MACRO(rejectWebglShadersWithUndefinedBehavior, 69, any, none)             \
-    MACRO(emulateR32fImageAtomicExchange, 70, spirvVk, none)                  \
-    MACRO(simplifyLoopConditions, 71, none, msl)                              \
-    MACRO(separateCompoundStructDeclarations, 72, none, msl || wgsl)          \
-    MACRO(preserveDenorms, 73, none, spirvVk)                                 \
-    MACRO(removeInactiveVariables, 74, any, spirvVk || msl)                   \
-    MACRO(ensureLoopForwardProgress, 75, none, msl)                           \
-    MACRO(skipAllValidationAndTransforms, 76, none, none)                     \
-    MACRO(transformFloatUniformTo16Bits, 77, none, spirvVk)
+    MACRO(rejectWebglShadersWithLargeVariables, 56, any, none)                \
+    MACRO(explicitFragmentLocations, 57, glsl, none)                          \
+    MACRO(preferPrecomputedVertexTransform, 58, spirvVk, none)                \
+    MACRO(avoidComplexExpressionsInStructConstructor, 59, glsl, none)         \
+    MACRO(allowExtensionDisableAfterNonPPTokensInWebGL, 60, any, none)        \
+    MACRO(passHighpToPackUnormSnormBuiltins, 61, glsl, none)                  \
+    MACRO(emulateClipDistanceState, 62, glsl, none)                           \
+    MACRO(emulateClipOrigin, 63, glsl, none)                                  \
+    MACRO(aliasedUnlessRestrict, 64, spirvVk, none)                           \
+    MACRO(emulateAlphaToCoverage, 65, msl, none)                              \
+    MACRO(rescopeGlobalVariables, 66, msl, none)                              \
+    MACRO(preTransformTextureCubeGradDerivatives, 67, appleGLSL || msl, none) \
+    MACRO(avoidOpSelectWithMismatchingRelaxedPrecision, 68, spirvVk, none)    \
+    MACRO(emitSPIRV14, 69, spirvVk, none)                                     \
+    MACRO(rejectWebglShadersWithUndefinedBehavior, 70, any, none)             \
+    MACRO(emulateR32fImageAtomicExchange, 71, spirvVk, none)                  \
+    MACRO(simplifyLoopConditions, 72, none, msl)                              \
+    MACRO(separateCompoundStructDeclarations, 73, none, msl || wgsl)          \
+    MACRO(preserveDenorms, 74, none, spirvVk)                                 \
+    MACRO(removeInactiveVariables, 75, any, spirvVk || msl)                   \
+    MACRO(retainInactiveFragmentOutputs, 76, any, msl)                        \
+    MACRO(ensureLoopForwardProgress, 77, none, msl)                           \
+    MACRO(unused2, 78, none, none)                                            \
+    MACRO(transformFloatUniformTo16Bits, 79, none, spirvVk)                   \
+    MACRO(useIR, 80, none, none)                                              \
+    MACRO(expandFragmentOutputsToVec4, 81, any, glsl)
 
 void filterOptions(ShShaderOutput output, ShCompileOptions &options);
 ShShaderOutput resolveShaderOutput(ShShaderOutput output);
@@ -148,7 +153,6 @@ ShShaderOutput resolveShaderOutput(ShShaderOutput output);
     MACRO(ANGLE_texture_multisample, !msl)                     \
     MACRO(ANGLE_multi_draw, !msl)                              \
     MACRO(ANGLE_base_vertex_base_instance, any)                \
-    MACRO(WEBGL_video_texture, !msl)                           \
     MACRO(APPLE_clip_distance, any)                            \
     MACRO(OES_texture_cube_map_array, !msl)                    \
     MACRO(EXT_texture_cube_map_array, !msl)                    \

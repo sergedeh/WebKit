@@ -61,9 +61,11 @@ public:
     bool shouldSetScrollViewDecelerationRateFast() const;
     void setRootNodeIsInUserScroll(bool) override;
 
-    void adjustTargetContentOffsetForSnapping(CGSize maxScrollDimensions, CGPoint velocity, CGFloat topInset, CGPoint currentContentOffset, CGPoint* targetContentOffset);
+    CGPoint adjustTargetScrollOffsetForSnapping(CGSize maxScrollOffset, CGFloat zoomScale, CGPoint velocity, CGPoint currentScrollOffset, CGPoint targetScrollOffset);
     bool hasActiveSnapPoint() const;
-    CGPoint nearestActiveContentInsetAdjustedSnapOffset(CGFloat topInset, const CGPoint&) const;
+    CGPoint scrollOffsetSnappedToNearestSnapPoint(CGPoint scrollOffset, CGFloat zoomScale) const;
+
+    void updateSnapIndicesForMainFrameOffset(CGPoint scrollOffset, CGFloat zoomScale);
 
 #if ENABLE(OVERLAY_REGIONS_IN_EVENT_REGION)
     void updateOverlayRegions(const Vector<WebCore::PlatformLayerIdentifier>& destroyedLayers = { }) override;
@@ -74,9 +76,12 @@ public:
     void animationsWereAddedToNode(RemoteLayerTreeNode&) override WTF_IGNORES_THREAD_SAFETY_ANALYSIS;
     void animationsWereRemovedFromNode(RemoteLayerTreeNode&) override;
     void updateTimelinesRegistration(WebCore::ProcessIdentifier, const WebCore::AcceleratedTimelinesUpdate&, MonotonicTime) override;
+    void removeTimelines(WebCore::ProcessIdentifier) override;
     RefPtr<const RemoteAnimationTimeline> timeline(const TimelineID&) const override;
     HashSet<Ref<RemoteProgressBasedTimeline>> timelinesForScrollingNodeIDForTesting(WebCore::ScrollingNodeID) const override;
+    HashSet<Ref<RemoteMonotonicTimeline>> monotonicTimelinesForProcessForTesting(WebCore::ProcessIdentifier) const override;
     void progressBasedTimelinesWereUpdatedForNode(const WebCore::ScrollingTreeScrollingNode&) override;
+    bool hasHighImpactMonotonicAnimations() const override;
 #endif
 
     void displayDidRefresh(WebCore::PlatformDisplayID) override;
@@ -89,17 +94,25 @@ private:
     void scrollingTreeNodeDidEndScroll(WebCore::ScrollingNodeID) override;
 
     void connectStateNodeLayers(WebCore::ScrollingStateTree&, const RemoteLayerTreeHost&) override;
-    void establishLayerTreeScrollingRelations(const RemoteLayerTreeHost&) override;
 
 #if ENABLE(OVERLAY_REGIONS_IN_EVENT_REGION)
     void selectOverlayRegionScrollViewIfNeeded();
+#if ENABLE(OVERLAY_REGIONS_REMOTE_EFFECT)
+    void updateAllFixedAndStickyOverlayRegions();
+    void updateOverlayRegionForNode(WebCore::ScrollingNodeID);
+    bool nodeQualifiesForOverlayRegionExclusions(const RemoteLayerTreeNode&, bool) const;
+
+    void stickyScrollingTreeNodeBeganSticking(WebCore::ScrollingNodeID) override;
+    void stickyScrollingTreeNodeEndedSticking(WebCore::ScrollingNodeID) override;
+    void scrollingTreeNodeWillBeRemoved(WebCore::ScrollingNodeID) override;
+#else
     void updateOverlayRegionLayers();
+#endif
 #endif
 
     WebCore::FloatRect currentLayoutViewport() const;
 
-    bool shouldSnapForMainFrameScrolling(WebCore::ScrollEventAxis) const;
-    std::pair<float, std::optional<unsigned>> closestSnapOffsetForMainFrameScrolling(WebCore::ScrollEventAxis, float currentScrollOffset, WebCore::FloatPoint scrollDestination, float velocity) const;
+    std::pair<float, std::optional<unsigned>> closestSnapOffsetForMainFrameScrolling(WebCore::ScrollEventAxis, CGFloat zoomScale, CGFloat currentScrollOffset, WebCore::FloatPoint scrollDestination, float velocity) const;
 
 #if ENABLE(THREADED_ANIMATIONS)
     void updateTimeDependentAnimationStacks();
@@ -110,11 +123,16 @@ private:
     HashMap<unsigned, OptionSet<WebCore::TouchAction>> m_touchActionsByTouchIdentifier;
 
 #if ENABLE(OVERLAY_REGIONS_IN_EVENT_REGION)
-    HashMap<WebCore::PlatformLayerIdentifier, WebCore::ScrollingNodeID> m_fixedScrollingNodesByLayerID;
     HashMap<WebCore::PlatformLayerIdentifier, WebCore::ScrollingNodeID> m_scrollingNodesByLayerID;
+    HashMap<WebCore::PlatformLayerIdentifier, WebCore::ScrollingNodeID> m_fixedAndStickyScrollingNodesByLayerID;
+#if ENABLE(OVERLAY_REGIONS_REMOTE_EFFECT)
+    HashMap<WebCore::ScrollingNodeID, WebCore::PlatformLayerIdentifier> m_layerIDsByFixedAndStickyScrollingNodeID;
+#else
+    HashSet<WebCore::IntRect> m_lastOverlayRegionRects;
+#endif
 
     bool m_needsOverlayRegionScrollViewSelection { false };
-    HashSet<WebCore::IntRect> m_lastOverlayRegionRects;
+    bool m_needsOverlayRegionBehaviorUpdate { false };
     RetainPtr<WKBaseScrollView> m_selectedOverlayRegionScrollView;
 #endif
 

@@ -38,6 +38,8 @@ class WorkerDebuggerAgent final : public WebDebuggerAgent, public WTF::CanMakeTh
     WTF_MAKE_TZONE_ALLOCATED(WorkerDebuggerAgent);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(WorkerDebuggerAgent);
 public:
+    OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeThreadSafeCheckedPtr);
+
     WorkerDebuggerAgent(WorkerAgentContext&);
     ~WorkerDebuggerAgent();
 
@@ -49,7 +51,7 @@ private:
     void muteConsole() { }
     void unmuteConsole() { }
 
-    Ref<WorkerOrWorkletGlobalScope> protectedGlobalScope() const;
+    WorkerOrWorkletGlobalScope& globalScope() const { return m_globalScope.get(); }
 
     Inspector::InjectedScript injectedScriptForEval(Inspector::Protocol::ErrorString&, std::optional<Inspector::Protocol::Runtime::ExecutionContextId>&&);
 

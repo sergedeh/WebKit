@@ -43,11 +43,11 @@ namespace {
 
 class Validate {
 public:
-    Validate(Graph& graph, GraphDumpMode graphDumpMode, CString graphDumpBeforePhase)
+    Validate(Graph& graph, GraphDumpMode graphDumpMode, UTF8CString graphDumpBeforePhase)
         : m_graph(graph)
         , m_graphDumpMode(graphDumpMode)
         , m_graphDumpBeforePhase(graphDumpBeforePhase)
-        , m_myTupleRefCounts(m_graph.m_tupleData.size(), 0)
+        , m_myTupleRefCounts(FillWith { }, m_graph.m_tupleData.size(), 0)
     {
     }
     
@@ -322,34 +322,33 @@ public:
                     VALIDATE((node), !!node->cellOperand()->value() && node->cellOperand()->value().isCell());
                     break;
                 case CheckArrayOrEmpty:
-                    VALIDATE((node), is64Bit());
                     VALIDATE((node), !!node->child1());
                     VALIDATE((node), node->child1().useKind() == CellUse);
                     break;
                 case CheckStructureOrEmpty:
-                    VALIDATE((node), is64Bit());
                     VALIDATE((node), !!node->child1());
                     VALIDATE((node), node->child1().useKind() == CellUse);
                     break;
                 case CheckStructure:
                 case StringFromCharCode:
+                case StringFromCodePoint:
                     VALIDATE((node), !!node->child1());
                     break;
                 case PutStructure:
-                    VALIDATE((node), !node->transition()->previous->dfgShouldWatch());
+                    VALIDATE((node), !node->transition()->previous->dfgMayWatch());
                     break;
                 case MultiPutByOffset:
                     for (unsigned i = node->multiPutByOffsetData().variants.size(); i--;) {
                         const PutByVariant& variant = node->multiPutByOffsetData().variants[i];
                         if (variant.kind() != PutByVariant::Transition)
                             continue;
-                        VALIDATE((node), !variant.oldStructureForTransition()->dfgShouldWatch());
+                        VALIDATE((node), !variant.oldStructureForTransition()->dfgMayWatch());
                     }
                     break;
                 case MultiDeleteByOffset:
                     for (unsigned i = node->multiDeleteByOffsetData().variants.size(); i--;) {
                         const DeleteByVariant& variant = node->multiDeleteByOffsetData().variants[i];
-                        VALIDATE((node), !variant.newStructure() || !variant.oldStructure()->dfgShouldWatch());
+                        VALIDATE((node), !variant.newStructure() || !variant.oldStructure()->dfgMayWatch());
                     }
                     break;
                 case MaterializeNewObject:
@@ -694,6 +693,7 @@ private:
                 case PhantomNewAsyncGeneratorFunction:
                 case PhantomCreateActivation:
                 case PhantomNewRegExp:
+                case PhantomNewPromise:
                 case GetMyArgumentByVal:
                 case GetMyArgumentByValOutOfBounds:
                 case PutHint:
@@ -918,6 +918,7 @@ private:
                 case PhantomCreateRest:
                 case PhantomClonedArguments:
                 case PhantomNewRegExp:
+                case PhantomNewPromise:
                 case MovHint:
                 case Upsilon:
                 case ForwardVarargs:
@@ -1018,10 +1019,6 @@ private:
                     VALIDATE((node), node->entrypointIndex() < m_graph.m_numberOfEntrypoints);
                     break;
 
-                case GetButterfly:
-                    VALIDATE((node), !node->child1()->isPhantomAllocation());
-                    break;
-
                 default:
                     m_graph.doToChildren(
                         node,
@@ -1076,7 +1073,7 @@ private:
             getLocalPositions.operand(operand) < setLocalPositions.operand(operand));
     }
     
-    void reportValidationContext() { }
+    void LEGACY_NODELETE reportValidationContext() { }
 
     void reportValidationContext(Node* node)
     {
@@ -1148,7 +1145,7 @@ private:
 
     Graph& m_graph;
     GraphDumpMode m_graphDumpMode;
-    CString m_graphDumpBeforePhase;
+    UTF8CString m_graphDumpBeforePhase;
 
     UncheckedKeyHashMap<Node*, unsigned> m_myRefCounts;
     Vector<uint32_t> m_myTupleRefCounts;
@@ -1157,7 +1154,7 @@ private:
 
 } // End anonymous namespace.
 
-void validate(Graph& graph, GraphDumpMode graphDumpMode, CString graphDumpBeforePhase)
+void validate(Graph& graph, GraphDumpMode graphDumpMode, UTF8CString graphDumpBeforePhase)
 {
     Validate validationObject(graph, graphDumpMode, graphDumpBeforePhase);
     validationObject.validate();

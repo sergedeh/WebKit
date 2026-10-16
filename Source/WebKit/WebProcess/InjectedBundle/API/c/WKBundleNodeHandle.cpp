@@ -32,47 +32,6 @@
 #include "WKBundleAPICast.h"
 #include "WebFrame.h"
 #include "WebImage.h"
-#include <WebCore/HTMLTextFormControlElement.h>
-
-static WebCore::AutoFillButtonType toAutoFillButtonType(WKAutoFillButtonType wkAutoFillButtonType)
-{
-    switch (wkAutoFillButtonType) {
-    case kWKAutoFillButtonTypeNone:
-        return WebCore::AutoFillButtonType::None;
-    case kWKAutoFillButtonTypeContacts:
-        return WebCore::AutoFillButtonType::Contacts;
-    case kWKAutoFillButtonTypeCredentials:
-        return WebCore::AutoFillButtonType::Credentials;
-    case kWKAutoFillButtonTypeStrongPassword:
-        return WebCore::AutoFillButtonType::StrongPassword;
-    case kWKAutoFillButtonTypeCreditCard:
-        return WebCore::AutoFillButtonType::CreditCard;
-    case kWKAutoFillButtonTypeLoading:
-        return WebCore::AutoFillButtonType::Loading;
-    }
-    ASSERT_NOT_REACHED();
-    return WebCore::AutoFillButtonType::None;
-}
-
-static WKAutoFillButtonType toWKAutoFillButtonType(WebCore::AutoFillButtonType autoFillButtonType)
-{
-    switch (autoFillButtonType) {
-    case WebCore::AutoFillButtonType::None:
-        return kWKAutoFillButtonTypeNone;
-    case WebCore::AutoFillButtonType::Contacts:
-        return kWKAutoFillButtonTypeContacts;
-    case WebCore::AutoFillButtonType::Credentials:
-        return kWKAutoFillButtonTypeCredentials;
-    case WebCore::AutoFillButtonType::StrongPassword:
-        return kWKAutoFillButtonTypeStrongPassword;
-    case WebCore::AutoFillButtonType::CreditCard:
-        return kWKAutoFillButtonTypeCreditCard;
-    case WebCore::AutoFillButtonType::Loading:
-        return kWKAutoFillButtonTypeLoading;
-    }
-    ASSERT_NOT_REACHED();
-    return kWKAutoFillButtonTypeNone;
-}
 
 WKTypeID WKBundleNodeHandleGetTypeID()
 {
@@ -87,19 +46,18 @@ WKBundleNodeHandleRef WKBundleNodeHandleCreate(JSContextRef contextRef, JSObject
 
 WKBundleNodeHandleRef WKBundleNodeHandleCopyDocument(WKBundleNodeHandleRef nodeHandleRef)
 {
-    RefPtr<WebKit::InjectedBundleNodeHandle> nodeHandle = WebKit::toProtectedImpl(nodeHandleRef)->document();
+    RefPtr<WebKit::InjectedBundleNodeHandle> nodeHandle = protect(WebKit::toImpl(nodeHandleRef))->document();
     return toAPILeakingRef(WTF::move(nodeHandle));
 }
 
-WKRect WKBundleNodeHandleGetRenderRect(WKBundleNodeHandleRef nodeHandleRef, bool* isReplaced)
+WKRect WKBundleNodeHandleGetRenderRect(WKBundleNodeHandleRef, bool*)
 {
-    ASSERT_NOT_REACHED();
     return { };
 }
 
 WKImageRef WKBundleNodeHandleCopySnapshotWithOptions(WKBundleNodeHandleRef nodeHandleRef, WKSnapshotOptions options)
 {
-    RefPtr<WebKit::WebImage> image = WebKit::toProtectedImpl(nodeHandleRef)->renderedImage(WebKit::toSnapshotOptions(options), options & kWKSnapshotOptionsExcludeOverflow);
+    RefPtr<WebKit::WebImage> image = protect(WebKit::toImpl(nodeHandleRef))->renderedImage(WebKit::toSnapshotOptions(options), options & kWKSnapshotOptionsExcludeOverflow);
     return toAPILeakingRef(WTF::move(image));
 }
 
@@ -111,17 +69,15 @@ WKBundleRangeHandleRef WKBundleNodeHandleCopyVisibleRange(WKBundleNodeHandleRef)
 
 WKRect WKBundleNodeHandleGetElementBounds(WKBundleNodeHandleRef elementHandleRef)
 {
-    return WebKit::toAPI(WebKit::toProtectedImpl(elementHandleRef)->elementBounds());
+    return WebKit::toAPI(protect(WebKit::toImpl(elementHandleRef))->elementBounds());
 }
 
-void WKBundleNodeHandleSetHTMLInputElementValueForUser(WKBundleNodeHandleRef htmlInputElementHandleRef, WKStringRef valueRef)
+void WKBundleNodeHandleSetHTMLInputElementValueForUser(WKBundleNodeHandleRef, WKStringRef)
 {
-    WebKit::toProtectedImpl(htmlInputElementHandleRef)->setHTMLInputElementValueForUser(WebKit::toWTFString(valueRef));
 }
 
-void WKBundleNodeHandleSetHTMLInputElementSpellcheckEnabled(WKBundleNodeHandleRef htmlInputElementHandleRef, bool enabled)
+void WKBundleNodeHandleSetHTMLInputElementSpellcheckEnabled(WKBundleNodeHandleRef, bool)
 {
-    WebKit::toProtectedImpl(htmlInputElementHandleRef)->setHTMLInputElementSpellcheckEnabled(enabled);
 }
 
 bool WKBundleNodeHandleGetHTMLInputElementAutoFilled(WKBundleNodeHandleRef)
@@ -130,40 +86,35 @@ bool WKBundleNodeHandleGetHTMLInputElementAutoFilled(WKBundleNodeHandleRef)
     return false;
 }
 
-void WKBundleNodeHandleSetHTMLInputElementAutoFilled(WKBundleNodeHandleRef htmlInputElementHandleRef, bool filled)
+void WKBundleNodeHandleSetHTMLInputElementAutoFilled(WKBundleNodeHandleRef, bool)
 {
-    WebKit::toProtectedImpl(htmlInputElementHandleRef)->setHTMLInputElementAutoFilled(filled);
 }
 
-void WKBundleNodeHandleSetHTMLInputElementAutoFilledAndViewable(WKBundleNodeHandleRef htmlInputElementHandleRef, bool autoFilledAndViewable)
+void WKBundleNodeHandleSetHTMLInputElementAutoFilledAndViewable(WKBundleNodeHandleRef, bool)
 {
-    WebKit::toProtectedImpl(htmlInputElementHandleRef)->setHTMLInputElementAutoFilledAndViewable(autoFilledAndViewable);
 }
 
-void WKBundleNodeHandleSetHTMLInputElementAutoFilledAndObscured(WKBundleNodeHandleRef htmlInputElementHandleRef, bool autoFilledAndObscured)
+void WKBundleNodeHandleSetHTMLInputElementAutoFilledAndObscured(WKBundleNodeHandleRef, bool)
 {
-    WebKit::toProtectedImpl(htmlInputElementHandleRef)->setHTMLInputElementAutoFilledAndObscured(autoFilledAndObscured);
 }
 
 bool WKBundleNodeHandleGetHTMLInputElementAutoFillButtonEnabled(WKBundleNodeHandleRef)
 {
-    ASSERT_NOT_REACHED();
     return false;
 }
 
-void WKBundleNodeHandleSetHTMLInputElementAutoFillButtonEnabledWithButtonType(WKBundleNodeHandleRef htmlInputElementHandleRef, WKAutoFillButtonType autoFillButtonType)
+void WKBundleNodeHandleSetHTMLInputElementAutoFillButtonEnabledWithButtonType(WKBundleNodeHandleRef, uint8_t)
 {
-    WebKit::toProtectedImpl(htmlInputElementHandleRef)->setHTMLInputElementAutoFillButtonEnabled(toAutoFillButtonType(autoFillButtonType));
 }
 
-WKAutoFillButtonType WKBundleNodeHandleGetHTMLInputElementAutoFillButtonType(WKBundleNodeHandleRef htmlInputElementHandleRef)
+uint8_t WKBundleNodeHandleGetHTMLInputElementAutoFillButtonType(WKBundleNodeHandleRef)
 {
-    return toWKAutoFillButtonType(WebKit::toProtectedImpl(htmlInputElementHandleRef)->htmlInputElementAutoFillButtonType());
+    return 0;
 }
 
-WKAutoFillButtonType WKBundleNodeHandleGetHTMLInputElementLastAutoFillButtonType(WKBundleNodeHandleRef htmlInputElementHandleRef)
+uint8_t WKBundleNodeHandleGetHTMLInputElementLastAutoFillButtonType(WKBundleNodeHandleRef)
 {
-    return toWKAutoFillButtonType(WebKit::toProtectedImpl(htmlInputElementHandleRef)->htmlInputElementLastAutoFillButtonType());
+    return 0;
 }
 
 bool WKBundleNodeHandleGetHTMLInputElementAutoFillAvailable(WKBundleNodeHandleRef)
@@ -172,9 +123,8 @@ bool WKBundleNodeHandleGetHTMLInputElementAutoFillAvailable(WKBundleNodeHandleRe
     return false;
 }
 
-void WKBundleNodeHandleSetHTMLInputElementAutoFillAvailable(WKBundleNodeHandleRef htmlInputElementHandleRef, bool autoFillAvailable)
+void WKBundleNodeHandleSetHTMLInputElementAutoFillAvailable(WKBundleNodeHandleRef, bool)
 {
-    WebKit::toProtectedImpl(htmlInputElementHandleRef)->setAutoFillAvailable(autoFillAvailable);
 }
 
 WKRect WKBundleNodeHandleGetHTMLInputElementAutoFillButtonBounds(WKBundleNodeHandleRef)
@@ -183,14 +133,14 @@ WKRect WKBundleNodeHandleGetHTMLInputElementAutoFillButtonBounds(WKBundleNodeHan
     return { };
 }
 
-bool WKBundleNodeHandleGetHTMLInputElementLastChangeWasUserEdit(WKBundleNodeHandleRef htmlInputElementHandleRef)
+bool WKBundleNodeHandleGetHTMLInputElementLastChangeWasUserEdit(WKBundleNodeHandleRef)
 {
-    return WebKit::toProtectedImpl(htmlInputElementHandleRef)->htmlInputElementLastChangeWasUserEdit();
+    return false;
 }
 
-bool WKBundleNodeHandleGetHTMLTextAreaElementLastChangeWasUserEdit(WKBundleNodeHandleRef htmlTextAreaElementHandleRef)
+bool WKBundleNodeHandleGetHTMLTextAreaElementLastChangeWasUserEdit(WKBundleNodeHandleRef)
 {
-    return WebKit::toProtectedImpl(htmlTextAreaElementHandleRef)->htmlTextAreaElementLastChangeWasUserEdit();
+    return false;
 }
 
 WKBundleNodeHandleRef WKBundleNodeHandleCopyHTMLTableCellElementCellAbove(WKBundleNodeHandleRef)
@@ -199,21 +149,19 @@ WKBundleNodeHandleRef WKBundleNodeHandleCopyHTMLTableCellElementCellAbove(WKBund
     return nullptr;
 }
 
-WKBundleFrameRef WKBundleNodeHandleCopyDocumentFrame(WKBundleNodeHandleRef documentHandleRef)
+WKBundleFrameRef WKBundleNodeHandleCopyDocumentFrame(WKBundleNodeHandleRef)
 {
-    RefPtr<WebKit::WebFrame> frame = WebKit::toProtectedImpl(documentHandleRef)->documentFrame();
-    return toAPILeakingRef(WTF::move(frame));
+    return nullptr;
 }
 
-WKBundleFrameRef WKBundleNodeHandleCopyHTMLFrameElementContentFrame(WKBundleNodeHandleRef htmlFrameElementHandleRef)
+WKBundleFrameRef WKBundleNodeHandleCopyHTMLFrameElementContentFrame(WKBundleNodeHandleRef)
 {
-    ASSERT_NOT_REACHED();
     return nullptr;
 }
 
 WKBundleFrameRef WKBundleNodeHandleCopyHTMLIFrameElementContentFrame(WKBundleNodeHandleRef htmlIFrameElementHandleRef)
 {
-    RefPtr<WebKit::WebFrame> frame = WebKit::toProtectedImpl(htmlIFrameElementHandleRef)->htmlIFrameElementContentFrame();
+    RefPtr<WebKit::WebFrame> frame = protect(WebKit::toImpl(htmlIFrameElementHandleRef))->htmlIFrameElementContentFrame();
     return toAPILeakingRef(WTF::move(frame));
 }
 
@@ -223,9 +171,8 @@ bool WKBundleNodeHandleGetHTMLInputElementAutofilled(WKBundleNodeHandleRef htmlI
     return false;
 }
 
-void WKBundleNodeHandleSetHTMLInputElementAutofilled(WKBundleNodeHandleRef handle, bool enabled)
+void WKBundleNodeHandleSetHTMLInputElementAutofilled(WKBundleNodeHandleRef, bool)
 {
-    WKBundleNodeHandleSetHTMLInputElementAutoFilled(handle, enabled);
 }
 
 void WKBundleNodeHandleSetHTMLInputElementAutoFillButtonEnabled(WKBundleNodeHandleRef, bool)
@@ -235,7 +182,7 @@ void WKBundleNodeHandleSetHTMLInputElementAutoFillButtonEnabled(WKBundleNodeHand
 
 WKBundleFrameRef WKBundleNodeHandleCopyOwningDocumentFrame(WKBundleNodeHandleRef documentHandleRef)
 {
-    if (RefPtr document = WebKit::toProtectedImpl(documentHandleRef)->document())
+    if (RefPtr document = protect(WebKit::toImpl(documentHandleRef))->document())
         return toAPILeakingRef(document->documentFrame());
     return nullptr;
 }

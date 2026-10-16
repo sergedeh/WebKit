@@ -27,6 +27,7 @@
 
 #if ENABLE(WEB_CODECS)
 
+#include <WebCore/CanvasImageSource.h>
 #include <WebCore/ContextDestructionObserver.h>
 #include <WebCore/DOMRectReadOnly.h>
 #include <WebCore/JSDOMPromiseDeferredForward.h>
@@ -39,16 +40,21 @@ namespace WebCore {
 
 class BufferSource;
 class CSSStyleImageValue;
+class ConcreteObjectSize;
 class DOMRectReadOnly;
 class HTMLCanvasElement;
 class HTMLImageElement;
 class HTMLVideoElement;
+class Image;
 class ImageBitmap;
 class ImageBuffer;
+class IntSize;
 class NativeImage;
 class OffscreenCanvas;
 class SVGImageElement;
 class VideoColorSpace;
+
+struct ImageOrientation;
 
 template<typename> class ExceptionOr;
 
@@ -59,19 +65,6 @@ public:
     // ContextDestructionObserver.
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
-
-    using CanvasImageSource = Variant<RefPtr<HTMLImageElement>
-        , RefPtr<SVGImageElement>
-        , RefPtr<HTMLCanvasElement>
-        , RefPtr<ImageBitmap>
-        , RefPtr<CSSStyleImageValue>
-#if ENABLE(OFFSCREEN_CANVAS)
-        , RefPtr<OffscreenCanvas>
-#endif
-#if ENABLE(VIDEO)
-        , RefPtr<HTMLVideoElement>
-#endif
-    >;
 
     enum class AlphaOption { Keep, Discard };
     struct Init {
@@ -99,13 +92,13 @@ public:
         std::optional<size_t> displayHeight { };
 
         std::optional<VideoColorSpaceInit> colorSpace { };
+        Vector<Ref<JSC::ArrayBuffer>> transfer { };
     };
 
     static ExceptionOr<Ref<WebCodecsVideoFrame>> create(ScriptExecutionContext&, CanvasImageSource&&, Init&&);
-    static ExceptionOr<Ref<WebCodecsVideoFrame>> create(ScriptExecutionContext&, Ref<WebCodecsVideoFrame>&&, Init&&);
     static ExceptionOr<Ref<WebCodecsVideoFrame>> create(ScriptExecutionContext&, BufferSource&&, BufferInit&&);
     static ExceptionOr<Ref<WebCodecsVideoFrame>> create(ScriptExecutionContext&, ImageBuffer&, IntSize, Init&&);
-    WEBCORE_EXPORT static ExceptionOr<Ref<WebCodecsVideoFrame>> create(ScriptExecutionContext&, Ref<NativeImage>&&);
+    WEBCORE_EXPORT static ExceptionOr<Ref<WebCodecsVideoFrame>> create(ScriptExecutionContext&, Ref<NativeImage>&&, Init&&);
     static Ref<WebCodecsVideoFrame> create(ScriptExecutionContext&, Ref<VideoFrame>&&, BufferInit&&);
     static Ref<WebCodecsVideoFrame> create(ScriptExecutionContext& context, WebCodecsVideoFrameData&& data) { return adoptRef(*new WebCodecsVideoFrame(context, WTF::move(data))); }
 
@@ -125,6 +118,7 @@ public:
     struct CopyToOptions {
         std::optional<DOMRectInit> rect;
         std::optional<Vector<PlaneLayout>> layout;
+        std::optional<VideoPixelFormat> format;
     };
     ExceptionOr<size_t> allocationSize(const CopyToOptions&);
 
@@ -136,11 +130,10 @@ public:
     bool isDetached() const { return m_isDetached; }
     RefPtr<VideoFrame> internalFrame() const { return m_data.internalFrame; }
 
-    void setDisplaySize(size_t, size_t);
-    void setVisibleRect(const DOMRectInit&);
-    bool shoudlDiscardAlpha() const { return m_data.format && (*m_data.format == VideoPixelFormat::RGBX || *m_data.format == VideoPixelFormat::BGRX); }
+    void LEGACY_NODELETE setDisplaySize(size_t, size_t);
+    void LEGACY_NODELETE setVisibleRect(const DOMRectInit&);
 
-    const WebCodecsVideoFrameData& data() const { return m_data; }
+    const WebCodecsVideoFrameData& data() const LIFETIME_BOUND { return m_data; }
 
     size_t memoryCost() const { return m_data.memoryCost(); }
 
@@ -148,9 +141,23 @@ private:
     explicit WebCodecsVideoFrame(ScriptExecutionContext&);
     WebCodecsVideoFrame(ScriptExecutionContext&, WebCodecsVideoFrameData&&);
 
-    static ExceptionOr<Ref<WebCodecsVideoFrame>> initializeFrameFromOtherFrame(ScriptExecutionContext&, Ref<WebCodecsVideoFrame>&&, Init&&, VideoFrame::ShouldCloneWithDifferentTimestamp);
-    static ExceptionOr<Ref<WebCodecsVideoFrame>> initializeFrameFromOtherFrame(ScriptExecutionContext&, Ref<VideoFrame>&&, Init&&, VideoFrame::ShouldCloneWithDifferentTimestamp);
-    static ExceptionOr<Ref<WebCodecsVideoFrame>> initializeFrameWithResourceAndSize(ScriptExecutionContext&, Ref<NativeImage>&&, Init&&);
+    static ExceptionOr<Ref<WebCodecsVideoFrame>> create(ScriptExecutionContext&, Ref<HTMLImageElement>&&, Init&&);
+    static ExceptionOr<Ref<WebCodecsVideoFrame>> create(ScriptExecutionContext&, Ref<SVGImageElement>&&, Init&&);
+#if ENABLE(VIDEO)
+    static ExceptionOr<Ref<WebCodecsVideoFrame>> create(ScriptExecutionContext&, Ref<HTMLVideoElement>&&, Init&&);
+#endif
+    static ExceptionOr<Ref<WebCodecsVideoFrame>> create(ScriptExecutionContext&, Ref<HTMLCanvasElement>&&, Init&&);
+#if ENABLE(OFFSCREEN_CANVAS)
+    static ExceptionOr<Ref<WebCodecsVideoFrame>> create(ScriptExecutionContext&, Ref<OffscreenCanvas>&&, Init&&);
+#endif
+    static ExceptionOr<Ref<WebCodecsVideoFrame>> create(ScriptExecutionContext&, Ref<ImageBitmap>&&, Init&&);
+    static ExceptionOr<Ref<WebCodecsVideoFrame>> create(ScriptExecutionContext&, Ref<WebCodecsVideoFrame>&&, Init&&);
+    static ExceptionOr<Ref<WebCodecsVideoFrame>> create(ScriptExecutionContext&, Ref<CSSStyleImageValue>&&, Init&&);
+    static ExceptionOr<Ref<WebCodecsVideoFrame>> createFromImageElement(ScriptExecutionContext&, auto&, Init&&);
+
+    static ExceptionOr<Ref<WebCodecsVideoFrame>> initializeFrameFromOtherFrame(ScriptExecutionContext&, Ref<WebCodecsVideoFrame>&&, Init&&, VideoFrame::ShouldClone);
+    static ExceptionOr<Ref<WebCodecsVideoFrame>> initializeFrameFromOtherFrame(ScriptExecutionContext&, Ref<VideoFrame>&&, Init&&, VideoFrame::ShouldClone);
+    static ExceptionOr<Ref<WebCodecsVideoFrame>> initializeFrameWithResourceAndSize(ScriptExecutionContext&, Ref<NativeImage>&&, Init&&, std::optional<IntSize> defaultDisplaySize = std::nullopt);
 
     WebCodecsVideoFrameData m_data;
     mutable RefPtr<VideoColorSpace> m_colorSpace;

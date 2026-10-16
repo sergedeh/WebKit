@@ -10,8 +10,6 @@ Do NOT modify or remove this file.
 ------------------------------------------------------------------------
 Properties requiring vendor prefixes:
 None
-Property values requiring vendor prefixes:
-None
 ------------------------------------------------------------------------
 List of files:
 /LayoutTests/imported/w3c/web-platform-tests/css/css-values/calc-size/WEB_FEATURES.yml
@@ -39,6 +37,10 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/css/css-values/calc-size/calc-size-flex-006.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-values/calc-size/calc-size-flex-007-expected.xht
 /LayoutTests/imported/w3c/web-platform-tests/css/css-values/calc-size/calc-size-flex-007.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-values/calc-size/calc-size-flex-008-expected.xht
+/LayoutTests/imported/w3c/web-platform-tests/css/css-values/calc-size/calc-size-flex-008.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-values/calc-size/calc-size-flex-009-expected.xht
+/LayoutTests/imported/w3c/web-platform-tests/css/css-values/calc-size/calc-size-flex-009.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-values/calc-size/calc-size-flex-basis-on-column.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-values/calc-size/calc-size-flex-basis-on-row.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-values/calc-size/calc-size-grid-repeat-expected.html

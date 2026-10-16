@@ -29,18 +29,20 @@
 #if ENABLE(ADVANCED_PRIVACY_PROTECTIONS)
 
 #import "Logging.h"
-#import "RestrictedOpenerType.h"
 #import "WKContentRuleListStoreInternal.h"
 #import <WebCore/DNS.h>
 #import <WebCore/LinkDecorationFilteringData.h>
-#import <WebCore/NetworkStorageSession.h>
 #import <WebCore/OrganizationStorageAccessPromptQuirk.h>
 #import <WebCore/ResourceRequest.h>
+#import <WebCore/TrackingPreventionTypes.h>
 #import <numeric>
 #import <pal/spi/cf/CFNetworkSPI.h>
 #import <pal/spi/cocoa/NetworkSPI.h>
+#import <pal/spi/cocoa/WebPrivacySPI.h>
 #import <time.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/Borrow.h>
+#import <wtf/MonotonicTime.h>
 #import <wtf/NeverDestroyed.h>
 #import <wtf/RobinHoodHashMap.h>
 #import <wtf/RunLoop.h>
@@ -50,11 +52,6 @@
 #import <wtf/posix/SocketPOSIX.h>
 #import <wtf/text/MakeString.h>
 #import <pal/cocoa/WebPrivacySoftLink.h>
-
-#if HAVE(SYSTEM_SUPPORT_FOR_ADVANCED_PRIVACY_PROTECTIONS)
-SOFT_LINK_LIBRARY_OPTIONAL(libnetwork)
-SOFT_LINK_OPTIONAL(libnetwork, nw_context_set_tracker_lookup_callback, void, __cdecl, (nw_context_t, nw_context_tracker_lookup_callback_t))
-#endif
 
 @interface WKWebPrivacyNotificationListener : NSObject
 
@@ -104,7 +101,7 @@ Ref<ListDataObserver> ListDataControllerBase::observeUpdates(Function<void()>&& 
 {
     ASSERT(RunLoop::isMain());
     if (!m_notificationListener) {
-        m_notificationListener = adoptNS([[WKWebPrivacyNotificationListener alloc] initWithType:static_cast<WPResourceType>(resourceTypeValue()) callback:^{
+        lazyInitialize(m_notificationListener, adoptNS([[WKWebPrivacyNotificationListener alloc] initWithType:static_cast<WPResourceType>(resourceTypeValue()) callback:^{
             updateList([weakThis = WeakPtr { *this }] {
                 RefPtr protectedThis = weakThis.get();
                 if (!protectedThis)
@@ -113,7 +110,7 @@ Ref<ListDataObserver> ListDataControllerBase::observeUpdates(Function<void()>&& 
                     observer.invokeCallback();
                 });
             });
-        }]);
+        }]));
     }
     Ref observer = ListDataObserver::create(WTF::move(callback));
     m_observers.add(observer.get());
@@ -165,7 +162,8 @@ void LinkDecorationFilteringController::updateList(CompletionHandler<void()>&& c
             RELEASE_LOG_ERROR(ResourceLoadStatistics, "Failed to request query parameters from WebPrivacy.");
         else {
             RetainPtr rules = [data rules];
-            for (WPLinkFilteringRule *rule : rules.get()) {
+            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+            for (SUPPRESS_UNRETAINED_LOCAL WPLinkFilteringRule *rule : rules.get()) {
                 auto domain = WebCore::RegistrableDomain { URL { makeString("http://"_s, String { rule.domain }) } };
                 result.append(WebCore::LinkDecorationFilteringData { WTF::move(domain), [rule respondsToSelector:@selector(path)] ? rule.path : @"", rule.queryParameter });
             }
@@ -209,15 +207,17 @@ void requestLinkDecorationFilteringData(LinkFilteringRulesCallback&& callback)
             RELEASE_LOG_ERROR(ResourceLoadStatistics, "Failed to request allowed query parameters from WebPrivacy.");
         else {
             RetainPtr rules = [data rules];
-            for (WPLinkFilteringRule *rule : rules.get()) {
+            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+            for (SUPPRESS_UNRETAINED_LOCAL WPLinkFilteringRule *rule : rules.get()) {
                 auto domain = WebCore::RegistrableDomain { URL { makeString("http://"_s, String { rule.domain }) } };
                 result.append(WebCore::LinkDecorationFilteringData { WTF::move(domain), { }, rule.queryParameter });
             }
         }
 
         auto callbacks = std::exchange(lookupCallbacks.get(), { });
-        for (int i = callbacks.size() - 1; i >= 0; --i) {
-            auto& callback = callbacks[i];
+        Borrow borrowedCallbacks = callbacks;
+        for (int i = borrowedCallbacks->size() - 1; i >= 0; --i) {
+            auto& callback = borrowedCallbacks[i];
             if (i)
                 callback(Vector { result });
             else
@@ -241,9 +241,11 @@ static HashMap<WebCore::RegistrableDomain, Vector<WebCore::RegistrableDomain>> q
 {
     HashMap<WebCore::RegistrableDomain, Vector<WebCore::RegistrableDomain>> map;
     RetainPtr<NSArray<NSString *>> topDomains = quirkDomains.allKeys;
-    for (NSString *topDomain : topDomains.get()) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSString *topDomain : topDomains.get()) {
         Vector<WebCore::RegistrableDomain> subFrameDomains;
-        for (NSString *subFrameDomain : [quirkDomains objectForKey:topDomain])
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL NSString *subFrameDomain : [quirkDomains objectForKey:topDomain])
             subFrameDomains.append(WebCore::RegistrableDomain::fromRawString(subFrameDomain));
         map.add(WebCore::RegistrableDomain::fromRawString(String { topDomain }), WTF::move(subFrameDomains));
     }
@@ -253,7 +255,8 @@ static HashMap<WebCore::RegistrableDomain, Vector<WebCore::RegistrableDomain>> q
 static Vector<URL> quirkPagesArrayToVector(NSArray<NSString *> *triggerPages)
 {
     Vector<URL> triggers;
-    for (NSString *page : triggerPages) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSString *page : triggerPages) {
         if (![page isEqualToString:@"*"])
             triggers.append(URL { page });
     }
@@ -283,7 +286,8 @@ void StorageAccessPromptQuirkController::updateList(CompletionHandler<void()>&& 
         else {
             RetainPtr quirks = [data quirks];
             auto hasQuirkDomainsAndTriggerPages = [PAL::getWPStorageAccessPromptQuirkClassSingleton() instancesRespondToSelector:@selector(quirkDomains)] && [PAL::getWPStorageAccessPromptQuirkClassSingleton() instancesRespondToSelector:@selector(triggerPages)];
-            for (WPStorageAccessPromptQuirk *quirk : quirks.get()) {
+            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+            for (SUPPRESS_UNRETAINED_LOCAL WPStorageAccessPromptQuirk *quirk : quirks.get()) {
                 if (hasQuirkDomainsAndTriggerPages)
                     result.append(WebCore::OrganizationStorageAccessPromptQuirk { quirk.name, quirkDomainsDictToMap(retainPtr(quirk.quirkDomains).get()), quirkPagesArrayToVector(retainPtr(quirk.triggerPages).get()) });
                 else
@@ -324,7 +328,8 @@ void StorageAccessUserAgentStringQuirkController::updateList(CompletionHandler<v
             RELEASE_LOG_ERROR(ResourceLoadStatistics, "Failed to request storage access user agent string quirks from WebPrivacy.");
         else {
             RetainPtr quirks = [data quirks];
-            for (WPStorageAccessUserAgentStringQuirk *quirk : quirks.get())
+            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+            for (SUPPRESS_UNRETAINED_LOCAL WPStorageAccessUserAgentStringQuirk *quirk : quirks.get())
                 result.add(WebCore::RegistrableDomain::fromRawString(quirk.domain), quirk.userAgentString);
             setCachedListData(WTF::move(result));
         }
@@ -334,78 +339,91 @@ void StorageAccessUserAgentStringQuirkController::updateList(CompletionHandler<v
     }];
 }
 
-RestrictedOpenerDomainsController& RestrictedOpenerDomainsController::singleton()
+HighValueFraudTargetDomainsController& HighValueFraudTargetDomainsController::singleton()
 {
-    static MainRunLoopNeverDestroyed<RestrictedOpenerDomainsController> sharedInstance;
+    static MainRunLoopNeverDestroyed<HighValueFraudTargetDomainsController> sharedInstance;
     return sharedInstance.get();
 }
 
-RestrictedOpenerDomainsController::RestrictedOpenerDomainsController()
+HighValueFraudTargetDomainsController::HighValueFraudTargetDomainsController()
 {
     scheduleNextUpdate(ContinuousApproximateTime::now());
     update();
 
-    m_notificationListener = adoptNS([[WKWebPrivacyNotificationListener alloc] initWithType:static_cast<WPResourceType>(WPResourceTypeRestrictedOpenerDomains) callback:^{
+    lazyInitialize(m_notificationListener, adoptNS([[WKWebPrivacyNotificationListener alloc] initWithType:static_cast<WPResourceType>(WPResourceTypeHighValueFraudTargetDomains) callback:^{
         update();
-    }]);
+    }]));
 }
 
-static RestrictedOpenerType restrictedOpenerType(WPRestrictedOpenerType type)
-{
-    switch (type) {
-    case WPRestrictedOpenerTypeNoOpener: return RestrictedOpenerType::NoOpener;
-    case WPRestrictedOpenerTypePostMessageAndClose: return RestrictedOpenerType::PostMessageAndClose;
-    default: return RestrictedOpenerType::Unrestricted;
-    }
-}
-
-void RestrictedOpenerDomainsController::scheduleNextUpdate(ContinuousApproximateTime now)
+void HighValueFraudTargetDomainsController::scheduleNextUpdate(ContinuousApproximateTime now)
 {
     // Allow the list to be re-requested from the server sometime between [24, 26) hours from now.
     static WeakRandom random;
     m_nextScheduledUpdateTime = now + 24_h + random.get() * 2_h;
 }
 
-void RestrictedOpenerDomainsController::update()
+void HighValueFraudTargetDomainsController::update()
 {
     ASSERT(RunLoop::isMain());
-    if (!PAL::isWebPrivacyFrameworkAvailable() || ![PAL::getWPResourcesClassSingleton() instancesRespondToSelector:@selector(requestRestrictedOpenerDomains:completionHandler:)])
+    if (m_hasInjectedDomainsForTesting)
         return;
 
-    auto options = adoptNS([PAL::allocWPResourceRequestOptionsInstance() init]);
+    if (!PAL::isWebPrivacyFrameworkAvailable() || ![PAL::getWPResourcesClassSingleton() instancesRespondToSelector:@selector(requestHighValueFraudTargetDomains:completionHandler:)])
+        return;
+
+    RetainPtr options = adoptNS([PAL::allocWPResourceRequestOptionsInstance() init]);
     [options setAfterUpdates:NO];
 
-    [[PAL::getWPResourcesClassSingleton() sharedInstance] requestRestrictedOpenerDomains:options.get() completionHandler:^(NSArray<WPRestrictedOpenerDomain *> *domains, NSError *error) {
+    auto requestStartTime = MonotonicTime::now();
+    [[PAL::getWPResourcesClassSingleton() sharedInstance] requestHighValueFraudTargetDomains:options.get() completionHandler:^(NSArray<WPHighValueFraudTargetDomain *> *domains, NSError *error) {
+        if (m_hasInjectedDomainsForTesting)
+            return;
+
+        auto elapsed = MonotonicTime::now() - requestStartTime;
         if (error) {
-            RELEASE_LOG_ERROR(ResourceLoadStatistics, "Failed to request restricted opener domains from WebPrivacy");
+            RELEASE_LOG_ERROR(ResourceLoadStatistics, "Failed to request high-value fraud target domains from WebPrivacy after %.1f ms: %@", elapsed.milliseconds(), error);
             return;
         }
 
-        HashMap<WebCore::RegistrableDomain, RestrictedOpenerType> restrictedOpenerTypes;
-        restrictedOpenerTypes.reserveInitialCapacity(domains.count);
+        HashSet<WebCore::RegistrableDomain> highValueDomains;
+        highValueDomains.reserveInitialCapacity(domains.count);
 
-        for (WPRestrictedOpenerDomain *domainInfo in domains) {
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL WPHighValueFraudTargetDomain *domainInfo in domains) {
             auto registrableDomain = WebCore::RegistrableDomain::fromRawString(domainInfo.domain);
             if (registrableDomain.isEmpty())
                 continue;
-            restrictedOpenerTypes.add(registrableDomain, restrictedOpenerType(domainInfo.openerType));
+            highValueDomains.add(WTF::move(registrableDomain));
         }
 
-        m_restrictedOpenerTypes = WTF::move(restrictedOpenerTypes);
+        m_domains = WTF::move(highValueDomains);
+
+        if (std::exchange(m_didReceiveInitialData, true))
+            RELEASE_LOG(ResourceLoadStatistics, "HighValueFraudTargetDomainsController::update: Reloaded %u high-value fraud target domain(s) from WebPrivacy in %.1f ms.", m_domains.size(), elapsed.milliseconds());
+        else
+            RELEASE_LOG(ResourceLoadStatistics, "HighValueFraudTargetDomainsController::update: Loaded initial %u high-value fraud target domain(s) from WebPrivacy in %.1f ms.", m_domains.size(), elapsed.milliseconds());
     }];
 }
 
-RestrictedOpenerType RestrictedOpenerDomainsController::lookup(const WebCore::RegistrableDomain& domain) const
+bool HighValueFraudTargetDomainsController::contains(const WebCore::RegistrableDomain& domain) const
 {
     auto now = ContinuousApproximateTime::now();
     if (now > m_nextScheduledUpdateTime) {
-        auto mutableThis = const_cast<RestrictedOpenerDomainsController*>(this);
+        auto mutableThis = const_cast<HighValueFraudTargetDomainsController*>(this);
         mutableThis->scheduleNextUpdate(now);
         mutableThis->update();
     }
 
-    auto it = m_restrictedOpenerTypes.find(domain);
-    return it == m_restrictedOpenerTypes.end() ? RestrictedOpenerType::Unrestricted : it->value;
+    return m_domains.contains(domain);
+}
+
+void HighValueFraudTargetDomainsController::setDomainsForTesting(HashSet<WebCore::RegistrableDomain>&& domains)
+{
+    ASSERT(RunLoop::isMain());
+    m_domains = WTF::move(domains);
+    m_didReceiveInitialData = true;
+    // Keep update() from replacing the injected list with real data from WebPrivacy.
+    m_hasInjectedDomainsForTesting = true;
 }
 
 ResourceMonitorURLsController& ResourceMonitorURLsController::singleton()
@@ -419,28 +437,21 @@ void ResourceMonitorURLsController::setContentRuleListStore(API::ContentRuleList
     m_contentRuleListStore = &store;
 }
 
-void ResourceMonitorURLsController::prepare(CompletionHandler<void(WKContentRuleList*, bool)>&& completionHandler)
+bool ResourceMonitorURLsController::canRequestContentRuleList() const
 {
-    ASSERT(RunLoop::isMain());
-    if (!PAL::isWebPrivacyFrameworkAvailable() || ![PAL::getWPResourcesClassSingleton() instancesRespondToSelector:@selector(prepareResourceMonitorRulesForStore:completionHandler:)]) {
-        completionHandler(nullptr, false);
-        return;
-    }
+    return PAL::isWebPrivacyFrameworkAvailable() && [PAL::getWPResourcesClassSingleton() instancesRespondToSelector:@selector(prepareResourceMonitorRulesForStore:completionHandler:)];
+}
 
-    static MainRunLoopNeverDestroyed<Vector<CompletionHandler<void(WKContentRuleList*, bool)>, 1>> lookupCompletionHandlers;
-    lookupCompletionHandlers->append(WTF::move(completionHandler));
-    if (lookupCompletionHandlers->size() > 1)
-        return;
-
+void ResourceMonitorURLsController::requestContentRuleList(PrepareCompletionHandler&& completionHandler)
+{
     Ref<API::ContentRuleListStore> store = m_contentRuleListStore ? *m_contentRuleListStore : API::ContentRuleListStore::defaultStoreSingleton();
 
-    [[PAL::getWPResourcesClassSingleton() sharedInstance] prepareResourceMonitorRulesForStore:protectedWrapper(store.get()).get() completionHandler:^(WKContentRuleList *list, bool updated, NSError *error) {
+    [[PAL::getWPResourcesClassSingleton() sharedInstance] prepareResourceMonitorRulesForStore:protect(wrapper(store.get())).get() completionHandler:makeBlockPtr([completionHandler = WTF::move(completionHandler)](WKContentRuleList *list, bool updated, NSError *error) mutable {
         if (error)
             RELEASE_LOG_ERROR(ResourceMonitoring, "Failed to request resource monitor urls from WebPrivacy: %@", error);
 
-        for (auto& completionHandler : std::exchange(lookupCompletionHandlers.get(), { }))
-            completionHandler(list, updated);
-    }];
+        completionHandler(list, updated);
+    }).get()];
 }
 
 void ResourceMonitorURLsController::getSource(CompletionHandler<void(String&&)>&& completionHandler)
@@ -463,6 +474,34 @@ void ResourceMonitorURLsController::getSource(CompletionHandler<void(String&&)>&
         for (auto& completionHandler : std::exchange(lookupCompletionHandlers.get(), { }))
             completionHandler(source);
     }];
+}
+
+TrackingPreventionContentRuleListController& TrackingPreventionContentRuleListController::singleton()
+{
+    static MainRunLoopNeverDestroyed<TrackingPreventionContentRuleListController> sharedInstance;
+    return sharedInstance.get();
+}
+
+unsigned TrackingPreventionContentRuleListController::resourceTypeValue() const
+{
+    return WPResourceTypeDefaultTrackerBlockRules;
+}
+
+bool TrackingPreventionContentRuleListController::canRequestContentRuleList() const
+{
+    return PAL::isWebPrivacyFrameworkAvailable() && [PAL::getWPResourcesClassSingleton() instancesRespondToSelector:@selector(loadDefaultContentRuleListForStore:completionHandler:)];
+}
+
+void TrackingPreventionContentRuleListController::requestContentRuleList(PrepareCompletionHandler&& completionHandler)
+{
+    Ref<API::ContentRuleListStore> store = API::ContentRuleListStore::defaultStoreSingleton();
+
+    [[PAL::getWPResourcesClassSingleton() sharedInstance] loadDefaultContentRuleListForStore:protect(wrapper(store.get())).get() completionHandler:makeBlockPtr([completionHandler = WTF::move(completionHandler)](WKContentRuleList *list, NSError *error) mutable {
+        if (error)
+            RELEASE_LOG_ERROR(ResourceLoadStatistics, "Failed to load the tracking prevention content rule list from WebPrivacy: %@", error);
+
+        completionHandler(list);
+    }).get()];
 }
 
 #if HAVE(SYSTEM_SUPPORT_FOR_ADVANCED_PRIVACY_PROTECTIONS)
@@ -498,6 +537,15 @@ class TrackerAddressLookupInfo {
 public:
     enum class CanBlock : bool { No, Yes };
 
+    // Single lock shared by both tracker lookup tables below, guarding their population, refresh,
+    // and lookups. A raw pointer into a table can never escape its critical section because the
+    // matchingInfo() helpers that return such pointers are private to their classes.
+    static Lock& trackerLookupLock()
+    {
+        static Lock lock;
+        return lock;
+    }
+
     TrackerAddressLookupInfo(WebCore::IPAddress&& network, unsigned netMaskLength, String&& owner, String&& host, CanBlock canBlock)
         : m_network { WTF::move(network) }
         , m_netMaskLength { netMaskLength }
@@ -510,18 +558,18 @@ public:
     TrackerAddressLookupInfo(WPNetworkAddressRange *range)
         : m_network { ipAddress(range.address).value() }
         , m_netMaskLength { static_cast<unsigned>(range.netMaskLength) }
-        , m_owner { range.owner.UTF8String }
-        , m_host { range.host.UTF8String }
+        , m_owner { range.owner }
+        , m_host { range.host }
         , m_canBlock { CanBlock::Yes } // FIXME: Grab this from WPNetworkAddressRange as well, once it's available.
     {
     }
 
     TrackerAddressLookupInfo() = default;
 
-    const CString& owner() const { return m_owner; }
-    const CString& host() const { return m_host; }
+    const UTF8CString& LEGACY_NODELETE owner() const { return m_owner; }
+    const UTF8CString& LEGACY_NODELETE host() const { return m_host; }
 
-    CanBlock canBlock() const { return m_canBlock; }
+    CanBlock LEGACY_NODELETE canBlock() const { return m_canBlock; }
 
     static void populateIfNeeded()
     {
@@ -539,10 +587,12 @@ public:
                     return;
                 }
 
+                Locker locker { trackerLookupLock() };
                 version4List().clear();
                 version6List().clear();
 
-                for (WPNetworkAddressRange *range in ranges) {
+                // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+                for (SUPPRESS_UNRETAINED_LOCAL WPNetworkAddressRange *range in ranges) {
                     switch (range.version) {
                     case WPNetworkAddressVersion4:
                         version4List().append({ range });
@@ -562,7 +612,28 @@ public:
         });
     }
 
-    static const TrackerAddressLookupInfo* find(const WebCore::IPAddress& address)
+    // Looks up the entry matching address and, while holding the lock, invokes function with it,
+    // returning whether a match was found. The entry reference passed to function is valid only for
+    // the duration of the call (while the lock is held) and must not escape it.
+    template<typename Function>
+    static bool find(const WebCore::IPAddress& address, NOESCAPE const Function& function)
+    {
+        Locker locker { trackerLookupLock() };
+        auto* info = matchingInfo(address);
+        if (!info)
+            return false;
+        function(*info);
+        return true;
+    }
+
+    static bool contains(const WebCore::IPAddress& address)
+    {
+        Locker locker { trackerLookupLock() };
+        return matchingInfo(address);
+    }
+
+private:
+    static const TrackerAddressLookupInfo* matchingInfo(const WebCore::IPAddress& address) WTF_REQUIRES_LOCK(trackerLookupLock())
     {
         auto& list = address.isIPv4() ? version4List() : version6List();
         if (list.isEmpty())
@@ -591,17 +662,17 @@ public:
             }
         }
 
-        if (list[upper].contains(address))
+        Borrow borrowedList = list;
+        if (borrowedList[upper].containsAddress(address))
             return &list[upper];
 
-        if (upper != lower && list[lower].contains(address))
+        if (upper != lower && borrowedList[lower].containsAddress(address))
             return &list[lower];
 
         return nullptr;
     }
 
-private:
-    static Vector<TrackerAddressLookupInfo>& version4List()
+    static Vector<TrackerAddressLookupInfo>& version4List() WTF_REQUIRES_LOCK(trackerLookupLock())
     {
         static NeverDestroyed sharedList = [] {
             return Vector<TrackerAddressLookupInfo> { };
@@ -609,7 +680,7 @@ private:
         return sharedList.get();
     }
 
-    static Vector<TrackerAddressLookupInfo>& version6List()
+    static Vector<TrackerAddressLookupInfo>& version6List() WTF_REQUIRES_LOCK(trackerLookupLock())
     {
         static NeverDestroyed sharedList = [] {
             return Vector<TrackerAddressLookupInfo> { };
@@ -617,39 +688,33 @@ private:
         return sharedList.get();
     }
 
-    bool contains(const WebCore::IPAddress& address) const
+    bool containsAddress(const WebCore::IPAddress& address) const
     {
         return m_network.matchingNetMaskLength(address) >= m_netMaskLength;
     }
 
     WebCore::IPAddress m_network { WTF::HashTableEmptyValue };
     unsigned m_netMaskLength { 0 };
-    CString m_owner;
-    CString m_host;
+    UTF8CString m_owner;
+    UTF8CString m_host;
     CanBlock m_canBlock { CanBlock::No };
 };
 
 class TrackerDomainLookupInfo {
 public:
-    enum class CanBlock : bool { No, Yes };
-
-    TrackerDomainLookupInfo(String&& owner, CanBlock canBlock)
-        : m_owner { owner.utf8() }
-        , m_canBlock { canBlock }
-    {
-    }
+    enum class CanBlock : uint8_t { No, WithAdvancedPrivacyProtections };
 
     TrackerDomainLookupInfo(WPTrackingDomain *domain)
-        : m_owner { domain.owner.UTF8String }
-        , m_canBlock { domain.canBlock ? CanBlock::Yes : CanBlock::No }
+        : m_owner { domain.owner }
+        , m_canBlock { domain.canBlock ? CanBlock::WithAdvancedPrivacyProtections : CanBlock::No }
     {
     }
 
     TrackerDomainLookupInfo() = default;
 
-    const CString& owner() const { return m_owner; }
+    const UTF8CString& LEGACY_NODELETE owner() const { return m_owner; }
 
-    CanBlock canBlock() const { return m_canBlock; }
+    CanBlock LEGACY_NODELETE canBlock() const { return m_canBlock; }
 
     static void populateIfNeeded()
     {
@@ -673,27 +738,55 @@ public:
                     return;
                 }
 
-                for (WPTrackingDomain *domain in domains)
+                // Readers walk this map and read the entries' CStrings under
+                // TrackerAddressLookupInfo::trackerLookupLock() (via find()/contains()), so the
+                // writer must hold it too — otherwise it races the map structure and frees CString
+                // buffers out from under a concurrent reader.
+                Locker locker { TrackerAddressLookupInfo::trackerLookupLock() };
+                // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+                for (SUPPRESS_UNRETAINED_LOCAL WPTrackingDomain *domain in domains)
                     list().set(String::fromLatin1([domain.host UTF8String]), TrackerDomainLookupInfo { domain });
             }];
         });
     }
 
-    static const TrackerDomainLookupInfo find(String host)
+    // Looks up the entry for host and, while holding the lock, invokes function with it if it names
+    // a known tracker (a matching entry with a non-empty owner), returning whether it did. The entry
+    // reference passed to function is valid only for the duration of the call and must not escape it.
+    template<typename Function>
+    static bool find(const String& host, NOESCAPE const Function& function)
     {
-        if (!list().isValidKey(host))
-            return { };
-        return list().get(host);
+        Locker locker { TrackerAddressLookupInfo::trackerLookupLock() };
+        auto* info = matchingInfo(host);
+        if (!info || !info->owner().length())
+            return false;
+        function(*info);
+        return true;
+    }
+
+    static bool contains(const String& host)
+    {
+        Locker locker { TrackerAddressLookupInfo::trackerLookupLock() };
+        auto* info = matchingInfo(host);
+        return info && info->owner().length();
     }
 
 private:
-    static MemoryCompactRobinHoodHashMap<String, TrackerDomainLookupInfo>& list()
+    static const TrackerDomainLookupInfo* matchingInfo(const String& host) WTF_REQUIRES_LOCK(TrackerAddressLookupInfo::trackerLookupLock())
+    {
+        if (!list().isValidKey(host))
+            return nullptr;
+        auto it = list().find(host);
+        return it != list().end() ? &it->value : nullptr;
+    }
+
+    static MemoryCompactRobinHoodHashMap<String, TrackerDomainLookupInfo>& LEGACY_NODELETE list() WTF_REQUIRES_LOCK(TrackerAddressLookupInfo::trackerLookupLock())
     {
         static NeverDestroyed<MemoryCompactRobinHoodHashMap<String, TrackerDomainLookupInfo>> map;
         return map.get();
     }
 
-    CString m_owner;
+    UTF8CString m_owner;
     CanBlock m_canBlock { CanBlock::No };
 };
 
@@ -713,26 +806,37 @@ void configureForAdvancedPrivacyProtections(NSURLSession *session)
     TrackerAddressLookupInfo::populateIfNeeded();
     TrackerDomainLookupInfo::populateIfNeeded();
 
-    auto* setTrackerLookupCallback = nw_context_set_tracker_lookup_callbackPtr();
-    if (!setTrackerLookupCallback)
-        return;
+    nw_context_set_tracker_lookup_callback(context.get(), ^(nw_endpoint_t endpoint, const char** hostName, const char** owner, bool* canBlock) {
+        // The networking stack reads *owner and *hostName after this block returns (it copies them
+        // before the next lookup on this thread), so the strings must outlive the block without
+        // being tied to the lookup lists, which are refreshed on the WebPrivacy thread. Hold them in
+        // per-thread UTF8CStrings populated via isolatedCopy(): each copy owns its own CStringBuffer,
+        // referenced only by this thread, so nothing races the refresh — CStringBuffer is not
+        // ThreadSafeRefCounted, so we must never share a buffer across threads. NeverDestroyed avoids
+        // an exit-time destructor; each assignment releases the previous copy's buffer.
+        static thread_local NeverDestroyed<UTF8CString> lastOwner;
+        static thread_local NeverDestroyed<UTF8CString> lastHost;
 
-    setTrackerLookupCallback(context.get(), ^(nw_endpoint_t endpoint, const char** hostName, const char** owner, bool* canBlock) {
         if (auto address = ipAddress(endpoint)) {
-            if (auto* info = TrackerAddressLookupInfo::find(*address)) {
-                *owner = info->owner().data();
-                *hostName = info->host().data();
-                *canBlock = info->canBlock() == TrackerAddressLookupInfo::CanBlock::Yes;
-            }
+            bool matched = TrackerAddressLookupInfo::find(*address, [&](auto& info) {
+                lastOwner.get() = info.owner().isolatedCopy();
+                lastHost.get() = info.host().isolatedCopy();
+                *owner = lastOwner.get().legacyCStringPointer();
+                *hostName = lastHost.get().legacyCStringPointer();
+                *canBlock = info.canBlock() != TrackerAddressLookupInfo::CanBlock::No;
+            });
+            if (matched)
+                return;
         }
 
         if (auto host = hostname(endpoint)) {
             auto domain = WebCore::RegistrableDomain { URL { makeString("http://"_s, String::fromLatin1(*host)) } };
-            if (auto info = TrackerDomainLookupInfo::find(domain.string()); info.owner().length()) {
-                *owner = info.owner().data();
+            TrackerDomainLookupInfo::find(domain.string(), [&](auto& info) {
+                lastOwner.get() = info.owner().isolatedCopy();
+                *owner = lastOwner.get().legacyCStringPointer();
                 *hostName = *host;
-                *canBlock = info.canBlock() == TrackerDomainLookupInfo::CanBlock::Yes;
-            }
+                *canBlock = info.canBlock() != TrackerDomainLookupInfo::CanBlock::No;
+            });
         }
     });
 }
@@ -743,12 +847,12 @@ bool isKnownTrackerAddressOrDomain(StringView host)
     TrackerDomainLookupInfo::populateIfNeeded();
 
     if (auto address = URL::hostIsIPAddress(host) ? WebCore::IPAddress::fromString(host.toStringWithoutCopying()) : std::nullopt) {
-        if (TrackerAddressLookupInfo::find(*address))
+        if (TrackerAddressLookupInfo::contains(*address))
             return true;
     }
 
     auto domain = WebCore::RegistrableDomain { URL { makeString("http://"_s, host) } };
-    return TrackerDomainLookupInfo::find(domain.string()).owner().length();
+    return TrackerDomainLookupInfo::contains(domain.string());
 }
 
 WebCore::IsKnownCrossSiteTracker isRequestToKnownCrossSiteTracker(const WebCore::ResourceRequest& request)
@@ -846,17 +950,60 @@ void ScriptTrackingPrivacyController::updateList(CompletionHandler<void()>&& com
 #endif
 }
 
-WPResourceType ScriptTrackingPrivacyController::resourceType() const
-{
-    return WPResourceTypeFingerprintingScripts;
-}
-
 unsigned ScriptTrackingPrivacyController::resourceTypeValue() const
 {
     return WPResourceTypeFingerprintingScripts;
 }
 
 void ScriptTrackingPrivacyController::didUpdateCachedListData()
+{
+    m_cachedListData.firstPartyTopDomains.shrinkToFit();
+    m_cachedListData.firstPartyHosts.shrinkToFit();
+    m_cachedListData.thirdPartyTopDomains.shrinkToFit();
+    m_cachedListData.thirdPartyHosts.shrinkToFit();
+}
+
+void ConsistentPrivacyQuirkController::updateList(CompletionHandler<void()>&& completion)
+{
+    ASSERT(RunLoop::isMain());
+#if ENABLE(SCRIPT_TRACKING_PRIVACY_PROTECTIONS)
+    if (!PAL::isWebPrivacyFrameworkAvailable() || ![PAL::getWPResourcesClassSingleton() instancesRespondToSelector:@selector(requestFingerprintingScripts:completionHandler:)]) {
+        RunLoop::mainSingleton().dispatch(WTF::move(completion));
+        return;
+    }
+
+    static MainRunLoopNeverDestroyed<Vector<CompletionHandler<void()>, 1>> pendingCompletionHandlers;
+    pendingCompletionHandlers->append(WTF::move(completion));
+    if (pendingCompletionHandlers->size() > 1)
+        return;
+
+    RetainPtr options = adoptNS([PAL::allocWPResourceRequestOptionsInstance() init]);
+    [options setAfterUpdates:NO];
+
+    [[PAL::getWPResourcesClassSingleton() sharedInstance] requestFingerprintingScripts:options.get() completionHandler:^(NSArray<WPFingerprintingScript *> *, NSError *error) {
+        auto callCompletionHandlers = makeScopeExit([&] {
+            for (auto& completionHandler : std::exchange(pendingCompletionHandlers.get(), { }))
+                completionHandler();
+        });
+
+        if (error) {
+            RELEASE_LOG_ERROR(ResourceLoadStatistics, "Failed to request known fingerprinting scripts from WebPrivacy for consistent privacy quirks: %@", error);
+            return;
+        }
+
+        setCachedListData({ });
+    }];
+#else
+    RunLoop::mainSingleton().dispatch(WTF::move(completion));
+#endif
+}
+
+unsigned ConsistentPrivacyQuirkController::resourceTypeValue() const
+{
+    return WPResourceTypeConsistentPrivacyQuirk;
+}
+
+void ConsistentPrivacyQuirkController::didUpdateCachedListData()
 {
     m_cachedListData.firstPartyTopDomains.shrinkToFit();
     m_cachedListData.firstPartyHosts.shrinkToFit();

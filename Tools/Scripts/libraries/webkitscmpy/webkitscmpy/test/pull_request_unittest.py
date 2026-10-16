@@ -24,6 +24,7 @@ import logging
 import os
 import time
 import unittest
+from contextlib import contextmanager
 from unittest.mock import patch
 
 from webkitbugspy import Tracker, bugzilla, github, radar
@@ -32,7 +33,7 @@ from webkitcorepy import OutputCapture, testing
 from webkitcorepy.mocks import Environment
 from webkitcorepy.mocks import Terminal as MockTerminal
 
-from webkitscmpy import Commit, Contributor, PullRequest, local, mocks, program, remote
+from webkitscmpy import Commit, CommitClassifier, Contributor, PullRequest, local, mocks, program, remote
 
 
 class TestPullRequest(unittest.TestCase):
@@ -603,6 +604,64 @@ No pre-PR checks to run""")
                 "https://github.example.com/WebKit/WebKit/pull/1\n",
             )
 
+    def test_github_sticky_no_update_title(self):
+        with mocks.remote.GitHub() as remote, mocks.local.Git(
+            self.path,
+            remote='https://{}'.format(remote.remote),
+            remotes=dict(fork='https://{}/Contributor/WebKit'.format(remote.hosts[0])),
+        ) as repo, mocks.local.Svn(), patch('webkitbugspy.Tracker._trackers', []):
+            with OutputCapture():
+                repo.staged['added.txt'] = 'added'
+                self.assertEqual(0, program.main(
+                    args=('pull-request', '-i', 'pr-branch'),
+                    path=self.path,
+                ))
+
+            repo.edit_config('webkitscmpy.update-title', 'false')
+
+            with OutputCapture(level=logging.INFO) as captured:
+                repo.staged['added.txt'] = 'diff'
+                self.assertEqual(0, program.main(
+                    args=('pull-request', '-v', '--no-history'),
+                    path=self.path,
+                ))
+
+            self.assertEqual(local.Git(self.path).remote().pull_requests.get(1).title, '[Testing] Creating commits')
+            self.assertEqual(
+                captured.stdout.getvalue(),
+                "Updated 'PR 1 | [Testing] Creating commits'!\n"
+                "https://github.example.com/WebKit/WebKit/pull/1\n",
+            )
+
+    def test_github_sticky_update_title_override(self):
+        with mocks.remote.GitHub() as remote, mocks.local.Git(
+            self.path,
+            remote='https://{}'.format(remote.remote),
+            remotes=dict(fork='https://{}/Contributor/WebKit'.format(remote.hosts[0])),
+        ) as repo, mocks.local.Svn(), patch('webkitbugspy.Tracker._trackers', []):
+            with OutputCapture():
+                repo.staged['added.txt'] = 'added'
+                self.assertEqual(0, program.main(
+                    args=('pull-request', '-i', 'pr-branch'),
+                    path=self.path,
+                ))
+
+            repo.edit_config('webkitscmpy.update-title', 'false')
+
+            with OutputCapture(level=logging.INFO) as captured:
+                repo.staged['added.txt'] = 'diff'
+                self.assertEqual(0, program.main(
+                    args=('pull-request', '-v', '--no-history', '--update-title'),
+                    path=self.path,
+                ))
+
+            self.assertEqual(local.Git(self.path).remote().pull_requests.get(1).title, '[Testing] Amending commits')
+            self.assertEqual(
+                captured.stdout.getvalue(),
+                "Updated 'PR 1 | [Testing] Amending commits'!\n"
+                "https://github.example.com/WebKit/WebKit/pull/1\n",
+            )
+
     def test_github_sticky_remote(self):
         with mocks.remote.GitHub(remote='github.example.com/WebKit/WebKit-security') as remote, mocks.local.Git(
             self.path, remote='https://{}'.format(remote.remote),
@@ -788,6 +847,120 @@ No pre-PR checks to run""")
             ],
         )
 
+    def test_github_reopen_defaults(self):
+        with mocks.remote.GitHub() as remote, mocks.local.Git(
+            self.path, remote='https://{}'.format(remote.remote),
+            remotes=dict(fork='https://{}/Contributor/WebKit'.format(remote.hosts[0])),
+        ) as repo, mocks.local.Svn(), patch('webkitbugspy.Tracker._trackers', []):
+            with OutputCapture():
+                repo.staged['added.txt'] = 'added'
+                self.assertEqual(0, program.main(
+                    args=('pull-request', '-i', 'pr-branch'),
+                    path=self.path,
+                ))
+
+            local.Git(self.path).remote().pull_requests.get(1).close()
+            self.assertFalse(local.Git(self.path).remote().pull_requests.get(1).opened)
+
+            # Automation cannot answer the "this pull-request is closed" prompt, it must not re-use the closed pull-request
+            with OutputCapture(level=logging.INFO) as captured:
+                repo.staged['added.txt'] = 'diff'
+                self.assertEqual(0, program.main(
+                    args=('pull-request', '-v', '--no-history', '--defaults'),
+                    path=self.path,
+                ))
+
+            self.assertFalse(local.Git(self.path).remote().pull_requests.get(1).opened)
+            self.assertTrue(local.Git(self.path).remote().pull_requests.get(2).opened)
+            self.assertEqual(local.Git(self.path).remote().pull_requests.get(2).head, 'eng/pr-branch')
+
+        self.assertEqual(
+            captured.stdout.getvalue(),
+            "Created 'PR 2 | [Testing] Amending commits'!\n"
+            "https://github.example.com/WebKit/WebKit/pull/2\n",
+        )
+        self.assertEqual(captured.stderr.getvalue(), '')
+        log = captured.root.log.getvalue().splitlines()
+        self.assertEqual(
+            [line for line in log if 'Mock process' not in line], [
+                'Amending commit...',
+                "Rebasing 'eng/pr-branch' on 'main'...",
+                "Rebased 'eng/pr-branch' on 'main!'",
+                'Running pre-PR checks...',
+                'No pre-PR checks to run',
+                'Checking if PR already exists...',
+                'PR #1 found.',
+                "Updating 'main' on 'https://github.example.com/Contributor/WebKit'",
+                "Pushing 'eng/pr-branch' to 'fork'...",
+                "Creating pull-request for 'eng/pr-branch'...",
+            ],
+        )
+
+    def test_github_reopen_closed(self):
+        with mocks.remote.GitHub() as remote, mocks.local.Git(
+            self.path, remote='https://{}'.format(remote.remote),
+            remotes=dict(fork='https://{}/Contributor/WebKit'.format(remote.hosts[0])),
+        ) as repo, mocks.local.Svn(), patch('webkitbugspy.Tracker._trackers', []):
+            with OutputCapture():
+                repo.staged['added.txt'] = 'added'
+                self.assertEqual(0, program.main(
+                    args=('pull-request', '-i', 'pr-branch'),
+                    path=self.path,
+                ))
+
+            local.Git(self.path).remote().pull_requests.get(1).close()
+            self.assertFalse(local.Git(self.path).remote().pull_requests.get(1).opened)
+
+            # '--reopen-closed' is how automation opts into re-using a closed pull-request
+            with OutputCapture(level=logging.INFO) as captured:
+                repo.staged['added.txt'] = 'diff'
+                self.assertEqual(0, program.main(
+                    args=('pull-request', '-v', '--no-history', '--defaults', '--reopen-closed'),
+                    path=self.path,
+                ))
+
+            self.assertTrue(local.Git(self.path).remote().pull_requests.get(1).opened)
+
+        self.assertEqual(
+            captured.stdout.getvalue(),
+            "Updated 'PR 1 | [Testing] Amending commits'!\n"
+            "https://github.example.com/WebKit/WebKit/pull/1\n",
+        )
+        self.assertEqual(captured.stderr.getvalue(), '')
+
+    def test_find_existing_pull_request_prefers_open(self):
+        with OutputCapture(), mocks.remote.GitHub() as remote, mocks.local.Git(
+            self.path, remote='https://{}'.format(remote.remote),
+            remotes=dict(fork='https://{}/Contributor/WebKit'.format(remote.hosts[0])),
+        ), mocks.local.Svn(), patch('webkitbugspy.Tracker._trackers', []):
+            # A closed pull-request later in iteration order must not hide an open one
+            remote.pull_requests = [dict(
+                number=1,
+                state='open',
+                title='[Testing] Existing commit',
+                user=dict(login='rreviewer'),
+                body='#### 06de5d56554e693db72313f4ca1fb969c30b8ccb\n<pre>\n[Testing] Existing commit\n</pre>',
+                head=dict(ref='eng/pr-branch'),
+                base=dict(ref='main'),
+                draft=False,
+            ), dict(
+                number=2,
+                state='closed',
+                title='[Testing] Abandoned commit',
+                user=dict(login='rreviewer'),
+                body='#### 16de5d56554e693db72313f4ca1fb969c30b8ccb\n<pre>\n[Testing] Abandoned commit\n</pre>',
+                head=dict(ref='eng/pr-branch'),
+                base=dict(ref='main'),
+                draft=False,
+            )]
+
+            repository = local.Git(self.path)
+            existing_pr = program.PullRequest.find_existing_pull_request(
+                repository, repository.remote(), branch='eng/pr-branch',
+            )
+            self.assertEqual(1, existing_pr.number)
+            self.assertTrue(existing_pr.opened)
+
     def test_github_substring_branch(self):
         # Test that a branch that is a substring of another branch doesn't match
         # For example, 'eng/Adopt-LIFETIME_BOUND-for-WTF-Ref' should not match
@@ -867,6 +1040,60 @@ No pre-PR checks to run""")
                 "Creating pull-request for 'eng/Adopt-LIFETIME_BOUND-for-WTF-Ref'...",
             ],
         )
+
+    @contextmanager
+    def _unreviewed_with_reviewed_by_repo(self, message='Unreviewed, fix the build.\n\nReviewed by NOBODY (OOPS!)\n', extra_commits=None):
+        with OutputCapture(level=logging.INFO) as captured, mocks.remote.GitHub() as remote, mocks.local.Git(
+            self.path, remote='https://{}'.format(remote.remote),
+            remotes=dict(fork='https://{}/Contributor/WebKit'.format(remote.hosts[0])),
+        ) as repo, mocks.local.Svn(), patch('webkitbugspy.Tracker._trackers', []):
+            bad_commit = Commit(
+                hash='06de5d56554e693db72313f4ca1fb969c30b8ccb',
+                branch='eng/pr-branch',
+                author=dict(name='Tim Contributor', emails=['tcontributor@example.com']),
+                identifier='5.1@eng/pr-branch',
+                timestamp=int(time.time()),
+                message=message,
+            )
+            repo.commits['eng/pr-branch'] = [repo.commits[repo.default_branch][-1], bad_commit] + (extra_commits or [])
+            repo.head = repo.commits['eng/pr-branch'][-1]
+            yield repo, captured
+
+    def test_unreviewed_with_reviewed_by(self):
+        with self._unreviewed_with_reviewed_by_repo() as (repo, captured), MockTerminal.input('y'):
+            self.assertEqual(0, program.main(
+                args=('pull-request', '-v', '--no-history'),
+                path=self.path,
+            ))
+            self.assertNotIn('Reviewed by', repo.head.message)
+        self.assertEqual(captured.stderr.getvalue(), '')
+
+        with self._unreviewed_with_reviewed_by_repo() as (repo, captured), MockTerminal.input('n'):
+            self.assertEqual(0, program.main(
+                args=('pull-request', '-v', '--no-history'),
+                path=self.path,
+            ))
+            self.assertIn('Reviewed by', repo.head.message)
+        self.assertEqual(captured.stderr.getvalue(), '')
+
+        extra = Commit(
+            hash='17de5d56554e693db72313f4ca1fb969c30b8ccb',
+            branch='eng/pr-branch',
+            author=dict(name='Tim Contributor', emails=['tcontributor@example.com']),
+            identifier='5.2@eng/pr-branch',
+            timestamp=int(time.time()),
+            message='Unreviewed, fix the build again.\n\nReviewed by NOBODY (OOPS!)\n',
+        )
+        with self._unreviewed_with_reviewed_by_repo(extra_commits=[extra]) as (repo, captured):
+            self.assertEqual(1, program.main(
+                args=('pull-request', '-v', '--no-history'),
+                path=self.path,
+            ))
+        self.assertIn(
+            "Multiple commits are marked 'Unreviewed' or 'Versioning' but contain a 'Reviewed by' line, please fix before posting\n",
+            captured.stderr.getvalue(),
+        )
+
 
     def test_github_bugzilla(self):
         with OutputCapture(level=logging.INFO) as captured, mocks.remote.GitHub(projects=bmocks.PROJECTS) as remote, bmocks.Bugzilla(
@@ -990,6 +1217,139 @@ No pre-PR checks to run""")
                 'Synced PR labels with issue component!',
             ],
         )
+
+    def test_github_existing_branch_bugzilla(self):
+        with OutputCapture(level=logging.INFO) as captured, mocks.remote.GitHub(
+                projects=bmocks.PROJECTS) as remote, bmocks.Bugzilla(
+                self.BUGZILLA.split('://')[-1],
+                projects=bmocks.PROJECTS, issues=bmocks.ISSUES,
+                environment=Environment(
+                    BUGS_EXAMPLE_COM_USERNAME='tcontributor@example.com',
+                    BUGS_EXAMPLE_COM_PASSWORD='password',
+                )), patch(
+            'webkitbugspy.Tracker._trackers', [bugzilla.Tracker(self.BUGZILLA)],
+        ), mocks.local.Git(
+            self.path, remote='https://{}'.format(remote.remote),
+            remotes=dict(fork='https://{}/Contributor/WebKit'.format(remote.hosts[0])),
+        ) as repo, mocks.local.Svn(), MockTerminal.input('https://bugs.example.com/show_bug.cgi?id=1'):
+
+            repo.commits['eng/pr-branch'] = [
+                repo.commits[repo.default_branch][-1],
+                Commit(
+                    hash='06de5d56554e693db72313f4ca1fb969c30b8ccb',
+                    branch='eng/pr-branch',
+                    author=dict(name='Tim Contributor', emails=['tcontributor@example.com']),
+                    identifier="5.1@eng/pr-branch",
+                    timestamp=int(time.time()),
+                    message='[Testing] Existing commit'
+                )
+            ]
+            repo.head = repo.commits['eng/pr-branch'][-1]
+            repo.staged['added.txt'] = 'added'
+            self.assertEqual(0, program.main(
+                args=('pull-request', '-v', '--no-history', '--commit'),
+                path=self.path,
+            ))
+
+            self.assertEqual(
+                Tracker.instance().issue(1).comments[-1].content,
+                'Pull request: https://github.example.com/WebKit/WebKit/pull/1',
+            )
+
+        self.assertEqual(
+            captured.stdout.getvalue(),
+            "Enter issue URL, Bugzilla ID, or title of new issue: \n"
+            "Created 'PR 1 | Example issue 1'!\n"
+            "Posted pull request link to https://bugs.example.com/show_bug.cgi?id=1\n"
+            "https://github.example.com/WebKit/WebKit/pull/1\n",
+        )
+        self.assertEqual(captured.stderr.getvalue(), '')
+
+    def test_github_existing_branch_bugzilla_id(self):
+        with OutputCapture(level=logging.INFO) as captured, mocks.remote.GitHub(
+                projects=bmocks.PROJECTS) as remote, bmocks.Bugzilla(
+                self.BUGZILLA.split('://')[-1],
+                projects=bmocks.PROJECTS, issues=bmocks.ISSUES,
+                environment=Environment(
+                    BUGS_EXAMPLE_COM_USERNAME='tcontributor@example.com',
+                    BUGS_EXAMPLE_COM_PASSWORD='password',
+                )), patch(
+            'webkitbugspy.Tracker._trackers', [bugzilla.Tracker(self.BUGZILLA)],
+        ), mocks.local.Git(
+            self.path, remote='https://{}'.format(remote.remote),
+            remotes=dict(fork='https://{}/Contributor/WebKit'.format(remote.hosts[0])),
+        ) as repo, mocks.local.Svn(), MockTerminal.input('1'):
+
+            repo.commits['eng/pr-branch'] = [
+                repo.commits[repo.default_branch][-1],
+                Commit(
+                    hash='06de5d56554e693db72313f4ca1fb969c30b8ccb',
+                    branch='eng/pr-branch',
+                    author=dict(name='Tim Contributor', emails=['tcontributor@example.com']),
+                    identifier="5.1@eng/pr-branch",
+                    timestamp=int(time.time()),
+                    message='[Testing] Existing commit'
+                )
+            ]
+            repo.head = repo.commits['eng/pr-branch'][-1]
+            repo.staged['added.txt'] = 'added'
+            self.assertEqual(0, program.main(
+                args=('pull-request', '-v', '--no-history', '--commit'),
+                path=self.path,
+            ))
+
+            self.assertEqual(
+                Tracker.instance().issue(1).comments[-1].content,
+                'Pull request: https://github.example.com/WebKit/WebKit/pull/1',
+            )
+
+        self.assertEqual(
+            captured.stdout.getvalue(),
+            "Enter issue URL, Bugzilla ID, or title of new issue: \n"
+            "Created 'PR 1 | Example issue 1'!\n"
+            "Posted pull request link to https://bugs.example.com/show_bug.cgi?id=1\n"
+            "https://github.example.com/WebKit/WebKit/pull/1\n",
+        )
+        self.assertEqual(captured.stderr.getvalue(), '')
+
+    def test_github_existing_branch_no_staged_changes(self):
+        with OutputCapture(level=logging.INFO) as captured, mocks.remote.GitHub(
+                projects=bmocks.PROJECTS) as remote, bmocks.Bugzilla(
+                self.BUGZILLA.split('://')[-1],
+                projects=bmocks.PROJECTS, issues=bmocks.ISSUES,
+                environment=Environment(
+                    BUGS_EXAMPLE_COM_USERNAME='tcontributor@example.com',
+                    BUGS_EXAMPLE_COM_PASSWORD='password',
+                )), patch(
+            'webkitbugspy.Tracker._trackers', [bugzilla.Tracker(self.BUGZILLA)],
+        ), mocks.local.Git(
+            self.path, remote='https://{}'.format(remote.remote),
+            remotes=dict(fork='https://{}/Contributor/WebKit'.format(remote.hosts[0])),
+        ) as repo, mocks.local.Svn(), MockTerminal.input('https://bugs.example.com/show_bug.cgi?id=1'):
+
+            repo.commits['eng/pr-branch'] = [
+                repo.commits[repo.default_branch][-1],
+                Commit(
+                    hash='06de5d56554e693db72313f4ca1fb969c30b8ccb',
+                    branch='eng/pr-branch',
+                    author=dict(name='Tim Contributor', emails=['tcontributor@example.com']),
+                    identifier="5.1@eng/pr-branch",
+                    timestamp=int(time.time()),
+                    message='[Testing] Existing commit'
+                )
+            ]
+            repo.head = repo.commits['eng/pr-branch'][-1]
+            self.assertEqual(0, program.main(
+                args=('pull-request', '-v', '--no-history', '--commit'),
+                path=self.path,
+            ))
+
+            self.assertEqual(
+                Tracker.instance().issue(1).comments[-1].content,
+                'Pull request: https://github.example.com/WebKit/WebKit/pull/1',
+            )
+
+        self.assertEqual(captured.stderr.getvalue(), '')
 
     def test_github_branch_number(self):
         with OutputCapture(level=logging.INFO) as captured, mocks.remote.GitHub(
@@ -1258,6 +1618,117 @@ No pre-PR checks to run""")
             ],
         )
 
+    def test_github_bugzilla_gardening(self):
+        with OutputCapture(level=logging.INFO) as captured, mocks.remote.GitHub(projects=bmocks.PROJECTS) as remote, bmocks.Bugzilla(
+            self.BUGZILLA.split('://')[-1],
+            projects=bmocks.PROJECTS, issues=bmocks.ISSUES,
+            environment=Environment(
+                BUGS_EXAMPLE_COM_USERNAME='tcontributor@example.com',
+                BUGS_EXAMPLE_COM_PASSWORD='password',
+            )), patch(
+                'webkitbugspy.Tracker._trackers', [bugzilla.Tracker(self.BUGZILLA)],
+        ), mocks.local.Git(
+            self.path, remote='https://{}'.format(remote.remote),
+            remotes=dict(fork='https://{}/Contributor/WebKit'.format(remote.hosts[0])),
+        ) as repo, mocks.local.Svn():
+
+            repo.commits['eng/pr-branch'] = [
+                repo.commits[repo.default_branch][-1],
+                Commit(
+                    hash='06de5d56554e693db72313f4ca1fb969c30b8ccb',
+                    branch='eng/pr-branch',
+                    author=dict(name='Tim Contributor', emails=['tcontributor@example.com']),
+                    identifier="5.1@eng/pr-branch",
+                    timestamp=int(time.time()),
+                    message='[GARDENING] Existing commit\nbugs.example.com/show_bug.cgi?id=1'
+                )
+            ]
+            repo.head = repo.commits['eng/pr-branch'][-1]
+            self.assertEqual(0, program.main(
+                args=('pull-request', '-v', '--no-history'),
+                path=self.path,
+                classifier=CommitClassifier([CommitClassifier.CommitClass(
+                    name='Gardening',
+                    headers=[{'value': 'GARDENING', 'ratio': 85}],
+                )]),
+            ))
+
+            self.assertEqual(
+                Tracker.instance().issue(1).comments[-1].content,
+                'Test gardening pull request: https://github.example.com/WebKit/WebKit/pull/1',
+            )
+            gh_issue = github.Tracker('https://github.example.com/WebKit/WebKit').issue(1)
+            self.assertEqual(gh_issue.project, 'WebKit')
+            self.assertEqual(gh_issue.component, 'Text')
+
+        self.assertEqual(
+            captured.stdout.getvalue(),
+            "Created 'PR 1 | [GARDENING] Existing commit'!\n"
+            'Posted pull request link to https://bugs.example.com/show_bug.cgi?id=1\n'
+            'https://github.example.com/WebKit/WebKit/pull/1\n',
+        )
+        self.assertEqual(captured.stderr.getvalue(), '')
+        log = captured.root.log.getvalue().splitlines()
+        self.assertEqual(
+            [line for line in log if 'Mock process' not in line], [
+                "Using committed changes...",
+                "Rebasing 'eng/pr-branch' on 'main'...",
+                "Rebased 'eng/pr-branch' on 'main!'",
+                'Running pre-PR checks...',
+                'No pre-PR checks to run',
+                'Checking if PR already exists...',
+                'PR not found.',
+                "Updating 'main' on 'https://github.example.com/Contributor/WebKit'",
+                "Pushing 'eng/pr-branch' to 'fork'...",
+                "Creating pull-request for 'eng/pr-branch'...",
+                'Checking issue assignee...',
+                'Checking for pull request link in associated issue...',
+                'Syncing PR labels with issue component...',
+                'Synced PR labels with issue component!',
+            ],
+        )
+
+    def test_github_bugzilla_gardening_with_test_fix(self):
+        with OutputCapture(level=logging.INFO) as captured, mocks.remote.GitHub(projects=bmocks.PROJECTS) as remote, bmocks.Bugzilla(
+            self.BUGZILLA.split('://')[-1],
+            projects=bmocks.PROJECTS, issues=bmocks.ISSUES,
+            environment=Environment(
+                BUGS_EXAMPLE_COM_USERNAME='tcontributor@example.com',
+                BUGS_EXAMPLE_COM_PASSWORD='password',
+            )), patch(
+                'webkitbugspy.Tracker._trackers', [bugzilla.Tracker(self.BUGZILLA)],
+        ), mocks.local.Git(
+            self.path, remote='https://{}'.format(remote.remote),
+            remotes=dict(fork='https://{}/Contributor/WebKit'.format(remote.hosts[0])),
+        ) as repo, mocks.local.Svn():
+
+            repo.commits['eng/pr-branch'] = [
+                repo.commits[repo.default_branch][-1],
+                Commit(
+                    hash='06de5d56554e693db72313f4ca1fb969c30b8ccb',
+                    branch='eng/pr-branch',
+                    author=dict(name='Tim Contributor', emails=['tcontributor@example.com']),
+                    identifier="5.1@eng/pr-branch",
+                    timestamp=int(time.time()),
+                    message='[GARDENING] Existing commit\nbugs.example.com/show_bug.cgi?id=1'
+                )
+            ]
+            repo.head = repo.commits['eng/pr-branch'][-1]
+            self.assertEqual(0, program.main(
+                args=('pull-request', '-v', '--no-history'),
+                path=self.path,
+                classifier=CommitClassifier([CommitClassifier.CommitClass(
+                    name='Gardening',
+                    headers=[{'value': 'GARDENING', 'ratio': 85}],
+                    paths=['LayoutTests/TestExpectations', 'LayoutTests/.+-expected(-mismatch)?\\.'],
+                )]),
+            ))
+
+            self.assertEqual(
+                Tracker.instance().issue(1).comments[-1].content,
+                'Pull request: https://github.example.com/WebKit/WebKit/pull/1',
+            )
+
     def test_github_branch_secondary_redacted(self):
         with OutputCapture(level=logging.INFO) as captured, mocks.remote.GitHub(projects=bmocks.PROJECTS) as remote, bmocks.Bugzilla(
             self.BUGZILLA.split('://')[-1],
@@ -1506,6 +1977,7 @@ No pre-PR checks to run""")
             captured.stdout.getvalue(),
             "Created 'PR 1 | [Testing] Existing commit'!\n"
             'Posted pull request link to https://bugs.example.com/show_bug.cgi?id=1\n'
+            'Updated rdar://1 to Analyze/Review\n'
             'https://github.example.com/WebKit/WebKit/pull/1\n',
         )
         self.assertEqual(captured.stderr.getvalue(), '')
@@ -1582,6 +2054,7 @@ No pre-PR checks to run""")
             captured.stdout.getvalue(),
             "Created 'PR 1 | [Testing] Existing commit'!\n"
             'Posted pull request link to https://bugs.example.com/show_bug.cgi?id=1\n'
+            'Updated rdar://1 to Analyze/Review\n'
             'https://github.example.com/WebKit/WebKit/pull/1\n',
         )
         self.assertEqual(captured.stderr.getvalue(), '')
@@ -1661,6 +2134,7 @@ No pre-PR checks to run""")
             captured.stdout.getvalue(),
             "Created 'PR 1 | [Testing] Existing commit'!\n"
             'Posted pull request link to https://bugs.example.com/show_bug.cgi?id=1\n'
+            'Updated rdar://1 to Analyze/Review\n'
             'https://github.example.com/WebKit/WebKit/pull/1\n',
         )
         self.assertEqual(captured.stderr.getvalue(), '')
@@ -1731,6 +2205,7 @@ No pre-PR checks to run""")
             captured.stdout.getvalue(),
             "Created 'PR 1 | [Testing] Existing commit'!\n"
             'Posted pull request link to https://bugs.example.com/show_bug.cgi?id=1\n'
+            'Updated rdar://1 to Analyze/Review\n'
             'https://github.example.com/WebKit/WebKit/pull/1\n',
         )
         self.assertEqual(captured.stderr.getvalue(), '')
@@ -1753,6 +2228,91 @@ No pre-PR checks to run""")
                 'Synced PR labels with issue component!',
             ],
         )
+
+    def test_update_radar(self):
+        def run(commands, substate='Investigate', message=None):
+            issues = list(bmocks.ISSUES)
+            issues[0] = dict(bmocks.ISSUES[0], substate=substate)
+            if message is None:
+                message = '[Testing] Existing commit\nbugs.example.com/show_bug.cgi?id=1\n<rdar://problem/1>\n'
+
+            with mocks.remote.GitHub(projects=bmocks.PROJECTS) as remote, bmocks.Bugzilla(
+                self.BUGZILLA.split('://')[-1],
+                projects=bmocks.PROJECTS, issues=bmocks.ISSUES,
+                environment=Environment(
+                    BUGS_EXAMPLE_COM_USERNAME='tcontributor@example.com',
+                    BUGS_EXAMPLE_COM_PASSWORD='password',
+                ),
+            ), bmocks.Radar(issues=issues), patch(
+                'webkitbugspy.Tracker._trackers', [
+                    bugzilla.Tracker(self.BUGZILLA, radar_importer=bmocks.USERS['Radar WebKit Bug Importer']),
+                    radar.Tracker(),
+                ],
+            ), mocks.local.Git(
+                self.path, remote='https://{}'.format(remote.remote),
+                remotes=dict(fork='https://{}/Contributor/WebKit'.format(remote.hosts[0])),
+            ) as repo, mocks.local.Svn():
+
+                repo.commits['eng/pr-branch'] = [
+                    repo.commits[repo.default_branch][-1],
+                    Commit(
+                        hash='06de5d56554e693db72313f4ca1fb969c30b8ccb',
+                        branch='eng/pr-branch',
+                        author=dict(name='Tim Contributor', emails=['tcontributor@example.com']),
+                        identifier="5.1@eng/pr-branch",
+                        timestamp=int(time.time()),
+                        message=message
+                    )
+                ]
+
+                result = None
+                repo.head = repo.commits['eng/pr-branch'][-1]
+                for args in commands:
+                    result = program.main(args=args, path=self.path)
+                rdar_tracker = next(t for t in Tracker._trackers if isinstance(t, radar.Tracker))
+                return result, rdar_tracker.issue(1).substate
+
+        # on by default: Investigate → Review
+        result, substate = run([('pull-request', '--no-history')])
+        self.assertEqual(0, result)
+        self.assertEqual('Review', substate)
+
+        # on by default: Fix → Review
+        result, substate = run([('pull-request', '--no-history')], substate='Fix')
+        self.assertEqual(0, result)
+        self.assertEqual('Review', substate)
+
+        # draft PR: Investigate → Fix
+        result, substate = run([('pull-request', '--no-history', '--draft')])
+        self.assertEqual(0, result)
+        self.assertEqual('Fix', substate)
+
+        # existing draft PR re-pushed without --draft: still → Fix
+        result, substate = run([
+            ('pull-request', '--no-history', '--draft'),
+            ('pull-request', '--no-history'),
+        ])
+        self.assertEqual(0, result)
+        self.assertEqual('Fix', substate)
+
+        # --no-update-radar: no change
+        result, substate = run([('pull-request', '--no-history', '--no-update-radar')])
+        self.assertEqual(0, result)
+        self.assertEqual('Investigate', substate)
+
+        # substate not Investigate or Fix: no change
+        result, substate = run([('pull-request', '--no-history')], substate='Screen')
+        self.assertEqual(0, result)
+        self.assertEqual('Screen', substate)
+
+        # new radar: no change
+        result, substate = run(
+            [('pull-request', '--no-history')],
+            substate='Screen',
+            message='[Testing] Existing commit\nbugs.example.com/show_bug.cgi?id=1\n'
+        )
+        self.assertEqual(0, result)
+        self.assertEqual('Screen', substate)
 
     def test_no_update_issue(self):
         with OutputCapture(level=logging.INFO) as captured, mocks.remote.GitHub(projects=bmocks.PROJECTS) as remote, bmocks.Bugzilla(
@@ -1819,6 +2379,36 @@ No pre-PR checks to run""")
                 'Synced PR labels with issue component!',
             ],
         )
+
+    def test_no_update_issue_title(self):
+        with OutputCapture(level=logging.INFO) as captured, mocks.remote.GitHub(projects=bmocks.PROJECTS) as remote, bmocks.Bugzilla(
+            self.BUGZILLA.split('://')[-1],
+            projects=bmocks.PROJECTS, issues=bmocks.ISSUES,
+            environment=Environment(
+                BUGS_EXAMPLE_COM_USERNAME='tcontributor@example.com',
+                BUGS_EXAMPLE_COM_PASSWORD='password',
+            ),
+        ), patch(
+            'webkitbugspy.Tracker._trackers', [bugzilla.Tracker(self.BUGZILLA)],
+        ), mocks.local.Git(
+            self.path, remote='https://{}'.format(remote.remote),
+            remotes=dict(fork='https://{}/Contributor/WebKit'.format(remote.hosts[0])),
+        ) as repo, mocks.local.Svn(), MockTerminal.input('Example change without a bug'):
+
+            repo.staged['added.txt'] = 'added'
+            self.assertEqual(0, program.main(
+                args=('pull-request', '-v', '--no-history', '--no-issue'),
+                path=self.path,
+            ))
+
+        self.assertEqual(
+            captured.stdout.getvalue(),
+            "'main' is not a pull request branch, enter issue URL, Bugzilla ID, or name of new branch: \n"
+            "Created the local development branch 'eng/Example-change-without-a-bug'\n"
+            "Created 'PR 1 | Example change without a bug'!\n"
+            'https://github.example.com/WebKit/WebKit/pull/1\n',
+        )
+        self.assertEqual(captured.stderr.getvalue(), '')
 
     def test_bitbucket(self):
         with OutputCapture(level=logging.INFO) as captured, mocks.remote.BitBucket() as remote, mocks.local.Git(self.path, remote='ssh://git@{}/{}/{}.git'.format(
@@ -2053,6 +2643,7 @@ No pre-PR checks to run""")
             captured.stdout.getvalue(),
             "Created 'PR 1 | <rdar://problem/1> [Testing] Existing commit'!\n"
             'Posted pull request link to rdar://1\n'
+            'Updated rdar://1 to Analyze/Review\n'
             'https://bitbucket.example.com/projects/WEBKIT/repos/webkit/pull-requests/1/overview\n',
         )
         self.assertEqual(captured.stderr.getvalue(), '')
@@ -2105,6 +2696,7 @@ No pre-PR checks to run""")
             captured.stdout.getvalue(),
             "Created 'PR 1 | <rdar://problem/1> [Testing] Existing commit'!\n"
             'Posted pull request link to rdar://1\n'
+            'Updated rdar://1 to Analyze/Review\n'
             'https://bitbucket.example.com/projects/WEBKIT/repos/webkit/pull-requests/1/overview\n',
         )
         self.assertEqual(captured.stderr.getvalue(), '')
@@ -2125,6 +2717,21 @@ No pre-PR checks to run""")
             ],
         )
 
+    def test_redacts_credentials_in_traceback(self):
+        with OutputCapture(level=logging.INFO) as captured, \
+             mocks.local.Git(self.path), \
+             patch('webkitbugspy.Tracker._trackers', []), \
+             patch('webkitscmpy.program.pull_request.PullRequest.main', side_effect=Exception(
+                 "url: /rest/bug/1?login=myuser&password=mysecret"
+             )):
+            self.assertEqual(-1, program.main(
+                args=('pull-request',),
+                path=self.path,
+            ))
+        self.assertIn('login=<REDACTED>', captured.stderr.getvalue())
+        self.assertIn('password=<REDACTED>', captured.stderr.getvalue())
+        self.assertNotIn('myuser', captured.stderr.getvalue())
+        self.assertNotIn('mysecret', captured.stderr.getvalue())
 
 class TestNetworkPullRequestGitHub(unittest.TestCase):
     remote = 'https://github.example.com/WebKit/WebKit'
@@ -2221,6 +2828,21 @@ Reviewed by NOBODY (OOPS!).
             self.assertEqual(pr.title, 'Example Change')
             pr.generator.update(pr, title='New Title')
 
+            pr = remote.GitHub(self.remote).pull_requests.get(1)
+            self.assertEqual(pr.title, 'New Title')
+
+    def test_update_head_mismatch(self):
+        with self.webserver():
+            pr = remote.GitHub(self.remote).pull_requests.get(1)
+            self.assertEqual(pr.head, 'eng/pull-request')
+            with self.assertRaises(ValueError):
+                pr.generator.update(pr, head='eng/different-branch', title='New Title')
+
+    def test_update_same_head(self):
+        with self.webserver():
+            pr = remote.GitHub(self.remote).pull_requests.get(1)
+            self.assertEqual(pr.head, 'eng/pull-request')
+            pr.generator.update(pr, head='eng/pull-request', title='New Title')
             pr = remote.GitHub(self.remote).pull_requests.get(1)
             self.assertEqual(pr.title, 'New Title')
 

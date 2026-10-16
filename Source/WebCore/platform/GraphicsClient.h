@@ -25,15 +25,20 @@
 
 #pragma once
 
+#if ENABLE(OFFSCREEN_CANVAS)
+#include <WebCore/PlaceholderRenderingContextSource.h>
+#endif
 #include <WebCore/PlatformScreen.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-class DestinationColorSpace;
+class ColorSpace;
 class GraphicsContextGL;
 class ImageBuffer;
 class SerializedImageBuffer;
+
+struct ImageBufferTransferHandle;
 
 struct GraphicsContextGLAttributes;
 
@@ -53,6 +58,15 @@ public:
     virtual ~GraphicsClient() = default;
 
     virtual PlatformDisplayID displayID() const = 0;
+#if HAVE(IOSURFACE)
+    virtual bool useIOSurfaceWebKitBehavior() const { return false; }
+#endif
+
+#if ENABLE(OFFSCREEN_CANVAS)
+    // The source for an OffscreenCanvas whose placeholder is in another process. Null when this
+    // process cannot reach that placeholder.
+    virtual RefPtr<PlaceholderRenderingContextSource> createPlaceholderRenderingContextSource(const RemotePlaceholderRenderingContextIdentifier&) { return nullptr; }
+#endif
 
 #if ENABLE(WEBGL)
     virtual RefPtr<GraphicsContextGL> createGraphicsContextGL(const GraphicsContextGLAttributes&) const = 0;
@@ -63,10 +77,17 @@ public:
 
 private:
     // Called by passing GraphicsClient into ImageBuffer functions.
-    virtual RefPtr<ImageBuffer> createImageBuffer(const FloatSize&, RenderingMode, RenderingPurpose, float resolutionScale, const DestinationColorSpace&, ImageBufferFormat) const = 0;
+    virtual RefPtr<ImageBuffer> createImageBuffer(const FloatSize&, RenderingMode, RenderingPurpose, float resolutionScale, const ColorSpace&, ImageBufferFormat) const = 0;
 
     // Called by passing GraphicsClient into SerializedImageBuffer functions.
     virtual RefPtr<WebCore::ImageBuffer> sinkIntoImageBuffer(std::unique_ptr<WebCore::SerializedImageBuffer>) = 0;
+
+    // Called by passing GraphicsClient into ImageBuffer::createFromTransferHandle().
+    // Pure virtual rather than defaulted to nullptr here: a body would instantiate
+    // ~RefPtr<ImageBuffer> where ImageBuffer is still incomplete, and defining it out of line
+    // would make it the key function, putting the vtable in WebCore where subclasses in WebKit
+    // can't link against it.
+    virtual RefPtr<WebCore::ImageBuffer> createImageBufferFromTransferHandle(const ImageBufferTransferHandle&) = 0;
 
     friend class ImageBuffer;
     friend class SerializedImageBuffer;

@@ -26,34 +26,32 @@
 #include "config.h"
 #include "CSSPropertyParserConsumer+ViewTransition.h"
 
+#include "CSSCustomIdentValue.h"
 #include "CSSParserTokenRange.h"
-#include "CSSPrimitiveValue.h"
 #include "CSSPropertyParserConsumer+Ident.h"
+#include "CSSPropertyParserConsumer+List.h"
 #include "CSSValueKeywords.h"
 #include "CSSValueList.h"
-#include "CSSValuePool.h"
 
 namespace WebCore {
 namespace CSSPropertyParserHelpers {
 
-RefPtr<CSSValue> consumeViewTransitionTypes(CSSParserTokenRange& range, CSS::PropertyParserState&)
+RefPtr<CSSValue> consumeViewTransitionTypes(CSSParserTokenRange& range, CSS::PropertyParserState& state)
 {
     // <'types'> = none | <custom-ident>+
     // https://www.w3.org/TR/css-view-transitions-2/#descdef-view-transition-types
 
-    if (range.peek().id() == CSSValueNone)
+    if (range.peek().id() == CSSValueID::None)
         return consumeIdent(range);
 
     CSSValueListBuilder list;
     do {
-        if (range.peek().id() == CSSValueNone)
-            return nullptr;
-        auto type = consumeCustomIdent(range);
+        auto type = consumeUnresolvedCustomIdentExcluding(range, state, { CSSValueID::None });
         if (!type)
+             return nullptr;
+        if (type->value.startsWith("-ua-"_s))
             return nullptr;
-        if (type->customIdent().startsWith("-ua-"_s))
-            return nullptr;
-        list.append(type.releaseNonNull());
+        list.append(CSSCustomIdentValue::create(WTF::move(*type)));
     } while (!range.atEnd());
     return CSSValueList::createSpaceSeparated(WTF::move(list));
 }

@@ -27,15 +27,16 @@
 #include "LayoutState.h"
 
 #include "BlockFormattingState.h"
+#include "Document.h"
 #include "InlineContentCache.h"
 #include "LayoutBox.h"
 #include "LayoutBoxGeometry.h"
 #include "LayoutContainingBlockChainIterator.h"
 #include "LayoutElementBox.h"
 #include "LayoutInitialContainingBlock.h"
+#include "RenderBlockFlow.h"
 #include "RenderBox.h"
 #include "Settings.h"
-#include "TableFormattingState.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -95,53 +96,16 @@ BoxGeometry& LayoutState::ensureGeometryForBoxSlow(const Box& layoutBox)
     }).iterator->value;
 }
 
-bool LayoutState::hasFormattingState(const ElementBox& formattingContextRoot) const
-{
-    ASSERT(formattingContextRoot.establishesFormattingContext());
-    return m_blockFormattingStates.contains(formattingContextRoot) || m_tableFormattingStates.contains(formattingContextRoot);
-}
-
-FormattingState& LayoutState::formattingStateForFormattingContext(const ElementBox& formattingContextRoot) const
-{
-    ASSERT(formattingContextRoot.establishesFormattingContext());
-
-    if (formattingContextRoot.establishesBlockFormattingContext())
-        return formattingStateForBlockFormattingContext(formattingContextRoot);
-
-    if (formattingContextRoot.establishesTableFormattingContext())
-        return formattingStateForTableFormattingContext(formattingContextRoot);
-
-    CRASH();
-}
-
-BlockFormattingState& LayoutState::formattingStateForBlockFormattingContext(const ElementBox& blockFormattingContextRoot) const
-{
-    ASSERT(blockFormattingContextRoot.establishesBlockFormattingContext());
-    return *m_blockFormattingStates.get(blockFormattingContextRoot);
-}
-
-TableFormattingState& LayoutState::formattingStateForTableFormattingContext(const ElementBox& tableFormattingContextRoot) const
-{
-    ASSERT(tableFormattingContextRoot.establishesTableFormattingContext());
-    return *m_tableFormattingStates.get(tableFormattingContextRoot);
-}
-
 InlineContentCache& LayoutState::inlineContentCache(const ElementBox& formattingContextRoot)
 {
     ASSERT(formattingContextRoot.establishesInlineFormattingContext());
-    return *m_inlineContentCaches.ensure(formattingContextRoot, [&] { return makeUnique<InlineContentCache>(); }).iterator->value;
+    return protect(downcast<RenderBlockFlow>(*formattingContextRoot.rendererForIntegration()))->ensureInlineContentCache();
 }
 
 BlockFormattingState& LayoutState::ensureBlockFormattingState(const ElementBox& formattingContextRoot)
 {
     ASSERT(formattingContextRoot.establishesBlockFormattingContext());
-    return *m_blockFormattingStates.ensure(formattingContextRoot, [&] { return makeUnique<BlockFormattingState>(*this, formattingContextRoot); }).iterator->value;
-}
-
-TableFormattingState& LayoutState::ensureTableFormattingState(const ElementBox& formattingContextRoot)
-{
-    ASSERT(formattingContextRoot.establishesTableFormattingContext());
-    return *m_tableFormattingStates.ensure(formattingContextRoot, [&] { return makeUnique<TableFormattingState>(*this, formattingContextRoot); }).iterator->value;
+    return *m_blockFormattingStates.ensure(formattingContextRoot, [&] { return makeUnique<BlockFormattingState>(formattingContextRoot); }).iterator->value;
 }
 
 void LayoutState::destroyBlockFormattingState(const ElementBox& formattingContextRoot)
@@ -150,30 +114,28 @@ void LayoutState::destroyBlockFormattingState(const ElementBox& formattingContex
     m_blockFormattingStates.remove(formattingContextRoot);
 }
 
-void LayoutState::destroyInlineContentCache(const ElementBox& formattingContextRoot)
+void LayoutState::layoutWithFormattingContextForBox(const ElementBox& box, std::optional<LayoutUnit> overridingBorderBoxLogicalWidth, std::optional<LayoutUnit> overridingBorderBoxLogicalHeight) const
 {
-    ASSERT(formattingContextRoot.establishesInlineFormattingContext());
-    m_inlineContentCaches.remove(formattingContextRoot);
-}
-
-void LayoutState::layoutWithFormattingContextForBox(const ElementBox& box, std::optional<LayoutUnit> widthConstraint, std::optional<LayoutUnit> heightConstraint) const
-{
-    const_cast<LayoutState&>(*this).m_formattingContextLayoutFunction(box, widthConstraint, heightConstraint, const_cast<LayoutState&>(*this));
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST const_cast<LayoutState&>(*this).m_formattingContextLayoutFunction(box, overridingBorderBoxLogicalWidth, overridingBorderBoxLogicalHeight, const_cast<LayoutState&>(*this));
 }
 
 LayoutUnit LayoutState::logicalWidthWithFormattingContextForBox(const ElementBox& box, LayoutIntegration::LogicalWidthType logicalWidthType) const
 {
-    return const_cast<LayoutState&>(*this).m_formattingContextLogicalWidthFunction(box, logicalWidthType);
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<LayoutState&>(*this).m_formattingContextLogicalWidthFunction(box, logicalWidthType);
 }
 
 LayoutUnit LayoutState::logicalHeightWithFormattingContextForBox(const ElementBox& box, LayoutIntegration::LogicalHeightType logicalHeightType) const
 {
-    return const_cast<LayoutState&>(*this).m_formattingContextLogicalHeightFunction(box, logicalHeightType);
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<LayoutState&>(*this).m_formattingContextLogicalHeightFunction(box, logicalHeightType);
 }
 
 void LayoutState::layoutWithFormattingContextForBlockInInline(const Layout::ElementBox& block, LayoutPoint blockLineLogicalTopLeft, const InlineLayoutState& inlineLayoutState) const
 {
-    const_cast<LayoutState&>(*this).m_formattingContextLayoutForBlockInInlineFunction(block, blockLineLogicalTopLeft, const_cast<InlineLayoutState&>(inlineLayoutState), const_cast<LayoutState&>(*this));
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST const_cast<LayoutState&>(*this).m_formattingContextLayoutForBlockInInlineFunction(block, blockLineLogicalTopLeft, const_cast<InlineLayoutState&>(inlineLayoutState), const_cast<LayoutState&>(*this));
 }
 
 }

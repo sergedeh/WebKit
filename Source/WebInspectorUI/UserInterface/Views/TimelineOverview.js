@@ -374,10 +374,13 @@ WI.TimelineOverview = class TimelineOverview extends WI.View
 
     closed()
     {
+        this._recording.removeEventListener(WI.TimelineRecording.Event.InstrumentAdded, this._instrumentAdded, this);
+        this._recording.removeEventListener(WI.TimelineRecording.Event.InstrumentRemoved, this._instrumentRemoved, this);
+        this._recording.removeEventListener(WI.TimelineRecording.Event.MarkerAdded, this._markerAdded, this);
+        this._recording.removeEventListener(WI.TimelineRecording.Event.Reset, this._recordingReset, this);
+
         WI.timelineManager.removeEventListener(WI.TimelineManager.Event.CapturingStateChanged, this._handleTimelineCapturingStateChanged, this);
         WI.timelineManager.removeEventListener(WI.TimelineManager.Event.RecordingImported, this._recordingImported, this);
-
-        super.closed();
     }
 
     reset()
@@ -1022,7 +1025,7 @@ WI.TimelineOverview = class TimelineOverview extends WI.View
 
     _handleTimelineCapturingStateChanged(event)
     {
-        switch (event.data.capturingState) {
+        switch (WI.timelineManager.capturingState) {
         case WI.TimelineManager.CapturingState.Active:
             this._editInstrumentsButton.enabled = false;
             this._stopEditingInstruments();
@@ -1036,6 +1039,9 @@ WI.TimelineOverview = class TimelineOverview extends WI.View
 
     _recordingImported(event)
     {
+        if (event.data.recording !== this._recording)
+            return;
+
         let {overviewData} = event.data;
 
         if (overviewData.secondsPerPixel !== undefined)

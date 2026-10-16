@@ -26,6 +26,7 @@
 #pragma once
 
 #include <JavaScriptCore/AbstractSlotVisitorInlines.h>
+#include <JavaScriptCore/Collector.h>
 #include <JavaScriptCore/HeapCellInlines.h>
 #include <JavaScriptCore/MarkedBlock.h>
 #include <JavaScriptCore/PreciseAllocation.h>
@@ -34,6 +35,11 @@
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
+
+inline void SlotVisitor::didRace(JSCell* cell, const char* reason)
+{
+    didRace(VisitRaceKey(cell, reason));
+}
 
 ALWAYS_INLINE void SlotVisitor::appendUnbarriered(JSValue* slot, size_t count)
 {
@@ -52,14 +58,14 @@ ALWAYS_INLINE void SlotVisitor::appendUnbarriered(JSCell* cell)
     Dependency dependency;
     if (cell->isPreciseAllocation()) [[unlikely]] {
         if (cell->preciseAllocation().isMarked()) [[likely]] {
-            if (!m_heapAnalyzer) [[likely]]
+            if (!m_isAnalyzingHeap) [[likely]]
                 return;
         }
     } else {
         MarkedBlock& block = cell->markedBlock();
         dependency = block.aboutToMark(m_markingVersion, cell);
         if (block.isMarked(cell, dependency)) [[likely]] {
-            if (!m_heapAnalyzer) [[likely]]
+            if (!m_isAnalyzingHeap) [[likely]]
                 return;
         }
     }
@@ -156,7 +162,8 @@ ALWAYS_INLINE void SlotVisitor::appendValuesHidden(const WriteBarrierBase<Unknow
 
 ALWAYS_INLINE bool SlotVisitor::isMarked(const void* p) const
 {
-    return heap()->isMarked(p);
+    HeapCell* cell = std::bit_cast<HeapCell*>(p);
+    return cell->cellContainer().isMarked(markingVersion(), cell);
 }
 
 ALWAYS_INLINE bool SlotVisitor::isMarked(MarkedBlock& container, HeapCell* cell) const
@@ -173,9 +180,15 @@ inline void SlotVisitor::reportExtraMemoryVisited(size_t size)
 {
     if (m_isFirstVisit) {
         m_nonCellVisitCount += size;
-        // FIXME: Change this to use SaturatedArithmetic when available.
+        // The memory belongs to the heap of the cell being visited.
+        JSC::Heap* heap = m_currentCell->heap();
+        if (heap != m_extraMemoryHeap) [[unlikely]] {
+            flushExtraMemoryVisited();
+            m_extraMemoryHeap = heap;
+        }
+        // FIXME: Change this to use SaturatingArithmetic when available.
         // https://bugs.webkit.org/show_bug.cgi?id=170411
-        m_extraMemorySize += size;
+        m_extraMemoryInHeap += size;
     }
 }
 
@@ -183,12 +196,12 @@ inline void SlotVisitor::reportExtraMemoryVisited(size_t size)
 inline void SlotVisitor::reportExternalMemoryVisited(size_t size)
 {
     if (m_isFirstVisit)
-        heap()->reportExternalMemoryVisited(size);
+        m_currentCell->heap()->reportExternalMemoryVisited(size);
 }
 #endif
 
 template<typename Func>
-IterationStatus SlotVisitor::forEachMarkStack(const Func& func)
+IterationStatus SlotVisitor::forEachMarkStack(NOESCAPE const Func& func)
 {
     if (func(m_collectorStack) == IterationStatus::Done)
         return IterationStatus::Done;

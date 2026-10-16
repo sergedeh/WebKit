@@ -37,6 +37,7 @@
 #include "WebSharedWorker.h"
 #include "WebSharedWorkerContextManagerConnectionMessages.h"
 #include "WebSharedWorkerServer.h"
+#include <WebCore/MessagePortChannelRegistry.h>
 #include <WebCore/ScriptExecutionContextIdentifier.h>
 #include <wtf/MemoryPressureHandler.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -51,26 +52,26 @@ constexpr Seconds idleTerminationDelay { 5_s };
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WebSharedWorkerServerToContextConnection);
 
-Ref<WebSharedWorkerServerToContextConnection> WebSharedWorkerServerToContextConnection::create(NetworkConnectionToWebProcess& connection, const WebCore::Site& site, WebSharedWorkerServer& server)
+Ref<WebSharedWorkerServerToContextConnection> WebSharedWorkerServerToContextConnection::create(NetworkConnectionToWebProcess& connection, const WebCore::Site& site, WebSharedWorkerServer& server, WebCore::CrossOriginEmbedderPolicyValue crossOriginEmbedderPolicy)
 {
-    return adoptRef(*new WebSharedWorkerServerToContextConnection(connection, site, server));
+    return adoptRef(*new WebSharedWorkerServerToContextConnection(connection, site, server, crossOriginEmbedderPolicy));
 }
 
-WebSharedWorkerServerToContextConnection::WebSharedWorkerServerToContextConnection(NetworkConnectionToWebProcess& connection, const WebCore::Site& site, WebSharedWorkerServer& server)
+WebSharedWorkerServerToContextConnection::WebSharedWorkerServerToContextConnection(NetworkConnectionToWebProcess& connection, const WebCore::Site& site, WebSharedWorkerServer& server, WebCore::CrossOriginEmbedderPolicyValue crossOriginEmbedderPolicy)
     : m_connection(connection)
     , m_server(server)
     , m_site(site)
     , m_idleTerminationTimer(*this, &WebSharedWorkerServerToContextConnection::idleTerminationTimerFired)
+    , m_crossOriginEmbedderPolicyValue(crossOriginEmbedderPolicy)
 {
     CONTEXT_CONNECTION_RELEASE_LOG("WebSharedWorkerServerToContextConnection:");
-    relaxAdoptionRequirement();
     server.addContextConnection(*this);
 }
 
 WebSharedWorkerServerToContextConnection::~WebSharedWorkerServerToContextConnection()
 {
     CONTEXT_CONNECTION_RELEASE_LOG("~WebSharedWorkerServerToContextConnection:");
-    if (CheckedPtr server = m_server.get(); server && server->contextConnectionForRegistrableDomain(registrableDomain()) == this)
+    if (CheckedPtr server = m_server.get(); server && server->contextConnectionForRegistrableDomain(registrableDomain(), m_crossOriginEmbedderPolicyValue) == this)
         server->removeContextConnection(*this);
 }
 
@@ -161,6 +162,14 @@ void WebSharedWorkerServerToContextConnection::resumeSharedWorker(WebCore::Share
 void WebSharedWorkerServerToContextConnection::postConnectEvent(const WebSharedWorker& sharedWorker, const WebCore::TransferredMessagePort& port, CompletionHandler<void(bool)>&& completionHandler)
 {
     CONTEXT_CONNECTION_RELEASE_LOG("postConnectEvent: sharedWorkerIdentifier=%" PRIu64, sharedWorker.identifier().toUInt64());
+
+    // SharedWorkers follow a different flow than normal MessagePort events
+    // We pre-record the destination so impending message checks pass.
+    if (RefPtr connection = m_connection.get()) {
+        Ref networkProcess = connection->networkProcess();
+        CheckedRef registry = networkProcess->messagePortChannelRegistry();
+        registry->recordPendingTransferDestination(port.first, connection->webProcessIdentifier());
+    }
     sendWithAsyncReply(Messages::WebSharedWorkerContextManagerConnection::PostConnectEvent { sharedWorker.identifier(), port, sharedWorker.origin().clientOrigin }, WTF::move(completionHandler));
 }
 
@@ -172,7 +181,7 @@ void WebSharedWorkerServerToContextConnection::terminateSharedWorker(const WebSh
 
 void WebSharedWorkerServerToContextConnection::addSharedWorkerObject(WebCore::SharedWorkerObjectIdentifier sharedWorkerObjectIdentifier)
 {
-    CONTEXT_CONNECTION_RELEASE_LOG("addSharedWorkerObject: sharedWorkerObjectIdentifier=%" PUBLIC_LOG_STRING, sharedWorkerObjectIdentifier.toString().utf8().data());
+    CONTEXT_CONNECTION_RELEASE_LOG("addSharedWorkerObject: sharedWorkerObjectIdentifier=%" PUBLIC_LOG_STRING, sharedWorkerObjectIdentifier.toString().utf8());
     auto& sharedWorkerObjects = m_sharedWorkerObjects.ensure(sharedWorkerObjectIdentifier.processIdentifier(), [] { return HashSet<WebCore::SharedWorkerObjectIdentifier> { }; }).iterator->value;
     ASSERT(!sharedWorkerObjects.contains(sharedWorkerObjectIdentifier));
     sharedWorkerObjects.add(sharedWorkerObjectIdentifier);
@@ -189,7 +198,7 @@ void WebSharedWorkerServerToContextConnection::addSharedWorkerObject(WebCore::Sh
 
 void WebSharedWorkerServerToContextConnection::removeSharedWorkerObject(WebCore::SharedWorkerObjectIdentifier sharedWorkerObjectIdentifier)
 {
-    CONTEXT_CONNECTION_RELEASE_LOG("removeSharedWorkerObject: sharedWorkerObjectIdentifier=%" PUBLIC_LOG_STRING, sharedWorkerObjectIdentifier.toString().utf8().data());
+    CONTEXT_CONNECTION_RELEASE_LOG("removeSharedWorkerObject: sharedWorkerObjectIdentifier=%" PUBLIC_LOG_STRING, sharedWorkerObjectIdentifier.toString().utf8());
     auto it = m_sharedWorkerObjects.find(sharedWorkerObjectIdentifier.processIdentifier());
     ASSERT(it != m_sharedWorkerObjects.end());
     if (it == m_sharedWorkerObjects.end())

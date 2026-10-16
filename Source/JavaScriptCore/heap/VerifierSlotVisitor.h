@@ -67,14 +67,14 @@ public:
         MarkerData& operator=(MarkerData&&) = default;
 
         ReferrerToken referrer() const { return m_referrer; }
-        StackTrace* stack() const { return m_stack.get(); }
+        StackTrace* stack() const LIFETIME_BOUND { return m_stack.get(); }
 
     private:
         ReferrerToken m_referrer;
         std::unique_ptr<StackTrace> m_stack;
     };
 
-    VerifierSlotVisitor(Heap&);
+    explicit VerifierSlotVisitor(Collector&);
     ~VerifierSlotVisitor();
 
     void append(const ConservativeRoots&) final;
@@ -93,7 +93,7 @@ public:
     void reportExternalMemoryVisited(size_t) final { }
 #endif
 
-    bool mutatorIsStopped() const final;
+    bool mutatorsAreStopped() const final;
 
     void didAddOpaqueRoot(void*) final;
     void didFindOpaqueRoot(void*) final;
@@ -109,9 +109,9 @@ public:
     NO_RETURN_DUE_TO_CRASH void addParallelConstraintTask(RefPtr<SharedTask<void(SlotVisitor&)>>) final;
     void executeConstraintTasks();
 
-    template<typename Functor> void forEachLiveCell(const Functor&);
-    template<typename Functor> void forEachLivePreciseAllocation(const Functor&);
-    template<typename Functor> void forEachLiveMarkedBlockCell(const Functor&);
+    template<typename Functor> void forEachLiveCell(NOESCAPE const Functor&);
+    template<typename Functor> void forEachLivePreciseAllocation(NOESCAPE const Functor&);
+    template<typename Functor> void forEachLiveMarkedBlockCell(NOESCAPE const Functor&);
 
     JS_EXPORT_PRIVATE void dumpMarkerData(HeapCell*);
 
@@ -132,13 +132,13 @@ private:
         MarkedBlockData(MarkedBlock*);
 
         MarkedBlock* block() const { return m_block; }
-        const AtomsBitSet& atoms() const { return m_atoms; }
+        const AtomsBitSet& atoms() const LIFETIME_BOUND { return m_atoms; }
 
         bool isMarked(unsigned atomNumber) { return m_atoms.get(atomNumber); }
         bool testAndSetMarked(unsigned atomNumber) { return m_atoms.testAndSet(atomNumber); }
 
         void addMarkerData(unsigned atomNumber, MarkerData&&);
-        const MarkerData* markerData(unsigned atomNumber) const;
+        const MarkerData* LEGACY_NODELETE markerData(unsigned atomNumber) const;
 
     private:
         MarkedBlock* m_block { nullptr };

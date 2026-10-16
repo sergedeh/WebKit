@@ -26,6 +26,7 @@
 #pragma once
 
 #include "APIObject.h"
+#include <WebCore/SecurityOriginData.h>
 #include <wtf/Markable.h>
 #include <wtf/URL.h>
 #include <wtf/UUID.h>
@@ -34,6 +35,7 @@
 namespace WebKit {
 
 enum class UnifiedOriginStorageLevel : uint8_t;
+enum class TimeBasedEvictionMode : uint8_t;
 
 namespace WebPushD {
 struct WebPushDaemonConnectionConfiguration;
@@ -70,6 +72,18 @@ public:
     std::optional<double> originQuotaRatio() const { return m_originQuotaRatio; }
     void setOriginQuotaRatio(std::optional<double> ratio) { m_originQuotaRatio = ratio; }
 
+    static TimeBasedEvictionMode defaultTimeBasedEvictionMode();
+    TimeBasedEvictionMode timeBasedEvictionMode() const { return m_timeBasedEvictionMode; }
+    void setTimeBasedEvictionMode(TimeBasedEvictionMode mode) { m_timeBasedEvictionMode = mode; }
+    Seconds timeBasedEvictionThreshold() const { return m_timeBasedEvictionThreshold; }
+    void setTimeBasedEvictionThreshold(Seconds threshold) { m_timeBasedEvictionThreshold = threshold; }
+    std::optional<Seconds> lastModificationTimeUpdateIntervalOverride() const { return m_lastModificationTimeUpdateIntervalOverride; }
+    void setLastModificationTimeUpdateIntervalOverride(std::optional<Seconds> interval) { m_lastModificationTimeUpdateIntervalOverride = interval; }
+    std::optional<Seconds> timeBasedEvictionIntervalOverride() const { return m_timeBasedEvictionIntervalOverride; }
+    void setTimeBasedEvictionIntervalOverride(std::optional<Seconds> interval) { m_timeBasedEvictionIntervalOverride = interval; }
+    const Vector<WebCore::SecurityOriginData>& mockPushSubscriptionOriginsForTesting() const { return m_mockPushSubscriptionOriginsForTesting; }
+    void setMockPushSubscriptionOriginsForTesting(Vector<WebCore::SecurityOriginData>&& origins) { m_mockPushSubscriptionOriginsForTesting = WTF::move(origins); }
+
     std::optional<double> totalQuotaRatio() const { return m_totalQuotaRatio; }
     void setTotalQuotaRatio(std::optional<double> ratio) { m_totalQuotaRatio = ratio; }
 
@@ -84,43 +98,39 @@ public:
     void setIsDeclarativeWebPushEnabled(bool enabled) { m_isDeclarativeWebPushEnabled = enabled; }
 #endif
     
-    const String& mediaCacheDirectory() const { return m_directories.mediaCacheDirectory; }
+    const String& mediaCacheDirectory() const LIFETIME_BOUND { return m_directories.mediaCacheDirectory; }
     void setMediaCacheDirectory(String&& directory) { m_directories.mediaCacheDirectory = WTF::move(directory); }
     
-    const String& mediaKeysStorageDirectory() const { return m_directories.mediaKeysStorageDirectory; }
+    const String& mediaKeysStorageDirectory() const LIFETIME_BOUND { return m_directories.mediaKeysStorageDirectory; }
     void setMediaKeysStorageDirectory(String&& directory) { m_directories.mediaKeysStorageDirectory = WTF::move(directory); }
     
-    const String& alternativeServicesDirectory() const { return m_directories.alternativeServicesDirectory; }
+    const String& alternativeServicesDirectory() const LIFETIME_BOUND { return m_directories.alternativeServicesDirectory; }
     void setAlternativeServicesDirectory(String&& directory) { m_directories.alternativeServicesDirectory = WTF::move(directory); }
 
-    const String& javaScriptConfigurationDirectory() const { return m_directories.javaScriptConfigurationDirectory; }
+    const String& javaScriptConfigurationDirectory() const LIFETIME_BOUND { return m_directories.javaScriptConfigurationDirectory; }
     void setJavaScriptConfigurationDirectory(String&& directory) { m_directories.javaScriptConfigurationDirectory = WTF::move(directory); }
 
-    const String& searchFieldHistoryDirectory() const { return m_directories.searchFieldHistoryDirectory; }
+    const String& searchFieldHistoryDirectory() const LIFETIME_BOUND { return m_directories.searchFieldHistoryDirectory; }
     void setSearchFieldHistoryDirectory(String&& directory) { m_directories.searchFieldHistoryDirectory = WTF::move(directory); }
 
     // indexedDBDatabaseDirectory is sort of deprecated. Data is migrated from here to
     // generalStoragePath unless useCustomStoragePaths is true.
-    const String& indexedDBDatabaseDirectory() const { return m_directories.indexedDBDatabaseDirectory; }
+    const String& indexedDBDatabaseDirectory() const LIFETIME_BOUND { return m_directories.indexedDBDatabaseDirectory; }
     void setIndexedDBDatabaseDirectory(String&& directory) { m_directories.indexedDBDatabaseDirectory = WTF::move(directory); }
 
-    const String& webSQLDatabaseDirectory() const { return m_directories.webSQLDatabaseDirectory; }
+    const String& webSQLDatabaseDirectory() const LIFETIME_BOUND { return m_directories.webSQLDatabaseDirectory; }
     void setWebSQLDatabaseDirectory(String&& directory) { m_directories.webSQLDatabaseDirectory = WTF::move(directory); }
 
-    const String& hstsStorageDirectory() const { return m_directories.hstsStorageDirectory; }
+    const String& hstsStorageDirectory() const LIFETIME_BOUND { return m_directories.hstsStorageDirectory; }
     void setHSTSStorageDirectory(String&& directory) { m_directories.hstsStorageDirectory = WTF::move(directory); }
 
     // localStorageDirectory is sort of deprecated. Data is migrated from here to
     // generalStoragePath unless useCustomStoragePaths is true.
-    const String& localStorageDirectory() const { return m_directories.localStorageDirectory; }
+    const String& localStorageDirectory() const LIFETIME_BOUND { return m_directories.localStorageDirectory; }
     void setLocalStorageDirectory(String&& directory) { m_directories.localStorageDirectory = WTF::move(directory); }
 
-#if ENABLE(ARKIT_INLINE_PREVIEW)
-    const String& modelElementCacheDirectory() const { return m_directories.modelElementCacheDirectory; }
-    void setModelElementCacheDirectory(String&& directory) { m_directories.modelElementCacheDirectory = WTF::move(directory); }
-#endif
 
-    const String& boundInterfaceIdentifier() const { return m_boundInterfaceIdentifier; }
+    const String& boundInterfaceIdentifier() const LIFETIME_BOUND { return m_boundInterfaceIdentifier; }
     void setBoundInterfaceIdentifier(String&& identifier) { m_boundInterfaceIdentifier = WTF::move(identifier); }
 
     bool allowsCellularAccess() const { return m_allowsCellularAccess; }
@@ -155,56 +165,56 @@ public:
     void setProxyConfiguration(CFDictionaryRef configuration) { m_proxyConfiguration = configuration; }
 #endif
     
-    const String& deviceIdHashSaltsStorageDirectory() const { return m_directories.deviceIdHashSaltsStorageDirectory; }
+    const String& deviceIdHashSaltsStorageDirectory() const LIFETIME_BOUND { return m_directories.deviceIdHashSaltsStorageDirectory; }
     void setDeviceIdHashSaltsStorageDirectory(String&& directory) { m_directories.deviceIdHashSaltsStorageDirectory = WTF::move(directory); }
 
 #if ENABLE(ENCRYPTED_MEDIA)
-    const String& mediaKeysHashSaltsStorageDirectory() const { return m_directories.mediaKeysHashSaltsStorageDirectory; }
+    const String& mediaKeysHashSaltsStorageDirectory() const LIFETIME_BOUND { return m_directories.mediaKeysHashSaltsStorageDirectory; }
     void setMediaKeysHashSaltsStorageDirectory(String&& directory) { m_directories.mediaKeysHashSaltsStorageDirectory = WTF::move(directory); }
 #endif
 
-    const String& cookieStorageFile() const { return m_directories.cookieStorageFile; }
+    const String& cookieStorageFile() const LIFETIME_BOUND { return m_directories.cookieStorageFile; }
     void setCookieStorageFile(String&& directory) { m_directories.cookieStorageFile = WTF::move(directory); }
     
-    const String& resourceLoadStatisticsDirectory() const { return m_directories.resourceLoadStatisticsDirectory; }
+    const String& resourceLoadStatisticsDirectory() const LIFETIME_BOUND { return m_directories.resourceLoadStatisticsDirectory; }
     void setResourceLoadStatisticsDirectory(String&& directory) { m_directories.resourceLoadStatisticsDirectory = WTF::move(directory); }
 
-    const String& networkCacheDirectory() const { return m_directories.networkCacheDirectory; }
+    const String& networkCacheDirectory() const LIFETIME_BOUND { return m_directories.networkCacheDirectory; }
     void setNetworkCacheDirectory(String&& directory) { m_directories.networkCacheDirectory = WTF::move(directory); }
     
-    const String& cacheStorageDirectory() const { return m_directories.cacheStorageDirectory; }
+    const String& cacheStorageDirectory() const LIFETIME_BOUND { return m_directories.cacheStorageDirectory; }
     void setCacheStorageDirectory(String&& directory) { m_directories.cacheStorageDirectory = WTF::move(directory); }
 
-    const String& generalStorageDirectory() const { return m_directories.generalStorageDirectory; }
+    const String& generalStorageDirectory() const LIFETIME_BOUND { return m_directories.generalStorageDirectory; }
     void setGeneralStorageDirectory(String&& directory) { m_directories.generalStorageDirectory = WTF::move(directory); }
 
     UnifiedOriginStorageLevel unifiedOriginStorageLevel() const { return m_unifiedOriginStorageLevel; }
     void setUnifiedOriginStorageLevel(UnifiedOriginStorageLevel level) { m_unifiedOriginStorageLevel = level; }
 
-    const String& webPushPartitionString() const { return m_webPushPartitionString; }
+    const String& webPushPartitionString() const LIFETIME_BOUND { return m_webPushPartitionString; }
     void setWebPushPartitionString(String&& string) { m_webPushPartitionString = WTF::move(string); }
     
-    const String& serviceWorkerRegistrationDirectory() const { return m_directories.serviceWorkerRegistrationDirectory; }
+    const String& serviceWorkerRegistrationDirectory() const LIFETIME_BOUND { return m_directories.serviceWorkerRegistrationDirectory; }
     void setServiceWorkerRegistrationDirectory(String&& directory) { m_directories.serviceWorkerRegistrationDirectory = WTF::move(directory); }
     
     bool serviceWorkerProcessTerminationDelayEnabled() const { return m_serviceWorkerProcessTerminationDelayEnabled; }
     void setServiceWorkerProcessTerminationDelayEnabled(bool enabled) { m_serviceWorkerProcessTerminationDelayEnabled = enabled; }
 
-    const String& sourceApplicationBundleIdentifier() const { return m_sourceApplicationBundleIdentifier; }
+    const String& sourceApplicationBundleIdentifier() const LIFETIME_BOUND { return m_sourceApplicationBundleIdentifier; }
     void setSourceApplicationBundleIdentifier(String&& identifier) { m_sourceApplicationBundleIdentifier = WTF::move(identifier); }
 
-    const String& sourceApplicationSecondaryIdentifier() const { return m_sourceApplicationSecondaryIdentifier; }
+    const String& sourceApplicationSecondaryIdentifier() const LIFETIME_BOUND { return m_sourceApplicationSecondaryIdentifier; }
     void setSourceApplicationSecondaryIdentifier(String&& identifier) { m_sourceApplicationSecondaryIdentifier = WTF::move(identifier); }
     
 #if ENABLE(CONTENT_EXTENSIONS)
-    const String& resourceMonitorThrottlerDirectory() const { return m_directories.resourceMonitorThrottlerDirectory; }
+    const String& resourceMonitorThrottlerDirectory() const LIFETIME_BOUND { return m_directories.resourceMonitorThrottlerDirectory; }
     void setResourceMonitorThrottlerDirectory(String&& directory) { m_directories.resourceMonitorThrottlerDirectory = WTF::move(directory); }
 #endif
 
-    const URL& httpProxy() const { return m_httpProxy; }
+    const URL& httpProxy() const LIFETIME_BOUND { return m_httpProxy; }
     void setHTTPProxy(URL&& proxy) { m_httpProxy = WTF::move(proxy); }
 
-    const URL& httpsProxy() const { return m_httpsProxy; }
+    const URL& httpsProxy() const LIFETIME_BOUND { return m_httpsProxy; }
     void setHTTPSProxy(URL&& proxy) { m_httpsProxy = WTF::move(proxy); }
 
     bool deviceManagementRestrictionsEnabled() const { return m_deviceManagementRestrictionsEnabled; }
@@ -213,11 +223,14 @@ public:
     bool allLoadsBlockedByDeviceManagementRestrictionsForTesting() const { return m_allLoadsBlockedByDeviceManagementRestrictionsForTesting; }
     void setAllLoadsBlockedByDeviceManagementRestrictionsForTesting(bool blocked) { m_allLoadsBlockedByDeviceManagementRestrictionsForTesting = blocked; }
 
-    WebPushD::WebPushDaemonConnectionConfiguration webPushDaemonConnectionConfiguration() const;
+    WebPushD::WebPushDaemonConnectionConfiguration LEGACY_NODELETE webPushDaemonConnectionConfiguration() const;
 
-    const String& dataConnectionServiceType() const { return m_dataConnectionServiceType; }
+    const String& dataConnectionServiceType() const LIFETIME_BOUND { return m_dataConnectionServiceType; }
     void setDataConnectionServiceType(String&& type) { m_dataConnectionServiceType = WTF::move(type); }
-    
+
+    const String& ipAddressSpaceOverridesForTesting() const LIFETIME_BOUND { return m_ipAddressSpaceOverridesForTesting; }
+    void setIPAddressSpaceOverridesForTesting(String&& overrides) { m_ipAddressSpaceOverridesForTesting = WTF::move(overrides); }
+
     bool suppressesConnectionTerminationOnSystemChange() const { return m_suppressesConnectionTerminationOnSystemChange; }
     void setSuppressesConnectionTerminationOnSystemChange(bool suppresses) { m_suppressesConnectionTerminationOnSystemChange = suppresses; }
 
@@ -235,7 +248,7 @@ public:
     std::optional<unsigned> overrideServiceWorkerRegistrationCountTestingValue() const { return m_overrideServiceWorkerRegistrationCountTestingValue; }
     void setOverrideServiceWorkerRegistrationCountTestingValue(unsigned count) { m_overrideServiceWorkerRegistrationCountTestingValue = count; }
 
-    const URL& standaloneApplicationURL() const { return m_standaloneApplicationURL; }
+    const URL& standaloneApplicationURL() const LIFETIME_BOUND { return m_standaloneApplicationURL; }
     void setStandaloneApplicationURL(URL&& url) { m_standaloneApplicationURL = WTF::move(url); }
 
     bool enableInAppBrowserPrivacyForTesting() const { return m_enableInAppBrowserPrivacyForTesting; }
@@ -243,26 +256,35 @@ public:
     
     bool allowsHSTSWithUntrustedRootCertificate() const { return m_allowsHSTSWithUntrustedRootCertificate; }
     void setAllowsHSTSWithUntrustedRootCertificate(bool allows) { m_allowsHSTSWithUntrustedRootCertificate = allows; }
+
+    bool qualifiedServerTrustDebugEnabledForTesting() const { return m_qualifiedServerTrustDebugEnabledForTesting; }
+    void setQualifiedServerTrustDebugEnabledForTesting(bool enabled) { m_qualifiedServerTrustDebugEnabledForTesting = enabled; }
     
     void setPCMMachServiceName(String&& name) { m_pcmMachServiceName = WTF::move(name); }
-    const String& pcmMachServiceName() const { return m_pcmMachServiceName; }
+    const String& pcmMachServiceName() const LIFETIME_BOUND { return m_pcmMachServiceName; }
 
     void setWebPushMachServiceName(String&& name) { m_webPushMachServiceName = WTF::move(name); }
-    const String& webPushMachServiceName() const { return m_webPushMachServiceName; }
+    const String& webPushMachServiceName() const LIFETIME_BOUND { return m_webPushMachServiceName; }
 
     void setMemoryFootprintNotificationThresholds(Vector<size_t>&& thresholds) { m_memoryFootprintNotificationThresholds = WTF::move(thresholds); }
-    const Vector<size_t>& memoryFootprintNotificationThresholds() { return m_memoryFootprintNotificationThresholds; }
+    const Vector<size_t>& memoryFootprintNotificationThresholds() LIFETIME_BOUND { return m_memoryFootprintNotificationThresholds; }
 
 #if HAVE(WEBCONTENTRESTRICTIONS_PATH_SPI)
     void setWebContentRestrictionsConfigurationFile(String&& file) { m_webContentRestrictionsConfigurationFile = WTF::move(file); }
-    const String& webContentRestrictionsConfigurationFile() const { return m_webContentRestrictionsConfigurationFile; }
+    const String& webContentRestrictionsConfigurationFile() const LIFETIME_BOUND { return m_webContentRestrictionsConfigurationFile; }
 #endif
 
     void setAdditionalDomainsWithUserInteractionForTesting(String&& domains) { m_additionalDomainsWithUserInteractionForTesting = WTF::move(domains); }
-    const String& additionalDomainsWithUserInteractionForTesting() const { return m_additionalDomainsWithUserInteractionForTesting; }
+    const String& additionalDomainsWithUserInteractionForTesting() const LIFETIME_BOUND { return m_additionalDomainsWithUserInteractionForTesting; }
 
-    const String& enhancedSecurityDirectory() const { return m_directories.enhancedSecurityDirectory; }
+    const String& enhancedSecurityDirectory() const LIFETIME_BOUND { return m_directories.enhancedSecurityDirectory; }
     void setEnhancedSecurityDirectory(String&& directory) { m_directories.enhancedSecurityDirectory = WTF::move(directory); }
+
+    const String& isolatedSitesDirectory() const LIFETIME_BOUND { return m_directories.isolatedSitesDirectory; }
+    void setIsolatedSitesDirectory(String&& directory) { m_directories.isolatedSitesDirectory = WTF::move(directory); }
+
+    std::optional<unsigned> overridePersistentNotificationMinimumLifetimeForTesting() const { return m_overrideServiceWorkerRegistrationCountTestingValue; }
+    void setOverridePersistentNotificationMinimumLifetimeForTesting(unsigned count) { m_overrideServiceWorkerRegistrationCountTestingValue = count; }
 
     struct Directories {
         String alternativeServicesDirectory;
@@ -275,6 +297,7 @@ public:
         String generalStorageDirectory;
         String hstsStorageDirectory;
         String indexedDBDatabaseDirectory;
+        String isolatedSitesDirectory;
         String javaScriptConfigurationDirectory;
         String localStorageDirectory;
         String mediaCacheDirectory;
@@ -284,9 +307,6 @@ public:
         String searchFieldHistoryDirectory;
         String serviceWorkerRegistrationDirectory;
         String webSQLDatabaseDirectory;
-#if ENABLE(ARKIT_INLINE_PREVIEW)
-        String modelElementCacheDirectory;
-#endif
 #if ENABLE(CONTENT_EXTENSIONS)
         String resourceMonitorThrottlerDirectory;
 #endif
@@ -294,7 +314,7 @@ public:
         Directories isolatedCopy() const&;
         Directories isolatedCopy() &&;
     };
-    const Directories& directories() const { return m_directories; }
+    const Directories& directories() const LIFETIME_BOUND { return m_directories; }
 
 private:
     static Ref<WebsiteDataStoreConfiguration> create(IsPersistent isPersistent, ShouldInitializePaths shouldInitializePaths) { return adoptRef(*new WebsiteDataStoreConfiguration(isPersistent, shouldInitializePaths)); }
@@ -310,6 +330,11 @@ private:
     Directories m_directories;
     uint64_t m_perOriginStorageQuota;
     std::optional<double> m_originQuotaRatio;
+    TimeBasedEvictionMode m_timeBasedEvictionMode { defaultTimeBasedEvictionMode() };
+    Seconds m_timeBasedEvictionThreshold { 180 * 24_h };
+    std::optional<Seconds> m_lastModificationTimeUpdateIntervalOverride;
+    std::optional<Seconds> m_timeBasedEvictionIntervalOverride;
+    Vector<WebCore::SecurityOriginData> m_mockPushSubscriptionOriginsForTesting;
     std::optional<double> m_totalQuotaRatio;
     std::optional<uint64_t> m_standardVolumeCapacity;
     std::optional<uint64_t> m_volumeCapacityOverride;
@@ -323,6 +348,7 @@ private:
     String m_sourceApplicationSecondaryIdentifier;
     String m_boundInterfaceIdentifier;
     String m_dataConnectionServiceType;
+    String m_ipAddressSpaceOverridesForTesting;
     URL m_httpProxy;
     URL m_httpsProxy;
     bool m_deviceManagementRestrictionsEnabled { false };
@@ -346,6 +372,7 @@ private:
     URL m_standaloneApplicationURL;
     bool m_enableInAppBrowserPrivacyForTesting { false };
     bool m_allowsHSTSWithUntrustedRootCertificate { false };
+    bool m_qualifiedServerTrustDebugEnabledForTesting { false };
     bool m_trackingPreventionDebugModeEnabled { false };
 #if ENABLE(DECLARATIVE_WEB_PUSH)
     bool m_isDeclarativeWebPushEnabled { false };

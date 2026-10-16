@@ -35,16 +35,16 @@
 #import "JSContextPrivate.h"
 #import "JSContextRefInternal.h"
 #import "JSGlobalObject.h"
-#import "JSInternalPromise.h"
 #import "JSModuleLoader.h"
-#import "JSRetainPtr.h"
 #import "JSScriptInternal.h"
 #import "JSValueInternal.h"
 #import "JSVirtualMachineInternal.h"
 #import "JSWrapperMap.h"
 #import "JavaScriptCore.h"
 #import "ObjcRuntimeExtras.h"
+#import "OpaqueJSString.h"
 #import "StrongInlines.h"
+#import "TopExceptionScope.h"
 #import <wtf/RetainPtr.h>
 #import <wtf/WeakObjCPtr.h>
 
@@ -137,7 +137,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
         return [JSValue valueWithJSValueRef:result inContext:self];
     }
 
-    auto* apiGlobalObject = JSC::jsDynamicCast<JSC::JSAPIGlobalObject*>(globalObject);
+    auto* apiGlobalObject = dynamicDowncast<JSC::JSAPIGlobalObject>(globalObject);
     if (!apiGlobalObject)
         return [JSValue valueWithNewPromiseRejectedWithReason:[JSValue valueWithNewErrorFromMessage:@"Context does not support module loading" inContext:self] inContext:self];
 
@@ -165,7 +165,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     }
 
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSC::JSArray* result = globalObject->moduleLoader()->dependencyKeysIfEvaluated(globalObject, JSC::jsString(vm, String([[script sourceURL] absoluteString])));
+    JSC::JSArray* result = globalObject->moduleLoader()->dependencyKeysIfEvaluated(globalObject, String([[script sourceURL] absoluteString]));
     if (scope.exception()) {
         JSValueRef exceptionValue = toRef(globalObject, scope.exception()->value());
         scope.clearException();
@@ -259,13 +259,11 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 - (NSString *)name
 {
-    // FIXME: This looks like a static analysis false positive (rdar://145661220).
-    SUPPRESS_UNCOUNTED_ARG auto name = adopt(JSGlobalContextCopyName(m_context));
+    RefPtr name = adoptRef(JSGlobalContextCopyName(m_context));
     if (!name)
         return nil;
 
-    // FIXME: This looks like a static analysis false positive (rdar://145661220).
-    SUPPRESS_UNCOUNTED_ARG return adoptCF(JSStringCopyCFString(kCFAllocatorDefault, name.get())).bridgingAutorelease();
+    return adoptCF(JSStringCopyCFString(kCFAllocatorDefault, name.get())).bridgingAutorelease();
 }
 
 - (void)setName:(NSString *)name

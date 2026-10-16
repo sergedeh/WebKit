@@ -25,8 +25,9 @@
 
 #pragma once
 
+#include <WebCore/FontBaseline.h>
 #include <WebCore/InlineLevelBox.h>
-#include <WebCore/InlineLine.h>
+#include <WebCore/InlineLineRun.h>
 #include <WebCore/InlineRect.h>
 #include <WebCore/LayoutElementBox.h>
 #include <wtf/TZoneMalloc.h>
@@ -59,35 +60,38 @@ class RubyFormattingContext;
 class LineBox {
     WTF_MAKE_TZONE_ALLOCATED(LineBox);
 public:
-    LineBox(const Box& rootLayoutBox, InlineLayoutUnit contentLogicalLeft, InlineLayoutUnit contentLogicalWidth, size_t lineIndex, bool isFirstFormattedLine, size_t nonSpanningInlineLevelBoxCount);
+    LineBox(const Box& rootLayoutBox, InlineLayoutUnit contentLogicalLeft, InlineLayoutUnit contentLogicalWidth, size_t lineIndex, bool isFirstFormattedLine, bool hasBlockEllipsisContentOnly, size_t nonSpanningInlineLevelBoxCount);
 
     // Note that the line can have many inline boxes and be "empty" the same time e.g. <div><span></span><span></span></div>
-    bool hasContent() const { return m_hasContent; }
     bool hasInlineBox() const { return m_boxTypes.contains(InlineLevelBox::Type::InlineBox); }
     bool hasNonInlineBox() const { return m_boxTypes.containsAny({ InlineLevelBox::Type::AtomicInlineBox, InlineLevelBox::Type::LineBreakBox, InlineLevelBox::Type::GenericInlineLevelBox }); }
     bool hasAtomicInlineBox() const { return m_boxTypes.contains(InlineLevelBox::Type::AtomicInlineBox); }
 
-    InlineRect logicalRectForTextRun(const Line::Run&) const;
+    InlineRect logicalRectForTextRun(const LineRun&) const;
     InlineRect logicalRectForLineBreakBox(const Box&) const;
     InlineRect logicalRectForRootInlineBox() const { return m_rootInlineBox.logicalRect(); }
     InlineRect logicalBorderBoxForAtomicInlineBox(const Box&, const BoxGeometry&) const;
     InlineRect logicalBorderBoxForInlineBox(const Box&, const BoxGeometry&) const;
     InlineRect logicalContentBoxForInlineBox(const Box&) const;
 
-    const InlineLevelBox* inlineLevelBoxFor(const Box& layoutBox) const { return const_cast<LineBox&>(*this).inlineLevelBoxFor(layoutBox); }
-    const InlineLevelBox& inlineLevelBoxFor(const Line::Run& lineRun) const { return const_cast<LineBox&>(*this).inlineLevelBoxFor(lineRun); }
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    const InlineLevelBox* inlineLevelBoxFor(const Box& layoutBox) const LIFETIME_BOUND { SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<LineBox&>(*this).inlineLevelBoxFor(layoutBox); }
+    const InlineLevelBox& inlineLevelBoxFor(const LineRun& lineRun) const LIFETIME_BOUND { SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<LineBox&>(*this).inlineLevelBoxFor(lineRun); }
 
-    const InlineLevelBox& rootInlineBox() const { return m_rootInlineBox; }
+    const InlineLevelBox& rootInlineBox() const LIFETIME_BOUND { return m_rootInlineBox; }
     using InlineLevelBoxList = Vector<InlineLevelBox>;
-    const InlineLevelBoxList& nonRootInlineLevelBoxes() const { return m_nonRootInlineLevelBoxList; }
+    const InlineLevelBoxList& nonRootInlineLevelBoxes() const LIFETIME_BOUND { return m_nonRootInlineLevelBoxList; }
 
+    InlineLayoutUnit alignmentBaseline() const { return logicalRectForRootInlineBox().top() + rootInlineBox().ascent(); }
     FontBaseline baselineType() const { return m_baselineType; }
 
-    const InlineRect& logicalRect() const { return m_logicalRect; }
+    const InlineRect& logicalRect() const LIFETIME_BOUND { return m_logicalRect; }
 
     size_t lineIndex() const { return m_lineIndex; }
 
     bool isFirstFormattedLine() const { return m_isFirstFormattedLine; }
+
+    bool hasBlockEllipsisContentOnly() const { return m_hasBlockEllipsisContentOnly; }
 
 private:
     friend class LineBoxBuilder;
@@ -95,31 +99,32 @@ private:
     friend class RubyFormattingContext;
 
     void addInlineLevelBox(InlineLevelBox&&);
-    InlineLevelBoxList& nonRootInlineLevelBoxes() { return m_nonRootInlineLevelBoxList; }
+    InlineLevelBoxList& nonRootInlineLevelBoxes() LIFETIME_BOUND { return m_nonRootInlineLevelBoxList; }
 
-    InlineLevelBox& rootInlineBox() { return m_rootInlineBox; }
+    InlineLevelBox& rootInlineBox() LIFETIME_BOUND { return m_rootInlineBox; }
 
-    const InlineLevelBox& parentInlineBox(const InlineLevelBox& inlineLevelBox) const { return const_cast<LineBox&>(*this).parentInlineBox(inlineLevelBox); }
-    InlineLevelBox& parentInlineBox(const InlineLevelBox&);
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    const InlineLevelBox& parentInlineBox(const InlineLevelBox& inlineLevelBox) const LIFETIME_BOUND { SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<LineBox&>(*this).parentInlineBox(inlineLevelBox); }
+    InlineLevelBox& parentInlineBox(const InlineLevelBox&) LIFETIME_BOUND;
 
-    const InlineLevelBox& parentInlineBox(const Line::Run& lineRun) const { return const_cast<LineBox&>(*this).parentInlineBox(lineRun); }
-    InlineLevelBox& parentInlineBox(const Line::Run&);
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    const InlineLevelBox& parentInlineBox(const LineRun& lineRun) const LIFETIME_BOUND { SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<LineBox&>(*this).parentInlineBox(lineRun); }
+    InlineLevelBox& parentInlineBox(const LineRun&) LIFETIME_BOUND;
 
-    InlineLevelBox& inlineLevelBoxFor(const Line::Run&);
-    InlineLevelBox* inlineLevelBoxFor(const Box& layoutBox);
+    InlineLevelBox& inlineLevelBoxFor(const LineRun&) LIFETIME_BOUND;
+    InlineLevelBox* inlineLevelBoxFor(const Box& layoutBox) LIFETIME_BOUND;
 
     InlineRect logicalRectForInlineLevelBox(const Box& layoutBox) const;
 
     void setLogicalRect(const InlineRect& logicalRect) { m_logicalRect = logicalRect; }
-    void setHasContent(bool hasContent) { m_hasContent = hasContent; }
     void setBaselineType(FontBaseline baselineType) { m_baselineType = baselineType; }
 
     InlineLayoutUnit inlineLevelBoxAbsoluteTop(const InlineLevelBox&) const;
 
 private:
     size_t m_lineIndex { 0 };
-    bool m_hasContent { false };
     bool m_isFirstFormattedLine { true };
+    bool m_hasBlockEllipsisContentOnly { false };
     InlineRect m_logicalRect;
     EnumSet<InlineLevelBox::Type> m_boxTypes;
 
@@ -145,12 +150,12 @@ inline InlineLevelBox& LineBox::parentInlineBox(const InlineLevelBox& inlineLeve
     return *inlineLevelBoxFor(inlineLevelBox.layoutBox().parent());
 }
 
-inline InlineLevelBox& LineBox::parentInlineBox(const Line::Run& lineRun)
+inline InlineLevelBox& LineBox::parentInlineBox(const LineRun& lineRun)
 {
     return *inlineLevelBoxFor(lineRun.layoutBox().parent());
 }
 
-inline InlineLevelBox& LineBox::inlineLevelBoxFor(const Line::Run& lineRun)
+inline InlineLevelBox& LineBox::inlineLevelBoxFor(const LineRun& lineRun)
 {
     return *inlineLevelBoxFor(lineRun.layoutBox());
 }

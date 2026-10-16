@@ -33,6 +33,7 @@
 #if ENABLE(WK_WEB_EXTENSIONS)
 
 #import "CocoaHelpers.h"
+#import "CocoaImage.h"
 #import "FoundationSPI.h"
 #import "Logging.h"
 #import "WKWebExtensionInternal.h"
@@ -41,6 +42,7 @@
 #import <CoreFoundation/CFBundle.h>
 #import <WebCore/DataURLDecoder.h>
 #import <WebCore/LocalizedStrings.h>
+#import <WebCore/MIMETypeRegistry.h>
 #import <wtf/FileSystem.h>
 #import <wtf/cf/TypeCastsCF.h>
 #import <wtf/text/MakeString.h>
@@ -56,7 +58,6 @@
 
 SOFT_LINK_PRIVATE_FRAMEWORK(CoreSVG)
 SOFT_LINK(CoreSVG, CGSVGDocumentCreateFromData, CGSVGDocumentRef, (CFDataRef data, CFDictionaryRef options), (data, options))
-SOFT_LINK(CoreSVG, CGSVGDocumentRelease, void, (CGSVGDocumentRef document), (document))
 #endif
 
 namespace WebKit {
@@ -120,14 +121,15 @@ WebExtension::WebExtension(NSBundle *appExtensionBundle, NSURL *resourceURL, Ref
 
 WebExtension::WebExtension(NSDictionary *manifest, Resources&& resources)
     : m_manifestJSON(JSON::Value::null())
-    , m_resources(WTF::move(resources))
+    , m_dataResources(toDataResources(resources))
+    , m_stringResources(toStringResources(resources))
 {
     RELEASE_ASSERT(manifest);
 
     auto *manifestString = encodeJSONString(manifest);
     RELEASE_ASSERT(manifestString);
 
-    m_resources.set("manifest.json"_s, manifestString);
+    m_stringResources.set("manifest.json"_s, manifestString);
 }
 
 NSDictionary *WebExtension::manifestDictionary()
@@ -147,7 +149,8 @@ SecStaticCodeRef WebExtension::bundleStaticCode() const
     if (m_bundleStaticCode)
         return m_bundleStaticCode.get();
 
-    SecStaticCodeRef staticCodeRef;
+    // This is an out-parameter which is immediately adopted below.
+    SUPPRESS_UNRETAINED_LOCAL SecStaticCodeRef staticCodeRef;
     OSStatus error = SecStaticCodeCreateWithPath(retainPtr(bridge_cast(m_bundle.get().bundleURL)).get(), kSecCSDefaultFlags, &staticCodeRef);
     if (error != noErr || !staticCodeRef) {
         if (staticCodeRef)
@@ -209,7 +212,7 @@ bool WebExtension::validateResourceData(NSURL *resourceURL, NSData *resourceData
 }
 #endif // PLATFORM(MAC)
 
-Expected<Ref<API::Data>, RefPtr<API::Error>> WebExtension::resourceDataForPath(const String& originalPath, CacheResult cacheResult, SuppressNotFoundErrors suppressErrors)
+std::expected<Ref<API::Data>, RefPtr<API::Error>> WebExtension::resourceDataForPath(const String& originalPath, CacheResult cacheResult, SuppressNotFoundErrors suppressErrors)
 {
     ASSERT(originalPath);
 
@@ -239,20 +242,19 @@ Expected<Ref<API::Data>, RefPtr<API::Error>> WebExtension::resourceDataForPath(c
     if ([cocoaPath isEqualToString:generatedBackgroundPageFilename] || [cocoaPath isEqualToString:generatedBackgroundServiceWorkerFilename])
         return API::Data::create(generatedBackgroundContent().utf8().span());
 
-    if (auto entry = m_resources.find(path); entry != m_resources.end()) {
-        return WTF::switchOn(entry->value,
-            [](const Ref<API::Data>& data) {
-                return data;
-            },
-            [](const String& string) {
-                return API::Data::create(string.utf8().span());
-            });
+    if (auto maybeData = m_dataResources.getOptional(path))
+        return *maybeData;
+
+    if (auto maybeString = m_stringResources.getOptional(path)) {
+        auto data = API::Data::create(maybeString->utf8().span());
+        m_dataResources.set(path, data);
+        return data;
     }
 
     auto *resourceURL = resourceFileURLForPath(path).createNSURL().get();
     if (!resourceURL) {
         if (suppressErrors == SuppressNotFoundErrors::No)
-            return makeUnexpected(createError(Error::ResourceNotFound, WEB_UI_FORMAT_CFSTRING("Unable to find \"%@\" in the extension’s resources. It is an invalid path.", "WKWebExtensionErrorResourceNotFound description with invalid file path", bridge_cast(cocoaPath))));
+            return makeUnexpected(createError(Error::ResourceNotFound, WEB_UI_FORMAT_CFSTRING("Unable to find “%@” in the extension’s resources. It is an invalid path.", "WKWebExtensionErrorResourceNotFound description with invalid file path", bridge_cast(cocoaPath))));
         return makeUnexpected(nullptr);
     }
 
@@ -260,20 +262,20 @@ Expected<Ref<API::Data>, RefPtr<API::Error>> WebExtension::resourceDataForPath(c
     NSData *resultData = [NSData dataWithContentsOfURL:resourceURL options:NSDataReadingMappedIfSafe error:&fileReadError];
     if (!resultData) {
         if (suppressErrors == SuppressNotFoundErrors::No)
-            return makeUnexpected(createError(Error::ResourceNotFound, WEB_UI_FORMAT_CFSTRING("Unable to find \"%@\" in the extension’s resources.", "WKWebExtensionErrorResourceNotFound description with file name", bridge_cast(cocoaPath)), API::Error::create(fileReadError)));
+            return makeUnexpected(createError(Error::ResourceNotFound, WEB_UI_FORMAT_CFSTRING("Unable to find “%@” in the extension’s resources.", "WKWebExtensionErrorResourceNotFound description with file name", bridge_cast(cocoaPath)), API::Error::create(fileReadError)));
         return makeUnexpected(nullptr);
     }
 
 #if PLATFORM(MAC)
     NSError *validationError;
     if (!validateResourceData(resourceURL, resultData, &validationError)) {
-        return makeUnexpected(createError(Error::InvalidResourceCodeSignature, WEB_UI_FORMAT_CFSTRING("Unable to validate \"%@\" with the extension’s code signature. It likely has been modified since the extension was built.", "WKWebExtensionErrorInvalidResourceCodeSignature description with file name", bridge_cast(cocoaPath)), API::Error::create(validationError)));
+        return makeUnexpected(createError(Error::InvalidResourceCodeSignature, WEB_UI_FORMAT_CFSTRING("Unable to validate “%@” with the extension’s code signature. It likely has been modified since the extension was built.", "WKWebExtensionErrorInvalidResourceCodeSignature description with file name", bridge_cast(cocoaPath)), API::Error::create(validationError)));
     }
 #endif
 
     Ref data = API::Data::createWithoutCopying(resultData);
     if (cacheResult == CacheResult::Yes)
-        m_resources.set(path, data);
+        m_dataResources.set(path, data);
 
     return data;
 }
@@ -292,7 +294,7 @@ void WebExtension::recordError(Ref<API::Error> error)
     [wrapper() didChangeValueForKey:@"errors"];
 }
 
-Expected<Ref<WebCore::Icon>, RefPtr<API::Error>> WebExtension::iconForPath(const String& imagePath, WebCore::FloatSize sizeForResizing, std::optional<double> idealDisplayScale)
+std::expected<Ref<WebCore::Icon>, RefPtr<API::Error>> WebExtension::iconForPath(const String& imagePath, WebCore::FloatSize sizeForResizing, std::optional<double> idealDisplayScale)
 {
     ASSERT(!imagePath.isEmpty());
 
@@ -332,23 +334,52 @@ Expected<Ref<WebCore::Icon>, RefPtr<API::Error>> WebExtension::iconForPath(const
 
     CocoaImage *result;
 
-#if !USE(APPKIT)
     auto imageType = resourceMIMETypeForPath(imagePath);
     if (equalLettersIgnoringASCIICase(imageType, "image/svg+xml"_s)) {
-        CGSVGDocumentRef document = CGSVGDocumentCreateFromData(bridge_cast(imageData), nullptr);
+#if USE(APPKIT)
+        // The CGImageSource-backed helper below (called createCocoaImageRestrictedToSupportedTypes)
+        // only decodes bitmap formats, not vector SVG, so handle SVG separately here.
+        // This mirrors the existing iOS path below, which decodes SVG via CoreSVG.
+        if (Class svgImageRepClass = NSClassFromString(@"_NSSVGImageRep")) {
+            RetainPtr<NSImageRep> svgImageRep = adoptNS((NSImageRep *)[[svgImageRepClass alloc] initWithData:imageData]);
+            if (svgImageRep && !NSEqualSizes([svgImageRep size], NSZeroSize)) {
+                result = [[NSImage alloc] initWithSize:[svgImageRep size]];
+                [result addRepresentation:svgImageRep.get()];
+            }
+        }
+#else
+        RetainPtr document = adoptCF(CGSVGDocumentCreateFromData(bridge_cast(imageData), nullptr));
         if (!document)
             return makeUnexpected(nullptr);
 
-        // Since we need to rasterize, scale the image for the densest display, so it will have enough pixels to be sharp.
+
+        // Since we need to rasterize, scale the image for the highest density display, so it will have enough pixels to be sharp.
         result = [UIImage _imageWithCGSVGDocument:document scale:displayScale orientation:UIImageOrientationUp];
-        CGSVGDocumentRelease(document);
+#endif
     }
-#endif // !USE(APPKIT)
 
 #if USE(APPKIT)
-    if (!result)
-        result = [[CocoaImage alloc] initWithData:imageData];
+    if (WebCore::MIMETypeRegistry::isPDFMIMEType(imageType)) {
+        RetainPtr<NSImageRep> pdfImageRep = adoptNS([[NSPDFImageRep alloc] initWithData:imageData]);
+        if (pdfImageRep && !NSEqualSizes([pdfImageRep size], NSZeroSize)) {
+            result = [[NSImage alloc] initWithSize:[pdfImageRep size]];
+            [result addRepresentation:pdfImageRep.get()];
+        }
+    }
+#endif
 
+    if (!result) {
+#if USE(APPKIT)
+        result = createCocoaImageRestrictedToSupportedTypes(imageData).autorelease();
+#else
+        result = createCocoaImageRestrictedToSupportedTypes(imageData, displayScale).autorelease();
+#endif
+    }
+
+    if (!result)
+        return makeUnexpected(createError(Error::InvalidIcon, WEB_UI_FORMAT_CFSTRING("Failed to load image for path “%@”. The image is not in a supported format.", "WKWebExtensionErrorInvalidManifestEntry description for icon with unsupported image format", bridge_cast(imagePath.createNSString().get()))));
+
+#if USE(APPKIT)
     if (!sizeForResizing.isZero()) {
         // Proportionally scale the size.
         auto originalSize = result.size;
@@ -358,25 +389,26 @@ Expected<Ref<WebCore::Icon>, RefPtr<API::Error>> WebExtension::iconForPath(const
 
         result.size = WebCore::FloatSize(originalSize.width * aspectRatio, originalSize.height * aspectRatio);
     }
-
-    if (RefPtr iconResult = WebCore::Icon::create(result))
-        return iconResult.releaseNonNull();
-    return makeUnexpected(nullptr);
 #else
-    if (!result)
-        result = [[CocoaImage alloc] initWithData:imageData scale:displayScale];
-
     // Rasterization is needed because UIImageAsset will not register the image unless it is a CGImage.
     // If the image is already a CGImage bitmap, this operation is a no-op.
     result = result._rasterizedImage;
 
-    if (!sizeForResizing.isZero() && WebCore::FloatSize(result.size) != sizeForResizing)
-        result = [result imageByPreparingThumbnailOfSize:sizeForResizing];
+    if (!sizeForResizing.isZero() && WebCore::FloatSize(result.size) != sizeForResizing) {
+        auto *rendererFormat = [[UIGraphicsImageRendererFormat alloc] init];
+        rendererFormat.scale = displayScale;
+        rendererFormat.opaque = NO;
+
+        auto *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:sizeForResizing format:rendererFormat];
+        result = [renderer imageWithActions:^(UIGraphicsImageRendererContext *) {
+            [result drawInRect:CGRectMake(0, 0, sizeForResizing.width(), sizeForResizing.height())];
+        }];
+    }
+#endif
 
     if (RefPtr iconResult = WebCore::Icon::create(result))
         return iconResult.releaseNonNull();
     return makeUnexpected(nullptr);
-#endif // not USE(APPKIT)
 }
 
 RefPtr<WebCore::Icon> WebExtension::bestIcon(RefPtr<JSON::Object> icons, WebCore::FloatSize idealSize, NOESCAPE const Function<void(Ref<API::Error>)>& reportError)

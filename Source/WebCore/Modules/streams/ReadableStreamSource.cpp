@@ -28,6 +28,7 @@
 #include "ReadableStreamSource.h"
 
 #include "JSDOMPromiseDeferred.h"
+#include <wtf/Scope.h>
 
 namespace WebCore {
 
@@ -55,6 +56,16 @@ void ReadableStreamSource::pull(DOMPromiseDeferred<void>&& promise)
     doPull();
 }
 
+void ReadableStreamSource::cancel(JSC::JSValue value, DOMPromiseDeferred<void>&& promise)
+{
+    clean();
+
+    m_promise = makeUnique<DOMPromiseDeferred<void>>(WTF::move(promise));
+
+    setActive();
+    doCancel(value);
+}
+
 void ReadableStreamSource::startFinished()
 {
     ASSERT(m_promise);
@@ -71,16 +82,44 @@ void ReadableStreamSource::pullFinished()
     setInactive();
 }
 
-void ReadableStreamSource::cancel(JSC::JSValue value)
+void ReadableStreamSource::cancelFinished()
 {
+    ASSERT(m_promise);
+    m_promise->resolve();
+    m_promise = nullptr;
+    setInactive();
+}
+
+void ReadableStreamSource::cancelFinished(Exception&& exception)
+{
+    ASSERT(m_promise);
+    m_promise->reject(WTF::move(exception));
+    m_promise = nullptr;
+    setInactive();
+}
+
+void ReadableStreamSource::cancelFinishedWithError(JSC::JSValue error)
+{
+    ASSERT(m_promise);
+    m_promise->rejectWithCallback([&error](auto&) {
+        return error;
+    });
+    m_promise = nullptr;
+    setInactive();
+}
+
+void ReadableStreamSource::error(const Exception& exception)
+{
+    if (m_controller)
+        m_controller->error(exception);
     clean();
-    doCancel(value);
 }
 
 void ReadableStreamSource::error(JSC::JSGlobalObject& globalObject, JSC::JSValue value)
 {
     if (m_controller)
         m_controller->error(globalObject, value);
+    clean();
 }
 
 void ReadableStreamSource::clean()
@@ -93,6 +132,10 @@ void ReadableStreamSource::clean()
 
 void SimpleReadableStreamSource::doCancel(JSC::JSValue)
 {
+    auto scope = makeScopeExit([&] {
+        cancelFinished();
+    });
+
     m_isCancelled = true;
 }
 

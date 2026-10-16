@@ -248,8 +248,13 @@ angle::Result SyncHelper::serverWait(ContextVk *contextVk)
 
 angle::Result SyncHelper::getStatus(ErrorContext *context, ContextVk *contextVk, bool *signaledOut)
 {
-    // Submit commands if it was deferred on the context that issued the sync object
-    ANGLE_TRY(submitSyncIfDeferred(contextVk, RenderPassClosureReason::SyncObjectClientWait));
+    ASSERT(context);
+    if (!context->getFeatures().disableSubmitCommandsOnSyncStatusCheckForTesting.enabled)
+    {
+        // Submit commands if it was deferred on the context that issued the sync object
+        ANGLE_TRY(submitSyncIfDeferred(contextVk, RenderPassClosureReason::SyncObjectClientWait));
+    }
+
     ASSERT(mUse.valid());
     Renderer *renderer = context->getRenderer();
     if (renderer->hasResourceUseFinished(mUse))
@@ -302,15 +307,19 @@ angle::Result SyncHelper::submitSyncIfDeferred(ContextVk *contextVk, RenderPassC
     //
     // Deferring the submission is restricted to non-EGL sync objects, so it's sufficient to ensure
     // that the contexts in the share group issue their deferred flushes.
-    for (auto context : contextVk->getShareGroup()->getContexts())
-    {
-        ContextVk *sharedContextVk = vk::GetImpl(context.second);
-        if (sharedContextVk->hasUnsubmittedUse(mUse))
-        {
-            ANGLE_TRY(sharedContextVk->flushCommandsAndEndRenderPassIfDeferredSyncInit(reason));
-            break;
-        }
-    }
+    angle::Result result        = angle::Result::Continue;
+    vk::ResourceUse resourceUse = mUse;
+    contextVk->getShareGroup()->getContexts().forEach(
+        [resourceUse, reason, &result](gl::Context *context) {
+            ContextVk *sharedContextVk = vk::GetImpl(context);
+            if (sharedContextVk->hasUnsubmittedUse(resourceUse))
+            {
+                result = sharedContextVk->flushCommandsAndEndRenderPassIfDeferredSyncInit(reason);
+                return false;
+            }
+            return true;
+        });
+    ANGLE_TRY(result);
     // Note mUse could still be invalid here if it is inserted on a fresh created context, i.e.,
     // fence is tracking nothing and is finished when inserted..
     ASSERT(contextVk->getRenderer()->hasResourceUseSubmitted(mUse));
@@ -441,7 +450,7 @@ angle::Result SyncHelperNativeFence::initializeWithFd(ContextVk *contextVk, int 
     */
     // Flush current pending set of commands providing the fence...
     ANGLE_TRY(contextVk->flushAndSubmitCommands(nullptr, &mExternalFence,
-                                                RenderPassClosureReason::SyncObjectWithFdInit));
+                                                QueueSubmitReason::SyncObjectWithFdInit));
 
     ANGLE_VK_TRY(contextVk, mExternalFence->getFenceFdStatus());
 
@@ -473,7 +482,7 @@ angle::Result SyncHelperNativeFence::prepareForClientWait(ErrorContext *context,
     if (flushCommands && contextVk)
     {
         ANGLE_TRY(contextVk->flushAndSubmitCommands(nullptr, nullptr,
-                                                    RenderPassClosureReason::SyncObjectClientWait));
+                                                    QueueSubmitReason::SyncObjectClientWait));
     }
 
     *resultOut = VK_INCOMPLETE;
@@ -537,6 +546,7 @@ angle::Result SyncHelperNativeFence::serverWait(ContextVk *contextVk)
     importFdInfo.flags                      = VK_SEMAPHORE_IMPORT_TEMPORARY_BIT_KHR;
     importFdInfo.handleType                 = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT_KHR;
     importFdInfo.fd                         = dup(mExternalFence->getFenceFd());
+    ANGLE_VK_CHECK(contextVk, importFdInfo.fd >= 0, VK_ERROR_OUT_OF_HOST_MEMORY);
     ANGLE_VK_TRY(contextVk, waitSemaphore.get().importFd(device, importFdInfo));
 
     // Add semaphore to next submit job.
@@ -567,6 +577,7 @@ angle::Result SyncHelperNativeFence::dupNativeFenceFD(ErrorContext *context, int
     }
 
     *fdOut = dup(mExternalFence->getFenceFd());
+    ANGLE_VK_CHECK(context, *fdOut >= 0, VK_ERROR_OUT_OF_HOST_MEMORY);
 
     return angle::Result::Continue;
 }
@@ -628,12 +639,12 @@ EGLSyncVk::EGLSyncVk() : EGLSyncImpl(), mSyncHelper(nullptr) {}
 
 EGLSyncVk::~EGLSyncVk() {}
 
-void EGLSyncVk::onDestroy(const egl::Display *display)
+void EGLSyncVk::onDestroy(const egl::ThreadSafeDisplay *display)
 {
     mSyncHelper->releaseToRenderer(vk::GetImpl(display)->getRenderer());
 }
 
-egl::Error EGLSyncVk::initialize(const egl::Display *display,
+egl::Error EGLSyncVk::initialize(const egl::ThreadSafeDisplay *display,
                                  const gl::Context *context,
                                  EGLenum type,
                                  const egl::AttributeMap &attribs)
@@ -671,7 +682,7 @@ egl::Error EGLSyncVk::initialize(const egl::Display *display,
     }
 }
 
-egl::Error EGLSyncVk::clientWait(const egl::Display *display,
+egl::Error EGLSyncVk::clientWait(const egl::ThreadSafeDisplay *display,
                                  const gl::Context *context,
                                  EGLint flags,
                                  EGLTime timeout,
@@ -692,7 +703,7 @@ egl::Error EGLSyncVk::clientWait(const egl::Display *display,
     return egl::NoError();
 }
 
-egl::Error EGLSyncVk::serverWait(const egl::Display *display,
+egl::Error EGLSyncVk::serverWait(const egl::ThreadSafeDisplay *display,
                                  const gl::Context *context,
                                  EGLint flags)
 {
@@ -706,7 +717,7 @@ egl::Error EGLSyncVk::serverWait(const egl::Display *display,
     return angle::ToEGL(mSyncHelper->serverWait(contextVk), EGL_BAD_ALLOC);
 }
 
-egl::Error EGLSyncVk::getStatus(const egl::Display *display, EGLint *outStatus)
+egl::Error EGLSyncVk::getStatus(const egl::ThreadSafeDisplay *display, EGLint *outStatus)
 {
     bool signaled = false;
     if (mSyncHelper->getStatus(vk::GetImpl(display), nullptr, &signaled) == angle::Result::Stop)
@@ -718,7 +729,7 @@ egl::Error EGLSyncVk::getStatus(const egl::Display *display, EGLint *outStatus)
     return egl::NoError();
 }
 
-egl::Error EGLSyncVk::dupNativeFenceFD(const egl::Display *display, EGLint *fdOut) const
+egl::Error EGLSyncVk::dupNativeFenceFD(const egl::ThreadSafeDisplay *display, EGLint *fdOut) const
 {
     return angle::ToEGL(mSyncHelper->dupNativeFenceFD(vk::GetImpl(display), fdOut),
                         EGL_BAD_PARAMETER);

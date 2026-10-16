@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "LegacyRenderSVGModelObjectInlines.h"
 #include "LegacyRenderSVGResourceMasker.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGMaskElement.h"
@@ -36,19 +37,14 @@ inline SVGMaskElement& LegacyRenderSVGResourceMasker::maskElement() const
     return downcast<SVGMaskElement>(LegacyRenderSVGResourceContainer::element());
 }
 
-inline Ref<SVGMaskElement> LegacyRenderSVGResourceMasker::protectedMaskElement() const
-{
-    return maskElement();
-}
-
 SVGUnitTypes::SVGUnitType LegacyRenderSVGResourceMasker::maskUnits() const
 {
-    return protectedMaskElement()->maskUnits();
+    return protect(maskElement())->maskUnits();
 }
 
 SVGUnitTypes::SVGUnitType LegacyRenderSVGResourceMasker::maskContentUnits() const
 {
-    return protectedMaskElement()->maskContentUnits();
+    return protect(maskElement())->maskContentUnits();
 }
 
 }

@@ -36,11 +36,13 @@
 #import "WKRemoteObjectCoder.h"
 #import "WKSharedAPICast.h"
 #import "WebPage.h"
+#import "WebPageProxy.h"
 #import "WebRemoteObjectRegistry.h"
 #import "_WKRemoteObjectInterface.h"
 #import <objc/runtime.h>
 #import <wtf/MainThread.h>
 #import <wtf/ObjCRuntimeExtras.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 
 extern "C" const char *_protocol_getMethodTypeEncoding(Protocol *p, SEL sel, BOOL isRequiredMethod, BOOL isInstanceMethod);
 extern "C" id __NSMakeSpecialForwardingCaptureBlock(const char *signature, void (^handler)(NSInvocation *inv)) NS_RETURNS_RETAINED; // FIXME(rdar://162217343): Despite the name, __NSMakeSpecialForwardingCaptureBlock returns +1
@@ -132,7 +134,7 @@ struct PendingReply {
     _remoteObjectRegistry = nullptr;
 }
 
-static uint64_t generateReplyIdentifier()
+static uint64_t LEGACY_NODELETE generateReplyIdentifier()
 {
     static uint64_t identifier;
 
@@ -186,9 +188,9 @@ static uint64_t generateReplyIdentifier()
     remoteObjectRegistry->sendInvocation(WebKit::RemoteObjectInvocation(interface.identifier, [encoder rootObjectDictionary], WTF::move(replyInfo)));
 }
 
-- (WebKit::RemoteObjectRegistry&)remoteObjectRegistry
+- (WebKit::RemoteObjectRegistry*)remoteObjectRegistry
 {
-    return *_remoteObjectRegistry;
+    return _remoteObjectRegistry.get();
 }
 
 static NSString *replyBlockSignature(Protocol *protocol, SEL selector, NSUInteger blockIndex)
@@ -228,7 +230,7 @@ static NSString *replyBlockSignature(Protocol *protocol, SEL selector, NSUIntege
 
     RetainPtr decoder = adoptNS([[WKRemoteObjectDecoder alloc] initWithInterface:interface.get() rootObjectDictionary:encodedInvocation.releaseNonNull() replyToSelector:nullptr]);
 
-    RetainPtr<NSInvocation> invocation = [decoder decodeObjectOfClass:[NSInvocation class] forKey:invocationKey];
+    RetainPtr invocation = dynamic_objc_cast<NSInvocation>([decoder decodeObjectOfClass:[NSInvocation class] forKey:invocationKey]);
 
     RetainPtr<NSMethodSignature> methodSignature = invocation.get().methodSignature;
     auto& replyInfo = remoteObjectInvocation.replyInfo();
@@ -247,7 +249,7 @@ static NSString *replyBlockSignature(Protocol *protocol, SEL selector, NSUIntege
             return;
         }
 
-        RetainPtr<NSString> wireBlockSignature = [NSMethodSignature signatureWithObjCTypes:replyInfo->blockSignature.utf8().data()]._typeString;
+        RetainPtr<NSString> wireBlockSignature = [NSMethodSignature signatureWithObjCTypes:replyInfo->blockSignature.utf8().legacyCStringPointer()]._typeString;
         RetainPtr<NSString> expectedBlockSignature = replyBlockSignature(retainPtr([interface protocol]).get(), invocation.get().selector, i);
 
         if (!expectedBlockSignature) {
@@ -283,7 +285,7 @@ static NSString *replyBlockSignature(Protocol *protocol, SEL selector, NSUIntege
                 remoteObjectRegistry->sendUnusedReply(m_replyID);
             }
 
-            void didCallReplyBlock() { m_didCallReplyBlock = true; }
+            void LEGACY_NODELETE didCallReplyBlock() { m_didCallReplyBlock = true; }
 
         private:
             ReplyBlockCallChecker(_WKRemoteObjectRegistry *registry, uint64_t replyID)
@@ -292,7 +294,7 @@ static NSString *replyBlockSignature(Protocol *protocol, SEL selector, NSUIntege
             {
             }
 
-            RetainPtr<_WKRemoteObjectRegistry> m_remoteObjectRegistry;
+            const RetainPtr<_WKRemoteObjectRegistry> m_remoteObjectRegistry;
             uint64_t m_replyID = 0;
             bool m_didCallReplyBlock = false;
         };

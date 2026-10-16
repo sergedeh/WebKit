@@ -27,6 +27,7 @@
 
 #include "MessageReceiver.h"
 #include "SharedPreferencesForWebProcess.h"
+#include "Untrusted.h"
 #include "WebPageProxyIdentifier.h"
 #include <wtf/CheckedRef.h>
 #include <wtf/TZoneMalloc.h>
@@ -56,13 +57,13 @@ public:
     void ref() const final;
     void deref() const final;
 
-    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
+    std::optional<SharedPreferencesForWebProcess> LEGACY_NODELETE sharedPreferencesForWebProcess() const;
 
 private:
     RefPtr<WebPageProxy> mostReasonableWebPageProxy(const WebCore::SecurityOriginData&, WebCore::PermissionQuerySource) const;
 
     // IPC Message handlers.
-    void query(const WebCore::ClientOrigin&, const WebCore::PermissionDescriptor&, std::optional<WebPageProxyIdentifier>, WebCore::PermissionQuerySource, CompletionHandler<void(std::optional<WebCore::PermissionState>)>&&);
+    void query(IPC::Untrusted<WebCore::ClientOrigin>&&, const WebCore::PermissionDescriptor&, std::optional<WebPageProxyIdentifier>, WebCore::PermissionQuerySource, CompletionHandler<void(std::optional<WebCore::PermissionState>)>&&);
 
     const CheckedRef<WebProcessProxy> m_process;
 };

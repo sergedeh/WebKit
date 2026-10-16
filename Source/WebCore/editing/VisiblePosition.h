@@ -40,7 +40,7 @@ public:
     VisiblePosition() = default;
 
     // This constructor will ignore the passed-in affinity if the position is not at the end of a line.
-    WEBCORE_EXPORT VisiblePosition(const Position&, Affinity = defaultAffinity);
+    WEBCORE_EXPORT VisiblePosition(const Position&, Affinity = defaultAffinity, AllowUserSelectNone = AllowUserSelectNone::No);
 
     bool isNull() const { return m_deepPosition.isNull(); }
     bool isNotNull() const { return m_deepPosition.isNotNull(); }
@@ -48,6 +48,7 @@ public:
 
     Position deepEquivalent() const { return m_deepPosition; }
     Affinity affinity() const { return m_affinity; }
+    AllowUserSelectNone allowUserSelectNone() const { return m_allowUserSelectNone; }
 
     void setAffinity(Affinity affinity) { m_affinity = affinity; }
 
@@ -67,7 +68,7 @@ public:
     char32_t characterBefore() const { return previous().characterAfter(); }
 
     // FIXME: This does not handle [table, 0] correctly.
-    Element* rootEditableElement() const { return m_deepPosition.isNotNull() ? m_deepPosition.deprecatedNode()->rootEditableElement() : 0; }
+    Element* rootEditableElement() const { return m_deepPosition.isNotNull() ? protect(m_deepPosition.deprecatedNode())->rootEditableElement() : 0; }
 
     InlineBoxAndOffset inlineBoxAndOffset() const;
     InlineBoxAndOffset inlineBoxAndOffset(TextDirection primaryDirection) const;
@@ -89,7 +90,7 @@ public:
 
     // This is a tentative enhancement of operator== to account for affinity.
     // FIXME: Combine this function with operator==.
-    bool equals(const VisiblePosition&) const;
+    bool LEGACY_NODELETE equals(const VisiblePosition&) const;
 
 #if ENABLE(TREE_DEBUGGING)
     void debugPosition(ASCIILiteral msg = ""_s) const;
@@ -98,13 +99,14 @@ public:
 #endif
 
 private:
-    static Position canonicalPosition(const Position&);
+    static Position canonicalPosition(const Position&, AllowUserSelectNone = AllowUserSelectNone::No);
 
     Position leftVisuallyDistinctCandidate() const;
     Position rightVisuallyDistinctCandidate() const;
 
     Position m_deepPosition;
     Affinity m_affinity { defaultAffinity };
+    AllowUserSelectNone m_allowUserSelectNone;
 };
 
 bool operator==(const VisiblePosition&, const VisiblePosition&);
@@ -118,7 +120,7 @@ WEBCORE_EXPORT Element* enclosingBlockFlowElement(const VisiblePosition&);
 bool isFirstVisiblePositionInNode(const VisiblePosition&, const Node*);
 bool isLastVisiblePositionInNode(const VisiblePosition&, const Node*);
 
-bool areVisiblePositionsInSameTreeScope(const VisiblePosition&, const VisiblePosition&);
+bool LEGACY_NODELETE areVisiblePositionsInSameTreeScope(const VisiblePosition&, const VisiblePosition&);
 
 Node* commonInclusiveAncestor(const VisiblePosition&, const VisiblePosition&);
 

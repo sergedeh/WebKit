@@ -47,9 +47,9 @@ void LaunchServicesDatabaseManager::handleEvent(xpc_object_t message)
     String messageName = xpcDictionaryGetString(message, XPCEndpoint::xpcMessageNameKey);
     if (messageName == LaunchServicesDatabaseXPCConstants::xpcUpdateLaunchServicesDatabaseMessageName) {
 #if HAVE(LSDATABASECONTEXT)
-        XPCObjectPtr<xpc_object_t> database = xpc_dictionary_get_value(message, LaunchServicesDatabaseXPCConstants::xpcLaunchServicesDatabaseKey);
+        OSObjectPtr<xpc_object_t> database = xpc_dictionary_get_value(message, LaunchServicesDatabaseXPCConstants::xpcLaunchServicesDatabaseKey);
 
-        RELEASE_LOG_FORWARDABLE(Loading, RECEIVED_LAUNCH_SERVICES_DATABASE);
+        RELEASE_LOG_FORWARDABLE(Loading, ReceivedLaunchServicesDatabase);
 
         if (database)
             [LSDatabaseContext.sharedDatabaseContext observeDatabaseChange4WebKit:database.get()];
@@ -61,8 +61,7 @@ void LaunchServicesDatabaseManager::handleEvent(xpc_object_t message)
 
 void LaunchServicesDatabaseManager::didConnect()
 {
-    // FIXME: This is a false positive. <rdar://164843889>
-    SUPPRESS_RETAINPTR_CTOR_ADOPT auto message = adoptXPCObject(xpc_dictionary_create(nullptr, nullptr, 0));
+    OSObjectPtr message = adoptOSObject(xpc_dictionary_create(nullptr, nullptr, 0));
     xpc_dictionary_set_string(message.get(), XPCEndpoint::xpcMessageNameKey, LaunchServicesDatabaseXPCConstants::xpcRequestLaunchServicesDatabaseUpdateMessageName);
 
     auto connection = this->connection();
@@ -90,10 +89,10 @@ void LaunchServicesDatabaseManager::waitForDatabaseUpdate()
     bool databaseUpdated = waitForDatabaseUpdate(waitTime);
     auto elapsedTime = MonotonicTime::now() - startTime;
     if (elapsedTime > 0.5_s)
-        RELEASE_LOG_ERROR_FORWARDABLE(Loading, WAITING_FOR_LAUNCH_SERVICES_DATABASE_UPDATE_TOOK_F_SECONDS, elapsedTime.value());
+        RELEASE_LOG_ERROR_FORWARDABLE(Loading, WaitingForLaunchServicesDatabaseUpdateTookFSeconds, elapsedTime.value());
 
     if (!databaseUpdated)
-        RELEASE_LOG_FAULT_FORWARDABLE(Loading, TIMED_OUT_WAITING_FOR_LAUNCH_SERVICES_DATABASE_UPDATE);
+        RELEASE_LOG_FAULT_FORWARDABLE(Loading, TimedOutWaitingForLaunchServicesDatabaseUpdate);
 }
 
 }

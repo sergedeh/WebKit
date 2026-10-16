@@ -41,12 +41,22 @@ protected:
     MathMLRowElement(const QualifiedName& tagName, Document&, OptionSet<TypeFlag> = { });
     void childrenChanged(const ChildChange&) override;
 
-    bool acceptsMathVariantAttribute() override;
+    bool acceptsLegacyMathVariantAttribute() override;
 
 private:
-    RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) override;
+    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) override;
+    bool isMathMLRowElement() const final { return true; }
 };
 
 }
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::MathMLRowElement)
+    static bool isType(const WebCore::MathMLElement& element) { return element.isMathMLRowElement(); }
+    static bool isType(const WebCore::Node& node)
+    {
+        auto* mathMLElement = dynamicDowncast<WebCore::MathMLElement>(node);
+        return mathMLElement && isType(*mathMLElement);
+    }
+SPECIALIZE_TYPE_TRAITS_END()
 
 #endif // ENABLE(MATHML)

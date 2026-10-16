@@ -20,13 +20,13 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 # SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import configparser
 import importlib.abc
 import importlib.machinery
 import json
 import logging
 import math
 import os
-import platform
 import re
 import shutil
 import ssl
@@ -43,10 +43,12 @@ from logging import NullHandler
 from webkitcorepy import log
 from webkitcorepy.version import Version
 from webkitcorepy.file_lock import FileLock
+from webkitcorepy._vendored.packaging import tags
 
 from html.parser import HTMLParser
 from urllib.request import urlopen
 from urllib.error import URLError
+from urllib.parse import urlparse
 
 
 class SimplyPypiIndexPageParser(HTMLParser):
@@ -203,29 +205,11 @@ class Package(object):
                         if not match:
                             continue
 
-                        # Temporarily disable AutoInstall so we don't try to AutoInstall
-                        # packaging via the below import while installing packaging.
-                        with AutoInstall.temporarily_disable():
-                            try:
-                                from packaging import tags
-                            except ImportError:
-                                # This is a subset of compatible tags, but these are the
-                                # only ones that are particularly common; we need these
-                                # to be able to install packaging and its dependencies.
-                                generic_tags = [
-                                    "py2.py3-none-any",
-                                    "py3.py2-none-any",
-                                    "py3-none-any",
-                                ]
+                        if not cached_tags:
+                            cached_tags = set(AutoInstall.tags())
 
-                                if match.group(1) not in generic_tags:
-                                    continue
-                            else:
-                                if not cached_tags:
-                                    cached_tags = set(AutoInstall.tags())
-
-                                if all([tag not in cached_tags for tag in tags.parse_tag(match.group(1))]):
-                                    continue
+                        if all([tag not in cached_tags for tag in tags.parse_tag(match.group(1))]):
+                            continue
 
                         extension = 'whl'
 
@@ -285,11 +269,28 @@ class Package(object):
             return False
         if not manifest.get('version'):
             return False
-        if self.version and Version(*manifest.get('version').split('.')) not in self.version:
+        if self.version and Version(*manifest.get('version').split('.')) != self.version:
             return False
         if not all(pkg.is_cached() for dep in self.implicit_deps for pkg in AutoInstall.packages[dep]):
             return False
         return True
+
+    @staticmethod
+    def _merge_move(source, target):
+        # Recursively move source into target. Unlike shutil.move, existing
+        # directories at the destination are merged rather than replaced. This
+        # preserves shared namespace packages (e.g. 'backports') when multiple
+        # wheels contribute sub-packages to the same top-level directory.
+        if os.path.isdir(source) and os.path.isdir(target):
+            for entry in os.listdir(source):
+                Package._merge_move(os.path.join(source, entry), os.path.join(target, entry))
+            os.rmdir(source)
+            return
+        if os.path.isdir(target):
+            shutil.rmtree(target, ignore_errors=True)
+        elif os.path.exists(target):
+            os.remove(target)
+        shutil.move(source, target)
 
     def install(self):
         AutoInstall.register(self)
@@ -412,12 +413,7 @@ class Package(object):
                     ):
                         raise OSError('Cannot install {}, could not find setup.py'.format(self.name))
                     for file in to_be_moved:
-                        target = os.path.join(AutoInstall.directory, file)
-                        if os.path.isdir(target):
-                            shutil.rmtree(target, ignore_errors=True)
-                        elif os.path.exists(target):
-                            os.remove(target)
-                        shutil.move(os.path.join(temp_location, file), AutoInstall.directory)
+                        self._merge_move(os.path.join(temp_location, file), os.path.join(AutoInstall.directory, file))
 
                 self.do_post_install(temp_location)
 
@@ -446,17 +442,41 @@ class Package(object):
                 AutoInstall.userspace_should_own(manifest)
 
 
+def _pypi_indices_from_file(file):
+    result = []
+    config = configparser.ConfigParser()
+    config.read_file(file)
+    for section in ('global', 'user'):
+        if not config.has_section(section):
+            continue
+        for key in ('index-url', 'extra-index-url'):
+            value = config.get(section, key, fallback=None)
+            if value:
+                for url in value.split('\n'):
+                    url = url.strip()
+                    if url:
+                        parsed = urlparse(url)
+                        if parsed.hostname:
+                            # AutoInstall appends 'simple/<package>/' to the index, but
+                            # index-url values conventionally end with '/simple/' and may
+                            # contain a path prefix (e.g. a proxy at https://host/pypi/simple/).
+                            # Keep the prefix, dropping the trailing '/simple' component.
+                            host = parsed.netloc.rpartition('@')[2]
+                            path = parsed.path.rstrip('/').removesuffix('/simple')
+                            result.append(host + path)
+    return result
 
-def _default_pypi_index():
-    pypi_url = re.compile(r'\Aindex\S* = https?://(?P<host>\S+)/.*')
-    pip_config = '/Library/Application Support/pip/pip.conf'
-    if os.path.isfile(pip_config):
-        with open(pip_config, 'r') as config:
-            for line in config.readlines():
-                match = pypi_url.match(line.lstrip())
-                if match:
-                    return match.group('host')
-    return 'pypi.org'
+
+def _default_pypi_indices():
+    for path in ['~/Library/Application Support/pip/pip.conf', '/Library/Application Support/pip/pip.conf']:
+        path = os.path.expanduser(path)
+        if not os.path.isfile(path):
+            continue
+        with open(path, 'r') as f:
+            result = _pypi_indices_from_file(f)
+        if result:
+            return result
+    return ['pypi.org']
 
 
 class AutoInstall(importlib.abc.MetaPathFinder):
@@ -470,7 +490,8 @@ class AutoInstall(importlib.abc.MetaPathFinder):
     BASE_LIBRARIES = ['setuptools', 'wheel', 'six', 'pyparsing', 'packaging', 'tomli', 'setuptools_scm']
 
     directory = None
-    index = _default_pypi_index()
+    _indexes = _default_pypi_indices()
+    index = _indexes[-1]
     timeout = 30
     times_to_retry = 1
     version = Version(sys.version_info[0], sys.version_info[1], sys.version_info[2])
@@ -483,7 +504,7 @@ class AutoInstall(importlib.abc.MetaPathFinder):
     if not ca_cert_path or not os.path.isfile(ca_cert_path):
         ca_cert_path = os.path.join(os.path.dirname(__file__), 'cacert.pem')
 
-    _previous_index = None
+    _previous_index = _indexes[0] if len(_indexes) > 1 else None
     _previous_ca_cert_path = None
     _fatal_check = False
     _temporary_disable = 0
@@ -596,7 +617,7 @@ class AutoInstall(importlib.abc.MetaPathFinder):
         try:
             response = AutoInstall._request('https://{}/simple/pip/'.format(cls.index), ca_cert_path=cls.ca_cert_path)
             if response.code != 200:
-                error('Failed to set AutoInstall index to {}, received {} response when searching for simple/pip'.format(index, response.code))
+                error('Failed to set AutoInstall index to {}, received {} response when searching for simple/pip'.format(cls.index, response.code))
 
         except URLError:
             error('Failed to set AutoInstall index to {}, no response from the server'.format(cls.index))
@@ -715,18 +736,7 @@ class AutoInstall(importlib.abc.MetaPathFinder):
 
     @classmethod
     def tags(cls):
-        from packaging import tags
-
-        for tag in tags.sys_tags():
-            yield tag
-
-        # FIXME: Work around for https://github.com/pypa/packaging/pull/319 and Big Sur
-        if sys.platform == 'darwin' and Version.from_string(platform.mac_ver()[0]) > Version(10):
-            for override in tags.mac_platforms(version=(10, 16)):
-                for tag in tags.sys_tags():
-                    if not tag.platform:
-                        pass
-                    yield tags.Tag(tag.interpreter, tag.abi, override)
+        yield from tags.sys_tags()
 
     @classmethod
     def log(cls, message, level=logging.WARNING):

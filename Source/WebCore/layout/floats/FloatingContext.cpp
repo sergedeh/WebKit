@@ -26,15 +26,14 @@
 #include "config.h"
 #include "FloatingContext.h"
 
-#include "BlockFormattingContext.h"
-#include "BlockFormattingState.h"
 #include "FloatAvoider.h"
 #include "LayoutBox.h"
 #include "LayoutBoxGeometry.h"
 #include "LayoutContainingBlockChainIterator.h"
 #include "LayoutElementBox.h"
 #include "LayoutShape.h"
-#include "RenderStyle+GettersInlines.h"
+#include "LayoutState.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include <ranges>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -67,19 +66,19 @@ class Iterator;
 class FloatPair {
 public:
     struct InlineStartEndIndex {
-        bool isEmpty() const { return !inlineStart && !inlineEnd; }
+        bool LEGACY_NODELETE isEmpty() const { return !inlineStart && !inlineEnd; }
 
         std::optional<size_t> inlineStart;
         std::optional<size_t> inlineEnd;
     };
 
-    bool isEmpty() const { return m_floatPair.isEmpty(); }
+    bool LEGACY_NODELETE isEmpty() const { return m_floatPair.isEmpty(); }
     const PlacedFloats::Item* inlineStart() const;
     const PlacedFloats::Item* inlineEnd() const;
     bool intersects(const FloatAvoider&) const;
     bool intersects(BoxGeometry::HorizontalEdges) const;
     bool containsFloatFromFormattingContext() const;
-    PositionInContextRoot highestBlockAxisPosition() const { return m_highestBlockAxisPosition; }
+    PositionInContextRoot LEGACY_NODELETE highestBlockAxisPosition() const { return m_highestBlockAxisPosition; }
     PositionInContextRoot lowestBlockAxisPosition() const;
 
     struct InlineAxisConstraints {
@@ -87,7 +86,7 @@ public:
         std::optional<PositionInContextRoot> end;
     };
     InlineAxisConstraints inlineAxisConstraints() const;
-    InlineStartEndIndex operator*() const { return m_floatPair; };
+    InlineStartEndIndex LEGACY_NODELETE operator*() const { return m_floatPair; };
     bool operator==(const FloatPair&) const;
 
 private:
@@ -103,7 +102,7 @@ class Iterator {
 public:
     Iterator(const PlacedFloats::List&, std::optional<PositionInContextRoot> blockStart);
 
-    const FloatPair& operator*() const { return m_current; }
+    const FloatPair& LEGACY_NODELETE operator*() const { return m_current; }
     Iterator& operator++();
     bool operator==(const Iterator&) const;
 
@@ -326,8 +325,8 @@ std::optional<FloatingContext::BlockAxisPositionWithClearance> FloatingContext::
         ASSERT(*blockAxisPosition == logicalTopRelativeToBlockFormattingContextRoot);
 
         // The return vertical position needs to be in the containing block's coordinate system.
-        auto& containingBlock = FormattingContext::containingBlock(layoutBox);
-        if (&containingBlock == &placedFloats().blockFormattingContextRoot())
+        CheckedRef containingBlock = Layout::containingBlock(layoutBox);
+        if (containingBlock.ptr() == &placedFloats().blockFormattingContextRoot())
             return BlockAxisPositionWithClearance { logicalTopRelativeToBlockFormattingContextRoot, clearance };
 
         auto containingBlockTopLeft = BoxGeometry::borderBoxTopLeft(containingBlockGeometries().geometryForBox(containingBlock));
@@ -349,6 +348,56 @@ std::optional<FloatingContext::BlockAxisPositionWithClearance> FloatingContext::
     return { };
 }
 
+static bool floatContainsLine(const Rect& floatBoxRect, LayoutUnit candidateTop, LayoutUnit candidateBottom, LayoutUnit candidateHeight)
+{
+    if (floatBoxRect.isEmpty())
+        return false;
+    if (!candidateHeight)
+        return floatBoxRect.top() <= candidateTop && floatBoxRect.bottom() > candidateTop;
+    return floatBoxRect.top() < candidateBottom && floatBoxRect.bottom() > candidateTop;
+}
+
+static std::optional<std::pair<LayoutUnit, LayoutUnit>> computeShapeEdge(const PlacedFloats::Item& floatItem, const Rect& marginRect, LayoutUnit candidateTop, LayoutUnit candidateHeight)
+{
+    RefPtr shape = floatItem.shape();
+    if (!shape)
+        return { };
+
+    auto borderRect = floatItem.absoluteBorderBoxRect();
+    auto positionInShape = candidateTop - borderRect.top();
+
+    if (!shape->lineOverlapsShapeMarginBounds(positionInShape, candidateHeight))
+        return { };
+
+    // PolygonShape gets confused when passing in 0px height interval at vertices.
+    auto segment = shape->getExcludedInterval(positionInShape, std::max(candidateHeight, 1_lu));
+    if (!segment.isValid)
+        return { };
+
+    // FIXME: This is potentially slow.
+    auto bottom = candidateTop + 1_lu;
+
+    if (floatItem.isStartPositioned()) {
+        auto shapeRight = borderRect.left() + LayoutUnit { segment.logicalRight };
+        return std::pair { std::min(shapeRight, marginRect.right()), bottom };
+    }
+    auto shapeLeft = borderRect.left() + LayoutUnit { segment.logicalLeft };
+    return std::pair { std::max(shapeLeft, marginRect.left()), bottom };
+}
+
+static std::optional<std::pair<LayoutUnit, LayoutUnit>> computeFloatEdgeAndBottom(const PlacedFloats::Item& floatItem, LayoutUnit candidateTop, LayoutUnit candidateBottom, LayoutUnit candidateHeight)
+{
+    auto marginRect = floatItem.absoluteRectWithMargin();
+    if (!floatContainsLine(marginRect, candidateTop, candidateBottom, candidateHeight))
+        return { };
+
+    if (floatItem.shape())
+        return computeShapeEdge(floatItem, marginRect, candidateTop, candidateHeight);
+
+    auto edge = floatItem.isStartPositioned() ? marginRect.right() : marginRect.left();
+    return std::pair { edge, marginRect.bottom() };
+}
+
 FloatingContext::Constraints FloatingContext::constraints(LayoutUnit candidateTop, LayoutUnit candidateBottom, MayBeAboveLastFloat mayBeAboveLastFloat) const
 {
     if (isEmpty())
@@ -368,56 +417,13 @@ FloatingContext::Constraints FloatingContext::constraints(LayoutUnit candidateTo
     auto adjustedCandidateBottom = adjustedCandidateTop + (candidateBottom - candidateTop);
     auto candidateHeight = adjustedCandidateBottom - adjustedCandidateTop;
 
-    auto contains = [&] (auto& floatBoxRect) {
-        if (floatBoxRect.isEmpty())
-            return false;
-        if (!candidateHeight)
-            return floatBoxRect.top() <= adjustedCandidateTop && floatBoxRect.bottom() > adjustedCandidateTop;
-        return floatBoxRect.top() < adjustedCandidateBottom && floatBoxRect.bottom() > adjustedCandidateTop;
-    };
-
-    auto computeFloatEdgeAndBottom = [&](auto& floatItem) -> std::optional<std::pair<LayoutUnit, LayoutUnit>> {
-        auto marginRect = floatItem.absoluteRectWithMargin();
-        if (!contains(marginRect))
-            return { };
-
-        if (auto* shape = floatItem.shape()) {
-            // Shapes are relative to the border box.
-            auto borderRect = floatItem.absoluteBorderBoxRect();
-            auto positionInShape = adjustedCandidateTop - borderRect.top();
-
-            if (!shape->lineOverlapsShapeMarginBounds(positionInShape, candidateHeight))
-                return { };
-
-            // PolygonShape gets confused when passing in 0px height interval at vertices.
-            auto segment = shape->getExcludedInterval(positionInShape, std::max(candidateHeight, 1_lu));
-            if (!segment.isValid)
-                return { };
-
-            // Bottom is used to decide the next line top if nothing fits. With shape we'll just sample one pixel down.
-            // FIXME: This is potentially slow.
-            auto bottom = adjustedCandidateTop + 1_lu;
-
-            if (floatItem.isStartPositioned()) {
-                auto shapeRight = borderRect.left() + LayoutUnit { segment.logicalRight };
-                // Shape can't extend beyond the margin box.
-                return std::pair { std::min(shapeRight, marginRect.right()), bottom };
-            }
-            auto shapeLeft = borderRect.left() + LayoutUnit { segment.logicalLeft };
-            return std::pair { std::max(shapeLeft, marginRect.left()), bottom };
-        }
-
-        auto edge = floatItem.isStartPositioned() ? marginRect.right() : marginRect.left();
-        return std::pair { edge, marginRect.bottom() };
-    };
-
     auto constraints = Constraints { };
     if (mayBeAboveLastFloat == MayBeAboveLastFloat::No) {
         for (auto& floatItem : placedFloats.list() | std::views::reverse) {
             if ((constraints.start && floatItem.isStartPositioned()) || (constraints.end && !floatItem.isStartPositioned()))
                 continue;
 
-            auto edgeAndBottom = computeFloatEdgeAndBottom(floatItem);
+            auto edgeAndBottom = computeFloatEdgeAndBottom(floatItem, adjustedCandidateTop, adjustedCandidateBottom, candidateHeight);
             if (!edgeAndBottom)
                 continue;
 
@@ -428,14 +434,12 @@ FloatingContext::Constraints FloatingContext::constraints(LayoutUnit candidateTo
             else
                 constraints.end = PointInContextRoot { edge, bottom };
 
-            if ((constraints.start && constraints.end)
-                || (constraints.start && !placedFloats.hasEndPositioned())
-                || (constraints.end && !placedFloats.hasStartPositioned()))
+            if ((constraints.start && constraints.end) || (constraints.start && !placedFloats.hasEndPositioned()) || (constraints.end && !placedFloats.hasStartPositioned()))
                 break;
         }
     } else {
         for (auto& floatItem : placedFloats.list() | std::views::reverse) {
-            auto edgeAndBottom = computeFloatEdgeAndBottom(floatItem);
+            auto edgeAndBottom = computeFloatEdgeAndBottom(floatItem, adjustedCandidateTop, adjustedCandidateBottom, candidateHeight);
             if (!edgeAndBottom)
                 continue;
 
@@ -538,11 +542,11 @@ void FloatingContext::findPositionForFormattingContextRoot(FloatAvoider& floatAv
 
 FloatingContext::AbsoluteCoordinateValuesForFloatAvoider FloatingContext::absoluteCoordinates(const Box& floatAvoider, LayoutPoint borderBoxTopLeft) const
 {
-    auto& containingBlock = FormattingContext::containingBlock(floatAvoider);
+    CheckedRef containingBlock = Layout::containingBlock(floatAvoider);
     auto& containingBlockGeometry = containingBlockGeometries().geometryForBox(containingBlock);
     auto absoluteTopLeft = mapTopLeftToBlockFormattingContextRoot(floatAvoider, borderBoxTopLeft);
 
-    if (&containingBlock == &placedFloats().blockFormattingContextRoot())
+    if (containingBlock.ptr() == &placedFloats().blockFormattingContextRoot())
         return { absoluteTopLeft, { }, { containingBlockGeometry.contentBoxLeft(), containingBlockGeometry.contentBoxRight() } };
 
     auto containingBlockAbsoluteTopLeft = mapTopLeftToBlockFormattingContextRoot(containingBlock, BoxGeometry::borderBoxTopLeft(containingBlockGeometry));
@@ -552,20 +556,20 @@ FloatingContext::AbsoluteCoordinateValuesForFloatAvoider FloatingContext::absolu
 LayoutPoint FloatingContext::mapTopLeftToBlockFormattingContextRoot(const Box& layoutBox, LayoutPoint borderBoxTopLeft) const
 {
     ASSERT(layoutBox.isFloatingPositioned() || layoutBox.isInFlow());
-    auto& blockFormattingContextRoot = placedFloats().blockFormattingContextRoot();
-    for (auto& containingBlock : containingBlockChain(layoutBox, blockFormattingContextRoot))
+    CheckedRef blockFormattingContextRoot = placedFloats().blockFormattingContextRoot();
+    for (CheckedRef containingBlock : containingBlockChain(layoutBox, blockFormattingContextRoot))
         borderBoxTopLeft.moveBy(BoxGeometry::borderBoxTopLeft(containingBlockGeometries().geometryForBox(containingBlock)));
     return borderBoxTopLeft;
 }
 
 Point FloatingContext::mapPointFromFloatingContextRootToBlockFormattingContextRoot(Point position) const
 {
-    auto& from = root();
-    auto& to = placedFloats().blockFormattingContextRoot();
-    if (&from == &to)
+    CheckedRef from = root();
+    CheckedRef to = placedFloats().blockFormattingContextRoot();
+    if (from.ptr() == to.ptr())
         return position;
     auto mappedPosition = position;
-    for (auto* containingBlock = &from; containingBlock != &to; containingBlock = &FormattingContext::containingBlock(*containingBlock))
+    for (CheckedPtr containingBlock = from.ptr(); containingBlock != to.ptr(); containingBlock = &Layout::containingBlock(*containingBlock))
         mappedPosition.moveBy(BoxGeometry::borderBoxTopLeft(containingBlockGeometries().geometryForBox(*containingBlock)));
     return mappedPosition;
 }
@@ -626,7 +630,7 @@ FloatPair::FloatPair(const PlacedFloats::List& floats)
 {
 }
 
-const PlacedFloats::Item* FloatPair::inlineStart() const
+const PlacedFloats::Item* LEGACY_NODELETE FloatPair::inlineStart() const
 {
     if (!m_floatPair.inlineStart)
         return { };
@@ -635,7 +639,7 @@ const PlacedFloats::Item* FloatPair::inlineStart() const
     return &m_floats[*m_floatPair.inlineStart];
 }
 
-const PlacedFloats::Item* FloatPair::inlineEnd() const
+const PlacedFloats::Item* LEGACY_NODELETE FloatPair::inlineEnd() const
 {
     if (!m_floatPair.inlineEnd)
         return { };
@@ -659,7 +663,7 @@ bool FloatPair::intersects(const FloatAvoider& floatAvoider) const
     return intersects(inlineStart()) || intersects(inlineEnd());
 }
 
-bool FloatPair::intersects(BoxGeometry::HorizontalEdges containingBlockContentBoxEdges) const
+bool LEGACY_NODELETE FloatPair::intersects(BoxGeometry::HorizontalEdges containingBlockContentBoxEdges) const
 {
     ASSERT(!m_floatPair.isEmpty());
 
@@ -685,12 +689,12 @@ bool FloatPair::containsFloatFromFormattingContext() const
     return isInsideCurrentFormattingContext(inlineStart()) || isInsideCurrentFormattingContext(inlineEnd());
 }
 
-bool FloatPair::operator ==(const FloatPair& other) const
+bool LEGACY_NODELETE FloatPair::operator ==(const FloatPair& other) const
 {
     return m_floatPair.inlineStart == other.m_floatPair.inlineStart && m_floatPair.inlineEnd == other.m_floatPair.inlineEnd;
 }
 
-FloatPair::InlineAxisConstraints FloatPair::inlineAxisConstraints() const
+FloatPair::InlineAxisConstraints LEGACY_NODELETE FloatPair::inlineAxisConstraints() const
 {
     auto startEdge = std::optional<PositionInContextRoot> { };
     auto endEdge = std::optional<PositionInContextRoot> { };
@@ -730,7 +734,7 @@ Iterator::Iterator(const PlacedFloats::List& floats, std::optional<PositionInCon
         set(*blockStart);
 }
 
-inline static std::optional<size_t> previousFloatingIndex(Float floatingType, const PlacedFloats::List& floats, size_t currentIndex)
+inline static std::optional<size_t> LEGACY_NODELETE previousFloatingIndex(Float floatingType, const PlacedFloats::List& floats, size_t currentIndex)
 {
     ASSERT(floatingType == Float::InlineStart || floatingType == Float::InlineEnd);
     RELEASE_ASSERT(currentIndex <= floats.size());
@@ -844,7 +848,7 @@ void Iterator::set(PositionInContextRoot blockAxisPosition)
     ASSERT(!m_current.m_floatPair.inlineEnd || (*m_current.m_floatPair.inlineEnd < m_floats.size() && !m_floats[*m_current.m_floatPair.inlineEnd].isStartPositioned()));
 }
 
-bool Iterator::operator==(const Iterator& other) const
+bool LEGACY_NODELETE Iterator::operator==(const Iterator& other) const
 {
     return m_current == other.m_current;
 }

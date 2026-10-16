@@ -51,7 +51,7 @@ public:
     CacheUpdate(CacheUpdate&&);
     CacheUpdate& operator=(CacheUpdate&&);
 
-    bool isGlobal() const;
+    bool LEGACY_NODELETE isGlobal() const;
     const GlobalUpdate& asGlobal() const;
     const FunctionUpdate& asFunction() const;
 

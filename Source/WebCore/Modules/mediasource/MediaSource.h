@@ -38,6 +38,7 @@
 #include "MediaPlayer.h"
 #include "MediaPromiseTypes.h"
 #include "MediaSourceInit.h"
+#include "MediaSourcePrivate.h"
 #include "MediaSourcePrivateClient.h"
 #include "URLRegistry.h"
 #include <optional>
@@ -65,8 +66,6 @@ class VideoTrack;
 class VideoTrackPrivate;
 template<typename> class ExceptionOr;
 
-enum class MediaSourceReadyState { Closed, Open, Ended };
-
 class MediaSource
     : public RefCounted<MediaSource>
     , public ActiveDOMObject
@@ -79,7 +78,7 @@ class MediaSource
 {
     WTF_MAKE_TZONE_ALLOCATED(MediaSource);
 public:
-    static void setRegistry(URLRegistry*);
+    static void LEGACY_NODELETE setRegistry(URLRegistry*);
     static MediaSource* lookup(const String& url) { return s_registry ? downcast<MediaSource>(s_registry->lookup(url)) : nullptr; }
 
     static Ref<MediaSource> create(ScriptExecutionContext&, MediaSourceInit&&);
@@ -107,10 +106,9 @@ public:
     enum class EndOfStreamError { Network, Decode };
     void streamEndedWithError(std::optional<EndOfStreamError>);
 
-    bool attachToElement(WeakPtr<HTMLMediaElement>&&);
+    bool LEGACY_NODELETE attachToElement(WeakPtr<HTMLMediaElement>&&);
     void elementIsShuttingDown();
     void detachFromElement();
-    bool isSeeking() const { return !!m_pendingSeekTarget; }
     PlatformTimeRanges seekable();
     ExceptionOr<void> setLiveSeekableRange(double start, double end);
     ExceptionOr<void> clearLiveSeekableRange();
@@ -123,8 +121,8 @@ public:
     ReadyState readyState() const;
     ExceptionOr<void> endOfStream(std::optional<EndOfStreamError>);
 
-    Ref<SourceBufferList> sourceBuffers() const;
-    Ref<SourceBufferList> activeSourceBuffers() const;
+    Ref<SourceBufferList> LEGACY_NODELETE sourceBuffers() const;
+    Ref<SourceBufferList> LEGACY_NODELETE activeSourceBuffers() const;
     ExceptionOr<Ref<SourceBuffer>> addSourceBuffer(const String& type);
     ExceptionOr<void> removeSourceBuffer(SourceBuffer&);
     static bool isTypeSupported(ScriptExecutionContext&, const String& type);
@@ -136,28 +134,26 @@ public:
 #endif
     bool detachable() const { return m_detachable; }
 
-    ScriptExecutionContext* scriptExecutionContext() const final;
-    using ActiveDOMObject::protectedScriptExecutionContext;
+    ScriptExecutionContext* LEGACY_NODELETE scriptExecutionContext() const final;
 
-    static const MediaTime& currentTimeFudgeFactor();
     static bool contentTypeShouldGenerateTimestamps(const ContentType&);
 
 #if !RELEASE_LOG_DISABLED
     const Logger& logger() const final { return m_logger.get(); }
     uint64_t logIdentifier() const final { return m_logIdentifier; }
     ASCIILiteral logClassName() const final { return "MediaSource"_s; }
-    WTFLogChannel& logChannel() const final;
+    WTFLogChannel& LEGACY_NODELETE logChannel() const final;
     void setLogIdentifier(uint64_t);
 
     Ref<Logger> logger(ScriptExecutionContext&);
-    void didLogMessage(const WTFLogChannel&, WTFLogLevel, Vector<JSONLogValue>&&) final;
+    void LEGACY_NODELETE didLogMessage(const WTFLogChannel&, WTFLogLevel, std::optional<WTFLogLocation>, Vector<JSONLogValue>&&) final;
 #endif
 
     virtual bool isManaged() const { return false; }
     virtual bool streaming() const { return false; }
     void memoryPressure();
 
-    void setAsSrcObject(bool);
+    void LEGACY_NODELETE setAsSrcObject(bool);
 
     // Called by SourceBuffer.
     void sourceBufferBufferedChanged();
@@ -172,12 +168,10 @@ public:
     void addTextTrackMirrorToElement(Ref<InbandTextTrackPrivate>&&);
     void addVideoTrackMirrorToElement(Ref<VideoTrackPrivate>&&, bool selected);
 
-    Ref<MediaSourcePrivateClient> client() const;
+    Ref<MediaSourcePrivateClient> LEGACY_NODELETE client() const;
 
 protected:
     MediaSource(ScriptExecutionContext&, MediaSourceInit&&);
-
-    bool isBuffered(const PlatformTimeRanges&) const;
 
     void scheduleEvent(const AtomString& eventName);
     void notifyElementUpdateMediaState() const;
@@ -185,7 +179,7 @@ protected:
 
     virtual void elementDetached() { }
 
-    RefPtr<MediaSourcePrivate> protectedPrivate() const;
+    MediaSourcePrivate* mediaSourcePrivate() const { return m_private; }
 
     WeakPtr<HTMLMediaElement> m_mediaElement;
     bool m_detachable { false };
@@ -195,7 +189,7 @@ private:
 
     // ActiveDOMObject.
     void stop() final;
-    bool virtualHasPendingActivity() const final;
+    bool LEGACY_NODELETE virtualHasPendingActivity() const final;
 
     static bool isTypeSupported(ScriptExecutionContext&, const String& type, Vector<ContentType>&& contentTypesRequiringHardwareSupport);
 
@@ -206,7 +200,6 @@ private:
 
     void removeSourceBufferWithOptionalDestruction(SourceBuffer&, bool withDestruction);
 
-    Ref<MediaTimePromise> waitForTarget(const SeekTarget&);
     using RendererType = MediaSourcePrivateClient::RendererType;
     void failedToCreateRenderer(RendererType);
 
@@ -228,24 +221,16 @@ private:
     void regenerateActiveSourceBuffers();
     void updateBufferedIfNeeded(bool forced = false);
 
-    bool hasBufferedTime(const MediaTime&);
-    bool hasCurrentTime();
-    bool hasFutureTime();
-
-    void completeSeek();
-
     static URLRegistry* s_registry;
 
     const Ref<SourceBufferList> m_sourceBuffers;
     const Ref<SourceBufferList> m_activeSourceBuffers;
-    std::optional<SeekTarget> m_pendingSeekTarget;
-    std::optional<MediaTimePromise::AutoRejectProducer> m_seekTargetPromise;
     bool m_openDeferred { false };
     bool m_sourceopenPending { false };
     bool m_isAttached { false };
     std::optional<ReadyState> m_readyStateBeforeDetached;
 #if ENABLE(MEDIA_SOURCE_IN_WORKERS)
-    RefPtr<MediaSourceHandle> m_handle;
+    const RefPtr<MediaSourceHandle> m_handle;
 #endif
 
 #if !RELEASE_LOG_DISABLED

@@ -31,6 +31,7 @@
 #include "SVGAnimationAdditiveListFunctionImpl.h"
 #include "SVGAnimationAdditiveValueFunctionImpl.h"
 #include "SVGAnimationDiscreteFunctionImpl.h"
+#include <wtf/TypeCasts.h>
 
 namespace WebCore {
 
@@ -49,12 +50,14 @@ class SVGAnimatedAngleAnimator final : public SVGAnimatedPropertyAnimator<SVGAni
     using Base::Base;
 
 public:
-    static auto create(const QualifiedName& attributeName, Ref<SVGAnimatedAngle>& animated, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive)
+    static auto create(const QualifiedName& attributeName, const Ref<SVGAnimatedAngle>& animated, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive)
     {
         return adoptRef(*new SVGAnimatedAngleAnimator(attributeName, animated, animationMode, calcMode, isAccumulated, isAdditive));
     }
 
 private:
+    SVGAnimatorType animatorType() const final { return SVGAnimatorType::Angle; }
+
     void animate(SVGElement& targetElement, float progress, unsigned repeatCount) final
     {
         m_function.animate(targetElement, progress, repeatCount, m_animated->animVal().value());
@@ -68,12 +71,14 @@ class SVGAnimatedBooleanAnimator final : public SVGAnimatedPropertyAnimator<SVGA
 public:
     using Base::Base;
 
-    static auto create(const QualifiedName& attributeName, Ref<SVGAnimatedBoolean>& animated, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive)
+    static auto create(const QualifiedName& attributeName, const Ref<SVGAnimatedBoolean>& animated, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive)
     {
         return adoptRef(*new SVGAnimatedBooleanAnimator(attributeName, animated, animationMode, calcMode, isAccumulated, isAdditive));
     }
 
 private:
+    SVGAnimatorType animatorType() const final { return SVGAnimatorType::Boolean; }
+
     void animate(SVGElement& targetElement, float progress, unsigned repeatCount) final
     {
         bool& animated = m_animated->animVal();
@@ -90,12 +95,14 @@ class SVGAnimatedEnumerationAnimator final : public SVGAnimatedPropertyAnimator<
     using Base::m_function;
 
 public:
-    static auto create(const QualifiedName& attributeName, Ref<SVGAnimatedEnumeration>& animated, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive)
+    static auto create(const QualifiedName& attributeName, const Ref<SVGAnimatedEnumeration>& animated, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive)
     {
         return adoptRef(*new SVGAnimatedEnumerationAnimator<EnumType>(attributeName, animated, animationMode, calcMode, isAccumulated, isAdditive));
     }
 
 private:
+    SVGAnimatorType animatorType() const final { return SVGAnimatorType::Enumeration; }
+
     void animate(SVGElement& targetElement, float progress, unsigned repeatCount) final
     {
         EnumType animated;
@@ -115,12 +122,14 @@ class SVGAnimatedIntegerAnimator final : public SVGAnimatedPropertyAnimator<SVGA
 public:
     using Base::Base;
 
-    static auto create(const QualifiedName& attributeName, Ref<SVGAnimatedInteger>& animated, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive)
+    static auto create(const QualifiedName& attributeName, const Ref<SVGAnimatedInteger>& animated, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive)
     {
         return adoptRef(*new SVGAnimatedIntegerAnimator(attributeName, animated, animationMode, calcMode, isAccumulated, isAdditive));
     }
 
 private:
+    SVGAnimatorType animatorType() const final { return SVGAnimatorType::Integer; }
+
     void animate(SVGElement& targetElement, float progress, unsigned repeatCount) final
     {
         m_function.animate(targetElement, progress, repeatCount, m_animated->animVal());
@@ -132,17 +141,19 @@ class SVGAnimatedLengthAnimator final : public SVGAnimatedPropertyAnimator<SVGAn
     using Base = SVGAnimatedPropertyAnimator<SVGAnimatedLength, SVGAnimationLengthFunction>;
 
 public:
-    SVGAnimatedLengthAnimator(const QualifiedName& attributeName, Ref<SVGAnimatedLength>& animated, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive, SVGLengthMode lengthMode)
+    SVGAnimatedLengthAnimator(const QualifiedName& attributeName, const Ref<SVGAnimatedLength>& animated, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive, SVGLengthMode lengthMode)
         : Base(attributeName, animated, animationMode, calcMode, isAccumulated, isAdditive, lengthMode)
     {
     }
 
-    static auto create(const QualifiedName& attributeName, Ref<SVGAnimatedLength>& animated, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive, SVGLengthMode lengthMode)
+    static auto create(const QualifiedName& attributeName, const Ref<SVGAnimatedLength>& animated, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive, SVGLengthMode lengthMode)
     {
         return adoptRef(*new SVGAnimatedLengthAnimator(attributeName, animated, animationMode, calcMode, isAccumulated, isAdditive, lengthMode));
     }
 
 private:
+    SVGAnimatorType animatorType() const final { return SVGAnimatorType::Length; }
+
     void animate(SVGElement& targetElement, float progress, unsigned repeatCount) final
     {
         m_function.animate(targetElement, progress, repeatCount, m_animated->animVal().value());
@@ -154,20 +165,22 @@ class SVGAnimatedLengthListAnimator final : public SVGAnimatedPropertyAnimator<S
     using Base = SVGAnimatedPropertyAnimator<SVGAnimatedLengthList, SVGAnimationLengthListFunction>;
 
 public:
-    SVGAnimatedLengthListAnimator(const QualifiedName& attributeName, Ref<SVGAnimatedLengthList>& animated, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive, SVGLengthMode lengthMode)
+    SVGAnimatedLengthListAnimator(const QualifiedName& attributeName, const Ref<SVGAnimatedLengthList>& animated, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive, SVGLengthMode lengthMode)
         : Base(attributeName, animated, animationMode, calcMode, isAccumulated, isAdditive, lengthMode)
     {
     }
 
-    static auto create(const QualifiedName& attributeName, Ref<SVGAnimatedLengthList>& animated, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive, SVGLengthMode lengthMode)
+    static auto create(const QualifiedName& attributeName, const Ref<SVGAnimatedLengthList>& animated, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive, SVGLengthMode lengthMode)
     {
         return adoptRef(*new SVGAnimatedLengthListAnimator(attributeName, animated, animationMode, calcMode, isAccumulated, isAdditive, lengthMode));
     }
 
 private:
+    SVGAnimatorType animatorType() const final { return SVGAnimatorType::LengthList; }
+
     void animate(SVGElement& targetElement, float progress, unsigned repeatCount) final
     {
-        m_function.animate(targetElement, progress, repeatCount, m_animated->animVal());
+        m_function.animate(targetElement, progress, repeatCount, protect(m_animated->animVal()));
     }
 };
 
@@ -179,12 +192,14 @@ class SVGAnimatedNumberAnimator final : public SVGAnimatedPropertyAnimator<SVGAn
     using Base::Base;
 
 public:
-    static auto create(const QualifiedName& attributeName, Ref<SVGAnimatedNumber>& animated, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive)
+    static auto create(const QualifiedName& attributeName, const Ref<SVGAnimatedNumber>& animated, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive)
     {
         return adoptRef(*new SVGAnimatedNumberAnimator(attributeName, animated, animationMode, calcMode, isAccumulated, isAdditive));
     }
 
 private:
+    SVGAnimatorType animatorType() const final { return SVGAnimatorType::Number; }
+
     void animate(SVGElement& targetElement, float progress, unsigned repeatCount) final
     {
         m_function.animate(targetElement, progress, repeatCount, m_animated->animVal());
@@ -197,33 +212,37 @@ class SVGAnimatedNumberListAnimator final : public SVGAnimatedPropertyAnimator<S
     using Base::Base;
     
 public:
-    static auto create(const QualifiedName& attributeName, Ref<SVGAnimatedNumberList>& animated, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive)
+    static auto create(const QualifiedName& attributeName, const Ref<SVGAnimatedNumberList>& animated, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive)
     {
         return adoptRef(*new SVGAnimatedNumberListAnimator(attributeName, animated, animationMode, calcMode, isAccumulated, isAdditive));
     }
-    
+
 private:
+    SVGAnimatorType animatorType() const final { return SVGAnimatorType::NumberList; }
+
     void animate(SVGElement& targetElement, float progress, unsigned repeatCount) final
     {
-        m_function.animate(targetElement, progress, repeatCount, m_animated->animVal());
+        m_function.animate(targetElement, progress, repeatCount, protect(m_animated->animVal()));
     }
 };
 
-class SVGAnimatedPathSegListAnimator final : public SVGAnimatedPropertyAnimator<SVGAnimatedPathSegList, SVGAnimationPathSegListFunction> {
-    WTF_MAKE_TZONE_ALLOCATED(SVGAnimatedPathSegListAnimator);
-    using Base = SVGAnimatedPropertyAnimator<SVGAnimatedPathSegList, SVGAnimationPathSegListFunction>;
+class SVGAnimatedPathAnimator final : public SVGAnimatedPropertyAnimator<SVGAnimatedPath, SVGAnimationPathFunction> {
+    WTF_MAKE_TZONE_ALLOCATED(SVGAnimatedPathAnimator);
+    using Base = SVGAnimatedPropertyAnimator<SVGAnimatedPath, SVGAnimationPathFunction>;
     using Base::Base;
 
 public:
-    static auto create(const QualifiedName& attributeName, Ref<SVGAnimatedPathSegList>& animated, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive)
+    static auto create(const QualifiedName& attributeName, const Ref<SVGAnimatedPath>& animated, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive)
     {
-        return adoptRef(*new SVGAnimatedPathSegListAnimator(attributeName, animated, animationMode, calcMode, isAccumulated, isAdditive));
+        return adoptRef(*new SVGAnimatedPathAnimator(attributeName, animated, animationMode, calcMode, isAccumulated, isAdditive));
     }
 
 private:
+    SVGAnimatorType animatorType() const final { return SVGAnimatorType::Path; }
+
     void animate(SVGElement& targetElement, float progress, unsigned repeatCount) final
     {
-        m_animated->animVal().pathByteStreamWillChange();
+        protect(m_animated->animVal())->pathByteStreamWillChange();
         m_function.animate(targetElement, progress, repeatCount, m_animated->animVal().pathByteStream());
     }
 };
@@ -234,15 +253,17 @@ class SVGAnimatedPointListAnimator final : public SVGAnimatedPropertyAnimator<SV
     using Base::Base;
     
 public:
-    static auto create(const QualifiedName& attributeName, Ref<SVGAnimatedPointList>& animated, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive)
+    static auto create(const QualifiedName& attributeName, const Ref<SVGAnimatedPointList>& animated, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive)
     {
         return adoptRef(*new SVGAnimatedPointListAnimator(attributeName, animated, animationMode, calcMode, isAccumulated, isAdditive));
     }
-    
+
 private:
+    SVGAnimatorType animatorType() const final { return SVGAnimatorType::PointList; }
+
     void animate(SVGElement& targetElement, float progress, unsigned repeatCount) final
     {
-        m_function.animate(targetElement, progress, repeatCount, m_animated->animVal());
+        m_function.animate(targetElement, progress, repeatCount, protect(m_animated->animVal()));
     }
 };
 
@@ -254,12 +275,14 @@ class SVGAnimatedOrientTypeAnimator final : public SVGAnimatedPropertyAnimator<S
     using Base::Base;
 
 public:
-    static auto create(const QualifiedName& attributeName, Ref<SVGAnimatedOrientType>& animated, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive)
+    static auto create(const QualifiedName& attributeName, const Ref<SVGAnimatedOrientType>& animated, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive)
     {
         return adoptRef(*new SVGAnimatedOrientTypeAnimator(attributeName, animated, animationMode, calcMode, isAccumulated, isAdditive));
     }
 
 private:
+    SVGAnimatorType animatorType() const final { return SVGAnimatorType::OrientType; }
+
     void animate(SVGElement& targetElement, float progress, unsigned repeatCount) final
     {
         SVGMarkerOrientType animated;
@@ -274,12 +297,14 @@ class SVGAnimatedPreserveAspectRatioAnimator final : public SVGAnimatedPropertyA
     using Base::Base;
 
 public:
-    static auto create(const QualifiedName& attributeName, Ref<SVGAnimatedPreserveAspectRatio>& animated, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive)
+    static auto create(const QualifiedName& attributeName, const Ref<SVGAnimatedPreserveAspectRatio>& animated, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive)
     {
         return adoptRef(*new SVGAnimatedPreserveAspectRatioAnimator(attributeName, animated, animationMode, calcMode, isAccumulated, isAdditive));
     }
 
 private:
+    SVGAnimatorType animatorType() const final { return SVGAnimatorType::PreserveAspectRatio; }
+
     void animate(SVGElement& targetElement, float progress, unsigned repeatCount) final
     {
         SVGPreserveAspectRatioValue& animated = m_animated->animVal().value();
@@ -294,12 +319,14 @@ class SVGAnimatedRectAnimator final : public SVGAnimatedPropertyAnimator<SVGAnim
 public:
     using Base::Base;
 
-    static auto create(const QualifiedName& attributeName, Ref<SVGAnimatedRect>& animated, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive)
+    static auto create(const QualifiedName& attributeName, const Ref<SVGAnimatedRect>& animated, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive)
     {
         return adoptRef(*new SVGAnimatedRectAnimator(attributeName, animated, animationMode, calcMode, isAccumulated, isAdditive));
     }
 
 private:
+    SVGAnimatorType animatorType() const final { return SVGAnimatorType::Rect; }
+
     void animate(SVGElement& targetElement, float progress, unsigned repeatCount) final
     {
         m_function.animate(targetElement, progress, repeatCount, m_animated->animVal().value());
@@ -312,12 +339,14 @@ class SVGAnimatedStringAnimator final : public SVGAnimatedPropertyAnimator<SVGAn
     using Base::Base;
 
 public:
-    static auto create(const QualifiedName& attributeName, Ref<SVGAnimatedString>& animated, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive)
+    static auto create(const QualifiedName& attributeName, const Ref<SVGAnimatedString>& animated, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive)
     {
         return adoptRef(*new SVGAnimatedStringAnimator(attributeName, animated, animationMode, calcMode, isAccumulated, isAdditive));
     }
 
 private:
+    SVGAnimatorType animatorType() const final { return SVGAnimatorType::String; }
+
     bool isAnimatedStyleClassAnimator() const
     {
         return m_attributeName.matches(HTMLNames::classAttr);
@@ -353,16 +382,83 @@ class SVGAnimatedTransformListAnimator final : public SVGAnimatedPropertyAnimato
     using Base::Base;
 
 public:
-    static auto create(const QualifiedName& attributeName, Ref<SVGAnimatedTransformList>& animated, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive)
+    static auto create(const QualifiedName& attributeName, const Ref<SVGAnimatedTransformList>& animated, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive)
     {
         return adoptRef(*new SVGAnimatedTransformListAnimator(attributeName, animated, animationMode, calcMode, isAccumulated, isAdditive));
     }
 
 private:
+    SVGAnimatorType animatorType() const final { return SVGAnimatorType::TransformList; }
+
     void animate(SVGElement& targetElement, float progress, unsigned repeatCount) final
     {
-        m_function.animate(targetElement, progress, repeatCount, m_animated->animVal());
+        m_function.animate(targetElement, progress, repeatCount, protect(m_animated->animVal()));
     }
 };
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::SVGAnimatedAngleAnimator)
+    static bool isType(const WebCore::SVGAttributeAnimator& animator) { return animator.animatorType() == WebCore::SVGAnimatorType::Angle; }
+SPECIALIZE_TYPE_TRAITS_END()
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::SVGAnimatedBooleanAnimator)
+    static bool isType(const WebCore::SVGAttributeAnimator& animator) { return animator.animatorType() == WebCore::SVGAnimatorType::Boolean; }
+SPECIALIZE_TYPE_TRAITS_END()
+
+// Type trait for template class SVGAnimatedEnumerationAnimator
+namespace WTF {
+template<typename EnumType, typename ArgType>
+class TypeCastTraits<const WebCore::SVGAnimatedEnumerationAnimator<EnumType>, ArgType, false> {
+public:
+    static bool isOfType(ArgType& source) { return source.animatorType() == WebCore::SVGAnimatorType::Enumeration; }
+};
+}
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::SVGAnimatedIntegerAnimator)
+    static bool isType(const WebCore::SVGAttributeAnimator& animator) { return animator.animatorType() == WebCore::SVGAnimatorType::Integer; }
+SPECIALIZE_TYPE_TRAITS_END()
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::SVGAnimatedLengthAnimator)
+    static bool isType(const WebCore::SVGAttributeAnimator& animator) { return animator.animatorType() == WebCore::SVGAnimatorType::Length; }
+SPECIALIZE_TYPE_TRAITS_END()
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::SVGAnimatedLengthListAnimator)
+    static bool isType(const WebCore::SVGAttributeAnimator& animator) { return animator.animatorType() == WebCore::SVGAnimatorType::LengthList; }
+SPECIALIZE_TYPE_TRAITS_END()
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::SVGAnimatedNumberAnimator)
+    static bool isType(const WebCore::SVGAttributeAnimator& animator) { return animator.animatorType() == WebCore::SVGAnimatorType::Number; }
+SPECIALIZE_TYPE_TRAITS_END()
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::SVGAnimatedNumberListAnimator)
+    static bool isType(const WebCore::SVGAttributeAnimator& animator) { return animator.animatorType() == WebCore::SVGAnimatorType::NumberList; }
+SPECIALIZE_TYPE_TRAITS_END()
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::SVGAnimatedPathAnimator)
+    static bool isType(const WebCore::SVGAttributeAnimator& animator) { return animator.animatorType() == WebCore::SVGAnimatorType::Path; }
+SPECIALIZE_TYPE_TRAITS_END()
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::SVGAnimatedPointListAnimator)
+    static bool isType(const WebCore::SVGAttributeAnimator& animator) { return animator.animatorType() == WebCore::SVGAnimatorType::PointList; }
+SPECIALIZE_TYPE_TRAITS_END()
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::SVGAnimatedOrientTypeAnimator)
+    static bool isType(const WebCore::SVGAttributeAnimator& animator) { return animator.animatorType() == WebCore::SVGAnimatorType::OrientType; }
+SPECIALIZE_TYPE_TRAITS_END()
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::SVGAnimatedPreserveAspectRatioAnimator)
+    static bool isType(const WebCore::SVGAttributeAnimator& animator) { return animator.animatorType() == WebCore::SVGAnimatorType::PreserveAspectRatio; }
+SPECIALIZE_TYPE_TRAITS_END()
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::SVGAnimatedRectAnimator)
+    static bool isType(const WebCore::SVGAttributeAnimator& animator) { return animator.animatorType() == WebCore::SVGAnimatorType::Rect; }
+SPECIALIZE_TYPE_TRAITS_END()
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::SVGAnimatedStringAnimator)
+    static bool isType(const WebCore::SVGAttributeAnimator& animator) { return animator.animatorType() == WebCore::SVGAnimatorType::String; }
+SPECIALIZE_TYPE_TRAITS_END()
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::SVGAnimatedTransformListAnimator)
+    static bool isType(const WebCore::SVGAttributeAnimator& animator) { return animator.animatorType() == WebCore::SVGAnimatorType::TransformList; }
+SPECIALIZE_TYPE_TRAITS_END()

@@ -11,12 +11,12 @@
 #include "include/core/SkSerialProcs.h"
 #include "include/core/SkStream.h"
 #include "include/encode/SkPngEncoder.h"
-#include "src/base/SkTime.h"
 #include "src/core/SkPicturePriv.h"
 #include "src/core/SkRecord.h"
 #include "src/core/SkRecordCanvas.h"
 #include "src/core/SkRecordDraw.h"
 #include "src/core/SkRecordOpts.h"
+#include "src/core/SkTime.h"
 #include "src/image/SkImage_Base.h"
 #include "tools/flags/CommandLineFlags.h"
 
@@ -78,12 +78,11 @@ public:
     void print(const SkRecords::DrawPicture& command, double ns) {
         this->printNameAndTime(command, ns);
 
-        if (auto bp = SkPicturePriv::AsSkBigPicture(command.picture)) {
+        if (auto record = SkPicturePriv::GetRecord(command.picture.get())) {
             ++fIndent;
 
-            const SkRecord& record = *bp->record();
-            for (int i = 0; i < record.count(); i++) {
-                record.visit(i, *this);
+            for (int i = 0; i < record->count(); i++) {
+                record->visit(i, *this);
             }
 
             --fIndent;

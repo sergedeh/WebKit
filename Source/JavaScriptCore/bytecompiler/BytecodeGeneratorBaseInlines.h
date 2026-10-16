@@ -27,6 +27,7 @@
 
 #include "BytecodeGeneratorBase.h"
 
+#include "Fits.h"
 #include "RegisterID.h"
 #include "StackAlignment.h"
 
@@ -73,20 +74,7 @@ void BytecodeGeneratorBase<Traits>::reclaimFreeRegisters()
 template<typename Traits>
 void BytecodeGeneratorBase<Traits>::emitLabel(GenericLabel<Traits>& label)
 {
-    unsigned newLabelIndex = m_writer.position();
-    label.setLocation(*this, newLabelIndex);
-
-    if (m_codeBlock->numberOfJumpTargets()) {
-        unsigned lastLabelIndex = m_codeBlock->lastJumpTarget();
-        ASSERT(lastLabelIndex <= newLabelIndex);
-        if (newLabelIndex == lastLabelIndex) {
-            // Peephole optimizations have already been disabled by emitting the last label
-            return;
-        }
-    }
-
-    m_codeBlock->addJumpTarget(newLabelIndex);
-
+    label.setLocation(*this, m_writer.position());
     m_lastOpcodeID = Traits::opcodeForDisablingOptimizations;
 }
 
@@ -99,64 +87,27 @@ void BytecodeGeneratorBase<Traits>::recordOpcode(typename Traits::OpcodeID opcod
 }
 
 template<typename Traits>
-void BytecodeGeneratorBase<Traits>::alignWideOpcode16()
+template<OpcodeSize size, typename... Ops>
+void BytecodeGeneratorBase<Traits>::writeOpcode(typename Traits::OpcodeTraits::OpcodeID opcodeID, Ops... ops)
 {
-#if CPU(NEEDS_ALIGNED_ACCESS)
-    static_assert(Traits::OpcodeTraits::maxOpcodeIDWidth == OpcodeSize::Narrow);
-    size_t opcodeSize = 1;
-    size_t prefixAndOpcodeSize = opcodeSize + PaddingBySize<OpcodeSize::Wide16>::value;
-    while ((m_writer.position() + prefixAndOpcodeSize) % OpcodeSize::Wide16)
-        Traits::OpNop::template emit<OpcodeSize::Narrow>(this);
-#endif
-}
-
-template<typename Traits>
-void BytecodeGeneratorBase<Traits>::alignWideOpcode32()
-{
-#if CPU(NEEDS_ALIGNED_ACCESS)
-    static_assert(Traits::OpcodeTraits::maxOpcodeIDWidth == OpcodeSize::Narrow);
-    size_t opcodeSize = 1;
-    size_t prefixAndOpcodeSize = opcodeSize + PaddingBySize<OpcodeSize::Wide32>::value;
-    while ((m_writer.position() + prefixAndOpcodeSize) % OpcodeSize::Wide32)
-        Traits::OpNop::template emit<OpcodeSize::Narrow>(this);
-#endif
-}
-
-template<typename Traits>
-void BytecodeGeneratorBase<Traits>::write(uint8_t b)
-{
-    m_writer.write(b);
-}
-
-
-template<typename Traits>
-void BytecodeGeneratorBase<Traits>::write(uint16_t h)
-{
-    m_writer.write(h);
-}
-
-template<typename Traits>
-void BytecodeGeneratorBase<Traits>::write(uint32_t i)
-{
-    m_writer.write(i);
-}
-
-template<typename Traits>
-void BytecodeGeneratorBase<Traits>::write(int8_t b)
-{
-    m_writer.write(static_cast<uint8_t>(b));
-}
-
-template<typename Traits>
-void BytecodeGeneratorBase<Traits>::write(int16_t h)
-{
-    m_writer.write(static_cast<uint16_t>(h));
-}
-
-template<typename Traits>
-void BytecodeGeneratorBase<Traits>::write(int32_t i)
-{
-    m_writer.write(static_cast<uint32_t>(i));
+    using OpcodeTraits = typename Traits::OpcodeTraits;
+    using OpcodeIDType = typename OpcodeTraits::OpcodeID;
+    constexpr auto opcodeIDSize = OpcodeIDWidthBySize<OpcodeTraits, size>::opcodeIDSize;
+    if constexpr (size == OpcodeSize::Wide16) {
+        m_writer.write(
+            Fits<OpcodeIDType, OpcodeSize::Narrow>::convert(OpcodeTraits::wide16),
+            Fits<OpcodeIDType, opcodeIDSize>::convert(opcodeID),
+            Fits<Ops, size>::convert(ops)...);
+    } else if constexpr (size == OpcodeSize::Wide32) {
+        m_writer.write(
+            Fits<OpcodeIDType, OpcodeSize::Narrow>::convert(OpcodeTraits::wide32),
+            Fits<OpcodeIDType, opcodeIDSize>::convert(opcodeID),
+            Fits<Ops, size>::convert(ops)...);
+    } else {
+        m_writer.write(
+            Fits<OpcodeIDType, opcodeIDSize>::convert(opcodeID),
+            Fits<Ops, size>::convert(ops)...);
+    }
 }
 
 template<typename Traits>
@@ -182,7 +133,7 @@ RegisterID* BytecodeGeneratorBase<Traits>::newTemporary()
 
 template<typename Traits>
 template<typename Functor>
-void BytecodeGeneratorBase<Traits>::newTemporaries(size_t count, const Functor& func)
+void BytecodeGeneratorBase<Traits>::newTemporaries(size_t count, NOESCAPE const Functor& func)
 {
     reclaimFreeRegisters();
     for (size_t index = 0; index < count; ++index) {

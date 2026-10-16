@@ -27,6 +27,7 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import errno
+import functools
 import logging
 import re
 
@@ -59,11 +60,24 @@ class LayoutTestFinder(object):
         self._options = options
         self._filesystem = self._port.host.filesystem
         self.LAYOUT_TESTS_DIRECTORY = 'LayoutTests'
+        self._test_list_expectations = []
+        # Cache the inner finder per device_type. Bound here, not module-level, so the
+        # cache doesn't outlive this LayoutTestFinder instance.
+        self._inner_finder = functools.cache(self._make_inner_finder)
+
+    def _make_inner_finder(self, device_type=None):
+        return LayoutTestFinder_New(
+            self._port.host.filesystem,
+            self._port.layout_tests_dir(),
+            self._port.baseline_search_path(device_type),
+        )
 
     def find_tests(self, options, args, device_type=None, with_expectations=False):
         paths = self._strip_test_dir_prefixes(args)
         if options and options.test_list:
-            paths += self._strip_test_dir_prefixes(self._read_test_names_from_file(options.test_list, self._port.TEST_PATH_SEPARATOR))
+            test_names, expectations = self._read_test_names_from_file(options.test_list, self._port.TEST_PATH_SEPARATOR)
+            paths += self._strip_test_dir_prefixes(test_names)
+            self._test_list_expectations = expectations
         tests = self.find_tests_by_path(paths, device_type=device_type, with_expectations=with_expectations)
         return (paths, tests)
 
@@ -76,7 +90,8 @@ class LayoutTestFinder(object):
         """
         paths = self._strip_test_dir_prefixes(args)
         if options and options.test_list:
-            paths += self._strip_test_dir_prefixes(self._read_test_names_from_file(options.test_list, self._port.TEST_PATH_SEPARATOR))
+            test_names, _ = self._read_test_names_from_file(options.test_list, self._port.TEST_PATH_SEPARATOR)
+            paths += self._strip_test_dir_prefixes(test_names)
 
         layout_tests_dir = self._port.layout_tests_dir()
         paths = [p for p in paths
@@ -91,30 +106,16 @@ class LayoutTestFinder(object):
 
     def find_tests_by_path(self, paths, device_type=None, with_expectations=False):
         """Return the list of tests found. Both generic and platform-specific tests matching paths should be returned."""
-        finder = LayoutTestFinder_New(
-            self._port.host.filesystem,
-            self._port.layout_tests_dir(),
-            self._port.baseline_search_path(device_type),
-        )
-
-        return list(finder.get_tests(paths))
+        return list(self._inner_finder(device_type).get_tests(paths))
 
     def _is_test_file(self, filesystem, dirname, filename):
-        finder = LayoutTestFinder_New(
-            self._port.host.filesystem,
-            self._port.layout_tests_dir(),
-            self._port.baseline_search_path(),
-        )
+        finder = self._inner_finder()
         return finder.is_test_file(
             dirname, filename
         ) and not self._is_w3c_resource_file(filesystem, dirname, filename)
 
     def _is_w3c_resource_file(self, filesystem, dirname, filename):
-        finder = LayoutTestFinder_New(
-            self._port.host.filesystem,
-            self._port.layout_tests_dir(),
-            self._port.baseline_search_path(),
-        )
+        finder = self._inner_finder()
 
         if dirname:
             dirname = self._filesystem.relpath(dirname, self._port.layout_tests_dir())
@@ -152,24 +153,48 @@ class LayoutTestFinder(object):
     def _read_test_names_from_file(self, filenames, test_path_separator):
         fs = self._filesystem
         tests = []
+        expectations = []
         for filename in filenames:
             if test_path_separator != fs.sep:
                 filename = filename.replace(test_path_separator, fs.sep)
             file_contents = fs.read_text_file(filename).split('\n')
-            for line in file_contents:
-                line = self._strip_comments(line)
-                if line:
-                    tests.append(line)
-        return tests
+            for line_number, line in enumerate(file_contents, 1):
+                content = self._strip_test_list_comments(line)
+                if not content:
+                    continue
+
+                if '[' in content:
+                    # Line has inline expectations (TestExpectations syntax)
+                    expectations.append((filename, line_number, content))
+                    test_name = content[:content.index('[')].strip()
+                    if test_name:
+                        tests.append(test_name)
+                else:
+                    tests.append(content)
+        return tests, expectations
+
+    def get_test_list_expectations(self):
+        return self._test_list_expectations
+
+    def get_test_list_skip_paths(self):
+        skip_paths = set()
+        for _filename, _line_number, raw_line in self._test_list_expectations:
+            match = re.search(r'\[([^\]]+)\]', raw_line)
+            if match and 'SKIP' in match.group(1).upper().split():
+                test_name = raw_line[:raw_line.index('[')].strip()
+                if test_name:
+                    skip_paths.add(test_name)
+        return skip_paths
 
     @staticmethod
-    def _strip_comments(line):
-        commentIndex = line.find('//')
-        if commentIndex == -1:
-            commentIndex = len(line)
-
-        line = re.sub(r'\s+', ' ', line[:commentIndex].strip())
-        if line == '':
-            return None
-        else:
-            return line
+    def _strip_test_list_comments(line):
+        # Strip // comments by finding the position and truncating.
+        comment_index = line.find('//')
+        if comment_index != -1:
+            line = line[:comment_index]
+        # Strip # comments.
+        comment_index = line.find('#')
+        if comment_index != -1:
+            line = line[:comment_index]
+        line = re.sub(r'\s+', ' ', line.strip())
+        return line if line else None

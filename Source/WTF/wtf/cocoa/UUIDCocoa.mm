@@ -23,11 +23,14 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#if !__has_feature(objc_arc)
+#error This file requires ARC. Add the "-fobjc-arc" compiler flag for this file.
+#endif
+
 #import "config.h"
 #import <wtf/UUID.h>
 
 #import <wtf/RetainPtr.h>
-#import <wtf/cocoa/TypeCastsCocoa.h>
 
 namespace WTF {
 

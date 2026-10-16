@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,14 +26,35 @@
 #include "config.h"
 #include "PropertyAllowlist.h"
 
+#include "CSSProperty.h"
+
 namespace WebCore {
 namespace Style {
 
 PropertyAllowlist propertyAllowlistForPseudoElement(PseudoElementType type)
 {
-    if (type == PseudoElementType::Marker)
+    switch (type) {
+    case PseudoElementType::GrammarError:
+    case PseudoElementType::Highlight:
+    case PseudoElementType::Selection:
+    case PseudoElementType::SpellingError:
+    case PseudoElementType::TargetText:
+        return PropertyAllowlist::Highlight;
+    case PseudoElementType::Marker:
         return PropertyAllowlist::Marker;
-    return PropertyAllowlist::None;
+    default:
+        return PropertyAllowlist::None;
+    }
+}
+
+// https://drafts.csswg.org/css-pseudo-4/#highlight-styling
+bool isValidHighlightStyleProperty(CSSPropertyID id)
+{
+    // Custom properties are not part of the applicable property list but are allowed, since they
+    // can be substituted into the properties that are. https://drafts.csswg.org/css-pseudo-4/#highlight-cascade
+    if (id == CSSPropertyID::Custom)
+        return true;
+    return CSSProperty::appliesToHighlightPseudoElements(id);
 }
 
 // https://drafts.csswg.org/css-lists-3/#marker-properties (Editor's Draft, 14 July 2021)
@@ -41,76 +62,78 @@ PropertyAllowlist propertyAllowlistForPseudoElement(PseudoElementType type)
 bool isValidMarkerStyleProperty(CSSPropertyID id)
 {
     switch (id) {
-    case CSSPropertyColor:
-    case CSSPropertyContent:
-    case CSSPropertyCustom:
-    case CSSPropertyCursor:
-    case CSSPropertyDirection:
-    case CSSPropertyFont:
-    case CSSPropertyFontFamily:
-    case CSSPropertyFontFeatureSettings:
-    case CSSPropertyFontKerning:
-    case CSSPropertyFontSize:
-    case CSSPropertyFontSizeAdjust:
-    case CSSPropertyFontWidth:
-    case CSSPropertyFontStyle:
-    case CSSPropertyFontSynthesis:
-    case CSSPropertyFontSynthesisWeight:
-    case CSSPropertyFontSynthesisStyle:
-    case CSSPropertyFontSynthesisSmallCaps:
-    case CSSPropertyFontVariantAlternates:
-    case CSSPropertyFontVariantCaps:
-    case CSSPropertyFontVariantEastAsian:
-    case CSSPropertyFontVariantLigatures:
-    case CSSPropertyFontVariantNumeric:
-    case CSSPropertyFontVariantPosition:
-    case CSSPropertyFontWeight:
+    case CSSPropertyID::Color:
+    case CSSPropertyID::Content:
+    case CSSPropertyID::Custom:
+    case CSSPropertyID::Cursor:
+    case CSSPropertyID::Direction:
+    case CSSPropertyID::Font:
+    case CSSPropertyID::FontFamily:
+    case CSSPropertyID::FontFeatureSettings:
+    case CSSPropertyID::FontKerning:
+    case CSSPropertyID::FontSize:
+    case CSSPropertyID::FontSizeAdjust:
+    case CSSPropertyID::FontWidth:
+    case CSSPropertyID::FontStyle:
+    case CSSPropertyID::FontSynthesis:
+    case CSSPropertyID::FontSynthesisWeight:
+    case CSSPropertyID::FontSynthesisStyle:
+    case CSSPropertyID::FontSynthesisSmallCaps:
+    case CSSPropertyID::FontVariantAlternates:
+    case CSSPropertyID::FontVariantCaps:
+    case CSSPropertyID::FontVariantEastAsian:
+    case CSSPropertyID::FontVariantLigatures:
+    case CSSPropertyID::FontVariantNumeric:
+    case CSSPropertyID::FontVariantPosition:
+    case CSSPropertyID::FontWeight:
 #if ENABLE(VARIATION_FONTS)
-    case CSSPropertyFontOpticalSizing:
-    case CSSPropertyFontVariationSettings:
+    case CSSPropertyID::FontOpticalSizing:
+    case CSSPropertyID::FontVariationSettings:
 #endif
-    case CSSPropertyHyphens:
-    case CSSPropertyLetterSpacing:
-    case CSSPropertyLineBreak:
-    case CSSPropertyLineHeight:
-    case CSSPropertyListStyle:
-    case CSSPropertyOverflowWrap:
-    case CSSPropertyTabSize:
-    case CSSPropertyTextCombineUpright:
-    case CSSPropertyTextDecorationSkipInk:
-    case CSSPropertyTextEmphasis:
-    case CSSPropertyTextEmphasisColor:
-    case CSSPropertyTextEmphasisPosition:
-    case CSSPropertyTextEmphasisStyle:
-    case CSSPropertyTextIndent:
-    case CSSPropertyTextOrientation:
-    case CSSPropertyTextShadow:
-    case CSSPropertyTextTransform:
-    case CSSPropertyTextWrapMode:
-    case CSSPropertyTextWrapStyle:
-    case CSSPropertyUnicodeBidi:
-    case CSSPropertyWebkitTextOrientation:
-    case CSSPropertyWordBreak:
-    case CSSPropertyWordSpacing:
-    case CSSPropertyWhiteSpace:
-    case CSSPropertyWhiteSpaceCollapse:
-    case CSSPropertyAnimationDuration:
-    case CSSPropertyAnimationTimingFunction:
-    case CSSPropertyAnimationDelay:
-    case CSSPropertyAnimationIterationCount:
-    case CSSPropertyAnimationDirection:
-    case CSSPropertyAnimationFillMode:
-    case CSSPropertyAnimationPlayState:
-    case CSSPropertyAnimationComposition:
-    case CSSPropertyAnimationName:
-    case CSSPropertyAnimationRangeEnd:
-    case CSSPropertyAnimationRangeStart:
-    case CSSPropertyAnimationTimeline:
-    case CSSPropertyTransitionBehavior:
-    case CSSPropertyTransitionDuration:
-    case CSSPropertyTransitionTimingFunction:
-    case CSSPropertyTransitionDelay:
-    case CSSPropertyTransitionProperty:
+    case CSSPropertyID::Hyphens:
+    case CSSPropertyID::LetterSpacing:
+    case CSSPropertyID::LineBreak:
+    case CSSPropertyID::LineHeight:
+    case CSSPropertyID::ListStyle:
+    case CSSPropertyID::OverflowWrap:
+    case CSSPropertyID::Quotes:
+    case CSSPropertyID::TabSize:
+    case CSSPropertyID::TextCombineUpright:
+    case CSSPropertyID::TextDecorationSkipInk:
+    case CSSPropertyID::TextEmphasis:
+    case CSSPropertyID::TextEmphasisColor:
+    case CSSPropertyID::TextEmphasisPosition:
+    case CSSPropertyID::TextEmphasisStyle:
+    case CSSPropertyID::TextIndent:
+    case CSSPropertyID::TextOrientation:
+    case CSSPropertyID::TextShadow:
+    case CSSPropertyID::TextTransform:
+    case CSSPropertyID::TextWrapMode:
+    case CSSPropertyID::TextWrapStyle:
+    case CSSPropertyID::UnicodeBidi:
+    case CSSPropertyID::WebkitTextFillColor:
+    case CSSPropertyID::WebkitTextOrientation:
+    case CSSPropertyID::WordBreak:
+    case CSSPropertyID::WordSpacing:
+    case CSSPropertyID::WhiteSpace:
+    case CSSPropertyID::WhiteSpaceCollapse:
+    case CSSPropertyID::AnimationDuration:
+    case CSSPropertyID::AnimationTimingFunction:
+    case CSSPropertyID::AnimationDelay:
+    case CSSPropertyID::AnimationIterationCount:
+    case CSSPropertyID::AnimationDirection:
+    case CSSPropertyID::AnimationFillMode:
+    case CSSPropertyID::AnimationPlayState:
+    case CSSPropertyID::AnimationComposition:
+    case CSSPropertyID::AnimationName:
+    case CSSPropertyID::AnimationRangeEnd:
+    case CSSPropertyID::AnimationRangeStart:
+    case CSSPropertyID::AnimationTimeline:
+    case CSSPropertyID::TransitionBehavior:
+    case CSSPropertyID::TransitionDuration:
+    case CSSPropertyID::TransitionTimingFunction:
+    case CSSPropertyID::TransitionDelay:
+    case CSSPropertyID::TransitionProperty:
         return true;
     default:
         break;
@@ -122,35 +145,39 @@ bool isValidMarkerStyleProperty(CSSPropertyID id)
 bool isValidCueStyleProperty(CSSPropertyID id)
 {
     switch (id) {
-    case CSSPropertyColor:
-    case CSSPropertyCustom:
-    case CSSPropertyFont:
-    case CSSPropertyFontFamily:
-    case CSSPropertyFontSize:
-    case CSSPropertyFontStyle:
-    case CSSPropertyFontVariantCaps:
-    case CSSPropertyFontWeight:
-    case CSSPropertyLineHeight:
-    case CSSPropertyOpacity:
-    case CSSPropertyOutline:
-    case CSSPropertyOutlineColor:
-    case CSSPropertyOutlineOffset:
-    case CSSPropertyOutlineStyle:
-    case CSSPropertyOutlineWidth:
-    case CSSPropertyVisibility:
-    case CSSPropertyWhiteSpace:
-    case CSSPropertyWhiteSpaceCollapse:
-    case CSSPropertyTextCombineUpright:
-    case CSSPropertyTextDecorationLine:
-    case CSSPropertyTextShadow:
-    case CSSPropertyTextWrapMode:
-    case CSSPropertyTextWrapStyle:
-    case CSSPropertyBorderStyle:
-    case CSSPropertyPaintOrder:
-    case CSSPropertyStrokeLinejoin:
-    case CSSPropertyStrokeLinecap:
-    case CSSPropertyStrokeColor:
-    case CSSPropertyStrokeWidth:
+    case CSSPropertyID::Color:
+    case CSSPropertyID::Custom:
+    case CSSPropertyID::Font:
+    case CSSPropertyID::FontFamily:
+    case CSSPropertyID::FontSize:
+    case CSSPropertyID::FontStyle:
+    case CSSPropertyID::FontVariantCaps:
+    case CSSPropertyID::FontWeight:
+    case CSSPropertyID::LineHeight:
+    case CSSPropertyID::Opacity:
+    case CSSPropertyID::Outline:
+    case CSSPropertyID::OutlineColor:
+    case CSSPropertyID::OutlineOffset:
+    case CSSPropertyID::OutlineStyle:
+    case CSSPropertyID::OutlineWidth:
+    case CSSPropertyID::Visibility:
+    case CSSPropertyID::WhiteSpace:
+    case CSSPropertyID::WhiteSpaceCollapse:
+    case CSSPropertyID::TextCombineUpright:
+    case CSSPropertyID::TextDecorationColor:
+    case CSSPropertyID::TextDecorationInset:
+    case CSSPropertyID::TextDecorationLine:
+    case CSSPropertyID::TextDecorationStyle:
+    case CSSPropertyID::TextDecorationThickness:
+    case CSSPropertyID::TextShadow:
+    case CSSPropertyID::TextWrapMode:
+    case CSSPropertyID::TextWrapStyle:
+    case CSSPropertyID::BorderStyle:
+    case CSSPropertyID::PaintOrder:
+    case CSSPropertyID::StrokeLinejoin:
+    case CSSPropertyID::StrokeLinecap:
+    case CSSPropertyID::StrokeColor:
+    case CSSPropertyID::StrokeWidth:
         return true;
     default:
         break;
@@ -163,46 +190,50 @@ bool isValidCueStyleProperty(CSSPropertyID id)
 bool isValidCueSelectorStyleProperty(CSSPropertyID id)
 {
     switch (id) {
-    case CSSPropertyBackground:
-    case CSSPropertyBackgroundAttachment:
-    case CSSPropertyBackgroundClip:
-    case CSSPropertyBackgroundColor:
-    case CSSPropertyBackgroundImage:
-    case CSSPropertyBackgroundOrigin:
-    case CSSPropertyBackgroundPosition:
-    case CSSPropertyBackgroundPositionX:
-    case CSSPropertyBackgroundPositionY:
-    case CSSPropertyBackgroundRepeat:
-    case CSSPropertyBackgroundSize:
-    case CSSPropertyColor:
-    case CSSPropertyCustom:
-    case CSSPropertyFont:
-    case CSSPropertyFontFamily:
-    case CSSPropertyFontSize:
-    case CSSPropertyFontStyle:
-    case CSSPropertyFontVariantCaps:
-    case CSSPropertyFontWeight:
-    case CSSPropertyLineHeight:
-    case CSSPropertyOpacity:
-    case CSSPropertyOutline:
-    case CSSPropertyOutlineColor:
-    case CSSPropertyOutlineOffset:
-    case CSSPropertyOutlineStyle:
-    case CSSPropertyOutlineWidth:
-    case CSSPropertyVisibility:
-    case CSSPropertyWhiteSpace:
-    case CSSPropertyWhiteSpaceCollapse:
-    case CSSPropertyTextCombineUpright:
-    case CSSPropertyTextDecorationLine:
-    case CSSPropertyTextShadow:
-    case CSSPropertyTextWrapMode:
-    case CSSPropertyTextWrapStyle:
-    case CSSPropertyBorderStyle:
-    case CSSPropertyPaintOrder:
-    case CSSPropertyStrokeLinejoin:
-    case CSSPropertyStrokeLinecap:
-    case CSSPropertyStrokeColor:
-    case CSSPropertyStrokeWidth:
+    case CSSPropertyID::Background:
+    case CSSPropertyID::BackgroundAttachment:
+    case CSSPropertyID::BackgroundClip:
+    case CSSPropertyID::BackgroundColor:
+    case CSSPropertyID::BackgroundImage:
+    case CSSPropertyID::BackgroundOrigin:
+    case CSSPropertyID::BackgroundPosition:
+    case CSSPropertyID::BackgroundPositionX:
+    case CSSPropertyID::BackgroundPositionY:
+    case CSSPropertyID::BackgroundRepeat:
+    case CSSPropertyID::BackgroundSize:
+    case CSSPropertyID::Color:
+    case CSSPropertyID::Custom:
+    case CSSPropertyID::Font:
+    case CSSPropertyID::FontFamily:
+    case CSSPropertyID::FontSize:
+    case CSSPropertyID::FontStyle:
+    case CSSPropertyID::FontVariantCaps:
+    case CSSPropertyID::FontWeight:
+    case CSSPropertyID::LineHeight:
+    case CSSPropertyID::Opacity:
+    case CSSPropertyID::Outline:
+    case CSSPropertyID::OutlineColor:
+    case CSSPropertyID::OutlineOffset:
+    case CSSPropertyID::OutlineStyle:
+    case CSSPropertyID::OutlineWidth:
+    case CSSPropertyID::Visibility:
+    case CSSPropertyID::WhiteSpace:
+    case CSSPropertyID::WhiteSpaceCollapse:
+    case CSSPropertyID::TextCombineUpright:
+    case CSSPropertyID::TextDecorationColor:
+    case CSSPropertyID::TextDecorationInset:
+    case CSSPropertyID::TextDecorationLine:
+    case CSSPropertyID::TextDecorationStyle:
+    case CSSPropertyID::TextDecorationThickness:
+    case CSSPropertyID::TextShadow:
+    case CSSPropertyID::TextWrapMode:
+    case CSSPropertyID::TextWrapStyle:
+    case CSSPropertyID::BorderStyle:
+    case CSSPropertyID::PaintOrder:
+    case CSSPropertyID::StrokeLinejoin:
+    case CSSPropertyID::StrokeLinecap:
+    case CSSPropertyID::StrokeColor:
+    case CSSPropertyID::StrokeWidth:
         return true;
     default:
         break;
@@ -213,17 +244,17 @@ bool isValidCueSelectorStyleProperty(CSSPropertyID id)
 bool isValidCueBackgroundStyleProperty(CSSPropertyID id)
 {
     switch (id) {
-    case CSSPropertyBackground:
-    case CSSPropertyBackgroundAttachment:
-    case CSSPropertyBackgroundClip:
-    case CSSPropertyBackgroundColor:
-    case CSSPropertyBackgroundImage:
-    case CSSPropertyBackgroundOrigin:
-    case CSSPropertyBackgroundPosition:
-    case CSSPropertyBackgroundPositionX:
-    case CSSPropertyBackgroundPositionY:
-    case CSSPropertyBackgroundRepeat:
-    case CSSPropertyBackgroundSize:
+    case CSSPropertyID::Background:
+    case CSSPropertyID::BackgroundAttachment:
+    case CSSPropertyID::BackgroundClip:
+    case CSSPropertyID::BackgroundColor:
+    case CSSPropertyID::BackgroundImage:
+    case CSSPropertyID::BackgroundOrigin:
+    case CSSPropertyID::BackgroundPosition:
+    case CSSPropertyID::BackgroundPositionX:
+    case CSSPropertyID::BackgroundPositionY:
+    case CSSPropertyID::BackgroundRepeat:
+    case CSSPropertyID::BackgroundSize:
         return true;
     default:
         break;

@@ -53,6 +53,7 @@ static const CGFloat maxLabelWidth = 300;
 ValidationBubble::ValidationBubble(NSView* view, String&& message, const Settings& settings)
     : m_view(view)
     , m_message(WTF::move(message))
+    , m_popover(adoptNS([[WebValidationPopover alloc] init]))
 {
     RetainPtr<NSViewController> controller = adoptNS([[NSViewController alloc] init]);
 
@@ -73,7 +74,6 @@ ValidationBubble::ValidationBubble(NSView* view, String&& message, const Setting
     [label setFrame:NSMakeRect(horizontalPadding, verticalPadding, labelSize.width, labelSize.height)];
     [popoverView setFrame:NSMakeRect(0, 0, labelSize.width + horizontalPadding * 2, labelSize.height + verticalPadding * 2)];
 
-    m_popover = adoptNS([[WebValidationPopover alloc] init]);
     [m_popover setContentViewController:controller.get()];
     [m_popover setBehavior:NSPopoverBehaviorTransient];
     [m_popover setAnimates:NO];
@@ -86,6 +86,8 @@ ValidationBubble::~ValidationBubble()
 
 void ValidationBubble::showRelativeTo(const IntRect& anchorRect)
 {
+    m_anchorRect = anchorRect;
+
     // Passing an unparented view to [m_popover showRelativeToRect:ofView:preferredEdge:] crashes.
     RetainPtr view = m_view.get();
     if (![view window])

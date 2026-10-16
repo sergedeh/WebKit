@@ -359,7 +359,6 @@
 (define (syscall-unix-in-use-after-launch-blocked-in-lockdown-mode) (syscall-number
     SYS_abort_with_payload ;; <rdar://problem/50967271>
     SYS_change_fdguard_np
-    SYS_fgetattrlist ;; <rdar://problem/50266257>
     SYS_fileport_makefd
     SYS_flock
     SYS_fsetattrlist ;; MTLCompilerFSCache::openSync
@@ -380,6 +379,12 @@
     SYS_sem_open
     SYS_shared_region_map_and_slide_2_np ;; <rdar://problem/60294880>
     SYS_sysctlbyname))
+
+(define (syscall-unix-allowed-with-telemetry)
+    (syscall-number
+        SYS_fgetattrlist ;; <rdar://problem/50266257>
+        SYS_openat_dprotected_np
+        SYS_renameat))
 
 (define (syscall-quicklook)
     (syscall-number
@@ -592,7 +597,6 @@
         "hw.product"
         "hw.vectorunit"
         "kern.bootargs"
-        "kern.hostname"
         "kern.hv_vmm_present"
         "kern.maxfilesperproc" ;; <rdar://problem/65900517>
         "kern.memorystatus_level"
@@ -606,6 +610,9 @@
         "kern.willshutdown" ;; <rdar://122511261>
         "sysctl.name2oid"
         "vm.footprint_suspend"))
+
+(allow sysctl-read (with report) (with telemetry-backtrace)
+    (sysctl-name "kern.hostname"))
 
 (define (sysctl-read-prefix-allowed)
     (sysctl-name-prefix

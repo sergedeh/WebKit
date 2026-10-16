@@ -25,13 +25,11 @@
 
 #import "DOMImplementationInternal.h"
 
-#import "DOMCSSStyleSheetInternal.h"
 #import "DOMDocumentInternal.h"
 #import "DOMDocumentTypeInternal.h"
 #import "DOMHTMLDocumentInternal.h"
 #import "DOMInternal.h"
 #import "ExceptionHandlers.h"
-#import <WebCore/CSSStyleSheet.h>
 #import <WebCore/DOMImplementation.h>
 #import <WebCore/DocumentType.h>
 #import <WebCore/HTMLDocument.h>
@@ -43,9 +41,14 @@
 
 @implementation DOMImplementation
 
-static inline WebCore::DOMImplementation& unwrap(DOMImplementation& wrapper)
+static inline WebCore::DOMImplementation& rawUnwrap(DOMImplementation& wrapper)
 {
     return *reinterpret_cast<WebCore::DOMImplementation*>(wrapper._internal);
+}
+
+static inline Ref<WebCore::DOMImplementation> unwrap(DOMImplementation& wrapper)
+{
+    return protect(rawUnwrap(wrapper));
 }
 
 - (void)dealloc
@@ -53,7 +56,7 @@ static inline WebCore::DOMImplementation& unwrap(DOMImplementation& wrapper)
     if (WebCoreObjCScheduleDeallocateOnMainThread([DOMImplementation class], self))
         return;
     if (_internal)
-        unwrap(*self).deref();
+        rawUnwrap(*self).deref();
     [super dealloc];
 }
 
@@ -65,25 +68,24 @@ static inline WebCore::DOMImplementation& unwrap(DOMImplementation& wrapper)
 - (DOMDocumentType *)createDocumentType:(NSString *)qualifiedName publicId:(NSString *)publicId systemId:(NSString *)systemId
 {
     WebCore::JSMainThreadNullState state;
-    return kit(raiseOnDOMError(unwrap(*self).createDocumentType(qualifiedName, publicId, systemId)).ptr());
+    return kit(raiseOnDOMError(unwrap(*self)->createDocumentType(qualifiedName, publicId, systemId)).ptr());
 }
 
 - (DOMDocument *)createDocument:(NSString *)namespaceURI qualifiedName:(NSString *)qualifiedName doctype:(DOMDocumentType *)doctype
 {
     WebCore::JSMainThreadNullState state;
-    return kit(raiseOnDOMError(unwrap(*self).createDocument(namespaceURI, qualifiedName, core(doctype))).ptr());
+    return kit(raiseOnDOMError(unwrap(*self)->createDocument(namespaceURI, qualifiedName, protect(core(doctype)))).ptr());
 }
 
 - (DOMCSSStyleSheet *)createCSSStyleSheet:(NSString *)title media:(NSString *)media
 {
-    WebCore::JSMainThreadNullState state;
-    return kit(unwrap(*self).createCSSStyleSheet(title, media).ptr());
+    return nil;
 }
 
 - (DOMHTMLDocument *)createHTMLDocument:(NSString *)title
 {
     WebCore::JSMainThreadNullState state;
-    return kit(unwrap(*self).createHTMLDocument(title).ptr());
+    return kit(unwrap(*self)->createHTMLDocument(title).ptr());
 }
 
 @end
@@ -112,7 +114,7 @@ static inline WebCore::DOMImplementation& unwrap(DOMImplementation& wrapper)
 
 @end
 
-DOMImplementation *kit(WebCore::DOMImplementation* value)
+SUPPRESS_NODELETE DOMImplementation *kit(WebCore::DOMImplementation* value)
 {
     WebCoreThreadViolationCheckRoundOne();
     if (!value)

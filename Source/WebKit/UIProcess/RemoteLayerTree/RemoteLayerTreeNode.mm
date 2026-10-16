@@ -40,6 +40,12 @@
 #import <pal/spi/cocoa/QuartzCoreSPI.h>
 #endif
 
+#if ENABLE(OVERLAY_REGIONS_REMOTE_EFFECT)
+#import "UIKitSPI.h"
+#import "WKBaseScrollView.h"
+#import <wtf/cocoa/VectorCocoa.h>
+#endif
+
 #if ENABLE(THREADED_ANIMATIONS)
 #import "RemoteAnimation.h"
 #import "RemoteAnimationStack.h"
@@ -50,6 +56,11 @@ namespace WebKit {
 static NSString *const WKRemoteLayerTreeNodePropertyKey = @"WKRemoteLayerTreeNode";
 #if ENABLE(GAZE_GLOW_FOR_INTERACTION_REGIONS)
 static NSString *const WKInteractionRegionContainerKey = @"WKInteractionRegionContainer";
+#endif
+#if ENABLE(OVERLAY_REGIONS_REMOTE_EFFECT)
+// FIXME: rdar://169697770
+static NSString *const WKOverlayRegionEffectKey = @"overlayRegion";
+static NSString *const WKLookToScrollExclusionEffectName = @"lookToScrollExclusionEffect";
 #endif
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteLayerTreeNode);
@@ -110,17 +121,24 @@ void RemoteLayerTreeNode::detachFromParent()
     removeInteractionRegionsContainer();
 #endif
 #if PLATFORM(IOS_FAMILY)
-    if (auto view = uiView()) {
+    if (RetainPtr view = uiView()) {
         [view removeFromSuperview];
         return;
     }
 #endif
-    [protectedLayer() removeFromSuperlayer];
+    [protect(layer()) removeFromSuperlayer];
 }
 
 void RemoteLayerTreeNode::setEventRegion(const WebCore::EventRegion& eventRegion)
 {
+#if ENABLE(OVERLAY_REGIONS_REMOTE_EFFECT)
+    bool regionChanged = (m_eventRegion != eventRegion);
+#endif
     m_eventRegion = eventRegion;
+#if ENABLE(OVERLAY_REGIONS_REMOTE_EFFECT)
+    if (regionChanged)
+        updateExclusionRegion(EventRegionChanged::Yes);
+#endif
 }
 
 void RemoteLayerTreeNode::initializeLayer()
@@ -135,18 +153,16 @@ void RemoteLayerTreeNode::initializeLayer()
 
 void RemoteLayerTreeNode::applyBackingStore(RemoteLayerTreeHost* host, RemoteLayerBackingStoreProperties& properties)
 {
-    if (asyncContentsIdentifier() && properties.contentsRenderingResourceIdentifier() && *asyncContentsIdentifier() >= *properties.contentsRenderingResourceIdentifier())
+    if (asyncContentsIdentifier() && properties.contentsFrameIdentifier() && *asyncContentsIdentifier() >= *properties.contentsFrameIdentifier())
         return;
 
-    UIView* hostingView = nil;
+    RetainPtr<UIView> hostingView;
 #if PLATFORM(IOS_FAMILY)
     hostingView = uiView();
 #endif
 
-    properties.applyBackingStoreToNode(*this, host->replayDynamicContentScalingDisplayListsIntoBackingStore(), hostingView);
-
-    if (auto identifier = properties.contentsRenderingResourceIdentifier())
-        setAsyncContentsIdentifier(*identifier);
+    bool applied = properties.applyBackingStoreToNode(*this, host->replayDynamicContentScalingDisplayListsIntoBackingStore(), hostingView.get());
+    setAsyncContentsIdentifier(applied ? properties.contentsFrameIdentifier() : std::nullopt);
 }
 
 #if ENABLE(GAZE_GLOW_FOR_INTERACTION_REGIONS)
@@ -266,6 +282,100 @@ void RemoteLayerTreeNode::propagateInteractionRegionsChangeInHierarchy(Interacti
 }
 #endif
 
+#if ENABLE(OVERLAY_REGIONS_REMOTE_EFFECT)
+void RemoteLayerTreeNode::setIsLookToScrollExclusion(bool value)
+{
+    if (value == m_isLookToScrollExclusion)
+        return;
+
+    m_isLookToScrollExclusion = value;
+    updateExclusionRegion();
+}
+
+void RemoteLayerTreeNode::updateExclusionRegion(EventRegionChanged eventRegionChanged)
+{
+    bool shouldHaveEffect = m_isLookToScrollExclusion
+        && m_hasVisibleRect
+        && !eventRegion().region().isEmpty();
+
+    if (eventRegionChanged == EventRegionChanged::No && shouldHaveEffect == m_hasLookToScrollExclusionEffect)
+        return;
+
+    RetainPtr overlayView = uiView();
+    if (!overlayView)
+        return;
+
+    if (shouldHaveEffect) {
+        CARemoteEffect *effect = [CARemoteExternalEffect effectWithName:WKLookToScrollExclusionEffectName];
+        auto& region = eventRegion().region();
+
+        bool isFullLayerRegion = false;
+        if (region.isRect()) {
+            CGRect layerBounds = [layer() bounds];
+            auto regionBounds = region.bounds();
+
+            isFullLayerRegion = std::abs(regionBounds.x() - layerBounds.origin.x) <= 1
+                && std::abs(regionBounds.y() - layerBounds.origin.y) <= 1
+                && std::abs(regionBounds.width() - layerBounds.size.width) <= 1
+                && std::abs(regionBounds.height() - layerBounds.size.height) <= 1;
+        }
+
+        if (!isFullLayerRegion) {
+            effect.userInfo = @{ @"effectiveRects": createNSArray(region.rects(), [] (const auto& rect) {
+                return @[@(rect.x()), @(rect.y()), @(rect.width()), @(rect.height())];
+            }).autorelease() };
+        }
+
+        [overlayView _requestRemoteEffects:@[effect] forKey:WKOverlayRegionEffectKey];
+    } else if (m_hasLookToScrollExclusionEffect)
+        [overlayView _removeRemoteEffectsForKey:WKOverlayRegionEffectKey];
+
+    m_hasLookToScrollExclusionEffect = shouldHaveEffect;
+}
+
+void RemoteLayerTreeNode::updateExclusionRegionAndDescendants(bool isExclusion)
+{
+    if (m_isLookToScrollExclusion == isExclusion)
+        return;
+
+    if (RetainPtr view = uiView()) {
+        if ([view isKindOfClass:[WKBaseScrollView class]])
+            return;
+    }
+
+    setIsLookToScrollExclusion(isExclusion);
+
+    for (CALayer *sublayer in layer().sublayers) {
+        if (RefPtr subnode = forCALayer(sublayer)) {
+            if (subnode->isFixedSubtreeRoot())
+                continue;
+            subnode->updateExclusionRegionAndDescendants(isExclusion);
+        }
+    }
+}
+
+void RemoteLayerTreeNode::visibleRectChangedForOverlayRegions()
+{
+    bool hasVisibleRect = !!m_visibleRect;
+    if (m_hasVisibleRect == hasVisibleRect)
+        return;
+
+    m_hasVisibleRect = hasVisibleRect;
+    updateExclusionRegion();
+}
+
+void RemoteLayerTreeNode::updateOverlayRegionAfterHierarchyChange()
+{
+    for (CALayer *sublayer in layer().sublayers) {
+        if (RefPtr subnode = forCALayer(sublayer)) {
+            if (subnode->isFixedSubtreeRoot())
+                continue;
+            subnode->updateExclusionRegionAndDescendants(m_isLookToScrollExclusion);
+        }
+    }
+}
+#endif
+
 std::optional<WebCore::PlatformLayerIdentifier> RemoteLayerTreeNode::layerID(CALayer *layer)
 {
     RefPtr node = forCALayer(layer);
@@ -288,18 +398,26 @@ NSString *RemoteLayerTreeNode::appendLayerDescription(NSString *description, CAL
 void RemoteLayerTreeNode::addToHostingNode(RemoteLayerTreeNode& hostingNode)
 {
 #if PLATFORM(IOS_FAMILY)
-    [hostingNode.uiView() addSubview:uiView()];
+    RetainPtr hostingView = hostingNode.uiView();
+    RetainPtr view = uiView();
+    if ([view superview] != hostingView.get())
+        [hostingView addSubview:view.get()];
+    ASSERT([hostingView subviews].count == 1);
 #else
-    [hostingNode.protectedLayer() addSublayer:protectedLayer().get()];
+    RetainPtr hostingLayer = hostingNode.layer();
+    RetainPtr layer = this->layer();
+    if ([layer superlayer] != hostingLayer.get())
+        [hostingLayer addSublayer:layer.get()];
+    ASSERT([hostingLayer sublayers].count == 1);
 #endif
 }
 
 void RemoteLayerTreeNode::removeFromHostingNode()
 {
 #if PLATFORM(IOS_FAMILY)
-    [uiView() removeFromSuperview];
+    [protect(uiView()) removeFromSuperview];
 #else
-    [protectedLayer() removeFromSuperlayer];
+    [protect(layer()) removeFromSuperlayer];
 #endif
 }
 
@@ -313,13 +431,19 @@ void RemoteLayerTreeNode::setAcceleratedEffectsAndBaseValues(const WebCore::Acce
         animationStack->clear(layer.get());
     host.animationsWereRemovedFromNode(*this);
 
-    if (effects.isEmpty())
+    m_hasHighImpactMonotonicAnimations = false;
+
+    if (effects.isEmpty()) {
+        m_animationStack = nullptr;
         return;
+    }
 
     Ref animationStack = RemoteAnimationStack::create(effects.map([&](const Ref<WebCore::AcceleratedEffect>& effect) {
         TimelineID timelineID { effect->timelineIdentifier(), m_layerID.processIdentifier() };
         RefPtr timeline = host.timeline(timelineID);
-        ASSERT(timeline);
+        RELEASE_ASSERT(timeline, "Remote layer tree animations should have a pre-registered timeline.");
+        if (!m_hasHighImpactMonotonicAnimations && timeline->isMonotonic())
+            m_hasHighImpactMonotonicAnimations = effect->hasHighImpact();
         return RemoteAnimation::create(Ref { effect }.get(), *timeline);
     }), baseValues.clone(), layer.get().bounds);
     m_animationStack = animationStack.copyRef();
@@ -333,10 +457,5 @@ void RemoteLayerTreeNode::setAcceleratedEffectsAndBaseValues(const WebCore::Acce
     host.animationsWereAddedToNode(*this);
 }
 #endif
-
-RetainPtr<CALayer> RemoteLayerTreeNode::protectedLayer() const
-{
-    return layer();
-}
 
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -41,11 +41,11 @@ Path2D::~Path2D() = default;
 
 ExceptionOr<void> Path2D::addPath(Path2D& path, DOMMatrix2DInit&& matrixInit)
 {
-    auto checkValid = DOMMatrixReadOnly::validateAndFixup(matrixInit);
-    if (checkValid.hasException())
-        return checkValid.releaseException();
+    auto transform = DOMMatrixReadOnly::toAffineTransform(matrixInit);
+    if (transform.hasException())
+        return transform.releaseException();
 
-    m_path.addPath(path.path(), { matrixInit.a.value_or(1), matrixInit.b.value_or(0), matrixInit.c.value_or(0), matrixInit.d.value_or(1), matrixInit.e.value_or(0), matrixInit.f.value_or(0) });
+    m_path.addPath(path.path(), transform.releaseReturnValue());
     return { };
 }
 

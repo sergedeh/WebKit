@@ -26,11 +26,11 @@
 #pragma once
 
 #include <JavaScriptCore/JSExportMacros.h>
+#include <JavaScriptCore/JSLock.h>
 #include <wtf/CheckedRef.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
 #include <wtf/RefPtr.h>
-#include <wtf/RetainPtr.h>
 #include <wtf/RunLoop.h>
 #include <wtf/SharedTask.h>
 #include <wtf/TZoneMalloc.h>
@@ -38,7 +38,6 @@
 
 namespace JSC {
 
-class JSLock;
 class VM;
 
 class JSRunLoopTimer : public ThreadSafeRefCounted<JSRunLoopTimer> {
@@ -57,6 +56,8 @@ public:
         void timerDidFire();
 
     public:
+        JS_EXPORT_PRIVATE ~Manager();
+
         static Manager& singleton();
 
         void registerVM(VM&);
@@ -85,7 +86,7 @@ public:
             Vector<std::pair<Ref<JSRunLoopTimer>, MonotonicTime>> timers;
         };
 
-        UncheckedKeyHashMap<Ref<JSLock>, std::unique_ptr<PerVMData>> m_mapping;
+        UncheckedKeyHashMap<Ref<JSLock>, std::unique_ptr<PerVMData>> m_mapping WTF_GUARDED_BY_LOCK(m_lock);
     };
 
     JSRunLoopTimer(VM&);
@@ -114,7 +115,7 @@ private:
 
     void timerDidFire();
 
-    UncheckedKeyHashSet<TimerNotificationCallback> m_timerSetCallbacks;
+    UncheckedKeyHashSet<TimerNotificationCallback> m_timerSetCallbacks WTF_GUARDED_BY_LOCK(m_timerCallbacksLock);
     Lock m_timerCallbacksLock;
 
     Lock m_lock;

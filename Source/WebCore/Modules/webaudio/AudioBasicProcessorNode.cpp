@@ -75,17 +75,17 @@ void AudioBasicProcessorNode::uninitialize()
 void AudioBasicProcessorNode::process(size_t framesToProcess)
 {
     CheckedPtr firstOutput = output(0);
-    AudioBus& destinationBus = firstOutput->bus();
+    Ref destinationBus = firstOutput->bus();
 
     if (!isInitialized() || !processor() || processor()->numberOfChannels() != numberOfChannels())
-        destinationBus.zero();
+        destinationBus->zero();
     else {
         CheckedPtr firstInput = input(0);
-        AudioBus& sourceBus = firstInput->bus();
+        Ref sourceBus = firstInput->bus();
 
         // FIXME: if we take "tail time" into account, then we can avoid calling processor()->process() once the tail dies down.
         if (!firstInput->isConnected())
-            sourceBus.zero();
+            sourceBus->zero();
 
         processor()->process(sourceBus, destinationBus, framesToProcess);  
     }
@@ -103,7 +103,7 @@ void AudioBasicProcessorNode::processOnlyAudioParams(size_t framesToProcess)
 void AudioBasicProcessorNode::pullInputs(size_t framesToProcess)
 {
     // Render input stream - suggest to the input to render directly into output bus for in-place processing in process() if possible.
-    checkedInput(0)->pull(&checkedOutput(0)->bus(), framesToProcess);
+    protect(input(0))->pull(protect(output(0)->bus()).ptr(), framesToProcess);
 }
 
 // As soon as we know the channel count of our input, we can lazily initialize.
@@ -130,7 +130,7 @@ void AudioBasicProcessorNode::checkNumberOfChannelsForInput(AudioNodeInput* inpu
     
     if (!isInitialized()) {
         // This will propagate the channel count to any nodes connected further down the chain...
-        checkedOutput(0)->setNumberOfChannels(numberOfChannels);
+        protect(output(0))->setNumberOfChannels(numberOfChannels);
 
         // Re-initialize the processor with the new channel count.
         processor()->setNumberOfChannels(numberOfChannels);

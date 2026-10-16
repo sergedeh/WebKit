@@ -55,7 +55,7 @@ struct AbstractValue {
         : m_type(SpecNone)
         , m_arrayModes(0)
     {
-#if USE(JSVALUE64) && !defined(NDEBUG)
+#if !defined(NDEBUG)
         // The WTF Traits for AbstractValue allow the initialization of values with bzero().
         // We verify the correctness of this assumption here.
         static bool needsDefaultConstructorCheck = true;
@@ -93,10 +93,10 @@ struct AbstractValue {
         makeTop(SpecFullTop);
     }
     
-    void clobberStructures()
+    void clobberStructures(Graph& graph)
     {
         if (m_type & SpecCell) {
-            m_structure.clobber();
+            m_structure.clobber(graph);
             clobberArrayModes();
         } else {
             ASSERT(m_structure.isClear());
@@ -105,7 +105,7 @@ struct AbstractValue {
         checkConsistency();
     }
     
-    ALWAYS_INLINE void fastForwardFromTo(AbstractValueClobberEpoch oldEpoch, AbstractValueClobberEpoch newEpoch)
+    ALWAYS_INLINE void fastForwardFromTo(Graph& graph, AbstractValueClobberEpoch oldEpoch, AbstractValueClobberEpoch newEpoch)
     {
         if (newEpoch == oldEpoch)
             return;
@@ -114,14 +114,14 @@ struct AbstractValue {
             return;
 
         if (newEpoch.clobberEpoch() != oldEpoch.clobberEpoch())
-            clobberStructures();
+            clobberStructures(graph);
         if (newEpoch.structureClobberState() == StructuresAreWatched)
             m_structure.observeInvalidationPoint();
 
         checkConsistency();
     }
     
-    ALWAYS_INLINE void fastForwardTo(AbstractValueClobberEpoch newEpoch)
+    ALWAYS_INLINE void fastForwardTo(Graph& graph, AbstractValueClobberEpoch newEpoch)
     {
         if (newEpoch == m_effectEpoch)
             return;
@@ -131,7 +131,7 @@ struct AbstractValue {
             return;
         }
 
-        fastForwardToSlow(newEpoch);
+        fastForwardToSlow(graph, newEpoch);
     }
     
     void observeTransition(RegisteredStructure from, RegisteredStructure to)
@@ -200,7 +200,7 @@ struct AbstractValue {
     
     bool valueIsTop() const
     {
-        return !m_value && m_type;
+        return !m_value && m_type != SpecEmpty;
     }
 
     bool isInt52Any() const
@@ -359,10 +359,10 @@ struct AbstractValue {
     FiltrationResult filter(const AbstractValue&);
     FiltrationResult filterClassInfo(Graph&, const ClassInfo*);
 
-    ALWAYS_INLINE FiltrationResult fastForwardToAndFilterUnproven(AbstractValueClobberEpoch newEpoch, SpeculatedType type)
+    ALWAYS_INLINE FiltrationResult fastForwardToAndFilterUnproven(Graph& graph, AbstractValueClobberEpoch newEpoch, SpeculatedType type)
     {
         if (m_type & SpecCell)
-            return fastForwardToAndFilterSlow(newEpoch, type);
+            return fastForwardToAndFilterSlow(graph, newEpoch, type);
         
         m_effectEpoch = newEpoch;
         m_type &= type;
@@ -396,7 +396,7 @@ struct AbstractValue {
     void assertIsRegistered(Graph&) const { }
 #endif
 
-    ResultType resultType() const;
+    ResultType LEGACY_NODELETE resultType() const;
 
     void dumpInContext(PrintStream&, DumpContext*) const;
     void dump(PrintStream&) const;
@@ -447,8 +447,7 @@ struct AbstractValue {
     // complex than the normal Epoch, because it knows how to track clobberStructures() and
     // observeInvalidationPoint() precisely using integer math.
     //
-    // One reason why it's here is to steal the 32-bit hole between m_arrayModes and m_value on
-    // 64-bit systems.
+    // One reason why it's here is to steal the 32-bit hole between m_arrayModes and m_value.
     AbstractValueClobberEpoch m_effectEpoch;
     
     // This is a proven constraint on the possible values that this value can
@@ -488,25 +487,24 @@ private:
         checkConsistency();
     }
     
-    void fastForwardToSlow(AbstractValueClobberEpoch);
+    void fastForwardToSlow(Graph&, AbstractValueClobberEpoch);
     FiltrationResult filterSlow(SpeculatedType);
-    FiltrationResult fastForwardToAndFilterSlow(AbstractValueClobberEpoch, SpeculatedType);
+    FiltrationResult fastForwardToAndFilterSlow(Graph&, AbstractValueClobberEpoch, SpeculatedType);
     
     void filterValueByType();
-    void filterArrayModesByType();
+    void LEGACY_NODELETE filterArrayModesByType();
 
-#if USE(JSVALUE64) && !defined(NDEBUG)
+#if !defined(NDEBUG)
     JS_EXPORT_PRIVATE void ensureCanInitializeWithZeros();
 #endif
     
-    bool shouldBeClear() const;
+    bool LEGACY_NODELETE shouldBeClear() const;
     FiltrationResult normalizeClarity();
     FiltrationResult normalizeClarity(Graph&);
 };
 
 } } // namespace JSC::DFG
 
-#if USE(JSVALUE64)
 namespace WTF {
 template <>
 struct VectorTraits<JSC::DFG::AbstractValue> : VectorTraitsBase<false, JSC::DFG::AbstractValue> {
@@ -518,6 +516,5 @@ struct HashTraits<JSC::DFG::AbstractValue> : GenericHashTraits<JSC::DFG::Abstrac
     static constexpr bool emptyValueIsZero = true;
 };
 };
-#endif // USE(JSVALUE64)
 
 #endif // ENABLE(DFG_JIT)

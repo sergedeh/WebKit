@@ -34,6 +34,18 @@
 /**
  * WPEBuffer:
  *
+ * A buffer to be rendered on a [class@View].
+ *
+ * [class@Buffer] is an abstract class that represents a buffer produced by the
+ * web engine and handed to a [class@View] for display through
+ * [method@View.render_buffer]. The WPE platform library provides three
+ * concrete implementations: [class@BufferDMABuf], [class@BufferSHM] and
+ * #WPEBufferAndroid.
+ *
+ * [class@Buffer] offers helpers to import a buffer's contents as an EGL image
+ * with [method@Buffer.import_to_egl_image] or as pixels in memory with
+ * [method@Buffer.import_to_pixels], as well as rendering and release
+ * fences for use when the display supports explicit sync.
  */
 struct _WPEBufferPrivate {
     GWeakPtr<WPEDisplay> display;
@@ -235,7 +247,7 @@ void wpe_buffer_set_user_data(WPEBuffer* buffer, gpointer userData, GDestroyNoti
  * wpe_buffer_get_user_data:
  * @buffer: a #WPEBuffer
  *
- * Get user data previously set with wpe_buffer_set_user_data.
+ * Get user data previously set with wpe_buffer_set_user_data().
  *
  * Returns: (nullable): the @buffer user data, or %NULL
  */
@@ -251,7 +263,7 @@ gpointer wpe_buffer_get_user_data(WPEBuffer* buffer)
  * @buffer: a #WPEBuffer
  * @error: return location for error or %NULL to ignore
  *
- * Import @buffer into a EGL image.
+ * Import @buffer into an EGL image.
  *
  * Returns: (transfer none): an EGL image, or %NULL in case of error
  */

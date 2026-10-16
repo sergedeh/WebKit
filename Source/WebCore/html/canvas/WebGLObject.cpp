@@ -45,7 +45,7 @@ WebGLObject::WebGLObject(WebGLRenderingContextBase& context, PlatformGLObject ob
 
 WebGLObject::~WebGLObject() = default;
 
-RefPtr<WebGLRenderingContextBase> WebGLObject::context() const
+WebGLRenderingContextBase* WebGLObject::context() const
 {
     return m_context.get();
 }
@@ -57,7 +57,7 @@ Lock& WebGLObject::objectGraphLockForContext()
     return context()->objectGraphLock();
 }
 
-RefPtr<GraphicsContextGL> WebGLObject::graphicsContextGL() const
+GraphicsContextGL* WebGLObject::graphicsContextGL() const
 {
     return m_context ? m_context->graphicsContextGL() : nullptr;
 }
@@ -109,6 +109,12 @@ void WebGLObject::onDetached(const AbstractLocker& locker, GraphicsContextGL* co
 bool WebGLObject::validate(const WebGLRenderingContextBase& context) const
 {
     return &context == m_context;
+}
+
+bool WebGLObject::hasActiveInspectorCanvasCallTracer() const
+{
+    RefPtr context = m_context.get();
+    return context && context->hasActiveInspectorCanvasCallTracer();
 }
 
 WebCoreOpaqueRoot root(WebGLObject* object)

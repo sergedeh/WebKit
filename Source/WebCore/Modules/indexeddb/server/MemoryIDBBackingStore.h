@@ -48,7 +48,7 @@ public:
     WEBCORE_EXPORT ~MemoryIDBBackingStore();
 
     IDBError getOrEstablishDatabaseInfo(IDBDatabaseInfo&) final;
-    uint64_t databaseVersion() final;
+    uint64_t LEGACY_NODELETE databaseVersion() final;
     void setDatabaseInfo(const IDBDatabaseInfo&);
     bool hasObjectStore(IDBObjectStoreIdentifier objectStoreIdentifier) { return !!infoForObjectStore(objectStoreIdentifier); }
     MemoryObjectStore* objectStoreForName(const String& name) const;
@@ -70,7 +70,7 @@ private:
     IDBError renameIndex(const IDBResourceIdentifier& transactionIdentifier, IDBObjectStoreIdentifier, IDBIndexIdentifier, const String& newName) final;
     IDBError keyExistsInObjectStore(const IDBResourceIdentifier& transactionIdentifier, IDBObjectStoreIdentifier, const IDBKeyData&, bool& keyExists) final;
     IDBError deleteRange(const IDBResourceIdentifier& transactionIdentifier, IDBObjectStoreIdentifier, const IDBKeyRangeData&) final;
-    IDBError addRecord(const IDBResourceIdentifier& transactionIdentifier, const IDBObjectStoreInfo&, const IDBKeyData&, const IndexIDToIndexKeyMap&, const IDBValue&) final;
+    IDBError overwriteRecord(const IDBResourceIdentifier& transactionIdentifier, const IDBObjectStoreInfo&, const IDBKeyData&, const IndexIDToIndexKeyMap&, const IDBValue&) final;
     IDBError getRecord(const IDBResourceIdentifier& transactionIdentifier, IDBObjectStoreIdentifier, const IDBKeyRangeData&, IDBGetRecordDataType, IDBGetResult& outValue) final;
     IDBError getAllRecords(const IDBResourceIdentifier& transactionIdentifier, const IDBGetAllRecordsData&, IDBGetAllResult& outValue) final;
     IDBError getIndexRecord(const IDBResourceIdentifier& transactionIdentifier, IDBObjectStoreIdentifier, IDBIndexIdentifier, IndexedDB::IndexRecordType, const IDBKeyRangeData&, IDBGetResult& outValue) final;
@@ -82,7 +82,7 @@ private:
     IDBError iterateCursor(const IDBResourceIdentifier& transactionIdentifier, const IDBResourceIdentifier& cursorIdentifier, const IDBIterateCursorData&, IDBGetResult& outResult) final;
 
     IDBObjectStoreInfo* infoForObjectStore(IDBObjectStoreIdentifier) final;
-    void deleteBackingStore() final;
+    void LEGACY_NODELETE deleteBackingStore() final;
 
     bool supportsSimultaneousReadWriteTransactions() final { return true; }
     bool isEphemeral() final { return true; }
@@ -93,11 +93,11 @@ private:
     IDBError addIndex(const IDBResourceIdentifier& transactionIdentifier, const IDBIndexInfo&) final;
     void revertAddIndex(const IDBResourceIdentifier& transactionIdentifier, IDBObjectStoreIdentifier, IDBIndexIdentifier) final;
     IDBError updateIndexRecordsWithIndexKey(const IDBResourceIdentifier& transactionIdentifier, const IDBIndexInfo&, const IDBKeyData&, const IndexKey&, std::optional<int64_t> recordID) final;
-    void forEachObjectStoreRecord(const IDBResourceIdentifier& transactionIdentifier, IDBObjectStoreIdentifier, Function<void(RecordOrError&&)>&&) final;
+    void forEachObjectStoreRecord(const IDBResourceIdentifier& transactionIdentifier, IDBObjectStoreIdentifier, NOESCAPE const Function<void(RecordOrError&&)>&) final;
 
     RefPtr<MemoryObjectStore> takeObjectStoreByIdentifier(IDBObjectStoreIdentifier);
 
-    void close() final;
+    void LEGACY_NODELETE close() final;
 
     void registerObjectStore(Ref<MemoryObjectStore>&&);
     void unregisterObjectStore(MemoryObjectStore&);

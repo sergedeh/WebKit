@@ -48,9 +48,7 @@ ExtendableEvent::ExtendableEvent(enum EventInterfaceType eventInterface, const A
 {
 }
 
-ExtendableEvent::~ExtendableEvent()
-{
-}
+ExtendableEvent::~ExtendableEvent() = default;
 
 // https://w3c.github.io/ServiceWorker/#dom-extendableevent-waituntil
 ExceptionOr<void> ExtendableEvent::waitUntil(Ref<DOMPromise>&& promise)
@@ -72,7 +70,7 @@ void ExtendableEvent::addExtendLifetimePromise(Ref<DOMPromise>&& promise)
         RefPtr context = globalObject ? globalObject->scriptExecutionContext() : nullptr;
         if (!context)
             return;
-        context->checkedEventLoop()->queueMicrotask([this, protectedThis = WTF::move(protectedThis), weakContext = WeakPtr { *context }]() mutable {
+        protect(context->eventLoop())->queueMicrotask(context->vm(), [this, protectedThis = WTF::move(protectedThis), weakContext = WeakPtr { *context }]() mutable {
             --m_pendingPromiseCount;
 
             // FIXME: Let registration be the context object's relevant global object's associated service worker's containing service worker registration.

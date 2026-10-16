@@ -38,6 +38,7 @@
 #import <Foundation/Foundation.h>
 #import <Network/Network.h>
 #import <Security/SecItem.h>
+#import <WebCore/NotificationData.h>
 #import <WebKit/WKContentRuleListStorePrivate.h>
 #import <WebKit/WKContextConfigurationRef.h>
 #import <WebKit/WKContextPrivate.h>
@@ -46,8 +47,8 @@
 #import <WebKit/WKPreferencesRefPrivate.h>
 #import <WebKit/WKProcessPoolPrivate.h>
 #import <WebKit/WKStringCF.h>
+#import <WebKit/WKURLResponseNS.h>
 #import <WebKit/WKUserContentControllerPrivate.h>
-#import <WebKit/WKUserMediaPermissionCheck.h>
 #import <WebKit/WKWebView.h>
 #import <WebKit/WKWebViewConfiguration.h>
 #import <WebKit/WKWebViewConfigurationPrivate.h>
@@ -65,6 +66,7 @@
 #import <wtf/MainThread.h>
 #import <wtf/RunLoop.h>
 #import <wtf/UniqueRef.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/cocoa/VectorCocoa.h>
 #import <wtf/spi/cocoa/SecuritySPI.h>
 #import <wtf/text/MakeString.h>
@@ -242,6 +244,13 @@ void TestController::platformInitializeDataStore(WKPageConfigurationRef, const T
     auto standaloneWebApplicationURL = options.standaloneWebApplicationURL();
     if (useEphemeralSession || standaloneWebApplicationURL.length() || options.enableInAppBrowserPrivacy()) {
         auto websiteDataStoreConfig = useEphemeralSession ? adoptNS([[_WKWebsiteDataStoreConfiguration alloc] initNonPersistentConfiguration]) : adoptNS([[_WKWebsiteDataStoreConfiguration alloc] init]);
+
+        // Including any non-trivial value of "persistent notifications have a minimum timeout before being closeable"
+        // is counterproductive for layout tests - especially WPT tests. We cover the behavior in API tests.
+        // So let's just set it to a tiny value for no behavior change in layout tests.
+#if ENABLE(NOTIFICATIONS) && ENABLE(NOTIFICATION_EVENT)
+        websiteDataStoreConfig.get().overridePersistentNotificationMinimumLifetimeForTesting = std::numeric_limits<float>::min();
+#endif
         if (!useEphemeralSession)
             configureWebsiteDataStoreTemporaryDirectories((WKWebsiteDataStoreConfigurationRef)websiteDataStoreConfig.get());
         if (standaloneWebApplicationURL.length())
@@ -317,6 +326,10 @@ void TestController::platformCreateWebView(WKPageConfigurationRef configuration,
     [cocoaConfiguration _setLongPressActionsEnabled:options.longPressActionsEnabled()];
 #endif
 
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
+    [cocoaConfiguration setAllowsImmersiveEnvironments:YES];
+#endif
+
     if (options.enableAttachmentElement())
         [cocoaConfiguration _setAttachmentElementEnabled:YES];
     if (options.enableAttachmentWideLayout())
@@ -358,9 +371,6 @@ void TestController::platformCreateWebView(WKPageConfigurationRef configuration,
     if (options.punchOutWhiteBackgroundsInDarkMode())
         m_mainWebView->setDrawsBackground(false);
 
-    if (options.editable())
-        m_mainWebView->setEditable(true);
-
     m_mainWebView->platformView().allowsLinkPreview = options.allowsLinkPreview();
     [m_mainWebView->platformView() _setShareSheetCompletesImmediatelyWithResolutionForTesting:YES];
 }
@@ -375,6 +385,13 @@ UniqueRef<PlatformWebView> TestController::platformCreateOtherPage(PlatformWebVi
 // Code that needs to run after TestController::m_mainWebView is initialized goes into this function.
 void TestController::finishCreatingPlatformWebView(PlatformWebView* view, const TestOptions& options)
 {
+    TestRunnerWKWebView *webView = view->platformView();
+    webView.announcementTranslationMode = [NSString stringWithUTF8String:options.announcementTranslationMode().c_str()];
+
+    auto displayedTranslationLocale = options.displayedTranslationLocale();
+    if (!displayedTranslationLocale.empty())
+        webView._displayedTranslationLocaleIdentifier = [NSString stringWithUTF8String:displayedTranslationLocale.c_str()];
+
 #if PLATFORM(MAC)
     if (options.shouldShowWindow())
         [view->platformWindow() orderFront:nil];
@@ -387,12 +404,12 @@ void TestController::finishCreatingPlatformWebView(PlatformWebView* view, const 
 void TestController::initializeDNS()
 {
     auto agentUUID = adoptNS([[NSUUID alloc] init]);
-    uuid_t agentUUIDBytes;
-    [agentUUID.get() getUUIDBytes:agentUUIDBytes];
-    NSLog(@"useLocalDNSResolver: agent UUID: %@.", agentUUID.get());
 
     m_resolverConfig = adoptOSObject(nw_resolver_config_create());
     if (auto resolverConfig = m_resolverConfig) {
+        uuid_t agentUUIDBytes;
+        [agentUUID.get() getUUIDBytes:agentUUIDBytes];
+
         nw_resolver_config_set_protocol(resolverConfig.get(), nw_resolver_protocol_dns53);
         nw_resolver_config_set_class(resolverConfig.get(), nw_resolver_class_designated_direct);
         nw_resolver_config_add_name_server(resolverConfig.get(), "127.0.0.1:8053");
@@ -403,7 +420,12 @@ void TestController::initializeDNS()
         if (!published) {
             NSLog(@"Failed to register DNS resolver agent UUID: %@. Using local DNS resolver failed.", agentUUID.get());
             RELEASE_ASSERT_NOT_REACHED();
+            return;
         }
+    } else {
+        NSLog(@"Failed to create DNS resolver config for agent UUID: %@. Using local DNS resolver failed.", agentUUID.get());
+        RELEASE_ASSERT_NOT_REACHED();
+        return;
     }
 
     // The following NetworkExtension policy is needed so we can run tests while a VPN is connected
@@ -515,8 +537,6 @@ void TestController::cocoaResetStateToConsistentValues(const TestOptions& option
     [LayoutTestSpellChecker uninstallAndReset];
 
     WebCoreTestSupport::setAdditionalSupportedImageTypesForTesting(String::fromLatin1(options.additionalSupportedImageTypes().c_str()));
-
-    [globalWebsiteDataStoreDelegateClient() clearReportedWindowProxyAccessDomains];
 }
 
 void TestController::platformSetStatisticsCrossSiteLoadWithLinkDecoration(WKStringRef fromHost, WKStringRef toHost, bool wasFiltered, void* context, SetStatisticsCrossSiteLoadWithLinkDecorationCallBack callback)
@@ -630,13 +650,19 @@ void TestController::addTestKeyToKeychain(const String& privateKeyBase64, const 
         (id)kSecAttrKeyClass: (id)kSecAttrKeyClassPrivate,
         (id)kSecAttrKeySizeInBits: @256
     };
-    CFErrorRef errorRef = nullptr;
-    auto key = adoptCF(SecKeyCreateWithData(
-        (__bridge CFDataRef)adoptNS([[NSData alloc] initWithBase64EncodedString:privateKeyBase64.createNSString().get() options:NSDataBase64DecodingIgnoreUnknownCharacters]).get(),
-        (__bridge CFDictionaryRef)options,
-        &errorRef
-    ));
-    ASSERT(!errorRef);
+    RetainPtr<SecKeyRef> key;
+    RetainPtr<CFErrorRef> keyError;
+    {
+        // FIXME: The Security framework API is missing the `CF_RETURNS_RETAINED` annotation (rdar://161546781).
+        CFErrorRef rawError = NULL;
+        key = adoptCF(SecKeyCreateWithData(
+            bridge_cast(adoptNS([[NSData alloc] initWithBase64EncodedString:privateKeyBase64.createNSString().get() options:NSDataBase64DecodingIgnoreUnknownCharacters]).get()),
+            bridge_cast(options),
+            &rawError
+        ));
+        SUPPRESS_RETAINPTR_CTOR_ADOPT keyError = adoptCF(rawError);
+    }
+    ASSERT(!keyError);
 
     NSDictionary* addQuery = @{
         (id)kSecValueRef: (id)key.get(),
@@ -763,25 +789,6 @@ WKRetainPtr<WKStringRef> TestController::takeViewPortSnapshot()
     return adoptWK(WKImageCreateDataURLFromImage(mainWebView()->windowSnapshotImage().get()));
 }
 
-static WKRetainPtr<WKArrayRef> createWKArray(NSArray *nsArray)
-{
-    auto array = adoptWK(WKMutableArrayCreate());
-
-    for (NSString *nsString in nsArray) {
-        auto string = adoptWK(WKStringCreateWithCFString((CFStringRef)nsString));
-        WKArrayAppendItem(array.get(), string.get());
-    }
-
-    return array;
-}
-
-WKRetainPtr<WKArrayRef> TestController::getAndClearReportedWindowProxyAccessDomains()
-{
-    auto domains = createWKArray([globalWebsiteDataStoreDelegateClient() reportedWindowProxyAccessDomains]);
-    [globalWebsiteDataStoreDelegateClient() clearReportedWindowProxyAccessDomains];
-    return domains;
-}
-
 WKRetainPtr<WKStringRef> TestController::getBackgroundFetchIdentifier()
 {
     __block String result;
@@ -793,7 +800,7 @@ WKRetainPtr<WKStringRef> TestController::getBackgroundFetchIdentifier()
     }];
     platformRunUntil(isDone, noTimeout);
 
-    return adoptWK(WKStringCreateWithUTF8CString(result.utf8().data()));
+    return toWK(result);
 }
 
 void TestController::abortBackgroundFetch(WKStringRef identifier)
@@ -872,6 +879,22 @@ void TestController::updatePresentation(CompletionHandler<void(WKTypeRef)>&& com
     [m_mainWebView->platformView() _doAfterNextPresentationUpdate:makeBlockPtr([completionHandler = WTF::move(completionHandler)] mutable {
         completionHandler(nullptr);
     }).get()];
+}
+
+uint64_t TestController::responseHeaderCount(WKURLResponseRef response)
+{
+    RetainPtr nsURLResponse = adoptNS(WKURLResponseCopyNSURLResponse(response));
+    if (![nsURLResponse isKindOfClass:[NSHTTPURLResponse class]])
+        return { };
+
+    NSHTTPURLResponse *httpResponse = (NSHTTPURLResponse *)nsURLResponse.get();
+    return [[httpResponse allHeaderFields] count];
+}
+
+String TestController::platformResponseMIMEType(WKURLResponseRef response)
+{
+    RetainPtr nsURLResponse = adoptNS(WKURLResponseCopyNSURLResponse(response));
+    return [nsURLResponse.get() MIMEType];
 }
 
 } // namespace WTR

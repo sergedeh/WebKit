@@ -31,7 +31,6 @@
 #include <WebCore/DocumentSyncData.h>
 #include <WebCore/Element.h>
 #include <WebCore/ExtensionStyleSheets.h>
-#include <WebCore/FrameSelection.h>
 #include <WebCore/NodeIterator.h>
 #include <WebCore/ReportingScope.h>
 #include <WebCore/SecurityOrigin.h>
@@ -42,7 +41,7 @@ namespace WebCore {
 
 inline PAL::TextEncoding Document::textEncoding() const
 {
-    if (RefPtr decoder = this->decoder())
+    if (auto* decoder = this->decoder())
         return decoder->encoding();
     return PAL::TextEncoding();
 }
@@ -64,15 +63,12 @@ inline ExtensionStyleSheets& Document::extensionStyleSheets()
     return *m_extensionStyleSheets;
 }
 
-inline CheckedRef<ExtensionStyleSheets> Document::checkedExtensionStyleSheets()
-{
-    return extensionStyleSheets();
-}
-
 inline VisitedLinkState& Document::visitedLinkState() const
 {
-    if (!m_visitedLinkState)
-        return const_cast<Document&>(*this).ensureVisitedLinkState();
+    if (!m_visitedLinkState) {
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<Document&>(*this).ensureVisitedLinkState();
+    }
     return *m_visitedLinkState;
 }
 
@@ -90,17 +86,12 @@ inline ScriptModuleLoader& Document::moduleLoader()
     return *m_moduleLoader;
 }
 
-inline CSSFontSelector& Document::fontSelector()
+inline CSSFontSelector& Document::fontSelector() const
 {
-    if (!m_fontSelector)
-        return ensureFontSelector();
-    return *m_fontSelector;
-}
-
-inline const CSSFontSelector& Document::fontSelector() const
-{
-    if (!m_fontSelector)
-        return const_cast<Document&>(*this).ensureFontSelector();
+    if (!m_fontSelector) {
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<Document&>(*this).ensureFontSelector();
+    }
     return *m_fontSelector;
 }
 
@@ -132,59 +123,27 @@ inline ClientOrigin Document::clientOrigin() const { return { topOrigin().data()
 
 inline bool Document::wasLastFocusByClick() const { return m_latestFocusTrigger == FocusTrigger::Click; }
 
-inline RefPtr<DocumentParser> Document::protectedParser() const
-{
-    return m_parser;
-}
-
-inline RefPtr<Element> Document::protectedDocumentElement() const
-{
-    return m_documentElement;
-}
-
 inline UndoManager& Document::undoManager() const
 {
-    if (!m_undoManager)
-        return const_cast<Document&>(*this).ensureUndoManager();
+    if (!m_undoManager) {
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<Document&>(*this).ensureUndoManager();
+    }
     return *m_undoManager;
-}
-
-inline Ref<UndoManager> Document::protectedUndoManager() const
-{
-    return undoManager();
 }
 
 inline ReportingScope& Document::reportingScope() const
 {
-    if (!m_reportingScope)
-        return const_cast<Document&>(*this).ensureReportingScope();
+    if (!m_reportingScope) {
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<Document&>(*this).ensureReportingScope();
+    }
     return *m_reportingScope;
-}
-
-inline Ref<ReportingScope> Document::protectedReportingScope() const
-{
-    return reportingScope();
-}
-
-inline RefPtr<TextResourceDecoder> Document::protectedDecoder() const
-{
-    return m_decoder;
-}
-
-inline RefPtr<Element> Document::protectedFocusedElement() const
-{
-    return m_focusedElement;
 }
 
 inline Ref<DocumentSyncData> Document::syncData()
 {
     return m_syncData.get();
-}
-
-// FIXME: Move to FrameSelectionInlines.h
-RefPtr<Document> FrameSelection::protectedDocument() const
-{
-    return m_document.get();
 }
 
 } // namespace WebCore

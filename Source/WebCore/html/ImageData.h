@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2008-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,12 +29,11 @@
 #pragma once
 
 #include <JavaScriptCore/Forward.h>
-#include <WebCore/ByteArrayPixelBuffer.h>
-#include <WebCore/Float16ArrayPixelBuffer.h>
 #include <WebCore/ImageDataArray.h>
 #include <WebCore/ImageDataSettings.h>
 #include <WebCore/IntSize.h>
 #include <WebCore/PredefinedColorSpace.h>
+#include <WebCore/TypedArrayPixelBuffer.h>
 #include <wtf/Forward.h>
 
 namespace WebCore {
@@ -43,32 +42,31 @@ template<typename> class ExceptionOr;
 
 class ImageData : public RefCounted<ImageData> {
 public:
-    WEBCORE_EXPORT static Ref<ImageData> create(Ref<ByteArrayPixelBuffer>&&, std::optional<ImageDataPixelFormat> = { });
-#if ENABLE(PIXEL_FORMAT_RGBA16F)
-    WEBCORE_EXPORT static Ref<ImageData> create(Ref<Float16ArrayPixelBuffer>&&, std::optional<ImageDataPixelFormat> = { });
-#endif
+    WEBCORE_EXPORT static Ref<ImageData> create(Ref<ArrayPixelBuffer>&&, std::optional<ImageDataPixelFormat> = { });
     WEBCORE_EXPORT static RefPtr<ImageData> create(Ref<PixelBuffer>&&, std::optional<ImageDataPixelFormat> = { });
-    WEBCORE_EXPORT static RefPtr<ImageData> create(RefPtr<ByteArrayPixelBuffer>&&, std::optional<ImageDataPixelFormat> = { });
+    WEBCORE_EXPORT static RefPtr<ImageData> create(RefPtr<ArrayPixelBuffer>&&, std::optional<ImageDataPixelFormat> = { });
     WEBCORE_EXPORT static RefPtr<ImageData> create(const IntSize&, PredefinedColorSpace, ImageDataPixelFormat = ImageDataPixelFormat::RgbaUnorm8);
     WEBCORE_EXPORT static RefPtr<ImageData> create(const IntSize&, ImageDataArray&&, PredefinedColorSpace);
 
     WEBCORE_EXPORT static ExceptionOr<Ref<ImageData>> create(unsigned sw, unsigned sh, PredefinedColorSpace defaultColorSpace, std::optional<ImageDataSettings> = std::nullopt, std::span<const uint8_t> = { });
     WEBCORE_EXPORT static ExceptionOr<Ref<ImageData>> create(unsigned sw, unsigned sh, std::optional<ImageDataSettings>);
-    WEBCORE_EXPORT static ExceptionOr<Ref<ImageData>> create(ImageDataArray&&, unsigned sw, std::optional<unsigned> sh, std::optional<ImageDataSettings>);
+    WEBCORE_EXPORT static ExceptionOr<Ref<ImageData>> create(Ref<JSC::ArrayBufferView>&&, unsigned sw, std::optional<unsigned> sh, std::optional<ImageDataSettings>);
 
     WEBCORE_EXPORT ~ImageData();
 
-    static PredefinedColorSpace computeColorSpace(std::optional<ImageDataSettings>, PredefinedColorSpace defaultColorSpace = PredefinedColorSpace::SRGB);
+    static PredefinedColorSpace LEGACY_NODELETE computeColorSpace(std::optional<ImageDataSettings>, PredefinedColorSpace defaultColorSpace = PredefinedColorSpace::SRGB);
 
-    const IntSize& size() const { return m_size; }
+    const IntSize& size() const LIFETIME_BOUND { return m_size; }
 
     int width() const { return m_size.width(); }
     int height() const { return m_size.height(); }
-    const ImageDataArray& data() const { return m_data; }
+    const ImageDataArray& data() const LIFETIME_BOUND { return m_data; }
     PredefinedColorSpace colorSpace() const { return m_colorSpace; }
     ImageDataPixelFormat pixelFormat() const { return m_data.pixelFormat(); }
 
-    Ref<ByteArrayPixelBuffer> byteArrayPixelBuffer() const;
+    size_t memoryCost() const { return m_memoryCost; }
+
+    WEBCORE_EXPORT Ref<ByteArrayPixelBuffer> byteArrayPixelBuffer() const;
 #if ENABLE(PIXEL_FORMAT_RGBA16F)
     Ref<Float16ArrayPixelBuffer> float16ArrayPixelBuffer() const;
 #endif
@@ -81,6 +79,10 @@ private:
     IntSize m_size;
     ImageDataArray m_data;
     PredefinedColorSpace m_colorSpace;
+    // memoryCost() is invoked concurrently from a GC thread, so the cost is computed
+    // once here rather than read off the array buffer view, whose byte length involves
+    // chasing a buffer pointer that can be nullified by detaching.
+    const size_t m_memoryCost;
 };
 
 WEBCORE_EXPORT TextStream& operator<<(TextStream&, const ImageData&);

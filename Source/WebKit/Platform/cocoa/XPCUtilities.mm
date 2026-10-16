@@ -26,34 +26,32 @@
 #include "config.h"
 #include "XPCUtilities.h"
 
-#if USE(EXIT_XPC_MESSAGE_WORKAROUND)
-#include "Logging.h"
-#include <wtf/WTFProcess.h>
-#include <wtf/darwin/XPCObjectPtr.h>
-#include <wtf/text/ASCIILiteral.h>
-#endif
+#include <wtf/spi/darwin/ReasonSPI.h>
 
 namespace WebKit {
 
-#if USE(EXIT_XPC_MESSAGE_WORKAROUND)
-static constexpr auto messageNameKey = "message-name"_s;
-static constexpr auto exitProcessMessage = "exit"_s;
-#endif
-
 #if !USE(EXTENSIONKIT_PROCESS_TERMINATION)
-void terminateWithReason(xpc_connection_t connection, ReasonCode, const char*)
+void terminateWithReason(xpc_connection_t connection, ReasonCode reasonCode, const char* reason, std::optional<IPC::MessageName> invalidMessageName)
 {
-    // This could use ReasonSPI.h, but currently does not as the SPI is blocked by the sandbox.
-    // See https://bugs.webkit.org/show_bug.cgi?id=224499 rdar://76396241
     if (!connection)
         return;
 
-#if USE(EXIT_XPC_MESSAGE_WORKAROUND)
-    // Give the process a chance to exit cleanly by sending a XPC message to request termination, then try xpc_connection_kill.
-    // FIXME: This is a false positive. <rdar://164843889>
-    SUPPRESS_RETAINPTR_CTOR_ADOPT auto exitMessage = adoptXPCObject(xpc_dictionary_create(nullptr, nullptr, 0));
-    xpc_dictionary_set_string(exitMessage.get(), messageNameKey, exitProcessMessage.characters());
-    xpc_connection_send_message(connection, exitMessage.get());
+#if ASAN_ENABLED
+    // Unlike xpc_connection_kill(), this leaves a crash report that run-webkit-tests can match.
+    // Not done unconditionally because the SPI is blocked for embedders with a sandbox (Bug 224499).
+    if (reasonCode == ReasonCode::MessageCheckKilled || reasonCode == ReasonCode::WatchdogTimerFired) {
+        // Encode the ReasonCode in the low byte; for a message check, pack the failing
+        // IPC message name above it so the crash report identifies which check failed.
+        uint64_t code = std::to_underlying(reasonCode);
+        if (invalidMessageName)
+            code |= static_cast<uint64_t>(std::to_underlying(*invalidMessageName)) << 8;
+        if (!terminate_with_reason(xpc_connection_get_pid(connection), OS_REASON_WEBKIT, code, reason, 0))
+            return;
+    }
+#else
+    UNUSED_PARAM(reasonCode);
+    UNUSED_PARAM(reason);
+    UNUSED_PARAM(invalidMessageName);
 #endif
 
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
@@ -61,18 +59,5 @@ ALLOW_DEPRECATED_DECLARATIONS_BEGIN
 ALLOW_DEPRECATED_DECLARATIONS_END
 }
 #endif // !USE(EXTENSIONKIT_PROCESS_TERMINATION)
-
-#if USE(EXIT_XPC_MESSAGE_WORKAROUND)
-void handleXPCExitMessage(xpc_object_t event)
-{
-    if (xpc_get_type(event) == XPC_TYPE_DICTIONARY) {
-        String messageName = xpcDictionaryGetString(event, messageNameKey);
-        if (messageName == exitProcessMessage) {
-            RELEASE_LOG_ERROR(IPC, "Received exit message, exiting now.");
-            terminateProcess(EXIT_FAILURE);
-        }
-    }
-}
-#endif // USE(EXIT_XPC_MESSAGE_WORKAROUND)
 
 }

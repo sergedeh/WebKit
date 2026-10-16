@@ -36,11 +36,14 @@
 #import "GraphicsContext.h"
 #import "LayoutRect.h"
 #import "Logging.h"
+#import "MediaPlayerPrivate.h"
 #import "MediaSampleAVFObjC.h"
 #import "MediaSessionManagerCocoa.h"
 #import "NativeImage.h"
+#import "PeriodicSharedTimer.h"
 #import "PixelBufferConformerCV.h"
 #import "PlatformDynamicRangeLimitCocoa.h"
+#import "SharedTimebase.h"
 #import "SpatialAudioExperienceHelper.h"
 #import "TextTrackRepresentation.h"
 #import "Timer.h"
@@ -56,8 +59,10 @@
 #import <wtf/BlockObjCExceptions.h>
 #import <wtf/BlockPtr.h>
 #import <wtf/MainThread.h>
+#import <wtf/NeverDestroyed.h>
 #import <wtf/SoftLinking.h>
 #import <wtf/TZoneMallocInlines.h>
+#import <wtf/WeakObjCPtr.h>
 #import <wtf/WorkQueue.h>
 #import <wtf/cocoa/Entitlements.h>
 #import <wtf/darwin/DispatchExtras.h>
@@ -67,6 +72,12 @@
 #import "VideoToolboxSoftLink.h"
 #import <pal/cf/CoreMediaSoftLink.h>
 #import <pal/cocoa/AVFoundationSoftLink.h>
+
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/AVSampleBufferRenderSynchronizerAdditions.mm>)
+#import <WebKitAdditions/AVSampleBufferRenderSynchronizerAdditions.mm>
+#else
+static void setSynchronizerScreenReserved(AVSampleBufferRenderSynchronizer *, bool) { }
+#endif
 
 @interface AVSampleBufferDisplayLayer (Staging_100128644)
 @property (assign, nonatomic) BOOL preventsAutomaticBackgroundingDuringVideoPlayback;
@@ -82,13 +93,30 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(AudioVideoRendererAVFObjC);
 
-AudioVideoRendererAVFObjC::AudioVideoRendererAVFObjC(const Logger& originalLogger, uint64_t logSiteIdentifier)
+static PeriodicSharedTimer& sharedTimebaseTimer()
+{
+    static NeverDestroyed<PeriodicSharedTimer> timer { 100_ms };
+    return timer.get();
+}
+
+Ref<AudioVideoRendererAVFObjC> AudioVideoRendererAVFObjC::create(const Logger& logger, uint64_t logIdentifier)
+{
+    return adoptRef(*new AudioVideoRendererAVFObjC(logger, logIdentifier, nullptr));
+}
+
+Ref<AudioVideoRendererAVFObjC> AudioVideoRendererAVFObjC::create(const Logger& logger, uint64_t logIdentifier, UniqueRef<SharedTimebase>&& sharedTimebase)
+{
+    return adoptRef(*new AudioVideoRendererAVFObjC(logger, logIdentifier, sharedTimebase.moveToUniquePtr()));
+}
+
+AudioVideoRendererAVFObjC::AudioVideoRendererAVFObjC(const Logger& originalLogger, uint64_t logSiteIdentifier, std::unique_ptr<SharedTimebase>&& sharedTimebase)
     : m_logger(originalLogger)
     , m_logIdentifier(logSiteIdentifier)
     , m_videoLayerManager(makeUniqueRef<VideoLayerManagerObjC>(originalLogger, logSiteIdentifier))
-    , m_synchronizer([adoptNS(PAL::allocAVSampleBufferRenderSynchronizerInstance()) init])
+    , m_synchronizer(adoptNS([PAL::allocAVSampleBufferRenderSynchronizerInstance() init]))
     , m_listener(WebAVSampleBufferListener::create(*this))
     , m_startupTime(MonotonicTime::now())
+    , m_sharedTimebase(WTF::move(sharedTimebase))
 #if ENABLE(ENCRYPTED_MEDIA) && HAVE(AVCONTENTKEYSESSION)
     , m_keyStatusesChangedObserver(Observer<void()>::create([weakThis = ThreadSafeWeakPtr { *this }] {
         if (RefPtr protectedThis = weakThis.get())
@@ -99,7 +127,7 @@ AudioVideoRendererAVFObjC::AudioVideoRendererAVFObjC(const Logger& originalLogge
     // addPeriodicTimeObserverForInterval: throws an exception if you pass a non-numeric CMTime, so just use
     // an arbitrarily large time value of once an hour:
     __block ThreadSafeWeakPtr weakThis { *this };
-    m_timeJumpedObserver = [m_synchronizer addPeriodicTimeObserverForInterval:PAL::toCMTime(MediaTime::createWithDouble(3600)) queue:mainDispatchQueueSingleton() usingBlock:^(CMTime time) {
+    lazyInitialize(m_timeJumpedObserver, retainPtr([m_synchronizer addPeriodicTimeObserverForInterval:PAL::toCMTime(MediaTime::createWithDouble(3600)) queue:mainDispatchQueueSingleton() usingBlock:^(CMTime time) {
 #if LOG_DISABLED
         UNUSED_PARAM(time);
 #endif
@@ -112,14 +140,17 @@ AudioVideoRendererAVFObjC::AudioVideoRendererAVFObjC(const Logger& originalLogge
 
         m_isSynchronizerSeeking = false;
         maybeCompleteSeek();
-    }];
+    }]));
     stall();
 }
 
 AudioVideoRendererAVFObjC::~AudioVideoRendererAVFObjC()
 {
+    if (std::exchange(m_registeredWithSharedTimer, false))
+        sharedTimebaseTimer().removeClient(*this);
     if (RefPtr rateChangeListener = std::exchange(m_effectiveRateChangedListener, { }))
         rateChangeListener->stop();
+    cancelStartupGateObserver();
     cancelSeekingPromiseIfNeeded();
     cancelTimeReachedAction();
     cancelTimeObserver();
@@ -139,33 +170,59 @@ AudioVideoRendererAVFObjC::~AudioVideoRendererAVFObjC()
 #endif
 }
 
+void AudioVideoRendererAVFObjC::shutdown()
+{
+    if (std::exchange(m_isShutdown, true))
+        return;
+    ALWAYS_LOG(LOGIDENTIFIER);
+
+    cancelSeekingPromiseIfNeeded();
+    cancelTimeReachedAction();
+
+    for (auto& renderer : m_audioRenderers.values()) {
+        removeRendererFromSynchronizerIfNeeded(renderer.get());
+        m_listener->stopObservingAudioRenderer(renderer.get());
+        [renderer stopRequestingMediaData];
+    }
+    m_audioRenderers.clear();
+    m_audioTracksMap.clear();
+
+    destroyVideoTrack();
+}
+
 void AudioVideoRendererAVFObjC::setPreferences(VideoRendererPreferences preferences)
 {
+    if (m_isShutdown)
+        return;
     m_preferences = preferences;
-    if (RefPtr videoRenderer = m_videoRenderer)
+    if (auto* videoRenderer = m_videoRenderer.get())
         videoRenderer->setPreferences(preferences);
 }
 
 void AudioVideoRendererAVFObjC::setHasProtectedVideoContent(bool protectedContent)
 {
+    if (m_isShutdown)
+        return;
     ALWAYS_LOG(LOGIDENTIFIER, "protectedContent: ", protectedContent);
 
     if (std::exchange(m_hasProtectedVideoContent, protectedContent) != protectedContent)
         updateDisplayLayerIfNeeded();
 }
 
-TracksRendererManager::TrackIdentifier AudioVideoRendererAVFObjC::addTrack(TrackType type)
+std::optional<TracksRendererManager::TrackIdentifier> AudioVideoRendererAVFObjC::addTrack(TrackType type)
 {
+    if (m_isShutdown)
+        return { };
     auto identifier = TrackIdentifier::generate();
     m_trackTypes.add(identifier, type);
     ALWAYS_LOG(LOGIDENTIFIER, toString(identifier));
 
     switch (type) {
     case TrackType::Video:
-        if (RefPtr videoRenderer = m_videoRenderer) {
-            videoRenderer->stopRequestingMediaData();
+        cancelVideoDataRequest();
+        m_requestVideoPromise.reset();
+        if (RefPtr videoRenderer = m_videoRenderer)
             videoRenderer->flush();
-        }
         m_enabledVideoTrackId = identifier;
         updateDisplayLayerIfNeeded();
         break;
@@ -173,14 +230,15 @@ TracksRendererManager::TrackIdentifier AudioVideoRendererAVFObjC::addTrack(Track
         addAudioRenderer(identifier);
         break;
     default:
-        ASSERT_NOT_REACHED();
-        break;
+        return std::nullopt;
     }
     return identifier;
 }
 
 void AudioVideoRendererAVFObjC::removeTrack(TrackIdentifier trackId)
 {
+    if (m_isShutdown)
+        return;
     ALWAYS_LOG(LOGIDENTIFIER, toString(trackId));
     auto type = typeOf(trackId);
     if (!type)
@@ -204,6 +262,8 @@ void AudioVideoRendererAVFObjC::removeTrack(TrackIdentifier trackId)
 
 void AudioVideoRendererAVFObjC::enqueueSample(TrackIdentifier trackId, Ref<MediaSample>&& sample, std::optional<MediaTime> minimumUpcomingTime)
 {
+    if (m_isShutdown)
+        return;
     auto type = typeOf(trackId);
     if (!type)
         return;
@@ -246,8 +306,19 @@ void AudioVideoRendererAVFObjC::enqueueSample(TrackIdentifier trackId, Ref<Media
         }
 
         ASSERT(m_videoRenderer);
-        if (RefPtr videoRenderer = m_videoRenderer; videoRenderer && isEnabledVideoTrackId(trackId))
-            videoRenderer->enqueueSample(sample, minimumUpcomingTime.value_or(sample->presentationTime()));
+        if (m_keyframeNeeded && !sample->isSync()) {
+            ALWAYS_LOG(LOGIDENTIFIER, "Keyframe needed: but frame not keyframe");
+            ASSERT_NOT_REACHED();
+            return;
+        }
+        m_keyframeNeeded = false;
+        if (RefPtr videoRenderer = m_videoRenderer; videoRenderer && isEnabledVideoTrackId(trackId)) {
+            videoRenderer->enqueueSample(sample, minimumUpcomingTime);
+            if (!m_hasEverSubmittedVideoSample) {
+                m_hasEverSubmittedVideoSample = true;
+                m_previousRendererConfiguration.isRenderingCompressedVideo = !isUsingDecompressionSession();
+            }
+        }
         break;
 
     case TrackType::Audio:
@@ -276,12 +347,10 @@ bool AudioVideoRendererAVFObjC::isReadyForMoreSamples(TrackIdentifier trackId)
 
     switch (*type) {
     case TrackType::Video:
-        return m_readyToRequestVideoData && isEnabledVideoTrackId(trackId) && protectedVideoRenderer()->isReadyForMoreMediaData();
+        return m_readyToRequestVideoData && isEnabledVideoTrackId(trackId) && protect(m_videoRenderer)->isReadyForMoreMediaData();
     case TrackType::Audio:
-        if (!m_readyToRequestAudioData)
-            return false;
         if (RetainPtr audioRenderer = audioRendererFor(trackId))
-            return [audioRenderer isReadyForMoreMediaData];
+            return audioTrackPropertiesFor(trackId).readyToRequestAudioData && [audioRenderer isReadyForMoreMediaData];
         return false;
     default:
         ASSERT_NOT_REACHED();
@@ -291,6 +360,8 @@ bool AudioVideoRendererAVFObjC::isReadyForMoreSamples(TrackIdentifier trackId)
 
 Ref<AudioVideoRenderer::RequestPromise> AudioVideoRendererAVFObjC::requestMediaDataWhenReady(TrackIdentifier trackId)
 {
+    if (m_isShutdown)
+        return RequestPromise::createAndReject(PlatformMediaError::Shutdown);
     auto type = typeOf(trackId);
     if (!type)
         return RequestPromise::createAndReject(PlatformMediaError::LogicError);
@@ -298,51 +369,33 @@ Ref<AudioVideoRenderer::RequestPromise> AudioVideoRendererAVFObjC::requestMediaD
     DEBUG_LOG(LOGIDENTIFIER, "trackId: ", toString(trackId), " isEnabledVideoTrackId: ", isEnabledVideoTrackId(trackId));
 
     switch (*type) {
-    case TrackType::Video:
+    case TrackType::Video: {
         ASSERT(m_videoRenderer);
-        if (RefPtr videoRenderer = m_videoRenderer) {
-            m_requestVideoPromise.emplace(PlatformMediaError::Cancelled);
-            videoRenderer->requestMediaDataWhenReady([trackId, weakThis = ThreadSafeWeakPtr { *this }] {
-                RefPtr protectedThis = weakThis.get();
-                if (!protectedThis)
-                    return;
-                if (!protectedThis->m_readyToRequestVideoData) {
-                        DEBUG_LOG_WITH_THIS(protectedThis, LOGIDENTIFIER_WITH_THIS(protectedThis), "Not ready to request video data, ignoring");
-                    return;
-                }
-                if (RefPtr videoRenderer = protectedThis->m_videoRenderer)
-                    videoRenderer->stopRequestingMediaData();
-                if (auto existingPromise = std::exchange(protectedThis->m_requestVideoPromise, std::nullopt))
-                    existingPromise->resolve(trackId);
-            });
-            return m_requestVideoPromise->promise();
-        }
-        break;
-    case TrackType::Audio:
-        if (RetainPtr audioRenderer = audioRendererFor(trackId)) {
-            auto& property = audioTrackPropertiesFor(trackId);
-            property.requestPromise = makeUnique<RequestPromise::AutoRejectProducer>(PlatformMediaError::Cancelled);
-            auto handler = makeBlockPtr([trackId, weakThis = ThreadSafeWeakPtr { *this }] {
-                RefPtr protectedThis = weakThis.get();
-                if (!protectedThis)
-                    return;
-                if (!protectedThis->m_readyToRequestAudioData) {
-                        DEBUG_LOG_WITH_THIS(protectedThis, LOGIDENTIFIER_WITH_THIS(protectedThis), "Not ready to request audio data, ignoring");
-                    return;
-                }
-
-                RetainPtr audioRenderer = protectedThis->audioRendererFor(trackId);
-                if (!audioRenderer)
-                    return;
-                [audioRenderer stopRequestingMediaData];
-                auto& property = protectedThis->audioTrackPropertiesFor(trackId);
-                if (auto existingPromise = std::exchange(property.requestPromise, nullptr))
-                    existingPromise->resolve(trackId);
-            });
-            [audioRenderer requestMediaDataWhenReadyOnQueue:mainDispatchQueueSingleton() usingBlock:handler.get()];
-            return property.requestPromise->promise();
-        }
-        break;
+        if (!m_videoRenderer)
+            break;
+        cancelVideoDataRequest();
+        m_requestVideoPromise.reset();
+        if (isReadyForMoreSamples(trackId))
+            return RequestPromise::createAndResolve(trackId);
+        m_requestVideoPromise.emplace(PlatformMediaError::Cancelled);
+        Ref promise = m_requestVideoPromise->promise();
+        if (m_readyToRequestVideoData)
+            requestVideoDataWhenReady(trackId);
+        return promise;
+    }
+    case TrackType::Audio: {
+        if (!audioRendererFor(trackId))
+            break;
+        auto& property = audioTrackPropertiesFor(trackId);
+        property.requestPromise = nullptr;
+        if (isReadyForMoreSamples(trackId))
+            return RequestPromise::createAndResolve(trackId);
+        property.requestPromise = makeUnique<RequestPromise::AutoRejectProducer>(PlatformMediaError::Cancelled);
+        Ref promise = property.requestPromise->promise();
+        if (property.readyToRequestAudioData)
+            requestAudioDataWhenReady(trackId);
+        return promise;
+    }
     default:
         ASSERT_NOT_REACHED();
         break;
@@ -350,8 +403,95 @@ Ref<AudioVideoRenderer::RequestPromise> AudioVideoRendererAVFObjC::requestMediaD
     return RequestPromise::createAndReject(PlatformMediaError::LogicError);
 }
 
+void AudioVideoRendererAVFObjC::requestVideoDataWhenReady(TrackIdentifier trackId)
+{
+    ASSERT(m_requestVideoPromise);
+    ASSERT(m_readyToRequestVideoData);
+    ASSERT(!m_videoDataRequest->hasCallback());
+
+    RefPtr videoRenderer = m_videoRenderer;
+    if (!videoRenderer)
+        return;
+
+    videoRenderer->requestMediaDataWhenReady()->whenSettled(RunLoop::mainSingleton(), [trackId, weakThis = ThreadSafeWeakPtr { *this }](auto&& result) {
+        RefPtr protectedThis = weakThis.get();
+        if (!protectedThis)
+            return;
+        protectedThis->m_videoDataRequest->complete();
+        if (!result)
+            return;
+        ASSERT(protectedThis->m_readyToRequestVideoData);
+        ASSERT(protectedThis->m_requestVideoPromise);
+        std::exchange(protectedThis->m_requestVideoPromise, std::nullopt)->resolve(trackId);
+    })->track(m_videoDataRequest);
+}
+
+void AudioVideoRendererAVFObjC::cancelVideoDataRequest()
+{
+    if (m_videoDataRequest->hasCallback())
+        m_videoDataRequest->disconnect();
+    if (RefPtr videoRenderer = m_videoRenderer)
+        videoRenderer->stopRequestingMediaData();
+}
+
+void AudioVideoRendererAVFObjC::clearReadyToRequestVideoData()
+{
+    m_readyToRequestVideoData = false;
+    cancelVideoDataRequest();
+}
+
+void AudioVideoRendererAVFObjC::requestAudioDataWhenReady(TrackIdentifier trackId)
+{
+    RetainPtr audioRenderer = audioRendererFor(trackId);
+    if (!audioRenderer)
+        return;
+
+    auto handler = makeBlockPtr([trackId, weakThis = ThreadSafeWeakPtr { *this }, weakAudioRenderer = WeakObjCPtr { audioRenderer.get() }] {
+        [protect(weakAudioRenderer) stopRequestingMediaData];
+
+        RefPtr protectedThis = weakThis.get();
+        if (!protectedThis || !protectedThis->audioRendererFor(trackId))
+            return;
+
+        auto& property = protectedThis->audioTrackPropertiesFor(trackId);
+        if (!property.readyToRequestAudioData) {
+            DEBUG_LOG_WITH_THIS(protectedThis, LOGIDENTIFIER_WITH_THIS(protectedThis), "Not ready to request audio data, deferring");
+            return;
+        }
+        if (auto existingPromise = std::exchange(property.requestPromise, nullptr))
+            existingPromise->resolve(trackId);
+    });
+    [audioRenderer requestMediaDataWhenReadyOnQueue:mainDispatchQueueSingleton() usingBlock:handler.get()];
+}
+
+void AudioVideoRendererAVFObjC::setReadyToRequestVideoData()
+{
+    m_readyToRequestVideoData = true;
+    if (!m_requestVideoPromise || m_videoDataRequest->hasCallback() || !m_enabledVideoTrackId)
+        return;
+    auto trackId = *m_enabledVideoTrackId;
+    if (isReadyForMoreSamples(trackId))
+        std::exchange(m_requestVideoPromise, std::nullopt)->resolve(trackId);
+    else
+        requestVideoDataWhenReady(trackId);
+}
+
+void AudioVideoRendererAVFObjC::setReadyToRequestAudioData(TrackIdentifier trackId)
+{
+    auto& property = audioTrackPropertiesFor(trackId);
+    property.readyToRequestAudioData = true;
+    if (!property.requestPromise)
+        return;
+    if (isReadyForMoreSamples(trackId))
+        std::exchange(property.requestPromise, nullptr)->resolve(trackId);
+    else
+        requestAudioDataWhenReady(trackId);
+}
+
 void AudioVideoRendererAVFObjC::notifyTrackNeedsReenqueuing(TrackIdentifier trackId, Function<void(TrackIdentifier, const MediaTime&)>&& callback)
 {
+    if (m_isShutdown)
+        return;
     auto type = typeOf(trackId);
     if (!type)
         return;
@@ -372,15 +512,13 @@ void AudioVideoRendererAVFObjC::notifyTrackNeedsReenqueuing(TrackIdentifier trac
 
 void AudioVideoRendererAVFObjC::flush()
 {
+    if (m_isShutdown)
+        return;
     ALWAYS_LOG(LOGIDENTIFIER);
 
     cancelSeekingPromiseIfNeeded();
-    if (m_seekState == RequiresFlush)
-        m_seekState = Seeking;
-    else {
-        m_seekState = SeekCompleted;
-        m_isSynchronizerSeeking = false;
-    }
+    m_seekState = SeekCompleted;
+    m_isSynchronizerSeeking = false;
 
     flushVideo();
     flushAudio();
@@ -388,7 +526,9 @@ void AudioVideoRendererAVFObjC::flush()
 
 void AudioVideoRendererAVFObjC::flushTrack(TrackIdentifier trackId)
 {
-    DEBUG_LOG(LOGIDENTIFIER, toString(trackId));
+    if (m_isShutdown)
+        return;
+    ALWAYS_LOG(LOGIDENTIFIER, toString(trackId));
 
     auto type = typeOf(trackId);
     if (!type)
@@ -410,6 +550,8 @@ void AudioVideoRendererAVFObjC::flushTrack(TrackIdentifier trackId)
 
 void AudioVideoRendererAVFObjC::applicationWillResignActive()
 {
+    if (m_isShutdown)
+        return;
     RefPtr videoRenderer = m_videoRenderer;
     if (!videoRenderer || !videoRenderer->isUsingDecompressionSession())
         return;
@@ -425,12 +567,18 @@ void AudioVideoRendererAVFObjC::applicationWillResignActive()
 
 void AudioVideoRendererAVFObjC::notifyWhenErrorOccurs(Function<void(PlatformMediaError)>&& callback)
 {
+    if (m_isShutdown) {
+        callback(PlatformMediaError::Shutdown);
+        return;
+    }
     m_errorCallback = WTF::move(callback);
 }
 
 // Synchronizer interface
 void AudioVideoRendererAVFObjC::play(std::optional<MonotonicTime> hostTime)
 {
+    if (m_isShutdown)
+        return;
     ALWAYS_LOG(LOGIDENTIFIER, "m_rate: ", m_rate, " seeking: ", seeking());
     m_isPlaying = true;
     if (!seeking())
@@ -439,8 +587,17 @@ void AudioVideoRendererAVFObjC::play(std::optional<MonotonicTime> hostTime)
 
 void AudioVideoRendererAVFObjC::pause(std::optional<MonotonicTime> hostTime)
 {
+    if (m_isShutdown)
+        return;
     ALWAYS_LOG(LOGIDENTIFIER, "m_rate: ", m_rate);
     m_isPlaying = false;
+    // Capture current time to prevent time going backwards after resume.
+    // The AVSampleBufferRenderSynchronizer can briefly report earlier times
+    // during playback resumption due to timing jitter.
+    // False positive see webkit.org/b/298024
+    SUPPRESS_UNRETAINED_ARG MediaTime pauseTime = PAL::toMediaTime(PAL::CMTimebaseGetTime([m_synchronizer timebase]));
+    if (pauseTime.isFinite() && pauseTime > m_lastSeekTime)
+        setTimeFloor(pauseTime);
     setSynchronizerRate(0, hostTime);
 }
 
@@ -451,24 +608,32 @@ bool AudioVideoRendererAVFObjC::paused() const
 
 bool AudioVideoRendererAVFObjC::timeIsProgressing() const
 {
-    return m_isPlaying && [m_synchronizer rate];
+    return m_isPlaying && synchronizerRate();
 }
 
 MediaTime AudioVideoRendererAVFObjC::currentTime() const
 {
+    ASSERT(isMainThread());
     if (seeking())
         return m_lastSeekTime;
-
     // False positive see webkit.org/b/298024
     SUPPRESS_UNRETAINED_ARG MediaTime synchronizerTime = clampTimeToLastSeekTime(PAL::toMediaTime(PAL::CMTimebaseGetTime([m_synchronizer timebase])));
     if (synchronizerTime < MediaTime::zeroTime())
         return MediaTime::zeroTime();
 
+    // Clamp to the stall cap. The synchronizer can overshoot the registered boundary during the
+    // observer's dispatch latency; without the clamp the overshoot leaks into snapshots and the
+    // observer's eventual setRate:0 time:cap visibly walks ct backward.
+    Locker locker { m_publishLock };
+    if (m_stallCap && synchronizerTime > *m_stallCap)
+        return *m_stallCap;
     return synchronizerTime;
 }
 
 void AudioVideoRendererAVFObjC::setRate(double rate)
 {
+    if (m_isShutdown)
+        return;
     ALWAYS_LOG(LOGIDENTIFIER, "m_rate: ", rate);
 
     if (m_rate == rate)
@@ -479,32 +644,98 @@ void AudioVideoRendererAVFObjC::setRate(double rate)
         setAudioTimePitchAlgorithm(renderer, algorithm.get());
     });
 
-    if (shouldBePlaying())
+    if (shouldBePlaying()) {
         [m_synchronizer setRate:m_rate];
+        m_lastSetSyncRate = m_rate;
+    }
 }
 
 double AudioVideoRendererAVFObjC::effectiveRate() const
 {
+    if (m_startupGateObserver)
+        return 0;
+    // currentTime() floors the reported time to m_lastSeekTime while the timebase is in pre-roll
+    // (negative at startup, below the seek target right after a seek). While floored the published
+    // time isn't advancing, so report 0 to keep the snapshot self-consistent — otherwise the reader
+    // would extrapolate ahead of a frozen currentTime and the next honest snapshot would land below
+    // its high-water-mark.
+    SUPPRESS_UNRETAINED_ARG MediaTime rawTime = PAL::toMediaTime(PAL::CMTimebaseGetTime([m_synchronizer timebase]));
+    if (clampTimeToLastSeekTime(rawTime) != rawTime || rawTime < MediaTime::zeroTime())
+        return 0;
     // False positive see webkit.org/b/298024
-    SUPPRESS_UNRETAINED_ARG return PAL::CMTimebaseGetRate([m_synchronizer timebase]);
+    SUPPRESS_UNRETAINED_ARG return PAL::CMTimebaseGetEffectiveRate([m_synchronizer timebase]);
+}
+
+void AudioVideoRendererAVFObjC::updateSharedTimebase()
+{
+    ASSERT(isMainThread());
+    if (!m_sharedTimebase)
+        return;
+    publishSnapshot(currentTime(), effectiveRate());
+}
+
+void AudioVideoRendererAVFObjC::publishSnapshot(MediaTime currentTime, double playbackRate)
+{
+    if (!m_sharedTimebase)
+        return;
+    Locker locker { m_publishLock };
+    // Floor: never publish below the high-water-mark. Catches AVF retroactive anchor changes
+    // that lower CMTimebaseGetTime after rate changes, and is reset downward at seek sites.
+    if (m_publishedTimeFloor.isFinite() && currentTime < m_publishedTimeFloor)
+        currentTime = m_publishedTimeFloor;
+    // Ceiling: stall cap from the boundary observer, masking the synchronizer's overshoot
+    // during dispatch latency until the observer parks the timebase.
+    if (m_stallCap && currentTime > *m_stallCap) {
+        currentTime = *m_stallCap;
+        playbackRate = 0;
+    }
+    m_publishedTimeFloor = currentTime;
+    m_sharedTimebase->storeSnapshot({
+        .currentTime = currentTime,
+        .playbackRate = playbackRate,
+        .hostTime = MonotonicTime::now()
+    });
 }
 
 void AudioVideoRendererAVFObjC::stall()
 {
+    if (m_isShutdown)
+        return;
     ALWAYS_LOG(LOGIDENTIFIER, "playing: ", m_isPlaying, " rate: ", m_rate);
     setSynchronizerRate(0, { });
 }
 
-void AudioVideoRendererAVFObjC::notifyTimeReachedAndStall(const MediaTime& timeBoundary, Function<void(const MediaTime&)>&& callback)
+Ref<MediaTimePromise> AudioVideoRendererAVFObjC::notifyTimeReachedAndStall(const MediaTime& timeBoundary)
 {
+    if (m_isShutdown)
+        return MediaTimePromise::createAndReject(PlatformMediaError::Shutdown);
     cancelTimeReachedAction();
-    RetainPtr<NSArray> times = @[[NSValue valueWithCMTime:PAL::toCMTime(timeBoundary)]];
+
+    if (timeBoundary <= currentTime()) {
+        ALWAYS_LOG(LOGIDENTIFIER, "boundary ", timeBoundary, " is behind currentTime ", currentTime(), "; stalling and resolving immediately");
+        stall();
+        return MediaTimePromise::createAndResolve(timeBoundary);
+    }
+
+    ASSERT(!m_stallProducer);
+    m_stallProducer.emplace();
+    Ref promise = m_stallProducer->promise();
+
+    // Register the observer at a 1ms-aligned tick at-or-before the boundary so it fires reliably;
+    // sample-unit values land between ticks and the observer never fires. The synchronizer is
+    // still parked at, and the producer resolves with, the original boundary.
+    auto roundedBoundary = timeBoundary.toTimeScale(1000, MediaTime::RoundingFlags::TowardNegativeInfinity);
+    {
+        Locker locker { m_publishLock };
+        m_stallCap = timeBoundary;
+    }
+    RetainPtr<NSArray> times = @[[NSValue valueWithCMTime:PAL::toCMTime(roundedBoundary)]];
 
     auto logSiteIdentifier = LOGIDENTIFIER;
     DEBUG_LOG(logSiteIdentifier, timeBoundary);
     UNUSED_PARAM(logSiteIdentifier);
 
-    m_currentTimeObserver = [m_synchronizer addBoundaryTimeObserverForTimes:times.get() queue:mainDispatchQueueSingleton() usingBlock:makeBlockPtr([weakThis = ThreadSafeWeakPtr { *this }, timeBoundary, logSiteIdentifier, callback = WTF::move(callback)]() mutable {
+    m_currentTimeObserver = [m_synchronizer addBoundaryTimeObserverForTimes:times.get() queue:mainDispatchQueueSingleton() usingBlock:makeBlockPtr([weakThis = ThreadSafeWeakPtr { *this }, timeBoundary, logSiteIdentifier]() mutable {
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis)
             return;
@@ -514,19 +745,31 @@ void AudioVideoRendererAVFObjC::notifyTimeReachedAndStall(const MediaTime& timeB
 
         // Experimentation shows that between the time the boundary time observer is called, the time have progressed by a few milliseconds. Re-adjust time. This seek doesn't require re-enqueuing/flushing.
         [protectedThis->m_synchronizer setRate:0 time:PAL::toCMTime(timeBoundary)];
+        protectedThis->m_lastSetSyncRate = 0;
 
-        callback(now);
+        protectedThis->updateSharedTimebase();
+        if (auto producer = std::exchange(protectedThis->m_stallProducer, std::nullopt))
+            producer->resolve(timeBoundary);
     }).get()];
+    return promise;
 }
 
 void AudioVideoRendererAVFObjC::cancelTimeReachedAction()
 {
+    {
+        Locker locker { m_publishLock };
+        m_stallCap.reset();
+    }
+    if (auto producer = std::exchange(m_stallProducer, std::nullopt))
+        producer->reject(PlatformMediaError::Cancelled);
     if (RetainPtr observer = std::exchange(m_currentTimeObserver, nullptr))
         [m_synchronizer removeTimeObserver:observer.get()];
 }
 
 void AudioVideoRendererAVFObjC::performTaskAtTime(const MediaTime& time, Function<void(const MediaTime&)>&& task)
 {
+    if (m_isShutdown)
+        return;
     cancelPerformTaskAtTimeObserverIfNeeded();
 
     RetainPtr<NSArray> times = @[[NSValue valueWithCMTime:PAL::toCMTime(time)]];
@@ -543,6 +786,7 @@ void AudioVideoRendererAVFObjC::performTaskAtTime(const MediaTime& time, Functio
         MediaTime now = protectedThis->currentTime();
         ALWAYS_LOG_WITH_THIS(protectedThis, logSiteIdentifier, "boundary time observer called, now: ", now);
 
+        protectedThis->updateSharedTimebase();
         task(now);
 
         protectedThis->cancelPerformTaskAtTimeObserverIfNeeded();
@@ -551,22 +795,21 @@ void AudioVideoRendererAVFObjC::performTaskAtTime(const MediaTime& time, Functio
 
 void AudioVideoRendererAVFObjC::setTimeObserver(Seconds interval, Function<void(const MediaTime&)>&& callback)
 {
-    m_currentTimeDidChangeCallback = WTF::move(callback);
-
+    if (m_isShutdown)
+        return;
     cancelTimeObserver();
 
-    if (m_currentTimeDidChangeCallback) {
-        __block ThreadSafeWeakPtr weakThis = *this;
-        m_timeChangedObserver = [m_synchronizer addPeriodicTimeObserverForInterval:PAL::toCMTime(MediaTime::createWithSeconds(interval)) queue:mainDispatchQueueSingleton() usingBlock:^(CMTime time) {
-            if (RefPtr protectedThis = weakThis.get()) {
-                if (!protectedThis->m_currentTimeDidChangeCallback)
-                    return;
+    if (!callback)
+        return;
 
-                auto clampedTime = CMTIME_IS_NUMERIC(time) ? protectedThis->clampTimeToLastSeekTime(PAL::toMediaTime(time)) : MediaTime::zeroTime();
-                protectedThis->m_currentTimeDidChangeCallback(clampedTime);
-            }
-        }];
-    }
+    m_timeChangedObserver = [m_synchronizer addPeriodicTimeObserverForInterval:PAL::toCMTime(MediaTime::createWithSeconds(interval)) queue:mainDispatchQueueSingleton() usingBlock:makeBlockPtr([weakThis = ThreadSafeWeakPtr { *this }, callback = WTF::move(callback)](CMTime time) mutable {
+        RefPtr protectedThis = weakThis.get();
+        if (!protectedThis)
+            return;
+        auto clampedTime = CMTIME_IS_NUMERIC(time) ? protectedThis->clampTimeToLastSeekTime(PAL::toMediaTime(time)) : MediaTime::zeroTime();
+        protectedThis->updateSharedTimebase();
+        callback(clampedTime);
+    }).get()];
 }
 
 void AudioVideoRendererAVFObjC::cancelTimeObserver()
@@ -581,69 +824,146 @@ void AudioVideoRendererAVFObjC::cancelPerformTaskAtTimeObserverIfNeeded()
         [m_synchronizer removeTimeObserver:taskObserver.get()];
 }
 
-void AudioVideoRendererAVFObjC::prepareToSeek()
+Ref<MediaTimePromise> AudioVideoRendererAVFObjC::prepareToSeek(const MediaTime& seekTime)
 {
+    if (m_isShutdown)
+        return MediaTimePromise::createAndReject(PlatformMediaError::Shutdown);
     ALWAYS_LOG(LOGIDENTIFIER, "state: ", toString(m_seekState));
 
     cancelSeekingPromiseIfNeeded();
-    m_seekState = Preparing;
-    stall();
-}
-
-Ref<MediaTimePromise> AudioVideoRendererAVFObjC::seekTo(const MediaTime& seekTime)
-{
-    ALWAYS_LOG(LOGIDENTIFIER, seekTime, "state: ", toString(m_seekState), " m_isSynchronizerSeeking: ", m_isSynchronizerSeeking, " hasAvailableVideoFrame: ", m_videoRenderer && allRenderersHaveAvailableSamples());
-
-    cancelSeekingPromiseIfNeeded();
-    if (m_seekState == RequiresFlush)
-        return MediaTimePromise::createAndReject(PlatformMediaError::RequiresFlushToResume);
-
-    m_lastSeekTime = seekTime;
+    m_seekState = Seeking;
 
     MediaTime synchronizerTime = PAL::toMediaTime([m_synchronizer currentTime]);
 
     bool isSynchronizerSeeking = m_isSynchronizerSeeking || std::abs((synchronizerTime - seekTime).toMicroseconds()) > 1000;
 
     if (!isSynchronizerSeeking && allRenderersHaveAvailableSamples()) {
-        ALWAYS_LOG(LOGIDENTIFIER, "Synchroniser doesn't require seeking current: ", synchronizerTime, " seeking: ", seekTime);
         // In cases where the destination seek time matches too closely the synchronizer's existing time
         // no time jumped notification will be issued. In this case, just notify the MediaPlayer that
         // the seek completed successfully.
-        m_seekPromise.emplace();
-        Ref promise = m_seekPromise->promise();
-        maybeCompleteSeek();
-        return promise;
+        setTimeFloor(seekTime);
+        m_seekState = SeekCompleted;
+
+        auto shouldBePlaying = this->shouldBePlaying();
+        ALWAYS_LOG(LOGIDENTIFIER, "Synchroniser doesn't require seeking current: ", synchronizerTime, " seeking: ", seekTime, ", shouldBePlaying: ", shouldBePlaying);
+
+        if (shouldBePlaying)
+            setSynchronizerRate(m_rate, { });
+        else
+            updateSharedTimebase();
+
+        return MediaTimePromise::createAndResolve(seekTime);
     }
 
+    setHasAvailableVideoFrame(false);
+    clearReadyToRequestVideoData();
+    for (auto& properties : m_audioTracksMap.values()) {
+        properties.hasAudibleSample = false;
+        properties.readyToRequestAudioData = false;
+    }
+    removeBlockedSamples();
+
+    setTimeFloor(seekTime);
     m_isSynchronizerSeeking = isSynchronizerSeeking;
     [m_synchronizer setRate:0 time:PAL::toCMTime(seekTime)];
+    m_lastSetSyncRate = 0;
+    updateSharedTimebase();
+    return MediaTimePromise::createAndResolve(MediaTime::indefiniteTime());
+}
 
-    if (m_seekState == SeekCompleted || m_seekState == Preparing) {
-        m_seekState = RequiresFlush;
-        m_readyToRequestAudioData = false;
-        m_readyToRequestVideoData = false;
-        ALWAYS_LOG(LOGIDENTIFIER, "Requesting Flush");
-        return MediaTimePromise::createAndReject(PlatformMediaError::RequiresFlushToResume);
-    }
+Ref<GenericPromise> AudioVideoRendererAVFObjC::finishSeek(const MediaTime& seekTime)
+{
+    if (m_isShutdown)
+        return GenericPromise::createAndReject();
+    ALWAYS_LOG(LOGIDENTIFIER, seekTime, "state: ", toString(m_seekState), " m_isSynchronizerSeeking: ", m_isSynchronizerSeeking, " hasAvailableVideoFrame: ", m_videoRenderer && allRenderersHaveAvailableSamples());
 
-    m_seekState = Seeking;
+    if (m_seekState != Seeking)
+        return GenericPromise::createAndReject();
 
     m_seekPromise.emplace();
-    return m_seekPromise->promise();
+    Ref promise = m_seekPromise->promise();
+    maybeCompleteSeek();
+    return promise;
 }
 
 void AudioVideoRendererAVFObjC::notifyEffectiveRateChanged(Function<void(double)>&& callback)
 {
+    if (m_isShutdown)
+        return;
+    m_effectiveRateChangedCallback = WTF::move(callback);
     // False positive see webkit.org/b/298024
-    SUPPRESS_UNRETAINED_ARG m_effectiveRateChangedListener = EffectiveRateChangedListener::create([callback = makeBlockPtr(WTF::move(callback))](double rate) mutable {
-        callOnMainThread([callback, rate] {
-            callback.get()(rate);
+    SUPPRESS_UNRETAINED_ARG m_effectiveRateChangedListener = EffectiveRateChangedListener::create([weakThis = ThreadSafeWeakPtr { *this }](double rate) mutable {
+        // On rate->0, publish synchronously on the listener thread before the main-thread hop.
+        // The main-thread updateSharedTimebase that handleEffectiveRateChanged would do is too
+        // late: the reader keeps extrapolating off the prior (rate=1) snapshot in the interim.
+        // Rate->non-zero is left to the main-thread path, which applies clampTimeToLastSeekTime
+        // and the startup gate.
+        if (RefPtr protectedThis = weakThis.get(); !rate && protectedThis && protectedThis->m_sharedTimebase) {
+            SUPPRESS_UNRETAINED_ARG MediaTime time = std::max(MediaTime::zeroTime(), PAL::toMediaTime(PAL::CMTimebaseGetTime([protectedThis->m_synchronizer timebase])));
+            protectedThis->publishSnapshot(time, 0);
+        }
+        callOnMainThread([weakThis, rate] {
+            if (RefPtr protectedThis = weakThis.get())
+                protectedThis->handleEffectiveRateChanged(rate);
         });
     }, [m_synchronizer timebase]);
 }
 
+void AudioVideoRendererAVFObjC::handleEffectiveRateChanged(double rate)
+{
+    ASSERT(isMainThread());
+
+    // -> 0, or non-zero -> non-zero (already moving): forward immediately.
+    // The 0 -> non-zero edge is the only one that lies, so it's gated below.
+    if (!rate || m_lastForwardedEffectiveRate) {
+        cancelStartupGateObserver();
+        m_lastForwardedEffectiveRate = rate;
+        updateSharedTimebase();
+        if (m_effectiveRateChangedCallback)
+            m_effectiveRateChangedCallback(rate);
+        return;
+    }
+
+    // 0 -> non-zero with a gate already pending: leave it.
+    if (m_startupGateObserver)
+        return;
+
+    // 0 -> non-zero. Hold the rate change until the timebase is actually live — i.e. until the
+    // synchronizer time is valid (>= 0 and not below the last seek target), matching effectiveRate()'s
+    // guard. Releasing merely because the timebase value changed forwards while the time is still in
+    // pre-roll, publishing a rate-0 (frozen) snapshot that nothing subsequently advances past.
+    m_startupGateObserver = [m_synchronizer addPeriodicTimeObserverForInterval:PAL::CMTimeMake(1, 100) queue:mainDispatchQueueSingleton() usingBlock:makeBlockPtr([weakThis = ThreadSafeWeakPtr { *this }](CMTime) mutable {
+        RefPtr protectedThis = weakThis.get();
+        if (!protectedThis || !protectedThis->m_startupGateObserver)
+            return;
+        SUPPRESS_UNRETAINED_ARG MediaTime now = PAL::toMediaTime(PAL::CMTimebaseGetTime([protectedThis->m_synchronizer timebase]));
+        if (now >= MediaTime::zeroTime() && protectedThis->clampTimeToLastSeekTime(now) == now)
+            protectedThis->releaseStartupGateAndForwardRate();
+    }).get()];
+}
+
+void AudioVideoRendererAVFObjC::releaseStartupGateAndForwardRate()
+{
+    ASSERT(isMainThread());
+    cancelStartupGateObserver();
+    SUPPRESS_UNRETAINED_ARG double liveRate = PAL::CMTimebaseGetEffectiveRate([m_synchronizer timebase]);
+    m_lastForwardedEffectiveRate = liveRate;
+    // The gate just lifted: effectiveRate() now returns the live rate; publish before notifying.
+    updateSharedTimebase();
+    if (m_effectiveRateChangedCallback)
+        m_effectiveRateChangedCallback(liveRate);
+}
+
+void AudioVideoRendererAVFObjC::cancelStartupGateObserver()
+{
+    if (RetainPtr observer = std::exchange(m_startupGateObserver, nullptr))
+        [m_synchronizer removeTimeObserver:observer.get()];
+}
+
 void AudioVideoRendererAVFObjC::setVolume(float volume)
 {
+    if (m_isShutdown)
+        return;
     m_volume = volume;
     applyOnAudioRenderers([&](auto* renderer) {
         [renderer setVolume:volume];
@@ -652,6 +972,8 @@ void AudioVideoRendererAVFObjC::setVolume(float volume)
 
 void AudioVideoRendererAVFObjC::setMuted(bool muted)
 {
+    if (m_isShutdown)
+        return;
     m_muted = muted;
     applyOnAudioRenderers([&](auto* renderer) {
         [renderer setMuted:muted];
@@ -660,6 +982,8 @@ void AudioVideoRendererAVFObjC::setMuted(bool muted)
 
 void AudioVideoRendererAVFObjC::setPreservesPitchAndCorrectionAlgorithm(bool preservesPitch, std::optional<PitchCorrectionAlgorithm> pitchCorrectionAlgorithm)
 {
+    if (m_isShutdown)
+        return;
     m_preservesPitch = preservesPitch;
     m_pitchCorrectionAlgorithm = pitchCorrectionAlgorithm;
     RetainPtr algorithm = MediaSessionManagerCocoa::audioTimePitchAlgorithmForMediaPlayerPitchCorrectionAlgorithm(pitchCorrectionAlgorithm.value_or(PitchCorrectionAlgorithm::BestAllAround), preservesPitch, m_rate).createNSString();
@@ -676,6 +1000,8 @@ void AudioVideoRendererAVFObjC::setAudioTimePitchAlgorithm(AVSampleBufferAudioRe
 #if HAVE(AUDIO_OUTPUT_DEVICE_UNIQUE_ID)
 void AudioVideoRendererAVFObjC::setOutputDeviceId(const String& outputDeviceId)
 {
+    if (m_isShutdown)
+        return;
     m_audioOutputDeviceId = outputDeviceId;
     if (!outputDeviceId)
         return;
@@ -700,6 +1026,8 @@ void AudioVideoRendererAVFObjC::setOutputDeviceIdOnRenderer(AVSampleBufferAudioR
 
 void AudioVideoRendererAVFObjC::setIsVisible(bool visible)
 {
+    if (m_isShutdown)
+        return;
     if (m_visible == visible)
         return;
     m_visible = visible;
@@ -710,11 +1038,15 @@ void AudioVideoRendererAVFObjC::setIsVisible(bool visible)
 
 void AudioVideoRendererAVFObjC::setPresentationSize(const IntSize& newSize)
 {
+    if (m_isShutdown)
+        return;
     m_presentationSize = newSize;
 }
 
 void AudioVideoRendererAVFObjC::setShouldMaintainAspectRatio(bool shouldMaintainAspectRatio)
 {
+    if (m_isShutdown)
+        return;
     if (m_shouldMaintainAspectRatio == shouldMaintainAspectRatio)
         return;
 
@@ -734,40 +1066,54 @@ void AudioVideoRendererAVFObjC::setShouldMaintainAspectRatio(bool shouldMaintain
 
 void AudioVideoRendererAVFObjC::renderingCanBeAcceleratedChanged(bool isAccelerated)
 {
+    if (m_isShutdown)
+        return;
+    ALWAYS_LOG(LOGIDENTIFIER, isAccelerated);
     m_renderingCanBeAccelerated = isAccelerated;
-    if (isAccelerated)
-        updateDisplayLayerIfNeeded();
+    updateDisplayLayerIfNeeded();
 }
 
 void AudioVideoRendererAVFObjC::contentBoxRectChanged(const LayoutRect& newRect)
 {
+    if (m_isShutdown)
+        return;
     if (!layerOrVideoRenderer() && !newRect.isEmpty())
         updateDisplayLayerIfNeeded();
 }
 
 void AudioVideoRendererAVFObjC::notifyFirstFrameAvailable(Function<void()>&& callback)
 {
+    if (m_isShutdown)
+        return;
     m_firstFrameAvailableCallback = WTF::move(callback);
 }
 
 void AudioVideoRendererAVFObjC::notifyWhenHasAvailableVideoFrame(Function<void(const MediaTime&, double)>&& callback)
 {
+    if (m_isShutdown)
+        return;
     m_hasAvailableVideoFrameCallback = WTF::move(callback);
     configureHasAvailableVideoFrameCallbackIfNeeded();
 }
 
 void AudioVideoRendererAVFObjC::notifyWhenRequiresFlushToResume(Function<void()>&& callback)
 {
+    if (m_isShutdown)
+        return;
     m_notifyWhenRequiresFlushToResume = WTF::move(callback);
 }
 
 void AudioVideoRendererAVFObjC::notifyRenderingModeChanged(Function<void()>&& callback)
 {
+    if (m_isShutdown)
+        return;
     m_renderingModeChangedCallback = WTF::move(callback);
 }
 
 void AudioVideoRendererAVFObjC::expectMinimumUpcomingPresentationTime(const MediaTime& presentationTime)
 {
+    if (m_isShutdown)
+        return;
     if (!m_enabledVideoTrackId)
         return;
     if (RefPtr videoRenderer = m_videoRenderer)
@@ -776,11 +1122,15 @@ void AudioVideoRendererAVFObjC::expectMinimumUpcomingPresentationTime(const Medi
 
 void AudioVideoRendererAVFObjC::notifySizeChanged(Function<void(const MediaTime&, FloatSize)>&& callback)
 {
+    if (m_isShutdown)
+        return;
     m_sizeChangedCallback = WTF::move(callback);
 }
 
 void AudioVideoRendererAVFObjC::setShouldDisableHDR(bool shouldDisable)
 {
+    if (m_isShutdown)
+        return;
     m_shouldDisableHDR = shouldDisable;
     if (![m_sampleBufferDisplayLayer respondsToSelector:@selector(setToneMapToStandardDynamicRange:)])
         return;
@@ -791,12 +1141,21 @@ void AudioVideoRendererAVFObjC::setShouldDisableHDR(bool shouldDisable)
 
 void AudioVideoRendererAVFObjC::setPlatformDynamicRangeLimit(const PlatformDynamicRangeLimit& platformDynamicRangeLimit)
 {
+    if (m_isShutdown)
+        return;
     m_dynamicRangeLimit = platformDynamicRangeLimit;
 
     if (!m_sampleBufferDisplayLayer)
         return;
 
     setLayerDynamicRangeLimit(m_sampleBufferDisplayLayer.get(), platformDynamicRangeLimit);
+}
+
+void AudioVideoRendererAVFObjC::setResourceOwner(const ProcessIdentity& resourceOwner)
+{
+    if (m_isShutdown)
+        return;
+    m_resourceOwner = resourceOwner;
 }
 
 RefPtr<VideoFrame> AudioVideoRendererAVFObjC::currentVideoFrame() const
@@ -814,7 +1173,7 @@ RefPtr<VideoFrame> AudioVideoRendererAVFObjC::currentVideoFrame() const
 
 void AudioVideoRendererAVFObjC::paintCurrentVideoFrameInContext(GraphicsContext& context, const FloatRect& outputRect)
 {
-    if (context.paintingDisabled())
+    if (m_isShutdown || context.paintingDisabled())
         return;
 
     auto image = currentNativeImage();
@@ -832,13 +1191,7 @@ std::optional<VideoPlaybackQualityMetrics> AudioVideoRendererAVFObjC::videoPlayb
     if (!videoRenderer)
         return std::nullopt;
 
-    return VideoPlaybackQualityMetrics {
-        videoRenderer->totalVideoFrames(),
-        videoRenderer->droppedVideoFrames(),
-        videoRenderer->corruptedVideoFrames(),
-        videoRenderer->totalFrameDelay().toDouble(),
-        videoRenderer->totalDisplayedFrames()
-    };
+    return videoRenderer->videoPlaybackQualityMetrics();
 }
 
 PlatformLayer* AudioVideoRendererAVFObjC::platformVideoLayer() const
@@ -848,31 +1201,48 @@ PlatformLayer* AudioVideoRendererAVFObjC::platformVideoLayer() const
     return m_videoLayerManager->videoInlineLayer();
 }
 
-void AudioVideoRendererAVFObjC::setVideoLayerSizeFenced(const FloatSize& newSize, WTF::MachSendRightAnnotated&&)
+void AudioVideoRendererAVFObjC::setVideoLayerSize(const FloatSize& newSize)
 {
+    if (m_isShutdown)
+        return;
     if (!layerOrVideoRenderer() && !newSize.isEmpty())
         updateDisplayLayerIfNeeded();
 }
 
+void AudioVideoRendererAVFObjC::setVideoLayerSizeFenced(const FloatSize& newSize, WTF::MachSendRightAnnotated&&)
+{
+    setVideoLayerSize(newSize);
+}
+
 void AudioVideoRendererAVFObjC::setVideoFullscreenLayer(PlatformLayer *videoFullscreenLayer, WTF::Function<void()>&& completionHandler)
 {
+    if (m_isShutdown) {
+        completionHandler();
+        return;
+    }
     RefPtr currentImage = currentNativeImage();
     m_videoLayerManager->setVideoFullscreenLayer(videoFullscreenLayer, WTF::move(completionHandler), currentImage ? currentImage->platformImage() : nullptr);
 }
 
 void AudioVideoRendererAVFObjC::setVideoFullscreenFrame(const FloatRect& frame)
 {
+    if (m_isShutdown)
+        return;
     m_videoLayerManager->setVideoFullscreenFrame(frame);
 }
 
 void AudioVideoRendererAVFObjC::setTextTrackRepresentation(TextTrackRepresentation* representation)
 {
+    if (m_isShutdown)
+        return;
     RetainPtr representationLayer = representation ? representation->platformLayer() : nil;
     m_videoLayerManager->setTextTrackRepresentationLayer(representationLayer.get());
 }
 
 void AudioVideoRendererAVFObjC::syncTextTrackBounds()
 {
+    if (m_isShutdown)
+        return;
     m_videoLayerManager->syncTextTrackBounds();
 }
 
@@ -882,6 +1252,8 @@ Ref<GenericPromise> AudioVideoRendererAVFObjC::setVideoTarget(const PlatformVide
     UNUSED_PARAM(videoTarget);
     return GenericPromise::createAndReject();
 #else
+    if (m_isShutdown)
+        return GenericPromise::createAndReject();
     m_videoTarget = videoTarget;
     return updateDisplayLayerIfNeeded();
 #endif
@@ -890,6 +1262,8 @@ Ref<GenericPromise> AudioVideoRendererAVFObjC::setVideoTarget(const PlatformVide
 void AudioVideoRendererAVFObjC::isInFullscreenOrPictureInPictureChanged(bool isInFullscreenOrPictureInPicture)
 {
 #if ENABLE(LINEAR_MEDIA_PLAYER)
+    if (m_isShutdown)
+        return;
     ALWAYS_LOG(LOGIDENTIFIER, isInFullscreenOrPictureInPicture);
     destroyExpiringVideoRenderersIfNeeded();
 #else
@@ -905,7 +1279,7 @@ RetainPtr<AVSampleBufferAudioRenderer> AudioVideoRendererAVFObjC::audioRendererF
     return itRenderer->value;
 }
 
-void AudioVideoRendererAVFObjC::applyOnAudioRenderers(NOESCAPE Function<void(AVSampleBufferAudioRenderer *)>&& function) const
+void AudioVideoRendererAVFObjC::applyOnAudioRenderers(NOESCAPE const Function<void(AVSampleBufferAudioRenderer *)>& function) const
 {
     for (auto& pair : m_audioRenderers) {
         RetainPtr renderer = pair.value;
@@ -920,7 +1294,7 @@ void AudioVideoRendererAVFObjC::addAudioRenderer(TrackIdentifier trackId)
     if (!m_audioTracksMap.add(trackId, AudioTrackProperties()).isNewEntry)
         return;
 
-    RetainPtr renderer = [adoptNS(PAL::allocAVSampleBufferAudioRendererInstance()) init];
+    RetainPtr renderer = adoptNS([PAL::allocAVSampleBufferAudioRendererInstance() init]);
 
     if (!renderer) {
         ERROR_LOG(LOGIDENTIFIER, "-[AVSampleBufferAudioRenderer init] returned nil! bailing!");
@@ -986,12 +1360,28 @@ bool AudioVideoRendererAVFObjC::seeking() const
     return m_seekState != SeekCompleted;
 }
 
+void AudioVideoRendererAVFObjC::setScreenReserved(bool reserved)
+{
+    if (m_isShutdown)
+        return;
+    setSynchronizerScreenReserved(m_synchronizer, reserved);
+}
+
 MediaTime AudioVideoRendererAVFObjC::clampTimeToLastSeekTime(const MediaTime& time) const
 {
+    ASSERT(isMainThread());
     if (m_lastSeekTime.isFinite() && time < m_lastSeekTime)
         return m_lastSeekTime;
 
     return time;
+}
+
+void AudioVideoRendererAVFObjC::setTimeFloor(const MediaTime& time)
+{
+    ASSERT(isMainThread());
+    m_lastSeekTime = time;
+    Locker locker { m_publishLock };
+    m_publishedTimeFloor = time;
 }
 
 void AudioVideoRendererAVFObjC::maybeCompleteSeek()
@@ -1006,7 +1396,6 @@ void AudioVideoRendererAVFObjC::maybeCompleteSeek()
         m_seekState = WaitingForAvailableFame;
         return;
     }
-    m_seekState = Seeking;
     if (m_isSynchronizerSeeking) {
         ALWAYS_LOG(LOGIDENTIFIER, "Waiting on synchronizer to complete seeking");
         return;
@@ -1014,11 +1403,13 @@ void AudioVideoRendererAVFObjC::maybeCompleteSeek()
     m_seekState = SeekCompleted;
     if (shouldBePlaying())
         setSynchronizerRate(m_rate, { });
-    else
+    else {
         ALWAYS_LOG(LOGIDENTIFIER, "Not resuming playback, shouldBePlaying:false");
+        updateSharedTimebase();
+    }
 
     if (auto promise = std::exchange(m_seekPromise, std::nullopt))
-        promise->resolve(m_lastSeekTime);
+        promise->resolve();
     ALWAYS_LOG(LOGIDENTIFIER, "seek completed");
 }
 
@@ -1071,9 +1462,10 @@ void AudioVideoRendererAVFObjC::updateAllRenderersHaveAvailableSamples()
 
     if (allRenderersHaveAvailableSamples)
         maybeCompleteSeek();
-    if (shouldBePlaying() && [m_synchronizer rate] != m_rate)
+    if (shouldBePlaying() && synchronizerRate() != m_rate) {
         [m_synchronizer setRate:m_rate];
-    else if (!shouldBePlaying() && [m_synchronizer rate])
+        m_lastSetSyncRate = m_rate;
+    } else if (!shouldBePlaying() && synchronizerRate())
         stall();
 }
 
@@ -1169,9 +1561,11 @@ void AudioVideoRendererAVFObjC::ensureLayer()
         return;
     }
 
-    m_sampleBufferDisplayLayer = [adoptNS(PAL::allocAVSampleBufferDisplayLayerInstance()) init];
+    m_sampleBufferDisplayLayer = adoptNS([PAL::allocAVSampleBufferDisplayLayerInstance() init]);
     if (!m_sampleBufferDisplayLayer) {
         ERROR_LOG(LOGIDENTIFIER, "-[AVSampleBufferDisplayLayer init] returned nil! bailing!");
+        ASSERT_NOT_REACHED();
+        notifyError(PlatformMediaError::VideoDecodingError);
         return;
     }
     [m_sampleBufferDisplayLayer setName:@"AudioVideoRendererAVFObjC AVSampleBufferDisplayLayer"];
@@ -1212,9 +1606,11 @@ void AudioVideoRendererAVFObjC::ensureVideoRenderer()
 
     ALWAYS_LOG(LOGIDENTIFIER);
 
-    m_sampleBufferVideoRenderer = [adoptNS(PAL::allocAVSampleBufferVideoRendererInstance()) init];
+    m_sampleBufferVideoRenderer = adoptNS([PAL::allocAVSampleBufferVideoRendererInstance() init]);
     if (!m_sampleBufferVideoRenderer) {
         ERROR_LOG(LOGIDENTIFIER, "-[VSampleBufferVideoRenderer init] returned nil! bailing!");
+        ASSERT_NOT_REACHED();
+        notifyError(PlatformMediaError::VideoDecodingError);
         return;
     }
 
@@ -1317,7 +1713,7 @@ void AudioVideoRendererAVFObjC::configureHasAvailableVideoFrameCallbackIfNeeded(
     if (videoRenderer)
         videoRenderer->setPreferences(m_preferences);
 
-    if (m_previousRendererConfiguration.hasVideoTrack) {
+    if (hasSelectedVideo()) {
         // Activating AvailableVideoFrame callback may force the use of decompression session.
         updateDisplayLayerIfNeeded();
     }
@@ -1362,10 +1758,6 @@ void AudioVideoRendererAVFObjC::configureLayerOrVideoRenderer(WebSampleBufferVid
         m_sampleBufferDisplayLayerState = SampleBufferLayerState::AddedToSynchronizer;
 }
 
-RefPtr<VideoMediaSampleRenderer> AudioVideoRendererAVFObjC::protectedVideoRenderer() const
-{
-    return m_videoRenderer;
-}
 
 void AudioVideoRendererAVFObjC::sizeWillChangeAtTime(const MediaTime& time, const FloatSize& size)
 {
@@ -1428,10 +1820,9 @@ Ref<GenericPromise> AudioVideoRendererAVFObjC::stageVideoRenderer(WebSampleBuffe
     ASSERT(m_videoRenderer);
 
     RefPtr videoRenderer = m_videoRenderer;
+
     RendererConfiguration newConfiguration {
-        .canUseDecompressionSession = willUseDecompressionSessionIfNeeded(),
-        .isProtected = m_hasProtectedVideoContent,
-        .hasVideoTrack = m_enabledVideoTrackId.has_value()
+        .isRenderingCompressedVideo = !!renderer && !willUseDecompressionSessionIfNeeded() && m_hasEverSubmittedVideoSample
     };
     if (renderer == videoRenderer->renderer()) {
         if (std::exchange(m_previousRendererConfiguration, newConfiguration) != newConfiguration && renderer)
@@ -1458,12 +1849,14 @@ Ref<GenericPromise> AudioVideoRendererAVFObjC::stageVideoRenderer(WebSampleBuffe
         destroyVideoRenderer();
     }
 
-    bool videoTrackChangeOnly = !m_previousRendererConfiguration.hasVideoTrack && newConfiguration.hasVideoTrack;
-    bool flushRequired = std::exchange(m_previousRendererConfiguration, newConfiguration) != newConfiguration && !videoTrackChangeOnly;
-    m_readyToRequestVideoData = !flushRequired;
-    ALWAYS_LOG(LOGIDENTIFIER, "renderer: ", !!renderer, " videoTrackChangeOnly: ", videoTrackChangeOnly, " flushRequired: ", flushRequired);
+    bool flushRequired = std::exchange(m_previousRendererConfiguration, newConfiguration) != newConfiguration && m_hasEverSubmittedVideoSample;
+    if (flushRequired)
+        clearReadyToRequestVideoData();
+    else
+        m_readyToRequestVideoData = true;
+    ALWAYS_LOG(LOGIDENTIFIER, "renderer: ", !!renderer, " flushRequired: ", flushRequired);
 
-    return videoRenderer->changeRenderer(renderer)->whenSettled(RunLoop::mainSingleton(), [weakThis = ThreadSafeWeakPtr { *this }, rendererToExpire = WTF::move(rendererToExpire), flushRequired]() {
+    return videoRenderer->changeRenderer(renderer)->whenSettled(RunLoop::mainSingleton(), [weakThis = ThreadSafeWeakPtr { *this }, rendererToExpire = WTF::move(rendererToExpire), flushRequired] {
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis)
             return GenericPromise::createAndReject();
@@ -1471,12 +1864,16 @@ Ref<GenericPromise> AudioVideoRendererAVFObjC::stageVideoRenderer(WebSampleBuffe
             protectedThis->removeRendererFromSynchronizerIfNeeded(rendererToExpire.get());
         if (flushRequired)
             protectedThis->notifyRequiresFlushToResume();
+        else if (protectedThis->m_readyToRequestVideoData)
+            protectedThis->setReadyToRequestVideoData();
         return GenericPromise::createAndResolve();
     });
 }
 
 void AudioVideoRendererAVFObjC::destroyVideoTrack()
 {
+    cancelVideoDataRequest();
+    m_requestVideoPromise.reset();
     if (RefPtr videoRenderer = std::exchange(m_videoRenderer, { }))
         videoRenderer->shutdown();
     destroyLayer();
@@ -1542,6 +1939,8 @@ void AudioVideoRendererAVFObjC::audioRendererWasAutomaticallyFlushed(AVSampleBuf
 #if HAVE(SPATIAL_TRACKING_LABEL)
 void AudioVideoRendererAVFObjC::setSpatialTrackingInfo(bool prefersSpatialAudioExperience, SoundStageSize soundStage, const String& sceneIdentifier, const String& defaultLabel, const String& label)
 {
+    if (m_isShutdown)
+        return;
     if (m_prefersSpatialAudioExperience == prefersSpatialAudioExperience
         && m_soundStage == soundStage
         && m_sceneIdentifier == sceneIdentifier
@@ -1621,6 +2020,8 @@ void AudioVideoRendererAVFObjC::updateSpatialTrackingLabel()
 #if ENABLE(ENCRYPTED_MEDIA)
 void AudioVideoRendererAVFObjC::setCDMInstance(CDMInstance* instance)
 {
+    if (m_isShutdown)
+        return;
     RefPtr fpsInstance = dynamicDowncast<CDMInstanceFairPlayStreamingAVFObjC>(instance);
     if (fpsInstance == m_cdmInstance)
         return;
@@ -1638,6 +2039,8 @@ void AudioVideoRendererAVFObjC::setCDMInstance(CDMInstance* instance)
 
 Ref<MediaPromise> AudioVideoRendererAVFObjC::setInitData(Ref<SharedBuffer> initData)
 {
+    if (m_isShutdown)
+        return MediaPromise::createAndReject(PlatformMediaError::Shutdown);
 #if ENABLE(LEGACY_ENCRYPTED_MEDIA)
     m_initData = initData.copyRef();
     if (RefPtr session = m_session.get()) {
@@ -1664,6 +2067,8 @@ Ref<MediaPromise> AudioVideoRendererAVFObjC::setInitData(Ref<SharedBuffer> initD
 
 void AudioVideoRendererAVFObjC::attemptToDecrypt()
 {
+    if (m_isShutdown)
+        return;
     if (m_blockedSamples.isEmpty())
         return;
     if (m_cdmInstance && m_keyIDs.isEmpty()) {
@@ -1742,6 +2147,8 @@ void AudioVideoRendererAVFObjC::attachContentKeyToSampleIfNeeded(const MediaSamp
 #if ENABLE(LEGACY_ENCRYPTED_MEDIA)
 void AudioVideoRendererAVFObjC::setCDMSession(LegacyCDMSession* session)
 {
+    if (m_isShutdown)
+        return;
     RefPtr oldSession = m_session.get();
     if (session == oldSession)
         return;
@@ -1771,6 +2178,7 @@ void AudioVideoRendererAVFObjC::setSynchronizerRate(float rate, std::optional<Mo
         [m_synchronizer setRate:rate time:PAL::kCMTimeInvalid atHostTime:cmHostTime];
     } else
         [m_synchronizer setRate:rate];
+    m_lastSetSyncRate = rate;
 
     // If we are pausing the synchronizer, update the last image to ensure we have something
     // to display if and when the decoders are purged while in the background. And vice-versa,
@@ -1780,6 +2188,28 @@ void AudioVideoRendererAVFObjC::setSynchronizerRate(float rate, std::optional<Mo
         updateLastPixelBuffer();
     else
         maybePurgeLastPixelBuffer();
+
+    // Rate (and possibly time) just changed; publish so the reader extrapolates from a fresh anchor.
+    updateSharedTimebase();
+
+    if (!m_sharedTimebase)
+        return;
+    if (rate && !m_registeredWithSharedTimer) {
+        m_registeredWithSharedTimer = true;
+        sharedTimebaseTimer().addClient(*this);
+    } else if (!rate && m_registeredWithSharedTimer) {
+        m_registeredWithSharedTimer = false;
+        sharedTimebaseTimer().removeClient(*this);
+    }
+}
+
+void AudioVideoRendererAVFObjC::periodicSharedTimerFired()
+{
+    ASSERT(m_sharedTimebase);
+    SUPPRESS_UNRETAINED_ARG auto timebase = [m_synchronizer timebase];
+    SUPPRESS_UNRETAINED_ARG MediaTime rawTime = std::max(MediaTime::zeroTime(), PAL::toMediaTime(PAL::CMTimebaseGetTime(timebase)));
+    SUPPRESS_UNRETAINED_ARG double rate = PAL::CMTimebaseGetEffectiveRate(timebase);
+    publishSnapshot(rawTime, rate);
 }
 
 RefPtr<NativeImage> AudioVideoRendererAVFObjC::currentNativeImage() const
@@ -1790,9 +2220,21 @@ RefPtr<NativeImage> AudioVideoRendererAVFObjC::currentNativeImage() const
             m_rgbConformer = makeUnique<PixelBufferConformerCV>((__bridge CFDictionaryRef)attributes);
         }
         RetainPtr pixelBuffer = videoFrame->pixelBuffer();
-        return NativeImage::create(m_rgbConformer->createImageFromPixelBuffer(pixelBuffer.get()));
+        return m_rgbConformer->createImageFromPixelBuffer(pixelBuffer.get());
     }
     return nullptr;
+}
+
+Ref<AudioVideoRenderer::BitmapImagePromise> AudioVideoRendererAVFObjC::currentBitmapImage() const
+{
+    if (m_isShutdown)
+        return BitmapImagePromise::createAndReject();
+    RefPtr nativeImage = currentNativeImage();
+    if (!nativeImage)
+        return BitmapImagePromise::createAndReject();
+    if (RefPtr bitmapImage = MediaPlayerPrivateInterface::bitmapFromImage(*nativeImage))
+        return BitmapImagePromise::createAndResolve(bitmapImage.releaseNonNull());
+    return BitmapImagePromise::createAndReject();
 }
 
 bool AudioVideoRendererAVFObjC::updateLastPixelBuffer()
@@ -1841,23 +2283,32 @@ void AudioVideoRendererAVFObjC::flushVideo()
     ALWAYS_LOG(LOGIDENTIFIER);
 
     setHasAvailableVideoFrame(false);
-    // Flush may call immediately requestMediaDataWhenReady. Must clear m_readyToRequestVideoData before flushing renderer.
-    m_readyToRequestVideoData = true;
+    m_hasEverSubmittedVideoSample = false;
+    // Flush may immediately call requestMediaDataWhenReady, so set m_readyToRequestVideoData before flushing the renderer.
+    setReadyToRequestVideoData();
     if (RefPtr videoRenderer = m_videoRenderer)
         videoRenderer->flush();
+    removeBlockedSamples([&](auto trackId) {
+        return typeOf(trackId) == TrackType::Video;
+    });
     flushPendingSizeChanges();
+    m_keyframeNeeded = true;
 }
 
 void AudioVideoRendererAVFObjC::flushAudio()
 {
-    for (auto& properties : m_audioTracksMap.values())
+    for (auto& [trackId, properties] : m_audioTracksMap) {
         properties.hasAudibleSample = false;
+        setReadyToRequestAudioData(trackId);
+    }
     updateAllRenderersHaveAvailableSamples();
 
     applyOnAudioRenderers([&](auto *renderer) {
         [renderer flush];
     });
-    m_readyToRequestAudioData = true;
+    removeBlockedSamples([&](auto trackId) {
+        return typeOf(trackId) == TrackType::Audio;
+    });
 }
 
 void AudioVideoRendererAVFObjC::flushAudioTrack(TrackIdentifier trackId)
@@ -1866,14 +2317,33 @@ void AudioVideoRendererAVFObjC::flushAudioTrack(TrackIdentifier trackId)
     RetainPtr audioRenderer = audioRendererFor(trackId);
     if (!audioRenderer)
         return;
+    setReadyToRequestAudioData(trackId);
     [audioRenderer flush];
+    removeBlockedSamples([&](auto blockedTrackId) {
+        return blockedTrackId == trackId;
+    });
     setHasAvailableAudioSample(trackId, false);
+}
+
+void AudioVideoRendererAVFObjC::removeBlockedSamples(NOESCAPE const Function<bool(TrackIdentifier)>& predicate)
+{
+#if ENABLE(ENCRYPTED_MEDIA) && HAVE(AVCONTENTKEYSESSION)
+    if (!predicate) {
+        m_blockedSamples.clear();
+        return;
+    }
+    m_blockedSamples.removeAllMatching([&](auto& blockedSample) {
+        return predicate(blockedSample.first);
+    });
+#else
+    UNUSED_PARAM(predicate);
+#endif
 }
 
 void AudioVideoRendererAVFObjC::notifyRequiresFlushToResume()
 {
     ALWAYS_LOG(LOGIDENTIFIER);
-    m_readyToRequestVideoData = false;
+    clearReadyToRequestVideoData();
     setNeedsPlaceholderImage(true);
     if (m_notifyWhenRequiresFlushToResume)
         m_notifyWhenRequiresFlushToResume();
@@ -1881,8 +2351,7 @@ void AudioVideoRendererAVFObjC::notifyRequiresFlushToResume()
 
 void AudioVideoRendererAVFObjC::cancelSeekingPromiseIfNeeded()
 {
-    if (auto promise = std::exchange(m_seekPromise, std::nullopt))
-        promise->reject(PlatformMediaError::Cancelled);
+    m_seekPromise.reset();
 }
 
 WTFLogChannel& AudioVideoRendererAVFObjC::logChannel() const
@@ -1917,10 +2386,6 @@ String AudioVideoRendererAVFObjC::toString(TrackIdentifier trackId) const
 String AudioVideoRendererAVFObjC::toString(SeekState state) const
 {
     switch (state) {
-    case Preparing:
-        return "Preparing"_s;
-    case RequiresFlush:
-        return "RequiresFlush"_s;
     case Seeking:
         return "Seeking"_s;
     case WaitingForAvailableFame:

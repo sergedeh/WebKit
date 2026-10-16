@@ -47,14 +47,14 @@ public:
     bool hasPlatformContext() const final;
 
     // Returns the platform context for any purpose, including draws. Conservative estimate.
-    CGContextRef platformContext() const final { return const_cast<GraphicsContextCG*>(this)->contextForDraw(); }
+    CGContextRef platformContext() const final { return contextForDraw(); }
 
-    const DestinationColorSpace& colorSpace() const final;
+    const ColorSpace& colorSpace() const final;
 
     void save(GraphicsContextState::Purpose = GraphicsContextState::Purpose::SaveRestore) final;
     void restore(GraphicsContextState::Purpose = GraphicsContextState::Purpose::SaveRestore) final;
 
-    void drawNativeImage(NativeImage&, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions = { }) final;
+    void drawNativeImage(const NativeImage&, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions = { }) final;
     void drawRect(const FloatRect&, float borderThickness = 1) final;
     void drawLine(const FloatPoint&, const FloatPoint&) final;
     void drawEllipse(const FloatRect&) final;
@@ -79,6 +79,8 @@ public:
     void fillRectWithRoundedHole(const FloatRect&, const FloatRoundedRect& roundedHoleRect, const Color&) final;
     void clearRect(const FloatRect&) final;
     void strokeRect(const FloatRect&, float lineWidth) final;
+    void strokeArc(const PathArc&) final;
+    void strokeLine(const PathDataLine&) final;
 
     void fillEllipse(const FloatRect& ellipse) final;
     void strokeEllipse(const FloatRect& ellipse) final;
@@ -105,7 +107,7 @@ public:
     void setLineJoin(LineJoin) final;
     void setMiterLimit(float) final;
 
-    void drawPattern(NativeImage&, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions = { }) final;
+    void drawPattern(const NativeImage&, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions = { }) final;
 
     using GraphicsContext::scale;
     void scale(const FloatSize&) final;
@@ -117,8 +119,8 @@ public:
 
     AffineTransform getCTM(IncludeDeviceScale = PossiblyIncludeDeviceScale) const override;
 
-    void drawFocusRing(const Path&, float outlineWidth, const Color&) final;
-    void drawFocusRing(const Vector<FloatRect>&, float outlineOffset, float outlineWidth, const Color&) final;
+    void drawFocusRing(const Path&, float outlineWidth, const Color&, float zoomFactor) final;
+    void drawFocusRing(const Vector<FloatRect>&, float outlineWidth, const Color&, float zoomFactor) final;
 
     void drawLinesForText(const FloatPoint&, float thickness, std::span<const FloatSegment>, bool isPrinting, bool doubleLines, StrokeStyle) final;
 
@@ -141,16 +143,16 @@ public:
     FloatRect roundToDevicePixels(const FloatRect&) const;
 
     // Returns the platform context for draws.
-    CGContextRef contextForDraw()
+    const RetainPtr<CGContextRef>& contextForDraw() const
     {
         ASSERT(m_cgContext);
         m_hasDrawn = true;
-        return m_cgContext.get();
+        return m_cgContext;
     }
 
     // Returns false if there has not been any potential draws since last call.
     // Returns true if there has been potential draws since last call.
-    bool consumeHasDrawn();
+    bool LEGACY_NODELETE consumeHasDrawn();
 
 #if HAVE(SUPPORT_HDR_DISPLAY)
     void setMaxEDRHeadroom(std::optional<float>) final;
@@ -166,10 +168,10 @@ private:
     void setCGStyle(const std::optional<GraphicsStyle>&, bool shadowsIgnoreTransforms);
 
     // Returns the platform context for purposes of context state change, not draws.
-    CGContextRef contextForState() const;
+    const RetainPtr<CGContextRef>& LEGACY_NODELETE contextForState() const;
 
     const RetainPtr<CGContextRef> m_cgContext;
-    mutable std::optional<DestinationColorSpace> m_colorSpace;
+    mutable std::optional<ColorSpace> m_colorSpace;
 #if HAVE(SUPPORT_HDR_DISPLAY)
     std::optional<float> m_maxEDRHeadroom;
 #endif
@@ -177,10 +179,13 @@ private:
     const bool m_isLayerCGContext : 1;
     mutable bool m_userToDeviceTransformKnownToBeIdentity : 1 { false };
     // Flag for pending draws. Start with true because we do not know what commands have been scheduled to the context.
-    bool m_hasDrawn : 1 { true };
+    mutable bool m_hasDrawn : 1 { true };
 };
 
 CGAffineTransform getUserToBaseCTM(CGContextRef);
+
+enum class SingularValueSelection : bool { Smallest, Largest };
+CGFloat singularValue(const CGAffineTransform& userToBaseCTM, SingularValueSelection);
 
 } // namespace WebCore
 

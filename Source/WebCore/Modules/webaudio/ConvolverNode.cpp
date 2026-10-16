@@ -51,7 +51,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ConvolverNode);
 
-static unsigned computeNumberOfOutputChannels(unsigned inputChannels, unsigned responseChannels)
+static unsigned LEGACY_NODELETE computeNumberOfOutputChannels(unsigned inputChannels, unsigned responseChannels)
 {
     // The number of output channels for a Convolver must be one or two. And can only be one if
     // there's a mono source and a mono response buffer.
@@ -92,35 +92,39 @@ ConvolverNode::~ConvolverNode()
 void ConvolverNode::process(size_t framesToProcess)
 {
     CheckedPtr firstOutput = output(0);
-    AudioBus& outputBus = firstOutput->bus();
+    Ref outputBus = firstOutput->bus();
 
     // Synchronize with possible dynamic changes to the impulse response.
     if (!m_processLock.tryLock()) {
         // Too bad - tryLock() failed. We must be in the middle of setting a new impulse response.
-        outputBus.zero();
+        outputBus->zero();
         return;
     }
     Locker locker { AdoptLock, m_processLock };
 
     if (!isInitialized() || !m_reverb.get())
-        outputBus.zero();
+        outputBus->zero();
     else {
         // Process using the convolution engine.
         // Note that we can handle the case where nothing is connected to the input, in which case we'll just feed silence into the convolver.
         // FIXME: If we wanted to get fancy we could try to factor in the 'tail time' and stop processing once the tail dies down if
         // we keep getting fed silence.
-        m_reverb->process(checkedInput(0)->bus(), outputBus, framesToProcess);
+        m_reverb->process(protect(input(0)->bus()), outputBus, framesToProcess);
     }
 }
 
 ExceptionOr<void> ConvolverNode::setBufferForBindings(RefPtr<AudioBuffer>&& buffer)
 {
     ASSERT(isMainThread());
-    
-    if (!buffer)
-        return { };
 
-    if (buffer->sampleRate() != context().sampleRate())
+    if (!buffer) {
+        Locker locker { m_processLock };
+        m_reverb = nullptr;
+        m_buffer = nullptr;
+        return { };
+    }
+
+    if (buffer->sampleRate() != protect(context())->sampleRate())
         return Exception { ExceptionCode::NotSupportedError, "Buffer sample rate does not match the context's sample rate"_s };
 
     unsigned numberOfChannels = buffer->numberOfChannels();
@@ -142,7 +146,7 @@ ExceptionOr<void> ConvolverNode::setBufferForBindings(RefPtr<AudioBuffer>&& buff
     bufferBus->setSampleRate(buffer->sampleRate());
 
     // Create the reverb with the given impulse response.
-    bool useBackgroundThreads = !context().isOfflineContext();
+    bool useBackgroundThreads = !protect(context())->isOfflineContext();
     auto reverb = makeUnique<Reverb>(bufferBus, AudioUtilities::renderQuantumSize, MaxFFTSize, useBackgroundThreads, m_normalize);
 
     {
@@ -154,16 +158,15 @@ ExceptionOr<void> ConvolverNode::setBufferForBindings(RefPtr<AudioBuffer>&& buff
 
         m_reverb = WTF::move(reverb);
         m_buffer = WTF::move(buffer);
-        if (m_buffer) {
-            // This will propagate the channel count to any nodes connected further downstream in the graph.
-            checkedOutput(0)->setNumberOfChannels(computeNumberOfOutputChannels(checkedInput(0)->numberOfChannels(), m_buffer->numberOfChannels()));
-        }
+
+        // This will propagate the channel count to any nodes connected further downstream in the graph.
+        protect(output(0))->setNumberOfChannels(computeNumberOfOutputChannels(protect(input(0))->numberOfChannels(), m_buffer->numberOfChannels()));
     }
 
     return { };
 }
 
-AudioBuffer* ConvolverNode::bufferForBindings() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
+AudioBuffer* LEGACY_NODELETE ConvolverNode::bufferForBindings() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 {
     ASSERT(isMainThread());
     return m_buffer.get();
@@ -234,7 +237,7 @@ void ConvolverNode::checkNumberOfChannelsForInput(AudioNodeInput* input)
         if (!isInitialized()) {
             // This will propagate the channel count to any nodes connected further
             // downstream in the graph.
-            checkedOutput(0)->setNumberOfChannels(numberOfOutputChannels);
+            protect(output(0))->setNumberOfChannels(numberOfOutputChannels);
             initialize();
         }
     }

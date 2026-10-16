@@ -53,6 +53,8 @@
 #include "TextIterator.h"
 #include "VisibleUnits.h"
 
+#include <wtf/text/TextStream.h>
+
 namespace WebCore {
 
 using namespace HTMLNames;
@@ -68,13 +70,14 @@ public:
     
     void operator()(size_t lineOffset, size_t lineLength, bool isLastLine) const
     {
+        Ref typingCommand { m_typingCommand.get() };
         if (isLastLine) {
             if (!lineOffset || lineLength > 0)
-                m_typingCommand->insertTextRunWithoutNewlines(m_text.substring(lineOffset, lineLength), m_selectInsertedText);
+                typingCommand->insertTextRunWithoutNewlines(m_text.substring(lineOffset, lineLength), m_selectInsertedText);
         } else {
             if (lineLength > 0)
-                m_typingCommand->insertTextRunWithoutNewlines(m_text.substring(lineOffset, lineLength), false);
-            m_typingCommand->insertParagraphSeparator();
+                typingCommand->insertTextRunWithoutNewlines(m_text.substring(lineOffset, lineLength), false);
+            typingCommand->insertParagraphSeparator();
         }
     }
     
@@ -84,7 +87,7 @@ private:
     const String& m_text;
 };
 
-static inline EditAction editActionForTypingCommand(TypingCommand::Type command, TextGranularity granularity, TypingCommand::TextCompositionType compositionType, bool isAutocompletion)
+static inline EditAction LEGACY_NODELETE editActionForTypingCommand(TypingCommand::Type command, TextGranularity granularity, TypingCommand::TextCompositionType compositionType, bool isAutocompletion)
 {
     if (compositionType == TypingCommand::TextCompositionType::Pending) {
         if (command == TypingCommand::Type::InsertText)
@@ -130,7 +133,7 @@ static inline EditAction editActionForTypingCommand(TypingCommand::Type command,
     }
 }
 
-static inline bool editActionIsDeleteByTyping(EditAction action)
+static inline bool LEGACY_NODELETE editActionIsDeleteByTyping(EditAction action)
 {
     switch (action) {
     case EditAction::TypingDeleteSelection:
@@ -228,7 +231,7 @@ void TypingCommand::updateSelectionIfDifferentFromCurrentSelection(TypingCommand
 void TypingCommand::insertText(Ref<Document>&& document, const String& text, Event* triggeringEvent, OptionSet<Option> options, TextCompositionType composition)
 {
     if (!text.isEmpty())
-        document->editor().updateMarkersForWordsAffectedByEditing(deprecatedIsSpaceOrNewline(text[0]));
+        protect(document->editor())->updateMarkersForWordsAffectedByEditing(deprecatedIsSpaceOrNewline(text[0]));
     
     auto& selection = document->selection().selection();
     insertText(WTF::move(document), text, triggeringEvent, selection, options, composition);
@@ -237,7 +240,7 @@ void TypingCommand::insertText(Ref<Document>&& document, const String& text, Eve
 // FIXME: We shouldn't need to take selectionForInsertion. It should be identical to FrameSelection's current selection.
 void TypingCommand::insertText(Ref<Document>&& document, const String& text, Event* triggeringEvent, const VisibleSelection& selectionForInsertion, OptionSet<Option> options, TextCompositionType compositionType)
 {
-    LOG(Editing, "TypingCommand::insertText (text %s)", text.utf8().data());
+    LOG_WITH_STREAM(Editing, stream << "TypingCommand::insertText (text "_s << text << ")"_s);
 
     VisibleSelection currentSelection = document->selection().selection();
 
@@ -341,15 +344,24 @@ void TypingCommand::ensureLastEditCommandHasCurrentSelectionIfOpenForMoreTyping(
 }
 #endif
 
-void TypingCommand::postTextStateChangeNotificationForDeletion(const VisibleSelection& selection)
+String TypingCommand::recordDeletionForAccessibility(const VisibleSelection& selection)
 {
     if (!AXObjectCache::accessibilityEnabled())
-        return;
-    postTextStateChangeNotification(AXTextEditType::Delete, AccessibilityObject::stringForVisiblePositionRange(selection), selection.start());
+        return { };
+
     VisiblePositionIndexRange range;
     range.startIndex.value = indexForVisiblePosition(selection.visibleStart(), range.startIndex.scope);
     range.endIndex.value = indexForVisiblePosition(selection.visibleEnd(), range.endIndex.scope);
-    protectedComposition()->setRangeDeletedByUnapply(range);
+    protect(composition())->setRangeDeletedByUnapply(range);
+    return AccessibilityObject::stringForVisiblePositionRange(selection);
+}
+
+void TypingCommand::postTextStateChangeNotificationForDeletion(const String& deletedText)
+{
+    if (deletedText.isEmpty())
+        return;
+
+    postTextStateChangeNotification(AXTextEditType::Delete, deletedText);
 }
 
 bool TypingCommand::willApplyCommand()
@@ -446,17 +458,18 @@ void TypingCommand::didApplyCommand()
 
 void TypingCommand::markMisspellingsAfterTyping(Type commandType)
 {
+    Ref editor = protect(document())->editor();
 #if PLATFORM(MAC)
-    if (!document().editor().isContinuousSpellCheckingEnabled()
-        && !document().editor().isAutomaticQuoteSubstitutionEnabled()
-        && !document().editor().isAutomaticLinkDetectionEnabled()
-        && !document().editor().isAutomaticDashSubstitutionEnabled()
-        && !document().editor().isAutomaticTextReplacementEnabled())
+    if (!editor->isContinuousSpellCheckingEnabled()
+        && !editor->isAutomaticQuoteSubstitutionEnabled()
+        && !editor->isAutomaticLinkDetectionEnabled()
+        && !editor->isAutomaticDashSubstitutionEnabled()
+        && !editor->isAutomaticTextReplacementEnabled())
             return;
-    if (document().editor().isHandlingAcceptedCandidate())
+    if (editor->isHandlingAcceptedCandidate())
         return;
 #else
-    if (!document().editor().isContinuousSpellCheckingEnabled())
+    if (!editor->isContinuousSpellCheckingEnabled())
         return;
 #endif
     // Take a look at the selection that results after typing and determine whether we need to spellcheck. 
@@ -475,9 +488,9 @@ void TypingCommand::markMisspellingsAfterTyping(Type commandType)
             if (range && (commandType == TypingCommand::Type::InsertText || commandType == TypingCommand::Type::InsertLineBreak || commandType == TypingCommand::Type::InsertParagraphSeparator || commandType == TypingCommand::Type::InsertParagraphSeparatorInQuotedContent))
                 trimmedPreviousWord = plainText(*range).trim(deprecatedIsSpaceOrNewline);
             auto allowTextReplacement = !trimmedPreviousWord.isEmpty() && !triggeringEventIsUntrusted() ? AllowTextReplacement::Yes : AllowTextReplacement::No;
-            document().editor().markMisspellingsAfterTypingToWord(p1, endingSelection(), allowTextReplacement);
+            editor->markMisspellingsAfterTypingToWord(p1, endingSelection(), allowTextReplacement);
         } else if (commandType == TypingCommand::Type::InsertText)
-            document().editor().startAlternativeTextUITimer();
+            editor->startAlternativeTextUITimer();
 #else
         UNUSED_PARAM(commandType);
         // If this bug gets fixed, this PLATFORM(IOS_FAMILY) code could be removed:
@@ -492,7 +505,7 @@ void TypingCommand::markMisspellingsAfterTyping(Type commandType)
         VisiblePosition p1 = startOfWord(previous, startWordSide);
         VisiblePosition p2 = startOfWord(start, startWordSide);
         if (p1 != p2)
-            document().editor().markMisspellingsAfterTypingToWord(p1, endingSelection(), AllowTextReplacement::No);
+            editor->markMisspellingsAfterTypingToWord(p1, endingSelection(), AllowTextReplacement::No);
 #endif // !PLATFORM(IOS_FAMILY)
     }
 }
@@ -502,30 +515,34 @@ bool TypingCommand::willAddTypingToOpenCommand(Type commandType, TextGranularity
     m_currentTextToInsert = text;
     m_currentTypingEditAction = editActionForTypingCommand(commandType, granularity, m_compositionType, m_isAutocompletion);
 
+    m_smartListUndoData = std::nullopt;
+
     if (!shouldDeferWillApplyCommandUntilAddingTypingCommand())
         return true;
 
+    Ref editor = protect(document())->editor();
     if (!range || isEditingTextAreaOrTextInput())
-        return document().editor().willApplyEditing(*this, CompositeEditCommand::targetRangesForBindings());
+        return editor->willApplyEditing(*this, CompositeEditCommand::targetRangesForBindings());
 
-    return document().editor().willApplyEditing(*this, { 1, StaticRange::create(*range) });
+    return editor->willApplyEditing(*this, { FillWith { }, 1, StaticRange::create(*range) });
 }
 
 void TypingCommand::typingAddedToOpenCommand(Type commandTypeForAddedTyping)
 {
-    RefPtr protectedFrame = document().frame();
+    Ref document = this->document();
+    RefPtr protectedFrame = document->frame();
 
     updatePreservesTypingStyle(commandTypeForAddedTyping);
 
 #if PLATFORM(COCOA)
-    document().editor().appliedEditing(*this);
+    protect(document->editor())->appliedEditing(*this);
     // Since the spellchecking code may also perform corrections and other replacements, it should happen after the typing changes.
     if (!m_shouldPreventSpellChecking)
         markMisspellingsAfterTyping(commandTypeForAddedTyping);
 #else
     // The old spellchecking code requires that checking be done first, to prevent issues like that in 6864072, where <doesn't> is marked as misspelled.
     markMisspellingsAfterTyping(commandTypeForAddedTyping);
-    document().editor().appliedEditing(*this);
+    protect(document->editor())->appliedEditing(*this);
 #endif
 }
 
@@ -542,12 +559,12 @@ void TypingCommand::insertText(const String& text, bool selectInsertedText)
 
 void TypingCommand::insertTextAndNotifyAccessibility(const String& text, bool selectInsertedText)
 {
-    LOG(Editing, "TypingCommand %p insertTextAndNotifyAccessibility (text %s, selectInsertedText %d)", this, text.utf8().data(), selectInsertedText);
+    LOG_WITH_STREAM(Editing, stream << "TypingCommand "_s << this << " insertTextAndNotifyAccessibility (text "_s << text << ", selectInsertedText "_s << selectInsertedText << ")"_s);
 
     AccessibilityReplacedText replacedText(document().selection().selection());
     insertText(text, selectInsertedText);
-    replacedText.postTextStateChangeNotification(document().existingAXObjectCache(), AXTextEditType::Typing, text, document().selection().selection());
-    protectedComposition()->setRangeDeletedByUnapply(replacedText.replacedRange());
+    replacedText.postTextStateChangeNotification(protect(document().existingAXObjectCache()), AXTextEditType::Typing, text, document().selection().selection());
+    protect(composition())->setRangeDeletedByUnapply(replacedText.replacedRange());
 }
 
 void TypingCommand::insertTextRunWithoutNewlines(const String& text, bool selectInsertedText)
@@ -558,9 +575,15 @@ void TypingCommand::insertTextRunWithoutNewlines(const String& text, bool select
     auto allowPasswordEcho = triggeringEventIsUntrusted() ? AllowPasswordEcho::No : AllowPasswordEcho::Yes;
     auto rebalanceWhitespaces = m_compositionType == TextCompositionType::None ? InsertTextCommand::RebalanceLeadingAndTrailingWhitespaces : InsertTextCommand::RebalanceAllWhitespaces;
     auto command = InsertTextCommand::create(document(), text, allowPasswordEcho, selectInsertedText, rebalanceWhitespaces, EditAction::TypingInsertText);
+    Ref insertTextCommand = command.get();
 
     applyCommandToComposite(WTF::move(command), endingSelection());
     typingAddedToOpenCommand(Type::InsertText);
+
+    m_smartListUndoData = WTF::move(insertTextCommand->m_smartListUndoData);
+
+    if (insertTextCommand->m_styleToPreserveForSmartList)
+        document().selection().setTypingStyle(WTF::move(insertTextCommand->m_styleToPreserveForSmartList));
 }
 
 void TypingCommand::insertLineBreak()
@@ -579,8 +602,8 @@ void TypingCommand::insertLineBreakAndNotifyAccessibility()
 {
     AccessibilityReplacedText replacedText(document().selection().selection());
     insertLineBreak();
-    replacedText.postTextStateChangeNotification(document().existingAXObjectCache(), AXTextEditType::Typing, "\n"_s, document().selection().selection());
-    protectedComposition()->setRangeDeletedByUnapply(replacedText.replacedRange());
+    replacedText.postTextStateChangeNotification(protect(document().existingAXObjectCache()), AXTextEditType::Typing, "\n"_s, document().selection().selection());
+    protect(composition())->setRangeDeletedByUnapply(replacedText.replacedRange());
 }
 
 void TypingCommand::insertParagraphSeparator()
@@ -599,8 +622,8 @@ void TypingCommand::insertParagraphSeparatorAndNotifyAccessibility()
 {
     AccessibilityReplacedText replacedText(document().selection().selection());
     insertParagraphSeparator();
-    replacedText.postTextStateChangeNotification(document().existingAXObjectCache(), AXTextEditType::Typing, "\n"_s, document().selection().selection());
-    protectedComposition()->setRangeDeletedByUnapply(replacedText.replacedRange());
+    replacedText.postTextStateChangeNotification(protect(document().existingAXObjectCache()), AXTextEditType::Typing, "\n"_s, document().selection().selection());
+    protect(composition())->setRangeDeletedByUnapply(replacedText.replacedRange());
 }
 
 void TypingCommand::insertParagraphSeparatorInQuotedContent()
@@ -623,8 +646,8 @@ void TypingCommand::insertParagraphSeparatorInQuotedContentAndNotifyAccessibilit
 {
     AccessibilityReplacedText replacedText(document().selection().selection());
     insertParagraphSeparatorInQuotedContent();
-    replacedText.postTextStateChangeNotification(document().existingAXObjectCache(), AXTextEditType::Typing, "\n"_s, document().selection().selection());
-    protectedComposition()->setRangeDeletedByUnapply(replacedText.replacedRange());
+    replacedText.postTextStateChangeNotification(protect(document().existingAXObjectCache()), AXTextEditType::Typing, "\n"_s, document().selection().selection());
+    protect(composition())->setRangeDeletedByUnapply(replacedText.replacedRange());
 }
 
 bool TypingCommand::makeEditableRootEmpty()
@@ -643,16 +666,20 @@ bool TypingCommand::makeEditableRootEmpty()
         removeNode(*child);
 
     addBlockPlaceholderIfNeeded(root.get());
-    setEndingSelection(VisibleSelection(firstPositionInNode(root.get()), Affinity::Downstream, endingSelection().directionality()));
+    setEndingSelection(VisibleSelection(firstPositionInNode(*root), Affinity::Downstream, endingSelection().directionality()));
 
     return true;
 }
 
 void TypingCommand::deleteKeyPressed(TextGranularity granularity, bool shouldAddToKillRing)
 {
-    RefPtr protectedFrame = document().frame();
+    Ref document = this->document();
+    RefPtr protectedFrame = document->frame();
 
-    document().editor().updateMarkersForWordsAffectedByEditing(false);
+    protect(document->editor())->updateMarkersForWordsAffectedByEditing(false);
+
+    if (performSmartListUndo(granularity))
+        return;
 
     VisibleSelection selectionToDelete;
     VisibleSelection selectionAfterUndo;
@@ -702,7 +729,7 @@ void TypingCommand::deleteKeyPressed(TextGranularity granularity, bool shouldAdd
         }
 
         // If we have a caret selection at the beginning of a cell, we have nothing to do.
-        if (enclosingTableCell && visibleStart == firstPositionInNode(enclosingTableCell.get()))
+        if (enclosingTableCell && visibleStart == firstPositionInNode(*enclosingTableCell))
             return;
 
         // If the caret is at the start of a paragraph after a table, move content into the last table cell.
@@ -714,7 +741,7 @@ void TypingCommand::deleteKeyPressed(TextGranularity granularity, bool shouldAdd
             selection->modify(FrameSelection::Alteration::Extend, SelectionDirection::Backward, granularity);
         // If the caret is just after a table, select the table and don't delete anything.
         } else if (RefPtr table = isFirstPositionAfterTable(visibleStart)) {
-            setEndingSelection(VisibleSelection(positionBeforeNode(table.get()), endingSelection().start(), Affinity::Downstream, endingSelection().directionality()));
+            setEndingSelection(VisibleSelection(positionBeforeNode(*table), endingSelection().start(), Affinity::Downstream, endingSelection().directionality()));
             typingAddedToOpenCommand(Type::DeleteKey);
             return;
         }
@@ -741,23 +768,23 @@ void TypingCommand::deleteKeyPressed(TextGranularity granularity, bool shouldAdd
 #if PLATFORM(IOS_FAMILY)
         // Workaround for this bug:
         // <rdar://problem/4653755> UIKit text widgets should use WebKit editing API to manipulate text
-        setEndingSelection(document().selection().selection());
-        closeTyping(document());
+        setEndingSelection(document->selection().selection());
+        closeTyping(document);
 #endif
         return;
     }
 
-    if (selectionToDelete.isCaret() || !document().selection().shouldDeleteSelection(selectionToDelete))
+    if (selectionToDelete.isCaret() || !document->selection().shouldDeleteSelection(selectionToDelete))
         return;
 
     if (!willAddTypingToOpenCommand(Type::DeleteKey, granularity, { }, selectionToDelete.firstRange()))
         return;
 
     if (shouldAddToKillRing)
-        document().editor().addRangeToKillRing(*selectionToDelete.toNormalizedRange(), Editor::KillRingInsertionMode::PrependText);
+        protect(document->editor())->addRangeToKillRing(*selectionToDelete.toNormalizedRange(), Editor::KillRingInsertionMode::PrependText);
 
-    // Post the accessibility notification before actually deleting the content while selectionToDelete is still valid
-    postTextStateChangeNotificationForDeletion(selectionToDelete);
+    // Capture what's about to be deleted while selectionToDelete is still valid.
+    auto deletedText = recordDeletionForAccessibility(selectionToDelete);
 
     // Make undo select everything that has been deleted, unless an undo will undo more than just this deletion.
     // FIXME: This behaves like TextEdit except for the case where you open with text insertion and then delete
@@ -767,13 +794,55 @@ void TypingCommand::deleteKeyPressed(TextGranularity granularity, bool shouldAdd
     CompositeEditCommand::deleteSelection(selectionToDelete, m_smartDelete, /* mergeBlocksAfterDelete*/ true, /* replace*/ false, expandForSpecialElements, /*sanitizeMarkup*/ true);
     setSmartDelete(false);
     typingAddedToOpenCommand(Type::DeleteKey);
+    postTextStateChangeNotificationForDeletion(deletedText);
+}
+
+bool TypingCommand::performSmartListUndo(TextGranularity granularity)
+{
+    auto undoData = std::exchange(m_smartListUndoData, std::nullopt);
+    if (!undoData)
+        return false;
+
+    RefPtr listElement = undoData->listElement;
+    if (!listElement || !listElement->isConnected())
+        return false;
+
+    if (!endingSelection().isCaret())
+        return false;
+
+    RefPtr secondItem = enclosingListChild(protect(endingSelection().base().anchorNode()));
+    if (!secondItem || secondItem->parentNode() != listElement.get())
+        return false;
+
+    if (secondItem->nextSibling() || !secondItem->previousSibling())
+        return false;
+
+    if (!willAddTypingToOpenCommand(Type::DeleteKey, granularity, { }, { }))
+        return true;
+
+    Ref document = this->document();
+    auto firstParagraph = createDefaultParagraphElement(document);
+    auto secondParagraph = createDefaultParagraphElement(document);
+
+    insertNodeBefore(firstParagraph.copyRef(), *listElement);
+    insertNodeAt(document->createEditingTextNode(WTF::move(undoData->previousLineText)), firstPositionInNode(firstParagraph));
+
+    insertNodeBefore(secondParagraph.copyRef(), *listElement);
+    insertNodeAt(document->createEditingTextNode(makeString(WTF::move(undoData->currentLineText), ' ')), firstPositionInNode(secondParagraph));
+
+    removeNode(*listElement);
+
+    setEndingSelection(VisibleSelection(lastPositionInNode(secondParagraph), Affinity::Downstream, endingSelection().directionality()));
+    typingAddedToOpenCommand(Type::DeleteKey);
+    return true;
 }
 
 void TypingCommand::forwardDeleteKeyPressed(TextGranularity granularity, bool shouldAddToKillRing)
 {
-    RefPtr protectedFrame = document().frame();
+    Ref document = this->document();
+    RefPtr protectedFrame = document->frame();
 
-    document().editor().updateMarkersForWordsAffectedByEditing(false);
+    protect(document->editor())->updateMarkersForWordsAffectedByEditing(false);
 
     VisibleSelection selectionToDelete;
     VisibleSelection selectionAfterUndo;
@@ -802,14 +871,14 @@ void TypingCommand::forwardDeleteKeyPressed(TextGranularity granularity, bool sh
         Position downstreamEnd = endingSelection().end().downstream();
         VisiblePosition visibleEnd = endingSelection().visibleEnd();
         auto enclosingTableCell = enclosingNodeOfType(visibleEnd.deepEquivalent(), &isTableCell);
-        if (enclosingTableCell && visibleEnd == lastPositionInNode(enclosingTableCell.get()))
+        if (enclosingTableCell && visibleEnd == lastPositionInNode(*enclosingTableCell))
             return;
         if (visibleEnd == endOfParagraph(visibleEnd))
             downstreamEnd = visibleEnd.next(CannotCrossEditingBoundary).deepEquivalent().downstream();
         // When deleting tables: Select the table first, then perform the deletion
         if (downstreamEnd.containerNode() && downstreamEnd.containerNode()->renderer() && downstreamEnd.containerNode()->renderer()->isRenderTable()
-            && downstreamEnd.computeOffsetInContainerNode() <= caretMinOffset(*downstreamEnd.containerNode())) {
-            setEndingSelection(VisibleSelection(endingSelection().end(), positionAfterNode(downstreamEnd.containerNode()), Affinity::Downstream, endingSelection().directionality()));
+            && downstreamEnd.computeOffsetInContainerNode() <= caretMinOffset(*protect(downstreamEnd.containerNode()))) {
+            setEndingSelection(VisibleSelection(endingSelection().end(), positionAfterNode(*protect(downstreamEnd.containerNode())), Affinity::Downstream, endingSelection().directionality()));
             typingAddedToOpenCommand(Type::ForwardDeleteKey);
             return;
         }
@@ -845,28 +914,30 @@ void TypingCommand::forwardDeleteKeyPressed(TextGranularity granularity, bool sh
 #if PLATFORM(IOS_FAMILY)
         // Workaround for this bug:
         // <rdar://problem/4653755> UIKit text widgets should use WebKit editing API to manipulate text
-        setEndingSelection(document().selection().selection());
-        closeTyping(document());
+        setEndingSelection(document->selection().selection());
+        closeTyping(document);
 #endif
         return;
     }
     
-    if (selectionToDelete.isCaret() || !document().selection().shouldDeleteSelection(selectionToDelete))
+    if (selectionToDelete.isCaret() || !document->selection().shouldDeleteSelection(selectionToDelete))
         return;
 
     if (!willAddTypingToOpenCommand(Type::ForwardDeleteKey, granularity, { }, selectionToDelete.firstRange()))
         return;
 
-    // Post the accessibility notification before actually deleting the content while selectionToDelete is still valid
-    postTextStateChangeNotificationForDeletion(selectionToDelete);
+    // Capture what's about to be deleted while selectionToDelete is still valid; the notification is
+    // posted below, once the deletion is done.
+    auto deletedText = recordDeletionForAccessibility(selectionToDelete);
 
     if (shouldAddToKillRing)
-        document().editor().addRangeToKillRing(*selectionToDelete.toNormalizedRange(), Editor::KillRingInsertionMode::AppendText);
+        protect(document->editor())->addRangeToKillRing(*selectionToDelete.toNormalizedRange(), Editor::KillRingInsertionMode::AppendText);
     // make undo select what was deleted
     setStartingSelection(selectionAfterUndo);
     CompositeEditCommand::deleteSelection(selectionToDelete, m_smartDelete, /* mergeBlocksAfterDelete*/ true, /* replace*/ false, expandForSpecialElements, /*sanitizeMarkup*/ true);
     setSmartDelete(false);
     typingAddedToOpenCommand(Type::ForwardDeleteKey);
+    postTextStateChangeNotificationForDeletion(deletedText);
 }
 
 void TypingCommand::deleteSelection(bool smartDelete)
@@ -874,25 +945,17 @@ void TypingCommand::deleteSelection(bool smartDelete)
     if (!willAddTypingToOpenCommand(Type::DeleteSelection, TextGranularity::CharacterGranularity))
         return;
 
-    CompositeEditCommand::deleteSelection(smartDelete);
+    bool expandForSpecialElements = m_compositionType == TextCompositionType::None;
+    CompositeEditCommand::deleteSelection(smartDelete, /* mergeBlocksAfterDelete */ true, /* replace */ false, expandForSpecialElements);
     typingAddedToOpenCommand(Type::DeleteSelection);
 }
 
 #if PLATFORM(IOS_FAMILY)
-class FriendlyEditCommand : public EditCommand {
-public:
-    void setEndingSelection(const VisibleSelection& selection)
-    {
-        EditCommand::setEndingSelection(selection);
-    }
-};
-
 void TypingCommand::setEndingSelectionOnLastInsertCommand(const VisibleSelection& selection)
 {
     if (!m_commands.isEmpty()) {
-        RefPtr lastCommand = m_commands.last().get();
-        if (lastCommand->isInsertTextCommand())
-            static_cast<FriendlyEditCommand*>(lastCommand.get())->setEndingSelection(selection);
+        if (RefPtr lastCommand = dynamicDowncast<InsertTextCommand>(m_commands.last()))
+            lastCommand->setEndingSelection(selection);
     }
 }
 #endif

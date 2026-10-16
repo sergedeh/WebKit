@@ -24,10 +24,11 @@
  */
 
 #import <WebKitLegacy/DOMHTMLTextAreaElement.h>
+#import <wtf/Compiler.h>
 
 namespace WebCore {
 class HTMLTextAreaElement;
 }
 
 WebCore::HTMLTextAreaElement* core(DOMHTMLTextAreaElement *);
-DOMHTMLTextAreaElement *kit(WebCore::HTMLTextAreaElement*);
+DOMHTMLTextAreaElement * LEGACY_NODELETE kit(WebCore::HTMLTextAreaElement*);

@@ -40,6 +40,7 @@
 #include "EventTargetInlines.h"
 #include "ExceptionCode.h"
 #include "FrameLoader.h"
+#include "JSDOMConvertInterface.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JSMeteringMode.h"
 #include "JSOverconstrainedError.h"
@@ -62,6 +63,7 @@
 #include "Quirks.h"
 #include "RealtimeMediaSourceCenter.h"
 #include "ScriptExecutionContext.h"
+#include "ScriptExecutionContextInlines.h"
 #include "Settings.h"
 #include "WebAudioSourceProvider.h"
 #include <JavaScriptCore/ConsoleTypes.h>
@@ -91,7 +93,6 @@ MediaStreamTrack::MediaStreamTrack(ScriptExecutionContext& context, Ref<MediaStr
     , m_muted(m_private->muted())
     , m_isCaptureTrack(is<Document>(context) && m_private->isCaptureTrack())
 {
-    relaxAdoptionRequirement();
     ALWAYS_LOG(LOGIDENTIFIER);
 
     m_private->addObserver(*this);
@@ -139,11 +140,6 @@ const AtomString& MediaStreamTrack::kind() const
     if (m_kind.isNull())
         m_kind = m_private->isAudio() ? "audio"_s : "video"_s;
     return m_kind;
-}
-
-const String& MediaStreamTrack::id() const
-{
-    return m_private->id();
 }
 
 const String& MediaStreamTrack::label() const
@@ -214,6 +210,8 @@ bool MediaStreamTrack::enabled() const
 
 void MediaStreamTrack::setEnabled(bool enabled)
 {
+    if (RefPtr keeper = m_keeper.get())
+        keeper->setEnabled(enabled);
     m_private->setEnabled(enabled);
 }
 
@@ -239,7 +237,7 @@ RefPtr<MediaStreamTrack> MediaStreamTrack::clone()
 
     ALWAYS_LOG(LOGIDENTIFIER);
 
-    auto clone = MediaStreamTrack::create(*protectedScriptExecutionContext(), m_private->clone(), RegisterCaptureTrackToOwner::No);
+    auto clone = MediaStreamTrack::create(*protect(scriptExecutionContext()), m_private->clone(), RegisterCaptureTrackToOwner::No);
 
     clone->m_readyState = m_readyState;
     if (clone->ended() && clone->m_readyState == State::Live)
@@ -270,7 +268,7 @@ void MediaStreamTrack::stopTrack(StopMode mode)
 
     if (isAudio() && isCaptureTrack())
         if (RefPtr manager = mediaSessionManager())
-            manager->audioCaptureSourceStateChanged();
+            manager->audioCaptureSourceStateChanged(MediaSessionManagerInterface::IsCaptureStarting::No);
 
     configureTrackRendering();
 }
@@ -454,6 +452,14 @@ MediaProducerMediaStateFlags MediaStreamTrack::captureState(const RealtimeMediaS
         if (source.isProducingData())
             return MediaProducerMediaState::HasActiveVideoCaptureDevice;
         break;
+    case CaptureDevice::DeviceType::Canvas:
+        if (source.muted())
+            return MediaProducerMediaState::HasMutedVideoCaptureDevice;
+        if (source.interrupted())
+            return MediaProducerMediaState::HasInterruptedVideoCaptureDevice;
+        if (source.isProducingData())
+            return MediaProducerMediaState::HasActiveVideoCaptureDevice;
+        break;
     case CaptureDevice::DeviceType::Screen:
         if (source.muted())
             return MediaProducerMediaState::HasMutedScreenCaptureDevice;
@@ -488,7 +494,7 @@ MediaProducerMediaStateFlags MediaStreamTrack::mediaState() const
     if (!document || !document->page())
         return MediaProducer::IsNotPlaying;
 
-    return captureState(privateTrack().source());
+    return captureState(protect(privateTrack().source()));
 }
 
 void MediaStreamTrack::trackStarted(MediaStreamTrackPrivate&)
@@ -506,7 +512,7 @@ void MediaStreamTrack::trackEnded(MediaStreamTrackPrivate&)
     ALWAYS_LOG(LOGIDENTIFIER);
 
     if (m_isCaptureTrack && m_private->captureDidFail() && m_readyState != State::Ended)
-        protectedScriptExecutionContext()->addConsoleMessage(MessageSource::JS, MessageLevel::Error, "A MediaStreamTrack ended due to a capture failure"_s);
+        protect(scriptExecutionContext())->addConsoleMessage(MessageSource::JS, MessageLevel::Error, "A MediaStreamTrack ended due to a capture failure"_s);
 
     // http://w3c.github.io/mediacapture-main/#life-cycle
     // When a MediaStreamTrack track ends for any reason other than the stop() method being invoked, the User Agent must
@@ -541,7 +547,18 @@ void MediaStreamTrack::trackMutedChanged(MediaStreamTrackPrivate&)
     if (scriptExecutionContext()->activeDOMObjectsAreStopped() || m_ended)
         return;
 
-    Function<void()> updateMuted = [this, protectedThis = Ref { *this }, muted = m_private->muted()] {
+    bool muted = m_private->muted();
+    RefPtr<GenericPromise> sessionActivated;
+    if (isAudio() && isCaptureTrack()) {
+        if (RefPtr manager = mediaSessionManager()) {
+            Ref stateChanged = manager->audioCaptureSourceStateChanged(muted ? MediaSessionManagerInterface::IsCaptureStarting::No : MediaSessionManagerInterface::IsCaptureStarting::Yes);
+            // Only unmuting has something to wait for: muting requests deactivation without waiting.
+            if (!muted)
+                sessionActivated = WTF::move(stateChanged);
+        }
+    }
+
+    Function<void()> updateMuted = [this, protectedThis = Ref { *this }, muted] {
         RefPtr context = scriptExecutionContext();
         if (!context || context->activeDOMObjectsAreStopped())
             return;
@@ -551,16 +568,23 @@ void MediaStreamTrack::trackMutedChanged(MediaStreamTrackPrivate&)
 
         m_muted = muted;
 
-        if (isAudio() && isCaptureTrack())
-            if (RefPtr manager = mediaSessionManager())
-                manager->audioCaptureSourceStateChanged();
-
         dispatchEvent(Event::create(muted ? eventNames().muteEvent : eventNames().unmuteEvent, Event::CanBubble::No, Event::IsCancelable::No));
+
+        if (!muted && m_isConfigurationChangePending) {
+            m_isConfigurationChangePending = false;
+            dispatchEvent(Event::create(eventNames().configurationchangeEvent, Event::CanBubble::No, Event::IsCancelable::No));
+        }
     };
 
     if (m_shouldFireMuteEventImmediately)
         updateMuted();
-    else {
+    else if (sessionActivated) {
+        // Unmuting an audio capture track activates the audio session asynchronously. Delay the event
+        // until it has, so listeners observe an active session.
+        context->enqueueTaskWhenSettled(sessionActivated.releaseNonNull(), TaskSource::Networking, [updateMuted = WTF::move(updateMuted)](auto&&) mutable {
+            updateMuted();
+        });
+    } else {
         queueTaskKeepingObjectAlive(*this, TaskSource::Networking, [updateMuted = WTF::move(updateMuted)](auto&) {
             updateMuted();
         });
@@ -582,8 +606,13 @@ void MediaStreamTrack::trackSettingsChanged(MediaStreamTrackPrivate&)
 void MediaStreamTrack::trackConfigurationChanged(MediaStreamTrackPrivate&)
 {
     queueTaskKeepingObjectAlive(*this, TaskSource::Networking, [](auto& track) {
-        if (!track.scriptExecutionContext() || track.scriptExecutionContext()->activeDOMObjectsAreStopped() || track.m_private->muted() || track.ended())
+        if (!track.scriptExecutionContext() || track.scriptExecutionContext()->activeDOMObjectsAreStopped() || track.ended())
             return;
+
+        if (track.m_private->muted()) {
+            track.m_isConfigurationChangePending = true;
+            return;
+        }
 
         track.dispatchEvent(Event::create(eventNames().configurationchangeEvent, Event::CanBubble::No, Event::IsCancelable::No));
     });
@@ -622,7 +651,7 @@ void MediaStreamTrack::suspend(ReasonForSuspension reason)
 
 bool MediaStreamTrack::virtualHasPendingActivity() const
 {
-    return !m_ended && hasEventListeners();
+    return !m_ended && (hasEventListeners() || m_keeper.get());
 }
 
 #if ENABLE(WEB_AUDIO)
@@ -635,13 +664,13 @@ RefPtr<WebAudioSourceProvider> MediaStreamTrack::createAudioSourceProvider()
 bool MediaStreamTrack::isCapturingAudio() const
 {
     ASSERT(isCaptureTrack() && m_private->isAudio());
-    return !ended() && !muted();
+    return !ended() && !m_private->muted();
 }
 
 bool MediaStreamTrack::wantsToCaptureAudio() const
 {
     ASSERT(isCaptureTrack() && m_private->isAudio());
-    return !ended() && (!muted() || m_private->interrupted());
+    return !ended() && (!m_private->muted() || m_private->interrupted());
 }
 
 UniqueRef<MediaStreamTrackDataHolder> MediaStreamTrack::detach()
@@ -684,6 +713,17 @@ RefPtr<MediaSessionManagerInterface> MediaStreamTrack::mediaSessionManager() con
 ScriptExecutionContext* MediaStreamTrack::scriptExecutionContext() const
 {
     return ActiveDOMObject::scriptExecutionContext();
+}
+
+Ref<MediaStreamTrack::Keeper> MediaStreamTrack::keeper()
+{
+    RefPtr keeper = m_keeper.get();
+    if (!keeper) {
+        keeper = Keeper::create(enabled());
+        m_keeper = *keeper;
+    }
+
+    return keeper.releaseNonNull();
 }
 
 #if !RELEASE_LOG_DISABLED

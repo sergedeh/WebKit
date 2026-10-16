@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2010 Google Inc. All rights reserved.
- * Copyright (C) 2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2025-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,6 +29,7 @@
 #include <WebCore/BlobData.h>
 #include <WebCore/FileStreamClient.h>
 #include <WebCore/HTTPParsers.h>
+#include <wtf/Box.h>
 #include <wtf/Forward.h>
 #include <wtf/Variant.h>
 #include <wtf/Vector.h>
@@ -70,21 +71,24 @@ protected:
     void incrementReadItemCount() { ++m_readItemCount; }
     uint64_t lengthOfItemBeingRead() const { return m_itemLengthList[m_readItemCount]; }
     WEBCORE_EXPORT void clearAsyncStream();
-    WEBCORE_EXPORT BlobData* blobData() const;
+    WEBCORE_EXPORT BlobData* LEGACY_NODELETE blobData() const;
     FileStream* syncStream() const;
     AsyncFileStream* asyncStream() const;
-    Vector<uint8_t>& buffer() { return m_buffer; }
-    const Vector<uint8_t>& buffer() const { return m_buffer; }
+    WEBCORE_EXPORT void resizeBuffer(size_t);
+    const Vector<uint8_t>& buffer() const LIFETIME_BOUND { return *m_buffer; }
+
+    static uint64_t clampReadSizeToRemaining(uint64_t requested, uint64_t totalRemaining);
 
 private:
     void getSizeForNext();
-    std::optional<Error> seek();
-    std::optional<Error> adjustAndValidateRangeBounds();
+    std::optional<Error> LEGACY_NODELETE seek();
+    std::optional<Error> LEGACY_NODELETE adjustAndValidateRangeBounds();
     bool consumeData(std::span<const uint8_t>);
-    bool readDataAsync(const BlobDataItem&);
-    void readFileAsync(const BlobDataItem&);
+    bool readDataAsync(const BlobDataItem&, DataSegment&);
+    void readFileAsync(const BlobDataItem&, BlobDataFileReference&);
     void dispatchDidReceiveResponse();
     void doStart();
+    void didRead(int); // -1 in case of error.
 
     virtual void didReceiveResponse(ResourceResponse&&) = 0;
     virtual void didFail(Error) = 0;
@@ -98,13 +102,13 @@ private:
     // FileStreamClient methods.
     WEBCORE_EXPORT void didOpen(bool) final;
     WEBCORE_EXPORT void didGetSize(long long) final;
-    WEBCORE_EXPORT void didRead(int) final;
 
-    RefPtr<BlobData> m_blobData;
+    const RefPtr<BlobData> m_blobData;
     // For Async or Sync loading.
     Variant<std::unique_ptr<AsyncFileStream>, std::unique_ptr<FileStream>> m_stream;
     std::optional<HTTPRange> m_range;
-    Vector<uint8_t> m_buffer;
+    bool m_isWritingIntoBuffer { false };
+    const Box<Vector<uint8_t>> m_buffer;
     Vector<uint64_t> m_itemLengthList;
     uint64_t m_totalSize { 0 };
     uint64_t m_totalRemainingSize { 0 };

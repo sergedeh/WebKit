@@ -46,8 +46,9 @@ enum class PlatformMediaError : uint8_t {
     NotReady,
     AudioDecodingError,
     VideoDecodingError,
-    RequiresFlushToResume,
+    InvalidState,
     CDMInstanceKeyNeeded,
+    Shutdown,
 };
 
 using MediaPromise = NativePromise<void, PlatformMediaError>;

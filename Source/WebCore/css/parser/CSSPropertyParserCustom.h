@@ -31,15 +31,19 @@
 #pragma once
 
 #include "CSSBorderImage.h"
-#include "CSSBorderImageSliceValue.h"
-#include "CSSBorderImageWidthValue.h"
 #include "CSSBorderRadius.h"
+#include "CSSCustomIdentValue.h"
+#include "CSSFlexWrapValue.h"
 #include "CSSFontStyleRangeValue.h"
 #include "CSSFontVariantLigaturesParser.h"
 #include "CSSFontVariantNumericParser.h"
 #include "CSSFunctionValue.h"
-#include "CSSGridLineNamesValue.h"
+#include "CSSGridAutoFlowValue.h"
+#include "CSSGridLineValue.h"
 #include "CSSGridTemplateAreasValue.h"
+#include "CSSGridTemplateListValue.h"
+#include "CSSKeywordValueInlines.h"
+#include "CSSMaskBorder.h"
 #include "CSSOffsetRotateValue.h"
 #include "CSSParserTokenRangeGuard.h"
 #include "CSSPositionValue.h"
@@ -48,10 +52,10 @@
 #include "CSSPropertyParserConsumer+Anchor.h"
 #include "CSSPropertyParserConsumer+AngleDefinitions.h"
 #include "CSSPropertyParserConsumer+Animations.h"
-#include "CSSPropertyParserConsumer+Attr.h"
 #include "CSSPropertyParserConsumer+Background.h"
 #include "CSSPropertyParserConsumer+Box.h"
 #include "CSSPropertyParserConsumer+CSSPrimitiveValueResolver.h"
+#include "CSSPropertyParserConsumer+CalcSize.h"
 #include "CSSPropertyParserConsumer+Color.h"
 #include "CSSPropertyParserConsumer+ColorAdjust.h"
 #include "CSSPropertyParserConsumer+Content.h"
@@ -67,11 +71,14 @@
 #include "CSSPropertyParserConsumer+IntegerDefinitions.h"
 #include "CSSPropertyParserConsumer+LengthDefinitions.h"
 #include "CSSPropertyParserConsumer+LengthPercentageDefinitions.h"
+#include "CSSPropertyParserConsumer+LinkParameters.h"
 #include "CSSPropertyParserConsumer+List.h"
 #include "CSSPropertyParserConsumer+Lists.h"
 #include "CSSPropertyParserConsumer+Masking.h"
 #include "CSSPropertyParserConsumer+Motion.h"
 #include "CSSPropertyParserConsumer+NumberDefinitions.h"
+#include "CSSPropertyParserConsumer+ObjectViewBox.h"
+#include "CSSPropertyParserConsumer+Overflow.h"
 #include "CSSPropertyParserConsumer+Percentage.h"
 #include "CSSPropertyParserConsumer+PercentageDefinitions.h"
 #include "CSSPropertyParserConsumer+Position.h"
@@ -89,21 +96,17 @@
 #include "CSSPropertyParserConsumer+TimeDefinitions.h"
 #include "CSSPropertyParserConsumer+Timeline.h"
 #include "CSSPropertyParserConsumer+Transform.h"
-#include "CSSPropertyParserConsumer+Transitions.h"
 #include "CSSPropertyParserConsumer+UI.h"
 #include "CSSPropertyParserConsumer+URL.h"
 #include "CSSPropertyParserConsumer+UnicodeRange.h"
 #include "CSSPropertyParserConsumer+ViewTransition.h"
-#include "CSSPropertyParserConsumer+WillChange.h"
 #include "CSSPropertyParserResult.h"
 #include "CSSPropertyParsing.h"
-#include "CSSQuadValue.h"
 #include "CSSTransformListValue.h"
 #include "CSSURLValue.h"
 #include "CSSValuePair.h"
 #include "CSSValuePool.h"
 #include "FontFace.h"
-#include "Rect.h"
 #include "StylePropertyShorthand.h"
 #include "StylePropertyShorthandFunctions.h"
 #include "StyleURL.h"
@@ -149,8 +152,12 @@ public:
     static bool consumeFontSynthesisShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
     static bool consumeTextDecorationSkipShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
     static bool consumeBorderSpacingShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
+    static bool consumeCornerSingleShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
+    static bool consumeCornerPairShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
+    static bool consumeCornerQuadShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
     static bool consumeBorderRadiusShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
     static bool consumeWebkitBorderRadiusShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
+    static bool consumeBorderRadiusSideShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
     static bool consumeBorderImageShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
     static bool consumeWebkitBorderImageShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
     static bool consumeMaskBorderShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
@@ -172,9 +179,12 @@ public:
     static bool consumeContainerShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
     static bool consumeContainIntrinsicSizeShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
     static bool consumeAnimationRangeShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
+    static bool consumeTimelineTriggerActivationRangeShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
+    static bool consumeTimelineTriggerActiveRangeShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
     static bool consumeScrollTimelineShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
     static bool consumeViewTimelineShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
     static bool consumeLineClampShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
+    static bool consumeHyphenateLimitCharsShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
     static bool consumeTextBoxShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
     static bool consumeTextWrapShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
     static bool consumeWhiteSpaceShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
@@ -194,17 +204,17 @@ inline std::optional<BorderShorthandComponents> consumeBorderShorthandComponents
 
     while (!components.width || !components.style || !components.color) {
         if (!components.width) {
-            components.width = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyBorderLeftWidth, state);
+            components.width = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyID::BorderLeftWidth, state);
             if (components.width)
                 continue;
         }
         if (!components.style) {
-            components.style = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyBorderLeftStyle, state);
+            components.style = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyID::BorderLeftStyle, state);
             if (components.style)
                 continue;
         }
         if (!components.color) {
-            components.color = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyBorderLeftColor, state);
+            components.color = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyID::BorderLeftColor, state);
             if (components.color)
                 continue;
         }
@@ -222,29 +232,29 @@ inline std::optional<BorderShorthandComponents> consumeBorderShorthandComponents
 
 inline CSSValueID mapFromPageBreakBetween(CSSValueID value)
 {
-    if (value == CSSValueAlways)
-        return CSSValuePage;
-    if (value == CSSValueAuto || value == CSSValueAvoid || value == CSSValueLeft || value == CSSValueRight)
+    if (value == CSSValueID::Always)
+        return CSSValueID::Page;
+    if (value == CSSValueID::Auto || value == CSSValueID::Avoid || value == CSSValueID::Left || value == CSSValueID::Right)
         return value;
-    return CSSValueInvalid;
+    return CSSValueID::Invalid;
 }
 
 inline CSSValueID mapFromColumnBreakBetween(CSSValueID value)
 {
-    if (value == CSSValueAlways)
-        return CSSValueColumn;
-    if (value == CSSValueAuto)
+    if (value == CSSValueID::Always)
+        return CSSValueID::Column;
+    if (value == CSSValueID::Auto)
         return value;
-    if (value == CSSValueAvoid)
-        return CSSValueAvoidColumn;
-    return CSSValueInvalid;
+    if (value == CSSValueID::Avoid)
+        return CSSValueID::AvoidColumn;
+    return CSSValueID::Invalid;
 }
 
 inline CSSValueID mapFromColumnRegionOrPageBreakInside(CSSValueID value)
 {
-    if (value == CSSValueAuto || value == CSSValueAvoid)
+    if (value == CSSValueID::Auto || value == CSSValueID::Avoid)
         return value;
-    return CSSValueInvalid;
+    return CSSValueID::Invalid;
 }
 
 inline bool PropertyParserCustom::consumeStandardSpaceSeparatedShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand& shorthand, PropertyParserResult& result)
@@ -339,7 +349,7 @@ inline bool PropertyParserCustom::consumeFontShorthand(CSSParserTokenRange& rang
         // Parsing (correctly) doesn't re-run in response to updateStyleAfterChangeInEnvironment().
         // Instead, we store sentinel values, later replaced by environment-sensitive values
         // inside Style::BuilderCustom and Style::BuilderConverter.
-        result.addPropertyForAllLonghandsOfCurrentShorthand(state, CSSPrimitiveValue::create(systemFont), IsImplicit::Yes);
+        result.addPropertyForAllLonghandsOfCurrentShorthand(state, CSSKeywordValue::create(systemFont), IsImplicit::Yes);
         return true;
     }
 
@@ -356,13 +366,13 @@ inline bool PropertyParserCustom::consumeFontShorthand(CSSParserTokenRange& rang
 
     // Optional font-style, font-variant, font-width and font-weight, in any order.
     for (unsigned i = 0; i < 4 && !range.atEnd(); ++i) {
-        if (consumeIdent<CSSValueNormal>(range))
+        if (consumeIdent<CSSValueID::Normal>(range))
             continue;
-        if (!fontStyle && (fontStyle = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyFontStyle, state)))
+        if (!fontStyle && (fontStyle = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyID::FontStyle, state)))
             continue;
-        if (!fontVariantCaps && (fontVariantCaps = consumeIdent<CSSValueSmallCaps>(range)))
+        if (!fontVariantCaps && (fontVariantCaps = consumeIdent<CSSValueID::SmallCaps>(range)))
             continue;
-        if (!fontWeight && (fontWeight = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyFontWeight, state)))
+        if (!fontWeight && (fontWeight = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyID::FontWeight, state)))
             continue;
         if (!fontWidth && (fontWidth = CSSPropertyParsing::consumeFontWidthAbsolute(range)))
             continue;
@@ -372,13 +382,13 @@ inline bool PropertyParserCustom::consumeFontShorthand(CSSParserTokenRange& rang
     if (range.atEnd())
         return false;
 
-    fontSize = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyFontSize, state);
+    fontSize = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyID::FontSize, state);
     if (!fontSize || range.atEnd())
         return false;
 
     if (consumeSlashIncludingWhitespace(range)) {
-        if (!consumeIdent<CSSValueNormal>(range)) {
-            lineHeight = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyLineHeight, state);
+        if (!consumeIdent<CSSValueID::Normal>(range)) {
+            lineHeight = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyID::LineHeight, state);
             if (!lineHeight)
                 return false;
         }
@@ -386,7 +396,7 @@ inline bool PropertyParserCustom::consumeFontShorthand(CSSParserTokenRange& rang
             return false;
     }
 
-    fontFamily = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyFontFamily, state);
+    fontFamily = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyID::FontFamily, state);
     if (!fontFamily || !range.atEnd())
         return false;
 
@@ -403,14 +413,14 @@ inline bool PropertyParserCustom::consumeFontShorthand(CSSParserTokenRange& rang
 
 inline bool PropertyParserCustom::consumeFontVariantShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand&, PropertyParserResult& result)
 {
-    if (identMatches<CSSValueNormal, CSSValueNone>(range.peek().id())) {
-        result.addPropertyForCurrentShorthand(state, CSSPropertyFontVariantLigatures, consumeIdent(range));
-        result.addPropertyForCurrentShorthand(state, CSSPropertyFontVariantCaps, nullptr);
-        result.addPropertyForCurrentShorthand(state, CSSPropertyFontVariantAlternates, nullptr);
-        result.addPropertyForCurrentShorthand(state, CSSPropertyFontVariantNumeric, nullptr);
-        result.addPropertyForCurrentShorthand(state, CSSPropertyFontVariantEastAsian, nullptr);
-        result.addPropertyForCurrentShorthand(state, CSSPropertyFontVariantPosition, nullptr);
-        result.addPropertyForCurrentShorthand(state, CSSPropertyFontVariantEmoji, nullptr);
+    if (identMatches<CSSValueID::Normal, CSSValueID::None>(range.peek().id())) {
+        result.addPropertyForCurrentShorthand(state, CSSPropertyID::FontVariantLigatures, consumeIdent(range));
+        result.addPropertyForCurrentShorthand(state, CSSPropertyID::FontVariantCaps, nullptr);
+        result.addPropertyForCurrentShorthand(state, CSSPropertyID::FontVariantAlternates, nullptr);
+        result.addPropertyForCurrentShorthand(state, CSSPropertyID::FontVariantNumeric, nullptr);
+        result.addPropertyForCurrentShorthand(state, CSSPropertyID::FontVariantEastAsian, nullptr);
+        result.addPropertyForCurrentShorthand(state, CSSPropertyID::FontVariantPosition, nullptr);
+        result.addPropertyForCurrentShorthand(state, CSSPropertyID::FontVariantEmoji, nullptr);
         return range.atEnd();
     }
 
@@ -424,16 +434,16 @@ inline bool PropertyParserCustom::consumeFontVariantShorthand(CSSParserTokenRang
     auto implicitLigatures = IsImplicit::Yes;
     auto implicitNumeric = IsImplicit::Yes;
     do {
-        if (range.peek().id() == CSSValueNormal)
+        if (range.peek().id() == CSSValueID::Normal)
             return false;
 
-        if (!capsValue && (capsValue = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyFontVariantCaps, state)))
+        if (!capsValue && (capsValue = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyID::FontVariantCaps, state)))
             continue;
 
-        if (!positionValue && (positionValue = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyFontVariantPosition, state)))
+        if (!positionValue && (positionValue = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyID::FontVariantPosition, state)))
             continue;
 
-        if (!alternatesValue && (alternatesValue = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyFontVariantAlternates, state)))
+        if (!alternatesValue && (alternatesValue = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyID::FontVariantAlternates, state)))
             continue;
 
         auto ligaturesParseResult = ligaturesParser.consumeLigature(range);
@@ -451,33 +461,33 @@ inline bool PropertyParserCustom::consumeFontVariantShorthand(CSSParserTokenRang
             || numericParseResult == CSSFontVariantNumericParser::ParseResult::DisallowedValue)
             return false;
 
-        if (!eastAsianValue && (eastAsianValue = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyFontVariantEastAsian, state)))
+        if (!eastAsianValue && (eastAsianValue = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyID::FontVariantEastAsian, state)))
             continue;
 
-        if (state.context.propertySettings.cssFontVariantEmojiEnabled && !emojiValue && (emojiValue = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyFontVariantEmoji, state)))
+        if (state.context.propertySettings.cssFontVariantEmojiEnabled && !emojiValue && (emojiValue = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyID::FontVariantEmoji, state)))
             continue;
 
         // Saw some value that didn't match anything else.
         return false;
     } while (!range.atEnd());
 
-    result.addPropertyForCurrentShorthand(state, CSSPropertyFontVariantLigatures, ligaturesParser.finalizeValue().releaseNonNull(), implicitLigatures);
-    result.addPropertyForCurrentShorthand(state, CSSPropertyFontVariantCaps, WTF::move(capsValue));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyFontVariantAlternates, WTF::move(alternatesValue));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyFontVariantNumeric, numericParser.finalizeValue().releaseNonNull(), implicitNumeric);
-    result.addPropertyForCurrentShorthand(state, CSSPropertyFontVariantEastAsian, WTF::move(eastAsianValue));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyFontVariantPosition, WTF::move(positionValue));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyFontVariantEmoji, WTF::move(emojiValue));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::FontVariantLigatures, ligaturesParser.finalizeValue().releaseNonNull(), implicitLigatures);
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::FontVariantCaps, WTF::move(capsValue));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::FontVariantAlternates, WTF::move(alternatesValue));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::FontVariantNumeric, numericParser.finalizeValue().releaseNonNull(), implicitNumeric);
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::FontVariantEastAsian, WTF::move(eastAsianValue));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::FontVariantPosition, WTF::move(positionValue));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::FontVariantEmoji, WTF::move(emojiValue));
     return true;
 }
 
 inline bool PropertyParserCustom::consumeFontSynthesisShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand&, PropertyParserResult& result)
 {
     // none | [ weight || style || small-caps ]
-    if (range.peek().id() == CSSValueNone) {
-        result.addPropertyForCurrentShorthand(state, CSSPropertyFontSynthesisSmallCaps, consumeIdent(range).releaseNonNull());
-        result.addPropertyForCurrentShorthand(state, CSSPropertyFontSynthesisStyle, CSSPrimitiveValue::create(CSSValueNone));
-        result.addPropertyForCurrentShorthand(state, CSSPropertyFontSynthesisWeight, CSSPrimitiveValue::create(CSSValueNone));
+    if (range.peek().id() == CSSValueID::None) {
+        result.addPropertyForCurrentShorthand(state, CSSPropertyID::FontSynthesisSmallCaps, consumeIdent(range).releaseNonNull());
+        result.addPropertyForCurrentShorthand(state, CSSPropertyID::FontSynthesisStyle, CSSKeywordValue::create(CSSValueID::None));
+        result.addPropertyForCurrentShorthand(state, CSSPropertyID::FontSynthesisWeight, CSSKeywordValue::create(CSSValueID::None));
         return range.atEnd();
     }
 
@@ -492,19 +502,19 @@ inline bool PropertyParserCustom::consumeFontSynthesisShorthand(CSSParserTokenRa
     };
 
     while (!range.atEnd()) {
-        RefPtr ident = consumeIdent<CSSValueWeight, CSSValueStyle, CSSValueSmallCaps>(range);
+        RefPtr ident = consumeIdent<CSSValueID::Weight, CSSValueID::Style, CSSValueID::SmallCaps>(range);
         if (!ident)
             return false;
         switch (ident->valueID()) {
-        case CSSValueWeight:
+        case CSSValueID::Weight:
             if (!checkAndMarkExistence(&foundWeight))
                 return false;
             break;
-        case CSSValueStyle:
+        case CSSValueID::Style:
             if (!checkAndMarkExistence(&foundStyle))
                 return false;
             break;
-        case CSSValueSmallCaps:
+        case CSSValueID::SmallCaps:
             if (!checkAndMarkExistence(&foundSmallCaps))
                 return false;
             break;
@@ -514,22 +524,22 @@ inline bool PropertyParserCustom::consumeFontSynthesisShorthand(CSSParserTokenRa
         }
     }
 
-    result.addPropertyForCurrentShorthand(state, CSSPropertyFontSynthesisWeight, CSSPrimitiveValue::create(foundWeight ? CSSValueAuto : CSSValueNone));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyFontSynthesisStyle, CSSPrimitiveValue::create(foundStyle ? CSSValueAuto : CSSValueNone));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyFontSynthesisSmallCaps, CSSPrimitiveValue::create(foundSmallCaps ? CSSValueAuto : CSSValueNone));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::FontSynthesisWeight, CSSKeywordValue::create(foundWeight ? CSSValueID::Auto : CSSValueID::None));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::FontSynthesisStyle, CSSKeywordValue::create(foundStyle ? CSSValueID::Auto : CSSValueID::None));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::FontSynthesisSmallCaps, CSSKeywordValue::create(foundSmallCaps ? CSSValueID::Auto : CSSValueID::None));
     return true;
 }
 
 inline bool PropertyParserCustom::consumeTextDecorationSkipShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand&, PropertyParserResult& result)
 {
-    if (auto skip = consumeIdentRaw<CSSValueNone, CSSValueAuto, CSSValueInk>(range)) {
+    if (auto skip = consumeIdentRaw<CSSValueID::None, CSSValueID::Auto, CSSValueID::Ink>(range)) {
         switch (*skip) {
-        case CSSValueNone:
-            result.addPropertyForCurrentShorthand(state, CSSPropertyTextDecorationSkipInk, CSSPrimitiveValue::create(CSSValueNone));
+        case CSSValueID::None:
+            result.addPropertyForCurrentShorthand(state, CSSPropertyID::TextDecorationSkipInk, CSSKeywordValue::create(CSSValueID::None));
             return range.atEnd();
-        case CSSValueAuto:
-        case CSSValueInk:
-            result.addPropertyForCurrentShorthand(state, CSSPropertyTextDecorationSkipInk, CSSPrimitiveValue::create(CSSValueAuto));
+        case CSSValueID::Auto:
+        case CSSValueID::Ink:
+            result.addPropertyForCurrentShorthand(state, CSSPropertyID::TextDecorationSkipInk, CSSKeywordValue::create(CSSValueID::Auto));
             return range.atEnd();
         default:
             ASSERT_NOT_REACHED();
@@ -550,8 +560,8 @@ inline bool PropertyParserCustom::consumeBorderSpacingShorthand(CSSParserTokenRa
     if (!verticalSpacing || !range.atEnd())
         return false;
 
-    result.addPropertyForCurrentShorthand(state, CSSPropertyWebkitBorderHorizontalSpacing, horizontalSpacing.releaseNonNull());
-    result.addPropertyForCurrentShorthand(state, CSSPropertyWebkitBorderVerticalSpacing, verticalSpacing.releaseNonNull());
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::WebkitBorderHorizontalSpacing, horizontalSpacing.releaseNonNull());
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::WebkitBorderVerticalSpacing, verticalSpacing.releaseNonNull());
     return true;
 }
 
@@ -561,14 +571,14 @@ inline bool PropertyParserCustom::consumeColumnsShorthand(CSSParserTokenRange& r
     RefPtr<CSSValue> columnCount;
 
     for (unsigned propertiesParsed = 0; propertiesParsed < 2 && !range.atEnd(); ++propertiesParsed) {
-        if (range.peek().id() == CSSValueAuto) {
+        if (range.peek().id() == CSSValueID::Auto) {
             // 'auto' is a valid value for any of the two longhands, and at this point
             // we don't know which one(s) it is meant for. We need to see if there are other values first.
             consumeIdent(range);
         } else {
-            if (!columnWidth && (columnWidth = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyColumnWidth, state)))
+            if (!columnWidth && (columnWidth = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyID::ColumnWidth, state)))
                 continue;
-            if (!columnCount && (columnCount = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyColumnCount, state)))
+            if (!columnCount && (columnCount = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyID::ColumnCount, state)))
                 continue;
             // If we didn't find at least one match, this is an invalid shorthand and we have to ignore it.
             return false;
@@ -578,8 +588,8 @@ inline bool PropertyParserCustom::consumeColumnsShorthand(CSSParserTokenRange& r
     if (!range.atEnd())
         return false;
 
-    result.addPropertyForCurrentShorthand(state, CSSPropertyColumnWidth, WTF::move(columnWidth));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyColumnCount, WTF::move(columnCount));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::ColumnWidth, WTF::move(columnWidth));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::ColumnCount, WTF::move(columnCount));
     return true;
 }
 
@@ -596,31 +606,32 @@ inline bool PropertyParserCustom::consumeFlexShorthand(CSSParserTokenRange& rang
 
     auto isFlexBasisIdent = [](CSSValueID id) {
         switch (id) {
-        case CSSValueAuto:
-        case CSSValueContent:
-        case CSSValueIntrinsic:
-        case CSSValueMinIntrinsic:
-        case CSSValueMinContent:
-        case CSSValueWebkitMinContent:
-        case CSSValueMaxContent:
-        case CSSValueWebkitMaxContent:
-        case CSSValueWebkitFillAvailable:
-        case CSSValueFitContent:
-        case CSSValueWebkitFitContent:
+        case CSSValueID::Auto:
+        case CSSValueID::Content:
+        case CSSValueID::Intrinsic:
+        case CSSValueID::MinIntrinsic:
+        case CSSValueID::MinContent:
+        case CSSValueID::WebkitMinContent:
+        case CSSValueID::MaxContent:
+        case CSSValueID::WebkitMaxContent:
+        case CSSValueID::WebkitFillAvailable:
+        case CSSValueID::Stretch:
+        case CSSValueID::FitContent:
+        case CSSValueID::WebkitFitContent:
             return true;
         default:
             return false;
         }
     };
 
-    RefPtr<CSSPrimitiveValue> flexGrow;
-    RefPtr<CSSPrimitiveValue> flexShrink;
-    RefPtr<CSSPrimitiveValue> flexBasis;
+    RefPtr<CSSValue> flexGrow;
+    RefPtr<CSSValue> flexShrink;
+    RefPtr<CSSValue> flexBasis;
 
-    if (range.peek().id() == CSSValueNone) {
+    if (range.peek().id() == CSSValueID::None) {
         flexGrow = CSSPrimitiveValue::create(0);
         flexShrink = CSSPrimitiveValue::create(0);
-        flexBasis = CSSPrimitiveValue::create(CSSValueAuto);
+        flexBasis = CSSKeywordValue::create(CSSValueID::Auto);
         range.consumeIncludingWhitespace();
     } else {
         unsigned index = 0;
@@ -631,7 +642,7 @@ inline bool PropertyParserCustom::consumeFlexShorthand(CSSParserTokenRange& rang
                 else if (!flexShrink)
                     flexShrink = WTF::move(number);
                 else if (number->isZero() == true) // flex only allows a basis of 0 (sans units) if flex-grow and flex-shrink values have already been set.
-                    flexBasis = CSSPrimitiveValue::create(0, CSSUnitType::CSS_PX);
+                    flexBasis = CSSPrimitiveValue::create(0, CSSUnitType::Px);
                 else
                     return false;
             } else if (!flexBasis) {
@@ -655,15 +666,15 @@ inline bool PropertyParserCustom::consumeFlexShorthand(CSSParserTokenRange& rang
         // if turned back on for nested columns, etc.). We have layout test coverage of both
         // scenarios.
         if (!flexBasis)
-            flexBasis = CSSPrimitiveValue::create(0, CSSUnitType::CSS_PERCENTAGE);
+            flexBasis = CSSPrimitiveValue::create(0, CSSUnitType::Percentage);
     }
 
     if (!range.atEnd())
         return false;
 
-    result.addPropertyForCurrentShorthand(state, CSSPropertyFlexGrow, flexGrow.releaseNonNull());
-    result.addPropertyForCurrentShorthand(state, CSSPropertyFlexShrink, flexShrink.releaseNonNull());
-    result.addPropertyForCurrentShorthand(state, CSSPropertyFlexBasis, flexBasis.releaseNonNull());
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::FlexGrow, flexGrow.releaseNonNull());
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::FlexShrink, flexShrink.releaseNonNull());
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::FlexBasis, flexBasis.releaseNonNull());
     return true;
 }
 
@@ -673,9 +684,9 @@ inline bool PropertyParserCustom::consumeBorderShorthand(CSSParserTokenRange& ra
     if (!components)
         return false;
 
-    result.addPropertyForAllLonghandsOfShorthand(state, CSSPropertyBorderWidth, WTF::move(components->width), state.important);
-    result.addPropertyForAllLonghandsOfShorthand(state, CSSPropertyBorderStyle, WTF::move(components->style), state.important);
-    result.addPropertyForAllLonghandsOfShorthand(state, CSSPropertyBorderColor, WTF::move(components->color), state.important);
+    result.addPropertyForAllLonghandsOfShorthand(state, CSSPropertyID::BorderWidth, WTF::move(components->width), state.important);
+    result.addPropertyForAllLonghandsOfShorthand(state, CSSPropertyID::BorderStyle, WTF::move(components->style), state.important);
+    result.addPropertyForAllLonghandsOfShorthand(state, CSSPropertyID::BorderColor, WTF::move(components->color), state.important);
 
     for (auto longhand : borderImageShorthand())
         result.addPropertyForCurrentShorthand(state, longhand, nullptr);
@@ -688,9 +699,9 @@ inline bool PropertyParserCustom::consumeBorderInlineShorthand(CSSParserTokenRan
     if (!components)
         return false;
 
-    result.addPropertyForAllLonghandsOfShorthand(state, CSSPropertyBorderInlineWidth, WTF::move(components->width), state.important);
-    result.addPropertyForAllLonghandsOfShorthand(state, CSSPropertyBorderInlineStyle, WTF::move(components->style), state.important);
-    result.addPropertyForAllLonghandsOfShorthand(state, CSSPropertyBorderInlineColor, WTF::move(components->color), state.important);
+    result.addPropertyForAllLonghandsOfShorthand(state, CSSPropertyID::BorderInlineWidth, WTF::move(components->width), state.important);
+    result.addPropertyForAllLonghandsOfShorthand(state, CSSPropertyID::BorderInlineStyle, WTF::move(components->style), state.important);
+    result.addPropertyForAllLonghandsOfShorthand(state, CSSPropertyID::BorderInlineColor, WTF::move(components->color), state.important);
     return true;
 }
 
@@ -700,9 +711,9 @@ inline bool PropertyParserCustom::consumeBorderBlockShorthand(CSSParserTokenRang
     if (!components)
         return false;
 
-    result.addPropertyForAllLonghandsOfShorthand(state, CSSPropertyBorderBlockWidth, WTF::move(components->width), state.important);
-    result.addPropertyForAllLonghandsOfShorthand(state, CSSPropertyBorderBlockStyle, WTF::move(components->style), state.important);
-    result.addPropertyForAllLonghandsOfShorthand(state, CSSPropertyBorderBlockColor, WTF::move(components->color), state.important);
+    result.addPropertyForAllLonghandsOfShorthand(state, CSSPropertyID::BorderBlockWidth, WTF::move(components->width), state.important);
+    result.addPropertyForAllLonghandsOfShorthand(state, CSSPropertyID::BorderBlockStyle, WTF::move(components->style), state.important);
+    result.addPropertyForAllLonghandsOfShorthand(state, CSSPropertyID::BorderBlockColor, WTF::move(components->color), state.important);
     return true;
 }
 
@@ -712,10 +723,10 @@ inline bool PropertyParserCustom::consumeBorderRadiusShorthand(CSSParserTokenRan
     if (!borderRadius)
         return false;
 
-    result.addPropertyForCurrentShorthand(state, CSSPropertyBorderTopLeftRadius, WebCore::CSS::createCSSValue(state.pool, borderRadius->topLeft()));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyBorderTopRightRadius, WebCore::CSS::createCSSValue(state.pool, borderRadius->topRight()));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyBorderBottomRightRadius, WebCore::CSS::createCSSValue(state.pool, borderRadius->bottomRight()));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyBorderBottomLeftRadius, WebCore::CSS::createCSSValue(state.pool, borderRadius->bottomLeft()));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::BorderTopLeftRadius, WebCore::CSS::createCSSValue(state.pool, borderRadius->topLeft()));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::BorderTopRightRadius, WebCore::CSS::createCSSValue(state.pool, borderRadius->topRight()));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::BorderBottomRightRadius, WebCore::CSS::createCSSValue(state.pool, borderRadius->bottomRight()));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::BorderBottomLeftRadius, WebCore::CSS::createCSSValue(state.pool, borderRadius->bottomLeft()));
     return true;
 }
 
@@ -725,24 +736,166 @@ inline bool PropertyParserCustom::consumeWebkitBorderRadiusShorthand(CSSParserTo
     if (!borderRadius)
         return false;
 
-    result.addPropertyForCurrentShorthand(state, CSSPropertyBorderTopLeftRadius, WebCore::CSS::createCSSValue(state.pool, borderRadius->topLeft()));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyBorderTopRightRadius, WebCore::CSS::createCSSValue(state.pool, borderRadius->topRight()));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyBorderBottomRightRadius, WebCore::CSS::createCSSValue(state.pool, borderRadius->bottomRight()));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyBorderBottomLeftRadius, WebCore::CSS::createCSSValue(state.pool, borderRadius->bottomLeft()));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::BorderTopLeftRadius, WebCore::CSS::createCSSValue(state.pool, borderRadius->topLeft()));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::BorderTopRightRadius, WebCore::CSS::createCSSValue(state.pool, borderRadius->topRight()));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::BorderBottomRightRadius, WebCore::CSS::createCSSValue(state.pool, borderRadius->bottomRight()));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::BorderBottomLeftRadius, WebCore::CSS::createCSSValue(state.pool, borderRadius->bottomLeft()));
+    return true;
+}
+
+// MARK: - Corner / Corner-* shorthands (combined border-radius + corner-shape)
+//
+// Grammar (per corner): normal | <corner-shape>? <border-radius-corner> <corner-shape>?
+// Multiple corners are separated by '/' and follow the standard 1-to-N expansion.
+
+namespace CornerShorthandHelpers {
+
+inline Ref<CSSValue> zeroRadius()
+{
+    auto zero = CSSPrimitiveValue::create(0, CSSUnitType::Px);
+    return CSSValuePair::create(zero.copyRef(), WTF::move(zero));
+}
+
+inline Ref<CSSValue> roundShape()
+{
+    return CSSKeywordValue::create(CSSValueID::Round);
+}
+
+inline bool consumeOneCorner(CSSParserTokenRange& range, PropertyParserState& state, CSSPropertyID radiusProperty, CSSPropertyID shapeProperty, RefPtr<CSSValue>& radiusOut, RefPtr<CSSValue>& shapeOut)
+{
+    if (range.peek().id() == CSSValueID::Normal) {
+        range.consumeIncludingWhitespace();
+        radiusOut = zeroRadius();
+        shapeOut = roundShape();
+        return true;
+    }
+    shapeOut = CSSPropertyParsing::parseStylePropertyLonghand(range, shapeProperty, state);
+    radiusOut = CSSPropertyParsing::parseStylePropertyLonghand(range, radiusProperty, state);
+    if (!radiusOut)
+        return false;
+    if (!shapeOut)
+        shapeOut = CSSPropertyParsing::parseStylePropertyLonghand(range, shapeProperty, state);
+    return shapeOut != nullptr;
+}
+
+} // namespace CornerShorthandHelpers
+
+inline bool PropertyParserCustom::consumeCornerSingleShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand& shorthand, PropertyParserResult& result)
+{
+    ASSERT(shorthand.length() == 2);
+    auto longhands = shorthand.properties();
+    RefPtr<CSSValue> radius;
+    RefPtr<CSSValue> shape;
+    if (!CornerShorthandHelpers::consumeOneCorner(range, state, longhands[0], longhands[1], radius, shape))
+        return false;
+    if (!range.atEnd())
+        return false;
+
+    result.addPropertyForCurrentShorthand(state, longhands[0], radius.releaseNonNull());
+    result.addPropertyForCurrentShorthand(state, longhands[1], shape.releaseNonNull());
+    return true;
+}
+
+inline bool PropertyParserCustom::consumeCornerPairShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand& shorthand, PropertyParserResult& result)
+{
+    // Two-corner side shorthand: longhands are [radius0, shape0, radius1, shape1].
+    ASSERT(shorthand.length() == 4);
+    auto longhands = shorthand.properties();
+    std::array<RefPtr<CSSValue>, 2> radii;
+    std::array<RefPtr<CSSValue>, 2> shapes;
+
+    size_t count = 0;
+    for (size_t i = 0; i < 2; ++i) {
+        if (!CornerShorthandHelpers::consumeOneCorner(range, state, longhands[i * 2], longhands[i * 2 + 1], radii[i], shapes[i]))
+            return false;
+        ++count;
+        if (i == 1)
+            break;
+        if (!consumeSlashIncludingWhitespace(range))
+            break;
+    }
+    if (!range.atEnd() || !count)
+        return false;
+
+    if (count < 2) {
+        radii[1] = radii[0];
+        shapes[1] = shapes[0];
+    }
+
+    for (size_t i = 0; i < 2; ++i) {
+        result.addPropertyForCurrentShorthand(state, longhands[i * 2], radii[i].releaseNonNull());
+        result.addPropertyForCurrentShorthand(state, longhands[i * 2 + 1], shapes[i].releaseNonNull());
+    }
+    return true;
+}
+
+inline bool PropertyParserCustom::consumeCornerQuadShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand& shorthand, PropertyParserResult& result)
+{
+    // Master `corner`: longhands are [radius0, shape0, radius1, shape1, radius2, shape2, radius3, shape3]
+    // in order top-left, top-right, bottom-right, bottom-left.
+    ASSERT(shorthand.length() == 8);
+    auto longhands = shorthand.properties();
+    std::array<RefPtr<CSSValue>, 4> radii;
+    std::array<RefPtr<CSSValue>, 4> shapes;
+
+    size_t count = 0;
+    for (size_t i = 0; i < 4; ++i) {
+        if (!CornerShorthandHelpers::consumeOneCorner(range, state, longhands[i * 2], longhands[i * 2 + 1], radii[i], shapes[i]))
+            return false;
+        ++count;
+        if (i == 3)
+            break;
+        if (!consumeSlashIncludingWhitespace(range))
+            break;
+    }
+    if (!range.atEnd() || !count)
+        return false;
+
+    // 1-to-4 expansion (mirrors complete4Sides on a CSS quad).
+    if (count < 2) {
+        radii[1] = radii[0];
+        shapes[1] = shapes[0];
+    }
+    if (count < 3) {
+        radii[2] = radii[0];
+        shapes[2] = shapes[0];
+    }
+    if (count < 4) {
+        radii[3] = radii[1];
+        shapes[3] = shapes[1];
+    }
+
+    for (size_t i = 0; i < 4; ++i) {
+        result.addPropertyForCurrentShorthand(state, longhands[i * 2], radii[i].releaseNonNull());
+        result.addPropertyForCurrentShorthand(state, longhands[i * 2 + 1], shapes[i].releaseNonNull());
+    }
+    return true;
+}
+
+inline bool PropertyParserCustom::consumeBorderRadiusSideShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand& shorthand, PropertyParserResult& result)
+{
+    ASSERT(shorthand.length() == 2);
+    auto side = consumeUnresolvedBorderRadiusSide(range, state);
+    if (!side)
+        return false;
+
+    auto longhands = shorthand.properties();
+    result.addPropertyForCurrentShorthand(state, longhands[0], WebCore::CSS::createCSSValue(state.pool, side->first()));
+    result.addPropertyForCurrentShorthand(state, longhands[1], WebCore::CSS::createCSSValue(state.pool, side->second()));
     return true;
 }
 
 inline bool PropertyParserCustom::consumeBorderImageShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand&, PropertyParserResult& result)
 {
-    auto components = consumeBorderImageComponents(range, state);
+    auto components = consumeUnresolvedBorderImage(range, state);
     if (!components)
         return false;
 
-    result.addPropertyForCurrentShorthand(state, CSSPropertyBorderImageSource, WTF::move(components->source));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyBorderImageSlice, WTF::move(components->slice));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyBorderImageWidth, WTF::move(components->width));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyBorderImageOutset, WTF::move(components->outset));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyBorderImageRepeat, WTF::move(components->repeat));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::BorderImageSource, WebCore::CSS::tryCreateCSSValue(state.pool, components->borderImageSource));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::BorderImageSlice, WebCore::CSS::tryCreateCSSValue(state.pool, components->borderImageSlice));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::BorderImageWidth, WebCore::CSS::tryCreateCSSValue(state.pool, components->borderImageWidth));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::BorderImageOutset, WebCore::CSS::tryCreateCSSValue(state.pool, components->borderImageOutset));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::BorderImageRepeat, WebCore::CSS::tryCreateCSSValue(state.pool, components->borderImageRepeat));
     return true;
 }
 
@@ -751,29 +904,29 @@ inline bool PropertyParserCustom::consumeWebkitBorderImageShorthand(CSSParserTok
     // NOTE: -webkit-border-image has a legacy behavior that makes border image slices default to `fill`.
     // NOTE: -webkit-border-image has a legacy behavior that makes border image widths with length values also set the border widths.
 
-    auto components = consumeBorderImageComponents(range, state, BorderImageSliceFillDefault::Yes, BorderImageWidthOverridesWidthForLength::Yes);
+    auto components = consumeUnresolvedBorderImage(range, state, BorderImageSliceOverride::AlwaysFill, BorderImageWidthOverridesWidthForLength::Yes);
     if (!components)
         return false;
 
-    result.addPropertyForCurrentShorthand(state, CSSPropertyBorderImageSource, WTF::move(components->source));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyBorderImageSlice, WTF::move(components->slice));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyBorderImageWidth, WTF::move(components->width));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyBorderImageOutset, WTF::move(components->outset));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyBorderImageRepeat, WTF::move(components->repeat));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::BorderImageSource, WebCore::CSS::tryCreateCSSValue(state.pool, components->borderImageSource));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::BorderImageSlice, WebCore::CSS::tryCreateCSSValue(state.pool, components->borderImageSlice));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::BorderImageWidth, WebCore::CSS::tryCreateCSSValue(state.pool, components->borderImageWidth));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::BorderImageOutset, WebCore::CSS::tryCreateCSSValue(state.pool, components->borderImageOutset));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::BorderImageRepeat, WebCore::CSS::tryCreateCSSValue(state.pool, components->borderImageRepeat));
     return true;
 }
 
 inline bool PropertyParserCustom::consumeMaskBorderShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand&, PropertyParserResult& result)
 {
-    auto components = consumeBorderImageComponents(range, state);
+    auto components = consumeUnresolvedMaskBorder(range, state);
     if (!components)
         return false;
 
-    result.addPropertyForCurrentShorthand(state, CSSPropertyMaskBorderSource, WTF::move(components->source));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyMaskBorderSlice, WTF::move(components->slice));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyMaskBorderWidth, WTF::move(components->width));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyMaskBorderOutset, WTF::move(components->outset));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyMaskBorderRepeat, WTF::move(components->repeat));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::MaskBorderSource, WebCore::CSS::tryCreateCSSValue(state.pool, components->maskBorderSource));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::MaskBorderSlice, WebCore::CSS::tryCreateCSSValue(state.pool, components->maskBorderSlice));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::MaskBorderWidth, WebCore::CSS::tryCreateCSSValue(state.pool, components->maskBorderWidth));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::MaskBorderOutset, WebCore::CSS::tryCreateCSSValue(state.pool, components->maskBorderOutset));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::MaskBorderRepeat, WebCore::CSS::tryCreateCSSValue(state.pool, components->maskBorderRepeat));
     return true;
 }
 
@@ -781,18 +934,24 @@ inline bool PropertyParserCustom::consumeWebkitMaskBoxImageShorthand(CSSParserTo
 {
     // NOTE: -webkit-mask-box-image has a legacy behavior that makes border image slices default to `fill`.
 
-    auto components = consumeBorderImageComponents(range, state, BorderImageSliceFillDefault::Yes);
+    using namespace CSS::Literals;
+
+    auto components = consumeUnresolvedMaskBorder(range, state, MaskBorderSliceOverride::AlwaysFill);
     if (!components)
         return false;
 
-    if (!components->slice)
-        components->slice = CSSBorderImageSliceValue::create({ CSSPrimitiveValue::create(0), CSSPrimitiveValue::create(0), CSSPrimitiveValue::create(0), CSSPrimitiveValue::create(0) }, true);
+    auto defaultSlice = [] {
+        return CSS::MaskBorderSlice {
+            .values = { CSS::MaskBorderSlice::Value { 0_css_number } },
+            .fill = CSS::Keyword::Fill { },
+        };
+    };
 
-    result.addPropertyForCurrentShorthand(state, CSSPropertyMaskBorderSource, WTF::move(components->source));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyMaskBorderSlice, WTF::move(components->slice));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyMaskBorderWidth, WTF::move(components->width));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyMaskBorderOutset, WTF::move(components->outset));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyMaskBorderRepeat, WTF::move(components->repeat));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::MaskBorderSource, WebCore::CSS::tryCreateCSSValue(state.pool, components->maskBorderSource));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::MaskBorderSlice, WebCore::CSS::createCSSValue(state.pool, components->maskBorderSlice.value_or(defaultSlice())));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::MaskBorderWidth, WebCore::CSS::tryCreateCSSValue(state.pool, components->maskBorderWidth));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::MaskBorderOutset, WebCore::CSS::tryCreateCSSValue(state.pool, components->maskBorderOutset));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::MaskBorderRepeat, WebCore::CSS::tryCreateCSSValue(state.pool, components->maskBorderRepeat));
     return true;
 }
 
@@ -802,10 +961,10 @@ inline bool PropertyParserCustom::consumePageBreakAfterShorthand(CSSParserTokenR
     if (!keyword || !range.atEnd())
         return false;
     auto value = mapFromPageBreakBetween(*keyword);
-    if (value == CSSValueInvalid)
+    if (value == CSSValueID::Invalid)
         return false;
 
-    result.addPropertyForCurrentShorthand(state, CSSPropertyBreakAfter, CSSPrimitiveValue::create(value));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::BreakAfter, CSSKeywordValue::create(value));
     return true;
 }
 
@@ -815,10 +974,10 @@ inline bool PropertyParserCustom::consumePageBreakBeforeShorthand(CSSParserToken
     if (!keyword || !range.atEnd())
         return false;
     auto value = mapFromPageBreakBetween(*keyword);
-    if (value == CSSValueInvalid)
+    if (value == CSSValueID::Invalid)
         return false;
 
-    result.addPropertyForCurrentShorthand(state, CSSPropertyBreakBefore, CSSPrimitiveValue::create(value));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::BreakBefore, CSSKeywordValue::create(value));
     return true;
 }
 
@@ -828,10 +987,10 @@ inline bool PropertyParserCustom::consumePageBreakInsideShorthand(CSSParserToken
     if (!keyword || !range.atEnd())
         return false;
     auto value = mapFromColumnRegionOrPageBreakInside(*keyword);
-    if (value == CSSValueInvalid)
+    if (value == CSSValueID::Invalid)
         return false;
 
-    result.addPropertyForCurrentShorthand(state, CSSPropertyBreakInside, CSSPrimitiveValue::create(value));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::BreakInside, CSSKeywordValue::create(value));
     return true;
 }
 
@@ -845,10 +1004,10 @@ inline bool PropertyParserCustom::consumeWebkitColumnBreakAfterShorthand(CSSPars
     if (!keyword || !range.atEnd())
         return false;
     auto value = mapFromColumnBreakBetween(*keyword);
-    if (value == CSSValueInvalid)
+    if (value == CSSValueID::Invalid)
         return false;
 
-    result.addPropertyForCurrentShorthand(state, CSSPropertyBreakAfter, CSSPrimitiveValue::create(value));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::BreakAfter, CSSKeywordValue::create(value));
     return true;
 }
 
@@ -862,10 +1021,10 @@ inline bool PropertyParserCustom::consumeWebkitColumnBreakBeforeShorthand(CSSPar
     if (!keyword || !range.atEnd())
         return false;
     auto value = mapFromColumnBreakBetween(*keyword);
-    if (value == CSSValueInvalid)
+    if (value == CSSValueID::Invalid)
         return false;
 
-    result.addPropertyForCurrentShorthand(state, CSSPropertyBreakBefore, CSSPrimitiveValue::create(value));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::BreakBefore, CSSKeywordValue::create(value));
     return true;
 }
 
@@ -879,10 +1038,10 @@ inline bool PropertyParserCustom::consumeWebkitColumnBreakInsideShorthand(CSSPar
     if (!keyword || !range.atEnd())
         return false;
     auto value = mapFromColumnRegionOrPageBreakInside(*keyword);
-    if (value == CSSValueInvalid)
+    if (value == CSSValueID::Invalid)
         return false;
 
-    result.addPropertyForCurrentShorthand(state, CSSPropertyBreakInside, CSSPrimitiveValue::create(value));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::BreakInside, CSSKeywordValue::create(value));
     return true;
 }
 
@@ -890,17 +1049,17 @@ inline bool PropertyParserCustom::consumeWebkitTextOrientationShorthand(CSSParse
 {
     // -webkit-text-orientation is a legacy shorthand for text-orientation.
     // The only difference is that it accepts 'sideways-right', which is mapped into 'sideways'.
-    RefPtr<CSSPrimitiveValue> keyword;
+    RefPtr<CSSValue> keyword;
     auto valueID = range.peek().id();
-    if (valueID == CSSValueSidewaysRight) {
-        keyword = CSSPrimitiveValue::create(CSSValueSideways);
+    if (valueID == CSSValueID::SidewaysRight) {
+        keyword = CSSKeywordValue::create(CSSValueID::Sideways);
         consumeIdentRaw(range);
-    } else if (CSSPropertyParsing::isKeywordValidForStyleProperty(CSSPropertyTextOrientation, valueID, state))
+    } else if (CSSPropertyParsing::isKeywordValidForStyleProperty(CSSPropertyID::TextOrientation, valueID, state))
         keyword = consumeIdent(range);
     if (!keyword || !range.atEnd())
         return false;
 
-    result.addPropertyForCurrentShorthand(state, CSSPropertyTextOrientation, keyword.releaseNonNull());
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::TextOrientation, keyword.releaseNonNull());
     return true;
 }
 
@@ -908,29 +1067,29 @@ inline bool PropertyParserCustom::consumeAnimationShorthand(CSSParserTokenRange&
 {
     auto consumeAnimationValueForShorthand = [&](CSSPropertyID property) -> RefPtr<CSSValue> {
         switch (property) {
-        case CSSPropertyAnimationDelay:
+        case CSSPropertyID::AnimationDelay:
             return CSSPrimitiveValueResolver<Time<>>::consumeAndResolve(range, state);
-        case CSSPropertyAnimationDirection:
+        case CSSPropertyID::AnimationDirection:
             return CSSPropertyParsing::consumeSingleAnimationDirection(range);
-        case CSSPropertyAnimationDuration:
+        case CSSPropertyID::AnimationDuration:
             return CSSPropertyParsing::consumeSingleAnimationDuration(range, state);
-        case CSSPropertyAnimationFillMode:
+        case CSSPropertyID::AnimationFillMode:
             return CSSPropertyParsing::consumeSingleAnimationFillMode(range);
-        case CSSPropertyAnimationIterationCount:
+        case CSSPropertyID::AnimationIterationCount:
             return CSSPropertyParsing::consumeSingleAnimationIterationCount(range, state);
-        case CSSPropertyAnimationName:
+        case CSSPropertyID::AnimationName:
             return CSSPropertyParsing::consumeSingleAnimationName(range, state);
-        case CSSPropertyAnimationPlayState:
+        case CSSPropertyID::AnimationPlayState:
             return CSSPropertyParsing::consumeSingleAnimationPlayState(range);
-        case CSSPropertyAnimationComposition:
+        case CSSPropertyID::AnimationComposition:
             return CSSPropertyParsing::consumeSingleAnimationComposition(range);
-        case CSSPropertyAnimationTimeline:
-        case CSSPropertyAnimationRangeStart:
-        case CSSPropertyAnimationRangeEnd:
+        case CSSPropertyID::AnimationTimeline:
+        case CSSPropertyID::AnimationRangeStart:
+        case CSSPropertyID::AnimationRangeEnd:
             return nullptr; // reset-only longhands
-        case CSSPropertyAnimationTimingFunction:
+        case CSSPropertyID::AnimationTimingFunction:
             return consumeEasingFunction(range, state);
-        case CSSPropertyTransitionBehavior:
+        case CSSPropertyID::TransitionBehavior:
             return CSSPropertyParsing::consumeTransitionBehaviorValue(range);
         default:
             ASSERT_NOT_REACHED();
@@ -947,9 +1106,9 @@ inline bool PropertyParserCustom::consumeAnimationShorthand(CSSParserTokenRange&
 
     auto isResetOnlyLonghand = [](CSSPropertyID longhand) {
         switch (longhand) {
-        case CSSPropertyAnimationTimeline:
-        case CSSPropertyAnimationRangeStart:
-        case CSSPropertyAnimationRangeEnd:
+        case CSSPropertyID::AnimationTimeline:
+        case CSSPropertyID::AnimationRangeStart:
+        case CSSPropertyID::AnimationRangeEnd:
             return true;
         default:
             return false;
@@ -977,7 +1136,7 @@ inline bool PropertyParserCustom::consumeAnimationShorthand(CSSParserTokenRange&
 
         for (size_t i = 0; i < longhandCount; ++i) {
             if (!parsedLonghand[i] && !isResetOnlyLonghand(shorthandProperties[i]))
-                longhands[i].append(Ref { CSSPrimitiveValue::implicitInitialValue() });
+                longhands[i].append(protect(CSSKeywordValue::implicitInitialValue()));
             parsedLonghand[i] = false;
         }
     } while (consumeCommaIncludingWhitespace(range));
@@ -998,10 +1157,10 @@ inline bool PropertyParserCustom::consumeTransitionShorthand(CSSParserTokenRange
     auto isValidTransitionPropertyList = [](CSSPropertyID property, const CSSValueListBuilder& valueList) {
         // If there is more than one <single-transition> in the shorthand, and any of the transitions
         // has none as the <single-transition-property>, then the declaration is invalid.
-        if (property != CSSPropertyTransitionProperty || valueList.size() < 2)
+        if (property != CSSPropertyID::TransitionProperty || valueList.size() < 2)
             return true;
         for (auto& value : valueList) {
-            if (isValueID(value, CSSValueNone))
+            if (isValueID(value, CSSValueID::None))
                 return false;
         }
         return true;
@@ -1009,15 +1168,15 @@ inline bool PropertyParserCustom::consumeTransitionShorthand(CSSParserTokenRange
 
     auto consumeTransitionValueForShorthand = [&](CSSPropertyID property) -> RefPtr<CSSValue> {
         switch (property) {
-        case CSSPropertyTransitionDelay:
+        case CSSPropertyID::TransitionDelay:
             return CSSPrimitiveValueResolver<Time<>>::consumeAndResolve(range, state);
-        case CSSPropertyTransitionDuration:
+        case CSSPropertyID::TransitionDuration:
             return CSSPrimitiveValueResolver<Time<Nonnegative>>::consumeAndResolve(range, state);
-        case CSSPropertyTransitionProperty:
-            return consumeSingleTransitionPropertyOrNone(range, state);
-        case CSSPropertyTransitionTimingFunction:
+        case CSSPropertyID::TransitionProperty:
+            return CSSPropertyParsing::consumeSingleTransitionPropertyOrNone(range, state);
+        case CSSPropertyID::TransitionTimingFunction:
             return consumeEasingFunction(range, state);
-        case CSSPropertyTransitionBehavior:
+        case CSSPropertyID::TransitionBehavior:
             return CSSPropertyParsing::consumeTransitionBehaviorValue(range);
         default:
             ASSERT_NOT_REACHED();
@@ -1053,7 +1212,7 @@ inline bool PropertyParserCustom::consumeTransitionShorthand(CSSParserTokenRange
 
         for (size_t i = 0; i < longhandCount; ++i) {
             if (!parsedLonghand[i])
-                longhands[i].append(Ref { CSSPrimitiveValue::implicitInitialValue() });
+                longhands[i].append(protect(CSSKeywordValue::implicitInitialValue()));
             parsedLonghand[i] = false;
         }
     } while (consumeCommaIncludingWhitespace(range));
@@ -1077,61 +1236,61 @@ inline bool PropertyParserCustom::consumeBackgroundShorthand(CSSParserTokenRange
     auto consumeBackgroundComponent = [&](CSSPropertyID property) -> RefPtr<CSSValue> {
         switch (property) {
         // background-*
-        case CSSPropertyBackgroundClip:
+        case CSSPropertyID::BackgroundClip:
             return CSSPropertyParsing::consumeSingleBackgroundClip(range);
-        case CSSPropertyBackgroundBlendMode:
+        case CSSPropertyID::BackgroundBlendMode:
             return CSSPropertyParsing::consumeSingleBackgroundBlendMode(range);
-        case CSSPropertyBackgroundAttachment:
+        case CSSPropertyID::BackgroundAttachment:
             return CSSPropertyParsing::consumeSingleBackgroundAttachment(range);
-        case CSSPropertyBackgroundOrigin:
+        case CSSPropertyID::BackgroundOrigin:
             return CSSPropertyParsing::consumeSingleBackgroundOrigin(range);
-        case CSSPropertyBackgroundImage:
+        case CSSPropertyID::BackgroundImage:
             return CSSPropertyParsing::consumeSingleBackgroundImage(range, state);
-        case CSSPropertyBackgroundRepeat:
+        case CSSPropertyID::BackgroundRepeat:
             return CSSPropertyParsing::consumeSingleBackgroundRepeat(range, state);
-        case CSSPropertyBackgroundPositionX:
+        case CSSPropertyID::BackgroundPositionX:
             return CSSPropertyParsing::consumeSingleBackgroundPositionX(range, state);
-        case CSSPropertyBackgroundPositionY:
+        case CSSPropertyID::BackgroundPositionY:
             return CSSPropertyParsing::consumeSingleBackgroundPositionY(range, state);
-        case CSSPropertyBackgroundSize:
+        case CSSPropertyID::BackgroundSize:
             return consumeSingleBackgroundSize(range, state);
-        case CSSPropertyBackgroundColor:
+        case CSSPropertyID::BackgroundColor:
             return consumeColor(range, state);
 
         // mask-*
-        case CSSPropertyMaskComposite:
+        case CSSPropertyID::MaskComposite:
             return CSSPropertyParsing::consumeSingleMaskComposite(range);
-        case CSSPropertyMaskOrigin:
+        case CSSPropertyID::MaskOrigin:
             return CSSPropertyParsing::consumeSingleMaskOrigin(range);
-        case CSSPropertyMaskClip:
+        case CSSPropertyID::MaskClip:
             return CSSPropertyParsing::consumeSingleMaskClip(range);
-        case CSSPropertyMaskImage:
+        case CSSPropertyID::MaskImage:
             return CSSPropertyParsing::consumeSingleMaskImage(range, state);
-        case CSSPropertyMaskMode:
+        case CSSPropertyID::MaskMode:
             return CSSPropertyParsing::consumeSingleMaskMode(range);
-        case CSSPropertyMaskRepeat:
+        case CSSPropertyID::MaskRepeat:
             return CSSPropertyParsing::consumeSingleMaskRepeat(range, state);
-        case CSSPropertyMaskSize:
+        case CSSPropertyID::MaskSize:
             return consumeSingleMaskSize(range, state);
 
         // -webkit-background-*
-        case CSSPropertyWebkitBackgroundSize:
+        case CSSPropertyID::WebkitBackgroundSize:
             return consumeSingleWebkitBackgroundSize(range, state);
-        case CSSPropertyWebkitBackgroundClip:
+        case CSSPropertyID::WebkitBackgroundClip:
             return CSSPropertyParsing::consumeSingleWebkitBackgroundClip(range);
-        case CSSPropertyWebkitBackgroundOrigin:
+        case CSSPropertyID::WebkitBackgroundOrigin:
             return CSSPropertyParsing::consumeSingleWebkitBackgroundOrigin(range);
 
         // -webkit-mask-*
-        case CSSPropertyWebkitMaskClip:
+        case CSSPropertyID::WebkitMaskClip:
             return CSSPropertyParsing::consumeSingleWebkitMaskClip(range);
-        case CSSPropertyWebkitMaskComposite:
+        case CSSPropertyID::WebkitMaskComposite:
             return CSSPropertyParsing::consumeSingleWebkitMaskComposite(range);
-        case CSSPropertyWebkitMaskSourceType:
+        case CSSPropertyID::WebkitMaskSourceType:
             return CSSPropertyParsing::consumeSingleWebkitMaskSourceType(range);
-        case CSSPropertyWebkitMaskPositionX:
+        case CSSPropertyID::WebkitMaskPositionX:
             return CSSPropertyParsing::consumeSingleWebkitMaskPositionX(range, state);
-        case CSSPropertyWebkitMaskPositionY:
+        case CSSPropertyID::WebkitMaskPositionY:
             return CSSPropertyParsing::consumeSingleWebkitMaskPositionY(range, state);
 
         default:
@@ -1143,7 +1302,7 @@ inline bool PropertyParserCustom::consumeBackgroundShorthand(CSSParserTokenRange
     unsigned longhandCount = shorthand.length();
 
     // mask resets mask-border properties outside of this method.
-    if (shorthand.id() == CSSPropertyMask)
+    if (shorthand.id() == CSSPropertyID::Mask)
         longhandCount -= maskBorderShorthand().length();
 
     std::array<CSSValueListBuilder, 10> longhands;
@@ -1164,7 +1323,7 @@ inline bool PropertyParserCustom::consumeBackgroundShorthand(CSSParserTokenRange
                 RefPtr<CSSValue> valueY;
                 CSSPropertyID property = shorthandProperties[i];
 
-                if (property == CSSPropertyBackgroundPositionX || property == CSSPropertyWebkitMaskPositionX) {
+                if (property == CSSPropertyID::BackgroundPositionX || property == CSSPropertyID::WebkitMaskPositionX) {
                     // Note: This assumes y properties (for example background-position-y) follow the x properties in the shorthand array.
                     auto position = consumeBackgroundPositionUnresolved(range, state);
                     if (!position)
@@ -1172,7 +1331,7 @@ inline bool PropertyParserCustom::consumeBackgroundShorthand(CSSParserTokenRange
                     auto [positionX, positionY] = split(WTF::move(*position));
                     value = CSSPositionXValue::create(WTF::move(positionX));
                     valueY = CSSPositionYValue::create(WTF::move(positionY));
-                } else if (property == CSSPropertyBackgroundSize) {
+                } else if (property == CSSPropertyID::BackgroundSize) {
                     if (!consumeSlashIncludingWhitespace(range))
                         continue;
                     if (!lastParsedWasPosition)
@@ -1180,7 +1339,7 @@ inline bool PropertyParserCustom::consumeBackgroundShorthand(CSSParserTokenRange
                     value = consumeSingleBackgroundSize(range, state);
                     if (!value)
                         return false;
-                } else if (property == CSSPropertyMaskSize) {
+                } else if (property == CSSPropertyID::MaskSize) {
                     if (!consumeSlashIncludingWhitespace(range))
                         continue;
                     if (!lastParsedWasPosition)
@@ -1188,16 +1347,16 @@ inline bool PropertyParserCustom::consumeBackgroundShorthand(CSSParserTokenRange
                     value = consumeSingleMaskSize(range, state);
                     if (!value)
                         return false;
-                } else if (property == CSSPropertyBackgroundPositionY || property == CSSPropertyWebkitMaskPositionY) {
+                } else if (property == CSSPropertyID::BackgroundPositionY || property == CSSPropertyID::WebkitMaskPositionY) {
                     continue;
                 } else {
                     value = consumeBackgroundComponent(property);
                 }
                 if (value) {
-                    if (property == CSSPropertyBackgroundOrigin || property == CSSPropertyMaskOrigin)
+                    if (property == CSSPropertyID::BackgroundOrigin || property == CSSPropertyID::MaskOrigin)
                         originValue = value;
-                    else if (property == CSSPropertyBackgroundClip)
-                        clipIsBorderArea = value->valueID() == CSSValueBorderArea;
+                    else if (property == CSSPropertyID::BackgroundClip)
+                        clipIsBorderArea = isValueID(value, CSSValueID::BorderArea);
                     parsedLonghand[i] = true;
                     foundProperty = true;
                     longhands[i].append(value.releaseNonNull());
@@ -1214,21 +1373,21 @@ inline bool PropertyParserCustom::consumeBackgroundShorthand(CSSParserTokenRange
 
         for (size_t i = 0; i < longhandCount; ++i) {
             auto property = shorthandProperties[i];
-            if (property == CSSPropertyBackgroundColor && !range.atEnd()) {
+            if (property == CSSPropertyID::BackgroundColor && !range.atEnd()) {
                 if (parsedLonghand[i])
                     return false; // Colors are only allowed in the last layer.
                 continue;
             }
-            if ((property == CSSPropertyBackgroundClip || property == CSSPropertyMaskClip || property == CSSPropertyWebkitMaskClip) && !parsedLonghand[i] && originValue) {
+            if ((property == CSSPropertyID::BackgroundClip || property == CSSPropertyID::MaskClip || property == CSSPropertyID::WebkitMaskClip) && !parsedLonghand[i] && originValue) {
                 longhands[i].append(originValue.releaseNonNull());
                 continue;
             }
-            if (clipIsBorderArea && (property == CSSPropertyBackgroundOrigin) && !parsedLonghand[i]) {
-                longhands[i].append(CSSPrimitiveValue::create(CSSValueBorderBox));
+            if (clipIsBorderArea && (property == CSSPropertyID::BackgroundOrigin) && !parsedLonghand[i]) {
+                longhands[i].append(CSSKeywordValue::create(CSSValueID::BorderBox));
                 continue;
             }
             if (!parsedLonghand[i])
-                longhands[i].append(Ref { CSSPrimitiveValue::implicitInitialValue() });
+                longhands[i].append(protect(CSSKeywordValue::implicitInitialValue()));
         }
     } while (consumeCommaIncludingWhitespace(range));
     if (!range.atEnd())
@@ -1285,7 +1444,7 @@ inline bool PropertyParserCustom::consumeWebkitBackgroundSizeShorthand(CSSParser
     }, state);
     if (!backgroundSize || !range.atEnd())
         return false;
-    result.addPropertyForCurrentShorthand(state, CSSPropertyBackgroundSize, backgroundSize.releaseNonNull());
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::BackgroundSize, backgroundSize.releaseNonNull());
     return true;
 }
 
@@ -1333,7 +1492,7 @@ inline bool PropertyParserCustom::consumeMaskPositionShorthand(CSSParserTokenRan
 inline bool PropertyParserCustom::consumeOverflowShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand&, PropertyParserResult& result)
 {
     CSSValueID xValueID = range.consumeIncludingWhitespace().id();
-    if (!CSSPropertyParsing::isKeywordValidForStyleProperty(CSSPropertyOverflowY, xValueID, state))
+    if (!CSSPropertyParsing::isKeywordValidForStyleProperty(CSSPropertyID::OverflowY, xValueID, state))
         return false;
 
     CSSValueID yValueID;
@@ -1344,18 +1503,18 @@ inline bool PropertyParserCustom::consumeOverflowShorthand(CSSParserTokenRange& 
         // set using the shorthand, then for now overflow-x will default to auto, but once we implement
         // pagination controls, it should default to hidden. If the overflow-y value is anything but
         // paged-x or paged-y, then overflow-x and overflow-y should have the same value.
-        if (xValueID == CSSValueWebkitPagedX || xValueID == CSSValueWebkitPagedY)
-            xValueID = CSSValueAuto;
+        if (xValueID == CSSValueID::WebkitPagedX || xValueID == CSSValueID::WebkitPagedY)
+            xValueID = CSSValueID::Auto;
     } else
         yValueID = range.consumeIncludingWhitespace().id();
 
-    if (!CSSPropertyParsing::isKeywordValidForStyleProperty(CSSPropertyOverflowY, yValueID, state))
+    if (!CSSPropertyParsing::isKeywordValidForStyleProperty(CSSPropertyID::OverflowY, yValueID, state))
         return false;
     if (!range.atEnd())
         return false;
 
-    result.addPropertyForCurrentShorthand(state, CSSPropertyOverflowX, CSSPrimitiveValue::create(xValueID));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyOverflowY, CSSPrimitiveValue::create(yValueID));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::OverflowX, CSSKeywordValue::create(xValueID));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::OverflowY, CSSKeywordValue::create(yValueID));
     return true;
 }
 
@@ -1364,151 +1523,154 @@ inline bool PropertyParserCustom::consumeGridItemPositionShorthand(CSSParserToke
     ASSERT(shorthand.id() == state.currentProperty);
     ASSERT(shorthand.length() == 2);
 
-    RefPtr startValue = consumeGridLine(range, state);
+    auto startValue = consumeUnresolvedGridLine(range, state);
     if (!startValue)
         return false;
 
-    RefPtr<CSSValue> endValue;
+    std::optional<CSS::GridLine> endValue;
     if (consumeSlashIncludingWhitespace(range)) {
-        endValue = consumeGridLine(range, state);
+        endValue = consumeUnresolvedGridLine(range, state);
         if (!endValue)
             return false;
     } else {
-        endValue = isCustomIdentValue(*startValue) ? startValue : CSSPrimitiveValue::create(CSSValueAuto);
+        endValue = startValue->isCustomIdent() ? startValue : CSS::GridLine { CSS::Keyword::Auto { } };
     }
     if (!range.atEnd())
         return false;
 
     auto longhands = shorthand.properties();
-    result.addPropertyForCurrentShorthand(state, longhands[0], startValue.releaseNonNull());
-    result.addPropertyForCurrentShorthand(state, longhands[1], endValue.releaseNonNull());
+    result.addPropertyForCurrentShorthand(state, longhands[0], CSSGridLineValue::create(WTF::move(*startValue)));
+    result.addPropertyForCurrentShorthand(state, longhands[1], CSSGridLineValue::create(WTF::move(*endValue)));
     return true;
 }
 
 inline bool PropertyParserCustom::consumeGridAreaShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand&, PropertyParserResult& result)
 {
-    RefPtr rowStartValue = consumeGridLine(range, state);
-    if (!rowStartValue)
+    auto rowStart = consumeUnresolvedGridLine(range, state);
+    if (!rowStart)
         return false;
-    RefPtr<CSSValue> columnStartValue;
-    RefPtr<CSSValue> rowEndValue;
-    RefPtr<CSSValue> columnEndValue;
+    std::optional<CSS::GridLine> columnStart;
+    std::optional<CSS::GridLine> rowEnd;
+    std::optional<CSS::GridLine> columnEnd;
     if (consumeSlashIncludingWhitespace(range)) {
-        columnStartValue = consumeGridLine(range, state);
-        if (!columnStartValue)
+        columnStart = consumeUnresolvedGridLine(range, state);
+        if (!columnStart)
             return false;
         if (consumeSlashIncludingWhitespace(range)) {
-            rowEndValue = consumeGridLine(range, state);
-            if (!rowEndValue)
+            rowEnd = consumeUnresolvedGridLine(range, state);
+            if (!rowEnd)
                 return false;
             if (consumeSlashIncludingWhitespace(range)) {
-                columnEndValue = consumeGridLine(range, state);
-                if (!columnEndValue)
+                columnEnd = consumeUnresolvedGridLine(range, state);
+                if (!columnEnd)
                     return false;
             }
         }
     }
     if (!range.atEnd())
         return false;
-    if (!columnStartValue)
-        columnStartValue = isCustomIdentValue(*rowStartValue) ? rowStartValue : CSSPrimitiveValue::create(CSSValueAuto);
-    if (!rowEndValue)
-        rowEndValue = isCustomIdentValue(*rowStartValue) ? rowStartValue : CSSPrimitiveValue::create(CSSValueAuto);
-    if (!columnEndValue)
-        columnEndValue = isCustomIdentValue(*columnStartValue) ? columnStartValue : CSSPrimitiveValue::create(CSSValueAuto);
+    if (!columnStart)
+        columnStart = rowStart->isCustomIdent() ? rowStart : CSS::GridLine { CSS::Keyword::Auto { } };
+    if (!rowEnd)
+        rowEnd = rowStart->isCustomIdent() ? rowStart : CSS::GridLine { CSS::Keyword::Auto { } };
+    if (!columnEnd)
+        columnEnd = columnStart->isCustomIdent() ? columnStart : CSS::GridLine { CSS::Keyword::Auto { } };
 
-    result.addPropertyForCurrentShorthand(state, CSSPropertyGridRowStart, rowStartValue.releaseNonNull());
-    result.addPropertyForCurrentShorthand(state, CSSPropertyGridColumnStart, columnStartValue.releaseNonNull());
-    result.addPropertyForCurrentShorthand(state, CSSPropertyGridRowEnd, rowEndValue.releaseNonNull());
-    result.addPropertyForCurrentShorthand(state, CSSPropertyGridColumnEnd, columnEndValue.releaseNonNull());
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::GridRowStart, CSSGridLineValue::create(WTF::move(*rowStart)));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::GridColumnStart, CSSGridLineValue::create(WTF::move(*columnStart)));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::GridRowEnd, CSSGridLineValue::create(WTF::move(*rowEnd)));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::GridColumnEnd, CSSGridLineValue::create(WTF::move(*columnEnd)));
     return true;
 }
 
 inline bool PropertyParserCustom::consumeGridTemplateShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand&, PropertyParserResult& result)
 {
     CSSParserTokenRange rangeCopy = range;
-    RefPtr<CSSValue> rowsValue = consumeIdent<CSSValueNone>(range);
+    RefPtr<CSSValue> rowsValue = consumeIdent<CSSValueID::None>(range);
 
     // 1- 'none' case.
     if (rowsValue && range.atEnd()) {
-        result.addPropertyForCurrentShorthand(state, CSSPropertyGridTemplateRows, CSSPrimitiveValue::create(CSSValueNone));
-        result.addPropertyForCurrentShorthand(state, CSSPropertyGridTemplateColumns, CSSPrimitiveValue::create(CSSValueNone));
-        result.addPropertyForCurrentShorthand(state, CSSPropertyGridTemplateAreas, CSSPrimitiveValue::create(CSSValueNone));
+        result.addPropertyForCurrentShorthand(state, CSSPropertyID::GridTemplateRows, CSSKeywordValue::create(CSSValueID::None));
+        result.addPropertyForCurrentShorthand(state, CSSPropertyID::GridTemplateColumns, CSSKeywordValue::create(CSSValueID::None));
+        result.addPropertyForCurrentShorthand(state, CSSPropertyID::GridTemplateAreas, CSSKeywordValue::create(CSSValueID::None));
         return true;
     }
 
     // 2- <grid-template-rows> / <grid-template-columns>
     if (!rowsValue)
-        rowsValue = consumeGridTrackList(range, state, GridTemplate);
+        rowsValue = consumeGridTemplateList(range, state);
 
     if (rowsValue) {
         if (!consumeSlashIncludingWhitespace(range))
             return false;
-        RefPtr columnsValue = consumeGridTemplatesRowsOrColumns(range, state);
+        RefPtr columnsValue = consumeGridTemplateList(range, state);
         if (!columnsValue || !range.atEnd())
             return false;
 
-        result.addPropertyForCurrentShorthand(state, CSSPropertyGridTemplateRows, rowsValue.releaseNonNull());
-        result.addPropertyForCurrentShorthand(state, CSSPropertyGridTemplateColumns, columnsValue.releaseNonNull());
-        result.addPropertyForCurrentShorthand(state, CSSPropertyGridTemplateAreas, CSSPrimitiveValue::create(CSSValueNone));
+        result.addPropertyForCurrentShorthand(state, CSSPropertyID::GridTemplateRows, rowsValue.releaseNonNull());
+        result.addPropertyForCurrentShorthand(state, CSSPropertyID::GridTemplateColumns, columnsValue.releaseNonNull());
+        result.addPropertyForCurrentShorthand(state, CSSPropertyID::GridTemplateAreas, CSSKeywordValue::create(CSSValueID::None));
         return true;
     }
 
-    // 3- [ <line-names>? <string> <track-size>? <line-names>? ]+ [ / <track-list> ]?
+    // 3- [ <line-names>? <string> <track-size>? <line-names>? ]+ [ / <explicit-track-list> ]?
 
     range = rangeCopy;
 
     CSS::GridNamedAreaMap gridAreaMap;
-    CSSValueListBuilder templateRows;
+    CSS::GridTrackList templateRowsTrackList;
 
     // Persists between loop iterations so we can use the same value for
     // consecutive <line-names> values
-    RefPtr<CSSGridLineNamesValue> lineNames;
+    std::optional<CSS::GridLineNames> lineNames;
 
     do {
-        // Handle leading <custom-ident>*.
-        auto previousLineNames = std::exchange(lineNames, consumeGridLineNames(range, state));
-        if (lineNames) {
-            if (!previousLineNames)
-                templateRows.append(lineNames.releaseNonNull());
+        // Handle leading <line-names>?.
+        auto previousLineNames = std::exchange(lineNames, consumeUnresolvedGridLineNames(range, state));
+        if (lineNames && !lineNames->isEmpty()) {
+            if (!previousLineNames || previousLineNames->isEmpty())
+                templateRowsTrackList.value.value.append(CSS::GridTrackList::Track { WTF::move(*lineNames) });
             else {
-                Vector<String> combinedLineNames;
-                combinedLineNames.append(previousLineNames->names());
-                combinedLineNames.append(lineNames->names());
-                templateRows.last() = CSSGridLineNamesValue::create(combinedLineNames);
+                CSS::GridLineNames combinedLineNames;
+                combinedLineNames.value.value.reserveInitialCapacity(previousLineNames->size() + lineNames->size());
+                combinedLineNames.value.value.appendVector(previousLineNames->value.value);
+                combinedLineNames.value.value.appendVector(lineNames->value.value);
+
+                templateRowsTrackList.value.value.last() = CSS::GridTrackList::Track { WTF::move(combinedLineNames) };
             }
         }
 
-        // Handle a template-area's row.
+        // Handle a template-area's row <string>.
         auto row = consumeUnresolvedGridTemplateAreasRow(range, state);
         if (!row || !CSS::addRow(gridAreaMap, *row))
             return false;
 
-        // Handle template-rows's track-size.
-        if (RefPtr value = consumeGridTrackSize(range, state))
-            templateRows.append(value.releaseNonNull());
+        // Handle template-rows's <track-size>.
+        if (auto trackSize = consumeUnresolvedGridTrackSize(range, state))
+            templateRowsTrackList.value.value.append(CSS::GridTrackList::Track { WTF::move(*trackSize) });
         else
-            templateRows.append(CSSPrimitiveValue::create(CSSValueAuto));
+            templateRowsTrackList.value.value.append(CSS::GridTrackList::Track { CSS::GridTrackSize { CSS::GridTrackBreadth { CSS::Keyword::Auto { } } } });
 
-        // This will handle the trailing/leading <custom-ident>* in the grammar.
-        lineNames = consumeGridLineNames(range, state);
-        if (lineNames)
-            templateRows.append(*lineNames);
+        // This will handle the trailing/leading <line-names>? in the grammar.
+        lineNames = consumeUnresolvedGridLineNames(range, state);
+        if (lineNames && !lineNames->isEmpty())
+            templateRowsTrackList.value.value.append(CSS::GridTrackList::Track { *lineNames });
     } while (!range.atEnd() && !(range.peek().type() == DelimiterToken && range.peek().delimiter() == '/'));
 
-    RefPtr<CSSValue> columnsValue;
+    RefPtr<CSSValue> templateColumnsValue;
     if (!range.atEnd()) {
         if (!consumeSlashIncludingWhitespace(range))
             return false;
-        columnsValue = consumeGridTrackList(range, state, GridTemplateNoRepeat);
-        if (!columnsValue || !range.atEnd())
+        auto templateColumnsTrackList = consumeUnresolvedGridExplicitTrackList(range, state);
+        if (!templateColumnsTrackList || !range.atEnd())
             return false;
-    } else {
-        columnsValue = CSSPrimitiveValue::create(CSSValueNone);
-    }
-    result.addPropertyForCurrentShorthand(state, CSSPropertyGridTemplateRows, CSSValueList::createSpaceSeparated(WTF::move(templateRows)));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyGridTemplateColumns, columnsValue.releaseNonNull());
-    result.addPropertyForCurrentShorthand(state, CSSPropertyGridTemplateAreas, CSSGridTemplateAreasValue::create({ WTF::move(gridAreaMap) }));
+        templateColumnsValue = CSSGridTemplateListValue::create(CSS::GridTemplateList { WTF::move(*templateColumnsTrackList) });
+    } else
+        templateColumnsValue = CSSKeywordValue::create(CSSValueID::None);
+
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::GridTemplateRows, CSSGridTemplateListValue::create(CSS::GridTemplateList { WTF::move(templateRowsTrackList) }));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::GridTemplateColumns, templateColumnsValue.releaseNonNull());
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::GridTemplateAreas, CSSGridTemplateAreasValue::create(WTF::move(gridAreaMap)));
     return true;
 }
 
@@ -1516,29 +1678,28 @@ inline bool PropertyParserCustom::consumeGridShorthand(CSSParserTokenRange& rang
 {
     ASSERT(shorthand.length() == 6);
 
-    auto consumeImplicitGridAutoFlow = [](CSSParserTokenRange& range, CSSValueID flowDirection) -> RefPtr<CSSValue> {
+    auto consumeImplicitGridAutoFlow = [](CSSParserTokenRange& range, auto flowDirection) -> RefPtr<CSSValue> {
         // [ auto-flow && dense? ]
-        bool autoFlow = consumeIdentRaw<CSSValueAutoFlow>(range).has_value();
-        bool dense = consumeIdentRaw<CSSValueDense>(range).has_value();
-        if (!autoFlow && (!dense || !consumeIdentRaw<CSSValueAutoFlow>(range)))
+        bool autoFlow = consumeIdentRaw<CSSValueID::AutoFlow>(range).has_value();
+        bool dense = consumeIdentRaw<CSSValueID::Dense>(range).has_value();
+        if (!autoFlow && (!dense || !consumeIdentRaw<CSSValueID::AutoFlow>(range)))
             return nullptr;
         if (!dense)
-            return CSSValueList::createSpaceSeparated(CSSPrimitiveValue::create(flowDirection));
-        if (flowDirection == CSSValueRow)
-            return CSSValueList::createSpaceSeparated(CSSPrimitiveValue::create(CSSValueDense));
-        return CSSValueList::createSpaceSeparated(CSSPrimitiveValue::create(flowDirection),
-            CSSPrimitiveValue::create(CSSValueDense));
+            return CSSGridAutoFlowValue::create(CSS::GridAutoFlow { flowDirection });
+        if (flowDirection.value == CSSValueID::Row)
+            return CSSGridAutoFlowValue::create(CSS::GridAutoFlow { CSS::Keyword::Dense { } });
+        return CSSGridAutoFlowValue::create(CSS::GridAutoFlow { flowDirection, CSS::Keyword::Dense { } });
     };
 
-    CSSParserTokenRange rangeCopy = range;
+    auto rangeCopy = range;
 
     // 1- <grid-template>
     if (consumeGridTemplateShorthand(range, state, gridTemplateShorthand(), result)) {
         // It can only be specified the explicit or the implicit grid properties in a single grid declaration.
         // The sub-properties not specified are set to their initial value, as normal for shorthands.
-        result.addPropertyForCurrentShorthand(state, CSSPropertyGridAutoFlow, CSSPrimitiveValue::create(CSSValueRow));
-        result.addPropertyForCurrentShorthand(state, CSSPropertyGridAutoColumns, CSSPrimitiveValue::create(CSSValueAuto));
-        result.addPropertyForCurrentShorthand(state, CSSPropertyGridAutoRows, CSSPrimitiveValue::create(CSSValueAuto));
+        result.addPropertyForCurrentShorthand(state, CSSPropertyID::GridAutoFlow, CSSKeywordValue::create(CSSValueID::Row));
+        result.addPropertyForCurrentShorthand(state, CSSPropertyID::GridAutoColumns, CSSKeywordValue::create(CSSValueID::Auto));
+        result.addPropertyForCurrentShorthand(state, CSSPropertyID::GridAutoRows, CSSKeywordValue::create(CSSValueID::Auto));
 
         return true;
     }
@@ -1551,15 +1712,15 @@ inline bool PropertyParserCustom::consumeGridShorthand(CSSParserTokenRange& rang
     RefPtr<CSSValue> templateColumns;
     RefPtr<CSSValue> gridAutoFlow;
 
-    if (range.peek().id() == CSSValueAutoFlow || range.peek().id() == CSSValueDense) {
+    if (range.peek().id() == CSSValueID::AutoFlow || range.peek().id() == CSSValueID::Dense) {
         // 2- [ auto-flow && dense? ] <grid-auto-rows>? / <grid-template-columns>
-        gridAutoFlow = consumeImplicitGridAutoFlow(range, CSSValueRow);
+        gridAutoFlow = consumeImplicitGridAutoFlow(range, CSS::Keyword::Row { });
         if (!gridAutoFlow || range.atEnd())
             return false;
         if (consumeSlashIncludingWhitespace(range))
-            autoRowsValue = CSSPrimitiveValue::create(CSSValueAuto);
+            autoRowsValue = CSSKeywordValue::create(CSSValueID::Auto);
         else {
-            autoRowsValue = consumeGridTrackList(range, state, GridAuto);
+            autoRowsValue = consumeGridTrackSizes(range, state);
             if (!autoRowsValue)
                 return false;
             if (!consumeSlashIncludingWhitespace(range))
@@ -1567,30 +1728,30 @@ inline bool PropertyParserCustom::consumeGridShorthand(CSSParserTokenRange& rang
         }
         if (range.atEnd())
             return false;
-        templateColumns = consumeGridTemplatesRowsOrColumns(range, state);
+        templateColumns = consumeGridTemplateList(range, state);
         if (!templateColumns)
             return false;
-        templateRows = CSSPrimitiveValue::create(CSSValueNone);
-        autoColumnsValue = CSSPrimitiveValue::create(CSSValueAuto);
+        templateRows = CSSKeywordValue::create(CSSValueID::None);
+        autoColumnsValue = CSSKeywordValue::create(CSSValueID::Auto);
     } else {
         // 3- <grid-template-rows> / [ auto-flow && dense? ] <grid-auto-columns>?
-        templateRows = consumeGridTemplatesRowsOrColumns(range, state);
+        templateRows = consumeGridTemplateList(range, state);
         if (!templateRows)
             return false;
         if (!consumeSlashIncludingWhitespace(range) || range.atEnd())
             return false;
-        gridAutoFlow = consumeImplicitGridAutoFlow(range, CSSValueColumn);
+        gridAutoFlow = consumeImplicitGridAutoFlow(range, CSS::Keyword::Column { });
         if (!gridAutoFlow)
             return false;
         if (range.atEnd())
-            autoColumnsValue = CSSPrimitiveValue::create(CSSValueAuto);
+            autoColumnsValue = CSSKeywordValue::create(CSSValueID::Auto);
         else {
-            autoColumnsValue = consumeGridTrackList(range, state, GridAuto);
+            autoColumnsValue = consumeGridTrackSizes(range, state);
             if (!autoColumnsValue)
                 return false;
         }
-        templateColumns = CSSPrimitiveValue::create(CSSValueNone);
-        autoRowsValue = CSSPrimitiveValue::create(CSSValueAuto);
+        templateColumns = CSSKeywordValue::create(CSSValueID::None);
+        autoRowsValue = CSSKeywordValue::create(CSSValueID::Auto);
     }
 
     if (!range.atEnd())
@@ -1598,12 +1759,12 @@ inline bool PropertyParserCustom::consumeGridShorthand(CSSParserTokenRange& rang
 
     // It can only be specified the explicit or the implicit grid properties in a single grid declaration.
     // The sub-properties not specified are set to their initial value, as normal for shorthands.
-    result.addPropertyForCurrentShorthand(state, CSSPropertyGridTemplateColumns, templateColumns.releaseNonNull());
-    result.addPropertyForCurrentShorthand(state, CSSPropertyGridTemplateRows, templateRows.releaseNonNull());
-    result.addPropertyForCurrentShorthand(state, CSSPropertyGridTemplateAreas, CSSPrimitiveValue::create(CSSValueNone));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyGridAutoFlow, gridAutoFlow.releaseNonNull());
-    result.addPropertyForCurrentShorthand(state, CSSPropertyGridAutoColumns, autoColumnsValue.releaseNonNull());
-    result.addPropertyForCurrentShorthand(state, CSSPropertyGridAutoRows, autoRowsValue.releaseNonNull());
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::GridTemplateColumns, templateColumns.releaseNonNull());
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::GridTemplateRows, templateRows.releaseNonNull());
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::GridTemplateAreas, CSSKeywordValue::create(CSSValueID::None));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::GridAutoFlow, gridAutoFlow.releaseNonNull());
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::GridAutoColumns, autoColumnsValue.releaseNonNull());
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::GridAutoRows, autoRowsValue.releaseNonNull());
 
     return true;
 }
@@ -1666,18 +1827,18 @@ inline bool PropertyParserCustom::consumeBlockStepShorthand(CSSParserTokenRange&
 
     // Fill in default values if one was missing.
     if (!size)
-        size = CSSPrimitiveValue::create(CSSValueNone);
+        size = CSSKeywordValue::create(CSSValueID::None);
     if (!insert)
-        insert = CSSPrimitiveValue::create(CSSValueMarginBox);
+        insert = CSSKeywordValue::create(CSSValueID::MarginBox);
     if (!align)
-        align = CSSPrimitiveValue::create(CSSValueAuto);
+        align = CSSKeywordValue::create(CSSValueID::Auto);
     if (!round)
-        round = CSSPrimitiveValue::create(CSSValueUp);
+        round = CSSKeywordValue::create(CSSValueID::Up);
 
-    result.addPropertyForCurrentShorthand(state, CSSPropertyBlockStepSize, WTF::move(size));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyBlockStepInsert, WTF::move(insert));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyBlockStepAlign, WTF::move(align));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyBlockStepRound, WTF::move(round));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::BlockStepSize, WTF::move(size));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::BlockStepInsert, WTF::move(insert));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::BlockStepAlign, WTF::move(align));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::BlockStepRound, WTF::move(round));
     return true;
 }
 
@@ -1703,14 +1864,14 @@ inline bool PropertyParserCustom::consumeOverscrollBehaviorShorthand(CSSParserTo
             return false;
     }
 
-    result.addPropertyForCurrentShorthand(state, CSSPropertyOverscrollBehaviorX, WTF::move(overscrollBehaviorX));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyOverscrollBehaviorY, WTF::move(overscrollBehaviorY));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::OverscrollBehaviorX, WTF::move(overscrollBehaviorX));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::OverscrollBehaviorY, WTF::move(overscrollBehaviorY));
     return true;
 }
 
 inline bool PropertyParserCustom::consumeContainerShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand&, PropertyParserResult& result)
 {
-    RefPtr name = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyContainerName, state);
+    RefPtr name = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyID::ContainerName, state);
     if (!name)
         return false;
 
@@ -1722,7 +1883,7 @@ inline bool PropertyParserCustom::consumeContainerShorthand(CSSParserTokenRange&
         if (!consumeSlashIncludingWhitespace(range))
             return nullptr;
         sawSlash = true;
-        return CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyContainerType, state);
+        return CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyID::ContainerType, state);
     };
 
     auto type = consumeSlashType();
@@ -1730,15 +1891,15 @@ inline bool PropertyParserCustom::consumeContainerShorthand(CSSParserTokenRange&
     if (!range.atEnd() || (sawSlash && !type))
         return false;
 
-    result.addPropertyForCurrentShorthand(state, CSSPropertyContainerName, name.releaseNonNull());
-    result.addPropertyForCurrentShorthand(state, CSSPropertyContainerType, WTF::move(type));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::ContainerName, name.releaseNonNull());
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::ContainerType, WTF::move(type));
     return true;
 }
 
 inline bool PropertyParserCustom::consumeContainIntrinsicSizeShorthand(CSSParserTokenRange& range, PropertyParserState& state, [[maybe_unused]] const StylePropertyShorthand& shorthand, PropertyParserResult& result)
 {
     ASSERT(shorthand.length() == 2);
-    ASSERT(isExposed(CSSPropertyContainIntrinsicSize, &state.context.propertySettings));
+    ASSERT(isExposed(CSSPropertyID::ContainIntrinsicSize, &state.context.propertySettings));
 
     if (range.atEnd())
         return false;
@@ -1758,8 +1919,8 @@ inline bool PropertyParserCustom::consumeContainIntrinsicSizeShorthand(CSSParser
             return false;
     }
 
-    result.addPropertyForCurrentShorthand(state, CSSPropertyContainIntrinsicWidth, WTF::move(containIntrinsicWidth));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyContainIntrinsicHeight, WTF::move(containIntrinsicHeight));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::ContainIntrinsicWidth, WTF::move(containIntrinsicWidth));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::ContainIntrinsicHeight, WTF::move(containIntrinsicHeight));
     return true;
 }
 
@@ -1773,9 +1934,9 @@ inline bool PropertyParserCustom::consumeTransformOriginShorthand(CSSParserToken
             return false;
 
         auto [positionX, positionY] = split(WTF::move(*position));
-        result.addPropertyForCurrentShorthand(state, CSSPropertyTransformOriginX, CSSPositionXValue::create(WTF::move(positionX)));
-        result.addPropertyForCurrentShorthand(state, CSSPropertyTransformOriginY, CSSPositionYValue::create(WTF::move(positionY)));
-        result.addPropertyForCurrentShorthand(state, CSSPropertyTransformOriginZ, resultZ);
+        result.addPropertyForCurrentShorthand(state, CSSPropertyID::TransformOriginX, CSSPositionXValue::create(WTF::move(positionX)));
+        result.addPropertyForCurrentShorthand(state, CSSPropertyID::TransformOriginY, CSSPositionYValue::create(WTF::move(positionY)));
+        result.addPropertyForCurrentShorthand(state, CSSPropertyID::TransformOriginZ, resultZ);
         return true;
     }
     return false;
@@ -1784,9 +1945,11 @@ inline bool PropertyParserCustom::consumeTransformOriginShorthand(CSSParserToken
 inline bool PropertyParserCustom::consumePerspectiveOriginShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand&, PropertyParserResult& result)
 {
     if (auto position = consumePositionUnresolved(range, state)) {
+        if (!range.atEnd())
+            return false;
         auto [positionX, positionY] = split(WTF::move(*position));
-        result.addPropertyForCurrentShorthand(state, CSSPropertyPerspectiveOriginX, CSSPositionXValue::create(WTF::move(positionX)));
-        result.addPropertyForCurrentShorthand(state, CSSPropertyPerspectiveOriginY, CSSPositionYValue::create(WTF::move(positionY)));
+        result.addPropertyForCurrentShorthand(state, CSSPropertyID::PerspectiveOriginX, CSSPositionXValue::create(WTF::move(positionX)));
+        result.addPropertyForCurrentShorthand(state, CSSPropertyID::PerspectiveOriginY, CSSPositionYValue::create(WTF::move(positionY)));
         return true;
     }
 
@@ -1796,12 +1959,12 @@ inline bool PropertyParserCustom::consumePerspectiveOriginShorthand(CSSParserTok
 inline bool PropertyParserCustom::consumeWebkitPerspectiveShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand&, PropertyParserResult& result)
 {
     if (RefPtr value = CSSPropertyParsing::consumePerspective(range, state)) {
-        result.addPropertyForCurrentShorthand(state, CSSPropertyPerspective, value.releaseNonNull());
+        result.addPropertyForCurrentShorthand(state, CSSPropertyID::Perspective, value.releaseNonNull());
         return range.atEnd();
     }
 
     if (auto perspective = CSSPrimitiveValueResolver<Number<Nonnegative>>::consumeAndResolve(range, state)) {
-        result.addPropertyForCurrentShorthand(state, CSSPropertyPerspective, WTF::move(perspective));
+        result.addPropertyForCurrentShorthand(state, CSSPropertyID::Perspective, WTF::move(perspective));
         return range.atEnd();
     }
 
@@ -1819,10 +1982,10 @@ inline bool PropertyParserCustom::consumeOffsetShorthand(CSSParserTokenRange& ra
     // [ / <'offset-anchor'> ]?
 
     // Parse out offset-position.
-    auto offsetPosition = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyOffsetPosition, state);
+    auto offsetPosition = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyID::OffsetPosition, state);
 
     // Parse out offset-path.
-    auto offsetPath = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyOffsetPath, state);
+    auto offsetPath = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyID::OffsetPath, state);
 
     // Either one of offset-position and offset-path must be present.
     if (!offsetPosition && !offsetPath)
@@ -1834,11 +1997,11 @@ inline bool PropertyParserCustom::consumeOffsetShorthand(CSSParserTokenRange& ra
     if (offsetPath) {
         // Try to parse offset-distance first. If successful, parse the following offset-rotate.
         // Otherwise, parse in the reverse order.
-        if ((offsetDistance = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyOffsetDistance, state)))
-            offsetRotate = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyOffsetRotate, state);
+        if ((offsetDistance = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyID::OffsetDistance, state)))
+            offsetRotate = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyID::OffsetRotate, state);
         else {
-            offsetRotate = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyOffsetRotate, state);
-            offsetDistance = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyOffsetDistance, state);
+            offsetRotate = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyID::OffsetRotate, state);
+            offsetDistance = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyID::OffsetDistance, state);
         }
     }
 
@@ -1846,15 +2009,15 @@ inline bool PropertyParserCustom::consumeOffsetShorthand(CSSParserTokenRange& ra
     RefPtr<CSSValue> offsetAnchor;
     if (consumeSlashIncludingWhitespace(range)) {
         // offset-anchor must follow the slash.
-        if (!(offsetAnchor = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyOffsetAnchor, state)))
+        if (!(offsetAnchor = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyID::OffsetAnchor, state)))
             return false;
     }
 
-    result.addPropertyForCurrentShorthand(state, CSSPropertyOffsetPath, WTF::move(offsetPath));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyOffsetDistance, WTF::move(offsetDistance));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyOffsetPosition, WTF::move(offsetPosition));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyOffsetAnchor, WTF::move(offsetAnchor));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyOffsetRotate, WTF::move(offsetRotate));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::OffsetPath, WTF::move(offsetPath));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::OffsetDistance, WTF::move(offsetDistance));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::OffsetPosition, WTF::move(offsetPosition));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::OffsetAnchor, WTF::move(offsetAnchor));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::OffsetRotate, WTF::move(offsetRotate));
 
     return range.atEnd();
 }
@@ -1867,18 +2030,18 @@ inline bool PropertyParserCustom::consumeListStyleShorthand(CSSParserTokenRange&
     unsigned noneCount = 0;
 
     while (!range.atEnd()) {
-        if (range.peek().id() == CSSValueNone) {
+        if (range.peek().id() == CSSValueID::None) {
             ++noneCount;
             consumeIdent(range);
             continue;
         }
-        if (!position && (position = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyListStylePosition, state)))
+        if (!position && (position = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyID::ListStylePosition, state)))
             continue;
 
-        if (!image && (image = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyListStyleImage, state)))
+        if (!image && (image = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyID::ListStyleImage, state)))
             continue;
 
-        if (!type && (type = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyListStyleType, state)))
+        if (!type && (type = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyID::ListStyleType, state)))
             continue;
 
         return false;
@@ -1890,62 +2053,119 @@ inline bool PropertyParserCustom::consumeListStyleShorthand(CSSParserTokenRange&
     if (noneCount == 2) {
         // Using implicit none for list-style-image is how we serialize "none" instead of "none none".
         image = nullptr;
-        type = CSSPrimitiveValue::create(CSSValueNone);
+        type = CSSKeywordValue::create(CSSValueID::None);
     } else if (noneCount == 1) {
         // Use implicit none for list-style-image, but non-implicit for type.
         if (!type)
-            type = CSSPrimitiveValue::create(CSSValueNone);
+            type = CSSKeywordValue::create(CSSValueID::None);
     }
 
-    result.addPropertyForCurrentShorthand(state, CSSPropertyListStylePosition, WTF::move(position));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyListStyleImage, WTF::move(image));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyListStyleType, WTF::move(type));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::ListStylePosition, WTF::move(position));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::ListStyleImage, WTF::move(image));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::ListStyleType, WTF::move(type));
     return range.atEnd();
 }
 
-inline bool PropertyParserCustom::consumeLineClampShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand&, PropertyParserResult& result)
+bool PropertyParserCustom::consumeLineClampShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand& shorthand, PropertyParserResult& result)
 {
-    ASSERT(state.context.propertySettings.cssLineClampEnabled);
+    bool isLegacyLineClamp = shorthand.id() == CSSPropertyID::WebkitLineClamp;
+    ASSERT(state.context.propertySettings.cssLineClampEnabled || isLegacyLineClamp);
 
-    if (range.peek().id() == CSSValueNone) {
+    if (range.peek().id() == CSSValueID::None) {
         // Sets max-lines to none, continue to auto, and block-ellipsis to none.
-        result.addPropertyForCurrentShorthand(state, CSSPropertyMaxLines, CSSPrimitiveValue::create(CSSValueNone));
-        result.addPropertyForCurrentShorthand(state, CSSPropertyContinue, CSSPrimitiveValue::create(CSSValueAuto));
-        result.addPropertyForCurrentShorthand(state, CSSPropertyBlockEllipsis, CSSPrimitiveValue::create(CSSValueNone));
+        result.addPropertyForCurrentShorthand(state, CSSPropertyID::MaxLines, CSSKeywordValue::create(CSSValueID::Auto));
+        result.addPropertyForCurrentShorthand(state, CSSPropertyID::Continue, CSSKeywordValue::create(CSSValueID::Normal));
+        result.addPropertyForCurrentShorthand(state, CSSPropertyID::BlockEllipsis, CSSKeywordValue::create(CSSValueID::NoEllipsis));
         consumeIdent(range);
         return range.atEnd();
     }
 
-    RefPtr<CSSValue> maxLines;
+    RefPtr<CSSValue> numLines;
     RefPtr<CSSValue> blockEllipsis;
+    RefPtr<CSSKeywordValue> autoKeyword;
+    RefPtr<CSSValue> webkitLegacy;
 
-    for (unsigned propertiesParsed = 0; propertiesParsed < 2 && !range.atEnd(); ++propertiesParsed) {
-        if (!maxLines && (maxLines = CSSPropertyParsing::consumeMaxLines(range, state)))
+    do {
+        if (!webkitLegacy && (webkitLegacy = consumeIdent<CSSValueID::WebkitLegacy>(range)))
+            break;
+        if (!autoKeyword && (autoKeyword = consumeIdent<CSSValueID::Auto>(range))) {
+            if (blockEllipsis && numLines)
+                return false;
             continue;
+        }
         if (!blockEllipsis && (blockEllipsis = CSSPropertyParsing::consumeBlockEllipsis(range)))
             continue;
-        // There has to be at least one valid longhand.
+        if (!numLines && (numLines = CSSPrimitiveValueResolver<CSS::Integer<CSS::Range { 1, CSS::Range::infinity } >>::consumeAndResolve(range, state))) {
+            if (blockEllipsis && autoKeyword)
+                return false;
+            continue;
+        }
+        break;
+    } while (!range.atEnd());
+
+    if (isLegacyLineClamp && (autoKeyword || blockEllipsis || webkitLegacy))
         return false;
-    }
+    if (!numLines && !autoKeyword && !blockEllipsis)
+        return false;
+
+    RefPtr<CSSValue> maxLines;
+    if (numLines && autoKeyword) {
+        CSSValueListBuilder list;
+        list.append(numLines.releaseNonNull());
+        list.append(autoKeyword.releaseNonNull());
+        maxLines = CSSValueList::createSpaceSeparated(WTF::move(list));
+    } else if (numLines)
+        maxLines = numLines;
+    else if (autoKeyword)
+        maxLines = autoKeyword;
+    else
+        maxLines = CSSKeywordValue::create(CSSValueID::Auto);
 
     if (!blockEllipsis)
-        blockEllipsis = CSSPrimitiveValue::create(CSSValueAuto);
+        blockEllipsis = CSSKeywordValue::create(CSSValueID::Ellipsis);
 
-    if (!maxLines)
-        maxLines = CSSPrimitiveValue::create(CSSValueNone);
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::MaxLines, WTF::move(maxLines));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::BlockEllipsis, WTF::move(blockEllipsis));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::Continue, CSSKeywordValue::create(isLegacyLineClamp || webkitLegacy ? CSSValueID::WebkitLegacy : CSSValueID::Collapse));
+    return range.atEnd();
+}
 
-    result.addPropertyForCurrentShorthand(state, CSSPropertyMaxLines, WTF::move(maxLines));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyContinue, CSSPrimitiveValue::create(CSSValueDiscard));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyBlockEllipsis, WTF::move(blockEllipsis));
+inline bool PropertyParserCustom::consumeHyphenateLimitCharsShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand& shorthand, PropertyParserResult& result)
+{
+    ASSERT(state.currentProperty == shorthand.id());
+    ASSERT(shorthand.length() == 3);
+    auto longhands = shorthand.properties();
+
+    // <'hyphenate-limit-chars'> = [ auto | <integer [0,∞]> ]{1,3}
+    // First value is the total minimum, second is the minimum before the hyphen (defaulting
+    // to auto if omitted), and third is the minimum after the hyphen (defaulting to the
+    // before value if omitted).
+    RefPtr total = CSSPropertyParsing::parseStylePropertyLonghand(range, longhands[0], state);
+    if (!total)
+        return false;
+
+    RefPtr before = CSSPropertyParsing::parseStylePropertyLonghand(range, longhands[1], state);
+    auto beforeImplicit = !before ? IsImplicit::Yes : IsImplicit::No;
+    if (beforeImplicit == IsImplicit::Yes)
+        before = CSSKeywordValue::create(CSSValueID::Auto);
+
+    RefPtr after = CSSPropertyParsing::parseStylePropertyLonghand(range, longhands[2], state);
+    auto afterImplicit = !after ? IsImplicit::Yes : IsImplicit::No;
+    if (afterImplicit == IsImplicit::Yes)
+        after = before;
+
+    result.addPropertyForCurrentShorthand(state, longhands[0], total.releaseNonNull());
+    result.addPropertyForCurrentShorthand(state, longhands[1], before.releaseNonNull(), beforeImplicit);
+    result.addPropertyForCurrentShorthand(state, longhands[2], after.releaseNonNull(), afterImplicit);
     return range.atEnd();
 }
 
 inline bool PropertyParserCustom::consumeTextBoxShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand&, PropertyParserResult& result)
 {
-    if (range.peek().id() == CSSValueNormal) {
+    if (range.peek().id() == CSSValueID::Normal) {
         // if the single keyword normal is specified, it sets text-box-trim to none and text-box-edge to auto.
-        result.addPropertyForCurrentShorthand(state, CSSPropertyTextBoxTrim, CSSPrimitiveValue::create(CSSValueNone));
-        result.addPropertyForCurrentShorthand(state, CSSPropertyTextBoxEdge, CSSPrimitiveValue::create(CSSValueAuto));
+        result.addPropertyForCurrentShorthand(state, CSSPropertyID::TextBoxTrim, CSSKeywordValue::create(CSSValueID::None));
+        result.addPropertyForCurrentShorthand(state, CSSPropertyID::TextBoxEdge, CSSKeywordValue::create(CSSValueID::Auto));
         consumeIdent(range);
         return range.atEnd();
     }
@@ -1967,14 +2187,14 @@ inline bool PropertyParserCustom::consumeTextBoxShorthand(CSSParserTokenRange& r
 
     // Omitting the text-box-edge value sets it to auto (the initial value)
     if (!textBoxEdge)
-        textBoxEdge = CSSPrimitiveValue::create(CSSValueAuto);
+        textBoxEdge = CSSKeywordValue::create(CSSValueID::Auto);
 
     // Omitting the text-box-trim value sets it to both (not the initial value)
     if (!textBoxTrim)
-        textBoxTrim = CSSPrimitiveValue::create(CSSValueTrimBoth);
+        textBoxTrim = CSSKeywordValue::create(CSSValueID::TrimBoth);
 
-    result.addPropertyForCurrentShorthand(state, CSSPropertyTextBoxTrim, WTF::move(textBoxTrim));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyTextBoxEdge, WTF::move(textBoxEdge));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::TextBoxTrim, WTF::move(textBoxTrim));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::TextBoxEdge, WTF::move(textBoxEdge));
     return true;
 }
 
@@ -1997,12 +2217,12 @@ inline bool PropertyParserCustom::consumeTextWrapShorthand(CSSParserTokenRange& 
 
     // Fill in default values if one was missing from the multi-value syntax.
     if (!mode)
-        mode = CSSPrimitiveValue::create(CSSValueWrap);
+        mode = CSSKeywordValue::create(CSSValueID::Wrap);
     if (!style)
-        style = CSSPrimitiveValue::create(CSSValueAuto);
+        style = CSSKeywordValue::create(CSSValueID::Auto);
 
-    result.addPropertyForCurrentShorthand(state, CSSPropertyTextWrapMode, WTF::move(mode));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyTextWrapStyle, WTF::move(style));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::TextWrapMode, WTF::move(mode));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::TextWrapStyle, WTF::move(style));
     return true;
 }
 
@@ -2010,43 +2230,47 @@ inline bool PropertyParserCustom::consumeWhiteSpaceShorthand(CSSParserTokenRange
 {
     RefPtr<CSSValue> whiteSpaceCollapse;
     RefPtr<CSSValue> textWrapMode;
+    RefPtr<CSSValue> whiteSpaceTrim;
 
     // Single value syntax.
     auto singleValueKeyword = consumeIdentRaw<
-        CSSValueNormal,
-        CSSValuePre,
-        CSSValuePreLine,
-        CSSValuePreWrap
+        CSSValueID::Normal,
+        CSSValueID::Pre,
+        CSSValueID::PreLine,
+        CSSValueID::PreWrap
     >(range);
 
     if (singleValueKeyword) {
         switch (*singleValueKeyword) {
-        case CSSValueNormal:
-            whiteSpaceCollapse = CSSPrimitiveValue::create(CSSValueCollapse);
-            textWrapMode = CSSPrimitiveValue::create(CSSValueWrap);
+        case CSSValueID::Normal:
+            whiteSpaceCollapse = CSSKeywordValue::create(CSSValueID::Collapse);
+            textWrapMode = CSSKeywordValue::create(CSSValueID::Wrap);
             break;
-        case CSSValuePre:
-            whiteSpaceCollapse = CSSPrimitiveValue::create(CSSValuePreserve);
-            textWrapMode = CSSPrimitiveValue::create(CSSValueNowrap);
+        case CSSValueID::Pre:
+            whiteSpaceCollapse = CSSKeywordValue::create(CSSValueID::Preserve);
+            textWrapMode = CSSKeywordValue::create(CSSValueID::Nowrap);
             break;
-        case CSSValuePreLine:
-            whiteSpaceCollapse = CSSPrimitiveValue::create(CSSValuePreserveBreaks);
-            textWrapMode = CSSPrimitiveValue::create(CSSValueWrap);
+        case CSSValueID::PreLine:
+            whiteSpaceCollapse = CSSKeywordValue::create(CSSValueID::PreserveBreaks);
+            textWrapMode = CSSKeywordValue::create(CSSValueID::Wrap);
             break;
-        case CSSValuePreWrap:
-            whiteSpaceCollapse = CSSPrimitiveValue::create(CSSValuePreserve);
-            textWrapMode = CSSPrimitiveValue::create(CSSValueWrap);
+        case CSSValueID::PreWrap:
+            whiteSpaceCollapse = CSSKeywordValue::create(CSSValueID::Preserve);
+            textWrapMode = CSSKeywordValue::create(CSSValueID::Wrap);
             break;
         default:
             ASSERT_NOT_REACHED();
             return false;
         }
+        whiteSpaceTrim = CSSKeywordValue::create(CSSValueID::None);
     } else {
         // Multi-value syntax.
-        for (unsigned propertiesParsed = 0; propertiesParsed < 2 && !range.atEnd(); ++propertiesParsed) {
+        for (unsigned propertiesParsed = 0; propertiesParsed < 3 && !range.atEnd(); ++propertiesParsed) {
             if (!whiteSpaceCollapse && (whiteSpaceCollapse = CSSPropertyParsing::consumeWhiteSpaceCollapse(range)))
                 continue;
             if (!textWrapMode && (textWrapMode = CSSPropertyParsing::consumeTextWrapMode(range)))
+                continue;
+            if (!whiteSpaceTrim && state.context.propertySettings.cssWhiteSpaceTrimEnabled && (whiteSpaceTrim = CSSPropertyParsing::consumeWhiteSpaceTrim(range)))
                 continue;
             // If we didn't find at least one match, this is an invalid shorthand and we have to ignore it.
             return false;
@@ -2058,16 +2282,19 @@ inline bool PropertyParserCustom::consumeWhiteSpaceShorthand(CSSParserTokenRange
 
     // Fill in default values if one was missing from the multi-value syntax.
     if (!whiteSpaceCollapse)
-        whiteSpaceCollapse = CSSPrimitiveValue::create(CSSValueCollapse);
+        whiteSpaceCollapse = CSSKeywordValue::create(CSSValueID::Collapse);
     if (!textWrapMode)
-        textWrapMode = CSSPrimitiveValue::create(CSSValueWrap);
+        textWrapMode = CSSKeywordValue::create(CSSValueID::Wrap);
+    if (!whiteSpaceTrim)
+        whiteSpaceTrim = CSSKeywordValue::create(CSSValueID::None);
 
-    result.addPropertyForCurrentShorthand(state, CSSPropertyWhiteSpaceCollapse, WTF::move(whiteSpaceCollapse));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyTextWrapMode, WTF::move(textWrapMode));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::WhiteSpaceCollapse, WTF::move(whiteSpaceCollapse));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::TextWrapMode, WTF::move(textWrapMode));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::WhiteSpaceTrim, WTF::move(whiteSpaceTrim));
     return true;
 }
 
-inline bool PropertyParserCustom::consumeAnimationRangeShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand&, PropertyParserResult& result)
+inline bool PropertyParserCustom::consumeAnimationRangeShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand& shorthand, PropertyParserResult& result)
 {
     CSSValueListBuilder startList;
     CSSValueListBuilder endList;
@@ -2082,21 +2309,19 @@ inline bool PropertyParserCustom::consumeAnimationRangeShorthand(CSSParserTokenR
             // From the spec: If <'animation-range-end'> is omitted and <'animation-range-start'> includes a component, then
             // animation-range-end is set to that same and 100%. Otherwise, any omitted longhand is set to its initial value.
             auto rangeEndValueForStartValue = [](const CSSValue& value) {
-                auto isRangeOffset = [](auto& value) {
+                auto isRangeOffset = [](const CSSPrimitiveValue& value) {
                     return value.isLength() || value.isPercentage() || value.isCalculatedPercentageWithLength();
                 };
 
-                if (RefPtr primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value); primitiveValue && isRangeOffset(downcast<CSSPrimitiveValue>(value)))
-                    return CSSPrimitiveValue::create(CSSValueNormal);
-                return CSSPrimitiveValue::create(value.valueID());
+                if (RefPtr primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value); primitiveValue && isRangeOffset(*primitiveValue))
+                    return CSSKeywordValue::create(CSSValueID::Normal);
+                return CSSKeywordValue::create(valueID(value));
             };
 
-            if (RefPtr startPrimitiveValue = dynamicDowncast<CSSPrimitiveValue>(start))
-                end = rangeEndValueForStartValue(*startPrimitiveValue);
-            else {
-                RefPtr startPair = downcast<CSSValuePair>(start);
+            if (RefPtr startPair = dynamicDowncast<CSSValuePair>(start))
                 end = rangeEndValueForStartValue(startPair->first());
-            }
+            else
+                end = rangeEndValueForStartValue(*start);
         } else {
             end = consumeSingleAnimationRangeEnd(range, state);
             range.consumeWhitespace();
@@ -2110,9 +2335,20 @@ inline bool PropertyParserCustom::consumeAnimationRangeShorthand(CSSParserTokenR
     if (!range.atEnd())
         return false;
 
-    result.addPropertyForCurrentShorthand(state, CSSPropertyAnimationRangeStart, CSSValueList::createCommaSeparated(WTF::move(startList)));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyAnimationRangeEnd, CSSValueList::createCommaSeparated(WTF::move(endList)));
+    ASSERT(shorthand.properties().size() == 2);
+    result.addPropertyForCurrentShorthand(state, shorthand.properties()[0], CSSValueList::createCommaSeparated(WTF::move(startList)));
+    result.addPropertyForCurrentShorthand(state, shorthand.properties()[1], CSSValueList::createCommaSeparated(WTF::move(endList)));
     return true;
+}
+
+inline bool PropertyParserCustom::consumeTimelineTriggerActivationRangeShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand& shorthand, PropertyParserResult& result)
+{
+    return consumeAnimationRangeShorthand(range, state, shorthand, result);
+}
+
+inline bool PropertyParserCustom::consumeTimelineTriggerActiveRangeShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand& shorthand, PropertyParserResult& result)
+{
+    return consumeAnimationRangeShorthand(range, state, shorthand, result);
 }
 
 inline bool PropertyParserCustom::consumeScrollTimelineShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand&, PropertyParserResult& result)
@@ -2122,14 +2358,14 @@ inline bool PropertyParserCustom::consumeScrollTimelineShorthand(CSSParserTokenR
 
     do {
         // A valid scroll-timeline-name is required.
-        if (RefPtr name = CSSPropertyParsing::consumeSingleScrollTimelineName(range))
+        if (RefPtr name = CSSPropertyParsing::consumeSingleScrollTimelineName(range, state))
             namesList.append(name.releaseNonNull());
         else
             return false;
 
         // A scroll-timeline-axis is optional.
         if (range.peek().type() == CommaToken || range.atEnd())
-            axesList.append(CSSPrimitiveValue::create(CSSValueBlock));
+            axesList.append(CSSKeywordValue::create(CSSValueID::Block));
         else if (auto axis = CSSPropertyParsing::consumeAxis(range))
             axesList.append(axis.releaseNonNull());
         else
@@ -2139,9 +2375,9 @@ inline bool PropertyParserCustom::consumeScrollTimelineShorthand(CSSParserTokenR
     if (namesList.isEmpty())
         return false;
 
-    result.addPropertyForCurrentShorthand(state, CSSPropertyScrollTimelineName, CSSValueList::createCommaSeparated(WTF::move(namesList)));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::ScrollTimelineName, CSSValueList::createCommaSeparated(WTF::move(namesList)));
     if (!axesList.isEmpty())
-        result.addPropertyForCurrentShorthand(state, CSSPropertyScrollTimelineAxis, CSSValueList::createCommaSeparated(WTF::move(axesList)));
+        result.addPropertyForCurrentShorthand(state, CSSPropertyID::ScrollTimelineAxis, CSSValueList::createCommaSeparated(WTF::move(axesList)));
     return true;
 }
 
@@ -2151,12 +2387,12 @@ inline bool PropertyParserCustom::consumeViewTimelineShorthand(CSSParserTokenRan
     CSSValueListBuilder axesList;
     CSSValueListBuilder insetsList;
 
-    auto defaultAxis = [] -> Ref<CSSValue> { return CSSPrimitiveValue::create(CSSValueBlock); };
-    auto defaultInsets = [] -> Ref<CSSValue> { return CSSPrimitiveValue::create(CSSValueAuto); };
+    auto defaultAxis = [] -> Ref<CSSValue> { return CSSKeywordValue::create(CSSValueID::Block); };
+    auto defaultInsets = [] -> Ref<CSSValue> { return CSSKeywordValue::create(CSSValueID::Auto); };
 
     do {
         // A valid view-timeline-name is required.
-        if (RefPtr name = CSSPropertyParsing::consumeSingleScrollTimelineName(range))
+        if (RefPtr name = CSSPropertyParsing::consumeSingleScrollTimelineName(range, state))
             namesList.append(name.releaseNonNull());
         else
             return false;
@@ -2181,34 +2417,34 @@ inline bool PropertyParserCustom::consumeViewTimelineShorthand(CSSParserTokenRan
     if (namesList.isEmpty())
         return false;
 
-    result.addPropertyForCurrentShorthand(state, CSSPropertyViewTimelineName, CSSValueList::createCommaSeparated(WTF::move(namesList)));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyViewTimelineAxis, CSSValueList::createCommaSeparated(WTF::move(axesList)));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyViewTimelineInset, CSSValueList::createCommaSeparated(WTF::move(insetsList)));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::ViewTimelineName, CSSValueList::createCommaSeparated(WTF::move(namesList)));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::ViewTimelineAxis, CSSValueList::createCommaSeparated(WTF::move(axesList)));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::ViewTimelineInset, CSSValueList::createCommaSeparated(WTF::move(insetsList)));
     return true;
 }
 
 inline bool PropertyParserCustom::consumePositionTryShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand&, PropertyParserResult& result)
 {
-    auto order = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyPositionTryOrder, state);
-    auto fallbacks = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyPositionTryFallbacks, state);
+    auto order = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyID::PositionTryOrder, state);
+    auto fallbacks = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyID::PositionTryFallbacks, state);
     if (!fallbacks)
         return false;
 
-    result.addPropertyForCurrentShorthand(state, CSSPropertyPositionTryOrder, WTF::move(order));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyPositionTryFallbacks, WTF::move(fallbacks));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::PositionTryOrder, WTF::move(order));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::PositionTryFallbacks, WTF::move(fallbacks));
     return range.atEnd();
 }
 
 inline bool PropertyParserCustom::consumeMarkerShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand&, PropertyParserResult& result)
 {
-    RefPtr marker = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyMarkerStart, state);
+    RefPtr marker = CSSPropertyParsing::parseStylePropertyLonghand(range, CSSPropertyID::MarkerStart, state);
     if (!marker || !range.atEnd())
         return false;
 
     Ref markerRef = marker.releaseNonNull();
-    result.addPropertyForCurrentShorthand(state, CSSPropertyMarkerStart, markerRef.copyRef());
-    result.addPropertyForCurrentShorthand(state, CSSPropertyMarkerMid, markerRef.copyRef());
-    result.addPropertyForCurrentShorthand(state, CSSPropertyMarkerEnd, WTF::move(markerRef));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::MarkerStart, markerRef.copyRef());
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::MarkerMid, markerRef.copyRef());
+    result.addPropertyForCurrentShorthand(state, CSSPropertyID::MarkerEnd, WTF::move(markerRef));
     return true;
 }
 

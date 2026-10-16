@@ -43,6 +43,14 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(CloseWatcher);
 
+RefPtr<CloseWatcher> CloseWatcher::create(Document& document)
+{
+    if (!document.isFullyActive())
+        return nullptr;
+
+    return CloseWatcher::establish(document);
+}
+
 ExceptionOr<Ref<CloseWatcher>> CloseWatcher::create(ScriptExecutionContext& context, const Options& options)
 {
     RefPtr document = dynamicDowncast<Document>(context);
@@ -54,13 +62,13 @@ ExceptionOr<Ref<CloseWatcher>> CloseWatcher::create(ScriptExecutionContext& cont
     if (RefPtr signal = options.signal) {
         if (signal->aborted()) {
             watcher->m_active = false;
-            Ref manager = document->protectedWindow()->closeWatcherManager();
+            Ref manager = protect(document->window())->closeWatcherManager();
             manager->remove(watcher.get());
         } else {
-            watcher->m_signal = signal;
+            lazyInitialize(watcher->m_signal, Ref { *signal });
             watcher->m_signalAlgorithm = signal->addAlgorithm([weakWatcher = WeakPtr { watcher.get() }](JSC::JSValue) mutable {
-                if (weakWatcher)
-                    weakWatcher->destroy();
+                if (RefPtr watcher = weakWatcher.get())
+                    watcher->destroy();
             });
         }
     }
@@ -75,7 +83,7 @@ Ref<CloseWatcher> CloseWatcher::establish(Document& document)
     Ref watcher = adoptRef(*new CloseWatcher(document));
     watcher->suspendIfNeeded();
 
-    Ref manager = document.protectedWindow()->closeWatcherManager();
+    Ref manager = protect(document.window())->closeWatcherManager();
 
     manager->add(watcher);
     return watcher;
@@ -93,23 +101,23 @@ ScriptExecutionContext* CloseWatcher::scriptExecutionContext() const
 
 void CloseWatcher::requestClose()
 {
-    requestToClose();
+    requestToClose(RequireHistoryActionActivation::No);
 }
 
-bool CloseWatcher::requestToClose()
+bool CloseWatcher::requestToClose(RequireHistoryActionActivation requireHistoryActionActivation)
 {
-    if (!canBeClosed())
+    RefPtr document = downcast<Document>(scriptExecutionContext());
+    if (!isActive() || !enabled() || m_isRunningCancelAction || !document || !document->isFullyActive())
         return true;
 
-    RefPtr document = dynamicDowncast<Document>(scriptExecutionContext());
-    Ref manager = document->protectedWindow()->closeWatcherManager();
-    bool canPreventClose = manager->canPreventClose() && document->protectedWindow()->hasHistoryActionActivation();
+    Ref manager = protect(document->window())->closeWatcherManager();
+    bool canPreventClose = requireHistoryActionActivation == RequireHistoryActionActivation::No || (manager->canPreventClose() && document->window()->hasHistoryActionActivation());
     Ref cancelEvent = Event::create(eventNames().cancelEvent, Event::CanBubble::No, canPreventClose ? Event::IsCancelable::Yes : Event::IsCancelable::No);
     m_isRunningCancelAction = true;
     dispatchEvent(cancelEvent);
     m_isRunningCancelAction = false;
     if (cancelEvent->defaultPrevented()) {
-        document->protectedWindow()->consumeHistoryActionUserActivation();
+        protect(document->window())->consumeHistoryActionUserActivation();
         return false;
     }
 
@@ -119,7 +127,8 @@ bool CloseWatcher::requestToClose()
 
 void CloseWatcher::close()
 {
-    if (!canBeClosed())
+    RefPtr document = downcast<Document>(scriptExecutionContext());
+    if (!isActive() || !enabled() || !document || !document->isFullyActive())
         return;
 
     destroy();
@@ -129,27 +138,21 @@ void CloseWatcher::close()
     dispatchEvent(closeEvent);
 }
 
-bool CloseWatcher::canBeClosed() const
-{
-    RefPtr document = dynamicDowncast<Document>(scriptExecutionContext());
-    return isActive() && !m_isRunningCancelAction && document && document->isFullyActive();
-}
-
 void CloseWatcher::destroy()
 {
     if (!isActive())
         return;
 
-    RefPtr document = dynamicDowncast<Document>(scriptExecutionContext());
-    if (document && document->protectedWindow()) {
-        Ref manager = document->protectedWindow()->closeWatcherManager();
+    RefPtr document = downcast<Document>(scriptExecutionContext());
+    if (document && document->window()) {
+        Ref manager = protect(document->window())->closeWatcherManager();
         manager->remove(*this);
     }
 
     m_active = false;
 
-    if (RefPtr signal = m_signal)
-        signal->removeAlgorithm(m_signalAlgorithm);
+    if (m_signal)
+        m_signal->removeAlgorithm(m_signalAlgorithm);
 }
 
 void CloseWatcher::eventListenersDidChange()

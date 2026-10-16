@@ -77,14 +77,18 @@ WI.CSSGrouping = class CSSGrouping extends WI.Object
         newText ||= "";
 
         this._nodeStyles.ignoreNextContentDidChangeForStyleSheet = this._ownerStyleSheet;
+        using clearIgnoredStyleSheet = new ScopeExit(() => {
+            this._nodeStyles.ignoreNextContentDidChangeForStyleSheet = null;
+        });
 
-        let target = WI.assumingMainTarget();
+        let owningTarget = this._nodeStyles.node.owningTarget;
+        let target = owningTarget || WI.assumingMainTarget();
         let {grouping: groupingPayload} = await target.CSSAgent.setGroupingHeaderText(this._id, newText);
 
-        target.DOMAgent.markUndoableState();
+        WI.domUndoCoordinator.markUndoableState(target);
         await this._nodeStyles.refresh();
 
-        console.assert(groupingPayload.type == this._type);
+        console.assert(groupingPayload.type === this._type);
 
         console.assert(groupingPayload.ruleId);
         console.assert(groupingPayload.text);
@@ -100,7 +104,7 @@ WI.CSSGrouping = class CSSGrouping extends WI.Object
         }
 
         let groupingSourceCodeLocation = WI.DOMNodeStyles.createSourceCodeLocation(groupingPayload.sourceURL, location);
-        this._sourceCodeLocation = WI.cssManager.styleSheetForIdentifier(this._id.styleSheetId).offsetSourceCodeLocation(groupingSourceCodeLocation);
+        this._sourceCodeLocation = WI.cssManager.styleSheetForIdentifier(this._id.styleSheetId, owningTarget).offsetSourceCodeLocation(groupingSourceCodeLocation);
 
         this.dispatchEventToListeners(WI.CSSGrouping.Event.TextChanged);
     }
@@ -111,6 +115,12 @@ WI.CSSGrouping = class CSSGrouping extends WI.Object
             || this._type === WI.CSSGrouping.Type.MediaImportRule
             || this._type === WI.CSSGrouping.Type.MediaLinkNode
             || this._type === WI.CSSGrouping.Type.MediaStyleNode;
+    }
+
+    get isLayer()
+    {
+        return this._type === WI.CSSGrouping.Type.LayerRule
+            || this._type === WI.CSSGrouping.Type.LayerImportRule;
     }
 
     get isStartingStyle()
@@ -137,6 +147,9 @@ WI.CSSGrouping = class CSSGrouping extends WI.Object
         case WI.CSSGrouping.Type.ContainerRule:
             return "@container";
 
+        case WI.CSSGrouping.Type.KeyframesRule:
+            return "@keyframes";
+
         case WI.CSSGrouping.Type.ScopeRule:
             return "@scope";
 
@@ -161,6 +174,7 @@ WI.CSSGrouping.Type = {
     ScopeRule: "scope-rule",
     StartingStyleRule: "starting-style-rule",
     StyleRule: "style-rule",
+    KeyframesRule: "keyframes-rule",
 };
 
 WI.CSSGrouping.Event = {

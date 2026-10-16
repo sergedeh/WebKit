@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,6 +29,7 @@
 #if PLATFORM(IOS_FAMILY)
 
 #import "AdditionalButtonMasksIOS.h"
+#import "AutomationKeyIdentity.h"
 #import "UIKitSPI.h"
 #import <WebCore/KeyEventCodesIOS.h>
 #import <WebCore/PlatformEventFactoryIOS.h>
@@ -103,7 +104,7 @@ static OptionSet<WebEventModifier> modifiersForEvent(::WebEvent *event)
     return modifiers;
 }
 
-WebKeyboardEvent WebIOSEventFactory::createWebKeyboardEvent(::WebEvent *event, bool handledByInputMethod)
+WebKeyboardEventInit WebIOSEventFactory::createWebKeyboardEvent(::WebEvent *event, bool handledByInputMethod)
 {
     WebEventType type = (event.type == WebEventKeyUp) ? WebEventType::KeyUp : WebEventType::KeyDown;
     String text;
@@ -130,6 +131,13 @@ WebKeyboardEvent WebIOSEventFactory::createWebKeyboardEvent(::WebEvent *event, b
     auto modifiers = modifiersForEvent(event);
     double timestamp = event.timestamp;
 
+    // Check if this is a WebDriver-synthesized event, which may state its DOM identity directly.
+    if (auto identity = AutomationKeyIdentity::identity(event)) {
+        key = WTF::move(identity->key);
+        code = WTF::move(identity->code);
+        isKeypad = identity->isKeypad;
+    }
+
     if (windowsVirtualKeyCode == '\r') {
         text = "\r"_s;
         unmodifiedText = text;
@@ -148,10 +156,26 @@ WebKeyboardEvent WebIOSEventFactory::createWebKeyboardEvent(::WebEvent *event, b
         unmodifiedText = text;
     }
 
-    return WebKeyboardEvent { { type, modifiers, MonotonicTime::fromRawSeconds(timestamp) }, text, unmodifiedText, key, code, keyIdentifier, windowsVirtualKeyCode, nativeVirtualKeyCode, macCharCode, handledByInputMethod, autoRepeat, isKeypad, isSystemKey };
+    return {
+        { type, modifiers, MonotonicTime::fromRawSeconds(timestamp) },
+        {
+            .text = text,
+            .unmodifiedText = unmodifiedText,
+            .key = key,
+            .code = code,
+            .keyIdentifier = keyIdentifier,
+            .windowsVirtualKeyCode = windowsVirtualKeyCode,
+            .nativeVirtualKeyCode = nativeVirtualKeyCode,
+            .macCharCode = macCharCode,
+            .handledByInputMethod = handledByInputMethod,
+            .isAutoRepeat = autoRepeat,
+            .isKeypad = isKeypad,
+            .isSystemKey = isSystemKey,
+        }
+    };
 }
 
-WebMouseEvent WebIOSEventFactory::createWebMouseEvent(::WebEvent *event)
+WebMouseEventInit WebIOSEventFactory::createWebMouseEvent(::WebEvent *event)
 {
     // This currently only supports synthetic mouse moved events with no button pressed.
     ASSERT_ARG(event, event.type == WebEventMouseMoved);
@@ -166,7 +190,21 @@ WebMouseEvent WebIOSEventFactory::createWebMouseEvent(::WebEvent *event)
     int clickCount = 0;
     double timestamp = event.timestamp;
 
-    return WebMouseEvent({ type, OptionSet<WebEventModifier> { }, MonotonicTime::fromRawSeconds(timestamp) }, button, buttons, position, position, deltaX, deltaY, deltaZ, clickCount);
+    return {
+        { type, OptionSet<WebEventModifier> { }, MonotonicTime::fromRawSeconds(timestamp) },
+        {
+            .button = button,
+            .buttons = buttons,
+            .position = position,
+            .globalPosition = position,
+            .deltaX = deltaX,
+            .deltaY = deltaY,
+            .deltaZ = deltaZ,
+            .clickCount = clickCount,
+            .force = 0,
+            .inputSource = WebEventInputSource::UserDriven,
+        }
+    };
 }
 
 #if HAVE(UISCROLLVIEW_ASYNCHRONOUS_SCROLL_EVENT_HANDLING)
@@ -205,7 +243,7 @@ WebCore::FloatSize WebIOSEventFactory::translationInView(WKBEScrollViewScrollUpd
 #endif
 }
 
-WebWheelEvent WebIOSEventFactory::createWebWheelEvent(WKBEScrollViewScrollUpdate *update, UIView *contentView, std::optional<WebWheelEvent::Phase> overridePhase)
+WebWheelEventInit WebIOSEventFactory::createWebWheelEvent(WKBEScrollViewScrollUpdate *update, UIView *contentView, std::optional<WebWheelEvent::Phase> overridePhase)
 {
     WebCore::IntPoint scrollLocation = WebCore::roundedIntPoint([update locationInView:contentView]);
     auto delta = translationInView(update, contentView);
@@ -214,20 +252,22 @@ WebWheelEvent WebIOSEventFactory::createWebWheelEvent(WKBEScrollViewScrollUpdate
     auto timestamp = MonotonicTime::fromRawSeconds(update.timestamp);
     return {
         { WebEventType::Wheel, OptionSet<WebEventModifier> { }, timestamp },
-        scrollLocation,
-        scrollLocation,
-        delta,
-        wheelTicks,
-        WebWheelEvent::Granularity::ScrollByPixelWheelEvent,
-        false,
-        overridePhase.value_or(toWebPhase(update.phase)),
-        WebWheelEvent::Phase::None,
-        true,
-        1,
-        delta,
-        timestamp,
-        { },
-        WebWheelEvent::MomentumEndType::Unknown
+        {
+            .position = scrollLocation,
+            .globalPosition = scrollLocation,
+            .delta = delta,
+            .wheelTicks = wheelTicks,
+            .granularity = WebWheelEvent::Granularity::ScrollByPixelWheelEvent,
+            .directionInvertedFromDevice = false,
+            .phase = overridePhase.value_or(toWebPhase(update.phase)),
+            .momentumPhase = WebWheelEvent::Phase::None,
+            .hasPreciseScrollingDeltas = true,
+            .scrollCount = 1,
+            .unacceleratedScrollingDelta = delta,
+            .ioHIDEventTimestamp = timestamp,
+            .rawPlatformDelta = { },
+            .momentumEndType = WebWheelEvent::MomentumEndType::Unknown,
+        }
     };
 }
 #endif

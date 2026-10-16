@@ -30,6 +30,7 @@
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 #include <bmalloc/GigacageConfig.h>
+#include <cstddef>
 #include <wtf/Assertions.h>
 #include <wtf/Atomics.h>
 #include <wtf/ExportMacros.h>
@@ -65,6 +66,9 @@ struct ReservedGlobalConfigSlots {
     // Storage for the WTF config proper begins here
 };
 
+constexpr ptrdiff_t startOffsetOfExecutableAllocatorConfig =
+        offsetof(WebConfig::ReservedGlobalConfigSlots, reservationForExecutableAllocator);
+
 #if !USE(SYSTEM_MALLOC)
 static_assert(Gigacage::startOffsetOfGigacageConfig == offsetof(ReservedGlobalConfigSlots, reservationForGigacage));
 #endif
@@ -80,7 +84,7 @@ struct Config {
     WTF_EXPORT_PRIVATE static void permanentlyFreeze();
     WTF_EXPORT_PRIVATE static void initialize();
     WTF_EXPORT_PRIVATE static void finalize();
-    WTF_EXPORT_PRIVATE static void disableFreezingForTesting();
+    WTF_EXPORT_PRIVATE static void LEGACY_NODELETE disableFreezingForTesting();
 
     struct AssertNotFrozenScope {
         AssertNotFrozenScope();
@@ -112,10 +116,10 @@ struct Config {
     uint64_t spaceForExtensions[1];
 };
 
-constexpr size_t startOffsetOfWTFConfig = sizeof(WebConfig::ReservedGlobalConfigSlots);
+constexpr ptrdiff_t startOffsetOfWTFConfig = sizeof(WebConfig::ReservedGlobalConfigSlots);
 constexpr size_t startSlotOfWTFConfig = startOffsetOfWTFConfig / sizeof(WebConfig::Slot);
 
-constexpr size_t offsetOfWTFConfigExtension = startOffsetOfWTFConfig + offsetof(WTF::Config, spaceForExtensions);
+constexpr ptrdiff_t offsetOfWTFConfigExtension = startOffsetOfWTFConfig + offsetof(WTF::Config, spaceForExtensions);
 
 constexpr size_t alignmentOfWTFConfig = std::alignment_of<WTF::Config>::value;
 

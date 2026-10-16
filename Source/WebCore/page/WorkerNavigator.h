@@ -25,9 +25,9 @@
 
 #pragma once
 
-#include <WebCore/JSDOMPromiseDeferredForward.h>
-#include <WebCore/NavigatorBase.h>
-#include <WebCore/Supplementable.h>
+#include "JSDOMPromiseDeferredForward.h"
+#include "NavigatorBase.h"
+#include "Supplementable.h"
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
@@ -43,12 +43,12 @@ public:
 
     virtual ~WorkerNavigator();
 
-    const String& userAgent() const final;
-    bool onLine() const final;
+    const String& LEGACY_NODELETE userAgent() const final;
+    bool LEGACY_NODELETE onLine() const final;
     void setIsOnline(bool isOnline) { m_isOnline = isOnline; }
 
-    void setAppBadge(std::optional<unsigned long long>, Ref<DeferredPromise>&&);
-    void clearAppBadge(Ref<DeferredPromise>&&);
+    void setAppBadge(ScriptExecutionContext&, std::optional<unsigned long long>, Ref<DeferredPromise>&&);
+    void clearAppBadge(ScriptExecutionContext&, Ref<DeferredPromise>&&);
     NavigatorUAData& userAgentData() const;
 
     GPU* gpu();
@@ -60,7 +60,7 @@ private:
     String m_userAgent;
     bool m_isOnline;
 #if HAVE(WEBGPU_IMPLEMENTATION)
-    RefPtr<GPU> m_gpuForWebGPU;
+    const RefPtr<GPU> m_gpuForWebGPU;
 #endif
 };
 

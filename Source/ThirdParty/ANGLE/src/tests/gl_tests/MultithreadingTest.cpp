@@ -16,7 +16,9 @@
 #include "util/EGLWindow.h"
 #include "util/test_utils.h"
 
+#include <array>
 #include <atomic>
+#include <functional>
 #include <mutex>
 #include <thread>
 
@@ -37,6 +39,7 @@ class MultithreadingTest : public ANGLETest<>
         setConfigGreenBits(8);
         setConfigBlueBits(8);
         setConfigAlphaBits(8);
+        setPbuffer(true);
     }
 
     bool hasFenceSyncExtension() const
@@ -2204,10 +2207,11 @@ TEST_P(MultithreadingTestES3, RenderThenSampleDifferentContextPriority)
     // Large enough texture to catch timing problems.
     constexpr GLsizei kTexSize       = 1024;
     constexpr size_t kThreadCount    = 2;
-    EGLSurface surface[kThreadCount] = {EGL_NO_SURFACE, EGL_NO_SURFACE};
-    EGLContext ctx[kThreadCount]     = {EGL_NO_CONTEXT, EGL_NO_CONTEXT};
+    std::array<EGLSurface, kThreadCount> surface = {EGL_NO_SURFACE, EGL_NO_SURFACE};
+    std::array<EGLContext, kThreadCount> ctx     = {EGL_NO_CONTEXT, EGL_NO_CONTEXT};
 
-    EGLint priorities[kThreadCount] = {EGL_CONTEXT_PRIORITY_LOW_IMG, EGL_CONTEXT_PRIORITY_HIGH_IMG};
+    std::array<EGLint, kThreadCount> priorities = {EGL_CONTEXT_PRIORITY_LOW_IMG,
+                                                   EGL_CONTEXT_PRIORITY_HIGH_IMG};
 
     EGLint pbufferAttributes[kThreadCount][6] = {
         {EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE, EGL_NONE},
@@ -2404,10 +2408,11 @@ TEST_P(MultithreadingTestES3, RenderThenSampleInNewContextWithDifferentPriority)
     // Large enough texture to catch timing problems.
     constexpr GLsizei kTexSize       = 1024;
     constexpr size_t kThreadCount    = 2;
-    EGLSurface surface[kThreadCount] = {EGL_NO_SURFACE, EGL_NO_SURFACE};
-    EGLContext ctx[kThreadCount]     = {EGL_NO_CONTEXT, EGL_NO_CONTEXT};
+    std::array<EGLSurface, kThreadCount> surface = {EGL_NO_SURFACE, EGL_NO_SURFACE};
+    std::array<EGLContext, kThreadCount> ctx     = {EGL_NO_CONTEXT, EGL_NO_CONTEXT};
 
-    EGLint priorities[kThreadCount] = {EGL_CONTEXT_PRIORITY_LOW_IMG, EGL_CONTEXT_PRIORITY_HIGH_IMG};
+    std::array<EGLint, kThreadCount> priorities = {EGL_CONTEXT_PRIORITY_LOW_IMG,
+                                                   EGL_CONTEXT_PRIORITY_HIGH_IMG};
 
     EGLint pbufferAttributes[kThreadCount][6] = {
         {EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE, EGL_NONE},
@@ -2612,10 +2617,11 @@ TEST_P(MultithreadingTestES3, RenderThenSampleDifferentContextPriorityUsingEGLIm
     // Large enough texture to catch timing problems.
     constexpr GLsizei kTexSize       = 1024;
     constexpr size_t kThreadCount    = 2;
-    EGLSurface surface[kThreadCount] = {EGL_NO_SURFACE, EGL_NO_SURFACE};
-    EGLContext ctx[kThreadCount]     = {EGL_NO_CONTEXT, EGL_NO_CONTEXT};
+    std::array<EGLSurface, kThreadCount> surface = {EGL_NO_SURFACE, EGL_NO_SURFACE};
+    std::array<EGLContext, kThreadCount> ctx     = {EGL_NO_CONTEXT, EGL_NO_CONTEXT};
 
-    EGLint priorities[kThreadCount] = {EGL_CONTEXT_PRIORITY_LOW_IMG, EGL_CONTEXT_PRIORITY_HIGH_IMG};
+    std::array<EGLint, kThreadCount> priorities = {EGL_CONTEXT_PRIORITY_LOW_IMG,
+                                                   EGL_CONTEXT_PRIORITY_HIGH_IMG};
 
     EGLint pbufferAttributes[kThreadCount][6] = {
         {EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE, EGL_NONE},
@@ -2827,10 +2833,11 @@ TEST_P(MultithreadingTestES3, ContextPriorityMixing)
     // Large enough texture to catch timing problems.
     constexpr GLsizei kTexSize       = 1024;
     constexpr size_t kThreadCount    = 2;
-    EGLSurface surface[kThreadCount] = {EGL_NO_SURFACE, EGL_NO_SURFACE};
-    EGLContext ctx[kThreadCount]     = {EGL_NO_CONTEXT, EGL_NO_CONTEXT};
+    std::array<EGLSurface, kThreadCount> surface = {EGL_NO_SURFACE, EGL_NO_SURFACE};
+    std::array<EGLContext, kThreadCount> ctx     = {EGL_NO_CONTEXT, EGL_NO_CONTEXT};
 
-    EGLint priorities[kThreadCount] = {EGL_CONTEXT_PRIORITY_LOW_IMG, EGL_CONTEXT_PRIORITY_HIGH_IMG};
+    std::array<EGLint, kThreadCount> priorities = {EGL_CONTEXT_PRIORITY_LOW_IMG,
+                                                   EGL_CONTEXT_PRIORITY_HIGH_IMG};
 
     EGLint pbufferAttributes[kThreadCount][6] = {
         {EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE, EGL_NONE},
@@ -3344,7 +3351,7 @@ void main()
 })";
 
     constexpr uint32_t kTextureCount = 10;
-    GLuint textures[kTextureCount];
+    std::array<GLuint, kTextureCount> textures;
 
     ASSERT(IsGLExtensionEnabled("GL_KHR_texture_compression_astc_ldr") ||
            IsGLExtensionEnabled("GL_EXT_texture_compression_bptc"));
@@ -3353,7 +3360,7 @@ void main()
     const GLenum compressedFormat =
         hasBPTC ? GL_COMPRESSED_RGBA_BPTC_UNORM_EXT : GL_COMPRESSED_RGBA_ASTC_4x4_KHR;
 
-    std::vector<uint8_t> textureData[kTextureCount];
+    std::array<std::vector<uint8_t>, kTextureCount> textureData;
 
     constexpr int kSurfaceWidth  = 256;
     constexpr int kSurfaceHeight = 512;
@@ -3422,10 +3429,10 @@ void main()
         GLuint busyDrawALoc  = glGetAttribLocation(busyDrawProgram, "a");
 
         ANGLE_GL_PROGRAM(textureDrawProgram, kTextureDrawVS, kTextureDrawFS);
-        GLuint textureDrawSamplerLoc[kTextureCount] = {};
+        std::array<GLuint, kTextureCount> textureDrawSamplerLoc = {};
 
         glUseProgram(textureDrawProgram);
-        glGenTextures(kTextureCount, textures);
+        glGenTextures(kTextureCount, textures.data());
         for (uint32_t i = 0; i < kTextureCount; ++i)
         {
             std::ostringstream name;
@@ -4323,6 +4330,493 @@ void main()
                                threadFuncs.data());
 
     ASSERT_NE(currentStep, Step::Abort);
+}
+
+// Ensure vulkan backend is handling EGLImage multiple sibling properly and no UAF on
+// when sibling ImageHelper gets deleted.
+TEST_P(MultithreadingTest, EGLImageSiblingDeleteShouldNotUAF)
+{
+    ANGLE_SKIP_TEST_IF(!platformSupportsMultithreading());
+    // Bug is in ANGLE's Vulkan backend (vk_helpers.cpp).
+    ANGLE_SKIP_TEST_IF(!IsVulkan());
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_OES_EGL_image"));
+
+    EGLWindow *window = getEGLWindow();
+    EGLDisplay dpy    = window->getDisplay();
+
+    ANGLE_SKIP_TEST_IF(!IsEGLDisplayExtensionEnabled(dpy, "EGL_KHR_image_base"));
+    ANGLE_SKIP_TEST_IF(!IsEGLDisplayExtensionEnabled(dpy, "EGL_KHR_gl_texture_2D_image"));
+
+    // Release the test fixture's context: RunLockStepThreads spawns its own pair of
+    // share-group contexts and we don't want a third context muddying the iteration order.
+    EXPECT_EGL_TRUE(eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT));
+
+    constexpr GLsizei kTexSize = 64;
+
+    std::mutex mutex;
+    std::condition_variable condVar;
+
+    enum class Step
+    {
+        Start,
+        T0CreatedImage,
+        T1CreatedSibling,
+        T0StartedRP,
+        T1StartedRP,
+        T0DeletedSiblingB,
+        Finish,
+        Abort,
+    };
+    Step currentStep = Step::Start;
+
+    EGLImage eglImage = EGL_NO_IMAGE_KHR;
+
+    // Thread 0 (context X1): owns source A and sibling B.
+    auto thread0 = [&](EGLDisplay dpy, EGLSurface surface, EGLContext context) {
+        ThreadSynchronization<Step> threadSynchronization(&currentStep, &mutex, &condVar);
+
+        EXPECT_EGL_TRUE(eglMakeCurrent(dpy, surface, surface, context));
+        EXPECT_EGL_SUCCESS();
+
+        // ==== Step 1: Create source texture A and the EGLImage ====
+        GLuint sourceTex = 0;
+        glGenTextures(1, &sourceTex);
+        glBindTexture(GL_TEXTURE_2D, sourceTex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kTexSize, kTexSize, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                     nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        ASSERT_GL_NO_ERROR();
+
+        eglImage = eglCreateImageKHR(
+            dpy, context, EGL_GL_TEXTURE_2D_KHR,
+            reinterpret_cast<EGLClientBuffer>(static_cast<uintptr_t>(sourceTex)), nullptr);
+        ASSERT_EGL_SUCCESS();
+        ASSERT_NE(eglImage, EGL_NO_IMAGE_KHR);
+
+        // ==== Step 2: Create sibling B (serial S1) on this context ====
+        GLuint siblingB = 0;
+        glGenTextures(1, &siblingB);
+        glBindTexture(GL_TEXTURE_2D, siblingB);
+        glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, eglImage);
+        ASSERT_GL_NO_ERROR();
+
+        // ==== Step 3: Orphan source A -> ImageVk::mOwnsImage = true ====
+        glDeleteTextures(1, &sourceTex);
+        ASSERT_GL_NO_ERROR();
+
+        // ==== Step 4: Drop the Display's egl::Image ref. Only siblings B & C now hold refs. ====
+        // This is allowed before C is created - eglImage is still a valid EGLImageKHR handle
+        // for glEGLImageTargetTexture2DOES on T1 because B still holds a refcount.
+        // Actually: eglDestroyImageKHR removes the handle from the Display's map; do this AFTER
+        // T1 has created its sibling so the EGLImageKHR handle stays resolvable.
+        threadSynchronization.nextStep(Step::T0CreatedImage);
+        ASSERT_TRUE(threadSynchronization.waitForStep(Step::T1CreatedSibling));
+
+        // T1 has now created sibling C. egl::Image refcount = Display(1) + B(1) + C(1) = 3.
+        EXPECT_EGL_TRUE(eglDestroyImageKHR(dpy, eglImage));
+        eglImage = EGL_NO_IMAGE_KHR;
+        // egl::Image refcount = B(1) + C(1) = 2.
+
+        // ==== Step 5: Start render pass RP1 with sibling B as color attachment ====
+        ANGLE_GL_PROGRAM(redProgram, essl1_shaders::vs::Simple(), essl1_shaders::fs::Red());
+
+        GLuint fbo = 0;
+        glGenFramebuffers(1, &fbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, siblingB, 0);
+        ASSERT_EQ(glCheckFramebufferStatus(GL_FRAMEBUFFER),
+                  static_cast<GLenum>(GL_FRAMEBUFFER_COMPLETE));
+        glViewport(0, 0, kTexSize, kTexSize);
+
+        drawQuad(redProgram, essl1_shaders::PositionAttrib(), 0.5f);
+        ASSERT_GL_NO_ERROR();
+        // RP1 is now started(). X1 holds (imagePtr, S1).
+
+        threadSynchronization.nextStep(Step::T0StartedRP);
+        ASSERT_TRUE(threadSynchronization.waitForStep(Step::T1StartedRP));
+
+        // T1 has now started RP2 with (imagePtr). Both render passes are open.
+
+        // ==== Step 6: Delete sibling B  ====
+        glDeleteTextures(1, &siblingB);
+        ASSERT_GL_NO_ERROR();
+
+        threadSynchronization.nextStep(Step::T0DeletedSiblingB);
+
+        // Clean up X1. Its render pass slot was nulled in step 6, so this flush is benign.
+        glDeleteFramebuffers(1, &fbo);
+        glFlush();
+
+        ASSERT_TRUE(threadSynchronization.waitForStep(Step::Finish));
+        EXPECT_EGL_TRUE(eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT));
+    };
+
+    // Thread 1 (context X2): owns sibling C.
+    auto thread1 = [&](EGLDisplay dpy, EGLSurface surface, EGLContext context) {
+        ThreadSynchronization<Step> threadSynchronization(&currentStep, &mutex, &condVar);
+
+        ASSERT_TRUE(threadSynchronization.waitForStep(Step::T0CreatedImage));
+
+        EXPECT_EGL_TRUE(eglMakeCurrent(dpy, surface, surface, context));
+        EXPECT_EGL_SUCCESS();
+
+        // ==== Step 7: Create sibling C on this context ====
+        GLuint siblingC = 0;
+        glGenTextures(1, &siblingC);
+        glBindTexture(GL_TEXTURE_2D, siblingC);
+        glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, eglImage);
+        ASSERT_GL_NO_ERROR();
+
+        threadSynchronization.nextStep(Step::T1CreatedSibling);
+        ASSERT_TRUE(threadSynchronization.waitForStep(Step::T0StartedRP));
+
+        // ==== Step 8: Start render pass RP2 with sibling C as color attachment ====
+        ANGLE_GL_PROGRAM(greenProgram, essl1_shaders::vs::Simple(), essl1_shaders::fs::Green());
+
+        GLuint fbo = 0;
+        glGenFramebuffers(1, &fbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, siblingC, 0);
+        ASSERT_EQ(glCheckFramebufferStatus(GL_FRAMEBUFFER),
+                  static_cast<GLenum>(GL_FRAMEBUFFER_COMPLETE));
+        glViewport(0, 0, kTexSize, kTexSize);
+
+        // Start RP2: stores (imagePtr) in X2.mColorAttachments[0].
+        drawQuad(greenProgram, essl1_shaders::PositionAttrib(), 0.5f);
+        ASSERT_GL_NO_ERROR();
+        // RP2 is now started(). X2 holds (imagePtr).
+
+        threadSynchronization.nextStep(Step::T1StartedRP);
+        ASSERT_TRUE(threadSynchronization.waitForStep(Step::T0DeletedSiblingB));
+
+        // T0 has deleted B. Shared flag is now FALSE. egl::Image refcount = 1 (us).
+        // vk::ImageHelper is still alive. X2's render pass is still open.
+
+        // ==== Step 9: Delete sibling C - this is the FREE step ====
+        // glDeleteTextures(C) on this context (X2):
+        glDeleteTextures(1, &siblingC);
+        ASSERT_GL_NO_ERROR();
+
+        // ==== Step 10: End RP2 - this is the USE-AFTER-FREE step ====
+        glFinish();
+
+        glDeleteFramebuffers(1, &fbo);
+        threadSynchronization.nextStep(Step::Finish);
+        EXPECT_EGL_TRUE(eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT));
+    };
+
+    std::array<LockStepThreadFunc, 2> threadFuncs = {
+        std::move(thread0),
+        std::move(thread1),
+    };
+
+    RunLockStepThreads(getEGLWindow(), threadFuncs.size(), threadFuncs.data());
+
+    ASSERT_NE(currentStep, Step::Abort);
+
+    // Restore the fixture's context for teardown.
+    EXPECT_EGL_TRUE(
+        eglMakeCurrent(dpy, window->getSurface(), window->getSurface(), window->getContext()));
+}
+
+// Test that EGL image creation and destruction don't race.
+TEST_P(MultithreadingTest, EGLImageRaceCreateAndDestroy)
+{
+    // While the EGL backend doesn't technically support multithreading, it's expected to be
+    // thread-safe for image creation to support Chrome.
+    ANGLE_SKIP_TEST_IF(!platformSupportsMultithreading() && !IsOpenGLES());
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_OES_EGL_image"));
+
+    EGLWindow *window = getEGLWindow();
+    EGLDisplay dpy    = window->getDisplay();
+
+    ANGLE_SKIP_TEST_IF(!IsEGLDisplayExtensionEnabled(dpy, "EGL_KHR_image_base"));
+    ANGLE_SKIP_TEST_IF(!IsEGLDisplayExtensionEnabled(dpy, "EGL_KHR_gl_texture_2D_image"));
+
+    constexpr GLsizei kTexSize = 64;
+
+    std::mutex mutex;
+    std::condition_variable condVar;
+
+    enum class Step
+    {
+        Start,
+        T0CreatedImage,
+        T1DestroyLoopStarted,
+        T0RecreatedImage,
+        Finish,
+        Abort,
+    };
+    Step currentStep = Step::Start;
+
+    EGLImage predictedEglImage = EGL_NO_IMAGE_KHR;
+
+    auto thread0 = [&](EGLDisplay dpy, EGLSurface surface, EGLContext context) {
+        ThreadSynchronization<Step> threadSynchronization(&currentStep, &mutex, &condVar);
+
+        EXPECT_EGL_TRUE(eglMakeCurrent(dpy, surface, surface, context));
+        EXPECT_EGL_SUCCESS();
+
+        // Create source texture and the EGLImage
+        GLuint sourceTex = 0;
+        glGenTextures(1, &sourceTex);
+        glBindTexture(GL_TEXTURE_2D, sourceTex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kTexSize, kTexSize, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                     nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        ASSERT_GL_NO_ERROR();
+
+        predictedEglImage = eglCreateImageKHR(
+            dpy, context, EGL_GL_TEXTURE_2D_KHR,
+            reinterpret_cast<EGLClientBuffer>(static_cast<uintptr_t>(sourceTex)), nullptr);
+        ASSERT_EGL_SUCCESS();
+        ASSERT_NE(predictedEglImage, EGL_NO_IMAGE_KHR);
+
+        // Immediately delete the image.  This puts the |predictedEglImage| handle in a recycle
+        // list.
+        EXPECT_EGL_TRUE(eglDestroyImageKHR(dpy, predictedEglImage));
+
+        // Let the other thread get into a loop that tries to destroy the predicted image, to be
+        // created by this thread simultaneously.
+        threadSynchronization.nextStep(Step::T0CreatedImage);
+        ASSERT_TRUE(threadSynchronization.waitForStep(Step::T1DestroyLoopStarted));
+
+        // Create another EGL image.  In ANGLE, this would return the same handle as
+        // |predictedEglImage|.
+        GLuint sourceTex2 = 0;
+        glGenTextures(1, &sourceTex2);
+        glBindTexture(GL_TEXTURE_2D, sourceTex2);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kTexSize, kTexSize, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                     nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        ASSERT_GL_NO_ERROR();
+
+        EGLImage eglImage = eglCreateImageKHR(
+            dpy, context, EGL_GL_TEXTURE_2D_KHR,
+            reinterpret_cast<EGLClientBuffer>(static_cast<uintptr_t>(sourceTex2)), nullptr);
+        ASSERT_EGL_SUCCESS();
+        ASSERT_NE(eglImage, EGL_NO_IMAGE_KHR);
+
+        // Wait for the destroy loop to stop.
+        threadSynchronization.nextStep(Step::T0RecreatedImage);
+        ASSERT_TRUE(threadSynchronization.waitForStep(Step::Finish));
+
+        if (eglImage != predictedEglImage)
+        {
+            WARN() << "New EGL image does not have the same handle as destroyed image, test is "
+                      "ineffective";
+            EXPECT_EGL_TRUE(eglDestroyImageKHR(dpy, eglImage));
+        }
+
+        EXPECT_EGL_TRUE(eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT));
+    };
+
+    auto thread1 = [&](EGLDisplay dpy, EGLSurface surface, EGLContext context) {
+        ThreadSynchronization<Step> threadSynchronization(&currentStep, &mutex, &condVar);
+
+        ASSERT_TRUE(threadSynchronization.waitForStep(Step::T0CreatedImage));
+        Timer timer;
+        timer.start();
+        threadSynchronization.nextStep(Step::T1DestroyLoopStarted);
+        // Try to destroy the image with a handle that is expected to be recycled.  The destroy call
+        // will fail before T0 creates the image, and will succeed right after, assuming there are
+        // no race conditions.
+        while (!eglDestroyImageKHR(dpy, predictedEglImage) && timer.getElapsedWallClockTime() < 1.0)
+            ;
+
+        ASSERT_TRUE(threadSynchronization.waitForStep(Step::T0RecreatedImage));
+        threadSynchronization.nextStep(Step::Finish);
+        EXPECT_EGL_TRUE(eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT));
+    };
+
+    std::array<LockStepThreadFunc, 2> threadFuncs = {
+        std::move(thread0),
+        std::move(thread1),
+    };
+
+    RunLockStepThreads(getEGLWindow(), threadFuncs.size(), threadFuncs.data());
+
+    ASSERT_NE(currentStep, Step::Abort);
+
+    // Restore the fixture's context for teardown.
+    EXPECT_EGL_TRUE(
+        eglMakeCurrent(dpy, window->getSurface(), window->getSurface(), window->getContext()));
+}
+
+// Test that creating a shared context while the parent context is active and
+// binding buffers does not cause a data race on mSharedContext.
+TEST_P(MultithreadingTest, SharedContextDataRace)
+{
+    ANGLE_SKIP_TEST_IF(!platformSupportsMultithreading());
+
+    EGLWindow *window = getEGLWindow();
+    EGLDisplay dpy    = window->getDisplay();
+    EGLConfig config  = window->getConfig();
+
+    EGLSurface surface1 = EGL_NO_SURFACE;
+    EGLContext ctx1     = EGL_NO_CONTEXT;
+
+    EGLint pbufferAttributes[] = {
+        EGL_WIDTH, 256, EGL_HEIGHT, 256, EGL_NONE, EGL_NONE,
+    };
+    surface1 = eglCreatePbufferSurface(dpy, config, pbufferAttributes);
+    EXPECT_EGL_SUCCESS();
+
+    ctx1 = createMultithreadedContext(window, EGL_NO_CONTEXT);
+    EXPECT_NE(EGL_NO_CONTEXT, ctx1);
+
+    EXPECT_EGL_TRUE(eglMakeCurrent(dpy, surface1, surface1, ctx1));
+    EXPECT_EGL_SUCCESS();
+
+    std::atomic<bool> exitThread(false);
+
+    {
+        GLBuffer buffer;
+        // WUnbind ctx1 from the main thread so the worker thread can make it current.
+        EXPECT_EGL_TRUE(eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT));
+        EXPECT_EGL_SUCCESS();
+
+        // Thread 1: Concurrently bind/unbind buffer to trigger isSharedContext()
+        std::thread thread1([&]() {
+            EXPECT_EGL_TRUE(eglMakeCurrent(dpy, surface1, surface1, ctx1));
+
+            while (!exitThread.load(std::memory_order_relaxed))
+            {
+                glBindBuffer(GL_ARRAY_BUFFER, buffer);
+                glBindBuffer(GL_ARRAY_BUFFER, 0);
+            }
+
+            EXPECT_EGL_TRUE(eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT));
+        });
+
+        // Thread 2 (Main thread): Trigger setShared() by creating a shared context
+        for (int i = 0; i < 100; ++i)
+        {
+            EGLContext ctx2 = createMultithreadedContext(window, ctx1);
+            if (ctx2 != EGL_NO_CONTEXT)
+            {
+                eglDestroyContext(dpy, ctx2);
+            }
+        }
+
+        exitThread.store(true);
+        thread1.join();
+
+        // Make ctx1 current again on main thread so GLBuffer destructor can run safely
+        EXPECT_EGL_TRUE(eglMakeCurrent(dpy, surface1, surface1, ctx1));
+    }
+
+    EXPECT_EGL_TRUE(eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT));
+    eglDestroyContext(dpy, ctx1);
+    eglDestroySurface(dpy, surface1);
+
+    // Restore the window's context and surface
+    EXPECT_EGL_TRUE(
+        eglMakeCurrent(dpy, window->getSurface(), window->getSurface(), window->getContext()));
+}
+
+// A set of GL calls plus a client-data upload for the capture contention tests
+void ConcurrentCaptureGLWorkload(int iterationCount, std::vector<uint8_t> &bufferData)
+{
+    for (int i = 0; i < iterationCount; ++i)
+    {
+        glClearColor(0.02f * static_cast<float>(i % 32), 0.3f, 0.6f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glViewport(0, 0, 1 + (i % 8), 1 + (i % 8));
+        glEnable(GL_SCISSOR_TEST);
+        glScissor(0, 0, 1 + (i % 4), 1 + (i % 4));
+        glDisable(GL_SCISSOR_TEST);
+        bufferData[0] = static_cast<uint8_t>(i);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(bufferData.size()),
+                        bufferData.data());
+    }
+}
+
+// EGL thread work capture contention tests. EGL currency is per-thread so
+// toggling the side context here does not disturb the main thread's binding. The
+// eglMakeCurrent calls are captured and routed to CaptureEGLCallToFrameCapture
+// which shares the GL capture mutex
+void ConcurrentCaptureEGLThread(EGLDisplay dpy,
+                                EGLSurface sidePbuffer,
+                                EGLContext sideContext,
+                                std::atomic<bool> &stop,
+                                std::atomic<bool> &threadGood)
+{
+    if (eglMakeCurrent(dpy, sidePbuffer, sidePbuffer, sideContext) != EGL_TRUE)
+    {
+        threadGood = false;
+        return;
+    }
+    while (!stop.load(std::memory_order_relaxed))
+    {
+        eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+        eglMakeCurrent(dpy, sidePbuffer, sidePbuffer, sideContext);
+    }
+    eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+}
+
+// This test uses TSan to catch regressions when EGL/GL capture activity occurs on
+// multiple threads. A worker thread issues EGL calls while the main thread issues
+// GL calls and both are simultaneously added to FrameCaptureShared::mFrameCalls
+TEST_P(MultithreadingTest, ConcurrentEGLGLCapture)
+{
+    ANGLE_SKIP_TEST_IF(!IsTSan());
+
+    // Native GL backends cannot make contexts current on two threads concurrently: the
+    // underlying window-system call (e.g. glXMakeCurrent) is not thread-safe and aborts.
+    // The capture path this test targets is exercised on Vulkan/D3D11/Metal, which
+    // virtualize contexts; capture_replay is Vulkan-only regardless.
+    ANGLE_SKIP_TEST_IF(IsOpenGL() || IsOpenGLES());
+    ANGLE_SKIP_TEST_IF(!platformSupportsMultithreading());
+
+    EGLWindow *window      = getEGLWindow();
+    EGLDisplay dpy         = window->getDisplay();
+    EGLConfig config       = window->getConfig();
+    EGLSurface surface     = window->getSurface();
+    EGLContext mainContext = window->getContext();
+
+    // Create a second context with its own pbuffer operated on by a worker thread. Both
+    // threads' captured calls go to the same mFrameCalls structure
+    EGLContext sideContext = window->createContext(mainContext, nullptr);
+    ASSERT_EGL_SUCCESS();
+    ASSERT_NE(sideContext, EGL_NO_CONTEXT);
+
+    const EGLint pbufferAttribs[] = {EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE};
+    EGLSurface sidePbuffer        = eglCreatePbufferSurface(dpy, config, pbufferAttribs);
+    ASSERT_EGL_SUCCESS();
+    ASSERT_NE(sidePbuffer, EGL_NO_SURFACE);
+
+    // A bound buffer so GL side can upload client data
+    GLBuffer dataBuffer;
+    glBindBuffer(GL_ARRAY_BUFFER, dataBuffer);
+    std::vector<uint8_t> bufferData(256, 0x5au);
+    glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(bufferData.size()), bufferData.data(),
+                 GL_DYNAMIC_DRAW);
+    ASSERT_GL_NO_ERROR();
+
+    std::atomic<bool> stop{false};
+    std::atomic<bool> threadGood{true};
+    std::thread eglThread(ConcurrentCaptureEGLThread, dpy, sidePbuffer, sideContext, std::ref(stop),
+                          std::ref(threadGood));
+
+    // The main thread generates GL calls concurrently with the worker thread's captured
+    // EGL calls
+    constexpr int kConcurrentGLCalls = 2000;
+    ConcurrentCaptureGLWorkload(kConcurrentGLCalls, bufferData);
+
+    stop.store(true, std::memory_order_relaxed);
+    eglThread.join();
+    EXPECT_TRUE(threadGood);
+    ASSERT_GL_NO_ERROR();
+
+    // Make sure main context is current for cleanup
+    EXPECT_EGL_TRUE(eglMakeCurrent(dpy, surface, surface, mainContext));
+
+    eglDestroySurface(dpy, sidePbuffer);
+    eglDestroyContext(dpy, sideContext);
 }
 
 ANGLE_INSTANTIATE_TEST(

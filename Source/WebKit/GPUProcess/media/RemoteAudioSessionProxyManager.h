@@ -62,15 +62,13 @@ public:
     void updatePreferredBufferSizeForProcess();
     void updateSpatialExperience();
 
-    bool tryToSetActiveForProcess(RemoteAudioSessionProxy&, bool);
+    Ref<WebCore::AudioSession::SetActivePromise> tryToSetActiveForProcess(RemoteAudioSessionProxy&, bool);
 
     void beginInterruptionRemote();
     void endInterruptionRemote(WebCore::AudioSession::MayResume);
 
     WebCore::AudioSession& session() { return WebCore::AudioSession::singleton(); }
     const WebCore::AudioSession& session() const { return WebCore::AudioSession::singleton(); }
-    Ref<WebCore::AudioSession> protectedSession() { return WebCore::AudioSession::singleton(); }
-    Ref<const WebCore::AudioSession> protectedSession() const { return WebCore::AudioSession::singleton(); }
 
     void updatePresentingProcesses();
 

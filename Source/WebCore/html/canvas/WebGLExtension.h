@@ -31,6 +31,7 @@
 
 #include <atomic>
 #include <wtf/RefCounted.h>
+#include <wtf/RefPtr.h>
 
 namespace WebCore {
 
@@ -124,7 +125,13 @@ public:
 
     // Only to be used by friend WebCoreOpaqueRoot root(const WebGLExtension<T>*) that cannot be a friend
     // due to C++ warning on some compilers.
-    T* opaqueRoot() const { return m_context.load(); }
+    T* opaqueRoot() const LIFETIME_BOUND { return m_context.load(); }
+
+    bool hasActiveInspectorCanvasCallTracer() const
+    {
+        RefPtr context = m_context.load(std::memory_order::relaxed);
+        return context && context->hasActiveInspectorCanvasCallTracer();
+    }
 
 protected:
     WebGLExtension(T& context, WebGLExtensionName name)

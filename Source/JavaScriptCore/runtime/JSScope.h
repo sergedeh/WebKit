@@ -53,27 +53,27 @@ public:
     friend class LLIntOffsetsExtractor;
     static size_t offsetOfNext();
 
-    static JSObject* objectAtScope(JSScope*);
+    static JSObject* LEGACY_NODELETE objectAtScope(JSScope*);
 
     static JSObject* resolve(JSGlobalObject*, JSScope*, const Identifier&);
     static JSValue resolveScopeForHoistingFuncDeclInEval(JSGlobalObject*, JSScope*, const Identifier&);
     static ResolveOp abstractResolve(JSGlobalObject*, size_t depthOffset, JSScope*, const Identifier&, GetOrPut, ResolveType, InitializationMode);
 
     static bool hasConstantScope(ResolveType);
-    static JSScope* constantScopeForCodeBlock(ResolveType, CodeBlock*);
+    static JSScope* LEGACY_NODELETE constantScopeForCodeBlock(ResolveType, CodeBlock*);
 
     static void collectClosureVariablesUnderTDZ(JSScope*, TDZEnvironment& result, PrivateNameEnvironment&);
 
     DECLARE_VISIT_CHILDREN;
 
-    bool isVarScope();
-    bool isLexicalScope();
-    bool isModuleScope();
-    bool isCatchScope();
-    bool isCatchScopeWithSimpleParameter();
-    bool isFunctionNameScopeObject();
+    bool LEGACY_NODELETE isVarScope();
+    bool LEGACY_NODELETE isLexicalScope();
+    bool LEGACY_NODELETE isModuleScope();
+    bool LEGACY_NODELETE isCatchScope();
+    bool LEGACY_NODELETE isCatchScopeWithSimpleParameter();
+    bool LEGACY_NODELETE isFunctionNameScopeObject();
 
-    bool isNestedLexicalScope();
+    bool LEGACY_NODELETE isNestedLexicalScope();
 
     ScopeChainIterator begin();
     ScopeChainIterator end();
@@ -81,7 +81,7 @@ public:
 
     JSObject* globalThis();
 
-    SymbolTable* symbolTable();
+    SymbolTable* LEGACY_NODELETE symbolTable();
 
 protected:
     JSScope(VM&, Structure*, JSScope* next);
@@ -106,8 +106,8 @@ public:
     {
     }
 
-    JSObject* get() const { return JSScope::objectAtScope(m_node); }
-    JSObject* operator->() const { return JSScope::objectAtScope(m_node); }
+    JSObject* get() const;
+    JSObject* operator->() const;
     JSScope* scope() const { return m_node; }
 
     ScopeChainIterator& operator++() { m_node = m_node->next(); return *this; }

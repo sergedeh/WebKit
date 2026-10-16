@@ -56,14 +56,12 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(InspectorRuntimeAgent);
 InspectorRuntimeAgent::InspectorRuntimeAgent(AgentContext& context)
     : InspectorAgentBase("Runtime"_s)
     , m_injectedScriptManager(context.injectedScriptManager)
-    , m_debugger(*CheckedRef { context.environment }->debugger())
+    , m_debugger(CheckedRef { context.environment }->debugger())
     , m_vm(CheckedRef { context.environment }->vm())
 {
 }
 
-InspectorRuntimeAgent::~InspectorRuntimeAgent()
-{
-}
+InspectorRuntimeAgent::~InspectorRuntimeAgent() = default;
 
 static Ref<Protocol::Runtime::ErrorRange> buildErrorRangeObject(const JSTokenLocation& tokenLocation)
 {
@@ -145,11 +143,14 @@ Protocol::ErrorStringOr<std::tuple<Ref<Protocol::Runtime::RemoteObject>, std::op
     std::optional<bool> wasThrown;
     std::optional<int> savedResultIndex;
 
-    JSC::Debugger::TemporarilyDisableExceptionBreakpoints temporarilyDisableExceptionBreakpoints(m_debugger);
+    std::optional<JSC::Debugger::TemporarilyDisableExceptionBreakpoints> temporarilyDisableExceptionBreakpoints;
+    if (m_debugger)
+        temporarilyDisableExceptionBreakpoints.emplace(*m_debugger);
 
     bool pauseAndMute = doNotPauseOnExceptionsAndMuteConsole.value_or(false);
     if (pauseAndMute) {
-        temporarilyDisableExceptionBreakpoints.replace();
+        if (temporarilyDisableExceptionBreakpoints)
+            temporarilyDisableExceptionBreakpoints->replace();
         muteConsole();
     }
 
@@ -166,7 +167,7 @@ Protocol::ErrorStringOr<std::tuple<Ref<Protocol::Runtime::RemoteObject>, std::op
 
 void InspectorRuntimeAgent::awaitPromise(const Protocol::Runtime::RemoteObjectId& promiseObjectId, std::optional<bool>&& returnByValue, std::optional<bool>&& generatePreview, std::optional<bool>&& saveResult, Ref<AwaitPromiseCallback>&& callback)
 {
-    InjectedScript injectedScript = m_injectedScriptManager.injectedScriptForObjectId(promiseObjectId);
+    auto injectedScript = injectedScriptManager().injectedScriptForObjectId(promiseObjectId);
     if (injectedScript.hasNoValue()) {
         callback->sendFailure("Missing injected script for given promiseObjectId"_s);
         return;
@@ -182,7 +183,7 @@ void InspectorRuntimeAgent::awaitPromise(const Protocol::Runtime::RemoteObjectId
 
 void InspectorRuntimeAgent::callFunctionOn(const Protocol::Runtime::RemoteObjectId& objectId, const String& functionDeclaration, RefPtr<JSON::Array>&& arguments, std::optional<bool>&& doNotPauseOnExceptionsAndMuteConsole, std::optional<bool>&& returnByValue, std::optional<bool>&& generatePreview, std::optional<bool>&& emulateUserGesture, std::optional<bool>&& awaitPromise, Ref<CallFunctionOnCallback>&& callback)
 {
-    InjectedScript injectedScript = m_injectedScriptManager.injectedScriptForObjectId(objectId);
+    auto injectedScript = injectedScriptManager().injectedScriptForObjectId(objectId);
     if (injectedScript.hasNoValue()) {
         callback->sendFailure("Missing injected script for given objectId"_s);
         return;
@@ -195,11 +196,14 @@ void InspectorRuntimeAgent::callFunctionOn(InjectedScript& injectedScript, const
 {
     ASSERT(!injectedScript.hasNoValue());
 
-    JSC::Debugger::TemporarilyDisableExceptionBreakpoints temporarilyDisableExceptionBreakpoints(m_debugger);
+    std::optional<JSC::Debugger::TemporarilyDisableExceptionBreakpoints> temporarilyDisableExceptionBreakpoints;
+    if (m_debugger)
+        temporarilyDisableExceptionBreakpoints.emplace(*m_debugger);
 
     bool pauseAndMute = doNotPauseOnExceptionsAndMuteConsole.value_or(false);
     if (pauseAndMute) {
-        temporarilyDisableExceptionBreakpoints.replace();
+        if (temporarilyDisableExceptionBreakpoints)
+            temporarilyDisableExceptionBreakpoints->replace();
         muteConsole();
     }
 
@@ -219,12 +223,15 @@ Protocol::ErrorStringOr<Ref<Protocol::Runtime::ObjectPreview>> InspectorRuntimeA
 {
     Protocol::ErrorString errorString;
 
-    InjectedScript injectedScript = m_injectedScriptManager.injectedScriptForObjectId(objectId);
+    auto injectedScript = injectedScriptManager().injectedScriptForObjectId(objectId);
     if (injectedScript.hasNoValue())
         return makeUnexpected("Missing injected script for given objectId"_s);
 
-    JSC::Debugger::TemporarilyDisableExceptionBreakpoints temporarilyDisableExceptionBreakpoints(m_debugger);
-    temporarilyDisableExceptionBreakpoints.replace();
+    std::optional<JSC::Debugger::TemporarilyDisableExceptionBreakpoints> temporarilyDisableExceptionBreakpoints;
+    if (m_debugger) {
+        temporarilyDisableExceptionBreakpoints.emplace(*m_debugger);
+        temporarilyDisableExceptionBreakpoints->replace();
+    }
 
     RefPtr<Protocol::Runtime::ObjectPreview> preview;
 
@@ -244,7 +251,7 @@ Protocol::ErrorStringOr<std::tuple<Ref<JSON::ArrayOf<Protocol::Runtime::Property
 {
     Protocol::ErrorString errorString;
 
-    InjectedScript injectedScript = m_injectedScriptManager.injectedScriptForObjectId(objectId);
+    auto injectedScript = injectedScriptManager().injectedScriptForObjectId(objectId);
     if (injectedScript.hasNoValue())
         return makeUnexpected("Missing injected script for given objectId"_s);
 
@@ -259,8 +266,11 @@ Protocol::ErrorStringOr<std::tuple<Ref<JSON::ArrayOf<Protocol::Runtime::Property
     RefPtr<JSON::ArrayOf<Protocol::Runtime::PropertyDescriptor>> properties;
     RefPtr<JSON::ArrayOf<Protocol::Runtime::InternalPropertyDescriptor>> internalProperties;
 
-    JSC::Debugger::TemporarilyDisableExceptionBreakpoints temporarilyDisableExceptionBreakpoints(m_debugger);
-    temporarilyDisableExceptionBreakpoints.replace();
+    std::optional<JSC::Debugger::TemporarilyDisableExceptionBreakpoints> temporarilyDisableExceptionBreakpoints;
+    if (m_debugger) {
+        temporarilyDisableExceptionBreakpoints.emplace(*m_debugger);
+        temporarilyDisableExceptionBreakpoints->replace();
+    }
 
     muteConsole();
 
@@ -282,7 +292,7 @@ Protocol::ErrorStringOr<std::tuple<Ref<JSON::ArrayOf<Protocol::Runtime::Property
 {
     Protocol::ErrorString errorString;
 
-    InjectedScript injectedScript = m_injectedScriptManager.injectedScriptForObjectId(objectId);
+    auto injectedScript = injectedScriptManager().injectedScriptForObjectId(objectId);
     if (injectedScript.hasNoValue())
         return makeUnexpected("Missing injected script for given objectId"_s);
 
@@ -297,8 +307,11 @@ Protocol::ErrorStringOr<std::tuple<Ref<JSON::ArrayOf<Protocol::Runtime::Property
     RefPtr<JSON::ArrayOf<Protocol::Runtime::PropertyDescriptor>> properties;
     RefPtr<JSON::ArrayOf<Protocol::Runtime::InternalPropertyDescriptor>> internalProperties;
 
-    JSC::Debugger::TemporarilyDisableExceptionBreakpoints temporarilyDisableExceptionBreakpoints(m_debugger);
-    temporarilyDisableExceptionBreakpoints.replace();
+    std::optional<JSC::Debugger::TemporarilyDisableExceptionBreakpoints> temporarilyDisableExceptionBreakpoints;
+    if (m_debugger) {
+        temporarilyDisableExceptionBreakpoints.emplace(*m_debugger);
+        temporarilyDisableExceptionBreakpoints->replace();
+    }
 
     muteConsole();
 
@@ -320,7 +333,7 @@ Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Protocol::Runtime::CollectionEntry>>> 
 {
     Protocol::ErrorString errorString;
 
-    InjectedScript injectedScript = m_injectedScriptManager.injectedScriptForObjectId(objectId);
+    auto injectedScript = injectedScriptManager().injectedScriptForObjectId(objectId);
     if (injectedScript.hasNoValue())
         return makeUnexpected("Missing injected script for given objectId"_s);
 
@@ -354,7 +367,7 @@ Protocol::ErrorStringOr<std::optional<int> /* saveResultIndex */> InspectorRunti
         if (injectedScript.hasNoValue())
             return makeUnexpected(errorString);
     } else {
-        injectedScript = m_injectedScriptManager.injectedScriptForObjectId(objectId);
+        injectedScript = injectedScriptManager().injectedScriptForObjectId(objectId);
         if (injectedScript.hasNoValue())
             return makeUnexpected("Missing injected script for given objectId"_s);
     }
@@ -371,14 +384,14 @@ Protocol::ErrorStringOr<std::optional<int> /* saveResultIndex */> InspectorRunti
 
 Protocol::ErrorStringOr<void> InspectorRuntimeAgent::setSavedResultAlias(const String& savedResultAlias)
 {
-    m_injectedScriptManager.injectedScriptHost().setSavedResultAlias(savedResultAlias);
+    injectedScriptManager().injectedScriptHost().setSavedResultAlias(savedResultAlias);
 
     return { };
 }
 
 Protocol::ErrorStringOr<void> InspectorRuntimeAgent::releaseObject(const Protocol::Runtime::RemoteObjectId& objectId)
 {
-    InjectedScript injectedScript = m_injectedScriptManager.injectedScriptForObjectId(objectId);
+    auto injectedScript = injectedScriptManager().injectedScriptForObjectId(objectId);
     if (!injectedScript.hasNoValue())
         injectedScript.releaseObject(objectId);
 
@@ -387,7 +400,7 @@ Protocol::ErrorStringOr<void> InspectorRuntimeAgent::releaseObject(const Protoco
 
 Protocol::ErrorStringOr<void> InspectorRuntimeAgent::releaseObjectGroup(const String& objectGroup)
 {
-    m_injectedScriptManager.releaseObjectGroup(objectGroup);
+    injectedScriptManager().releaseObjectGroup(objectGroup);
 
     return { };
 }

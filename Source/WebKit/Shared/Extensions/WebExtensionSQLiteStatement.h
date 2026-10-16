@@ -51,8 +51,6 @@ public:
         return adoptRef(*new WebExtensionSQLiteStatement(std::forward<Args>(args)...));
     }
 
-    explicit WebExtensionSQLiteStatement(Ref<WebExtensionSQLiteDatabase>, const String& query, RefPtr<API::Error>&);
-
     ~WebExtensionSQLiteStatement();
 
     void bind(const String&, int parameterIndex);
@@ -66,18 +64,21 @@ public:
     bool execute(RefPtr<API::Error>&);
 
     Ref<WebExtensionSQLiteRowEnumerator> fetch();
-    bool fetchWithEnumerationCallback(Function<void(RefPtr<WebExtensionSQLiteRow>, bool)>&, RefPtr<API::Error>&);
+    bool fetchWithEnumerationCallback(NOESCAPE const Function<void(RefPtr<WebExtensionSQLiteRow>, bool)>&, RefPtr<API::Error>&);
 
     void reset();
     void invalidate();
 
     Ref<WebExtensionSQLiteDatabase> database() { return m_db; };
-    sqlite3_stmt* handle() { return m_handle; };
+    sqlite3_stmt* handle() LIFETIME_BOUND { return m_handle; };
     bool isValid() { return !!m_handle; };
 
     Vector<String> columnNames();
     HashMap<String, int> columnNamesToIndicies();
+
 private:
+    explicit WebExtensionSQLiteStatement(Ref<WebExtensionSQLiteDatabase>, const String& query, RefPtr<API::Error>&);
+
     sqlite3_stmt* m_handle;
     const Ref<WebExtensionSQLiteDatabase> m_db;
 

@@ -71,6 +71,26 @@ function normalizeRgb10a2(rgba, index) {
   return rgba / normalizationFactor;
 }
 
+function makeRgb10a2Signed(rgba) {
+  const [r, g, b, a] = rgba;
+  // Check the input fits in i32, then check it's in range for i10 or i2.
+  assert((r | 0) === r && r >= -512 && r <= 511);
+  assert((g | 0) === g && g >= -512 && g <= 511);
+  assert((b | 0) === b && b >= -512 && b <= 511);
+  assert((a | 0) === a && a >= -2 && a <= 1);
+  const r_bits = r & 0x3ff;
+  const g_bits = g & 0x3ff;
+  const b_bits = b & 0x3ff;
+  const a_bits = a & 0x3;
+  return r_bits | g_bits << 10 | b_bits << 20 | a_bits << 30;
+}
+
+function normalizeRgb10a2Signed(val, index) {
+  const isAlpha = index % 4 === 3;
+  const maxVal = isAlpha ? 1 : 511;
+  return Math.max(val / maxVal, -1.0);
+}
+
 
 
 
@@ -379,6 +399,32 @@ struct VSOutputs {
         }
 
       case 'snorm':{
+          if (formatInfo.bytesPerComponent === 'packed') {
+            assert(bitSize === 0);
+            switch (format) {
+              case 'snorm10-10-10-2':{
+
+                  const data = [
+                  [0, 0, 0, 0],
+                  [511, 511, 511, 1],
+                  [-512, -512, -512, -2],
+                  [243, -123, 342, -1]];
+
+                  const vertexData = new Uint32Array(data.map(makeRgb10a2Signed)).buffer;
+                  const expectedData = new Float32Array(data.flat().map(normalizeRgb10a2Signed)).buffer;
+
+                  return {
+                    shaderBaseType: 'f32',
+                    testComponentCount: data.flat().length,
+                    expectedData,
+                    vertexData,
+                    floatTolerance: 0.1 / 511
+                  };
+                }
+              default:
+                unreachable();
+            }
+          }
 
           const data = [
           42,
@@ -775,10 +821,13 @@ fn((t) => {
   const formatInfo = kVertexFormatInfo[format];
   const formatSize = formatInfo.byteSize;
   const makeMultipleOf = Math.min(formatSize, 4);
-  const offset = Math.floor(clamp(makeValueTestVariant(arrayStride, offsetVariant), {
+  const offset =
+  Math.floor(
+    clamp(makeValueTestVariant(arrayStride, offsetVariant), {
       min: 0,
       max: arrayStride - formatSize
-  }) / makeMultipleOf) * makeMultipleOf;
+    }) / makeMultipleOf
+  ) * makeMultipleOf;
 
   t.runTest([
   {
@@ -1077,7 +1126,9 @@ fn((t) => {
   const formatInfo = kVertexFormatInfo[format];
   const formatSize = formatInfo.byteSize;
   const makeMultipleOf = Math.min(formatSize, 4);
-  const offset = Math.floor(t.makeLimitVariant('maxVertexBufferArrayStride', offsetVariant) / makeMultipleOf) * makeMultipleOf;
+  const offset =
+  Math.floor(t.makeLimitVariant('maxVertexBufferArrayStride', offsetVariant) / makeMultipleOf) *
+  makeMultipleOf;
   const kCount = 10;
 
   // Create the stride 0 part of the test, first by faking a single vertex being drawn and

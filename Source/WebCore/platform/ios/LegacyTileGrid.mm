@@ -88,22 +88,16 @@ void LegacyTileGrid::dropTilesOutsideRect(const IntRect& keepRect)
 
 void LegacyTileGrid::dropTilesBetweenRects(const IntRect& dropRect, const IntRect& keepRect)
 {
-    Vector<TileIndex> toRemove;
-    for (const auto& tile : m_tiles) {
-        const TileIndex& index = tile.key;
+    m_tiles.removeIf([&](auto& tile) {
         IntRect tileRect = tile.value->rect();
-        if (tileRect.intersects(dropRect) && !tileRect.intersects(keepRect))
-            toRemove.append(index);
-    }
-    unsigned removeCount = toRemove.size();
-    for (unsigned n = 0; n < removeCount; ++n)
-        m_tiles.remove(toRemove[n]);
+        return tileRect.intersects(dropRect) && !tileRect.intersects(keepRect);
+    });
 }
 
 unsigned LegacyTileGrid::tileByteSize() const
 {
     IntSize tilePixelSize = m_tileSize;
-    tilePixelSize.scale(protectedTileCache()->screenScale());
+    tilePixelSize.scale(protect(tileCache())->screenScale());
     return LegacyTileLayerPool::bytesBackingLayerWithPixelSize(tilePixelSize);
 }
 
@@ -118,7 +112,7 @@ bool LegacyTileGrid::dropDistantTiles(unsigned tilesNeeded, double shortestDista
     unsigned bytesPerTile = tileByteSize();
     unsigned bytesNeeded = tilesNeeded * bytesPerTile;
     unsigned bytesUsed = tileCount() * bytesPerTile;
-    unsigned maximumBytes = protectedTileCache()->tileCapacityForGrid(this);
+    unsigned maximumBytes = protect(tileCache())->tileCapacityForGrid(this);
 
     int bytesToReclaim = int(bytesUsed) - (int(maximumBytes) - bytesNeeded);
     if (bytesToReclaim <= 0)
@@ -182,7 +176,7 @@ CALayer* LegacyTileGrid::tileHostLayer() const
 
 IntRect LegacyTileGrid::bounds() const
 {
-    return IntRect(IntPoint(), IntSize([tileHostLayer() size]));
+    return IntRect(IntPoint(), IntSize([protect(tileHostLayer()) size]));
 }
 
 RefPtr<LegacyTileGridTile> LegacyTileGrid::tileForIndex(const TileIndex& index) const
@@ -260,14 +254,14 @@ void LegacyTileGrid::updateTileOpacity()
 {
     TileMap::iterator end = m_tiles.end();
     for (TileMap::iterator it = m_tiles.begin(); it != end; ++it)
-        [it->value->tileLayer() setOpaque:m_tileCache->tilesOpaque()];
+        [protect(it->value->tileLayer()) setOpaque:m_tileCache->tilesOpaque()];
 }
 
 void LegacyTileGrid::updateTileBorderVisibility()
 {
     TileMap::iterator end = m_tiles.end();
     for (TileMap::iterator it = m_tiles.begin(); it != end; ++it)
-        it->value->showBorder(m_tileCache->tileBordersVisible());
+        protect(it->value)->showBorder(protect(m_tileCache)->tileBordersVisible());
 }
 
 unsigned LegacyTileGrid::tileCount() const
@@ -302,34 +296,29 @@ bool LegacyTileGrid::checkDoSingleTileLayout()
 
 void LegacyTileGrid::updateHostLayerSize()
 {
-    CALayer* hostLayer = protectedTileCache()->hostLayer();
-    CGRect tileHostBounds = [hostLayer convertRect:[hostLayer bounds] toLayer:tileHostLayer()];
+    RetainPtr hostLayer = protect(tileCache())->hostLayer();
+    RetainPtr tileHostLayer = this->tileHostLayer();
+    CGRect tileHostBounds = [hostLayer convertRect:[hostLayer bounds] toLayer:tileHostLayer];
     CGSize transformedSize;
     transformedSize.width = CGRound(tileHostBounds.size.width);
     transformedSize.height = CGRound(tileHostBounds.size.height);
 
-    CGRect bounds = [tileHostLayer() bounds];
+    CGRect bounds = [tileHostLayer bounds];
     if (CGSizeEqualToSize(bounds.size, transformedSize))
         return;
     bounds.size = transformedSize;
-    [tileHostLayer() setBounds:bounds];
+    [tileHostLayer setBounds:bounds];
 }
 
 void LegacyTileGrid::dropInvalidTiles()
 {
     IntRect bounds = this->bounds();
     IntRect dropBounds = intersection(m_validBounds, bounds);
-    Vector<TileIndex> toRemove;
-    for (const auto& tile : m_tiles) {
-        const TileIndex& index = tile.key;
+    m_tiles.removeIf([&](auto& tile) {
         const IntRect& tileRect = tile.value->rect();
-        IntRect expectedTileRect = tileRectForIndex(index);
-        if (expectedTileRect != tileRect || !dropBounds.contains(tileRect))
-            toRemove.append(index);
-    }
-    unsigned removeCount = toRemove.size();
-    for (unsigned n = 0; n < removeCount; ++n)
-        m_tiles.remove(toRemove[n]);
+        IntRect expectedTileRect = tileRectForIndex(tile.key);
+        return expectedTileRect != tileRect || !dropBounds.contains(tileRect);
+    });
 
     m_validBounds = bounds;
 }
@@ -549,7 +538,7 @@ void LegacyTileGrid::createTiles(LegacyTileCache::SynchronousTileCreationMode cr
 
     bool didCreateTiles = !!tilesToCreateCount;
     bool createMoreTiles = pendingTileCount > tilesToCreateCount;
-    protectedTileCache()->finishedCreatingTiles(didCreateTiles, createMoreTiles);
+    protect(tileCache())->finishedCreatingTiles(didCreateTiles, createMoreTiles);
 }
 
 void LegacyTileGrid::dumpTiles()
@@ -562,7 +551,7 @@ void LegacyTileGrid::dumpTiles()
         TileIndex& index = it->key;
         IntRect tileRect = it->value->rect();
         NSLog(@"#%-3d (%3d %3d) - [%6d %6d %6d %6d]%@", ++i, index.x(), index.y(), tileRect.x(), tileRect.y(), tileRect.width(), tileRect.height(), tileRect.intersects(visibleRect) ? @" *" : @"");
-        NSLog(@"     %@", [it->value->tileLayer() contents]);
+        NSLog(@"     %@", [protect(it->value->tileLayer()) contents]);
     }
 }
 

@@ -56,11 +56,6 @@ IPC::Connection& RemoteMediaSessionHelper::ensureConnection()
     return gpuProcessConnection->connection();
 }
 
-Ref<IPC::Connection> RemoteMediaSessionHelper::ensureProtectedConnection()
-{
-    return ensureConnection();
-}
-
 void RemoteMediaSessionHelper::gpuProcessConnectionDidClose(GPUProcessConnection& gpuProcessConnection)
 {
     gpuProcessConnection.messageReceiverMap().removeMessageReceiver(*this);
@@ -69,13 +64,23 @@ void RemoteMediaSessionHelper::gpuProcessConnectionDidClose(GPUProcessConnection
 
 void RemoteMediaSessionHelper::startMonitoringWirelessRoutesInternal()
 {
-    ensureProtectedConnection()->send(Messages::RemoteMediaSessionHelperProxy::StartMonitoringWirelessRoutes(), { });
+    protect(ensureConnection())->send(Messages::RemoteMediaSessionHelperProxy::StartMonitoringWirelessRoutes(), { });
 }
 
 void RemoteMediaSessionHelper::stopMonitoringWirelessRoutesInternal()
 {
-    ensureProtectedConnection()->send(Messages::RemoteMediaSessionHelperProxy::StopMonitoringWirelessRoutes(), { });
+    protect(ensureConnection())->send(Messages::RemoteMediaSessionHelperProxy::StopMonitoringWirelessRoutes(), { });
 }
+
+#if ENABLE(WIRELESS_PLAYBACK_MEDIA_PLAYER)
+void RemoteMediaSessionHelper::ensureMediaDeviceRouteControllerMonitoring()
+{
+    // Connecting causes the GPU process to create a RemoteMediaSessionHelperProxy, which registers
+    // as a client of MediaSessionHelper to ensure that changes in MediaDeviceRouteController's
+    // active route are sent to the WebContent process.
+    ensureConnection();
+}
+#endif
 
 void RemoteMediaSessionHelper::activeVideoRouteDidChange(SupportsAirPlayVideo supportsAirPlayVideo, MediaPlaybackTargetContextSerialized&& targetContext)
 {
@@ -89,11 +94,6 @@ void RemoteMediaSessionHelper::activeVideoRouteDidChange(SupportsAirPlayVideo su
     case WebCore::MediaPlaybackTargetType::None:
         break;
     }
-}
-
-void RemoteMediaSessionHelper::activeAudioRouteSupportsSpatialPlaybackDidChange(SupportsSpatialAudioPlayback supportsSpatialAudioPlayback)
-{
-    WebCore::MediaSessionHelper::activeAudioRouteSupportsSpatialPlaybackDidChange(supportsSpatialAudioPlayback);
 }
 
 }

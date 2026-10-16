@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Google LLC.
+ * Copyright 2019 Google LLC
  *
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
@@ -17,16 +17,6 @@
 #endif
 
 namespace skiagm {
-
-#define ERR_MSG_ASSERT(COND) \
-    do { \
-        if (!(COND)) { \
-            errorMsg->printf("preservefillrule.cpp(%i): assert(%s)", \
-                             __LINE__, #COND); \
-            return DrawResult::kFail; \
-        } \
-    } while (false)
-
 
 /**
  * This test originally ensured that the ccpr path cache preserved fill rules properly. CCPR is gone

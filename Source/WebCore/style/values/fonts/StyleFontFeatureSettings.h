@@ -41,7 +41,7 @@ struct FontFeatureSettings {
     FontFeatureSettings(WebCore::FontFeatureSettings&& platform) : m_platform { WTF::move(platform) } { }
     FontFeatureSettings(const WebCore::FontFeatureSettings& platform) : m_platform { platform } { }
 
-    const WebCore::FontFeatureSettings& platform() const { return m_platform; }
+    const WebCore::FontFeatureSettings& platform() const LIFETIME_BOUND { return m_platform; }
     WebCore::FontFeatureSettings takePlatform() { return WTF::move(m_platform); }
 
     bool operator==(const FontFeatureSettings&) const = default;
@@ -53,11 +53,11 @@ private:
 // MARK: - Conversion
 
 template<> struct CSSValueConversion<FontFeatureSettings> { auto operator()(BuilderState&, const CSSValue&) -> FontFeatureSettings; };
-template<> struct CSSValueCreation<FontFeatureSettings> { Ref<CSSValue> operator()(CSSValuePool&, const RenderStyle&, const FontFeatureSettings&); };
+template<> struct CSSValueCreation<FontFeatureSettings> { Ref<CSSValue> operator()(CSSValuePool&, const Style::ComputedStyle&, const FontFeatureSettings&); };
 
 // MARK: - Serialization
 
-template<> struct Serialize<FontFeatureSettings> { void operator()(StringBuilder&, const CSS::SerializationContext&, const RenderStyle&, const FontFeatureSettings&); };
+template<> struct Serialize<FontFeatureSettings> { void operator()(StringBuilder&, const CSS::SerializationContext&, const Style::ComputedStyle&, const FontFeatureSettings&); };
 
 // MARK: - Logging
 

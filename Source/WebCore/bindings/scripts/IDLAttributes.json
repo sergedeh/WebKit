@@ -23,6 +23,10 @@
         },
         "AllowShared": {
             "contextsAllowed": ["type"],
+            "typesAllowed": ["buffer source types"],
+            "supportsNullableTypes": true,
+            "supportsUnionTypes": true,
+            "notes": "FIXME: Only buffer view types should be allowed, and not union types. Until SharedArrayBuffer is a type of its own, [AllowShared] on ArrayBuffer stands in for it, including on the AllowSharedBufferSource union.",
             "standard": {
                 "url": "https://webidl.spec.whatwg.org/#AllowShared"
             }
@@ -67,8 +71,16 @@
         "CheckSecurityForNode": {
             "contextsAllowed": ["attribute", "operation"]
         },
+        "CheckSecurityForNodeWithFrameOwner": {
+            "contextsAllowed": ["attribute", "operation"]
+        },
+        "CheckSecurityForNodeWithDOMWindow": {
+            "contextsAllowed": ["attribute", "operation"]
+        },
         "Clamp": {
             "contextsAllowed": ["type"],
+            "typesAllowed": ["integer types"],
+            "supportsNullableTypes": true,
             "standard": {
                 "url": "https://webidl.spec.whatwg.org/#Clamp"
             }
@@ -93,7 +105,7 @@
             "values": ["*"]
         },
         "ConstantsEnum": {
-            "contextsAllowed": ["interface"],
+            "contextsAllowed": ["interface", "constant"],
             "values": ["*"]
         },
         "ContextAllowsMediaDevices": {
@@ -165,7 +177,7 @@
             "supportsConjunction": true
         },
         "DoNotCheckConstants": {
-            "contextsAllowed": ["interface"]
+            "contextsAllowed": ["interface", "constant"]
         },
         "DoNotCheckSecurity": {
             "contextsAllowed": ["attribute", "operation"]
@@ -180,6 +192,11 @@
             "contextsAllowed": ["interface", "dictionary", "enum", "attribute", "operation", "constant", "dictionary-member", "includes"],
             "values": ["*"],
             "supportsConjunction": true
+        },
+        "EnabledBySettingOrQuirk": {
+            "contextsAllowed": ["interface", "dictionary", "enum", "attribute", "operation", "constant", "dictionary-member", "includes"],
+            "values": ["*"],
+            "note": "Gates enablement on either a setting or quirk. Value is SettingName|QuirkName, e.g., EnabledBySettingOrQuirk=FullScreenEnabled|shouldEnterNativeFullscreenWhenCallingElementRequestFullscreen"
         },
         "EnabledByDeprecatedGlobalSetting": {
             "contextsAllowed": ["interface", "namespace", "dictionary", "enum", "attribute", "operation", "constant", "iterable", "includes"],
@@ -209,6 +226,8 @@
         },
         "EnforceRange": {
             "contextsAllowed": ["type"],
+            "typesAllowed": ["integer types"],
+            "supportsNullableTypes": true,
             "standard": {
                 "url": "https://webidl.spec.whatwg.org/#EnforceRange"
             }
@@ -234,12 +253,20 @@
         "ExportToWrappedFunction": {
             "contextsAllowed": ["interface"]
         },
+        "EmbedderArrayLike": {
+            "contextsAllowed": ["interface"]
+        },
         "Exposed": {
             "contextsAllowed": ["interface", "namespace", "attribute", "operation", "constant"],
             "values": ["*"],
             "standard": {
                 "url": "https://webidl.spec.whatwg.org/#Exposed"
             }
+        },
+        "ExposedEnabledBySetting": {
+            "contextsAllowed": ["interface"],
+            "values": ["*"],
+            "note": "Gates exposure in a specific context behind a runtime setting. Value is Context|SettingName, e.g., ExposedEnabledBySetting=SharedWorker|WorkerInSharedWorkerEnabled"
         },
         "GenerateAddOpaqueRoot": {
             "contextsAllowed": ["interface"],
@@ -274,12 +301,25 @@
         "IgnoreSubclassesWhenGeneratingToJSObject": {
             "contextsAllowed": ["interface"]
         },
+        "ImplementationDefaultValue": {
+            "contextsAllowed": ["dictionary-member", "argument"],
+            "values": ["*"],
+            "notes" : "Allows specifying a default value to use for optional dictionary member and operation arguments when the specification doesn't specify one but using one is unobservable." 
+        },
         "ImplementedAs": {
             "contextsAllowed": ["interface", "dictionary", "dictionary-member", "enum", "attribute", "operation", "constant"],
             "values": ["*"]
         },
         "ImplementedBy": {
             "contextsAllowed": ["interface", "namespace", "dictionary", "dictionary-member", "attribute", "operation", "constant"],
+            "values": ["*"]
+        },
+        "ImplementationRequired": {
+            "contextsAllowed": ["dictionary-member"],
+            "notes": "Allows treating the dictionary member as required when the specification doesn't specify the required keyword but using it is unobservable."
+        },
+        "InlineCapacity": {
+            "contextsAllowed": ["type"],
             "values": ["*"]
         },
         "InterfaceName": {
@@ -360,9 +400,6 @@
             },
             "unsupported": true
         },
-        "LegacyNativeDictionaryRequiredInterfaceNullability": {
-            "contextsAllowed": ["dictionary"]
-        },
         "LegacyNoInterfaceObject": {
             "contextsAllowed": ["interface"],
             "standard": {
@@ -371,6 +408,7 @@
         },
         "LegacyNullToEmptyString": {
             "contextsAllowed": ["type"],
+            "typesAllowed": ["DOMString", "USVString"],
             "standard": {
                 "url": "https://webidl.spec.whatwg.org/#LegacyNullToEmptyString"
             }
@@ -460,6 +498,10 @@
                 "url": "https://webidl.spec.whatwg.org/#PutForwards"
             }
         },
+        "QuirksCanChangeAtRuntime": {
+            "contextsAllowed": ["interface", "attribute", "operation", "constant"],
+            "note": "The quirks gating this member are not known when the interface prototype is first created. Emits JS<Interface>::reevaluateQuirkDependentPrototypeProperties(), which ScriptController::reevaluateQuirkDependentProperties() calls whenever the quirks change. Re-evaluation removes the member when it becomes disabled and reinstates it when it becomes enabled again, but never overwrites a value the page installed itself."
+        },
         "RaisesException": {
             "contextsAllowed": ["operation"],
             "notes": "Should only be used on indexed getters that have to throw an exception in some cases"
@@ -510,6 +552,9 @@
         "ReturnValue": {
             "contextsAllowed": ["argument"]
         },
+        "SameAgentCluster": {
+            "contextsAllowed": ["interface"]
+        },
         "SameObject": {
             "contextsAllowed": ["attribute"],
             "standard": {
@@ -527,8 +572,7 @@
             "contextsAllowed": ["interface"],
             "standard": {
                 "url": "https://html.spec.whatwg.org/multipage/structured-data.html#serializable"
-            },
-            "unsupported": true
+            }
         },
         "SetterCallWith": {
             "contextsAllowed": ["attribute"],
@@ -541,6 +585,9 @@
         "SkipVTableValidation": {
             "contextsAllowed": ["interface"]
         },
+        "StandaloneConstructorAttributes": {
+            "contextsAllowed": ["interface"]
+        },
         "SuppressToJSObject": {
             "contextsAllowed": ["interface"]
         },
@@ -551,8 +598,7 @@
             "contextsAllowed": ["interface"],
             "standard": {
                 "url": "https://html.spec.whatwg.org/multipage/structured-data.html#transferable"
-            },
-            "unsupported": true
+            }
         },
         "URL": {
             "contextsAllowed": ["attribute"]

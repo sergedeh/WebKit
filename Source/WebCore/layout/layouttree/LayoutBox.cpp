@@ -31,11 +31,10 @@
 #include "LayoutContainingBlockChainIterator.h"
 #include "LayoutElementBox.h"
 #include "LayoutInitialContainingBlock.h"
-#include "LayoutPhase.h"
 #include "LayoutShape.h"
 #include "LayoutState.h"
-#include "RenderObject.h"
-#include "RenderStyle+GettersInlines.h"
+#include "RenderElementInlines.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -46,7 +45,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(Box);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Box::BoxRareData);
 
 
-Box::Box(ElementAttributes&& elementAttributes, RenderStyle&& style, std::unique_ptr<RenderStyle>&& firstLineStyle, EnumSet<BaseTypeFlag> baseTypeFlags)
+Box::Box(ElementAttributes&& elementAttributes, Style::ComputedStyle&& style, std::unique_ptr<Style::ComputedStyle>&& firstLineStyle, EnumSet<BaseTypeFlag> baseTypeFlags)
     : m_nodeType(elementAttributes.nodeType)
     , m_isAnonymous(static_cast<bool>(elementAttributes.isAnonymous))
     , m_baseTypeFlags(baseTypeFlags.toRaw())
@@ -80,7 +79,7 @@ UniqueRef<Box> Box::removeFromParent()
     return makeUniqueRefFromNonNullUniquePtr(WTF::move(ownedSelf));
 }
 
-void Box::updateStyle(RenderStyle&& newStyle, std::unique_ptr<RenderStyle>&& newFirstLineStyle)
+void Box::updateStyle(Style::ComputedStyle&& newStyle, std::unique_ptr<Style::ComputedStyle>&& newFirstLineStyle)
 {
     m_style = WTF::move(newStyle);
     if (newFirstLineStyle)
@@ -91,8 +90,6 @@ void Box::updateStyle(RenderStyle&& newStyle, std::unique_ptr<RenderStyle>&& new
 
 bool Box::establishesFormattingContext() const
 {
-    // We need the final tree structure to tell whether a box establishes a certain formatting context. 
-    ASSERT(!Phase::isInTreeBuilding());
     return establishesInlineFormattingContext()
         || establishesBlockFormattingContext()
         || establishesTableFormattingContext()
@@ -203,11 +200,15 @@ bool Box::isFloatingPositioned() const
     // FIXME: Rendering code caches values like this. (style="position: absolute; float: left")
     if (isOutOfFlowPositioned())
         return false;
+    if (isLineBreakBox())
+        return false;
     return m_style.floating() != Float::None;
 }
 
 bool Box::hasFloatClear() const
 {
+    if (isWordBreakOpportunity())
+        return false;
     return m_style.clear() != Clear::None && (isBlockLevelBox() || isLineBreakBox());
 }
 
@@ -221,26 +222,40 @@ bool Box::isFloatAvoider() const
 
 bool Box::isInlineBlockBox() const
 {
-    return m_style.display() == DisplayType::InlineBlock;
+    auto display = m_style.display();
+    if (display == Style::DisplayType::InlineFlowRoot)
+        return true;
+    return display == Style::DisplayType::InlineFlow && is<ElementBox>(*this) && !isInlineBox() && !isReplacedBox() && !isIFrame();
 }
 
 bool Box::isInlineTableBox() const
 {
-    return m_style.display() == DisplayType::InlineTable;
+    return m_style.display() == Style::DisplayType::InlineTable;
+}
+
+static bool LEGACY_NODELETE isInsideTable(const Box& box)
+{
+    auto& parent = box.parent();
+    return parent.isTableBox() || parent.isTableWrapperBox() || parent.style().display().isInternalTableBox();
 }
 
 bool Box::isBlockLevelBox() const
 {
+    if (isInlineBox())
+        return false;
+
     // Block level elements generate block level boxes.
     auto display = m_style.display();
-    return display == DisplayType::Block
-        || display == DisplayType::ListItem
-        || display == DisplayType::Table
-        || display == DisplayType::Flex
-        || display == DisplayType::Box
-        || display == DisplayType::Grid
-        || display == DisplayType::GridLanes
-        || display == DisplayType::FlowRoot;
+    if (display.isInternalTableBox() || display == Style::DisplayType::TableCaption)
+        return !isInsideTable(*this);
+    return display == Style::DisplayType::BlockFlow
+        || display == Style::DisplayType::BlockFlowRoot
+        || display == Style::DisplayType::BlockTable
+        || display == Style::DisplayType::BlockFlex
+        || display == Style::DisplayType::BlockGrid
+        || display == Style::DisplayType::BlockGridLanes
+        || display == Style::DisplayType::BlockDeprecatedFlex
+        || display == Style::DisplayType::BlockFlowListItem;
 }
 
 bool Box::isBlockBox() const
@@ -251,26 +266,28 @@ bool Box::isBlockBox() const
 
 bool Box::isInlineLevelBox() const
 {
+    if (isInlineBox())
+        return true;
+
     // Inline level elements generate inline level boxes.
     auto display = m_style.display();
-    return display == DisplayType::Inline
-        || display == DisplayType::InlineBox
-        || display == DisplayType::InlineFlex
-        || display == DisplayType::InlineGrid
-        || display == DisplayType::InlineGridLanes
-        || display == DisplayType::Ruby
-        || display == DisplayType::RubyBase
-        || display == DisplayType::RubyAnnotation
-        || isInlineBlockBox()
-        || isInlineTableBox();
+    return is<ElementBox>(*this) &&
+          (display == Style::DisplayType::InlineFlow
+        || display == Style::DisplayType::InlineFlowRoot
+        || display == Style::DisplayType::InlineTable
+        || display == Style::DisplayType::InlineFlex
+        || display == Style::DisplayType::InlineGrid
+        || display == Style::DisplayType::InlineGridLanes
+        || display == Style::DisplayType::InlineRuby
+        || display == Style::DisplayType::InlineDeprecatedFlex
+        || display == Style::DisplayType::RubyBase
+        || display == Style::DisplayType::RubyText);
 }
 
 bool Box::isInlineBox() const
 {
     // An inline box is one that is both inline-level and whose contents participate in its containing inline formatting context.
-    // A non-replaced element with a 'display' value of 'inline' generates an inline box.
-    auto display = m_style.display();
-    return (display == DisplayType::Inline || display == DisplayType::Ruby || display == DisplayType::RubyBase) && !isReplacedBox();
+    return m_nodeType == NodeType::InlineBox || isLineBreakBox();
 }
 
 bool Box::isAtomicInlineBox() const
@@ -293,12 +310,14 @@ bool Box::isGridItem() const
 
 bool Box::isBlockContainer() const
 {
+    if (isInlineBox())
+        return false;
+
     auto display = m_style.display();
-    return display == DisplayType::Block
-        || display == DisplayType::FlowRoot
-        || display == DisplayType::ListItem
-        || display == DisplayType::RubyBlock
-        || isInlineBlockBox()
+    return display == Style::DisplayType::BlockFlow
+        || display == Style::DisplayType::BlockFlowRoot
+        || display == Style::DisplayType::BlockFlowListItem
+        || display == Style::DisplayType::BlockRuby
         || isTableCell()
         || isTableCaption(); // TODO && !replaced element
 }
@@ -322,7 +341,7 @@ bool Box::isLayoutContainmentBox() const
 
 bool Box::isRubyAnnotationBox() const
 {
-    return m_style.display() == DisplayType::RubyAnnotation;
+    return m_style.display() == Style::DisplayType::RubyText && m_parent && m_parent->isRuby();
 }
 
 bool Box::isInterlinearRubyAnnotationBox() const
@@ -332,7 +351,7 @@ bool Box::isInterlinearRubyAnnotationBox() const
 
 bool Box::isInternalRubyBox() const
 {
-    return m_style.display() == DisplayType::RubyBase || m_style.display() == DisplayType::RubyAnnotation;
+    return isRubyBase() || isRubyAnnotationBox();
 }
 
 bool Box::isSizeContainmentBox() const
@@ -356,7 +375,18 @@ bool Box::isInternalTableBox() const
 {
     // table-row-group, table-header-group, table-footer-group, table-row, table-cell, table-column-group, table-column
     // generates the appropriate internal table box which participates in a table formatting context.
-    return isTableBody() || isTableHeader() || isTableFooter() || isTableRow() || isTableCell() || isTableColumnGroup() || isTableColumn();
+    return isTableBody()
+        || isTableHeader()
+        || isTableFooter()
+        || isTableRow()
+        || isTableCell()
+        || isTableColumnGroup()
+        || isTableColumn();
+}
+
+bool Box::isRubyBase() const
+{
+    return style().display() == Style::DisplayType::RubyBase && m_parent && m_parent->isRuby();
 }
 
 const Box* Box::nextInFlowSibling() const
@@ -419,7 +449,7 @@ bool Box::isDescendantOf(const Box& box) const
 
 bool Box::isDescendantOfWithinFormattingContext(const Box& box) const
 {
-    for (auto* ancestor = &parent(); !ancestor->establishesFormattingContext(); ancestor = &ancestor->parent()) {
+    for (CheckedPtr ancestor = &parent(); !ancestor->establishesFormattingContext(); ancestor = &ancestor->parent()) {
         if (ancestor == &box)
             return true;
     }
@@ -430,7 +460,7 @@ bool Box::isInFormattingContextEstablishedBy(const ElementBox& formattingContext
 {
     ASSERT(formattingContextRoot.establishesFormattingContext());
 
-    auto* ancestor = &parent();
+    CheckedPtr ancestor = &parent();
     while (true) {
         if (ancestor->establishesFormattingContext())
             break;
@@ -541,11 +571,11 @@ void Box::setShape(RefPtr<const LayoutShape> shape)
 
 const ElementBox* Box::associatedRubyAnnotationBox() const
 {
-    if (style().display() != DisplayType::RubyBase)
+    if (isLineBreakBox() || style().display() != Style::DisplayType::RubyBase)
         return nullptr;
 
     auto* next = nextSibling();
-    if (!next || next->style().display() != DisplayType::RubyAnnotation)
+    if (!next || next->isLineBreakBox() || next->style().display() != Style::DisplayType::RubyText)
         return nullptr;
 
     return dynamicDowncast<ElementBox>(next);
@@ -557,7 +587,8 @@ Box::RareDataMap& Box::rareDataMap()
     return map;
 }
 
-const Box::BoxRareData& Box::rareData() const
+// The analyzer cannot verify that HashMap::get() does not destroy anything; a lookup never does.
+SUPPRESS_NODELETE const Box::BoxRareData& Box::rareData() const
 {
     ASSERT(hasRareData());
     return *rareDataMap().get(this);
@@ -581,6 +612,56 @@ void Box::removeRareData()
     setHasRareData(false);
 }
 
-}
+const ElementBox& containingBlock(const Box& layoutBox)
+{
+    // If we ever end up here with the ICB, we must be doing something not-so-great.
+    RELEASE_ASSERT(!is<InitialContainingBlock>(layoutBox));
+    // The containing block in which the root element lives is a rectangle called the initial containing block.
+    // For other elements, if the element's position is 'relative' or 'static', the containing block is formed by the
+    // content edge of the nearest block container ancestor box or which establishes a formatting context.
+    // If the element has 'position: fixed', the containing block is established by the viewport
+    // If the element has 'position: absolute', the containing block is established by the nearest ancestor with a
+    // 'position' of 'absolute', 'relative' or 'fixed'.
+    if (!layoutBox.isPositioned() || layoutBox.isInFlowPositioned()) {
+        SUPPRESS_UNCHECKED_LOCAL auto* ancestor = &layoutBox.parent();
+        for (; !is<InitialContainingBlock>(*ancestor); ancestor = &ancestor->parent()) {
+            if (ancestor->isContainingBlockForInFlow())
+                return *ancestor;
+        }
+        return *ancestor;
+    }
+
+    if (layoutBox.isFixedPositioned()) {
+        SUPPRESS_UNCHECKED_LOCAL auto* ancestor = &layoutBox.parent();
+        for (; !is<InitialContainingBlock>(*ancestor); ancestor = &ancestor->parent()) {
+            if (ancestor->isContainingBlockForFixedPosition())
+                return *ancestor;
+        }
+        return *ancestor;
+    }
+
+    if (layoutBox.isOutOfFlowPositioned()) {
+        SUPPRESS_UNCHECKED_LOCAL auto* ancestor = &layoutBox.parent();
+        for (; !is<InitialContainingBlock>(*ancestor); ancestor = &ancestor->parent()) {
+            if (ancestor->isContainingBlockForOutOfFlowPosition())
+                return *ancestor;
+        }
+        return *ancestor;
+    }
+
+    ASSERT_NOT_REACHED();
+    return layoutBox.parent();
 }
 
+UsedStyle Box::usedStyle() const
+{
+    return rendererForIntegration()->usedStyle();
+}
+
+UsedStyle Box::firstLineUsedStyle() const
+{
+    return rendererForIntegration()->firstLineUsedStyle();
+}
+
+}
+}

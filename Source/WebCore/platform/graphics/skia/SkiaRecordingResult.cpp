@@ -30,9 +30,13 @@
 
 namespace WebCore {
 
-SkiaRecordingResult::SkiaRecordingResult(sk_sp<SkPicture>&& picture, SkiaImageToFenceMap&& imageToFenceMap, const IntRect& recordRect, RenderingMode renderingMode, bool contentsOpaque, float contentsScale)
+SkiaRecordingResult::SkiaRecordingResult(sk_sp<SkPicture>&& picture, SkiaRecordingData&& recordingData, const IntRect& recordRect, RenderingMode renderingMode, bool contentsOpaque, float contentsScale)
     : m_picture(WTF::move(picture))
-    , m_imageToFenceMap(WTF::move(imageToFenceMap))
+#if USE(TEXTURE_MAPPER)
+    , m_imageToFenceMap(WTF::move(recordingData.imageToFenceMap))
+#endif
+    , m_atlasLayouts(WTF::move(recordingData.atlasLayouts))
+    , m_imageSetFingerprint(recordingData.imageSetFingerprint)
     , m_recordRect(recordRect)
     , m_renderingMode(renderingMode)
     , m_contentsOpaque(contentsOpaque)
@@ -42,11 +46,12 @@ SkiaRecordingResult::SkiaRecordingResult(sk_sp<SkPicture>&& picture, SkiaImageTo
 
 SkiaRecordingResult::~SkiaRecordingResult() = default;
 
-Ref<SkiaRecordingResult> SkiaRecordingResult::create(sk_sp<SkPicture>&& picture, SkiaImageToFenceMap&& imageToFenceMap, const IntRect& recordRect, RenderingMode renderingMode, bool contentsOpaque, float contentsScale)
+Ref<SkiaRecordingResult> SkiaRecordingResult::create(sk_sp<SkPicture>&& picture, SkiaRecordingData&& recordingData, const IntRect& recordRect, RenderingMode renderingMode, bool contentsOpaque, float contentsScale)
 {
-    return adoptRef(*new SkiaRecordingResult(WTF::move(picture), WTF::move(imageToFenceMap), recordRect, renderingMode, contentsOpaque, contentsScale));
+    return adoptRef(*new SkiaRecordingResult(WTF::move(picture), WTF::move(recordingData), recordRect, renderingMode, contentsOpaque, contentsScale));
 }
 
+#if USE(TEXTURE_MAPPER)
 bool SkiaRecordingResult::hasFences()
 {
     Locker locker { m_imageToFenceMapLock };
@@ -59,6 +64,7 @@ void SkiaRecordingResult::waitForFenceIfNeeded(const SkImage& image)
     if (auto fence = m_imageToFenceMap.get(&image))
         fence->serverWait();
 }
+#endif
 
 } // namespace WebCore
 

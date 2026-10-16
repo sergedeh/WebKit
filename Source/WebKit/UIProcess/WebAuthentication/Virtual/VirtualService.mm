@@ -36,6 +36,7 @@
 #import "VirtualLocalConnection.h"
 #import <WebCore/FidoConstants.h>
 #import <WebCore/WebAuthenticationConstants.h>
+#import <wtf/Borrow.h>
 #import <wtf/TZoneMallocInlines.h>
 #import <wtf/UniqueRef.h>
 #import <wtf/text/WTFString.h>
@@ -63,7 +64,7 @@ Ref<AuthenticatorTransportService> VirtualService::createVirtual(WebCore::Authen
 
 static AuthenticatorGetInfoResponse authenticatorInfoForConfig(const VirtualAuthenticatorConfiguration& config)
 {
-    AuthenticatorGetInfoResponse infoResponse({ ProtocolVersion::kCtap2 }, Vector<uint8_t>(aaguidLength, 0u));
+    AuthenticatorGetInfoResponse infoResponse({ ProtocolVersion::kCtap2 }, Vector<uint8_t>(FillWith { }, aaguidLength, 0u));
     AuthenticatorSupportedOptions options;
     infoResponse.setOptions(WTF::move(options));
     return infoResponse;
@@ -72,7 +73,7 @@ static AuthenticatorGetInfoResponse authenticatorInfoForConfig(const VirtualAuth
 void VirtualService::startDiscoveryInternal()
 {
 
-    for (auto& authenticator : m_authenticators) {
+    for (auto& authenticator : borrow(m_authenticators)) {
         RefPtr observer = this->observer();
         if (!observer)
             return;

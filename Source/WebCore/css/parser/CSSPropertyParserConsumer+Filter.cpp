@@ -69,7 +69,7 @@ template<CSSValueID filterFunction> static decltype(auto) consumeNumberOrPercent
     }
 }
 
-static std::optional<CSS::AppleInvertLightnessFunction> consumeFilterAppleInvertLightness(CSSParserTokenRange& range, CSS::PropertyParserState&)
+static std::optional<CSS::AppleInvertLightnessFunction> LEGACY_NODELETE consumeFilterAppleInvertLightness(CSSParserTokenRange& range, CSS::PropertyParserState&)
 {
     // <-apple-invert-lightness()> = -apple-invert-lightness()
     // Non-standard
@@ -137,9 +137,9 @@ static std::optional<CSS::DropShadowFunction> consumeFilterDropShadow(CSSParserT
     auto args = consumeFunction(range);
 
     std::optional<CSS::Color> color;
-    std::optional<CSS::Length<CSS::AllUnzoomed>> x;
-    std::optional<CSS::Length<CSS::AllUnzoomed>> y;
-    std::optional<CSS::Length<CSS::NonnegativeUnzoomed>> stdDeviation;
+    std::optional<CSS::Length<>> x;
+    std::optional<CSS::Length<>> y;
+    std::optional<CSS::Length<CSS::Nonnegative>> stdDeviation;
 
     auto consumeOptionalColor = [&] -> bool {
         if (color)
@@ -154,14 +154,14 @@ static std::optional<CSS::DropShadowFunction> consumeFilterDropShadow(CSSParserT
     auto consumeLengths = [&] -> bool {
         if (x)
             return false;
-        x = MetaConsumer<CSS::Length<CSS::AllUnzoomed>>::consume(args, state);
+        x = MetaConsumer<CSS::Length<>>::consume(args, state);
         if (!x)
             return false;
-        y = MetaConsumer<CSS::Length<CSS::AllUnzoomed>>::consume(args, state);
+        y = MetaConsumer<CSS::Length<>>::consume(args, state);
         if (!y)
             return false;
 
-        stdDeviation = MetaConsumer<CSS::Length<CSS::NonnegativeUnzoomed>>::consume(args, state);
+        stdDeviation = MetaConsumer<CSS::Length<CSS::Nonnegative>>::consume(args, state);
         return true;
     };
 
@@ -303,43 +303,43 @@ static std::optional<CSS::FilterValueList> consumeUnresolvedFilterValueList(CSSP
         }
 
         switch (rangeCopy.peek().functionId()) {
-        case CSSValueBlur:
+        case CSSValueID::Blur:
             if (!appendOnSuccess(consumeFilterBlur(rangeCopy, state)))
                 return { };
             break;
-        case CSSValueBrightness:
+        case CSSValueID::Brightness:
             if (!appendOnSuccess(consumeFilterBrightness(rangeCopy, state)))
                 return { };
             break;
-        case CSSValueContrast:
+        case CSSValueID::Contrast:
             if (!appendOnSuccess(consumeFilterContrast(rangeCopy, state)))
                 return { };
             break;
-        case CSSValueDropShadow:
+        case CSSValueID::DropShadow:
             if (!appendOnSuccess(consumeFilterDropShadow(rangeCopy, state)))
                 return { };
             break;
-        case CSSValueGrayscale:
+        case CSSValueID::Grayscale:
             if (!appendOnSuccess(consumeFilterGrayscale(rangeCopy, state)))
                 return { };
             break;
-        case CSSValueHueRotate:
+        case CSSValueID::HueRotate:
             if (!appendOnSuccess(consumeFilterHueRotate(rangeCopy, state)))
                 return { };
             break;
-        case CSSValueInvert:
+        case CSSValueID::Invert:
             if (!appendOnSuccess(consumeFilterInvert(rangeCopy, state)))
                 return { };
             break;
-        case CSSValueOpacity:
+        case CSSValueID::Opacity:
             if (!appendOnSuccess(consumeFilterOpacity(rangeCopy, state)))
                 return { };
             break;
-        case CSSValueSaturate:
+        case CSSValueID::Saturate:
             if (!appendOnSuccess(consumeFilterSaturate(rangeCopy, state)))
                 return { };
             break;
-        case CSSValueSepia:
+        case CSSValueID::Sepia:
             if (!appendOnSuccess(consumeFilterSepia(rangeCopy, state)))
                 return { };
             break;
@@ -355,7 +355,7 @@ static std::optional<CSS::FilterValueList> consumeUnresolvedFilterValueList(CSSP
 
 std::optional<CSS::Filter> consumeUnresolvedFilter(CSSParserTokenRange& range, CSS::PropertyParserState& state)
 {
-    if (range.peek().id() == CSSValueNone) {
+    if (range.peek().id() == CSSValueID::None) {
         range.consumeIncludingWhitespace();
         return CSS::Filter { CSS::Keyword::None { } };
     }
@@ -391,39 +391,39 @@ static std::optional<CSS::AppleColorFilter::List> consumeUnresolvedAppleColorFil
 
     do {
         switch (rangeCopy.peek().functionId()) {
-        case CSSValueAppleInvertLightness:
+        case CSSValueID::AppleInvertLightness:
             if (!appendOnSuccess(consumeFilterAppleInvertLightness(rangeCopy, state)))
                 return { };
             break;
-        case CSSValueBrightness:
+        case CSSValueID::Brightness:
             if (!appendOnSuccess(consumeFilterBrightness(rangeCopy, state)))
                 return { };
             break;
-        case CSSValueContrast:
+        case CSSValueID::Contrast:
             if (!appendOnSuccess(consumeFilterContrast(rangeCopy, state)))
                 return { };
             break;
-        case CSSValueGrayscale:
+        case CSSValueID::Grayscale:
             if (!appendOnSuccess(consumeFilterGrayscale(rangeCopy, state)))
                 return { };
             break;
-        case CSSValueHueRotate:
+        case CSSValueID::HueRotate:
             if (!appendOnSuccess(consumeFilterHueRotate(rangeCopy, state)))
                 return { };
             break;
-        case CSSValueInvert:
+        case CSSValueID::Invert:
             if (!appendOnSuccess(consumeFilterInvert(rangeCopy, state)))
                 return { };
             break;
-        case CSSValueOpacity:
+        case CSSValueID::Opacity:
             if (!appendOnSuccess(consumeFilterOpacity(rangeCopy, state)))
                 return { };
             break;
-        case CSSValueSaturate:
+        case CSSValueID::Saturate:
             if (!appendOnSuccess(consumeFilterSaturate(rangeCopy, state)))
                 return { };
             break;
-        case CSSValueSepia:
+        case CSSValueID::Sepia:
             if (!appendOnSuccess(consumeFilterSepia(rangeCopy, state)))
                 return { };
             break;
@@ -439,7 +439,7 @@ static std::optional<CSS::AppleColorFilter::List> consumeUnresolvedAppleColorFil
 
 std::optional<CSS::AppleColorFilter> consumeUnresolvedAppleColorFilter(CSSParserTokenRange& range, CSS::PropertyParserState& state)
 {
-    if (range.peek().id() == CSSValueNone) {
+    if (range.peek().id() == CSSValueID::None) {
         range.consumeIncludingWhitespace();
         return CSS::AppleColorFilter { CSS::Keyword::None { } };
     }
@@ -455,7 +455,7 @@ RefPtr<CSSValue> consumeAppleColorFilter(CSSParserTokenRange& range, CSS::Proper
     return nullptr;
 }
 
-std::optional<Style::Filter> parseFilterValueListOrNoneRaw(const String& string, const CSSParserContext& context, const Document& document, RenderStyle& style)
+std::optional<Style::Filter> parseFilterValueListOrNoneRaw(StringView string, const CSSParserContext& context, const Document& document, Style::ComputedStyle& style)
 {
     auto tokenizer = CSSTokenizer(string);
     auto range = tokenizer.tokenRange();

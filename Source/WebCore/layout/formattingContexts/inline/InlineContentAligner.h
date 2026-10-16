@@ -27,6 +27,7 @@
 
 #include <WebCore/InlineDisplayContent.h>
 #include <WebCore/InlineDisplayLine.h>
+#include <WebCore/InlineLineRun.h>
 #include <WebCore/LayoutUnits.h>
 
 namespace WebCore {
@@ -34,16 +35,16 @@ namespace Layout {
 
 class InlineContentAligner {
 public:
-    static InlineLayoutUnit applyTextAlignJustify(Line::RunList&, InlineLayoutUnit spaceToDistribute, size_t hangingTrailingWhitespaceLength);
+    static InlineLayoutUnit applyTextAlignJustify(LineRunList&, InlineLayoutUnit spaceToDistribute, size_t hangingTrailingWhitespaceLength);
 
-    static InlineLayoutUnit applyRubyAlign(RubyAlign, Line::RunList&, WTF::Range<size_t>, InlineLayoutUnit spaceToDistribute);
+    static InlineLayoutUnit applyRubyAlign(RubyAlign, std::span<LineRun>, InlineLayoutUnit spaceToDistribute);
 
     enum class AdjustContentOnlyInsideRubyBase : bool { No, Yes };
-    static void applyRubyBaseAlignmentOffset(InlineDisplay::Boxes&, const HashMap<const Box*, InlineLayoutUnit>& alignmentOffsetList, AdjustContentOnlyInsideRubyBase, InlineFormattingContext&);
-    static void applyRubyAnnotationAlignmentOffset(InlineDisplay::Boxes&, InlineLayoutUnit alignmentOffset, InlineFormattingContext&);
+    static void adjustRubyBaseContentWithAlignmentOffset(std::span<InlineDisplay::Box>, const HashMap<const Box*, InlineLayoutUnit>& alignmentOffsetList, InlineFormattingContext&);
+    static void adjustAnnotationContentWithAlignmentOffset(std::span<InlineDisplay::Box>, InlineLayoutUnit alignmentOffset, InlineFormattingContext&);
 
 private:
-    static InlineLayoutUnit applyExpansionOnRange(Line::RunList&, WTF::Range<size_t>, const ExpansionInfo&, InlineLayoutUnit spaceToDistribute);
+    static InlineLayoutUnit LEGACY_NODELETE applyExpansionOnRange(std::span<LineRun>, const ExpansionInfo&, InlineLayoutUnit spaceToDistribute);
 };
 
 }

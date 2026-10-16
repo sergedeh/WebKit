@@ -46,11 +46,10 @@
 #endif
 #endif
 
-#if PLATFORM(WPE) && USE(SKIA)
+#if PLATFORM(WPE)
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkImage.h>
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
-#include <wtf/Expected.h>
 #endif
 
 namespace WebKit {
@@ -72,18 +71,17 @@ public:
     static Ref<ViewSnapshot> create(RefPtr<cairo_surface_t>&&);
 #endif
 #endif
-#if PLATFORM(WPE) && USE(SKIA)
+#if PLATFORM(WPE)
     static Ref<ViewSnapshot> create(sk_sp<SkImage>&&);
 #endif
 
     ~ViewSnapshot();
 
     void clearImage();
-    bool hasImage() const;
+    bool LEGACY_NODELETE hasImage() const;
 
 #if HAVE(IOSURFACE)
     id asLayerContents();
-    RetainPtr<id> asProtectedLayerContents();
     RetainPtr<CGImageRef> asImageForTesting();
 #endif
 
@@ -103,10 +101,10 @@ public:
     float deviceScaleFactor() const { return m_deviceScaleFactor; }
 
     void setOrigin(WebCore::SecurityOriginData&& origin) { m_origin = WTF::move(origin); }
-    const WebCore::SecurityOriginData& origin() const { return m_origin; }
+    const WebCore::SecurityOriginData& origin() const LIFETIME_BOUND { return m_origin; }
 
 #if HAVE(IOSURFACE)
-    WebCore::IOSurface* surface() const { return m_surface.get(); }
+    WebCore::IOSurface* surface() const LIFETIME_BOUND { return m_surface.get(); }
 
     size_t estimatedImageSizeInBytes() const { return m_surface ? m_surface->totalBytes() : 0; }
     WebCore::IntSize size() const { return m_surface ? m_surface->size() : WebCore::IntSize(); }
@@ -120,15 +118,15 @@ public:
 #if USE(GTK4)
     GdkTexture* texture() const { return m_texture.get(); }
 #else
-    cairo_surface_t* surface() const { return m_surface.get(); }
+    cairo_surface_t* surface() const LIFETIME_BOUND { return m_surface.get(); }
 #endif
 
     size_t estimatedImageSizeInBytes() const;
     WebCore::IntSize size() const;
 #endif
 
-#if PLATFORM(WPE) && USE(SKIA)
-    SkImage* image() const { return m_image.get(); }
+#if PLATFORM(WPE)
+    SkImage* image() const LIFETIME_BOUND { return m_image.get(); }
 
     size_t estimatedImageSizeInBytes() const;
     WebCore::IntSize size() const;
@@ -153,7 +151,7 @@ private:
 #endif
 #endif
 
-#if PLATFORM(WPE) && USE(SKIA)
+#if PLATFORM(WPE)
     explicit ViewSnapshot(sk_sp<SkImage>&&);
 
     sk_sp<SkImage> m_image;
@@ -167,7 +165,7 @@ private:
     WebCore::SecurityOriginData m_origin;
 };
 
-#if !(PLATFORM(WPE) && USE(CAIRO))
+using RefPtrViewSnapshot = RefPtr<ViewSnapshot>;
 
 class ViewSnapshotStore {
     WTF_MAKE_NONCOPYABLE(ViewSnapshotStore);
@@ -176,7 +174,7 @@ public:
     ViewSnapshotStore();
     ~ViewSnapshotStore();
 
-    static ViewSnapshotStore& singleton();
+    static ViewSnapshotStore& LEGACY_NODELETE singleton();
 
     void recordSnapshot(WebPageProxy&, WebBackForwardListItem&);
 
@@ -196,7 +194,5 @@ private:
     ListHashSet<WeakRef<ViewSnapshot>> m_snapshotsWithImages;
     bool m_disableSnapshotVolatility { false };
 };
-
-#endif // !(PLATFORM(WPE) && USE(CAIRO))
 
 } // namespace WebKit

@@ -25,40 +25,38 @@
 
 #pragma once
 
-#include "UIProcess/Media/RemoteMediaSessionManagerProxy.h"
 #if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
 
-#include "RemoteMediaSessionClientProxy.h"
-#include "RemoteMediaSessionManagerProxy.h"
+#include "MessageSender.h"
 #include "RemoteMediaSessionState.h"
 #include <WebCore/PlatformMediaSession.h>
+#include <WebCore/ProcessQualified.h>
 
 namespace WebKit {
-class RemoteMediaSessionManagerProxy;
+
+class RemoteMediaSessionClientProxy;
+class WebProcessProxy;
 
 class RemoteMediaSessionProxy final
-    : public WebCore::PlatformMediaSession {
+    : public WebCore::PlatformMediaSession
+    , public IPC::MessageSender {
     WTF_MAKE_TZONE_ALLOCATED(RemoteMediaSessionProxy);
 public:
-    static Ref<RemoteMediaSessionProxy> create(RemoteMediaSessionState& state, RemoteMediaSessionManagerProxy& manager)
-    {
-        return adoptRef(*new RemoteMediaSessionProxy(state, manager));
-    }
-
+    static Ref<RemoteMediaSessionProxy> create(RemoteMediaSessionState&, WebProcessProxy&);
     ~RemoteMediaSessionProxy();
 
     void updateState(const RemoteMediaSessionState&);
 
     WebCore::MediaSessionIdentifier sessionIdentifier() const { return m_sessionState.sessionIdentifier; }
     WebCore::PageIdentifier pageIdentifier() const { return m_sessionState.pageIdentifier; }
-
-    WeakPtr<RemoteMediaSessionManagerProxy> manager() const { return m_manager; }
+    std::optional<WebCore::QualifiedMediaSessionIdentifier> qualifiedSessionIdentifier() const;
 
 private:
-    RemoteMediaSessionProxy(const RemoteMediaSessionState&, RemoteMediaSessionManagerProxy&);
+    RemoteMediaSessionProxy(Ref<RemoteMediaSessionClientProxy>&&, const RemoteMediaSessionState&, WebProcessProxy&);
 
     WebCore::PlatformMediaSessionState state() const  final { return m_sessionState.state; }
     void setState(WebCore::PlatformMediaSessionState) final;
+    bool commitPlaybackAdmission(WebCore::PlatformMediaSessionState) final;
 
     bool isPlayingToWirelessPlaybackTarget() const final { return m_sessionState.isPlayingToWirelessPlaybackTarget; }
 
@@ -72,6 +70,15 @@ private:
 
     bool hasMediaStreamSource() const final { return m_sessionState.hasMediaStreamSource; }
 
+    bool preparingToPlay() const final { return m_sessionState.preparingToPlay; }
+
+    // The content process only sends MediaSessionWillBeginPlayback once it has already committed the
+    // admission locally, so there is nothing to revalidate here — unlike preparingToPlay(), which mirrors
+    // that message's post-commit snapshot and would otherwise always read false at this point.
+    bool admissionStillValid() const final { return true; }
+
+    bool hasPlayedAudiblySinceLastInterruption() const final { return m_sessionState.hasPlayedAudiblySinceLastInterruption; }
+
     bool shouldOverridePauseDuringRouteChange() const final { return m_sessionState.shouldOverridePauseDuringRouteChange; }
 
     bool isNowPlayingEligible() const final { return m_sessionState.isNowPlayingEligible; }
@@ -81,13 +88,16 @@ private:
 
     bool isRemoteSessionProxy() const final { return true; }
 
+    IPC::Connection* messageSenderConnection() const final;
+    uint64_t messageSenderDestinationID() const final;
+
 #if !RELEASE_LOG_DISABLED
     const Logger& logger() const { return m_logger; }
-    Ref<const Logger> protectedLogger() const { return logger(); }
     uint64_t logIdentifier() const { return m_sessionState.logIdentifier; }
 #endif
 
-    WeakPtr<RemoteMediaSessionManagerProxy> m_manager;
+    const Ref<RemoteMediaSessionClientProxy> m_client;
+    const WeakPtr<WebProcessProxy> m_process;
     RemoteMediaSessionState m_sessionState;
 #if !RELEASE_LOG_DISABLED
     const Ref<const Logger> m_logger;

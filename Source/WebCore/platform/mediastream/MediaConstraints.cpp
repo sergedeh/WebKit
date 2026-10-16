@@ -119,9 +119,9 @@ void StringConstraint::merge(const StringConstraint& other)
     }
 }
 
-void MediaTrackConstraintSetMap::forEach(NOESCAPE Function<void(MediaConstraintType, const MediaConstraint&)>&& callback) const
+void MediaTrackConstraintSetMap::forEach(NOESCAPE const Function<void(MediaConstraintType, const MediaConstraint&)>& callback) const
 {
-    filter([callback = WTF::move(callback)] (auto type, auto& constraint) mutable {
+    filter([&callback](auto type, auto& constraint) {
         callback(type, constraint);
         return false;
     });
@@ -247,9 +247,6 @@ void MediaTrackConstraintSetMap::set(MediaConstraintType constraintType, std::op
     case MediaConstraintType::EchoCancellation:
         m_echoCancellation = WTF::move(constraint);
         break;
-    case MediaConstraintType::DisplaySurface:
-        m_displaySurface = WTF::move(constraint);
-        break;
     case MediaConstraintType::LogicalSurface:
         m_logicalSurface = WTF::move(constraint);
         break;
@@ -272,6 +269,7 @@ void MediaTrackConstraintSetMap::set(MediaConstraintType constraintType, std::op
     case MediaConstraintType::Volume:
     case MediaConstraintType::FacingMode:
     case MediaConstraintType::DeviceId:
+    case MediaConstraintType::DisplaySurface:
     case MediaConstraintType::GroupId:
     case MediaConstraintType::FocusDistance:
     case MediaConstraintType::Zoom:
@@ -293,6 +291,11 @@ void MediaTrackConstraintSetMap::set(MediaConstraintType constraintType, std::op
             constraint->removeEmptyStringConstraint();
         m_deviceId = WTF::move(constraint);
         break;
+    case MediaConstraintType::DisplaySurface:
+        if (constraint)
+            constraint->removeEmptyStringConstraint();
+        m_displaySurface = WTF::move(constraint);
+        break;
     case MediaConstraintType::GroupId:
         m_groupId = WTF::move(constraint);
         break;
@@ -308,7 +311,6 @@ void MediaTrackConstraintSetMap::set(MediaConstraintType constraintType, std::op
     case MediaConstraintType::FrameRate:
     case MediaConstraintType::Volume:
     case MediaConstraintType::EchoCancellation:
-    case MediaConstraintType::DisplaySurface:
     case MediaConstraintType::LogicalSurface:
     case MediaConstraintType::FocusDistance:
     case MediaConstraintType::Zoom:
@@ -450,6 +452,12 @@ void MediaTrackConstraintSetMap::merge(MediaConstraintType constraintType, const
         else
             m_deviceId->merge(constraint);
         break;
+    case MediaConstraintType::DisplaySurface:
+        if (!m_deviceId)
+            m_deviceId = constraint;
+        else
+            m_deviceId->merge(constraint);
+        break;
     case MediaConstraintType::GroupId:
         if (!m_groupId)
             m_groupId = constraint;
@@ -471,7 +479,6 @@ void MediaTrackConstraintSetMap::merge(MediaConstraintType constraintType, const
     case MediaConstraintType::Volume:
     case MediaConstraintType::Zoom:
     case MediaConstraintType::EchoCancellation:
-    case MediaConstraintType::DisplaySurface:
     case MediaConstraintType::LogicalSurface:
     case MediaConstraintType::Torch:
     case MediaConstraintType::FocusDistance:
@@ -491,12 +498,6 @@ void MediaTrackConstraintSetMap::merge(MediaConstraintType constraintType, const
             m_echoCancellation = constraint;
         else
             m_echoCancellation->merge(constraint);
-        break;
-    case MediaConstraintType::DisplaySurface:
-        if (!m_displaySurface)
-            m_displaySurface = constraint;
-        else
-            m_displaySurface->merge(constraint);
         break;
     case MediaConstraintType::LogicalSurface:
         if (!m_logicalSurface)
@@ -525,6 +526,7 @@ void MediaTrackConstraintSetMap::merge(MediaConstraintType constraintType, const
 
     case MediaConstraintType::FacingMode:
     case MediaConstraintType::DeviceId:
+    case MediaConstraintType::DisplaySurface:
     case MediaConstraintType::GroupId:
     case MediaConstraintType::WhiteBalanceMode:
     case MediaConstraintType::Width:
@@ -597,12 +599,12 @@ bool MediaTrackConstraintSetMap::isValid() const
             break;
         case MediaConstraintType::FacingMode:
         case MediaConstraintType::DeviceId:
+        case MediaConstraintType::DisplaySurface:
         case MediaConstraintType::GroupId:
         case MediaConstraintType::WhiteBalanceMode:
             isValid &= (constraint.dataType() == MediaConstraint::DataType::String);
             break;
         case MediaConstraintType::EchoCancellation:
-        case MediaConstraintType::DisplaySurface:
         case MediaConstraintType::LogicalSurface:
         case MediaConstraintType::Torch:
         case MediaConstraintType::BackgroundBlur:
@@ -661,6 +663,32 @@ void MediaConstraints::setDefaultAudioConstraints()
         echoCancellationConstraint.setIdeal(true);
         mandatoryConstraints.set(MediaConstraintType::EchoCancellation, WTF::move(echoCancellationConstraint));
     }
+}
+
+bool MediaConstraints::willUseEchoCancellation() const
+{
+    // Echo cancellation is enabled by default, so we only expect it to be off if it is explicitly asked for.
+    auto requestedValue = [](const MediaTrackConstraintSetMap& constraintSet) -> std::optional<bool> {
+        auto& constraint = constraintSet.echoCancellation();
+        if (!constraint)
+            return { };
+
+        bool value;
+        if (constraint->getExact(value) || constraint->getIdeal(value))
+            return value;
+
+        return { };
+    };
+
+    if (auto value = requestedValue(mandatoryConstraints))
+        return *value;
+
+    for (auto& advancedConstraint : advancedConstraints) {
+        if (auto value = requestedValue(advancedConstraint))
+            return *value;
+    }
+
+    return true;
 }
 
 void MediaConstraints::setDefaultVideoConstraints()
@@ -728,7 +756,7 @@ MediaConstraints MediaConstraints::isolatedCopy() const
     return { crossThreadCopy(mandatoryConstraints), crossThreadCopy(advancedConstraints), isValid };
 }
 
-static bool isAllowedRequiredConstraintForDeviceSelection(MediaConstraints::DeviceType deviceType, MediaConstraintType type)
+static bool LEGACY_NODELETE isAllowedRequiredConstraintForDeviceSelection(MediaConstraints::DeviceType deviceType, MediaConstraintType type)
 {
     // https://w3c.github.io/mediacapture-main/#dfn-allowed-required-constraints-for-device-selection
     if (type <= MediaConstraintType::GroupId)
@@ -737,7 +765,7 @@ static bool isAllowedRequiredConstraintForDeviceSelection(MediaConstraints::Devi
     if (deviceType == MediaConstraints::DeviceType::Microphone)
         return true;
 
-    return deviceType == MediaConstraints::DeviceType::Microphone || type == MediaConstraintType::DisplaySurface || type == MediaConstraintType::LogicalSurface;
+    return type == MediaConstraintType::DisplaySurface || type == MediaConstraintType::LogicalSurface;
 }
 
 bool MediaConstraints::hasDisallowedRequiredConstraintForDeviceSelection(DeviceType deviceType) const

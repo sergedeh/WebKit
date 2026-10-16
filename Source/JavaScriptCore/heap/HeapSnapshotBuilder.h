@@ -114,7 +114,7 @@ public:
     HeapSnapshotBuilder(HeapProfiler&, SnapshotType = SnapshotType::InspectorSnapshot);
     ~HeapSnapshotBuilder() final;
 
-    static void resetNextAvailableObjectIdentifier();
+    static void LEGACY_NODELETE resetNextAvailableObjectIdentifier();
 
     // Performs a garbage collection that builds a snapshot of all live cells.
     void buildSnapshot();
@@ -151,11 +151,11 @@ public:
 
 private:
     static NodeIdentifier nextAvailableObjectIdentifier;
-    static NodeIdentifier getNextObjectIdentifier();
+    static NodeIdentifier LEGACY_NODELETE getNextObjectIdentifier();
 
     // Finalized snapshots are not modified during building. So searching them
     // for an existing node can be done concurrently without a lock.
-    bool previousSnapshotHasNodeForCell(JSCell*, NodeIdentifier&);
+    bool LEGACY_NODELETE previousSnapshotHasNodeForCell(JSCell*, NodeIdentifier&);
 
     String descriptionForNode(const HeapSnapshotNode&);
 
@@ -177,7 +177,7 @@ private:
     UncheckedKeyHashMap<JSCell*, RootData> m_rootData;
     UncheckedKeyHashMap<JSCell*, void*> m_wrappedObjectPointers;
     UncheckedKeyHashMap<JSCell*, String> m_cellLabels;
-    UncheckedKeyHashSet<JSCell*> m_appendedCells;
+    UncheckedKeyHashSet<JSCell*> m_appendedCells WTF_GUARDED_BY_LOCK(m_buildingNodeMutex);
     SnapshotType m_snapshotType;
 };
 

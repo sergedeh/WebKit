@@ -25,9 +25,10 @@
 
 
 #import <WebKitLegacy/DOMNodeIterator.h>
+#import <wtf/Compiler.h>
 
 namespace WebCore {
 class NodeIterator;
 }
 
-DOMNodeIterator *kit(WebCore::NodeIterator*);
+DOMNodeIterator * LEGACY_NODELETE kit(WebCore::NodeIterator*);

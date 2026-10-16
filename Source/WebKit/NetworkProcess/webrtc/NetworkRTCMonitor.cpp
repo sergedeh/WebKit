@@ -37,6 +37,7 @@
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <ranges>
+#include <wtf/Borrow.h>
 #include <wtf/Function.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/RetainPtr.h>
@@ -70,7 +71,7 @@ HashMap<String, RTCNetwork> NetworkRTCMonitor::gatherNetworkMap()
     if (error)
         return { };
 
-    std::unique_ptr<struct ifaddrs> toBeFreed(interfaces);
+    std::unique_ptr<struct ifaddrs, decltype(freeifaddrs)*> toBeFreed(interfaces, freeifaddrs);
 
     HashMap<String, RTCNetwork> networkMap;
     for (auto* iterator = interfaces; iterator != nullptr; iterator = iterator->ifa_next) {
@@ -99,7 +100,7 @@ HashMap<String, RTCNetwork> NetworkRTCMonitor::gatherNetworkMap()
 
         networkMap.ensure(networkKey, [&] {
             auto interfaceType = NetworkRTCSharedMonitor::singleton().adapterTypeFromInterfaceName(iterator->ifa_name);
-            return RTCNetwork { name, networkKey.utf8().span(), address->second, prefixLength, interfaceType, 0, 0, true, false, scopeID, { } };
+            return RTCNetwork { String::fromLatin1(name), String { networkKey }, address->second, prefixLength, interfaceType, 0, 0, true, false, scopeID, { } };
         }).iterator->value.ips.append(address->first);
     }
 
@@ -201,8 +202,10 @@ bool NetworkRTCMonitor::isEqual(const Vector<RTCNetwork::InterfaceAddress>& a, c
     if (a.size() != b.size())
         return false;
 
+    Borrow borrowedA = a;
+    Borrow borrowedB = b;
     for (size_t i = 0; i < a.size(); ++i) {
-        if (!isEqual(a[i], b[i]))
+        if (!isEqual(borrowedA[i], borrowedB[i]))
             return false;
     }
     return true;
@@ -218,8 +221,8 @@ bool NetworkRTCMonitor::sortNetworks(const RTCNetwork& a, const RTCNetwork& b)
     if (a.type != b.type)
         return a.type < b.type;
 
-    int precedenceA = webrtc::IPAddressPrecedence(a.ips[0].rtcAddress());
-    int precedenceB = webrtc::IPAddressPrecedence(b.ips[0].rtcAddress());
+    int precedenceA = webrtc::IPAddressPrecedence(borrow(a.ips)->at(0).rtcAddress());
+    int precedenceB = webrtc::IPAddressPrecedence(borrow(b.ips)->at(0).rtcAddress());
 
     if (precedenceA != precedenceB)
         return precedenceA < precedenceB;
@@ -271,7 +274,7 @@ void NetworkRTCMonitor::stopUpdating()
 void NetworkRTCMonitor::onNetworksChanged(const Vector<RTCNetwork>& networkList, const RTCNetwork::IPAddress& ipv4, const RTCNetwork::IPAddress& ipv6)
 {
     RTC_RELEASE_LOG("onNetworksChanged sent");
-    m_rtcProvider->protectedConnection()->send(Messages::WebRTCMonitor::NetworksChanged(networkList, ipv4, ipv6), 0);
+    protect(m_rtcProvider->connection())->send(Messages::WebRTCMonitor::NetworksChanged(networkList, ipv4, ipv6), 0);
 }
 
 

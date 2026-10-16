@@ -42,17 +42,12 @@
 #import <wtf/cocoa/SpanCocoa.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
 
-#import "PDFKitSoftLink.h"
+#import <pal/cocoa/PDFKitSoftLink.h>
 
 NSString * const WebKitOriginalTopPrintingMarginKey = @"WebKitOriginalTopMargin";
 NSString * const WebKitOriginalBottomPrintingMarginKey = @"WebKitOriginalBottomMargin";
 
 NSString * const NSPrintInfoDidChangeNotification = @"NSPrintInfoDidChange";
-
-static Ref<WebKit::WebFrameProxy> protectedWebFrame(WKPrintingView *view)
-{
-    return *view->_webFrame;
-}
 
 static BOOL isForcingPreviewUpdate;
 
@@ -121,7 +116,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     [self _setAutodisplay:YES];
 
     // Enabling autodisplay normally implicitly calls endPrinting() via -[WKView drawRect:], but not when content is in accelerated compositing mode.
-    if (RefPtr page = protectedWebFrame(self)->page())
+    if (RefPtr page = _webFrame->page())
         page->endPrinting();
 }
 
@@ -152,7 +147,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     // those stashed-away values on subsequent calls.
     double originalTopMargin;
     double originalBottomMargin;
-    RetainPtr<NSNumber> originalTopMarginNumber = [infoDictionary objectForKey:WebKitOriginalTopPrintingMarginKey];
+    RetainPtr originalTopMarginNumber = dynamic_objc_cast<NSNumber>([infoDictionary objectForKey:WebKitOriginalTopPrintingMarginKey]);
     if (!originalTopMarginNumber) {
         ASSERT(![infoDictionary objectForKey:WebKitOriginalBottomPrintingMarginKey]);
         originalTopMargin = [info topMargin];
@@ -168,9 +163,10 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     
     CGFloat scale = [info scalingFactor];
     Ref webFrame = *_webFrame;
-    RefPtr page = webFrame->page();
-    [info setTopMargin:originalTopMargin + page->headerHeightForPrinting(webFrame) * scale];
-    [info setBottomMargin:originalBottomMargin + page->footerHeightForPrinting(webFrame) * scale];
+    if (RefPtr page = webFrame->page()) {
+        [info setTopMargin:originalTopMargin + page->headerHeightForPrinting(webFrame) * scale];
+        [info setBottomMargin:originalBottomMargin + page->footerHeightForPrinting(webFrame) * scale];
+    }
 }
 
 - (BOOL)_isPrintingPreview
@@ -414,7 +410,7 @@ static void prepareDataForPrintingOnSecondaryThread(WKPrintingView *view)
     if (!RunLoop::isMain())
         _isPrintingFromSecondaryThread = YES;
 
-    if (protectedWebFrame(self)->pageIsClosed()) {
+    if (_webFrame->pageIsClosed()) {
         *range = NSMakeRange(1, NSIntegerMax);
         return YES;
     }
@@ -496,8 +492,9 @@ static RetainPtr<NSString> linkDestinationName(PDFDocument *document, PDFDestina
         CGPDFContextAddDestinationAtPoint(context.get(), bridge_cast(linkDestinationName(pdfDocument, destination.get())).get(), destinationPoint);
     }
 
-    for (PDFAnnotation *annotation in [pdfPage annotations]) {
-        if (![[annotation valueForAnnotationKey:WebKit::get_PDFKit_PDFAnnotationKeySubtypeSingleton()] isEqualToString:WebKit::get_PDFKit_PDFAnnotationSubtypeLinkSingleton()])
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL PDFAnnotation *annotation in [pdfPage annotations]) {
+        if (![[annotation valueForAnnotationKey:PAL::get_PDFKit_PDFAnnotationKeySubtypeSingleton()] isEqualToString:PAL::get_PDFKit_PDFAnnotationSubtypeLinkSingleton()])
             continue;
 
         RetainPtr<NSURL> url = annotation.URL;
@@ -567,10 +564,11 @@ static RetainPtr<NSString> linkDestinationName(PDFDocument *document, PDFDestina
         return;
     }
 
-    WebCore::GraphicsContextCG context([[NSGraphicsContext currentContext] CGContext]);
+    RetainPtr cgContext = [[NSGraphicsContext currentContext] CGContext];
+    WebCore::GraphicsContextCG context(cgContext.get());
     WebCore::GraphicsContextStateSaver stateSaver(context);
 
-    bitmap->paint(context, protect(protectedWebFrame(self)->page())->deviceScaleFactor(), WebCore::IntPoint(nsRect.origin), bitmap->bounds());
+    bitmap->paint(context, _webFrame->page()->deviceScaleFactor(), WebCore::IntPoint(nsRect.origin), bitmap->bounds());
 }
 
 - (void)drawRect:(NSRect)nsRect
@@ -595,15 +593,16 @@ static RetainPtr<NSString> linkDestinationName(PDFDocument *document, PDFDestina
 
     if (!_printedPagesPDFDocument) {
         RetainPtr pdfData = toNSData(_printedPagesData.span());
-        _printedPagesPDFDocument = adoptNS([WebKit::allocPDFDocumentInstance() initWithData:pdfData.get()]);
+        _printedPagesPDFDocument = adoptNS([PAL::allocPDFDocumentInstance() initWithData:pdfData.get()]);
 
         unsigned pageCount = [_printedPagesPDFDocument pageCount];
         _linkDestinationsPerPage.clear();
         _linkDestinationsPerPage.resize(pageCount);
         for (unsigned i = 0; i < pageCount; i++) {
             RetainPtr page = [_printedPagesPDFDocument pageAtIndex:i];
-            for (PDFAnnotation *annotation in page.get().annotations) {
-                if (![[annotation valueForAnnotationKey:WebKit::get_PDFKit_PDFAnnotationKeySubtypeSingleton()] isEqualToString:WebKit::get_PDFKit_PDFAnnotationSubtypeLinkSingleton()])
+            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+            for (SUPPRESS_UNRETAINED_LOCAL PDFAnnotation *annotation in page.get().annotations) {
+                if (![[annotation valueForAnnotationKey:PAL::get_PDFKit_PDFAnnotationKeySubtypeSingleton()] isEqualToString:PAL::get_PDFKit_PDFAnnotationSubtypeLinkSingleton()])
                     continue;
 
                 if (annotation.URL)
@@ -701,7 +700,7 @@ static RetainPtr<NSString> linkDestinationName(PDFDocument *document, PDFDestina
     ASSERT(_printOperation.get() == [NSPrintOperation currentOperation]);
     if (![self _hasPageRects]) {
         LOG(Printing, "-[WKPrintingView %p rectForPage:%d] - data is not yet available", self, (int)page);
-        if (!protectedWebFrame(self)->page()) {
+        if (!_webFrame->page()) {
             // We may have not told AppKit how many pages there are, so it will try to print until a null rect is returned.
             return NSZeroRect;
         }
@@ -713,7 +712,7 @@ static RetainPtr<NSString> linkDestinationName(PDFDocument *document, PDFDestina
     // If Web process crashes while computing page rects, we never tell AppKit how many pages there are.
     // Returning a null rect prevents selecting non-existent pages in preview dialog.
     if (static_cast<unsigned>(page) > _printingPageRects.size()) {
-        ASSERT(!protectedWebFrame(self)->page());
+        ASSERT(!_webFrame->page());
         return NSZeroRect;
     }
 

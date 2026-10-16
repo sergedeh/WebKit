@@ -31,10 +31,12 @@
 #include "Chrome.h"
 #include "ChromeClient.h"
 #include "CommonVM.h"
+#include "FontSelector.h"
 #include "GraphicsContext.h"
 #include "Page.h"
 #include "ResourceUsageThread.h"
 #include "SystemFontDatabase.h"
+#include "TextRun.h"
 #include <JavaScriptCore/VM.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
@@ -81,7 +83,7 @@ public:
         FontCascadeDescription fontDescription;
         fontDescription.setOneFamily(systemFontDatabase.systemFontShorthandFamily(messageBox));
         fontDescription.setWeight(systemFontDatabase.systemFontShorthandWeight(messageBox));
-        fontDescription.setComputedSize(gFontSize);
+        fontDescription.setUsedSize(gFontSize);
         m_textFont = FontCascade(WTF::move(fontDescription));
         m_textFont.update(nullptr);
     }

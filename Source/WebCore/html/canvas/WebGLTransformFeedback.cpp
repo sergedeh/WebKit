@@ -37,11 +37,16 @@
 
 namespace WebCore {
 
-RefPtr<WebGLTransformFeedback> WebGLTransformFeedback::create(WebGL2RenderingContext& context)
+Ref<WebGLTransformFeedback> WebGLTransformFeedback::createLost()
 {
-    auto object = context.graphicsContextGL()->createTransformFeedback();
+    return adoptRef(*new WebGLTransformFeedback { });
+}
+
+Ref<WebGLTransformFeedback> WebGLTransformFeedback::create(WebGL2RenderingContext& context)
+{
+    auto object = protect(context.graphicsContextGL())->createTransformFeedback();
     if (!object)
-        return nullptr;
+        return createLost();
     return adoptRef(*new WebGLTransformFeedback { context, object });
 }
 
@@ -58,6 +63,8 @@ WebGLTransformFeedback::WebGLTransformFeedback(WebGL2RenderingContext& context, 
 {
     m_boundIndexedTransformFeedbackBuffers.grow(context.maxTransformFeedbackSeparateAttribs());
 }
+
+WebGLTransformFeedback::WebGLTransformFeedback() = default;
 
 void WebGLTransformFeedback::deleteObjectImpl(const AbstractLocker&, GraphicsContextGL* context3d, PlatformGLObject object)
 {
@@ -76,11 +83,11 @@ void WebGLTransformFeedback::setBoundIndexedTransformFeedbackBuffer(const Abstra
     m_boundIndexedTransformFeedbackBuffers[index] = buffer;
 }
 
-bool WebGLTransformFeedback::getBoundIndexedTransformFeedbackBuffer(GCGLuint index, WebGLBuffer** outBuffer)
+bool WebGLTransformFeedback::getBoundIndexedTransformFeedbackBuffer(GCGLuint index, RefPtr<WebGLBuffer>& outBuffer)
 {
     if (index >= m_boundIndexedTransformFeedbackBuffers.size())
         return false;
-    *outBuffer = m_boundIndexedTransformFeedbackBuffers[index].get();
+    outBuffer = m_boundIndexedTransformFeedbackBuffers[index];
     return true;
 }
 

@@ -6,10 +6,6 @@
 
 // WindowSurfaceCGL.cpp: CGL implementation of egl::Surface for windows
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #import "libANGLE/renderer/gl/cgl/WindowSurfaceCGL.h"
 
 #import <Cocoa/Cocoa.h>
@@ -18,6 +14,7 @@
 
 #import "common/debug.h"
 #import "common/gl/cgl/FunctionsCGL.h"
+#include "common/unsafe_buffers.h"
 #import "libANGLE/Context.h"
 #import "libANGLE/renderer/gl/FramebufferGL.h"
 #import "libANGLE/renderer/gl/RendererGL.h"
@@ -197,10 +194,10 @@ WindowSurfaceCGL::~WindowSurfaceCGL()
 
     for (size_t i = 0; i < ArraySize(mSwapState.textures); ++i)
     {
-        if (mSwapState.textures[i].texture != 0)
+        if (ANGLE_UNSAFE_TODO(mSwapState.textures[i].texture) != 0)
         {
-            mStateManager->deleteTexture(mSwapState.textures[i].texture);
-            mSwapState.textures[i].texture = 0;
+            mStateManager->deleteTexture(ANGLE_UNSAFE_TODO(mSwapState.textures[i].texture));
+            ANGLE_UNSAFE_TODO(mSwapState.textures[i].texture) = 0;
         }
     }
 }
@@ -215,13 +212,14 @@ egl::Error WindowSurfaceCGL::initialize(const egl::Display *display)
 
     for (size_t i = 0; i < ArraySize(mSwapState.textures); ++i)
     {
-        mFunctions->genTextures(1, &mSwapState.textures[i].texture);
-        mStateManager->bindTexture(gl::TextureType::_2D, mSwapState.textures[i].texture);
+        mFunctions->genTextures(1, ANGLE_UNSAFE_TODO(&mSwapState.textures[i].texture));
+        mStateManager->bindTexture(gl::TextureType::_2D,
+                                   ANGLE_UNSAFE_TODO(mSwapState.textures[i].texture));
         mFunctions->texImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA,
                                GL_UNSIGNED_BYTE, nullptr);
-        mSwapState.textures[i].width  = width;
-        mSwapState.textures[i].height = height;
-        mSwapState.textures[i].swapId = 0;
+        ANGLE_UNSAFE_TODO(mSwapState.textures[i].width)  = width;
+        ANGLE_UNSAFE_TODO(mSwapState.textures[i].height) = height;
+        ANGLE_UNSAFE_TODO(mSwapState.textures[i].swapId) = 0;
     }
     mSwapState.beingRendered  = &mSwapState.textures[0];
     mSwapState.lastRendered   = &mSwapState.textures[1];
@@ -357,8 +355,7 @@ EGLint WindowSurfaceCGL::getSwapBehavior() const
     return EGL_BUFFER_DESTROYED;
 }
 
-egl::Error WindowSurfaceCGL::attachToFramebuffer(const gl::Context *context,
-                                                 gl::Framebuffer *framebuffer)
+void WindowSurfaceCGL::attachToFramebuffer(const gl::Context *context, gl::Framebuffer *framebuffer)
 {
     FramebufferGL *framebufferGL = GetImplAs<FramebufferGL>(framebuffer);
     ASSERT(framebufferGL->getFramebufferID() == 0);
@@ -375,16 +372,13 @@ egl::Error WindowSurfaceCGL::attachToFramebuffer(const gl::Context *context,
         mFramebufferID = framebufferID;
     }
     framebufferGL->setFramebufferID(mFramebufferID);
-    return egl::NoError();
 }
 
-egl::Error WindowSurfaceCGL::detachFromFramebuffer(const gl::Context *context,
-                                                   gl::Framebuffer *framebuffer)
+void WindowSurfaceCGL::detachFromFramebuffer(gl::Framebuffer *framebuffer)
 {
     FramebufferGL *framebufferGL = GetImplAs<FramebufferGL>(framebuffer);
     ASSERT(framebufferGL->getFramebufferID() == mFramebufferID);
     framebufferGL->setFramebufferID(0);
-    return egl::NoError();
 }
 
 }  // namespace rx

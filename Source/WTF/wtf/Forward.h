@@ -23,11 +23,13 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <wtf/Platform.h>
+#include <wtf/text/Latin1Character.h>
 
 #if defined(__has_feature)
 #if __has_feature(objc_arc)
 #define OSObjectPtr OSObjectPtrArc
 #define RetainPtr RetainPtrArc
+#define RetainRef RetainRefArc
 #endif
 #endif
 
@@ -44,7 +46,7 @@ class AbstractLocker;
 class AtomString;
 class AtomStringImpl;
 class BinarySemaphore;
-class CString;
+class CStringBase;
 class ConcurrentWorkQueue;
 class CrashOnOverflow;
 class DefaultWeakPtrImpl;
@@ -54,9 +56,11 @@ class Lock;
 class Logger;
 class MachSendRight;
 class MainThreadDispatcher;
+class MediaTime;
 class MonotonicTime;
 class OrdinalNumber;
 class PrintStream;
+class ReducedResolutionSeconds;
 class SHA1;
 class Seconds;
 class SerialFunctionDispatcher;
@@ -77,10 +81,11 @@ class WorkQueue;
 struct AnyThreadsAccessTraits;
 struct ARCEnabled;
 struct FastMalloc;
+struct FillWith { };
 struct MachSendRightAnnotated;
 struct MainThreadAccessTraits;
-template<typename> struct ObjectIdentifierMainThreadAccessTraits;
-template<typename> struct ObjectIdentifierThreadSafeAccessTraits;
+struct ObjectIdentifierMainThreadAccessTraits;
+struct ObjectIdentifierThreadSafeAccessTraits;
 
 #if USE(PROTECTED_JIT)
 struct SequesteredArenaMalloc;
@@ -116,13 +121,16 @@ template<typename, typename> struct DefaultOSObjectRetainTraits;
 template<typename> struct DefaultRefDerefTraits;
 
 template<typename> class Awaitable;
+template<typename> class Borrow;
+template<typename> class CString;
 template<typename> class CompactPtr;
 template<typename> class CompletionHandler;
 template<typename, size_t = 0> class Deque;
 template<typename Key, typename, Key> class EnumeratedArray;
 template<typename> class EnumSet;
 template<typename, typename = EmbeddedFixedVectorMalloc> class FixedVector;
-template<typename, size_t = 8, typename = SegmentedVectorMalloc> class SegmentedVector;
+enum class SegmentedVectorGrowthPolicy : uint8_t { Constant, Doubling };
+template<typename, size_t = 8, size_t = 0, SegmentedVectorGrowthPolicy = SegmentedVectorGrowthPolicy::Constant, typename = SegmentedVectorMalloc> class SegmentedVector;
 template<typename> class Function;
 template<typename> struct FlatteningVariantTraits;
 template<typename> struct IsSmartPtr;
@@ -130,11 +138,12 @@ template<typename, typename = AnyThreadsAccessTraits> class LazyNeverDestroyed;
 template<typename, typename> class LazyUniqueRef;
 template<typename> struct MarkableTraits;
 template<typename T, typename Traits = MarkableTraits<T>> class Markable;
+template<typename> class MonotonicObjectIdentifier;
 template<typename, typename = AnyThreadsAccessTraits> class NeverDestroyed;
 template<typename T, typename = DefaultOSObjectRetainTraits<T, ARCEnabled>> class OSObjectPtr;
-template<typename, typename, typename> class ObjectIdentifierGeneric;
-template<typename T, typename RawValue = uint64_t> using ObjectIdentifier = ObjectIdentifierGeneric<T, ObjectIdentifierMainThreadAccessTraits<RawValue>, RawValue>;
-template<typename T, typename RawValue = uint64_t> using AtomicObjectIdentifier = ObjectIdentifierGeneric<T, ObjectIdentifierThreadSafeAccessTraits<RawValue>, RawValue>;
+template<typename, typename> class ObjectIdentifierGeneric;
+template<typename T> using ObjectIdentifier = ObjectIdentifierGeneric<T, ObjectIdentifierMainThreadAccessTraits>;
+template<typename T> using AtomicObjectIdentifier = ObjectIdentifierGeneric<T, ObjectIdentifierThreadSafeAccessTraits>;
 template<typename> class Observer;
 template<typename, ConcurrencyTag = ConcurrencyTag::None> class OptionSet;
 template<typename> class Packed;
@@ -145,6 +154,7 @@ template<typename T, typename = RawPtrTraits<T>> class CheckedPtr;
 template<typename T, typename = RawPtrTraits<T>, typename = DefaultRefDerefTraits<T>> class Ref;
 template<typename T, typename = RawPtrTraits<T>, typename = DefaultRefDerefTraits<T>> class RefPtr;
 template<typename> class RetainPtr;
+template<typename> class RetainRef;
 template<typename> class ScopedLambda;
 template<typename> class StringBuffer;
 template<typename> class StringParsingBuffer;
@@ -155,16 +165,20 @@ template<typename, size_t = 0> class VariantList;
 template<typename, size_t = 0> struct VariantListConstIterator;
 template<typename> struct VariantListProxy;
 template<typename> struct VariantListSizer;
-template<typename, size_t = 0, typename = CrashOnOverflow, size_t = 16, typename = VectorBufferMalloc> class Vector;
+template<typename T, size_t inlineCapacity = 0, typename OverflowHandler = CrashOnOverflow, size_t minCapacity = 16, typename Malloc = VectorBufferMalloc> class Vector;
 template<typename, typename WeakPtrImpl = DefaultWeakPtrImpl, typename = RawPtrTraits<WeakPtrImpl>> class WeakPtr;
 template<typename, typename = DefaultWeakPtrImpl> class WeakRef;
 template<typename T> class InlineWeakPtr;
 template<typename T> struct NoTaggingTraits;
-template<typename T, typename = NoTaggingTraits<T>> class ThreadSafeWeakPtr;
-template<typename T, typename = NoTaggingTraits<T>> class ThreadSafeWeakRef;
+template<typename T> class ThreadSafeWeakPtr;
+template<typename T> class ThreadSafeWeakRef;
+
+using UTF8CString = CString<char8_t>;
+using Latin1CString = CString<Latin1Character>;
+using ASCIICString = CString<char>;
 
 template <typename T>
-using SaSegmentedVector = SegmentedVector<T, 8, SequesteredArenaMalloc>;
+using SaSegmentedVector = SegmentedVector<T, 8, 0, SegmentedVectorGrowthPolicy::Constant, SequesteredArenaMalloc>;
 template <typename T>
 using SaFixedVector = FixedVector<T, SequesteredArenaMalloc>;
 template <typename T>
@@ -196,6 +210,8 @@ template<typename KeyArg, typename MappedArg, typename KeyHash = DefaultHash<Key
 using UncheckedKeyHashMap = HashMap<KeyArg, MappedArg, KeyHash, KeyTraits, MappedTraits, HashTraits, ShouldValidateKey::No, Malloc>;
 template<typename ValueArg, typename = DefaultHash<ValueArg>, typename = HashTraits<ValueArg>, typename = HashTableTraits, ShouldValidateKey = ShouldValidateKey::Yes> class HashSet;
 template<typename ValueArg, typename = DefaultHash<ValueArg>> class ListHashSet;
+template<typename KeyArg, typename MappedArg, typename = DefaultHash<KeyArg>, typename = HashTraits<KeyArg>, typename = HashTraits<MappedArg>, typename = HashTableMalloc> class OrderedHashMap;
+template<typename ValueArg, typename = DefaultHash<ValueArg>, typename = HashTraits<ValueArg>, typename = HashTableMalloc> class OrderedHashSet;
 template<typename ValueArg, typename HashArg = DefaultHash<ValueArg>, typename TraitsArg = HashTraits<ValueArg>, typename TableTraitsArg = HashTableTraits>
 using UncheckedKeyHashSet = HashSet<ValueArg, HashArg, TraitsArg, TableTraitsArg, ShouldValidateKey::No>;
 template<typename ResolveValueT, typename RejectValueT, unsigned options = 0> class NativePromise;
@@ -235,20 +251,22 @@ namespace std {
 namespace experimental {
 inline namespace fundamentals_v3 {
 template<class, class> class expected;
-template<class> class unexpected;
 }}} // namespace std::experimental::fundamentals_v3
 
 using WTF::SaSegmentedVector;
 using WTF::SaFixedVector;
 using WTF::SaVector;
 
+using WTF::ASCIICString;
 using WTF::ASCIILiteral;
 using WTF::AbstractLocker;
 using WTF::AtomString;
 using WTF::AtomStringImpl;
 using WTF::AtomicObjectIdentifier;
 using WTF::Awaitable;
+using WTF::Borrow;
 using WTF::BinarySemaphore;
+using WTF::CStringBase;
 using WTF::CString;
 using WTF::CompletionHandler;
 using WTF::ConcurrencyTag;
@@ -256,6 +274,7 @@ using WTF::ConcurrentWorkQueue;
 using WTF::Deque;
 using WTF::EnumSet;
 using WTF::EnumeratedArray;
+using WTF::FillWith;
 using WTF::FixedVector;
 using WTF::Function;
 using WTF::FunctionDispatcher;
@@ -268,6 +287,7 @@ using WTF::Hasher;
 using WTF::InlineWeakKeyHashMap;
 using WTF::InlineWeakKeyHashSet;
 using WTF::InlineWeakKeyListHashSet;
+using WTF::Latin1CString;
 using WTF::LazyNeverDestroyed;
 using WTF::LazyUniqueRef;
 using WTF::ListHashSet;
@@ -277,6 +297,8 @@ using WTF::MachSendRight;
 using WTF::MachSendRightAnnotated;
 using WTF::MainThreadDispatcher;
 using WTF::MarkableTraits;
+using WTF::MediaTime;
+using WTF::MonotonicObjectIdentifier;
 using WTF::MonotonicTime;
 using WTF::NativePromise;
 using WTF::NativePromiseRequest;
@@ -286,13 +308,17 @@ using WTF::ObjectIdentifier;
 using WTF::ObjectIdentifierGeneric;
 using WTF::Observer;
 using WTF::OptionSet;
+using WTF::OrderedHashMap;
+using WTF::OrderedHashSet;
 using WTF::OrdinalNumber;
 using WTF::PrintStream;
 using WTF::RawPtrTraits;
 using WTF::RawValueTraits;
+using WTF::ReducedResolutionSeconds;
 using WTF::Ref;
 using WTF::RefPtr;
 using WTF::RetainPtr;
+using WTF::RetainRef;
 using WTF::SHA1;
 using WTF::ScopedLambda;
 using WTF::SerialFunctionDispatcher;
@@ -309,6 +335,7 @@ using WTF::SuspendableWorkQueue;
 using WTF::TextPosition;
 using WTF::TextStream;
 using WTF::URL;
+using WTF::UTF8CString;
 using WTF::UncheckedKeyHashMap;
 using WTF::UncheckedKeyHashSet;
 using WTF::UniqueRef;
@@ -321,9 +348,6 @@ using WTF::WeakPtr;
 using WTF::WeakRef;
 using WTF::WorkQueue;
 using WTF::makeUniqueRef;
-
-template<class T, class E> using Expected = std::experimental::expected<T, E>;
-template<class E> using Unexpected = std::experimental::unexpected<E>;
 
 // Sometimes an inline method simply forwards to another one and does nothing else. If it were
 // just a forward declaration of that method then you would only need a forward declaration of

@@ -24,7 +24,6 @@
 
 #pragma once
 
-#include "CSSCalcValue.h"
 #include "CSSPrimitiveNumericTypes.h"
 #include "CSSPrimitiveValue.h"
 #include "CSSPropertyParserConsumer+MetaConsumer.h"
@@ -52,7 +51,7 @@ struct CSSPrimitiveValueResolverBase {
 
     static RefPtr<CSSPrimitiveValue> resolve(CSS::Calc auto value, CSSPropertyParserOptions = { })
     {
-        return CSSPrimitiveValue::create(value.protectedCalc());
+        return CSSPrimitiveValue::create(WTF::move(value));
     }
 
     static RefPtr<CSSPrimitiveValue> resolve(CSS::Numeric auto value, CSSPropertyParserOptions options = { })
@@ -69,7 +68,7 @@ struct CSSPrimitiveValueResolverBase {
             [&](const CSS::Percentage<pR, T>& value) -> RefPtr<CSSPrimitiveValue> {
                 return WTF::switchOn(value,
                     [&](const CSS::Percentage<pR, T>::Raw& raw) -> RefPtr<CSSPrimitiveValue> {
-                        return CSSPrimitiveValue::create(raw.value / 100.0, CSSUnitType::CSS_NUMBER);
+                        return CSSPrimitiveValue::create(raw.value / 100.0, CSSUnitType::Number);
                     },
                     [&](const CSS::Percentage<pR, T>::Calc& calc) -> RefPtr<CSSPrimitiveValue> {
                         return resolve(calc, options);

@@ -22,6 +22,8 @@
 #include "DOMWrapperWorld.h"
 
 #include "CommonVM.h"
+#include "JSEventListener.h"
+#include "Logging.h"
 #include "WebCoreJSClientData.h"
 #include "WindowProxy.h"
 #include <JavaScriptCore/HeapCellInlines.h>
@@ -50,16 +52,33 @@ DOMWrapperWorld::~DOMWrapperWorld()
 
     // These items are created lazily.
     while (!m_jsWindowProxies.isEmpty())
-        (*m_jsWindowProxies.begin())->destroyJSWindowProxy(*this);
+        protect(*m_jsWindowProxies.begin())->destroyJSWindowProxy(*this);
 }
 
 void DOMWrapperWorld::clearWrappers()
 {
+    if (!m_eventListeners.isEmptyIgnoringNullReferences()) {
+        RELEASE_LOG_ERROR(Bindings, "DOMWrapperWorld::clearWrappers() called when there were still registered event listeners");
+        auto eventListeners = std::exchange(m_eventListeners, { });
+        for (Ref eventListener : eventListeners)
+            eventListener->invalidate();
+    }
+
     m_wrappers.clear();
 
     // These items are created lazily.
     while (!m_jsWindowProxies.isEmpty())
-        (*m_jsWindowProxies.begin())->destroyJSWindowProxy(*this);
+        protect(*m_jsWindowProxies.begin())->destroyJSWindowProxy(*this);
+}
+
+void DOMWrapperWorld::addEventListener(JSEventListener& listener)
+{
+    m_eventListeners.add(listener);
+}
+
+void DOMWrapperWorld::removeEventListener(JSEventListener& listener)
+{
+    m_eventListeners.remove(listener);
 }
 
 DOMWrapperWorld& normalWorld(JSC::VM& vm)
@@ -74,11 +93,6 @@ DOMWrapperWorld& mainThreadNormalWorldSingleton()
     ASSERT(isMainThread());
     static NeverDestroyed<Ref<DOMWrapperWorld>> cachedNormalWorld = normalWorld(commonVM());
     return cachedNormalWorld->get();
-}
-
-bool isWorldCompatible(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
-{
-    return !value.isObject() || &worldForDOMObject(*value.getObject()) == &currentWorld(lexicalGlobalObject);
 }
 
 } // namespace WebCore

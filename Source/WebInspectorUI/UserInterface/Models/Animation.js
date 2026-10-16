@@ -59,10 +59,11 @@ WI.Animation = class Animation extends WI.Object
             name: payload.name,
             cssAnimationName: payload.cssAnimationName,
             cssTransitionProperty: payload.cssTransitionProperty,
-            stackTrace: WI.StackTrace.fromPayload(WI.assumingMainTarget(), payload.stackTrace),
+            // The Animation domain only exists on the page target, which `WI.assumingMainTarget()` returns.
+            stackTrace: WI.StackTrace.fromPayload(WI.assumingMainTarget(), payload.stackTrace, {deliveredOnTarget: true}),
         });
 
-        // COMPATIBILITY (iOS 26.0, macOS 26.0): `Animation` removed the `effect` property in favor of `Animation.requestEffect`.
+        // COMPATIBILITY (macOS 15.4, iOS 18.4): `Animation` removed the `effect` property in favor of `Animation.requestEffect`.
         if (payload.effect)
             animation.effectChanged(payload.effect);
 
@@ -284,7 +285,7 @@ WI.Animation = class Animation extends WI.Object
     {
         this._effect = null;
 
-        // COMPATIBILITY (iOS 26.0, macOS 26.0): `Animation.effectChanged` removed the `effect` parameter in favor of `Animation.requestEffect`.
+        // COMPATIBILITY (macOS 15.4, iOS 18.4): `Animation.effectChanged` removed the `effect` parameter in favor of `Animation.requestEffect`.
         if (!InspectorBackend.hasCommand("Animation.requestEffect"))
             this._updateEffect(effect);
 

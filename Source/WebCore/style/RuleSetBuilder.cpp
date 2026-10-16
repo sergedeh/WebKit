@@ -31,6 +31,7 @@
 
 #include "CSSCounterStyleRegistry.h"
 #include "CSSCounterStyleRule.h"
+#include "CSSEnvironmentMapRule.h"
 #include "CSSFontSelector.h"
 #include "CSSKeyframesRule.h"
 #include "CSSPositionTryRule.h"
@@ -38,13 +39,14 @@
 #include "CSSViewTransitionRule.h"
 #include "CustomFunctionRegistry.h"
 #include "Document.h"
+#include "DocumentInlines.h"
 #include "MediaQueryEvaluator.h"
 #include "MutableCSSSelector.h"
 #include "StyleCustomPropertyRegistry.h"
+#include "StyleDocumentScope.h"
 #include "StyleResolver.h"
 #include "StyleRuleFunction.h"
 #include "StyleRuleImport.h"
-#include "StyleScope.h"
 #include "StyleSheetContents.h"
 #include <ranges>
 #include <wtf/CryptographicallyRandomNumber.h>
@@ -59,6 +61,8 @@ RuleSetBuilder::RuleSetBuilder(RuleSet& ruleSet, const MQ::MediaQueryEvaluator& 
     , m_resolver(resolver)
     , m_shrinkToFit(shrinkToFit)
 {
+    RELEASE_ASSERT(!m_ruleSet->m_isBuilding);
+    m_ruleSet->m_isBuilding = true;
 }
 
 RuleSetBuilder::RuleSetBuilder(const MQ::MediaQueryEvaluator& evaluator)
@@ -77,6 +81,8 @@ RuleSetBuilder::~RuleSetBuilder()
 
     if (m_shrinkToFit == ShrinkToFit::Enable)
         m_ruleSet->shrinkToFit();
+
+    m_ruleSet->m_isBuilding = false;
 }
 
 void RuleSetBuilder::addRulesFromSheet(const StyleSheetContents& sheet, const MQ::MediaQueryList& sheetQuery)
@@ -220,6 +226,7 @@ void RuleSetBuilder::addChildRule(Ref<StyleRuleBase> rule)
     case StyleRuleType::Property:
     case StyleRuleType::ViewTransition:
     case StyleRuleType::PositionTry:
+    case StyleRuleType::EnvironmentMap:
         disallowDynamicMediaQueryEvaluationIfNeeded();
         if (m_resolver)
             m_collectedResolverMutatingRules.append({ rule, m_currentCascadeLayerIdentifier });
@@ -251,7 +258,7 @@ void RuleSetBuilder::addChildRule(Ref<StyleRuleBase> rule)
         disallowDynamicMediaQueryEvaluationIfNeeded();
 
         auto functionDeclarations = uncheckedDowncast<StyleRuleFunctionDeclarations>(WTF::move(rule));
-        m_currentFunctionDeclarationsList.append(WTF::move(functionDeclarations));
+        m_currentFunctionDeclarationsList.append({ WTF::move(functionDeclarations), m_currentContainerQueryIdentifier });
         return;
     }
 
@@ -287,7 +294,7 @@ void RuleSetBuilder::addRulesFromSheetContents(const StyleSheetContents& sheet)
                 pushCascadeLayer(*cascadeLayerName);
             }
 
-            addRulesFromSheetContents(*rule->styleSheet());
+            addRulesFromSheetContents(protect(*rule->styleSheet()));
 
             if (cascadeLayerName)
                 popCascadeLayer(*cascadeLayerName);
@@ -510,59 +517,78 @@ void RuleSetBuilder::addMutatingRulesToResolver()
     if (!m_cascadeLayerIdentifierMap.isEmpty())
         std::ranges::stable_sort(rulesToAdd, compareLayers);
 
+    Ref resolver = *m_resolver;
+    Ref document = resolver->document();
     for (auto& collectedRule : rulesToAdd) {
         if (collectedRule.layerIdentifier)
             m_ruleSet->m_resolverMutatingRulesInLayers.append(collectedRule);
 
         auto& rule = collectedRule.rule;
-        if (auto* styleRuleFontFace = dynamicDowncast<StyleRuleFontFace>(rule.get())) {
-            m_resolver->document().protectedFontSelector()->addFontFaceRule(*styleRuleFontFace, false);
-            m_resolver->invalidateMatchedDeclarationsCache();
+        if (RefPtr styleRuleFontFace = dynamicDowncast<StyleRuleFontFace>(rule.get())) {
+            protect(document->fontSelector())->addFontFaceRule(*styleRuleFontFace, false);
+            resolver->invalidateMatchedDeclarationsCache();
             continue;
         }
-        if (auto* styleRuleFontPaletteValues = dynamicDowncast<StyleRuleFontPaletteValues>(rule.get())) {
-            m_resolver->document().protectedFontSelector()->addFontPaletteValuesRule(*styleRuleFontPaletteValues);
-            m_resolver->invalidateMatchedDeclarationsCache();
+        if (RefPtr styleRuleFontPaletteValues = dynamicDowncast<StyleRuleFontPaletteValues>(rule.get())) {
+            protect(document->fontSelector())->addFontPaletteValuesRule(*styleRuleFontPaletteValues);
+            resolver->invalidateMatchedDeclarationsCache();
             continue;
         }
-        if (auto* styleRuleFontFeatureValues = dynamicDowncast<StyleRuleFontFeatureValues>(rule.get())) {
-            m_resolver->document().protectedFontSelector()->addFontFeatureValuesRule(*styleRuleFontFeatureValues);
-            m_resolver->invalidateMatchedDeclarationsCache();
+        if (RefPtr styleRuleFontFeatureValues = dynamicDowncast<StyleRuleFontFeatureValues>(rule.get())) {
+            protect(document->fontSelector())->addFontFeatureValuesRule(*styleRuleFontFeatureValues);
+            resolver->invalidateMatchedDeclarationsCache();
             continue;
         }
-        if (auto* styleRuleKeyframes = dynamicDowncast<StyleRuleKeyframes>(rule.get())) {
-            m_resolver->addKeyframeStyle(*styleRuleKeyframes);
+        if (RefPtr styleRuleKeyframes = dynamicDowncast<StyleRuleKeyframes>(rule.get())) {
+            resolver->addKeyframeStyle(*styleRuleKeyframes);
             continue;
         }
-        if (auto* styleRuleCounterStyle = dynamicDowncast<StyleRuleCounterStyle>(rule.get())) {
-            if (m_resolver->scopeType() == Resolver::ScopeType::ShadowTree)
+        if (RefPtr styleRuleCounterStyle = dynamicDowncast<StyleRuleCounterStyle>(rule.get())) {
+            if (resolver->scopeType() == Resolver::ScopeType::ShadowTree)
                 continue;
-            auto& registry = m_resolver->document().styleScope().counterStyleRegistry();
+            auto& registry = document->styleScope().counterStyleRegistry();
             registry.addCounterStyle(styleRuleCounterStyle->descriptors());
             continue;
         }
-        if (auto* styleRuleProperty = dynamicDowncast<StyleRuleProperty>(rule.get())) {
+        if (RefPtr styleRuleProperty = dynamicDowncast<StyleRuleProperty>(rule.get())) {
             // "A @property is invalid if it occurs in a stylesheet inside of a shadow tree, and must be ignored."
             // https://drafts.css-houdini.org/css-properties-values-api/#at-property-rule
-            if (m_resolver->scopeType() == Resolver::ScopeType::ShadowTree)
+            if (resolver->scopeType() == Resolver::ScopeType::ShadowTree)
                 continue;
-            auto& registry = m_resolver->document().styleScope().customPropertyRegistry();
+            auto& registry = document->styleScope().customPropertyRegistry();
             registry.registerFromStylesheet(styleRuleProperty->descriptor());
             continue;
         }
-        if (auto* styleRuleViewTransition = dynamicDowncast<StyleRuleViewTransition>(rule.get()))
+        if (RefPtr styleRuleViewTransition = dynamicDowncast<StyleRuleViewTransition>(rule.get()))
             m_ruleSet->setViewTransitionRule(*styleRuleViewTransition);
 
-        if (auto* positionTryRule = dynamicDowncast<StyleRulePositionTry>(rule.get())) {
+        if (RefPtr positionTryRule = dynamicDowncast<StyleRulePositionTry>(rule.get())) {
             // "If multiple @position-try rules are declared with the same name, the last one in document order wins."
             // https://drafts.csswg.org/css-anchor-position-1/#fallback-rule
             m_ruleSet->m_positionTryRules.set(positionTryRule->name(), *positionTryRule);
         }
 
-        if (auto* functionRule = dynamicDowncast<StyleRuleFunction>(rule.get())) {
+#if ENABLE(SPATIAL_PORTAL)
+        if (RefPtr environmentMapRule = dynamicDowncast<StyleRuleEnvironmentMap>(rule.get()); environmentMapRule && environmentMapRule->isUsable())
+            m_ruleSet->m_environmentMapRules.set(environmentMapRule->name(), *environmentMapRule);
+#endif
+
+        if (RefPtr functionRule = dynamicDowncast<StyleRuleFunction>(rule.get())) {
             auto declarationsList = m_functionDeclarationsMap.get(*functionRule);
-            CheckedRef registry = m_resolver->ensureCustomFunctionRegistry();
-            registry->registerFunction(*functionRule, declarationsList);
+
+            // Keep each block's wrapping @container chain rather than merging it away. @container in a
+            // function body depends on the calling element, so it is evaluated when the function is called.
+            auto declarationBlocks = WTF::map<1>(declarationsList, [&](auto& block) {
+                return CustomFunction::DeclarationsBlock {
+                    block.declarations->properties(),
+                    m_ruleSet->containerQueryChainFor(block.containerQueryIdentifier)
+                };
+            });
+
+            CheckedRef registry = resolver->ensureCustomFunctionRegistry();
+            registry->registerFunction(*functionRule, WTF::move(declarationBlocks));
+            // The cache keys on matched properties, not on the function registry. Mirrors @property.
+            resolver->invalidateMatchedDeclarationsCache();
         }
     }
 }

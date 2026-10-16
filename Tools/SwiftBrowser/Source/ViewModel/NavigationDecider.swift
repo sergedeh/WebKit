@@ -22,6 +22,7 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 
 import Foundation
+import SwiftUI
 import WebKit
 @_spi(Private) import _WebKit_SwiftUI
 
@@ -29,7 +30,10 @@ import WebKit
 final class NavigationDecider: WebPage.NavigationDeciding {
     weak var owner: BrowserViewModel? = nil
 
-    func decidePolicy(for action: WebPage.NavigationAction, preferences: inout WebPage.NavigationPreferences) async -> WKNavigationActionPolicy {
+    func decidePolicy(
+        for action: WebPage.NavigationAction,
+        preferences: inout WebPage.NavigationPreferences
+    ) async -> WKNavigationActionPolicy {
         if action.shouldPerformDownload {
             return .download
         }

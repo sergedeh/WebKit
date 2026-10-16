@@ -60,6 +60,13 @@ struct MatchResult : RefCounted<MatchResult> {
 
     bool isEmpty() const { return userAgentDeclarations.isEmpty() && userDeclarations.isEmpty() && authorDeclarations.isEmpty(); }
 
+    void copyDeclarationsFrom(const MatchResult& other)
+    {
+        userAgentDeclarations = other.userAgentDeclarations;
+        userDeclarations = other.userDeclarations;
+        authorDeclarations = other.authorDeclarations;
+    }
+
     bool cacheablePropertiesEqual(const MatchResult&) const;
 
 private:
@@ -96,7 +103,7 @@ inline bool MatchResult::cacheablePropertiesEqual(const MatchResult& other) cons
     // small set of properties so this doesn't make a significant difference.
     auto nonCacheableEqual = std::ranges::equal(nonCacheablePropertyIds, other.nonCacheablePropertyIds, [](auto& idA, auto& idB) {
         // This would need to check the custom property names for equality.
-        if (idA == CSSPropertyCustom || idB == CSSPropertyCustom)
+        if (idA == CSSPropertyID::Custom || idB == CSSPropertyID::Custom)
             return false;
         return idA == idB;
     });

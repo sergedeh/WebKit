@@ -30,6 +30,7 @@
 #include <wtf/CompletionHandler.h>
 #include <wtf/MainThread.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebCore {
 
@@ -44,7 +45,7 @@ MessagePortChannelRegistry::~MessagePortChannelRegistry()
 
 void MessagePortChannelRegistry::didCreateMessagePortChannel(const MessagePortIdentifier& port1, const MessagePortIdentifier& port2)
 {
-    LOG(MessagePorts, "Registry: Creating MessagePortChannel %p linking %s and %s", this, port1.logString().utf8().data(), port2.logString().utf8().data());
+    LOG_WITH_STREAM(MessagePorts, stream << "Registry: Creating MessagePortChannel "_s << this << " linking "_s << port1.logString() << " and "_s << port2.logString());
     ASSERT(isMainThread());
 
     MessagePortChannel::create(*this, port1, port2);
@@ -71,7 +72,12 @@ void MessagePortChannelRegistry::messagePortChannelDestroyed(MessagePortChannel&
     m_openChannels.remove(channel.port1());
     m_openChannels.remove(channel.port2());
 
-    LOG(MessagePorts, "Registry: After removing channel %s there are %u channels left in the registry:", channel.logString().utf8().data(), m_openChannels.size());
+    m_pendingTransferOrigins.remove(channel.port1());
+    m_pendingTransferOrigins.remove(channel.port2());
+    m_pendingTransferDestinations.remove(channel.port1());
+    m_pendingTransferDestinations.remove(channel.port2());
+
+    LOG_WITH_STREAM(MessagePorts, stream << "Registry: After removing channel "_s << channel.logString() << " there are "_s << m_openChannels.size() << " channels left in the registry:"_s);
 }
 
 void MessagePortChannelRegistry::didEntangleLocalToRemote(const MessagePortIdentifier& local, const MessagePortIdentifier& remote, ProcessIdentifier process)
@@ -97,11 +103,11 @@ void MessagePortChannelRegistry::didDisentangleMessagePort(const MessagePortIden
         channel->disentanglePort(port);
 }
 
-void MessagePortChannelRegistry::didCloseMessagePort(const MessagePortIdentifier& port)
+void MessagePortChannelRegistry::didCloseMessagePort(const MessagePortIdentifier& port, MessagePortStatus status)
 {
     ASSERT(isMainThread());
 
-    LOG(MessagePorts, "Registry: MessagePort %s closed in registry", port.logString().utf8().data());
+    LOG_WITH_STREAM(MessagePorts, stream << "Registry: MessagePort "_s << port.logString() << " closed in registry"_s);
 
     RefPtr channel = m_openChannels.get(port);
     if (!channel)
@@ -109,36 +115,36 @@ void MessagePortChannelRegistry::didCloseMessagePort(const MessagePortIdentifier
 
 #ifndef NDEBUG
     if (channel && channel->hasAnyMessagesPendingOrInFlight())
-        LOG(MessagePorts, "Registry: (Note) The channel closed for port %s had messages pending or in flight", port.logString().utf8().data());
+        LOG_WITH_STREAM(MessagePorts, stream << "Registry: (Note) The channel closed for port "_s << port.logString() << " had messages pending or in flight"_s);
 #endif
 
-    channel->closePort(port);
+    channel->closePort(port, status);
 
     // FIXME: When making message ports be multi-process, this should probably push a notification
     // to the remaining port to tell it this port closed.
 }
 
-bool MessagePortChannelRegistry::didPostMessageToRemote(MessageWithMessagePorts&& message, const MessagePortIdentifier& remoteTarget)
+bool MessagePortChannelRegistry::didPostMessageToRemote(MessageWithMessagePorts&& message, const MessagePortIdentifier& remoteTarget, CompletionHandlerCallingScope&& blobURLsInFlight)
 {
     ASSERT(isMainThread());
 
-    LOG(MessagePorts, "Registry: Posting message to MessagePort %s in registry", remoteTarget.logString().utf8().data());
+    LOG_WITH_STREAM(MessagePorts, stream << "Registry: Posting message to MessagePort "_s << remoteTarget.logString() << " in registry"_s);
 
     // The channel might be gone if the remote side was closed.
     RefPtr channel = m_openChannels.get(remoteTarget);
     if (!channel) {
-        LOG(MessagePorts, "Registry: Could not find MessagePortChannel for port %s; It was probably closed. Message will be dropped.", remoteTarget.logString().utf8().data());
+        LOG_WITH_STREAM(MessagePorts, stream << "Registry: Could not find MessagePortChannel for port "_s << remoteTarget.logString() << "; It was probably closed. Message will be dropped."_s);
         return false;
     }
 
-    return channel->postMessageToRemote(WTF::move(message), remoteTarget);
+    return channel->postMessageToRemote(WTF::move(message), remoteTarget, WTF::move(blobURLsInFlight));
 }
 
 void MessagePortChannelRegistry::takeAllMessagesForPort(const MessagePortIdentifier& port, CompletionHandler<void(Vector<MessageWithMessagePorts>&&, CompletionHandler<void()>&&)>&& callback)
 {
     ASSERT(isMainThread());
 
-    LOG(MessagePorts, "Registry: Taking all messages for MessagePort %s", port.logString().utf8().data());
+    LOG_WITH_STREAM(MessagePorts, stream << "Registry: Taking all messages for MessagePort "_s << port.logString());
 
     // The channel might be gone if the remote side was closed.
     RefPtr channel = m_openChannels.get(port);
@@ -155,6 +161,38 @@ MessagePortChannel* MessagePortChannelRegistry::existingChannelContainingPort(co
     ASSERT(isMainThread());
 
     return m_openChannels.get(port);
+}
+
+void MessagePortChannelRegistry::recordPendingTransferOrigin(const MessagePortIdentifier& port, ProcessIdentifier origin)
+{
+    ASSERT(isMainThread());
+    m_pendingTransferOrigins.set(port, origin);
+}
+
+bool MessagePortChannelRegistry::claimPendingTransferOrigin(const MessagePortIdentifier& port, ProcessIdentifier expected)
+{
+    ASSERT(isMainThread());
+    auto it = m_pendingTransferOrigins.find(port);
+    if (it == m_pendingTransferOrigins.end() || it->value != expected)
+        return false;
+    m_pendingTransferOrigins.remove(it);
+    return true;
+}
+
+void MessagePortChannelRegistry::recordPendingTransferDestination(const MessagePortIdentifier& port, ProcessIdentifier destination)
+{
+    ASSERT(isMainThread());
+    m_pendingTransferDestinations.set(port, destination);
+}
+
+bool MessagePortChannelRegistry::claimPendingTransferDestination(const MessagePortIdentifier& port, ProcessIdentifier expected)
+{
+    ASSERT(isMainThread());
+    auto it = m_pendingTransferDestinations.find(port);
+    if (it == m_pendingTransferDestinations.end() || it->value != expected)
+        return false;
+    m_pendingTransferDestinations.remove(it);
+    return true;
 }
 
 } // namespace WebCore

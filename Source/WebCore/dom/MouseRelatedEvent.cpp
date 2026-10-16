@@ -105,7 +105,7 @@ static inline bool isMoveEventType(const AtomString& eventType)
 void MouseRelatedEvent::init(bool isSimulated, const DoublePoint& windowLocation)
 {
     if (!isSimulated) {
-        if (RefPtr frameView = frameViewFromWindowProxy(view())) {
+        if (RefPtr frameView = frameViewFromWindowProxy(protect(view()))) {
             DoublePoint absolutePoint = frameView->windowToContents(windowLocation);
             DoublePoint documentPoint = frameView->absoluteToDocumentPoint(absolutePoint);
             m_pageLocation = WTF::move(documentPoint);
@@ -141,7 +141,7 @@ LocalFrameView* MouseRelatedEvent::frameViewFromWindowProxy(WindowProxy* windowP
     if (!window)
         return nullptr;
 
-    RefPtr frame = window->localFrame();
+    RefPtr frame = window->frame();
     return frame ? frame->view() : nullptr;
 }
 
@@ -167,7 +167,7 @@ void MouseRelatedEvent::initCoordinates(const DoublePoint& clientLocation)
     // Correct values are computed lazily, see computeRelativePosition.
 
     auto documentToClientOffset = [&] -> DoubleSize {
-        if (RefPtr frameView = frameViewFromWindowProxy(view()))
+        if (RefPtr frameView = frameViewFromWindowProxy(protect(view())))
             return frameView->documentToClientOffset();
         return { };
     };
@@ -184,7 +184,7 @@ void MouseRelatedEvent::initCoordinates(const DoublePoint& clientLocation)
 
 float MouseRelatedEvent::documentToAbsoluteScaleFactor() const
 {
-    if (RefPtr frameView = frameViewFromWindowProxy(view()))
+    if (RefPtr frameView = frameViewFromWindowProxy(protect(view())))
         return frameView->documentToAbsoluteScaleFactor();
 
     return 1;
@@ -192,7 +192,7 @@ float MouseRelatedEvent::documentToAbsoluteScaleFactor() const
 
 void MouseRelatedEvent::computePageLocation()
 {
-    m_absoluteLocation = pagePointToAbsolutePoint(m_pageLocation, frameViewFromWindowProxy(view()));
+    m_absoluteLocation = pagePointToAbsolutePoint(m_pageLocation, protect(frameViewFromWindowProxy(protect(view()))));
 }
 
 void MouseRelatedEvent::receivedTarget()
@@ -218,7 +218,7 @@ void MouseRelatedEvent::computeRelativePosition()
             renderer = renderer->parent();
 
         // Update the target node to point to the SVG root.
-        return std::pair { renderer, renderer->protectedNode() };
+        return std::pair { renderer, protect(renderer->node()) };
     };
 
     // Compute coordinates that are based on the target.
@@ -226,7 +226,7 @@ void MouseRelatedEvent::computeRelativePosition()
     m_offsetLocation = m_pageLocation;
 
     // Must have an updated render tree for this math to work correctly.
-    targetNode->protectedDocument()->updateLayoutIgnorePendingStylesheets();
+    protect(targetNode->document())->updateLayoutIgnorePendingStylesheets();
 
     // Adjust offsetLocation to be relative to the target's padding box.
     auto [renderer, adjustedNode] = findTargetRendererAndAdjustedNode(targetNode);
@@ -234,7 +234,7 @@ void MouseRelatedEvent::computeRelativePosition()
         targetNode = WTF::move(adjustedNode);
 
     if (renderer) {
-        m_offsetLocation = renderer->absoluteToLocal(absoluteLocation(), UseTransforms);
+        m_offsetLocation = renderer->absoluteToLocal(absoluteLocation(), MapCoordinatesMode::UseTransforms);
 
         if (CheckedPtr boxModel = dynamicDowncast<RenderBoxModelObject>(renderer.get()))
             m_offsetLocation.move(-boxModel->borderLeft(), -boxModel->borderTop());
@@ -252,19 +252,34 @@ void MouseRelatedEvent::computeRelativePosition()
     while (node && !node->renderer())
         node = node->parentNode();
 
-    CheckedPtr<RenderLayer> layer;
-    if (node && (layer = node->renderer()->enclosingLayer())) {
-        for (; layer; layer = layer->parent()) {
-            m_layerLocation -= toLayoutSize(layer->location());
+    if (node) {
+        CheckedPtr layer = node->renderer()->enclosingLayer();
+        while (layer && !layer->isSelfPaintingLayer())
+            layer = layer->parent();
+
+        if (layer) {
+            // Start with absoluteLocation which is already in absolute coordinates
+            // (has zoom factor applied via documentToAbsoluteScaleFactor).
+            auto layerLocationInAbsoluteCoords = absoluteLocation();
+
+            // Convert layer position to absolute coordinates accounting for transforms.
+            auto layerAbsolutePosition = layer->renderer().localToAbsolute(FloatPoint(), MapCoordinatesMode::UseTransforms);
+
+            // Subtract the layer's absolute position from the mouse absolute position.
+            layerLocationInAbsoluteCoords.moveBy(-layerAbsolutePosition);
+
+            // Scale back to page coordinates (remove zoom factor).
+            auto inverseScaleFactor = 1 / documentToAbsoluteScaleFactor();
+            m_layerLocation = LayoutPoint(layerLocationInAbsoluteCoords.scaled(inverseScaleFactor));
         }
     }
 
     m_hasCachedRelativePosition = true;
 }
-    
+
 DoublePoint MouseRelatedEvent::locationInRootViewCoordinates() const
 {
-    if (RefPtr frameView = frameViewFromWindowProxy(view()))
+    if (RefPtr frameView = frameViewFromWindowProxy(protect(view())))
         return frameView->contentsToRootView(m_absoluteLocation);
 
     return m_absoluteLocation;
@@ -316,7 +331,7 @@ double MouseRelatedEvent::pageY() const
     return std::floor(m_pageLocation.y());
 }
 
-static double finiteValue(double value)
+static double LEGACY_NODELETE finiteValue(double value)
 {
     return std::isfinite(value) ? value : 0;
 }

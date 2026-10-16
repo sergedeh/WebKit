@@ -21,10 +21,10 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
 // THE POSSIBILITY OF SUCH DAMAGE.
 
-#if ENABLE_SWIFTUI && compiler(>=6.0)
+#if ENABLE_SWIFTUI
 
 public import Foundation
-internal import WebKit_Internal
+import WebKit_Internal
 
 // SPI for the cross-import overlay.
 // swift-format-ignore: AllPublicDeclarationsHaveDocumentation
@@ -34,13 +34,21 @@ public struct WKScrollGeometryAdapter {
     // swift-format-ignore: AllPublicDeclarationsHaveDocumentation
     public let containerSize: CGSize
 
-    #if canImport(UIKit)
+    #if WTF_PLATFORM_IOS_FAMILY
     // SPI for the cross-import overlay.
     // swift-format-ignore: AllPublicDeclarationsHaveDocumentation
+    #if compiler(>=6.2.3)
+    // Workaround for rdar://170308157
+    @_expose(!Cxx)
+    #endif
     public let contentInsets: UIEdgeInsets
     #else
     // SPI for the cross-import overlay.
     // swift-format-ignore: AllPublicDeclarationsHaveDocumentation
+    #if compiler(>=6.2.3)
+    // Workaround for rdar://170308157
+    @_expose(!Cxx)
+    #endif
     public let contentInsets: NSEdgeInsets
     #endif
 

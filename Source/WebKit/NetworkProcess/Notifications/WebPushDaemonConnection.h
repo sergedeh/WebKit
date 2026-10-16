@@ -34,7 +34,6 @@
 #include "WebPushDaemonConstants.h"
 #include <WebCore/ExceptionData.h>
 #include <WebCore/PushSubscriptionData.h>
-#include <wtf/Expected.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace IPC {
@@ -42,8 +41,15 @@ class Connection;
 class Decoder;
 class Encoder;
 
-template<> struct AsyncReplyError<Expected<WebCore::PushSubscriptionData, WebCore::ExceptionData>> {
-    static Expected<WebCore::PushSubscriptionData, WebCore::ExceptionData> create()
+template<> struct AsyncReplyError<std::expected<WebCore::PushSubscriptionData, WebCore::ExceptionData>> {
+    static std::expected<WebCore::PushSubscriptionData, WebCore::ExceptionData> create()
+    {
+        return makeUnexpected(WebCore::ExceptionData { WebCore::ExceptionCode::AbortError, "Connection to web push daemon failed"_s });
+    }
+};
+
+template<> struct AsyncReplyError<std::expected<std::optional<WebCore::PushSubscriptionData>, WebCore::ExceptionData>> {
+    static std::expected<std::optional<WebCore::PushSubscriptionData>, WebCore::ExceptionData> create()
     {
         return makeUnexpected(WebCore::ExceptionData { WebCore::ExceptionCode::AbortError, "Connection to web push daemon failed"_s });
     }
@@ -68,14 +74,17 @@ struct ConnectionTraits {
 class Connection final : public Daemon::ConnectionToMachService<ConnectionTraits>, public IPC::MessageSender {
     WTF_MAKE_TZONE_ALLOCATED(Connection);
 public:
-    static Ref<Connection> create(CString&& machServiceName, WebPushDaemonConnectionConfiguration&&);
+    static Ref<Connection> create(UTF8CString&& machServiceName, WebPushDaemonConnectionConfiguration&&);
 
 private:
-    Connection(CString&& machServiceName, WebPushDaemonConnectionConfiguration&&);
+    Connection(UTF8CString&& machServiceName, WebPushDaemonConnectionConfiguration&&);
+#if PLATFORM(COCOA)
+    ~Connection();
+#endif
 
     void newConnectionWasInitialized() const final;
 #if PLATFORM(COCOA)
-    XPCObjectPtr<xpc_object_t> dictionaryFromMessage(MessageType, Daemon::EncodedMessage&&) const final { return nullptr; }
+    OSObjectPtr<xpc_object_t> dictionaryFromMessage(MessageType, Daemon::EncodedMessage&&) const final { return nullptr; }
     void connectionReceivedEvent(xpc_object_t) final { }
 #endif
 

@@ -49,7 +49,7 @@ public:
     CachedRecovery& operator=(CachedRecovery&) = delete;
     CachedRecovery& operator=(CachedRecovery&&) = delete;
 
-    const Vector<VirtualRegister, 1>& targets() const { return m_targets; }
+    const Vector<VirtualRegister, 1>& targets() const LIFETIME_BOUND { return m_targets; }
 
     void addTarget(VirtualRegister reg)
     {
@@ -68,15 +68,15 @@ public:
         m_targets.clear();
     }
 
-    void setWantedJSValueRegs(JSValueRegs jsValueRegs)
+    void setWantedGPR(GPRReg gpr)
     {
         ASSERT(m_wantedFPR == InvalidFPRReg);
-        m_wantedJSValueRegs = jsValueRegs;
+        m_wantedGPR = gpr;
     }
 
     void setWantedFPR(FPRReg fpr)
     {
-        ASSERT(!m_wantedJSValueRegs);
+        ASSERT(m_wantedGPR == InvalidGPRReg);
         m_wantedFPR = fpr;
     }
 
@@ -86,15 +86,10 @@ public:
     // result of these calls will stay valid after loads and/or stores.
     bool boxingRequiresGPR() const
     {
-#if USE(JSVALUE64)
         return recovery().dataFormat() == DataFormatDouble;
-#else
-        return false;
-#endif
     }
     bool boxingRequiresFPR() const
     {
-#if USE(JSVALUE64)
         switch (recovery().dataFormat()) {
         case DataFormatInt52:
         case DataFormatStrictInt52:
@@ -103,29 +98,26 @@ public:
         default:
             return false;
         }
-#else
-        return false;
-#endif
     }
     
     // This is used to determine what kind of register we need to be
     // able to load a recovery. We only use it when a direct load is
     // currently impossible, to determine whether we should spill a
     // GPR or an FPR for loading this value.
-    bool loadsIntoGPR() const;
-    bool loadsIntoFPR() const;
+    bool LEGACY_NODELETE loadsIntoGPR() const;
+    bool LEGACY_NODELETE loadsIntoFPR() const;
 
     ValueRecovery recovery() const { return m_recovery; }
 
     void setRecovery(ValueRecovery recovery) { m_recovery = recovery; }
 
-    JSValueRegs wantedJSValueRegs() const { return m_wantedJSValueRegs; }
+    GPRReg wantedGPR() const { return m_wantedGPR; }
 
     FPRReg wantedFPR() const { return m_wantedFPR; }
 private:
     Vector<VirtualRegister, 1> m_targets;
     ValueRecovery m_recovery;
-    JSValueRegs m_wantedJSValueRegs;
+    GPRReg m_wantedGPR { InvalidGPRReg };
     FPRReg m_wantedFPR { InvalidFPRReg };
 };
 

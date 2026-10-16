@@ -16,7 +16,10 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <map>
 #include <memory>
+#include <string>
 #include <tuple>
 #include <type_traits>
 #include <typeindex>
@@ -25,6 +28,7 @@
 
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "absl/base/config.h"
 #include "absl/base/no_destructor.h"
 #include "absl/container/internal/test_instance_tracker.h"
 #include "absl/meta/type_traits.h"
@@ -41,6 +45,16 @@ using ::testing::_;
 using ::testing::ElementsAre;
 using ::testing::Gt;
 using ::testing::Pair;
+
+#if ABSL_HAVE_BUILTIN(__builtin_infer_alloc_token)
+TEST(Memory, AlignedTypeAllocToken) {
+#if defined(__wasm__)
+  GTEST_SKIP() << "Fails on wasm due to lack of heap partitioning support.";
+#endif
+  EXPECT_GT(__builtin_infer_alloc_token(sizeof(AlignedType<alignof(void*)>)),
+            __builtin_infer_alloc_token(sizeof(int)));
+}
+#endif
 
 TEST(Memory, AlignmentLargerThanBase) {
   std::allocator<int8_t> alloc;
@@ -259,9 +273,9 @@ TEST(MapSlotPolicy, TransferReturnsTrue) {
   {
     using slot_policy = map_slot_policy<int, float>;
     EXPECT_TRUE(
-        (std::is_same<decltype(slot_policy::transfer<std::allocator<char>>(
-                          nullptr, nullptr, nullptr)),
-                      std::true_type>::value));
+        (std::is_same_v<decltype(slot_policy::transfer<std::allocator<char>>(
+                            nullptr, nullptr, nullptr)),
+                        std::true_type>));
   }
   {
     struct NonRelocatable {
@@ -274,9 +288,9 @@ TEST(MapSlotPolicy, TransferReturnsTrue) {
     EXPECT_FALSE(absl::is_trivially_relocatable<NonRelocatable>::value);
     using slot_policy = map_slot_policy<int, NonRelocatable>;
     EXPECT_TRUE(
-        (std::is_same<decltype(slot_policy::transfer<std::allocator<char>>(
-                          nullptr, nullptr, nullptr)),
-                      std::false_type>::value));
+        (std::is_same_v<decltype(slot_policy::transfer<std::allocator<char>>(
+                            nullptr, nullptr, nullptr)),
+                        std::false_type>));
   }
 }
 
@@ -284,17 +298,17 @@ TEST(MapSlotPolicy, DestroyReturnsTrue) {
   {
     using slot_policy = map_slot_policy<int, float>;
     EXPECT_TRUE(
-        (std::is_same<decltype(slot_policy::destroy<std::allocator<char>>(
-                          nullptr, nullptr)),
-                      std::true_type>::value));
+        (std::is_same_v<decltype(slot_policy::destroy<std::allocator<char>>(
+                            nullptr, nullptr)),
+                        std::true_type>));
   }
   {
-    EXPECT_FALSE(std::is_trivially_destructible<std::unique_ptr<int>>::value);
+    EXPECT_FALSE(std::is_trivially_destructible_v<std::unique_ptr<int>>);
     using slot_policy = map_slot_policy<int, std::unique_ptr<int>>;
     EXPECT_TRUE(
-        (std::is_same<decltype(slot_policy::destroy<std::allocator<char>>(
-                          nullptr, nullptr)),
-                      std::false_type>::value));
+        (std::is_same_v<decltype(slot_policy::destroy<std::allocator<char>>(
+                            nullptr, nullptr)),
+                        std::false_type>));
   }
 }
 
@@ -302,10 +316,10 @@ TEST(ApplyTest, TypeErasedApplyToSlotFn) {
   size_t x = 7;
   size_t seed = 100;
   auto fn = [](size_t v) { return v * 2; };
-  EXPECT_EQ(
-      (TypeErasedApplyToSlotFn<decltype(fn), size_t, /*kIsDefault=*/false>(
-          &fn, &x, seed)),
-      (HashElement<decltype(fn), /*kIsDefault=*/false>(fn, seed)(x)));
+  EXPECT_EQ((TypeErasedApplyToSlotFn<decltype(fn), size_t, /*kIsAbsl=*/false,
+                                     /*kSeedShift=*/0>(&fn, &x, seed)),
+            (HashElement<decltype(fn), /*kIsAbsl=*/false, /*kSeedShift=*/0>(
+                fn, seed)(x)));
 }
 
 TEST(ApplyTest, TypeErasedDerefAndApplyToSlotFn) {
@@ -313,10 +327,12 @@ TEST(ApplyTest, TypeErasedDerefAndApplyToSlotFn) {
   size_t seed = 100;
   auto fn = [](size_t v) { return v * 2; };
   size_t* x_ptr = &x;
-  EXPECT_EQ((TypeErasedDerefAndApplyToSlotFn<decltype(fn), size_t,
-                                             /*kIsDefault=*/false>(&fn, &x_ptr,
-                                                                   seed)),
-            (HashElement<decltype(fn), /*kIsDefault=*/false>(fn, seed)(x)));
+  EXPECT_EQ(
+      (TypeErasedDerefAndApplyToSlotFn<decltype(fn), size_t,
+                                       /*kIsAbsl=*/false,
+                                       /*kSeedShift=*/0>(&fn, &x_ptr, seed)),
+      (HashElement<decltype(fn), /*kIsAbsl=*/false, /*kSeedShift=*/0>(
+          fn, seed)(x)));
 }
 
 TEST(HashElement, DefaultHash) {
@@ -328,7 +344,8 @@ TEST(HashElement, DefaultHash) {
       return v * 2 + seed * 3;
     }
   } hash;
-  EXPECT_EQ((HashElement<HashWithSeed, /*kIsDefault=*/true>(hash, seed)(x)),
+  EXPECT_EQ((HashElement<HashWithSeed, /*kIsAbsl=*/true,
+                         /*kSeedShift=*/0>(hash, seed)(x)),
             hash.hash_with_seed(x, seed));
 }
 
@@ -337,9 +354,19 @@ TEST(HashElement, NonDefaultHash) {
   size_t seed = 100;
   auto fn = [](size_t v) { return v * 2; };
   EXPECT_EQ(
-      (HashElement<decltype(fn), /*kIsDefault=*/false>(
+      (HashElement<decltype(fn), /*kIsAbsl=*/false, /*kSeedShift=*/0>(
           fn, seed)(x)),
       fn(x) ^ seed);
+}
+
+TEST(HashElement, NonDefaultHashWithSeedShift) {
+  size_t x = 7;
+  size_t seed = 100;
+  auto fn = [](size_t v) { return v * 2; };
+  EXPECT_EQ(
+      (HashElement<decltype(fn), /*kIsAbsl=*/false, /*kSeedShift=*/1>(
+          fn, seed)(x)),
+      fn(x) ^ (seed >> 1));
 }
 
 }  // namespace

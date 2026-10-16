@@ -25,12 +25,13 @@
 
 #pragma once
 
-#if ENABLE(WEBASSEMBLY)
+#if ENABLE(WEBASSEMBLY_DEBUGGER)
 
 #include "WasmInstanceAnchor.h"
 #include "WasmModule.h"
 #include "WasmVirtualAddress.h"
 #include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
 #include <wtf/Lock.h>
 #include <wtf/ThreadSafeWeakPtr.h>
 #include <wtf/Vector.h>
@@ -55,29 +56,35 @@ public:
     ModuleManager() = default;
     ~ModuleManager() = default;
 
-    uint32_t registerModule(Module&);
-    void unregisterModule(Module&);
-    Module* module(uint32_t moduleId) const;
-
-    uint32_t registerInstance(JSWebAssemblyInstance*);
+    void registerInstance(JSWebAssemblyInstance*);
     JSWebAssemblyInstance* jsInstance(uint32_t instanceId);
     uint32_t nextInstanceId() const;
 
     String generateLibrariesXML() const;
 
-private:
-    using IdToModule = UncheckedKeyHashMap<uint32_t, Module*, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
-    using IdToInstance = UncheckedKeyHashMap<uint32_t, ThreadSafeWeakPtr<Wasm::InstanceAnchor>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+    bool needsLibraryRequery();
+    void notifyLibraryRequeryComplete();
+    Vector<uint32_t> unnotifiedInstanceIds() const;
 
+    // IDs whose instance has been collected since the last call. Anything keyed by instance —
+    // breakpoint sites — drains this to drop what the instance left behind.
+    Vector<uint32_t> takeCollectedInstanceIds();
+
+private:
+    using IdToInstance = UncheckedKeyHashMap<uint32_t, ThreadSafeWeakPtr<Wasm::InstanceAnchor>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+    using InstanceIdSet = UncheckedKeyHashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+
+    // Drops entries whose instance has been collected, flagging the library removal for LLDB.
+    void sweepDeadInstances() WTF_REQUIRES_LOCK(m_lock);
     // Amortized cleanup mechanism (matches ThreadSafeWeakHashSet behavior).
     void amortizedCleanupIfNeeded() WTF_REQUIRES_LOCK(m_lock);
-    void cleanupHappened() WTF_REQUIRES_LOCK(m_lock);
 
     mutable Lock m_lock;
-    IdToModule m_moduleIdToModule WTF_GUARDED_BY_LOCK(m_lock);
     IdToInstance m_instanceIdToInstance WTF_GUARDED_BY_LOCK(m_lock);
+    InstanceIdSet m_unnotifiedInstanceIds WTF_GUARDED_BY_LOCK(m_lock); // Instance IDs not yet seen by LLDB; cleared by notifyLibraryRequeryComplete() after each qXfer:libraries:read reply
+    Vector<uint32_t> m_collectedInstanceIds WTF_GUARDED_BY_LOCK(m_lock); // Swept instance IDs awaiting takeCollectedInstanceIds()
+    bool m_hasPendingLibraryRemovals WTF_GUARDED_BY_LOCK(m_lock) { false }; // True when an instance went away but LLDB hasn't been notified yet
 
-    uint32_t m_nextModuleId WTF_GUARDED_BY_LOCK(m_lock) { 0 };
     uint32_t m_nextInstanceId WTF_GUARDED_BY_LOCK(m_lock) { 0 };
     mutable unsigned m_operationCountSinceLastCleanup WTF_GUARDED_BY_LOCK(m_lock) { 0 };
     mutable unsigned m_maxOperationCountWithoutCleanup WTF_GUARDED_BY_LOCK(m_lock) { 0 };
@@ -86,4 +93,4 @@ private:
 } // namespace Wasm
 } // namespace JSC
 
-#endif // ENABLE(WEBASSEMBLY)
+#endif // ENABLE(WEBASSEMBLY_DEBUGGER)

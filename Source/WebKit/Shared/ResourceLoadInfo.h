@@ -27,6 +27,7 @@
 
 #include "NetworkResourceLoadIdentifier.h"
 #include <WebCore/FrameIdentifier.h>
+#include <wtf/Markable.h>
 #include <wtf/URL.h>
 #include <wtf/UUID.h>
 #include <wtf/WallTime.h>
@@ -61,6 +62,7 @@ struct ResourceLoadInfo {
     WallTime eventTimestamp;
     bool loadedFromCache { false };
     Type type { Type::Other };
+    bool parentFrameIsMainFrame { false };
 };
 
 } // namespace WebKit

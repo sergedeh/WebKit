@@ -26,7 +26,9 @@
 #include "config.h"
 #include "CoordinatedPlatformLayerBufferExternalOES.h"
 
-#if USE(COORDINATED_GRAPHICS)
+#if USE(COORDINATED_GRAPHICS) && USE(TEXTURE_MAPPER)
+#include "BitmapTexturePool.h"
+#include "PlatformDisplay.h"
 #include "TextureMapper.h"
 
 namespace WebCore {
@@ -36,9 +38,20 @@ std::unique_ptr<CoordinatedPlatformLayerBufferExternalOES> CoordinatedPlatformLa
     return makeUnique<CoordinatedPlatformLayerBufferExternalOES>(textureID, size, flags, WTF::move(fence));
 }
 
+std::unique_ptr<CoordinatedPlatformLayerBufferExternalOES> CoordinatedPlatformLayerBufferExternalOES::create(Ref<BitmapTexture>&& texture, OptionSet<TextureMapperFlags> flags, std::unique_ptr<GLFence>&& fence)
+{
+    return makeUnique<CoordinatedPlatformLayerBufferExternalOES>(WTF::move(texture), flags, WTF::move(fence));
+}
+
 CoordinatedPlatformLayerBufferExternalOES::CoordinatedPlatformLayerBufferExternalOES(unsigned textureID, const IntSize& size, OptionSet<TextureMapperFlags> flags, std::unique_ptr<GLFence>&& fence)
     : CoordinatedPlatformLayerBuffer(Type::ExternalOES, size, flags, WTF::move(fence))
     , m_textureID(textureID)
+{
+}
+
+CoordinatedPlatformLayerBufferExternalOES::CoordinatedPlatformLayerBufferExternalOES(Ref<BitmapTexture>&& texture, OptionSet<TextureMapperFlags> flags, std::unique_ptr<GLFence>&& fence)
+    : CoordinatedPlatformLayerBuffer(Type::ExternalOES, texture->size(), flags, WTF::move(fence))
+    , m_texture(WTF::move(texture))
 {
 }
 
@@ -47,9 +60,12 @@ CoordinatedPlatformLayerBufferExternalOES::~CoordinatedPlatformLayerBufferExtern
 void CoordinatedPlatformLayerBufferExternalOES::paintToTextureMapper(TextureMapper& textureMapper, const FloatRect& targetRect, const TransformationMatrix& modelViewMatrix, float opacity)
 {
     waitForContentsIfNeeded();
-    textureMapper.drawTextureExternalOES(m_textureID, m_flags, targetRect, modelViewMatrix, opacity);
+
+    auto textureID = m_texture ? m_texture->id() : m_textureID;
+    if (textureID)
+        textureMapper.drawTextureExternalOES(textureID, m_flags, targetRect, modelViewMatrix, opacity);
 }
 
 } // namespace WebCore
 
-#endif // USE(COORDINATED_GRAPHICS)
+#endif // USE(COORDINATED_GRAPHICS) && USE(TEXTURE_MAPPER)

@@ -34,7 +34,6 @@
 #include <wtf/Forward.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
-#include <wtf/MonotonicTime.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/text/StringHash.h>
 
@@ -96,6 +95,8 @@ private:
     IPC::Connection* messageSenderConnection() const final;
     uint64_t messageSenderDestinationID() const final;
 
+    WebCore::PaymentCoordinator& LEGACY_NODELETE paymentCoordinator() const;
+
     // Message handlers.
     void validateMerchant(const String& validationURLString);
     void didAuthorizePayment(const WebCore::Payment&);
@@ -107,17 +108,12 @@ private:
 #endif
     void didCancelPaymentSession(WebCore::PaymentSessionError&&);
 
-    Ref<WebCore::PaymentCoordinator> protectedPaymentCoordinator();
-
     using AvailablePaymentNetworksSet = HashSet<String, ASCIICaseInsensitiveHash>;
     static AvailablePaymentNetworksSet platformAvailablePaymentNetworks();
 
     WeakPtr<WebPage> m_webPage;
 
     mutable std::optional<AvailablePaymentNetworksSet> m_availablePaymentNetworks;
-
-    MonotonicTime m_timestampOfLastCanMakePaymentsRequest;
-    std::optional<bool> m_lastCanMakePaymentsResult;
 };
 
 } // namespace WebKit

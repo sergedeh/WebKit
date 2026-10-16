@@ -28,9 +28,11 @@
 #include "ExtendableMessageEvent.h"
 
 #include "EventNames.h"
-#include "JSDOMConvert.h"
+#include "JSDOMConvertInterface.h"
 #include "JSExtendableMessageEvent.h"
+#include "JSValueInWrappedObjectInlines.h"
 #include "SecurityOrigin.h"
+#include <JavaScriptCore/StrongInlines.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -42,9 +44,9 @@ static JSC::Strong<JSC::JSObject> createWrapperAndSetData(JSC::JSGlobalObject& g
     auto& vm = globalObject.vm();
     JSC::Strong<JSC::Unknown> strongData(vm, value);
 
-    Locker<JSC::JSLock> locker(vm.apiLock());
-    JSC::Strong<JSC::JSObject> strongWrapper(vm, JSC::jsCast<JSC::JSObject*>(toJSNewlyCreated<IDLInterface<ExtendableMessageEvent>>(globalObject,  *JSC::jsCast<JSDOMGlobalObject*>(&globalObject), Ref { event })));
-    event.data().set(vm, strongWrapper.get(), value);
+    JSC::JSLockHolder locker(vm);
+    JSC::Strong<JSC::JSObject> strongWrapper(vm, downcast<JSC::JSObject>(toJSNewlyCreated<IDLInterface<ExtendableMessageEvent>>(globalObject,  downcast<JSDOMGlobalObject>(globalObject), Ref { event })));
+    event.data().set(globalObject, strongWrapper.get(), value);
 
     return strongWrapper;
 }
@@ -60,7 +62,7 @@ auto ExtendableMessageEvent::create(JSC::JSGlobalObject& globalObject, const Ato
 auto ExtendableMessageEvent::create(JSC::JSGlobalObject& globalObject, Vector<Ref<MessagePort>>&& ports, Ref<SerializedScriptValue>&& data, Ref<SecurityOrigin>&& origin, const String& lastEventId, std::optional<ExtendableMessageEventSource>&& source) -> ExtendableMessageEventWithStrongData
 {
     auto& vm = globalObject.vm();
-    Locker<JSC::JSLock> locker(vm.apiLock());
+    JSC::JSLockHolder locker(vm);
 
     bool didFail = false;
 
@@ -90,9 +92,7 @@ ExtendableMessageEvent::ExtendableMessageEvent(const AtomString& type, Ref<Secur
 {
 }
 
-ExtendableMessageEvent::~ExtendableMessageEvent()
-{
-}
+ExtendableMessageEvent::~ExtendableMessageEvent() = default;
 
 String ExtendableMessageEvent::origin() const
 {

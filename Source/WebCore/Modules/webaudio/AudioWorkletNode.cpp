@@ -48,7 +48,9 @@
 #include "ContextDestructionObserverInlines.h"
 #include "ErrorEvent.h"
 #include "EventNames.h"
+#include "ExceptionDetails.h"
 #include "JSAudioWorkletNodeOptions.h"
+#include "JSDOMGlobalObject.h"
 #include "MessageChannel.h"
 #include "MessagePort.h"
 #include "SerializedScriptValue.h"
@@ -90,21 +92,21 @@ ExceptionOr<Ref<AudioWorkletNode>> AudioWorkletNode::create(JSC::JSGlobalObject&
     if (!context.scriptExecutionContext())
         return Exception { ExceptionCode::InvalidStateError, "Audio context's frame is detached"_s };
 
-    auto messageChannel = MessageChannel::create(*context.protectedScriptExecutionContext());
-    auto& nodeMessagePort = messageChannel->port1();
-    auto& processorMessagePort = messageChannel->port2();
+    auto messageChannel = MessageChannel::create(*protect(context.scriptExecutionContext()));
+    Ref nodeMessagePort = messageChannel->port1();
+    Ref processorMessagePort = messageChannel->port2();
 
     RefPtr<SerializedScriptValue> serializedOptions;
     {
         auto lock = JSC::JSLockHolder { &globalObject };
-        auto* jsOptions = convertDictionaryToJS(globalObject, *JSC::jsCast<JSDOMGlobalObject*>(&globalObject), options);
-        serializedOptions = SerializedScriptValue::create(globalObject, jsOptions, SerializationForStorage::No, SerializationErrorMode::NonThrowing, SerializationContext::WorkerPostMessage);
+        auto* jsOptions = convertDictionaryToJS(globalObject, downcast<JSDOMGlobalObject>(globalObject), options);
+        serializedOptions = SerializedScriptValue::create(globalObject, jsOptions, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
         if (!serializedOptions)
             serializedOptions = SerializedScriptValue::nullValue();
     }
 
     auto parameterData = WTF::move(options.parameterData);
-    auto node = adoptRef(*new AudioWorkletNode(context, name, WTF::move(options), nodeMessagePort));
+    Ref node = adoptRef(*new AudioWorkletNode(context, name, WTF::move(options), WTF::move(nodeMessagePort)));
     node->suspendIfNeeded();
 
     auto result = node->handleAudioNodeOptions(options, { 2, ChannelCountMode::Max, ChannelInterpretation::Speakers });
@@ -118,7 +120,7 @@ ExceptionOr<Ref<AudioWorkletNode>> AudioWorkletNode::create(JSC::JSGlobalObject&
     if (node->numberOfOutputs() > 0)
         context.sourceNodeWillBeginPlayback(node);
 
-    context.audioWorklet().createProcessor(name, processorMessagePort.disentangle(), serializedOptions.releaseNonNull(), node);
+    context.audioWorklet().createProcessor(name, processorMessagePort->lenientDisentangle(), serializedOptions.releaseNonNull(), node);
 
     {
         // The node should be manually added to the automatic pull node list, even without a connect() call.
@@ -131,7 +133,7 @@ ExceptionOr<Ref<AudioWorkletNode>> AudioWorkletNode::create(JSC::JSGlobalObject&
 
 AudioWorkletNode::AudioWorkletNode(BaseAudioContext& context, const String& name, AudioWorkletNodeOptions&& options, Ref<MessagePort>&& port)
     : AudioNode(context, NodeTypeWorklet)
-    , ActiveDOMObject(context.scriptExecutionContext())
+    , ActiveDOMObject(protect(context.scriptExecutionContext()))
     , m_name(name)
     , m_parameters(AudioParamMap::create())
     , m_port(WTF::move(port))
@@ -161,6 +163,9 @@ AudioWorkletNode::~AudioWorkletNode()
             }
         }
     }
+    // The node is destroyed on the main thread, so release the rendering-thread assertion to avoid
+    // tripping its destructor check.
+    m_renderingThread = anyThreadLike;
     uninitialize();
 }
 
@@ -171,8 +176,9 @@ void AudioWorkletNode::initializeAudioParameters(const Vector<AudioParamDescript
 
     Locker locker { m_processLock };
 
+    Ref context = this->context();
     for (auto& descriptor : descriptors) {
-        auto parameter = AudioParam::create(context(), descriptor.name, descriptor.defaultValue, descriptor.minValue, descriptor.maxValue, descriptor.automationRate);
+        auto parameter = AudioParam::create(context, descriptor.name, descriptor.defaultValue, descriptor.minValue, descriptor.maxValue, descriptor.automationRate);
         m_parameters->add(descriptor.name, WTF::move(parameter));
     }
 
@@ -194,6 +200,7 @@ void AudioWorkletNode::setProcessor(RefPtr<AudioWorkletProcessor>&& processor)
         Locker locker { m_processLock };
         m_processor = WTF::move(processor);
         m_workletThread = Thread::currentSingleton();
+        m_renderingThread.reset();
     } else
         fireProcessorErrorOnMainThread(ProcessorError::ConstructorError);
 }
@@ -204,7 +211,7 @@ void AudioWorkletNode::process(size_t framesToProcess)
 
     auto zeroOutput = [&] {
         for (unsigned i = 0; i < numberOfOutputs(); ++i)
-            checkedOutput(i)->bus().zero();
+            protect(output(i)->bus())->zero();
     };
 
     if (!m_processLock.tryLock()) {
@@ -217,14 +224,30 @@ void AudioWorkletNode::process(size_t framesToProcess)
         zeroOutput();
         return;
     }
+    assertIsCurrent(m_renderingThread);
 
-    // If the input is not connected, pass nullptr to the processor.
+    // If the input is not connected, pass nullptr to the processor. An input is considered active
+    // as long as it is connected to a node that is still producing audio (i.e. its bus is not
+    // silent); once a source finishes playback it outputs silence.
+    bool hasActiveInputs = false;
     for (unsigned i = 0; i < numberOfInputs(); ++i) {
         CheckedPtr currentInput = input(i);
-        m_inputs[i] = currentInput->isConnected() ? &currentInput->bus() : nullptr;
+        bool connected = currentInput->isConnected();
+        m_inputs[i] = connected ? &currentInput->bus() : nullptr;
+        if (connected && !hasActiveInputs && !currentInput->bus().isSilent())
+            hasActiveInputs = true;
     }
+
+    // Once process() has returned false and the node no longer has any active inputs, the processor
+    // is done and we stop calling process().
+    if (!m_isActiveSource && !hasActiveInputs) {
+        didFinishProcessingOnRenderingThread(std::nullopt);
+        zeroOutput();
+        return;
+    }
+
     for (unsigned i = 0; i < numberOfOutputs(); ++i)
-        m_outputs[i] = checkedOutput(i)->bus();
+        m_outputs[i] = output(i)->bus();
 
     if (noiseInjectionPolicies().contains(NoiseInjectionPolicy::Minimal)) {
         for (unsigned inputIndex = 0; inputIndex < numberOfInputs(); ++inputIndex) {
@@ -247,15 +270,16 @@ void AudioWorkletNode::process(size_t framesToProcess)
             std::ranges::fill(paramValues->span().first(framesToProcess), audioParam->finalValue());
     }
 
-    bool threwException = false;
-    if (!m_processor->process(m_inputs, m_outputs, m_paramValuesMap, threwException))
-        didFinishProcessingOnRenderingThread(threwException);
+    std::optional<ExceptionDetails> exceptionDetails;
+    m_isActiveSource = protect(m_processor)->process(m_inputs, m_outputs, m_paramValuesMap, exceptionDetails);
+    if ((!m_isActiveSource && !hasActiveInputs) || exceptionDetails)
+        didFinishProcessingOnRenderingThread(WTF::move(exceptionDetails));
 }
 
-void AudioWorkletNode::didFinishProcessingOnRenderingThread(bool threwException)
+void AudioWorkletNode::didFinishProcessingOnRenderingThread(std::optional<ExceptionDetails>&& exceptionDetails)
 {
-    if (threwException)
-        fireProcessorErrorOnMainThread(ProcessorError::ProcessError);
+    if (exceptionDetails)
+        fireProcessorErrorOnMainThread(ProcessorError::ProcessError, WTF::move(exceptionDetails));
 
     m_processor = nullptr;
     m_tailTime = 0;
@@ -270,7 +294,7 @@ void AudioWorkletNode::updatePullStatus()
 
     bool hasConnectedOutput = false;
     for (unsigned i = 0; i < numberOfOutputs(); ++i) {
-        if (checkedOutput(i)->isConnected()) {
+        if (output(i)->isConnected()) {
             hasConnectedOutput = true;
             break;
         }
@@ -279,9 +303,9 @@ void AudioWorkletNode::updatePullStatus()
     // If no output is connected, add the node to the automatic pull list.
     // Otherwise, remove it out of the list.
     if (!hasConnectedOutput)
-        context().addAutomaticPullNode(*this);
+        protect(context())->addAutomaticPullNode(*this);
     else
-        context().removeAutomaticPullNode(*this);
+        protect(context())->removeAutomaticPullNode(*this);
 }
 
 void AudioWorkletNode::checkNumberOfChannelsForInput(AudioNodeInput* input)
@@ -295,7 +319,7 @@ void AudioWorkletNode::checkNumberOfChannelsForInput(AudioNodeInput* input)
         unsigned numberOfInputChannels = input->numberOfChannels();
         if (numberOfInputChannels != output(0)->numberOfChannels()) {
             // This will propagate the channel count to any nodes connected further downstream in the graph.
-            checkedOutput(0)->setNumberOfChannels(numberOfInputChannels);
+            protect(output(0))->setNumberOfChannels(numberOfInputChannels);
         }
     }
 
@@ -304,14 +328,17 @@ void AudioWorkletNode::checkNumberOfChannelsForInput(AudioNodeInput* input)
     updatePullStatus();
 }
 
-void AudioWorkletNode::fireProcessorErrorOnMainThread(ProcessorError error)
+void AudioWorkletNode::fireProcessorErrorOnMainThread(ProcessorError error, std::optional<ExceptionDetails>&& exceptionDetails)
 {
     ASSERT(!isMainThread());
 
     // Heap allocations are forbidden on the audio thread for performance reasons so we need to
     // explicitly allow the following allocation(s).
     DisableMallocRestrictionsForCurrentThreadScope disableMallocRestrictions;
-    callOnMainThread([this, protectedThis = Ref { *this }, error]() mutable {
+    String sourceURL = exceptionDetails ? exceptionDetails->sourceURL.isolatedCopy() : String { };
+    unsigned lineNumber = exceptionDetails ? exceptionDetails->lineNumber : 0;
+    unsigned columnNumber = exceptionDetails ? exceptionDetails->columnNumber : 0;
+    callOnMainThread([this, protectedThis = Ref { *this }, error, sourceURL = WTF::move(sourceURL), lineNumber, columnNumber]() mutable {
         String errorMessage;
         switch (error) {
         case ProcessorError::ConstructorError:
@@ -321,7 +348,7 @@ void AudioWorkletNode::fireProcessorErrorOnMainThread(ProcessorError error)
             errorMessage = "An error was thrown from AudioWorkletProcessor::process() method"_s;
             break;
         }
-        queueTaskToDispatchEvent(*this, TaskSource::MediaElement, ErrorEvent::create(eventNames().processorerrorEvent, errorMessage, { }, 0, 0, { }));
+        queueTaskToDispatchEvent(*this, TaskSource::MediaElement, ErrorEvent::create(eventNames().processorerrorEvent, errorMessage, sourceURL, lineNumber, columnNumber));
     });
 }
 

@@ -14,9 +14,9 @@
 #include "include/core/SkScalar.h"
 #include "include/core/SkSpan.h"
 #include "include/core/SkTypes.h"
-#include "include/private/base/SkFloatingPoint.h"
-#include "include/private/base/SkMacros.h"
-#include "include/private/base/SkTo.h"
+#include "include/private/SkFloatingPoint.h"
+#include "include/private/SkMacros.h"
+#include "include/private/SkTo.h"
 
 #include <cstdint>
 #include <cstring>
@@ -1739,43 +1739,6 @@ public:
         @return  true if matrix has only finite elements
     */
     bool isFinite() const { return SkIsFinite(fMat, 9); }
-
-#ifdef SK_SUPPORT_UNSPANNED_APIS
-    bool setPolyToPoly(const SkPoint src[], const SkPoint dst[], int count) {
-        return this->setPolyToPoly({src, count}, {dst, count});
-    }
-
-    void mapPoints(SkPoint dst[], const SkPoint src[], int count) const {
-        this->mapPoints({dst, count}, {src, count});
-    }
-    void mapPoints(SkPoint pts[], int count) const {
-        this->mapPoints(pts, pts, count);
-    }
-
-    void mapHomogeneousPoints(SkPoint3 dst[], const SkPoint3 src[], int count) const {
-        this->mapHomogeneousPoints({dst, count}, {src, count});
-    }
-    void mapHomogeneousPoints(SkPoint3 dst[], const SkPoint src[], int count) const {
-        this->mapPointsToHomogeneous({dst, count}, {src, count});
-    }
-
-    void mapVectors(SkVector dst[], const SkVector src[], int count) const {
-        this->mapVectors({dst, count}, {src, count});
-    }
-    void mapVectors(SkVector vecs[], int count) const {
-        this->mapVectors({vecs, count});
-    }
-    void mapXY(SkScalar x, SkScalar y, SkPoint* result) const {
-        *result = this->mapPoint({x, y});
-    }
-    SkPoint mapXY(SkScalar x, SkScalar y) const {
-        return this->mapPoint({x, y});
-    }
-    void mapVector(SkScalar dx, SkScalar dy, SkVector* result) const {
-        SkVector vec = { dx, dy };
-        this->mapVectors({result, 1}, {&vec, 1});
-    }
-#endif
 
 private:
     /** Set if the matrix will map a rectangle to another rectangle. This

@@ -120,8 +120,10 @@ public:
 
     IDBConnectionIdentifier serverConnectionIdentifier() const { return m_serverConnectionIdentifier; }
 
-    void ref();
-    void deref();
+    bool isValid() const;
+
+    void LEGACY_NODELETE ref();
+    WEBCORE_EXPORT void deref();
 
     void getAllDatabaseNamesAndVersions(ScriptExecutionContext&, Function<void(std::optional<Vector<IDBDatabaseNameAndVersion>>&&)>&&);
     void didGetAllDatabaseNamesAndVersions(const IDBResourceIdentifier&, std::optional<Vector<IDBDatabaseNameAndVersion>>&&);
@@ -134,11 +136,11 @@ public:
     void abortActivitiesForCurrentThread();
     void setContextSuspended(ScriptExecutionContext& currentContext, bool isContextSuspended);
 
-    PAL::SessionID sessionID() const;
+    PAL::SessionID LEGACY_NODELETE sessionID() const;
 
 private:
     void completeOpenDBRequest(const IDBResultData&);
-    bool hasRecordOfTransaction(const IDBTransaction&) const WTF_REQUIRES_LOCK(m_transactionMapLock);
+    bool LEGACY_NODELETE hasRecordOfTransaction(const IDBTransaction&) const WTF_REQUIRES_LOCK(m_transactionMapLock);
 
     void saveOperation(TransactionOperation&);
     std::pair<RefPtr<IDBDatabase>, std::optional<ScriptExecutionContextIdentifier>> databaseFromConnectionIdentifier(IDBDatabaseConnectionIdentifier);

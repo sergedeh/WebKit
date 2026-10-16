@@ -41,12 +41,13 @@ public:
     void deref() const final { CanvasRenderingContext::deref(); }
     USING_CAN_MAKE_WEAKPTR(CanvasRenderingContext);
 
-    virtual void reshape() = 0;
+    bool delegatesDisplay() const final { return true; }
+
 protected:
     explicit GPUBasedCanvasRenderingContext(CanvasBase&, CanvasRenderingContext::Type);
 
-    HTMLCanvasElement* htmlCanvas() const;
-    void markCanvasChanged();
+    HTMLCanvasElement* LEGACY_NODELETE htmlCanvas() const;
+    void willUpdateCanvasContents();
 };
     
 } // namespace WebCore

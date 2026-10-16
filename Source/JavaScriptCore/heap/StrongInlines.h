@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include <JavaScriptCore/JSCJSValueInlines.h>
+#include <JavaScriptCore/Strong.h>
 #include <JavaScriptCore/VM.h>
 
 #if ENABLE(REFTRACKER)
@@ -36,14 +36,14 @@ namespace JSC {
 
 template <typename T, ShouldStrongDestructorGrabLock shouldStrongDestructorGrabLock>
 inline Strong<T, shouldStrongDestructorGrabLock>::Strong(VM& vm, ExternalType value)
-    : Handle<T>(vm.heap.handleSet()->allocate())
+    : Handle<T>(vm.heap.strongSet()->allocate())
 {
     set(value);
 }
 
 template <typename T, ShouldStrongDestructorGrabLock shouldStrongDestructorGrabLock>
 inline Strong<T, shouldStrongDestructorGrabLock>::Strong(VM& vm, Handle<T> handle)
-    : Handle<T>(vm.heap.handleSet()->allocate())
+    : Handle<T>(vm.heap.strongSet()->allocate())
 {
     set(handle.get());
 }
@@ -52,8 +52,32 @@ template <typename T, ShouldStrongDestructorGrabLock shouldStrongDestructorGrabL
 inline void Strong<T, shouldStrongDestructorGrabLock>::set(VM& vm, ExternalType value)
 {
     if (!slot())
-        setSlot(vm.heap.handleSet()->allocate());
+        setSlot(vm.heap.strongSet()->allocate());
     set(value);
+}
+
+template <typename T, ShouldStrongDestructorGrabLock shouldStrongDestructorGrabLock>
+template <typename U> Strong<T, shouldStrongDestructorGrabLock>& Strong<T, shouldStrongDestructorGrabLock>::operator=(const Strong<U>& other)
+{
+    if (!other.slot()) {
+        clear();
+        return *this;
+    }
+
+    set(StrongSet::setFor(other.slot())->vm(), other.get());
+    return *this;
+}
+
+template <typename T, ShouldStrongDestructorGrabLock shouldStrongDestructorGrabLock>
+Strong<T, shouldStrongDestructorGrabLock>& Strong<T, shouldStrongDestructorGrabLock>::operator=(const Strong& other)
+{
+    if (!other.slot()) {
+        clear();
+        return *this;
+    }
+
+    set(StrongSet::setFor(other.slot())->vm(), other.get());
+    return *this;
 }
 
 } // namespace JSC

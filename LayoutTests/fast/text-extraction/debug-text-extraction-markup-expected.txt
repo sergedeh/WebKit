@@ -2,7 +2,7 @@
     <div role='banner'>
         <h1 aria-label='Main Page Title'>Welcome to Test Page</h1>
     </div>
-    <nav role='navigation' aria-label='Main navigation'>
+    <nav aria-label='Main navigation'>
         <ul>
             <li>
                 <a uid=… href='mailto:wenson_hsieh@apple.com'>Section 1</a>
@@ -20,19 +20,24 @@
             <div uid=… role='button'>Clickable Div</div>
         </section>
         <section aria-label='ARIA Labeling Examples'>
-            Name Field           Description
+            Name Field
+            Description
             <input type='text' uid=… aria-labelledby='Name Field' placeholder='Your name'>
             <div role='region' aria-labelledby='Description'>This region is labeled by another element.</div>
             <input type='text' uid=… aria-labelledby='Name Field' placeholder='Full name'>
             User Profile
-            <div role='group' aria-labelledby='User Profile'>
+            <div aria-labelledby='User Profile'>
                 Username:
                 <input type='text' uid=… label='Username:'>
             </div>
         </section>
         <section aria-label='Content with Roles'>
-            <article role='article'>Article Title                   January 1, 2024                            This is some article content with highlighted text.</article>
-            <aside role='complementary' aria-label='Related information'>
+            <article>
+                Article Title
+                January 1, 2024
+                This is some article content with highlighted text.
+            </article>
+            <aside aria-label='Related information'>
                 Related Links
                 <ul>
                     <li>
@@ -60,9 +65,7 @@
             </sub>
         </section>
     </main>
-    <footer role='contentinfo'>
-        Footer content with
-        <span role='img' aria-label='copyright symbol'>©</span>
-        2024 &amp; 2025
-    </footer>
+    Footer content with
+    <span role='img' aria-label='copyright symbol'>©</span>
+    2024 &amp; 2025
 </body>

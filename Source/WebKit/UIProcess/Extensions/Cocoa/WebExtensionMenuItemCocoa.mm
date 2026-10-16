@@ -42,6 +42,7 @@
 #import "WebExtensionMenuItemParameters.h"
 #import <WebCore/LocalizedStrings.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/Borrow.h>
 #import <wtf/cocoa/VectorCocoa.h>
 #import <wtf/text/MakeString.h>
 
@@ -100,8 +101,6 @@ WebExtensionMenuItem::WebExtensionMenuItem(WebExtensionContext& extensionContext
     , m_enabled(parameters.enabled.value_or(true))
     , m_visible(parameters.visible.value_or(true))
 {
-    relaxAdoptionRequirement();
-
     if (parameters.parentIdentifier) {
         if (RefPtr parentMenuItem = extensionContext.menuItem(parameters.parentIdentifier.value()))
             parentMenuItem->addSubmenuItem(*this);
@@ -124,14 +123,14 @@ WebExtensionMenuItem::WebExtensionMenuItem(WebExtensionContext& extensionContext
     }
 
     if (parameters.documentURLPatterns) {
-        for (auto& patternString : parameters.documentURLPatterns.value()) {
+        for (auto& patternString : borrow(parameters.documentURLPatterns.value())) {
             if (RefPtr pattern = WebExtensionMatchPattern::getOrCreate(patternString))
                 m_documentPatterns.add(pattern.releaseNonNull());
         }
     }
 
     if (parameters.targetURLPatterns) {
-        for (auto& patternString : parameters.targetURLPatterns.value()) {
+        for (auto& patternString : borrow(parameters.targetURLPatterns.value())) {
             if (RefPtr pattern = WebExtensionMatchPattern::getOrCreate(patternString))
                 m_targetPatterns.add(pattern.releaseNonNull());
         }
@@ -219,7 +218,7 @@ void WebExtensionMenuItem::update(const WebExtensionMenuItemParameters& paramete
     if (parameters.documentURLPatterns) {
         m_documentPatterns.clear();
 
-        for (auto& patternString : parameters.documentURLPatterns.value()) {
+        for (auto& patternString : borrow(parameters.documentURLPatterns.value())) {
             if (RefPtr pattern = WebExtensionMatchPattern::getOrCreate(patternString))
                 m_documentPatterns.add(pattern.releaseNonNull());
         }
@@ -228,7 +227,7 @@ void WebExtensionMenuItem::update(const WebExtensionMenuItemParameters& paramete
     if (parameters.targetURLPatterns) {
         m_targetPatterns.clear();
 
-        for (auto& patternString : parameters.targetURLPatterns.value()) {
+        for (auto& patternString : borrow(parameters.targetURLPatterns.value())) {
             if (RefPtr pattern = WebExtensionMatchPattern::getOrCreate(patternString))
                 m_targetPatterns.add(pattern.releaseNonNull());
         }
@@ -372,13 +371,13 @@ RefPtr<WebCore::Icon> WebExtensionMenuItem::icon(WebCore::FloatSize idealSize) c
 
 #if ENABLE(WK_WEB_EXTENSIONS_ICON_VARIANTS)
     if (m_iconVariants) {
-        result = extensionContext->protectedExtension()->bestIconVariant(m_iconVariants, WebCore::FloatSize(idealSize), [&](Ref<API::Error> error) {
+        result = protect(extensionContext->extension())->bestIconVariant(m_iconVariants, WebCore::FloatSize(idealSize), [&](Ref<API::Error> error) {
             extensionContext->recordError(error);
         });
     } else
 #endif // ENABLE(WK_WEB_EXTENSIONS_ICON_VARIANTS)
     if (m_icons) {
-        result = extensionContext->protectedExtension()->bestIcon(m_icons, WebCore::FloatSize(idealSize), [&](Ref<API::Error> error) {
+        result = protect(extensionContext->extension())->bestIcon(m_icons, WebCore::FloatSize(idealSize), [&](Ref<API::Error> error) {
             extensionContext->recordError(error);
         });
     }

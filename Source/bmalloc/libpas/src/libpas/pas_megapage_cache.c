@@ -30,7 +30,6 @@
 #include "pas_megapage_cache.h"
 
 #include "pas_bootstrap_free_heap.h"
-#include "pas_internal_config.h"
 #include "pas_large_free_heap_config.h"
 #include "pas_mte.h"
 #include "pas_payload_reservation_page_list.h"
@@ -122,7 +121,7 @@ static pas_aligned_allocation_result megapage_cache_allocate_aligned(size_t size
     
     begin = (uintptr_t)base_before_exclusion;
     PAS_PROFILE(MEGAPAGE_SET, begin);
-    PAS_MTE_HANDLE(MEGAPAGE_SET, begin);
+    PAS_MTE_CLEAR(begin);
 
     end = begin + new_size;
 

@@ -23,7 +23,6 @@
 """Supports style checking not specific to any one file type."""
 
 import re
-import sre_compile
 
 # FIXME: Test this list in the same way that the list of CppChecker
 #        categories is tested, for example by checking that all of its
@@ -31,6 +30,7 @@ import sre_compile
 #        after moving the relevant cpp_unittest.ErrorCollector code
 #        into a shared location and refactoring appropriately.
 categories = set([
+    "non-inclusive-term",
     "whitespace/carriage_return",
     "whitespace/tab"])
 
@@ -44,13 +44,13 @@ _regexp_compile_cache_ignorecase = {}
 
 def match(pattern, s):
     if not pattern in _regexp_compile_cache:
-        _regexp_compile_cache[pattern] = sre_compile.compile(pattern)
+        _regexp_compile_cache[pattern] = re.compile(pattern)
     return _regexp_compile_cache[pattern].match(s)
 
 
 def search(pattern, string):
     if not pattern in _regexp_compile_cache:
-        _regexp_compile_cache[pattern] = sre_compile.compile(pattern)
+        _regexp_compile_cache[pattern] = re.compile(pattern)
     return _regexp_compile_cache[pattern].search(string)
 
 
@@ -62,13 +62,13 @@ def searchIgnorecase(pattern, string):
 
 def sub(pattern, replacement, s):
     if not pattern in _regexp_compile_cache:
-        _regexp_compile_cache[pattern] = sre_compile.compile(pattern)
+        _regexp_compile_cache[pattern] = re.compile(pattern)
     return _regexp_compile_cache[pattern].sub(replacement, s)
 
 
 def subn(pattern, replacement, s):
     if not pattern in _regexp_compile_cache:
-        _regexp_compile_cache[pattern] = sre_compile.compile(pattern)
+        _regexp_compile_cache[pattern] = re.compile(pattern)
     return _regexp_compile_cache[pattern].subn(replacement, s)
 
 
@@ -79,7 +79,7 @@ class CarriageReturnChecker(object):
     def __init__(self, handle_style_error):
         self._handle_style_error = handle_style_error
 
-    def check(self, lines):
+    def check(self, lines, line_numbers=None):
         """Check for and strip trailing carriage returns from lines."""
         for line_number in range(len(lines)):
             if not lines[line_number].endswith("\r"):
@@ -104,7 +104,7 @@ class TabChecker(object):
         self.file_path = file_path
         self.handle_style_error = handle_style_error
 
-    def check(self, lines):
+    def check(self, lines, line_numbers=None):
         # FIXME: share with cpp_style.
         for line_number, line in enumerate(lines):
             if "\t" in line:

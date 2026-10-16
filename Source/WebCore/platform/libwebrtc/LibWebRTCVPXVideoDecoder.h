@@ -27,7 +27,7 @@
 
 #if USE(LIBWEBRTC)
 
-#include <WebCore/VideoDecoder.h>
+#include "VideoDecoder.h"
 #include <wtf/TZoneMalloc.h>
 #include <wtf/UniqueRef.h>
 
@@ -53,10 +53,10 @@ public:
 private:
     LibWebRTCVPXVideoDecoder(Type, const Config&, OutputCallback&&);
 
-    Ref<DecodePromise> decode(EncodedFrame&&) final;
+    Ref<DecodePromise> decode(VideoEncodedData&&) final;
     Ref<GenericPromise> flush() final;
     void reset() final;
-    void close() final;
+    void LEGACY_NODELETE close() final;
 
     const Ref<LibWebRTCVPXInternalVideoDecoder> m_internalDecoder;
 };

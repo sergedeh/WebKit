@@ -24,6 +24,7 @@
 #include "WebKitWebViewPrivate.h"
 #include "WebPageProxy.h"
 #include <wtf/SetForScope.h>
+#include <wtf/glib/GMallocString.h>
 
 #if PLATFORM(GTK)
 #include "Display.h"
@@ -70,6 +71,8 @@ void InputMethodFilter::setContext(WebKitInputMethodContext* context)
     }
 
     m_context = context;
+    m_cursorRect = { };
+    m_surrounding = { };
     if (!m_context)
         return;
 
@@ -162,6 +165,8 @@ static WebKitInputPurpose toWebKitPurpose(InputMethodState::Purpose purpose)
         return WEBKIT_INPUT_PURPOSE_EMAIL;
     case InputMethodState::Purpose::Password:
         return WEBKIT_INPUT_PURPOSE_PASSWORD;
+    case InputMethodState::Purpose::Search:
+        return WEBKIT_INPUT_PURPOSE_SEARCH;
     }
 
     RELEASE_ASSERT_NOT_REACHED();
@@ -182,6 +187,8 @@ static WebKitInputHints toWebKitHints(const OptionSet<InputMethodState::Hint>& h
         wkHints |= WEBKIT_INPUT_HINT_UPPERCASE_SENTENCES;
     if (hints.contains(InputMethodState::Hint::InhibitOnScreenKeyboard))
         wkHints |= WEBKIT_INPUT_HINT_INHIBIT_OSK;
+    if (hints.contains(InputMethodState::Hint::Private))
+        wkHints |= WEBKIT_INPUT_HINT_PRIVATE;
     return static_cast<WebKitInputHints>(wkHints);
 }
 
@@ -210,6 +217,8 @@ void InputMethodFilter::notifyFocusedOut()
         return;
 
     cancelComposition();
+    m_cursorRect = { };
+    m_surrounding = { };
     webkit_input_method_context_notify_focus_out(m_context.get());
 }
 
@@ -222,14 +231,10 @@ void InputMethodFilter::notifyCursorRect(const IntRect& cursorRect)
     if (!cursorRect.x() && !cursorRect.y() && !cursorRect.width() && !cursorRect.height())
         return;
 
-    // Don't move the window unless the cursor actually moves more than 10
-    // pixels. This prevents us from making the window flash during minor
-    // cursor adjustments.
-    static const int windowMovementThreshold = 10 * 10;
-    if (cursorRect.location().distanceSquaredToPoint(m_cursorLocation) < windowMovementThreshold)
+    if (cursorRect == m_cursorRect)
         return;
 
-    m_cursorLocation = cursorRect.location();
+    m_cursorRect = cursorRect;
     auto translatedRect = platformTransformCursorRectToViewCoordinates(cursorRect);
     webkit_input_method_context_notify_cursor_area(m_context.get(), translatedRect.x(), translatedRect.y(), translatedRect.width(), translatedRect.height());
 }
@@ -251,7 +256,8 @@ void InputMethodFilter::notifySurrounding(const String& text, uint64_t cursorPos
     auto selectionPositionUTF8 = cursorPositionUTF8;
     if (cursorPosition != selectionPosition)
         selectionPositionUTF8 = selectionPosition != text.length() ? StringView(text).left(selectionPosition).utf8().length() : textUTF8.length();
-    webkit_input_method_context_notify_surrounding(m_context.get(), textUTF8.data(), textUTF8.length(), cursorPositionUTF8, selectionPositionUTF8);
+    auto textCharacters = byteCast<char>(textUTF8.span());
+    webkit_input_method_context_notify_surrounding(m_context.get(), textCharacters.data(), textCharacters.size(), cursorPositionUTF8, selectionPositionUTF8);
 }
 
 void InputMethodFilter::preeditStarted()
@@ -273,18 +279,20 @@ void InputMethodFilter::preeditChanged()
     if (m_filteringContext.isActive)
         m_filteringContext.preeditChanged = true;
 
-    GUniqueOutPtr<gchar> newPreedit;
+    GUniqueOutPtr<gchar> preeditText;
     GList* underlines = nullptr;
     unsigned cursorOffset;
-    webkit_input_method_context_get_preedit(m_context.get(), &newPreedit.outPtr(), &underlines, &cursorOffset);
+    webkit_input_method_context_get_preedit(m_context.get(), &preeditText.outPtr(), &underlines, &cursorOffset);
 
-    if (m_preedit.text.utf8() == newPreedit.get()) {
+    auto newPreedit = GMallocString::unsafeAdoptFromUTF8(WTF::move(preeditText));
+    if (newPreedit == m_preedit.text.utf8()) {
         g_list_free_full(underlines, reinterpret_cast<GDestroyNotify>(webkit_input_method_underline_free));
         return;
     }
 
-    m_preedit.text = String::fromUTF8(newPreedit.get());
+    m_preedit.text = String::fromUTF8(newPreedit.span());
     m_preedit.cursorOffset = std::min(cursorOffset, m_preedit.text.length());
+    m_preedit.underlines.clear();
     if (underlines) {
         for (auto* it = underlines; it; it = g_list_next(it)) {
             auto* underline = static_cast<WebKitInputMethodUnderline*>(it->data);
@@ -296,7 +304,7 @@ void InputMethodFilter::preeditChanged()
 
     auto* webView = webkitInputMethodContextGetWebView(m_context.get());
     ASSERT(webView);
-    webkitWebViewSetComposition(webView, m_preedit.text, m_preedit.underlines, EditingRange(m_preedit.cursorOffset, 1));
+    webkitWebViewSetComposition(webView, m_preedit.text, m_preedit.underlines, EditingRange(m_preedit.cursorOffset, 0));
 }
 
 void InputMethodFilter::preeditFinished()
@@ -315,7 +323,7 @@ void InputMethodFilter::preeditFinished()
 
     auto* webView = webkitInputMethodContextGetWebView(m_context.get());
     ASSERT(webView);
-    webkitWebViewSetComposition(webView, { }, { }, EditingRange(0, 1));
+    webkitWebViewSetComposition(webView, { }, { }, EditingRange(0, 0));
 }
 
 void InputMethodFilter::committed(const char* compositionString)

@@ -56,31 +56,18 @@ static inline AffineTransform rotation(const FloatRect& boxRect, RotationDirecti
 
 class TextPainter {
 public:
-    TextPainter(GraphicsContext&, const FontCascade&, const RenderStyle&, const TextPaintStyle&, const Style::TextShadows&, const Style::AppleColorFilter&, const AtomString& emphasisMark, float emphasisMarkOffset, const RenderCombineText*);
+    TextPainter(GraphicsContext&, const FontCascade&, const Style::ComputedStyle&, const TextPaintStyle&, const Style::TextShadows&, const Style::AppleColorFilter&, const AtomString& emphasisMark, float emphasisMarkOffset, const RenderCombineText*);
 
     void paintRange(const TextRun&, const FloatRect& boxRect, const FloatPoint& textOrigin, unsigned start, unsigned end);
 
-    template<typename LayoutRun>
-    void setGlyphDisplayListIfNeeded(const LayoutRun& run, const PaintInfo& paintInfo, const RenderStyle& style, const TextRun& textRun)
-    {
-        if (!TextPainter::shouldUseGlyphDisplayList(paintInfo, style))
-            const_cast<LayoutRun&>(run).removeFromGlyphDisplayListCache();
-        else
-            m_glyphDisplayList = GlyphDisplayListCache::singleton().get(run, m_font, m_context, textRun, paintInfo);
-    }
+    void setGlyphDisplayListIfNeeded(const InlineDisplay::Box&, const PaintInfo&, const Style::ComputedStyle&, const TextRun&);
 
-    static bool shouldUseGlyphDisplayList(const PaintInfo&, const RenderStyle&);
-    WEBCORE_EXPORT static void setForceUseGlyphDisplayListForTesting(bool);
+    static bool shouldUseGlyphDisplayList(const PaintInfo&, const Style::ComputedStyle&);
+    WEBCORE_EXPORT static void LEGACY_NODELETE setForceUseGlyphDisplayListForTesting(bool);
     WEBCORE_EXPORT static String cachedGlyphDisplayListsForTextNodeAsText(Text&, OptionSet<DisplayList::AsTextFlag>);
     WEBCORE_EXPORT static void clearGlyphDisplayListCacheForTesting();
 
 private:
-    template<typename LayoutRun>
-    static RefPtr<const DisplayList::DisplayList> glyphDisplayListIfExists(const LayoutRun& run)
-    {
-        return GlyphDisplayListCache::singleton().getIfExists(run);
-    }
-
     void paintTextOrEmphasisMarks(const FontCascade&, const TextRun&, const AtomString& emphasisMark, float emphasisMarkOffset,
         const FloatPoint& textOrigin, unsigned startOffset, unsigned endOffset);
     void paintTextWithShadows(const Style::TextShadows*, const Style::AppleColorFilter&, const FontCascade&, const TextRun&, const FloatRect& boxRect, const FloatPoint& textOrigin,
@@ -90,7 +77,7 @@ private:
 
     GraphicsContext& m_context;
     const CheckedRef<const FontCascade> m_font;
-    const CheckedRef<const RenderStyle> m_renderStyle;
+    const CheckedRef<const Style::ComputedStyle> m_renderStyle;
     TextPaintStyle m_style;
     AtomString m_emphasisMark;
     const Style::TextShadows& m_shadow;
@@ -98,12 +85,11 @@ private:
     const CheckedPtr<const RenderCombineText> m_combinedText;
     RefPtr<const DisplayList::DisplayList> m_glyphDisplayList { nullptr };
     float m_emphasisMarkOffset { 0 };
-    WritingMode m_writingMode;
 };
 
 class ShadowApplier {
 public:
-    ShadowApplier(const RenderStyle&, GraphicsContext&, const Style::TextShadow*, const Style::AppleColorFilter&, const FloatRect& textRect, bool isLastShadowIteration, bool lastShadowIterationShouldDrawText = true, bool opaque = false, bool ignoreWritingMode = false);
+    ShadowApplier(const Style::ComputedStyle&, GraphicsContext&, const Style::TextShadow*, const Style::AppleColorFilter&, const FloatRect& textRect, bool isLastShadowIteration, bool lastShadowIterationShouldDrawText = true, bool opaque = false, bool ignoreWritingMode = false);
     FloatSize extraOffset() const { return m_extraOffset; }
     bool nothingToDraw() const { return m_nothingToDraw; }
     bool didSaveContext() const { return m_didSaveContext; }

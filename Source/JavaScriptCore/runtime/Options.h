@@ -28,10 +28,10 @@
 #include <JavaScriptCore/CPU.h>
 #include <JavaScriptCore/JSCConfig.h>
 #include <JavaScriptCore/JSExportMacros.h>
+#include <JavaScriptCore/OSCheck.h>
 #include <stdint.h>
 #include <wtf/ForbidHeapAllocation.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/PrintStream.h>
 #include <wtf/ScopedLambda.h>
 #include <wtf/StdLibExtras.h>
 
@@ -110,11 +110,11 @@ public:
 #endif
     };
 
-    JS_EXPORT_PRIVATE static void initializeWithOptionsCustomization(const ScopedLambda<void()>& optionsCustomizationCallback);
+    JS_EXPORT_PRIVATE static void initializeWithOptionsCustomization(NOESCAPE const ScopedLambda<void()>& optionsCustomizationCallback);
 
-    ALWAYS_INLINE static void initialize(const Invocable<void()> auto& optionsCustomizationCallback)
+    ALWAYS_INLINE static void initialize(NOESCAPE const Invocable<void()> auto& optionsCustomizationCallback)
     {
-        SUPPRESS_FORWARD_DECL_ARG initializeWithOptionsCustomization(scopedLambda<void()>(optionsCustomizationCallback));
+        SUPPRESS_FORWARD_DECL_ARG initializeWithOptionsCustomization(optionsCustomizationCallback);
     }
 
     static void finalize();
@@ -146,7 +146,7 @@ public: \
     FOR_EACH_JSC_OPTION(DECLARE_OPTION_ACCESSORS)
 #undef DECLARE_OPTION_ACCESSORS
 
-    static bool isAvailable(ID, Availability);
+    static bool LEGACY_NODELETE isAvailable(ID, Availability);
     JS_EXPORT_PRIVATE static SandboxPolicy machExceptionHandlerSandboxPolicy;
 
 private:
@@ -170,12 +170,36 @@ private:
 
     static void setAllJITCodeValidations(bool);
 
-    static bool defaultTCSMValue();
+    static bool LEGACY_NODELETE defaultTCSMValue();
     static unsigned computeNumberOfGCMarkers(unsigned maxNumberOfGCMarkers);
     static unsigned computeNumberOfWorkerThreads(int maxNumberOfWorkerThreads, int minimum = 1);
     static int32_t computePriorityDeltaOfWorkerThreads(int32_t twoCorePriorityDelta, int32_t multiCorePriorityDelta);
-    static constexpr bool jitEnabledByDefault() { return !useCompressedHeap && (is32Bit() || isAddress64Bit()); }
+    static constexpr bool jitEnabledByDefault() { return isAddress64Bit(); }
     static constexpr bool ipintEnabledByDefault() { return isARM64() || isARM64E() || isX86_64(); }
+    static double defaultQuickDFGTierUpThresholdFactor()
+    {
+#if PLATFORM(MAC)
+        return 0.15;
+#else
+        return 0.2;
+#endif
+    }
+    static double defaultRelaxedProfileCoverageFactorForQuickDFGTierUp()
+    {
+#if PLATFORM(MAC)
+        return 0.85;
+#else
+        return 1.0;
+#endif
+    }
+    static double defaultQuickFTLTierUpThresholdFactor()
+    {
+#if PLATFORM(MAC)
+        return 0.15;
+#else
+        return 1.0;
+#endif
+    }
 };
 
 } // namespace JSC

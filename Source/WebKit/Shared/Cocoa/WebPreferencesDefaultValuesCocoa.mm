@@ -42,40 +42,69 @@
 #else
 
 #if HAVE(LIQUID_GLASS)
-static bool platformIsLiquidGlassEnabled()
+static bool LEGACY_NODELETE platformIsLiquidGlassEnabled()
 {
     return true;
 }
 #endif
 
 namespace WebKit {
+
 #if ENABLE(VIDEO)
-bool defaultCaptionDisplaySettingsEnabled()
+
+bool LEGACY_NODELETE defaultCaptionDisplaySettingsEnabled()
 {
     return false;
 }
+
 #endif
 
 #if PLATFORM(MAC)
-bool defaultUseAppKitGestures()
+
+bool LEGACY_NODELETE defaultUseAppKitGestures()
+{
+    return false;
+}
+
+bool LEGACY_NODELETE defaultTextInputClientSelectionUpdatesEnabled()
+{
+    return false;
+}
+
+#endif // PLATFORM(MAC)
+
+#if ENABLE(CONTENT_CHANGE_OBSERVER)
+bool defaultContentChangeObserverEnabled()
+{
+#if PLATFORM(IOS_FAMILY) && !PLATFORM(MACCATALYST)
+    return true;
+#else
+    return false;
+#endif
+}
+#endif
+
+#if HAVE(WEBCONTENTRESTRICTIONS_ASK_TO)
+bool LEGACY_NODELETE defaultWebContentRestrictionsAskToEnabled()
 {
     return false;
 }
 #endif
+
 }
 
-#endif
+#endif // namespace WebKit
 
 namespace WebKit {
 
 #if HAVE(LIQUID_GLASS)
-static std::optional<bool>& cachedIsLiqudGlassEnabled()
+static std::optional<bool>& LEGACY_NODELETE cachedIsLiqudGlassEnabled()
 {
     static std::optional<bool> isLiquidGlassEnabled;
     return isLiquidGlassEnabled;
 }
 
-bool isLiquidGlassEnabled()
+bool LEGACY_NODELETE isLiquidGlassEnabled()
 {
     if (auto isLiquidGlassEnabled = cachedIsLiqudGlassEnabled())
         return *isLiquidGlassEnabled;
@@ -83,7 +112,7 @@ bool isLiquidGlassEnabled()
     return platformIsLiquidGlassEnabled();
 }
 
-void setLiquidGlassEnabled(bool isLiquidGlassEnabled)
+void LEGACY_NODELETE setLiquidGlassEnabled(bool isLiquidGlassEnabled)
 {
     cachedIsLiqudGlassEnabled() = isLiquidGlassEnabled;
 }
@@ -105,37 +134,25 @@ bool defaultExtendedProofreadingEnabled()
 
 bool defaultTextRecognitionInVideosEnabled()
 {
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
     static bool enabled = os_feature_enabled(VisualIntelligence, LiveText);
-#else
-    static bool enabled = false;
-#endif
     return enabled;
 }
 
 bool defaultVisualTranslationEnabled()
 {
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
     static bool enabled = os_feature_enabled(Translate, EnableVisualIntelligenceUI);
-#else
-    static bool enabled = false;
-#endif
     return enabled;
 }
 
 bool defaultRemoveBackgroundEnabled()
 {
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
     static bool enabled = os_feature_enabled(VisualIntelligence, RemoveBackground);
-#else
-    static bool enabled = false;
-#endif
     return enabled;
 }
 
 #endif // ENABLE(IMAGE_ANALYSIS)
 
-bool defaultTopContentInsetBackgroundCanChangeAfterScrolling()
+SUPPRESS_NODELETE bool defaultTopContentInsetBackgroundCanChangeAfterScrolling()
 {
 #if PLATFORM(IOS_FAMILY)
     return PAL::currentUserInterfaceIdiomIsSmallScreen();
@@ -144,7 +161,31 @@ bool defaultTopContentInsetBackgroundCanChangeAfterScrolling()
 #endif
 }
 
-bool defaultContentInsetBackgroundFillEnabled()
+#if ENABLE(SCREEN_TIME)
+bool defaultScreenTimeEnabled()
+{
+    bool isSafari = false;
+#if PLATFORM(IOS_FAMILY)
+    isSafari = WTF::IOSApplication::isMobileSafari() || WTF::IOSApplication::isSafariViewService();
+#elif PLATFORM(MAC)
+    isSafari = WTF::MacApplication::isSafari();
+#endif
+
+    if (isSafari)
+        return false;
+
+#if PLATFORM(MAC)
+    bool isTurboTax = WTF::MacApplication::isTurboTax();
+
+    if (isTurboTax && !linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::AutoLayoutInWKWebView))
+        return false;
+#endif // PLATFORM(MAC)
+
+    return true;
+}
+#endif // ENABLE(SCREEN_TIME)
+
+bool LEGACY_NODELETE defaultContentInsetBackgroundFillEnabled()
 {
 #if ENABLE(CONTENT_INSET_BACKGROUND_FILL)
     return isLiquidGlassEnabled();
@@ -154,7 +195,7 @@ bool defaultContentInsetBackgroundFillEnabled()
 }
 
 #if HAVE(MATERIAL_HOSTING)
-bool defaultHostedBlurMaterialInMediaControlsEnabled()
+bool LEGACY_NODELETE defaultHostedBlurMaterialInMediaControlsEnabled()
 {
     return isLiquidGlassEnabled();
 }
@@ -172,7 +213,7 @@ bool defaultIOSurfaceLosslessCompressionEnabled()
 }
 
 #if ENABLE(UNIFIED_PDF)
-bool defaultUnifiedPDFEnabled()
+bool LEGACY_NODELETE defaultUnifiedPDFEnabled()
 {
 #if ENABLE(UNIFIED_PDF_BY_DEFAULT)
     return true;
@@ -180,6 +221,15 @@ bool defaultUnifiedPDFEnabled()
     return false;
 #endif
 }
+#endif
+
+#if ENABLE(HORIZONTAL_BANNER_VIEW_OVERLAYS) && !USE(APPLE_INTERNAL_SDK)
+
+bool LEGACY_NODELETE defaultHorizontalBannerViewOverlaysEnabled()
+{
+    return false;
+}
+
 #endif
 
 } // namespace WebKit

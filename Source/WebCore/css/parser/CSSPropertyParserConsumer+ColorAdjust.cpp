@@ -31,6 +31,7 @@
 #include "CSSParserContext.h"
 #include "CSSParserIdioms.h"
 #include "CSSParserTokenRange.h"
+#include "CSSPropertyParserConsumer+Ident.h"
 #include "CSSPropertyParserState.h"
 #include "CSSValueKeywords.h"
 
@@ -39,12 +40,12 @@ namespace CSSPropertyParserHelpers {
 
 #if ENABLE(DARK_MODE_CSS)
 
-std::optional<CSS::ColorScheme> consumeUnresolvedColorScheme(CSSParserTokenRange& range, CSS::PropertyParserState&)
+std::optional<CSS::ColorScheme> consumeUnresolvedColorScheme(CSSParserTokenRange& range, CSS::PropertyParserState& state)
 {
     // <'color-scheme'> = normal | [ light | dark | <custom-ident> ]+ && only?
     // https://drafts.csswg.org/css-color-adjust/#propdef-color-scheme
 
-    if (range.peek().id() == CSSValueNormal) {
+    if (range.peek().id() == CSSValueID::Normal) {
         range.consumeIncludingWhitespace();
 
         // NOTE: `normal` is represented in CSS::ColorScheme as an empty list of schemes.
@@ -59,44 +60,47 @@ std::optional<CSS::ColorScheme> consumeUnresolvedColorScheme(CSSParserTokenRange
         .only = { }
     };
 
-    if (range.peek().id() == CSSValueOnly) {
+    if (range.peek().id() == CSSValueID::Only) {
         range.consumeIncludingWhitespace();
 
         result->only = CSS::Keyword::Only { };
     }
 
     while (!range.atEnd()) {
-        if (range.peek().type() != IdentToken)
-            return { };
-
-        CSSValueID id = range.peek().id();
-
-        switch (id) {
-        case CSSValueNormal:
-            // `normal` is only allowed as a single value, and was handled earlier.
-            // Don't allow it in the list.
-            return { };
-
-        case CSSValueOnly:
-            // `only` can either appear first, handled before the loop, or last,
-            // handled here.
-
-            if (result->only)
-                return { };
-            range.consumeIncludingWhitespace();
-            result->only = CSS::Keyword::Only { };
-
-            if (!range.atEnd())
+        if (range.peek().type() == IdentToken) {
+            switch (CSSValueID id = range.peek().id()) {
+            case CSSValueID::Normal:
+                // `normal` is only allowed as a single value, and was handled earlier.
+                // Don't allow it in the list.
                 return { };
 
-            break;
+            case CSSValueID::Only:
+                // `only` can either appear first, handled before the loop, or last,
+                // handled here.
 
-        default:
-            if (!isValidCustomIdentifier(id))
+                if (result->only)
+                    return { };
+                range.consumeIncludingWhitespace();
+                result->only = CSS::Keyword::Only { };
+
+                if (!range.atEnd())
+                    return { };
+
+                break;
+
+            default:
+                if (!isValidCustomIdentifier(id))
+                    return { };
+
+                result->schemes.value.append(CSS::CustomIdent { range.consumeIncludingWhitespace().value().toAtomString() });
+                break;
+            }
+        } else {
+            auto customIdent = consumeUnresolvedCustomIdentExcluding(range, state, { CSSValueID::Normal, CSSValueID::Only });
+            if (!customIdent)
                 return { };
 
-            result->schemes.value.append(CustomIdentifier { range.consumeIncludingWhitespace().value().toAtomString() });
-            break;
+            result->schemes.value.append(WTF::move(*customIdent));
         }
     }
 
@@ -106,7 +110,7 @@ std::optional<CSS::ColorScheme> consumeUnresolvedColorScheme(CSSParserTokenRange
     return result;
 }
 
-std::optional<CSS::ColorScheme> parseUnresolvedColorScheme(const String& string, const CSSParserContext& context)
+std::optional<CSS::ColorScheme> parseUnresolvedColorScheme(StringView string, const CSSParserContext& context)
 {
     auto tokenizer = CSSTokenizer(string);
     auto range = tokenizer.tokenRange();

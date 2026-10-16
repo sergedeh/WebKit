@@ -32,6 +32,7 @@
 #include "TemporalObject.h"
 #include <unicode/unum.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/text/CString.h>
 #include <wtf/unicode/icu/ICUHelpers.h>
 
 struct UFormattedValue;
@@ -48,6 +49,7 @@ enum class IntlRoundingType : uint8_t { FractionDigits, SignificantDigits, MoreP
 enum class IntlRoundingPriority : uint8_t { Auto, MorePrecision, LessPrecision };
 enum class IntlTrailingZeroDisplay : uint8_t { Auto, StripIfInteger };
 enum class IntlNotation : uint8_t { Standard, Scientific, Engineering, Compact };
+enum class CompactDisplay : uint8_t { Short, Long };
 template<typename IntlType> void setNumberFormatDigitOptions(JSGlobalObject*, IntlType*, JSObject*, unsigned minimumFractionDigitsDefault, unsigned maximumFractionDigitsDefault, IntlNotation);
 template<typename IntlType> void appendNumberFormatDigitOptionsToSkeleton(IntlType*, StringBuilder&);
 template<typename IntlType> void appendNumberFormatNotationOptionsToSkeleton(IntlType*, StringBuilder&);
@@ -60,11 +62,15 @@ struct UNumberRangeFormatterDeleter {
     JS_EXPORT_PRIVATE void operator()(UNumberRangeFormatter*);
 };
 
+// Approximate sizes of ICU objects for GC memory pressure reporting, measured empirically with unumf_open + format.
+inline constexpr size_t estimatedUNumberFormatterSize = 1000;
+inline constexpr size_t estimatedUNumberRangeFormatterSize = 20000;
+
 class IntlMathematicalValue {
     WTF_MAKE_TZONE_ALLOCATED(IntlMathematicalValue);
 public:
     enum class NumberType { Integer, Infinity, NaN, };
-    using Value = Variant<double, CString>;
+    using Value = Variant<double, ASCIICString>;
 
     IntlMathematicalValue() = default;
 
@@ -74,7 +80,7 @@ public:
         , m_sign(!std::isnan(value) && std::signbit(value))
     { }
 
-    explicit IntlMathematicalValue(NumberType numberType, bool sign, CString value)
+    explicit IntlMathematicalValue(NumberType numberType, bool sign, ASCIICString value)
         : m_value(value)
         , m_numberType(numberType)
         , m_sign(sign)
@@ -90,16 +96,16 @@ public:
             case NumberType::Integer: {
                 double value = std::get<double>(m_value);
                 if (isNegativeZero(value))
-                    m_value = CString("-0"_s);
+                    m_value = ASCIICString { "-0"_s };
                 else
                     m_value = String::number(value).ascii();
                 break;
             }
             case NumberType::NaN:
-                m_value = CString("nan"_s);
+                m_value = ASCIICString { "nan"_s };
                 break;
             case NumberType::Infinity:
-                m_value = CString(m_sign ? "-infinity"_s : "infinity"_s);
+                m_value = ASCIICString { m_sign ? "-infinity"_s : "infinity"_s };
                 break;
             }
         }
@@ -113,10 +119,10 @@ public:
             return std::get<double>(m_value);
         return std::nullopt;
     }
-    const CString& getString() const
+    const ASCIICString& getString() const
     {
-        ASSERT(std::holds_alternative<CString>(m_value));
-        return std::get<CString>(m_value);
+        ASSERT(std::holds_alternative<ASCIICString>(m_value));
+        return std::get<ASCIICString>(m_value);
     }
 
     static NumberType numberTypeFromDouble(double value)
@@ -165,13 +171,13 @@ public:
     JSValue formatToParts(JSGlobalObject*, IntlMathematicalValue&&, JSString* sourceType = nullptr) const;
     JSObject* resolvedOptions(JSGlobalObject*) const;
 
-    JSValue formatRange(JSGlobalObject*, double, double) const;
-    JSValue formatRange(JSGlobalObject*, IntlMathematicalValue&&, IntlMathematicalValue&&) const;
+    JSValue formatRange(JSGlobalObject*, double, double);
+    JSValue formatRange(JSGlobalObject*, IntlMathematicalValue&&, IntlMathematicalValue&&);
 
-    JSValue formatRangeToParts(JSGlobalObject*, double, double) const;
-    JSValue formatRangeToParts(JSGlobalObject*, IntlMathematicalValue&&, IntlMathematicalValue&&) const;
+    JSValue formatRangeToParts(JSGlobalObject*, double, double);
+    JSValue formatRangeToParts(JSGlobalObject*, IntlMathematicalValue&&, IntlMathematicalValue&&);
 
-    JSBoundFunction* boundFormat() const { return m_boundFormat.get(); }
+    JSBoundFunction* boundFormat() const LIFETIME_BOUND { return m_boundFormat.get(); }
     void setBoundFormat(VM&, JSBoundFunction*);
 
     enum class Style : uint8_t { Decimal, Percent, Currency, Unit };
@@ -187,6 +193,7 @@ public:
     friend void appendNumberFormatNotationOptionsToSkeleton(IntlType*, StringBuilder&);
 
     static ASCIILiteral notationString(IntlNotation);
+    static ASCIILiteral compactDisplayString(CompactDisplay);
 
     static IntlNumberFormat* unwrapForOldFunctions(JSGlobalObject*, JSValue);
 
@@ -200,10 +207,11 @@ private:
 
     static Vector<String> localeData(const String&, RelevantExtensionKey);
 
+    UNumberRangeFormatter* createNumberRangeFormatterIfNecessary(JSGlobalObject*);
+
     enum class CurrencyDisplay : uint8_t { Code, Symbol, FormalSymbol, NarrowSymbol, Name, Never };
     enum class CurrencySign : uint8_t { Standard, Accounting };
     enum class UnitDisplay : uint8_t { Short, Narrow, Long };
-    enum class CompactDisplay : uint8_t { Short, Long };
     enum class SignDisplay : uint8_t { Auto, Never, Always, ExceptZero, Negative };
     enum class UseGrouping : uint8_t { False, Min2, Auto, Always };
 
@@ -211,16 +219,18 @@ private:
     static ASCIILiteral currencyDisplayString(CurrencyDisplay);
     static ASCIILiteral currencySignString(CurrencySign);
     static ASCIILiteral unitDisplayString(UnitDisplay);
-    static ASCIILiteral compactDisplayString(CompactDisplay);
     static ASCIILiteral signDisplayString(SignDisplay);
     static JSValue useGroupingValue(VM&, UseGrouping);
 
     WriteBarrier<JSBoundFunction> m_boundFormat;
     std::unique_ptr<UNumberFormatter, UNumberFormatterDeleter> m_numberFormatter;
     std::unique_ptr<UNumberRangeFormatter, UNumberRangeFormatterDeleter> m_numberRangeFormatter;
+    String m_numberFormatterSkeleton;
+    ASCIICString m_dataLocaleWithExtensions;
 
     String m_locale;
-    String m_numberingSystem;
+    String m_dataLocale;
+    mutable String m_numberingSystem;
     String m_currency;
     String m_unit;
     unsigned m_minimumIntegerDigits { 1 };

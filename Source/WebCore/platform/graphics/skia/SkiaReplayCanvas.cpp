@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 Igalia S.L.
+ * Copyright (C) 2025, 2026 Igalia S.L.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,27 +30,112 @@
 #include "GLContext.h"
 #include "GLFence.h"
 #include "PlatformDisplay.h"
-
-WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
-#include <skia/gpu/ganesh/GrBackendSurface.h>
-#include <skia/gpu/ganesh/SkImageGanesh.h>
-WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
+#include "SkiaUtilities.h"
 
 namespace WebCore {
 
-SkiaReplayCanvas::SkiaReplayCanvas(const IntSize& size, const RefPtr<SkiaRecordingResult>& recording)
+SkiaReplayCanvas::SkiaReplayCanvas(const IntSize& size, const Ref<SkiaRecordingResult>& recording, const sk_sp<GrContextThreadSafeProxy>& threadSafeGrContext)
     : SkNWayCanvas(size.width(), size.height())
     , m_recording(recording)
+#if !USE(TEXTURE_MAPPER)
+    , m_threadSafeGrContext(threadSafeGrContext)
+#endif
 {
+    // Create atlas wrappers from pre-prepared GPU atlases.
+    // GPU atlases were uploaded on main thread; we just rewrap for this worker's context.
+    if (m_recording->hasGPUAtlases()) {
+        const auto& gpuAtlases = m_recording->gpuAtlases();
+        m_atlases.reserveInitialCapacity(gpuAtlases.size());
+
+        for (const auto& gpuAtlas : gpuAtlases)
+            m_atlases.append(SkiaReplayAtlas::create(gpuAtlas));
+    }
+
+#if USE(TEXTURE_MAPPER)
+    ASSERT_UNUSED(threadSafeGrContext, !threadSafeGrContext);
+#endif
 }
 
 SkiaReplayCanvas::~SkiaReplayCanvas() = default;
 
-Ref<SkiaReplayCanvas> SkiaReplayCanvas::create(const IntSize& size, const RefPtr<SkiaRecordingResult>& recodingResult)
+Ref<SkiaReplayCanvas> SkiaReplayCanvas::create(const IntSize& size, const Ref<SkiaRecordingResult>& recordingResult, const sk_sp<GrContextThreadSafeProxy>& threadSafeGrContext)
 {
-    return adoptRef(*new SkiaReplayCanvas(size, recodingResult));
+    return adoptRef(*new SkiaReplayCanvas(size, recordingResult, threadSafeGrContext));
 }
 
+void SkiaReplayCanvas::onDrawImage2(const SkImage* image, SkScalar x, SkScalar y, const SkSamplingOptions& sampling, const SkPaint* paint)
+{
+    // Check for atlas substitution for raster images.
+    if (!m_atlases.isEmpty() && image && !image->isTextureBacked()) {
+        for (auto& atlas : m_atlases) {
+            if (auto atlasRect = atlas->rectForImage(*image)) {
+                // Draw from atlas instead of original image.
+                const auto& atlasImage = atlas->atlasImage();
+                ASSERT(atlasImage);
+                auto dst = SkRect::MakeXYWH(x, y, atlasRect->width(), atlasRect->height());
+                SkNWayCanvas::onDrawImageRect2(atlasImage.get(), *atlasRect, dst, sampling, paint, SkCanvas::kStrict_SrcRectConstraint);
+                return;
+            }
+        }
+    }
+
+#if USE(TEXTURE_MAPPER)
+    invokeDrawFunctionWithImage(image, [&](const SkImage* image) {
+        SkNWayCanvas::onDrawImage2(image, x, y, sampling, paint);
+    });
+#else
+    SkNWayCanvas::onDrawImage2(image, x, y, sampling, paint);
+#endif
+}
+
+void SkiaReplayCanvas::onDrawImageRect2(const SkImage* image, const SkRect& src, const SkRect& dst, const SkSamplingOptions& sampling, const SkPaint* paint, SrcRectConstraint constraint)
+{
+    // Check for atlas substitution for raster images.
+    if (!m_atlases.isEmpty() && image && !image->isTextureBacked()) {
+        for (auto& atlas : m_atlases) {
+            if (auto atlasRect = atlas->rectForImage(*image)) {
+                // Draw from atlas instead of original image.
+                const auto& atlasImage = atlas->atlasImage();
+                ASSERT(atlasImage);
+
+                // Map src rect from image coordinates to atlas coordinates.
+                SkScalar atlasX = atlasRect->x() + src.x();
+                SkScalar atlasY = atlasRect->y() + src.y();
+                auto atlasSrc = SkRect::MakeXYWH(atlasX, atlasY, src.width(), src.height());
+
+                // Clamp to image bounds within atlas to prevent reading adjacent images.
+                SkRect imageBoundsInAtlas = *atlasRect;
+                if (!atlasSrc.intersect(imageBoundsInAtlas))
+                    return;
+
+                // Adjust destination proportionally if source was clamped.
+                if (atlasSrc.width() != src.width() || atlasSrc.height() != src.height()) {
+                    SkScalar leftClip = atlasSrc.x() - atlasX;
+                    SkScalar topClip = atlasSrc.y() - atlasY;
+                    SkScalar scaleX = dst.width() / src.width();
+                    SkScalar scaleY = dst.height() / src.height();
+
+                    auto adjustedDst = SkRect::MakeXYWH(dst.x() + leftClip * scaleX, dst.y() + topClip * scaleY, atlasSrc.width() * scaleX, atlasSrc.height() * scaleY);
+                    SkNWayCanvas::onDrawImageRect2(atlasImage.get(), atlasSrc, adjustedDst, sampling, paint, SkCanvas::kStrict_SrcRectConstraint);
+                    return;
+                }
+
+                SkNWayCanvas::onDrawImageRect2(atlasImage.get(), atlasSrc, dst, sampling, paint, SkCanvas::kStrict_SrcRectConstraint);
+                return;
+            }
+        }
+    }
+
+#if USE(TEXTURE_MAPPER)
+    invokeDrawFunctionWithImage(image, [&](const SkImage* image) {
+        SkNWayCanvas::onDrawImageRect2(image, src, dst, sampling, paint, constraint);
+    });
+#else
+    SkNWayCanvas::onDrawImageRect2(image, src, dst, sampling, paint, constraint);
+#endif
+}
+
+#if USE(TEXTURE_MAPPER)
 sk_sp<SkImage> SkiaReplayCanvas::waitForRenderingCompletionAndRewrapImageIfNeeded(const SkImage* image)
 {
     if (!image || !image->isTextureBacked())
@@ -66,15 +151,10 @@ sk_sp<SkImage> SkiaReplayCanvas::waitForRenderingCompletionAndRewrapImageIfNeede
     if (image->isValid(grContext->asRecorder()))
         return nullptr;
 
-    // FIXME: Add error reporting mechanism, a failure from GetBackendTextureFromImage() should be visible / reported.
-    GrBackendTexture backendTexture;
-    if (!SkImages::GetBackendTextureFromImage(image, &backendTexture, false))
-        return nullptr;
-
-    return SkImages::BorrowTextureFrom(grContext, backendTexture, kTopLeft_GrSurfaceOrigin, image->colorType(), image->alphaType(), image->refColorSpace());
+    return SkiaUtilities::rewrapImageForContext(grContext, *image);
 }
 
-void SkiaReplayCanvas::invokeDrawFunctionWithImage(const SkImage* image, Function<void(const SkImage*)>&& drawFunction)
+void SkiaReplayCanvas::invokeDrawFunctionWithImage(const SkImage* image, NOESCAPE const Function<void(const SkImage*)>& drawFunction)
 {
     if (auto wrappedImage = waitForRenderingCompletionAndRewrapImageIfNeeded(image)) {
         drawFunction(wrappedImage.get());
@@ -84,7 +164,7 @@ void SkiaReplayCanvas::invokeDrawFunctionWithImage(const SkImage* image, Functio
     drawFunction(image);
 }
 
-void SkiaReplayCanvas::invokeDrawFunctionWithPaint(const SkPaint& paint, Function<void(const SkPaint&)>&& drawFunction)
+void SkiaReplayCanvas::invokeDrawFunctionWithPaint(const SkPaint& paint, NOESCAPE const Function<void(const SkPaint&)>& drawFunction)
 {
     auto* shader = paint.getShader();
 
@@ -103,7 +183,7 @@ void SkiaReplayCanvas::invokeDrawFunctionWithPaint(const SkPaint& paint, Functio
     drawFunction(paint);
 }
 
-void SkiaReplayCanvas::invokeDrawFunctionWithShader(const SkShader* shader, Function<void(const SkShader*)>&& drawFunction)
+void SkiaReplayCanvas::invokeDrawFunctionWithShader(const SkShader* shader, NOESCAPE const Function<void(const SkShader*)>& drawFunction)
 {
     SkMatrix localMatrix;
     std::array<SkTileMode, 2> mode;
@@ -173,24 +253,10 @@ void SkiaReplayCanvas::onDrawGlyphRunList(const sktext::GlyphRunList& glyphRunLi
     });
 }
 
-void SkiaReplayCanvas::onDrawImage2(const SkImage* image, SkScalar x, SkScalar y, const SkSamplingOptions& sampling, const SkPaint* paint)
-{
-    invokeDrawFunctionWithImage(image, [&](const SkImage* image) {
-        SkNWayCanvas::onDrawImage2(image, x, y, sampling, paint);
-    });
-}
-
 void SkiaReplayCanvas::onDrawImageLattice2(const SkImage* image, const Lattice& lattice, const SkRect& dst, SkFilterMode filter, const SkPaint* paint)
 {
     invokeDrawFunctionWithImage(image, [&](const SkImage* image) {
         SkNWayCanvas::onDrawImageLattice2(image, lattice, dst, filter, paint);
-    });
-}
-
-void SkiaReplayCanvas::onDrawImageRect2(const SkImage* image, const SkRect& src, const SkRect& dst, const SkSamplingOptions& sampling, const SkPaint* paint, SrcRectConstraint constraint)
-{
-    invokeDrawFunctionWithImage(image, [&](const SkImage* image) {
-        SkNWayCanvas::onDrawImageRect2(image, src, dst, sampling, paint, constraint);
     });
 }
 
@@ -270,6 +336,7 @@ void SkiaReplayCanvas::onDrawVerticesObject(const SkVertices* vertices, SkBlendM
         SkNWayCanvas::onDrawVerticesObject(vertices, mode, paint);
     });
 }
+#endif // USE(TEXTURE_MAPPER)
 
 } // namespace WebCore
 

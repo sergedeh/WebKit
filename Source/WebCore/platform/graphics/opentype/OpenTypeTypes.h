@@ -22,18 +22,18 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef OpenTypeTypes_h
-#define OpenTypeTypes_h
+#pragma once
 
 #if ENABLE(OPENTYPE_MATH)
-#include <WebCore/Glyph.h>
+#include "Glyph.h"
 #endif
 
-#include <WebCore/SharedBuffer.h>
+#include "SharedBuffer.h"
+#include <numeric>
 #include <wtf/StdLibExtras.h>
+#include <wtf/TypeCasts.h>
 
-namespace WebCore {
-namespace OpenType {
+namespace WebCore::OpenType {
 
 struct BigEndianShort {
     operator short() const { return (v & 0x00ff) << 8 | v >> 8; }
@@ -74,14 +74,14 @@ typedef UInt16 GlyphID;
 typedef uint32_t Tag;
 #define OT_MAKE_TAG(ch1, ch2, ch3, ch4) ((((uint32_t)(ch4)) << 24) | (((uint32_t)(ch3)) << 16) | (((uint32_t)(ch2)) << 8) | ((uint32_t)(ch1)))
 
-template<typename T> static const T* validateTableSingle(const RefPtr<SharedBuffer>& buffer)
+template<typename T> const T* validateTableSingle(const RefPtr<SharedBuffer>& buffer)
 {
     if (!buffer || buffer->size() < sizeof(T))
         return nullptr;
     return &reinterpretCastSpanStartTo<const T>(buffer->span());
 }
 
-template<typename T> static std::span<const T> validateTable(const RefPtr<SharedBuffer>& buffer, size_t count)
+template<typename T> std::span<const T> validateTable(const RefPtr<SharedBuffer>& buffer, size_t count)
 {
     if (!buffer || (buffer->size() / sizeof(T)) < count)
         return { };
@@ -135,6 +135,20 @@ struct Coverage2Table : CoverageTable {
 };
 #endif // ENABLE(OPENTYPE_VERTICAL) || ENABLE(OPENTYPE_MATH)
 
+} // namespace WebCore::OpenType
+
+#if ENABLE(OPENTYPE_VERTICAL) || ENABLE(OPENTYPE_MATH)
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::OpenType::Coverage1Table)
+    static bool isType(const WebCore::OpenType::CoverageTable& table) { return table.coverageFormat == 1; }
+SPECIALIZE_TYPE_TRAITS_END()
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::OpenType::Coverage2Table)
+    static bool isType(const WebCore::OpenType::CoverageTable& table) { return table.coverageFormat == 2; }
+SPECIALIZE_TYPE_TRAITS_END()
+#endif // ENABLE(OPENTYPE_VERTICAL) || ENABLE(OPENTYPE_MATH)
+
+namespace WebCore::OpenType {
+
 #if ENABLE(OPENTYPE_MATH)
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 struct TableWithCoverage : TableBase {
@@ -143,7 +157,7 @@ protected:
     {
         switch (coverage->coverageFormat) {
         case 1: { // Coverage Format 1
-            const Coverage1Table* coverage1 = validatePtr<Coverage1Table>(buffer, coverage);
+            const Coverage1Table* coverage1 = validatePtr<Coverage1Table>(buffer, &downcast<Coverage1Table>(*coverage));
             if (!coverage1)
                 return false;
             uint16_t glyphCount = coverage1->glyphCount;
@@ -153,7 +167,7 @@ protected:
             // We do a binary search on the glyph indexes.
             uint32_t imin = 0, imax = glyphCount;
             while (imin < imax) {
-                uint32_t imid = (imin + imax) >> 1;
+                uint32_t imid = std::midpoint(imin, imax);
                 uint16_t glyphMid = coverage1->glyphArray[imid];
                 if (glyphMid == glyph) {
                     coverageIndex = imid;
@@ -167,7 +181,7 @@ protected:
             break;
         }
         case 2: { // Coverage Format 2
-            const Coverage2Table* coverage2 = validatePtr<Coverage2Table>(buffer, coverage);
+            const Coverage2Table* coverage2 = validatePtr<Coverage2Table>(buffer, &downcast<Coverage2Table>(*coverage));
             if (!coverage2)
                 return false;
             uint16_t rangeCount = coverage2->rangeCount;
@@ -177,7 +191,7 @@ protected:
             // We do a binary search on the ranges.
             uint32_t imin = 0, imax = rangeCount;
             while (imin < imax) {
-                uint32_t imid = (imin + imax) >> 1;
+                uint32_t imid = std::midpoint(imin, imax);
                 uint16_t rStart = coverage2->ranges[imid].start;
                 uint16_t rEnd = coverage2->ranges[imid].end;
                 if (rEnd < glyph)
@@ -198,7 +212,4 @@ protected:
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif
 
-} // namespace OpenType
-} // namespace WebCore
-
-#endif // OpenTypeTypes_h
+} // namespace WebCore::OpenType

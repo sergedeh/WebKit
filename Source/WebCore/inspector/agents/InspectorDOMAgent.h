@@ -39,6 +39,7 @@
 #include <JavaScriptCore/InspectorFrontendDispatchers.h>
 #include <wtf/CanMakeWeakPtr.h>
 #include <wtf/CheckedPtr.h>
+#include <wtf/CheckedRef.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/JSONValues.h>
@@ -90,6 +91,8 @@ class InspectorDOMAgent final : public InspectorAgentBase, public Inspector::DOM
     WTF_MAKE_TZONE_ALLOCATED(InspectorDOMAgent);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(InspectorDOMAgent);
 public:
+    OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeCheckedPtr);
+
     InspectorDOMAgent(PageAgentContext&, InspectorOverlay&);
     ~InspectorDOMAgent();
 
@@ -97,14 +100,15 @@ public:
     static String toErrorString(Exception&&);
 
     static String documentURLString(Document*);
+    static String documentBaseURLString(Document*);
 
     // We represent embedded doms as a part of the same hierarchy. Hence we treat children of frame owners differently.
     // We also skip whitespace text nodes conditionally. Following methods encapsulate these specifics.
-    static Node* innerFirstChild(Node*);
-    static Node* innerNextSibling(Node*);
-    static Node* innerPreviousSibling(Node*);
+    static Node* LEGACY_NODELETE innerFirstChild(Node*);
+    static Node* LEGACY_NODELETE innerNextSibling(Node*);
+    static Node* LEGACY_NODELETE innerPreviousSibling(Node*);
     static unsigned innerChildNodeCount(Node*);
-    static Node* innerParentNode(Node*);
+    static Node* LEGACY_NODELETE innerParentNode(Node*);
 
     static Node* scriptValueAsNode(JSC::JSValue);
     static JSC::JSValue nodeAsScriptValue(JSC::JSGlobalObject&, Node*);
@@ -186,7 +190,7 @@ public:
     void didInsertDOMNode(Node&);
     void didRemoveDOMNode(Node&);
     void willDestroyDOMNode(Node&);
-    void willModifyDOMAttr(Element&, const AtomString& oldValue, const AtomString& newValue);
+    void LEGACY_NODELETE willModifyDOMAttr(Element&, const AtomString& oldValue, const AtomString& newValue);
     void didModifyDOMAttr(Element&, const AtomString& name, const AtomString& value);
     void didRemoveDOMAttr(Element&, const AtomString& name);
     void characterDataModified(CharacterData&);
@@ -223,12 +227,13 @@ public:
     RefPtr<Inspector::Protocol::Runtime::RemoteObject> resolveNode(Node*, const String& objectGroup);
     bool handleMousePress();
     void mouseDidMoveOverElement(const HitTestResult&, OptionSet<PlatformEventModifier>);
+    void mouseDidMoveOverRemoteFrame();
     void inspect(Node*);
     void focusNode();
 
-    InspectorHistory* history() { return m_history.get(); }
+    InspectorHistory* history() LIFETIME_BOUND { return m_history.get(); }
     Vector<Document*> documents();
-    Vector<size_t> flexibleBoxRendererCachedItemsAtStartOfLine(const RenderObject&);
+    Vector<size_t> flexibleBoxRendererCachedItemsAtStartOfLine(const RenderObject&) const;
     void reset();
 
     Node* assertNode(Inspector::Protocol::ErrorString&, Inspector::Protocol::DOM::NodeId);
@@ -245,9 +250,6 @@ private:
 
     void highlightMousedOverNode();
     void setSearchingForNode(Inspector::Protocol::ErrorString&, bool enabled, RefPtr<JSON::Object>&& highlightConfig, RefPtr<JSON::Object>&& gridOverlayConfig, RefPtr<JSON::Object>&& flexOverlayConfig, bool showRulers);
-    std::unique_ptr<InspectorOverlay::Highlight::Config> highlightConfigFromInspectorObject(Inspector::Protocol::ErrorString&, RefPtr<JSON::Object>&& highlightInspectorObject);
-    std::optional<InspectorOverlay::Grid::Config> gridOverlayConfigFromInspectorObject(Inspector::Protocol::ErrorString&, RefPtr<JSON::Object>&& gridOverlayInspectorObject);
-    std::optional<InspectorOverlay::Flex::Config> flexOverlayConfigFromInspectorObject(Inspector::Protocol::ErrorString&, RefPtr<JSON::Object>&& flexOverlayInspectorObject);
 
     // Node-related methods.
     Inspector::Protocol::DOM::NodeId bind(Node&);
@@ -277,9 +279,9 @@ private:
 
     void relayoutDocument();
 
-    Ref<InspectorOverlay> protectedOverlay() const;
+    InspectorOverlay& overlay() const { return m_overlay.get(); }
 
-    Inspector::InjectedScriptManager& m_injectedScriptManager;
+    const CheckedRef<Inspector::InjectedScriptManager> m_injectedScriptManager;
     const UniqueRef<Inspector::DOMFrontendDispatcher> m_frontendDispatcher;
     const Ref<Inspector::DOMBackendDispatcher> m_backendDispatcher;
     WeakRef<Page> m_inspectedPage;
@@ -291,7 +293,7 @@ private:
     RefPtr<Document> m_document;
     using SearchResults = HashMap<String, Vector<RefPtr<Node>>>;
     SearchResults m_searchResults;
-    std::unique_ptr<RevalidateStyleAttributeTask> m_revalidateStyleAttrTask;
+    const std::unique_ptr<RevalidateStyleAttributeTask> m_revalidateStyleAttrTask;
     RefPtr<Node> m_nodeToFocus;
     RefPtr<Node> m_mousedOverNode;
     RefPtr<Node> m_inspectedNode;
@@ -322,6 +324,8 @@ private:
 
     // The pointer key for this map should not be used for anything other than matching.
     WeakHashMap<HTMLMediaElement, MediaMetrics> m_mediaMetrics;
+
+    RefPtr<EventListener> m_eventFiredCallback;
 #endif
 
     struct InspectorEventListener {

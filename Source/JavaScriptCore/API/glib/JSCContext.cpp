@@ -35,6 +35,7 @@
 #include "JSWithScope.h"
 #include "OpaqueJSString.h"
 #include "Parser.h"
+#include <wtf/glib/GSpanExtras.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/glib/WTFGType.h>
 #include <wtf/text/MakeString.h>
@@ -289,10 +290,8 @@ JSValueRef jscContextGArrayToJSArray(JSCContext* context, GPtrArray* gArray, JSV
     if (*exception)
         return JSValueMakeUndefined(priv->jsContext.get());
 
-    for (unsigned i = 0; i < gArray->len; ++i) {
-        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GLib port
-        gpointer item = g_ptr_array_index(gArray, i);
-        WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+    auto i = 0;
+    for (auto& item : span(gArray)) {
         if (!item)
             JSObjectSetPropertyAtIndex(priv->jsContext.get(), jsArrayObject, i, JSValueMakeNull(priv->jsContext.get()), exception);
         else if (JSC_IS_VALUE(item))
@@ -302,6 +301,7 @@ JSValueRef jscContextGArrayToJSArray(JSCContext* context, GPtrArray* gArray, JSV
 
         if (*exception)
             return JSValueMakeUndefined(priv->jsContext.get());
+        i++;
     }
 
     return jsArray;
@@ -325,7 +325,7 @@ static GRefPtr<GPtrArray> jscContextJSArrayToGArray(JSCContext* context, JSValue
     if (*exception)
         return nullptr;
 
-    JSRetainPtr<JSStringRef> lengthString(Adopt, JSStringCreateWithUTF8CString("length"));
+    RefPtr lengthString = adoptRef(JSStringCreateWithUTF8CString("length"));
     auto* jsLength = JSObjectGetProperty(priv->jsContext.get(), jsArrayObject, lengthString.get(), exception);
     if (*exception)
         return nullptr;
@@ -364,7 +364,7 @@ GUniquePtr<char*> jscContextJSArrayToGStrv(JSCContext* context, JSValueRef jsArr
     if (*exception)
         return nullptr;
 
-    JSRetainPtr<JSStringRef> lengthString(Adopt, JSStringCreateWithUTF8CString("length"));
+    RefPtr lengthString = adoptRef(JSStringCreateWithUTF8CString("length"));
     auto* jsLength = JSObjectGetProperty(priv->jsContext.get(), jsArrayObject, lengthString.get(), exception);
     if (*exception)
         return nullptr;
@@ -373,7 +373,11 @@ GUniquePtr<char*> jscContextJSArrayToGStrv(JSCContext* context, JSValueRef jsArr
     if (*exception)
         return nullptr;
 
-    GUniquePtr<char*> strv(static_cast<char**>(g_new0(char*, length + 1)));
+    auto sizeInBytes = checkedSum<size_t>(length, 1);
+    sizeInBytes *= sizeof(char*);
+    if (sizeInBytes.hasOverflowed())
+        return nullptr;
+    auto strv = GMallocSpan<char*>::zeroedMalloc(sizeInBytes);
     for (unsigned i = 0; i < length; ++i) {
         auto* jsItem = JSObjectGetPropertyAtIndex(priv->jsContext.get(), jsArrayObject, i, exception);
         if (*exception)
@@ -384,13 +388,10 @@ GUniquePtr<char*> jscContextJSArrayToGStrv(JSCContext* context, JSValueRef jsArr
             *exception = toRef(JSC::createTypeError(globalObject, makeString("invalid js type for GStrv: item "_s, i, " is not a string"_s)));
             return nullptr;
         }
-
-        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GLib port
-        strv.get()[i] = jsc_value_to_string(jsValueItem.get());
-        WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+        strv[i] = jsc_value_to_string(jsValueItem.get());
     }
 
-    return strv;
+    return GUniquePtr<char*> { strv.leakSpan().data() };
 }
 
 JSValueRef jscContextGValueToJSValue(JSCContext* context, const GValue* value, JSValueRef* exception)
@@ -426,7 +427,7 @@ JSValueRef jscContextGValueToJSValue(JSCContext* context, const GValue* value, J
         return JSValueMakeNumber(priv->jsContext.get(), value->data[0].v_uint64);
     case G_TYPE_STRING:
         if (const char* stringValue = g_value_get_string(value)) {
-            JSRetainPtr<JSStringRef> jsString(Adopt, JSStringCreateWithUTF8CString(stringValue));
+            RefPtr jsString = adoptRef(JSStringCreateWithUTF8CString(stringValue));
             return JSValueMakeString(priv->jsContext.get(), jsString.get());
         }
         return JSValueMakeNull(priv->jsContext.get());
@@ -447,13 +448,10 @@ JSValueRef jscContextGValueToJSValue(JSCContext* context, const GValue* value, J
                 return jscContextGArrayToJSArray(context, static_cast<GPtrArray*>(ptr), exception);
 
             if (g_type_is_a(G_VALUE_TYPE(value), G_TYPE_STRV)) {
-                WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GLib port
-                auto** strv = static_cast<char**>(ptr);
-                auto strvLength = g_strv_length(strv);
-                GRefPtr<GPtrArray> gArray = adoptGRef(g_ptr_array_new_full(strvLength, g_object_unref));
-                for (unsigned i = 0; i < strvLength; i++)
-                    g_ptr_array_add(gArray.get(), jsc_value_new_string(context, strv[i]));
-                WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+                auto items = span(static_cast<char**>(ptr));
+                GRefPtr<GPtrArray> gArray = adoptGRef(g_ptr_array_new_full(items.size(), g_object_unref));
+                for (auto* item : items)
+                    g_ptr_array_add(gArray.get(), jsc_value_new_string(context, item));
                 return jscContextGArrayToJSArray(context, gArray.get(), exception);
             }
         } else
@@ -500,7 +498,7 @@ void jscContextJSValueToGValue(JSCContext* context, JSValueRef jsValue, GType ty
         break;
     case G_TYPE_STRING:
         if (!JSValueIsNull(priv->jsContext.get(), jsValue)) {
-            JSRetainPtr<JSStringRef> jsString(Adopt, JSValueToStringCopy(priv->jsContext.get(), jsValue, exception));
+            RefPtr jsString = adoptRef(JSValueToStringCopy(priv->jsContext.get(), jsValue, exception));
             if (*exception)
                 return;
             size_t maxSize = JSStringGetMaximumUTF8CStringSize(jsString.get());
@@ -623,7 +621,7 @@ JSCContext* jsc_context_new()
  * jsc_context_new_with_virtual_machine:
  * @vm: a #JSCVirtualMachine
  *
- * Create a new #JSCContext in @virtual_machine.
+ * Create a new #JSCContext in @vm.
  *
  * Returns: (transfer full): the newly created #JSCContext.
  */
@@ -652,7 +650,7 @@ JSCVirtualMachine* jsc_context_get_virtual_machine(JSCContext* context)
  * jsc_context_get_exception:
  * @context: a #JSCContext
  *
- * Get the last unhandled exception thrown in @context by API functions calls.
+ * Get the last unhandled exception thrown in @context by API function calls.
  *
  * Returns: (transfer none) (nullable): a #JSCException or %NULL if there isn't any
  *    unhandled exception in the #JSCContext.
@@ -855,8 +853,8 @@ JSCValue* jsc_context_evaluate(JSCContext* context, const char* code, gssize len
 
 static JSValueRef evaluateScriptInContext(JSGlobalContextRef jsContext, String&& script, const char* uri, unsigned lineNumber, JSValueRef* exception)
 {
-    JSRetainPtr<JSStringRef> scriptJS(Adopt, OpaqueJSString::tryCreate(WTF::move(script)).leakRef());
-    JSRetainPtr<JSStringRef> sourceURI = uri ? adopt(JSStringCreateWithUTF8CString(uri)) : nullptr;
+    RefPtr scriptJS = OpaqueJSString::tryCreate(WTF::move(script));
+    RefPtr sourceURI = uri ? adoptRef(JSStringCreateWithUTF8CString(uri)) : nullptr;
     return JSEvaluateScript(jsContext, scriptJS.get(), nullptr, sourceURI.get(), lineNumber, exception);
 }
 
@@ -880,9 +878,7 @@ JSCValue* jsc_context_evaluate_with_source_uri(JSCContext* context, const char* 
     g_return_val_if_fail(code, nullptr);
 
     JSValueRef exception = nullptr;
-    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GLib port
-    JSValueRef result = evaluateScriptInContext(context->priv->jsContext.get(), String::fromUTF8(std::span(code, length < 0 ? strlen(code) : length)), uri, lineNumber, &exception);
-    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+    JSValueRef result = evaluateScriptInContext(context->priv->jsContext.get(), length < 0 ? String::fromUTF8(code) : String::fromUTF8(unsafeMakeSpan(code, length)), uri, lineNumber, &exception);
     if (jscContextHandleExceptionIfNeeded(context, exception))
         return jsc_value_new_undefined(context);
 
@@ -900,7 +896,7 @@ JSCValue* jsc_context_evaluate_with_source_uri(JSCContext* context, const char* 
  * @line_number: the starting line number
  * @object: (out) (transfer full): return location for a #JSCValue.
  *
- * Evaluate @code and create an new object where symbols defined in @code will be added as properties,
+ * Evaluate @code and create a new object where symbols defined in @code will be added as properties,
  * instead of being added to @context global object. The new object is returned as @object parameter.
  * Similar to how jsc_value_new_object() works, if @object_instance is not %NULL @object_class must be provided too.
  * The @line_number is the starting line number in @uri; the value is one-based so the first line is 1.
@@ -922,9 +918,7 @@ JSCValue* jsc_context_evaluate_in_object(JSCContext* context, const char* code, 
     JSC::JSLockHolder locker(globalObject);
     globalObject->setGlobalScopeExtension(JSC::JSWithScope::create(vm, globalObject, globalObject->globalScope(), toJS(JSContextGetGlobalObject(context->priv->jsContext.get()))));
     JSValueRef exception = nullptr;
-    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GLib port
-    JSValueRef result = evaluateScriptInContext(objectContext.get(), String::fromUTF8(std::span(code, length < 0 ? strlen(code) : length)), uri, lineNumber, &exception);
-    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+    JSValueRef result = evaluateScriptInContext(objectContext.get(), length < 0 ? String::fromUTF8(code) : String::fromUTF8(unsafeMakeSpan(code, length)), uri, lineNumber, &exception);
     if (jscContextHandleExceptionIfNeeded(context, exception))
         return jsc_value_new_undefined(context);
 
@@ -984,10 +978,8 @@ JSCCheckSyntaxResult jsc_context_check_syntax(JSCContext* context, const char* c
     JSC::JSLockHolder locker(vm);
 
     URL sourceURL = uri ? URL(String::fromLatin1(uri)) : URL();
-    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GLib port
-    JSC::SourceCode source = JSC::makeSource(String::fromUTF8(std::span(code, length < 0 ? strlen(code) : length)), JSC::SourceOrigin { sourceURL }, JSC::SourceTaintedOrigin::Untainted,
+    JSC::SourceCode source = JSC::makeSource(length < 0 ? String::fromUTF8(code) : String::fromUTF8(unsafeMakeSpan(code, length)), JSC::SourceOrigin { sourceURL }, JSC::SourceTaintedOrigin::Untainted,
         sourceURL.string() , TextPosition(OrdinalNumber::fromOneBasedInt(lineNumber), OrdinalNumber()));
-    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     bool success = false;
     JSC::ParserError error;
     switch (mode) {
@@ -1104,7 +1096,7 @@ JSCValue* jsc_context_get_value(JSCContext* context, const char* name)
  *
  * Register a custom class in @context using the given @name. If the new class inherits from
  * another #JSCClass, the parent should be passed as @parent_class, otherwise %NULL should be
- * used. The optional @vtable parameter allows to provide a custom implementation for handling
+ * used. The optional @vtable parameter allows providing a custom implementation for handling
  * the class, for example, to handle external properties not added to the prototype.
  * When an instance of the #JSCClass is cleared in the context, @destroy_notify is called with
  * the instance as parameter.

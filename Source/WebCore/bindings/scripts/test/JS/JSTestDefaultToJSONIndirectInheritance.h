@@ -30,24 +30,14 @@ class JSTestDefaultToJSONIndirectInheritance : public JSTestDefaultToJSONInherit
 public:
     using Base = JSTestDefaultToJSONInherit;
     using DOMWrapped = TestDefaultToJSONIndirectInheritance;
-    static JSTestDefaultToJSONIndirectInheritance* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<TestDefaultToJSONIndirectInheritance>&& impl)
-    {
-        SUPPRESS_UNCOUNTED_LOCAL auto& vm = globalObject->vm();
-        JSTestDefaultToJSONIndirectInheritance* ptr = new (NotNull, JSC::allocateCell<JSTestDefaultToJSONIndirectInheritance>(vm)) JSTestDefaultToJSONIndirectInheritance(structure, *globalObject, WTF::move(impl));
-        ptr->finishCreation(vm);
-        return ptr;
-    }
+    static JSTestDefaultToJSONIndirectInheritance* create(JSC::Structure*, JSDOMGlobalObject*, Ref<TestDefaultToJSONIndirectInheritance>&&);
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
 
     DECLARE_INFO;
 
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
-    }
-
+    static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue);
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
@@ -59,10 +49,9 @@ public:
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
     TestDefaultToJSONIndirectInheritance& wrapped() const
     {
-        return static_cast<TestDefaultToJSONIndirectInheritance&>(Base::wrapped());
+        // JSTestDefaultToJSONIndirectInheritance wrappers always wrap TestDefaultToJSONIndirectInheritance objects.
+        SUPPRESS_MEMORY_UNSAFE_CAST return static_cast<TestDefaultToJSONIndirectInheritance&>(Base::wrapped());
     }
-
-    Ref<TestDefaultToJSONIndirectInheritance> protectedWrapped() const;
 
 protected:
     JSTestDefaultToJSONIndirectInheritance(JSC::Structure*, JSDOMGlobalObject&, Ref<TestDefaultToJSONIndirectInheritance>&&);

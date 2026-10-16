@@ -29,10 +29,14 @@
 #if USE(LIBWEBRTC)
 
 #include "LibWebRTCNetwork.h"
+#include "LibWebRTCNetworkManager.h"
 #include "Logging.h"
 #include "NetworkProcessConnection.h"
 #include "NetworkRTCProviderMessages.h"
 #include "WebProcess.h"
+#include <WebCore/Document.h>
+#include <WebCore/Settings.h>
+#include <wtf/Borrow.h>
 #include <wtf/MainThread.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -50,10 +54,35 @@ void LibWebRTCResolver::sendOnMainThread(Function<void(IPC::Connection&)>&& call
 
 LibWebRTCResolver::~LibWebRTCResolver()
 {
-    WebProcess::singleton().libWebRTCNetwork().checkedSocketFactory()->removeResolver(identifier());
+    protect(WebProcess::singleton().libWebRTCNetwork().socketFactory())->removeResolver(identifier());
     sendOnMainThread([identifier = this->identifier()](IPC::Connection& connection) {
         connection.send(Messages::NetworkRTCProvider::StopResolver(identifier), 0);
     });
+}
+
+static bool canStart(WebCore::ScriptExecutionContextIdentifier contextIdentifier, const String& name)
+{
+    if (name.endsWithIgnoringASCIICase(".local"_s)) {
+        bool isValidUUID = WTF::isVersion4UUID(StringView { name }.left(name.length() - 6));
+        RELEASE_LOG_ERROR_IF(!isValidUUID, WebRTC, "mDNS candidate is not a Version 4 UUID");
+        return isValidUUID;
+    }
+
+    RefPtr document = WebCore::Document::allDocumentsMap().get(contextIdentifier);
+    if (!document) {
+        RELEASE_LOG_ERROR(WebRTC, "DNS Resolution requested for a missing document");
+        return false;
+    }
+
+    if (document->settings().webRTCDNSResolutionBySocketEnabled()) {
+        RefPtr networkManager = downcast<LibWebRTCNetworkManager>(document->rtcNetworkManager());
+        if (document->settings().webRTCRelayBypassDisabled() || (networkManager && networkManager->useMDNSCandidates())) {
+            RELEASE_LOG_INFO(WebRTC, "WebRTC DNS Resolution disabled by policy");
+            return false;
+        }
+    }
+
+    return true;
 }
 
 void LibWebRTCResolver::start(const webrtc::SocketAddress& address, Function<void()>&& callback)
@@ -65,15 +94,22 @@ void LibWebRTCResolver::start(const webrtc::SocketAddress& address, Function<voi
     m_port = address.port();
 
     auto addressString = address.HostAsURIString();
-    String name { std::span { addressString } };
+    String name = String::fromLatin1(std::span { addressString });
 
-    if (name.endsWithIgnoringASCIICase(".local"_s) && !WTF::isVersion4UUID(StringView { name }.left(name.length() - 6))) {
-        RELEASE_LOG_ERROR(WebRTC, "mDNS candidate is not a Version 4 UUID");
-        setError(-1);
-        return;
-    }
+    sendOnMainThread([identifier = this->identifier(), name = WTF::move(name).isolatedCopy(), contextIdentifier = m_contextIdentifier](IPC::Connection& connection) {
+        if (!canStart(contextIdentifier, name)) {
+            WebCore::LibWebRTCProvider::callOnWebRTCNetworkThread([identifier]() {
+                auto resolver = protect(WebProcess::singleton().libWebRTCNetwork().socketFactory())->resolver(identifier);
+                if (!resolver)
+                    return;
 
-    sendOnMainThread([identifier = this->identifier(), name = WTF::move(name).isolatedCopy()](IPC::Connection& connection) {
+                resolver->setError(-1);
+                if (auto callback = resolver->takeCallback())
+                    callback();
+            });
+            return;
+        }
+
         connection.send(Messages::NetworkRTCProvider::CreateResolver(identifier, name), 0);
     });
 }
@@ -90,7 +126,7 @@ bool LibWebRTCResolver::GetResolvedAddress(int family, webrtc::SocketAddress* ad
         return false;
 
     *address = m_addressToResolve;
-    for (auto& ipAddress : m_addresses) {
+    for (auto& ipAddress : borrow(m_addresses)) {
         if (family == ipAddress.family()) {
             address->SetResolvedIP(ipAddress);
             address->SetPort(m_port);
@@ -103,13 +139,16 @@ bool LibWebRTCResolver::GetResolvedAddress(int family, webrtc::SocketAddress* ad
 void LibWebRTCResolver::setResolvedAddress(Vector<webrtc::IPAddress>&& addresses)
 {
     m_addresses = WTF::move(addresses);
-    m_callback();
 }
 
 void LibWebRTCResolver::setError(int error)
 {
     m_error = error;
-    m_callback();
+}
+
+Function<void()> LibWebRTCResolver::takeCallback()
+{
+    return std::exchange(m_callback, { });
 }
 
 } // namespace WebKit

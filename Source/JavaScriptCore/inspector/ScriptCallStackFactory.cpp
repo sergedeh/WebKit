@@ -42,6 +42,7 @@
 #include "ScriptArguments.h"
 #include "ScriptCallFrame.h"
 #include "ScriptExecutable.h"
+#include "TopExceptionScope.h"
 #include <wtf/text/WTFString.h>
 
 namespace Inspector {
@@ -83,7 +84,7 @@ public:
     {
         AsyncStackTrace* parentStackTrace = nullptr;
         if (auto* debugger = m_globalObject->debugger()) {
-            if (auto* debuggerAgent = dynamicDowncast<InspectorDebuggerAgent>(debugger->client()))
+            if (CheckedPtr debuggerAgent = dynamicDowncast<InspectorDebuggerAgent>(debugger->client()))
                 parentStackTrace = debuggerAgent->currentParentStackTrace();
         }
 
@@ -158,7 +159,7 @@ static bool extractSourceInformationFromException(JSC::JSGlobalObject* globalObj
         lineColumn->column = columnValue && columnValue.isNumber() ? int(columnValue.toNumber(globalObject)) : 0;
         *sourceURL = sourceURLValue.toWTFString(globalObject);
         result = true;
-    } else if (ErrorInstance* error = jsDynamicCast<ErrorInstance*>(exceptionObject))
+    } else if (ErrorInstance* error = dynamicDowncast<ErrorInstance>(exceptionObject))
         result = getLineColumnAndSource(vm, error->stackTrace(), *lineColumn, *sourceURL);
 
     if (sourceURL->isEmpty())
@@ -171,7 +172,7 @@ static bool extractSourceInformationFromException(JSC::JSGlobalObject* globalObj
 Ref<ScriptCallStack> createScriptCallStackFromException(JSC::JSGlobalObject* globalObject, JSC::Exception* exception, size_t maxStackSize)
 {
     Vector<ScriptCallFrame> frames;
-    auto& stackTrace = exception->stack();
+    auto& stackTrace = exception->stackForReporting(globalObject->vm());
     VM& vm = globalObject->vm();
     for (size_t i = 0; i < stackTrace.size() && i < maxStackSize; i++) {
         auto lineColumn = stackTrace[i].computeLineAndColumn();
@@ -204,7 +205,7 @@ Ref<ScriptCallStack> createScriptCallStackFromException(JSC::JSGlobalObject* glo
 
     AsyncStackTrace* parentStackTrace = nullptr;
     if (auto* debugger = globalObject->debugger()) {
-        if (auto* debuggerAgent = dynamicDowncast<InspectorDebuggerAgent>(debugger->client()))
+        if (CheckedPtr debuggerAgent = dynamicDowncast<InspectorDebuggerAgent>(debugger->client()))
             parentStackTrace = debuggerAgent->currentParentStackTrace();
     }
     return ScriptCallStack::create(WTF::move(frames), stackTrace.size() > maxStackSize, parentStackTrace);

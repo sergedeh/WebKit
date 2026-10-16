@@ -55,15 +55,12 @@ enum class BlockType
 {
     kBlockUniform,
     kBlockBuffer,
-    kPixelLocalExt,  // GL_EXT_shader_pixel_local_storage.
 };
 
 const char *BlockTypeToString(BlockType type);
 
-// Base class for all variables defined in shaders, including Varyings, Uniforms, etc
-// Note: we must override the copy constructor and assignment operator so we can
-// work around excessive GCC binary bloating:
-// See https://code.google.com/p/angleproject/issues/detail?id=697
+// All interface variables defined in shaders like varyings, uniforms, etc, excluding interface
+// blocks.
 struct ShaderVariable
 {
     ShaderVariable();
@@ -201,7 +198,7 @@ struct ShaderVariable
     std::string structOrBlockName;
     std::string mappedStructOrBlockName;
 
-    // Only applies to interface block fields. Kept here for simplicity.
+    // Only applies to interface block fields.
     bool isRowMajorLayout;
 
     // VariableWithLocation
@@ -292,8 +289,9 @@ struct InterfaceBlock
     unsigned int arraySize;
     BlockLayoutType layout;
 
-    // Deprecated. Matrix packing should only be queried from individual fields of the block.
-    // TODO(oetuaho): Remove this once it is no longer used in Chromium.
+    // Only used to validate link, indicates whether the whole block is marked as row_major.
+    // Matrix packing is replicated in the individual fields (if applicable), and that's what must
+    // actually be used.
     bool isRowMajorLayout;
 
     int binding;
@@ -335,7 +333,7 @@ struct WorkGroupSize
     // Checks whether either all of the values are set, or none of them are.
     bool isLocalSizeValid() const;
 
-    int localSizeQualifiers[3];
+    std::array<int, 3> localSizeQualifiers;
 };
 
 inline constexpr WorkGroupSize::WorkGroupSize(int initialSize)

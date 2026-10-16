@@ -84,11 +84,11 @@ void TextTrackCueGenericBoxElement::applyCSSProperties()
 
     Ref cueElement = cue->element();
     if (cue->foregroundColor().isValid())
-        cueElement->setInlineStyleProperty(CSSPropertyColor, serializationForHTML(cue->foregroundColor()));
+        cueElement->setInlineStyleProperty(CSSPropertyID::Color, serializationForHTML(cue->foregroundColor()));
     if (cue->highlightColor().isValid())
-        cueElement->setInlineStyleProperty(CSSPropertyBackgroundColor, serializationForHTML(cue->highlightColor()));
+        cueElement->setInlineStyleProperty(CSSPropertyID::BackgroundColor, serializationForHTML(cue->highlightColor()));
     if (cue->backgroundColor().isValid())
-        setInlineStyleProperty(CSSPropertyBackgroundColor, serializationForHTML(cue->backgroundColor()));
+        setInlineStyleProperty(CSSPropertyID::BackgroundColor, serializationForHTML(cue->backgroundColor()));
 }
 
 Ref<TextTrackCueGeneric> TextTrackCueGeneric::create(ScriptExecutionContext& context, const MediaTime& start, const MediaTime& end, const String& content)
@@ -144,7 +144,8 @@ bool TextTrackCueGeneric::cueContentsMatch(const TextTrackCue& otherTextTrackCue
         && m_fontSizeMultiplier == other.m_fontSizeMultiplier
         && m_fontName == other.m_fontName
         && m_foregroundColor == other.m_foregroundColor
-        && m_backgroundColor == other.m_backgroundColor;
+        && m_backgroundColor == other.m_backgroundColor
+        && m_preventLineWrapping == other.m_preventLineWrapping;
 }
 
 bool TextTrackCueGeneric::isOrderedBefore(const TextTrackCue* that) const
@@ -193,6 +194,7 @@ void TextTrackCueGeneric::toJSON(JSON::Object& object) const
         object.setDouble("fontSizeMultiplier"_s, m_fontSizeMultiplier);
     if (!m_fontName.isEmpty())
         object.setString("font"_s, m_fontName);
+    object.setString("preventLineWrapping"_s, m_preventLineWrapping ? "true"_s : "false"_s);
 }
 
 } // namespace WebCore

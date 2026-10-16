@@ -22,6 +22,7 @@
 #pragma once
 
 #include "RenderInline.h"
+#include "SVGPaintServerCache.h"
 
 namespace WebCore {
 
@@ -31,12 +32,13 @@ class RenderSVGInline : public RenderInline {
     WTF_MAKE_TZONE_ALLOCATED(RenderSVGInline);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderSVGInline);
 public:
-    RenderSVGInline(Type, SVGGraphicsElement&, RenderStyle&&);
+    RenderSVGInline(Type, SVGGraphicsElement&, Style::ComputedStyle&&);
+    RenderSVGInline(Type, Document&, Style::ComputedStyle&&);
     virtual ~RenderSVGInline();
 
     inline SVGGraphicsElement& graphicsElement() const;
 
-    bool isChildAllowed(const RenderObject&, const RenderStyle&) const override;
+    bool isChildAllowed(const RenderObject&, const Style::ComputedStyle&) const override;
 
 private:
     void element() const = delete;
@@ -45,6 +47,9 @@ private:
     bool requiresLayer() const final { return false; }
 
     void updateFromStyle() final;
+
+    // The containing RenderSVGText paints the content. This is only reached when a resource references the SVG inline box directly, which renders nothing.
+    void paint(PaintInfo&, const LayoutPoint&) final { }
 
     // Chapter 10.4 of the SVG Specification say that we should use the
     // object bounding box of the parent text element.
@@ -61,19 +66,24 @@ private:
 
     bool needsHasSVGTransformFlags() const final;
 
-    LayoutRect clippedOverflowRect(const RenderLayerModelObject* repaintContainer, VisibleRectContext) const final;
+    LayoutRect clippedOverflowRect(const RenderLayerModelObject* repaintContainer, const VisibleRectContext&) const final;
     RepaintRects rectsForRepaintingAfterLayout(const RenderLayerModelObject* repaintContainer, RepaintOutlineBounds) const final;
 
-    std::optional<FloatRect> computeFloatVisibleRectInContainer(const FloatRect&, const RenderLayerModelObject* container, VisibleRectContext) const final;
+    std::optional<FloatRect> computeFloatVisibleRectInContainer(const FloatRect&, const RenderLayerModelObject* container, const VisibleRectContext&, VisibleRectState) const final;
 
     void mapLocalToContainer(const RenderLayerModelObject* ancestorContainer, TransformState&, OptionSet<MapCoordinatesMode>, bool* wasFixed) const final;
     const RenderElement* pushMappingToContainer(const RenderLayerModelObject* ancestorToStopAt, RenderGeometryMap&) const final;
     void absoluteQuads(Vector<FloatQuad>&, bool* wasFixed) const final;
-
-    std::unique_ptr<LegacyInlineFlowBox> createInlineFlowBox() final;
+#if PLATFORM(IOS_FAMILY)
+    void absoluteQuadsForSelection(Vector<FloatQuad>&) const final;
+#endif
 
     void willBeDestroyed() final;
-    void styleDidChange(Style::Difference, const RenderStyle* oldStyle) final;
+    void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) final;
+
+    SVGPaintServerCache* svgPaintServerCache() const final { return &m_svgPaintServerCache; }
+
+    mutable SVGPaintServerCache m_svgPaintServerCache;
 };
 
 } // namespace WebCore

@@ -38,7 +38,7 @@ namespace Style {
 
 Sepia Sepia::passthroughForInterpolation()
 {
-    return { .value = CSSFilterFunctionDescriptor<CSSValueSepia>::initialValueForInterpolation };
+    return { .value = CSSFilterFunctionDescriptor<CSSValueID::Sepia>::initialValueForInterpolation };
 }
 
 bool Sepia::transformColor(SRGBA<float>& color) const
@@ -49,7 +49,7 @@ bool Sepia::transformColor(SRGBA<float>& color) const
 
 // MARK: - Conversion
 
-auto ToCSS<Sepia>::operator()(const Sepia& value, const RenderStyle& style) -> CSS::Sepia
+auto ToCSS<Sepia>::operator()(const Sepia& value, const Style::ComputedStyle& style) -> CSS::Sepia
 {
     return { .value = CSS::Sepia::Parameter { toCSS(value.value, style) } };
 }
@@ -66,7 +66,7 @@ auto ToStyle<CSS::Sepia>::operator()(const CSS::Sepia& value, const BuilderState
             }
         ) };
     }
-    return { .value = CSSFilterFunctionDescriptor<CSSValueSepia>::defaultValue };
+    return { .value = CSSFilterFunctionDescriptor<CSSValueID::Sepia>::defaultValue };
 }
 
 // MARK: - Evaluation

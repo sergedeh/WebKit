@@ -41,7 +41,7 @@ namespace WGSL {
 
 template<TokenType TT, TokenType... TTs>
 struct TemplateTypes {
-    static bool includes(TokenType tokenType)
+    static bool LEGACY_NODELETE includes(TokenType tokenType)
     {
         return TT == tokenType || TemplateTypes<TTs...>::includes(tokenType);
     }
@@ -55,7 +55,7 @@ struct TemplateTypes {
 
 template <TokenType TT>
 struct TemplateTypes<TT> {
-    static bool includes(TokenType tokenType)
+    static bool LEGACY_NODELETE includes(TokenType tokenType)
     {
         return TT == tokenType;
     }
@@ -136,6 +136,15 @@ struct TemplateTypes<TT> {
     if (m_parseDepth > 128) \
         FAIL("maximum parser recursive depth reached"_s);
 
+// https://www.w3.org/TR/WGSL/#limits
+// Entered once for each type that has another type nested inside it. A leaf type such as `u32` is
+// not itself a level of nesting, so `array<u32, 1>` is nested one level deep, not two.
+#define CHECK_COMPOSITE_TYPE_NESTING() \
+    static constexpr unsigned maximumCompositeTypeNestingDepth = 15; \
+    SetForScope compositeTypeDepthScope(m_compositeTypeDepth, m_compositeTypeDepth + 1); \
+    if (m_compositeTypeDepth > maximumCompositeTypeNestingDepth) [[unlikely]] \
+        FAIL(makeString("composite type may not be nested more than "_s, String::number(maximumCompositeTypeNestingDepth), " levels"_s));
+
 template<typename Lexer>
 void Parser<Lexer>::splitMinusMinus()
 {
@@ -163,7 +172,7 @@ bool Parser<Lexer>::canBeginUnaryExpression(const Token& token)
     }
 }
 
-static bool canContinueMultiplicativeExpression(const Token& token)
+static bool LEGACY_NODELETE canContinueMultiplicativeExpression(const Token& token)
 {
     switch (token.type) {
     case TokenType::Modulo:
@@ -190,7 +199,7 @@ bool Parser<Lexer>::canContinueAdditiveExpression(const Token& token)
     }
 }
 
-static bool canContinueBitwiseExpression(const Token& token)
+static bool LEGACY_NODELETE canContinueBitwiseExpression(const Token& token)
 {
     switch (token.type) {
     case TokenType::And:
@@ -202,7 +211,7 @@ static bool canContinueBitwiseExpression(const Token& token)
     }
 }
 
-static bool canContinueRelationalExpression(const Token& token)
+static bool LEGACY_NODELETE canContinueRelationalExpression(const Token& token)
 {
     switch (token.type) {
     case TokenType::Gt:
@@ -217,17 +226,17 @@ static bool canContinueRelationalExpression(const Token& token)
     }
 }
 
-static bool canContinueShortCircuitAndExpression(const Token& token)
+static bool LEGACY_NODELETE canContinueShortCircuitAndExpression(const Token& token)
 {
     return token.type == TokenType::AndAnd;
 }
 
-static bool canContinueShortCircuitOrExpression(const Token& token)
+static bool LEGACY_NODELETE canContinueShortCircuitOrExpression(const Token& token)
 {
     return token.type == TokenType::OrOr;
 }
 
-static bool canContinueCompoundAssignmentStatement(const Token& token)
+static bool LEGACY_NODELETE canContinueCompoundAssignmentStatement(const Token& token)
 {
     switch (token.type) {
     case TokenType::PlusEq:
@@ -246,7 +255,7 @@ static bool canContinueCompoundAssignmentStatement(const Token& token)
     }
 }
 
-static AST::BinaryOperation toBinaryOperation(const Token& token)
+static AST::BinaryOperation LEGACY_NODELETE toBinaryOperation(const Token& token)
 {
     switch (token.type) {
     case TokenType::And:
@@ -300,7 +309,7 @@ static AST::BinaryOperation toBinaryOperation(const Token& token)
     }
 }
 
-static AST::UnaryOperation toUnaryOperation(const Token& token)
+static AST::UnaryOperation LEGACY_NODELETE toUnaryOperation(const Token& token)
 {
     switch (token.type) {
     case TokenType::And:
@@ -325,8 +334,12 @@ std::optional<FailedCheck> parse(ShaderModule& shaderModule)
     Lexer lexer(shaderModule.source().span<CharacterType>());
     Parser parser(shaderModule, lexer);
     auto result = parser.parseShader();
+    Vector<Error> errors;
+    auto warnings = parser.takeWarnings();
     if (!result.has_value())
-        return FailedCheck { { result.error() }, { /* warnings */ } };
+        errors.append(result.error());
+    if (!errors.isEmpty() || !warnings.isEmpty())
+        return FailedCheck { WTF::move(errors), WTF::move(warnings) };
     return std::nullopt;
 }
 
@@ -338,10 +351,10 @@ std::optional<FailedCheck> parse(ShaderModule& shaderModule)
 }
 
 template<typename Lexer>
-Expected<Token, TokenType> Parser<Lexer>::consumeType(TokenType type)
+std::expected<Token, TokenType> Parser<Lexer>::consumeType(TokenType type)
 {
     if (current().type == type) {
-        Expected<Token, TokenType> result = { m_current };
+        std::expected<Token, TokenType> result = { m_current };
         consume();
         return result;
     }
@@ -350,7 +363,7 @@ Expected<Token, TokenType> Parser<Lexer>::consumeType(TokenType type)
 
 template<typename Lexer>
 template<TokenType... TTs>
-Expected<Token, TokenType> Parser<Lexer>::consumeTypes()
+std::expected<Token, TokenType> Parser<Lexer>::consumeTypes()
 {
     auto token = m_current;
     if (TemplateTypes<TTs...>::includes(token.type)) {
@@ -388,8 +401,10 @@ Result<void> Parser<Lexer>::parseShader()
             consume();
             PARSE(diagnostic, Diagnostic);
             CONSUME_TYPE(Semicolon);
-            auto& directive = MAKE_ARENA_NODE(DiagnosticDirective, WTF::move(diagnostic));
-            m_shaderModule.directives().append(directive);
+            if (diagnostic) {
+                auto& directive = MAKE_ARENA_NODE(DiagnosticDirective, WTF::move(*diagnostic));
+                m_shaderModule.directives().append(directive);
+            }
             break;
         }
         default:
@@ -420,7 +435,7 @@ Result<void> Parser<Lexer>::parseEnableDirective()
         CONSUME_TYPE_NAMED(identifier, Identifier);
         auto* extension = parseExtension(identifier.ident);
         if (!extension)
-            FAIL("Expected 'f16'"_s);
+            FAIL("Expected 'clip_distances', 'f16', 'primitive_index', or 'subgroups'"_s);
         m_shaderModule.enabledExtensions().add(*extension);
 
         if (current().type != TokenType::Comma)
@@ -440,7 +455,7 @@ Result<void> Parser<Lexer>::parseRequireDirective()
         CONSUME_TYPE_NAMED(identifier, Identifier);
         auto* languageFeature = parseLanguageFeature(identifier.ident);
         if (!languageFeature)
-            FAIL("Expected 'readonly_and_readwrite_storage_textures', 'packed_4x8_integer_dot_product', 'unrestricted_pointer_parameters' or 'pointer_composite_access'"_s);
+            FAIL("Expected 'clip_distances', 'readonly_and_readwrite_storage_textures', 'packed_4x8_integer_dot_product', 'unrestricted_pointer_parameters', 'texture_formats_tier1', 'subgroup_id', 'subgroup_uniformity', or 'pointer_composite_access'"_s);
         m_shaderModule.requiredFeatures().add(*languageFeature);
 
         if (current().type != TokenType::Comma)
@@ -581,25 +596,31 @@ Result<AST::Declaration::Ref> Parser<Lexer>::parseDeclaration()
 {
     START_PARSE();
 
-    if (current().type == TokenType::KeywordConst) {
+    switch (current().type) {
+    case TokenType::KeywordConst: {
         PARSE(variable, Variable);
         CONSUME_TYPE(Semicolon);
         return { variable };
-    } else if (current().type == TokenType::KeywordAlias) {
+    }
+    case TokenType::KeywordAlias: {
         PARSE(alias, TypeAlias);
         return { alias };
-    } else if (current().type ==  TokenType::KeywordConstAssert) {
+    }
+    case TokenType::KeywordConstAssert: {
         PARSE(assert, ConstAssert);
         return { assert };
+    }
+    case TokenType::KeywordStruct: {
+        PARSE(structure, Structure);
+        return { structure };
+    }
+    default:
+        break;
     }
 
     PARSE(attributes, Attributes);
 
     switch (current().type) {
-    case TokenType::KeywordStruct: {
-        PARSE(structure, Structure, WTF::move(attributes));
-        return { structure };
-    }
     case TokenType::KeywordOverride:
     case TokenType::KeywordVar: {
         PARSE(variable, VariableWithAttributes, WTF::move(attributes));
@@ -631,15 +652,16 @@ Result<AST::Attribute::List> Parser<Lexer>::parseAttributes()
     AST::Attribute::List attributes;
 
     while (current().type == TokenType::Attribute) {
-        PARSE(firstAttribute, Attribute);
-        attributes.append(WTF::move(firstAttribute));
+        PARSE(attribute, Attribute);
+        if (attribute)
+            attributes.append(WTF::move(*attribute));
     }
 
     return { WTF::move(attributes) };
 }
 
 template<typename Lexer>
-Result<AST::Attribute::Ref> Parser<Lexer>::parseAttribute()
+Result<std::optional<AST::Attribute::Ref>> Parser<Lexer>::parseAttribute()
 {
     START_PARSE();
 
@@ -648,7 +670,9 @@ Result<AST::Attribute::Ref> Parser<Lexer>::parseAttribute()
     if (current().type == TokenType::KeywordDiagnostic) {
         consume();
         PARSE(diagnostic, Diagnostic);
-        RETURN_ARENA_NODE(DiagnosticAttribute, WTF::move(diagnostic));
+        if (!diagnostic)
+            return { std::nullopt };
+        RETURN_ARENA_NODE(DiagnosticAttribute, WTF::move(*diagnostic));
     }
 
 
@@ -686,7 +710,7 @@ Result<AST::Attribute::Ref> Parser<Lexer>::parseAttribute()
         PARSE(name, Identifier);
         auto* builtin = parseBuiltin(name);
         if (!builtin)
-            FAIL("Unknown builtin value. Expected 'vertex_index', 'instance_index', 'position', 'front_facing', 'frag_depth', 'sample_index', 'sample_mask', 'local_invocation_id', 'local_invocation_index', 'global_invocation_id', 'workgroup_id' or 'num_workgroups'"_s);
+            FAIL("Unknown builtin value. Expected 'clip_distances', 'vertex_index', 'instance_index', 'position', 'primitive_index', 'front_facing', 'frag_depth', 'sample_index', 'sample_mask', 'local_invocation_id', 'local_invocation_index', 'global_invocation_id', 'workgroup_id' or 'num_workgroups'"_s);
         switch (*builtin) {
         case Builtin::FragDepth:
             m_shaderModule.setUsesFragDepth();
@@ -752,19 +776,30 @@ Result<AST::Attribute::Ref> Parser<Lexer>::parseAttribute()
         auto* interpolationType = parseInterpolationType(interpolate);
         if (!interpolationType)
             FAIL("Unknown interpolation type. Expected 'flat', 'linear' or 'perspective'"_s);
-        InterpolationSampling sampleType { InterpolationSampling::Center };
+        std::optional<InterpolationSampling> sampleType;
         if (current().type == TokenType::Comma) {
             consume();
-            PARSE(sampling, Identifier);
-            auto* interpolationSampling = parseInterpolationSampling(sampling);
-            if (!interpolationSampling)
-                FAIL("Unknown interpolation sampling. Expected 'center', 'centroid', 'sample', 'first' or 'either"_s);
-            sampleType = *interpolationSampling;
+
+            if (current().type == TokenType::Identifier) {
+                PARSE(sampling, Identifier);
+                auto* interpolationSampling = parseInterpolationSampling(sampling);
+                if (!interpolationSampling)
+                    FAIL("Unknown interpolation sampling. Expected 'center', 'centroid', 'sample', 'first' or 'either"_s);
+                sampleType = *interpolationSampling;
+                if (current().type == TokenType::Comma)
+                    consume();
+            }
         }
-        if (current().type == TokenType::Comma)
-            consume();
+
+        if (!sampleType) {
+            if (*interpolationType == InterpolationType::Flat)
+                sampleType = InterpolationSampling::First;
+            else
+                sampleType = InterpolationSampling::Center;
+        }
+
         CONSUME_TYPE(ParenRight);
-        RETURN_ARENA_NODE(InterpolateAttribute, *interpolationType, sampleType);
+        RETURN_ARENA_NODE(InterpolateAttribute, *interpolationType, *sampleType);
     }
 
     if (ident.ident == "size"_s) {
@@ -806,7 +841,7 @@ Result<AST::Attribute::Ref> Parser<Lexer>::parseAttribute()
 }
 
 template<typename Lexer>
-Result<AST::Diagnostic> Parser<Lexer>::parseDiagnostic()
+Result<std::optional<AST::Diagnostic>> Parser<Lexer>::parseDiagnostic()
 {
     START_PARSE();
     CONSUME_TYPE(ParenLeft);
@@ -817,20 +852,30 @@ Result<AST::Diagnostic> Parser<Lexer>::parseDiagnostic()
     CONSUME_TYPE(Comma);
 
     PARSE(name, Identifier);
+    std::optional<TriggeringRule> triggeringRule;
     std::optional<AST::Identifier> suffix;
+
     if (current().type == TokenType::Period) {
         consume();
         PARSE(suffix, Identifier);
         suffix = WTF::move(suffix);
-    }
+    } else if (auto* rule = parseTriggeringRule(name))
+        triggeringRule = *rule;
+
     if (current().type == TokenType::Comma)
         consume();
     CONSUME_TYPE(ParenRight);
-    return AST::Diagnostic { *severityControl, AST::TriggeringRule { WTF::move(name), WTF::move(suffix) } };
+
+    if (!triggeringRule) {
+        m_warnings.append(Warning { makeString("unrecognized diagnostic rule "_s, name), name.span() });
+        return { std::nullopt };
+    }
+
+    return { AST::Diagnostic { *severityControl, *triggeringRule } };
 }
 
 template<typename Lexer>
-Result<AST::Structure::Ref> Parser<Lexer>::parseStructure(AST::Attribute::List&& attributes)
+Result<AST::Structure::Ref> Parser<Lexer>::parseStructure()
 {
     START_PARSE();
 
@@ -863,7 +908,7 @@ Result<AST::Structure::Ref> Parser<Lexer>::parseStructure(AST::Attribute::List&&
 
     CONSUME_TYPE(BraceRight);
 
-    RETURN_ARENA_NODE(Structure, WTF::move(name), WTF::move(members), WTF::move(attributes), AST::StructureRole::UserDefined);
+    RETURN_ARENA_NODE(Structure, WTF::move(name), WTF::move(members), AST::StructureRole::UserDefined);
 }
 
 template<typename Lexer>
@@ -884,13 +929,6 @@ Result<AST::Expression::Ref> Parser<Lexer>::parseTypeName()
 {
     START_PARSE();
 
-    auto scope = SetForScope(m_compositeTypeDepth, m_compositeTypeDepth + 1);
-
-    // https://www.w3.org/TR/WGSL/#limits
-    static constexpr unsigned maximumCompositeTypeNestingDepth = 15;
-    if (m_compositeTypeDepth > maximumCompositeTypeNestingDepth) [[unlikely]]
-        FAIL(makeString("composite type may not be nested more than "_s, String::number(maximumCompositeTypeNestingDepth), " levels"_s));
-
     if (current().type == TokenType::Identifier) {
         PARSE(name, Identifier);
         // FIXME: <rdar://150365759> remove the special case for array
@@ -906,6 +944,8 @@ template<typename Lexer>
 Result<AST::Expression::Ref> Parser<Lexer>::parseTypeNameAfterIdentifier(AST::Identifier&& name, SourcePosition _startOfElementPosition) // NOLINT
 {
     if (current().type == TokenType::TemplateArgsLeft) {
+        CHECK_COMPOSITE_TYPE_NESTING();
+
         CONSUME_TYPE(TemplateArgsLeft);
         AST::Expression::List arguments;
         do {
@@ -930,6 +970,8 @@ Result<AST::Expression::Ref> Parser<Lexer>::parseArrayType()
     AST::Expression::Ptr maybeElementCount = nullptr;
 
     if (current().type == TokenType::TemplateArgsLeft) {
+        CHECK_COMPOSITE_TYPE_NESTING();
+
         // We differ from the WGSL grammar here by allowing the type to be optional,
         // which allows us to use `parseArrayType` in `parseCallExpression`.
         consume();
@@ -1034,19 +1076,27 @@ Result<AST::VariableQualifier::Ref> Parser<Lexer>::parseVariableQualifier()
     CONSUME_TYPE(TemplateArgsLeft);
     PARSE(addressSpace, AddressSpace);
 
-    AccessMode accessMode;
+    AccessMode accessMode = defaultAccessModeForAddressSpace(addressSpace);
+    bool hasExplicitAccessMode = false;
     if (current().type == TokenType::Comma) {
-        if (addressSpace != AddressSpace::Storage)
-            FAIL("only variables in the <storage> address space may specify an access mode"_s);
-
         consume();
-        PARSE(actualAccessMode, AccessMode);
-        accessMode = actualAccessMode;
-    } else
-        accessMode = defaultAccessModeForAddressSpace(addressSpace);
+
+        if (current().type == TokenType::Identifier) {
+            if (addressSpace != AddressSpace::Storage)
+                FAIL("only variables in the <storage> address space may specify an access mode"_s);
+
+            PARSE(actualAccessMode, AccessMode);
+            accessMode = actualAccessMode;
+            hasExplicitAccessMode = true;
+
+            if (current().type == TokenType::Comma)
+                consume();
+        }
+    }
+
 
     CONSUME_TYPE(TemplateArgsRight);
-    RETURN_ARENA_NODE(VariableQualifier, addressSpace, accessMode);
+    RETURN_ARENA_NODE(VariableQualifier, addressSpace, accessMode, hasExplicitAccessMode);
 }
 
 template<typename Lexer>
@@ -1151,14 +1201,6 @@ Result<AST::Statement::Ref> Parser<Lexer>::parseStatement()
     CHECK_RECURSION();
 
     switch (current().type) {
-    case TokenType::BraceLeft: {
-        PARSE(compoundStmt, CompoundStatement);
-        return { compoundStmt };
-    }
-    case TokenType::KeywordIf: {
-        // FIXME: <rdar://150364837> Handle attributes attached to statement.
-        return parseIfStatement();
-    }
     case TokenType::KeywordReturn: {
         PARSE(returnStmt, ReturnStatement);
         CONSUME_TYPE(Semicolon);
@@ -1172,21 +1214,9 @@ Result<AST::Statement::Ref> Parser<Lexer>::parseStatement()
         RETURN_ARENA_NODE(VariableStatement, WTF::move(variable));
     }
     case TokenType::Identifier: {
-        PARSE(ident, Identifier);
-
-        if (current().type == TokenType::TemplateArgsLeft || current().type == TokenType::ParenLeft) {
-            PARSE(type, TypeNameAfterIdentifier, WTF::move(ident), _startOfElementPosition);
-            PARSE(arguments, ArgumentExpressionList);
-            auto& call = MAKE_ARENA_NODE(CallExpression, WTF::move(type), WTF::move(arguments));
-            CONSUME_TYPE(Semicolon);
-            RETURN_ARENA_NODE(CallStatement, call);
-        }
-
-        AST::Expression::Ref identifierExpression = MAKE_ARENA_NODE(IdentifierExpression, WTF::move(ident));
-        PARSE(lhs, PostfixExpression, WTF::move(identifierExpression), _startOfElementPosition);
-        PARSE(variableUpdatingStatement, VariableUpdatingStatement, WTF::move(lhs));
+        PARSE(statement, CallOrVariableUpdatingStatement);
         CONSUME_TYPE(Semicolon);
-        return { variableUpdatingStatement };
+        return { statement };
     }
     case TokenType::ParenLeft:
     case TokenType::And:
@@ -1194,22 +1224,6 @@ Result<AST::Statement::Ref> Parser<Lexer>::parseStatement()
         PARSE(variableUpdatingStatement, VariableUpdatingStatement);
         CONSUME_TYPE(Semicolon);
         return { variableUpdatingStatement };
-    }
-    case TokenType::KeywordFor: {
-        // FIXME: <rdar://150364837> Handle attributes attached to statement.
-        return parseForStatement();
-    }
-    case TokenType::KeywordLoop: {
-        // FIXME: <rdar://150364837> Handle attributes attached to statement.
-        return parseLoopStatement();
-    }
-    case TokenType::KeywordSwitch: {
-        // FIXME: <rdar://150364837> Handle attributes attached to statement.
-        return parseSwitchStatement();
-    }
-    case TokenType::KeywordWhile: {
-        // FIXME: <rdar://150364837> Handle attributes attached to statement.
-        return parseWhileStatement();
     }
     case TokenType::KeywordBreak: {
         consume();
@@ -1227,15 +1241,35 @@ Result<AST::Statement::Ref> Parser<Lexer>::parseStatement()
         RETURN_ARENA_NODE(DiscardStatement);
     }
     case TokenType::Underbar : {
-        consume();
-        CONSUME_TYPE(Equal);
-        PARSE(rhs, Expression);
+        PARSE(phonyAssignment, PhonyAssignmentStatement);
         CONSUME_TYPE(Semicolon);
-        RETURN_ARENA_NODE(PhonyAssignmentStatement, WTF::move(rhs));
+        return { phonyAssignment };
     }
     case TokenType::KeywordConstAssert: {
         PARSE(assert, ConstAssert);
         RETURN_ARENA_NODE(ConstAssertStatement, WTF::move(assert));
+    }
+    default:
+        break;
+    }
+
+
+    PARSE(attributes, Attributes);
+
+    switch (current().type) {
+    case TokenType::KeywordIf:
+        return parseIfStatementWithAttributes(WTF::move(attributes), _startOfElementPosition);
+    case TokenType::KeywordFor:
+        return parseForStatement(WTF::move(attributes));
+    case TokenType::KeywordLoop:
+        return parseLoopStatement(WTF::move(attributes));
+    case TokenType::KeywordSwitch:
+        return parseSwitchStatement(WTF::move(attributes));
+    case TokenType::KeywordWhile:
+        return parseWhileStatement(WTF::move(attributes));
+    case TokenType::BraceLeft: {
+        PARSE(compoundStmt, CompoundStatement, WTF::move(attributes));
+        return { compoundStmt };
     }
     default:
         FAIL("Not a valid statement"_s);
@@ -1245,9 +1279,15 @@ Result<AST::Statement::Ref> Parser<Lexer>::parseStatement()
 template<typename Lexer>
 Result<AST::CompoundStatement::Ref> Parser<Lexer>::parseCompoundStatement()
 {
-    START_PARSE();
-
     PARSE(attributes, Attributes);
+
+    return parseCompoundStatement(WTF::move(attributes));
+}
+
+template<typename Lexer>
+Result<AST::CompoundStatement::Ref> Parser<Lexer>::parseCompoundStatement(AST::Attribute::List&& attributes)
+{
+    START_PARSE();
 
     CONSUME_TYPE(BraceLeft);
 
@@ -1303,7 +1343,7 @@ Result<AST::Statement::Ref> Parser<Lexer>::parseIfStatementWithAttributes(AST::A
 }
 
 template<typename Lexer>
-Result<AST::Statement::Ref> Parser<Lexer>::parseForStatement()
+Result<AST::Statement::Ref> Parser<Lexer>::parseForStatement(AST::Attribute::List&& attributes)
 {
     START_PARSE();
 
@@ -1325,9 +1365,14 @@ Result<AST::Statement::Ref> Parser<Lexer>::parseForStatement()
             break;
         }
         case TokenType::Identifier: {
-            // FIXME: <rdar://150364959> this should be should also include function calls
-            PARSE(variableUpdatingStatement, VariableUpdatingStatement);
-            maybeInitializer = &variableUpdatingStatement.get();
+            PARSE(statement, CallOrVariableUpdatingStatement);
+            maybeInitializer = &statement.get();
+            break;
+        }
+        case TokenType::Underbar: {
+            // A phony assignment is a variable_updating_statement, so it is allowed here.
+            PARSE(phonyAssignment, PhonyAssignmentStatement);
+            maybeInitializer = &phonyAssignment.get();
             break;
         }
         default:
@@ -1343,33 +1388,42 @@ Result<AST::Statement::Ref> Parser<Lexer>::parseForStatement()
     CONSUME_TYPE(Semicolon);
 
     if (current().type != TokenType::ParenRight) {
-        // FIXME: <rdar://150364959> this should be should also include function calls
-        if (current().type != TokenType::Identifier)
-            FAIL("Invalid for-loop update clause"_s);
+        if (current().type == TokenType::Underbar) {
+            PARSE(phonyAssignment, PhonyAssignmentStatement);
+            maybeUpdate = &phonyAssignment.get();
+        } else {
+            if (current().type != TokenType::Identifier)
+                FAIL("Invalid for-loop update clause"_s);
 
-        PARSE(variableUpdatingStatement, VariableUpdatingStatement);
-        maybeUpdate = &variableUpdatingStatement.get();
+            PARSE(statement, CallOrVariableUpdatingStatement);
+            maybeUpdate = &statement.get();
+        }
     }
     CONSUME_TYPE(ParenRight);
 
     PARSE(body, CompoundStatement);
 
-    RETURN_ARENA_NODE(ForStatement, maybeInitializer, maybeTest, maybeUpdate, WTF::move(body));
+    RETURN_ARENA_NODE(ForStatement, WTF::move(attributes), maybeInitializer, maybeTest, maybeUpdate, WTF::move(body));
 }
 
 template<typename Lexer>
-Result<AST::Statement::Ref> Parser<Lexer>::parseLoopStatement()
+Result<AST::Statement::Ref> Parser<Lexer>::parseLoopStatement(AST::Attribute::List&& attributes)
 {
     START_PARSE();
 
     CONSUME_TYPE(KeywordLoop);
-    PARSE(attributes, Attributes);
+    PARSE(bodyAttributes, Attributes);
 
     CONSUME_TYPE(BraceLeft);
     AST::Statement::List bodyStatements;
     std::optional<AST::Continuing> maybeContinuing;
 
     while (current().type != TokenType::BraceRight) {
+        if (current().type == TokenType::Semicolon) {
+            consume();
+            continue;
+        }
+
         if (current().type != TokenType::KeywordContinuing) {
             PARSE(statement, Statement);
             bodyStatements.append(WTF::move(statement));
@@ -1385,6 +1439,11 @@ Result<AST::Statement::Ref> Parser<Lexer>::parseLoopStatement()
 
         CONSUME_TYPE(BraceLeft);
         while (current().type != TokenType::BraceRight) {
+            if (current().type == TokenType::Semicolon) {
+                consume();
+                continue;
+            }
+
             if (current().type != TokenType::KeywordBreak) {
                 PARSE(statement, Statement);
                 continuingStatements.append(statement);
@@ -1407,22 +1466,27 @@ Result<AST::Statement::Ref> Parser<Lexer>::parseLoopStatement()
         }
         CONSUME_TYPE(BraceRight);
 
-        maybeContinuing = { WTF::move(continuingStatements), WTF::move(continuingAttributes), breakIf };
+        maybeContinuing = { AST::Continuing { WTF::move(continuingStatements), WTF::move(continuingAttributes), breakIf } };
+
+        // https://www.w3.org/TR/WGSL/#loop-statement
+        // The continuing block closes the loop body, so anything following it is a parse error.
+        break;
     }
     CONSUME_TYPE(BraceRight);
 
-    RETURN_ARENA_NODE(LoopStatement, WTF::move(attributes), WTF::move(bodyStatements), WTF::move(maybeContinuing));
+    RETURN_ARENA_NODE(LoopStatement, WTF::move(attributes), WTF::move(bodyAttributes), WTF::move(bodyStatements), WTF::move(maybeContinuing));
 }
 
 template<typename Lexer>
-Result<AST::Statement::Ref> Parser<Lexer>::parseSwitchStatement()
+Result<AST::Statement::Ref> Parser<Lexer>::parseSwitchStatement(AST::Attribute::List&& attributes)
 {
     START_PARSE();
 
     CONSUME_TYPE(KeywordSwitch);
 
     PARSE(value, Expression);
-    PARSE(valueAttributes, Attributes);
+
+    PARSE(bodyAttributes, Attributes);
 
     CONSUME_TYPE(BraceLeft);
 
@@ -1476,11 +1540,11 @@ Result<AST::Statement::Ref> Parser<Lexer>::parseSwitchStatement()
     if (!defaultClause.has_value())
         FAIL("Switch statement must have exactly one default clause, but it has none"_s);
 
-    RETURN_ARENA_NODE(SwitchStatement, WTF::move(value), WTF::move(valueAttributes), WTF::move(clauses), WTF::move(*defaultClause));
+    RETURN_ARENA_NODE(SwitchStatement, WTF::move(attributes), WTF::move(value), WTF::move(bodyAttributes), WTF::move(clauses), WTF::move(*defaultClause));
 }
 
 template<typename Lexer>
-Result<AST::Statement::Ref> Parser<Lexer>::parseWhileStatement()
+Result<AST::Statement::Ref> Parser<Lexer>::parseWhileStatement(AST::Attribute::List&& attributes)
 {
     START_PARSE();
 
@@ -1489,7 +1553,7 @@ Result<AST::Statement::Ref> Parser<Lexer>::parseWhileStatement()
     PARSE(test, Expression);
     PARSE(body, CompoundStatement);
 
-    RETURN_ARENA_NODE(WhileStatement, WTF::move(test), WTF::move(body));
+    RETURN_ARENA_NODE(WhileStatement, WTF::move(attributes), WTF::move(test), WTF::move(body));
 }
 
 template<typename Lexer>
@@ -1547,6 +1611,40 @@ Result<AST::Statement::Ref> Parser<Lexer>::parseVariableUpdatingStatement(AST::E
     RETURN_ARENA_NODE(AssignmentStatement, WTF::move(lhs), WTF::move(rhs));
 }
 
+
+template<typename Lexer>
+Result<AST::Statement::Ref> Parser<Lexer>::parseCallOrVariableUpdatingStatement()
+{
+    // A func_call_statement and a variable_updating_statement both start with an identifier, so
+    // which one this is only becomes apparent once that identifier has been consumed. Neither
+    // consumes a trailing `;`, since a for-loop's init and update clauses do not have one.
+    START_PARSE();
+
+    PARSE(ident, Identifier);
+
+    if (current().type == TokenType::TemplateArgsLeft || current().type == TokenType::ParenLeft) {
+        PARSE(type, TypeNameAfterIdentifier, WTF::move(ident), _startOfElementPosition);
+        PARSE(arguments, ArgumentExpressionList);
+        auto& call = MAKE_ARENA_NODE(CallExpression, WTF::move(type), WTF::move(arguments));
+        RETURN_ARENA_NODE(CallStatement, call);
+    }
+
+    AST::Expression::Ref identifierExpression = MAKE_ARENA_NODE(IdentifierExpression, WTF::move(ident));
+    PARSE(lhs, PostfixExpression, WTF::move(identifierExpression), _startOfElementPosition);
+    return parseVariableUpdatingStatement(WTF::move(lhs));
+}
+
+template<typename Lexer>
+Result<AST::Statement::Ref> Parser<Lexer>::parsePhonyAssignmentStatement()
+{
+    // https://www.w3.org/TR/WGSL/#recursive-descent-syntax-assignment_statement
+    START_PARSE();
+
+    CONSUME_TYPE(Underbar);
+    CONSUME_TYPE(Equal);
+    PARSE(rhs, Expression);
+    RETURN_ARENA_NODE(PhonyAssignmentStatement, WTF::move(rhs));
+}
 
 template<typename Lexer>
 Result<AST::Expression::Ref> Parser<Lexer>::parseShortCircuitExpression(AST::Expression::Ref&& lhs, TokenType continuingToken, AST::BinaryOperation op)
@@ -1895,3 +1993,15 @@ Result<AST::Expression::List> Parser<Lexer>::parseArgumentExpressionList()
 }
 
 } // namespace WGSL
+
+#undef START_PARSE
+#undef CURRENT_SOURCE_SPAN
+#undef MAKE_ARENA_NODE
+#undef RETURN_ARENA_NODE
+#undef FAIL
+#undef PARSE
+#undef PARSE_MOVE
+#undef CONSUME_TYPE_NAMED
+#undef CONSUME_TYPE
+#undef CONSUME_TYPES_NAMED
+#undef CHECK_RECURSION

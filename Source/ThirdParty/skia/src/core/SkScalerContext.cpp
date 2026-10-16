@@ -19,15 +19,15 @@
 #include "include/core/SkPathEffect.h"
 #include "include/core/SkPixmap.h"
 #include "include/core/SkStrokeRec.h"
-#include "include/private/base/SkAlign.h"
-#include "include/private/base/SkCPUTypes.h"
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkFixed.h"
-#include "include/private/base/SkMalloc.h"
-#include "include/private/base/SkMutex.h"
-#include "include/private/base/SkTo.h"
-#include "src/base/SkArenaAlloc.h"
-#include "src/base/SkAutoMalloc.h"
+#include "include/private/SkAlign.h"
+#include "include/private/SkCPUTypes.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkFixed.h"
+#include "include/private/SkMalloc.h"
+#include "include/private/SkMutex.h"
+#include "include/private/SkTo.h"
+#include "src/core/SkArenaAlloc.h"
+#include "src/core/SkAutoMalloc.h"
 #include "src/core/SkAutoPixmapStorage.h"
 #include "src/core/SkBlitter_A8.h"
 #include "src/core/SkColorData.h"
@@ -572,10 +572,11 @@ void SkScalerContext::GenerateImageFromPath(
             sk_bzero(dstMask.image(), dstMask.computeImageSize());
             return;
         }
+        sk_bzero(dst.writable_addr(), dst.computeByteSize());
     } else {
         dst.reset(info, dstMask.image(), dstMask.fRowBytes);
     }
-    sk_bzero(dst.writable_addr(), dst.computeByteSize());
+    sk_bzero(dstMask.image(), dstMask.computeImageSize());
 
     skcpu::Draw draw;
     draw.fBlitterChooser = SkA8Blitter_Choose;
@@ -600,6 +601,7 @@ void SkScalerContext::GenerateImageFromPath(
             pack4xHToMask(dst, dstMask, maskPreBlend, doBGR, verticalLCD);
             break;
         default:
+            SkUNREACHABLE;
             break;
     }
 }
@@ -1144,6 +1146,8 @@ void SkScalerContext::MakeRecAndEffects(const SkFont& font, const SkPaint& paint
 
     rec->fMaskFormat = compute_mask_format(font);
 
+    // NOTE: SDFLCD text will never have kLCD16_Format at this point, and effectively skips this
+    // block. Instead the subPixelGeometry is piped in during drawAtlasSubrun.
     if (SkMask::kLCD16_Format == rec->fMaskFormat) {
         if (too_big_for_lcd(*rec, checkPost2x2)) {
             rec->fMaskFormat = SkMask::kA8_Format;

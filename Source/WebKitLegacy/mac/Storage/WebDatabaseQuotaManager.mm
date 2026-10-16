@@ -29,9 +29,10 @@
 #import <WebCore/DatabaseTracker.h>
 #import <WebCore/SecurityOriginData.h>
 
-using namespace WebCore;
 
-@implementation WebDatabaseQuotaManager
+@implementation WebDatabaseQuotaManager {
+    __weak WebSecurityOrigin *_origin;
+}
 
 - (id)initWithOrigin:(WebSecurityOrigin *)origin
 {
@@ -55,12 +56,12 @@ using namespace WebCore;
 
 - (unsigned long long)usage
 {
-    return DatabaseTracker::singleton().usage([_origin _core]->data());
+    return WebCore::DatabaseTracker::singleton().usage([protect(_origin) _core]->data());
 }
 
 - (unsigned long long)quota
 {
-    return DatabaseTracker::singleton().quota([_origin _core]->data());
+    return WebCore::DatabaseTracker::singleton().quota([protect(_origin) _core]->data());
 }
 
 // If the quota is set to a value lower than the current usage, that quota will
@@ -68,7 +69,7 @@ using namespace WebCore;
 // prevent new data from being added to databases in that origin.
 - (void)setQuota:(unsigned long long)quota
 {
-    DatabaseTracker::singleton().setQuota([_origin _core]->data(), quota);
+    WebCore::DatabaseTracker::singleton().setQuota([protect(_origin) _core]->data(), quota);
 }
 
 @end

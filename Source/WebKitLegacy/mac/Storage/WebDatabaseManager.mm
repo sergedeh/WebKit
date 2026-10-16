@@ -35,6 +35,7 @@
 #import <WebCore/DatabaseManager.h>
 #import <WebCore/DatabaseTracker.h>
 #import <WebCore/SecurityOrigin.h>
+#import <wtf/NeverDestroyed.h>
 #import <wtf/cocoa/VectorCocoa.h>
 #import <wtf/darwin/DispatchExtras.h>
 
@@ -44,20 +45,19 @@
 #import <WebCore/WebCoreThread.h>
 #endif
 
-using namespace WebCore;
 
-NSString *WebDatabaseDirectoryDefaultsKey = @"WebDatabaseDirectory";
+NSString * const WebDatabaseDirectoryDefaultsKey = @"WebDatabaseDirectory";
 
 NSString *WebDatabaseDisplayNameKey = @"WebDatabaseDisplayNameKey";
 NSString *WebDatabaseExpectedSizeKey = @"WebDatabaseExpectedSizeKey";
 NSString *WebDatabaseUsageKey = @"WebDatabaseUsageKey";
 
-NSString *WebDatabaseDidModifyOriginNotification = @"WebDatabaseDidModifyOriginNotification";
-NSString *WebDatabaseDidModifyDatabaseNotification = @"WebDatabaseDidModifyDatabaseNotification";
-NSString *WebDatabaseIdentifierKey = @"WebDatabaseIdentifierKey";
+NSString * const WebDatabaseDidModifyOriginNotification = @"WebDatabaseDidModifyOriginNotification";
+NSString * const WebDatabaseDidModifyDatabaseNotification = @"WebDatabaseDidModifyDatabaseNotification";
+NSString * const WebDatabaseIdentifierKey = @"WebDatabaseIdentifierKey";
 
 #if PLATFORM(IOS_FAMILY)
-CFStringRef WebDatabaseOriginsDidChangeNotification = CFSTR("WebDatabaseOriginsDidChangeNotification");
+const CFStringRef WebDatabaseOriginsDidChangeNotification = CFSTR("WebDatabaseOriginsDidChangeNotification");
 #endif
 
 static NSString *databasesDirectoryPath();
@@ -66,8 +66,8 @@ static NSString *databasesDirectoryPath();
 
 + (WebDatabaseManager *) sharedWebDatabaseManager
 {
-    static WebDatabaseManager *sharedManager = [[WebDatabaseManager alloc] init];
-    return sharedManager;
+    static NeverDestroyed<RetainPtr<WebDatabaseManager>> sharedManager = adoptNS([[WebDatabaseManager alloc] init]);
+    return sharedManager.get();
 }
 
 - (id)init
@@ -77,7 +77,7 @@ static NSString *databasesDirectoryPath();
 
     WebPlatformStrategies::initializeIfNecessary();
 
-    DatabaseManager& dbManager = DatabaseManager::singleton();
+    WebCore::DatabaseManager& dbManager = WebCore::DatabaseManager::singleton();
 
     // Set the database root path in WebCore
     dbManager.initialize(databasesDirectoryPath());
@@ -90,7 +90,7 @@ static NSString *databasesDirectoryPath();
 
 - (NSArray *)origins
 {
-    return createNSArray(DatabaseTracker::singleton().origins(), [] (auto&& origin) {
+    return createNSArray(WebCore::DatabaseTracker::singleton().origins(), [] (auto&& origin) {
         return adoptNS([[WebSecurityOrigin alloc] _initWithWebCoreSecurityOrigin:origin.securityOrigin().ptr()]);
     }).autorelease();
 }
@@ -99,7 +99,7 @@ static NSString *databasesDirectoryPath();
 {
     if (!origin)
         return nil;
-    return createNSArray(DatabaseTracker::singleton().databaseNames([origin _core]->data())).autorelease();
+    return createNSArray(WebCore::DatabaseTracker::singleton().databaseNames([origin _core]->data())).autorelease();
 }
 
 - (NSDictionary *)detailsForDatabase:(NSString *)databaseIdentifier withOrigin:(WebSecurityOrigin *)origin
@@ -107,7 +107,7 @@ static NSString *databasesDirectoryPath();
     if (!origin)
         return nil;
 
-    auto details = DatabaseManager::singleton().detailsForNameAndOrigin(databaseIdentifier, *[origin _core]);
+    auto details = WebCore::DatabaseManager::singleton().detailsForNameAndOrigin(databaseIdentifier, protect(*[origin _core]));
     if (details.name().isNull())
         return nil;
 
@@ -120,22 +120,22 @@ static NSString *databasesDirectoryPath();
 
 - (void)deleteAllDatabases
 {
-    DatabaseTracker::singleton().deleteAllDatabasesImmediately();
+    WebCore::DatabaseTracker::singleton().deleteAllDatabasesImmediately();
 #if PLATFORM(IOS_FAMILY)
     // FIXME: This needs to be removed once DatabaseTrackers in multiple processes
     // are in sync: <rdar://problem/9567500> Remove Website Data pane is not kept in sync with Safari
-    [[NSFileManager defaultManager] removeItemAtPath:databasesDirectoryPath() error:NULL];
+    [[NSFileManager defaultManager] removeItemAtPath:protect(databasesDirectoryPath()) error:NULL];
 #endif
 }
 
 - (BOOL)deleteOrigin:(WebSecurityOrigin *)origin
 {
-    return origin && DatabaseTracker::singleton().deleteOrigin([origin _core]->data());
+    return origin && WebCore::DatabaseTracker::singleton().deleteOrigin([origin _core]->data());
 }
 
 - (BOOL)deleteDatabase:(NSString *)databaseIdentifier withOrigin:(WebSecurityOrigin *)origin
 {
-    return origin && DatabaseTracker::singleton().deleteDatabase([origin _core]->data(), databaseIdentifier);
+    return origin && WebCore::DatabaseTracker::singleton().deleteDatabase([origin _core]->data(), databaseIdentifier);
 }
 
 // For DumpRenderTree support only
@@ -154,7 +154,7 @@ static bool isFileHidden(NSString *file)
 
 + (void)removeEmptyDatabaseFiles
 {
-    NSString *databasesDirectory = databasesDirectoryPath();
+    RetainPtr databasesDirectory = databasesDirectoryPath();
     NSFileManager *fileManager = [NSFileManager defaultManager];
     NSArray *array = [fileManager contentsOfDirectoryAtPath:databasesDirectory error:0];
     if (!array)
@@ -193,7 +193,7 @@ static bool isFileHidden(NSString *file)
             if (![fileManager fileExistsAtPath:dbFilePath isDirectory:&isDirectory] || isDirectory)
                 continue;
             
-            if (DatabaseTracker::deleteDatabaseFileIfEmpty(dbFilePath))
+            if (WebCore::DatabaseTracker::deleteDatabaseFileIfEmpty(dbFilePath))
                 ++deletedDatabaseFileCount;
         }
         
@@ -207,11 +207,11 @@ static bool isFileHidden(NSString *file)
 
 + (void)scheduleEmptyDatabaseRemoval
 {
-    DatabaseTracker::emptyDatabaseFilesRemovalTaskWillBeScheduled();
+    WebCore::DatabaseTracker::emptyDatabaseFilesRemovalTaskWillBeScheduled();
     
     dispatch_async(globalDispatchQueueSingleton(0, 0), ^{
         [WebDatabaseManager removeEmptyDatabaseFiles];
-        DatabaseTracker::emptyDatabaseFilesRemovalTaskDidFinish();
+        WebCore::DatabaseTracker::emptyDatabaseFilesRemovalTaskDidFinish();
     });
 }
 

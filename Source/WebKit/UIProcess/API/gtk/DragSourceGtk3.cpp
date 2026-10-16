@@ -49,22 +49,22 @@ DragSource::DragSource(GtkWidget* webView)
 
         switch (info) {
         case DragTargetType::Text:
-            gtk_selection_data_set_text(data, drag.m_selectionData->text().utf8().data(), -1);
+            gtk_selection_data_set_text(data, drag.m_selectionData->text().utf8().legacyCStringPointer(), -1);
             break;
         case DragTargetType::Markup: {
-            CString markup = drag.m_selectionData->markup().utf8();
+            auto markup = drag.m_selectionData->markup().utf8();
             gtk_selection_data_set(data, gdk_atom_intern_static_string("text/html"), 8, reinterpret_cast<const guchar*>(markup.data()), markup.length());
             break;
         }
         case DragTargetType::URIList: {
-            CString uriList = drag.m_selectionData->uriList().utf8();
+            auto uriList = drag.m_selectionData->uriList().utf8();
             gtk_selection_data_set(data, gdk_atom_intern_static_string("text/uri-list"), 8, reinterpret_cast<const guchar*>(uriList.data()), uriList.length());
             break;
         }
         case DragTargetType::NetscapeURL: {
-            CString urlString = drag.m_selectionData->url().string().utf8();
-            GUniquePtr<gchar> url(g_strdup_printf("%s\n%s", urlString.data(), drag.m_selectionData->hasText() ? drag.m_selectionData->text().utf8().data() : urlString.data()));
-            gtk_selection_data_set(data, gdk_atom_intern_static_string("_NETSCAPE_URL"), 8, reinterpret_cast<const guchar*>(url.get()), strlen(url.get()));
+            auto urlString = drag.m_selectionData->url().string();
+            auto url = makeString(urlString, '\n', drag.m_selectionData->hasText() ? drag.m_selectionData->text() : urlString).utf8();
+            gtk_selection_data_set(data, gdk_atom_intern_static_string("_NETSCAPE_URL"), 8, reinterpret_cast<const guchar*>(url.data()), url.length());
             break;
         }
         case DragTargetType::Image: {
@@ -139,12 +139,8 @@ void DragSource::begin(SelectionData&& selectionData, OptionSet<DragOperation> o
 
     m_drag = gtk_drag_begin_with_coordinates(m_webView, list.get(), dragOperationToGdkDragActions(operationMask), GDK_BUTTON_PRIMARY, nullptr, -1, -1);
     if (image) {
-#if USE(CAIRO)
-        RefPtr<cairo_surface_t> imageSurface(image->createCairoSurface());
-#else
         auto skiaImage = image->createPlatformImage();
         RefPtr<cairo_surface_t> imageSurface(skiaImageToCairoSurface(*skiaImage));
-#endif
         cairo_surface_set_device_offset(imageSurface.get(), -imageHotspot.x(), -imageHotspot.y());
         gtk_drag_set_icon_surface(m_drag.get(), imageSurface.get());
     } else

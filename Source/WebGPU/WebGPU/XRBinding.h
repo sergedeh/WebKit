@@ -25,25 +25,24 @@
 
 #pragma once
 
+#import <WebGPU/WebGPUCpp.h>
 #import <utility>
 #import <wtf/CompletionHandler.h>
 #import <wtf/FastMalloc.h>
 #import <wtf/Ref.h>
-#import <wtf/RefCountedAndCanMakeWeakPtr.h>
 #import <wtf/WeakPtr.h>
 
 struct WGPUXRBindingImpl {
 };
 
-namespace WebGPU {
+namespace WebGPU::Metal {
 
 class CommandEncoder;
 class Device;
-enum class XREye : uint8_t;
 class XRProjectionLayer;
 class XRSubImage;
 
-class XRBinding : public RefCountedAndCanMakeWeakPtr<XRBinding>, public WGPUXRBindingImpl {
+class XRBinding final : public WebGPU::XRBinding, public WGPUXRBindingImpl {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(XRBinding);
 public:
     static Ref<XRBinding> create(Device& device)
@@ -57,10 +56,10 @@ public:
 
     ~XRBinding();
 
-    void setLabel(String&&);
+    void LEGACY_NODELETE setLabel(String&&) final;
 
-    bool isValid() const;
-    Ref<XRProjectionLayer> createXRProjectionLayer(WGPUTextureFormat, WGPUTextureFormat*, WGPUTextureUsageFlags, double);
+    bool LEGACY_NODELETE isValid() const final;
+    Ref<XRProjectionLayer> createProjectionLayer(const WebGPU::XRProjectionLayerDescriptor&);
     RefPtr<XRSubImage> getViewSubImage(XRProjectionLayer&);
     Device& device() { return m_device; }
 
@@ -71,4 +70,4 @@ private:
     const Ref<Device> m_device;
 };
 
-} // namespace WebGPU
+} // namespace WebGPU::Metal

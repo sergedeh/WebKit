@@ -27,9 +27,7 @@
 #include "config.h"
 #include "StyleTextSizeAdjust.h"
 
-#if ENABLE(TEXT_AUTOSIZING)
-
-#include "CSSPrimitiveValue.h"
+#include "CSSKeywordValue.h"
 #include "StyleBuilderChecking.h"
 #include "StylePrimitiveNumericTypes+CSSValueConversion.h"
 
@@ -38,15 +36,11 @@ namespace Style {
 
 auto CSSValueConversion<TextSizeAdjust>::operator()(BuilderState& state, const CSSValue& value) -> TextSizeAdjust
 {
-    RefPtr primitiveValue = requiredDowncast<CSSPrimitiveValue>(state, value);
-    if (!primitiveValue)
-        return CSS::Keyword::Auto { };
-
-    if (primitiveValue->isValueID()) {
-        switch (primitiveValue->valueID()) {
-        case CSSValueAuto:
+    if (RefPtr keywordValue = dynamicDowncast<CSSKeywordValue>(value)) {
+        switch (keywordValue->valueID()) {
+        case CSSValueID::Auto:
             return CSS::Keyword::Auto { };
-        case CSSValueNone:
+        case CSSValueID::None:
             return CSS::Keyword::None { };
         default:
             break;
@@ -56,10 +50,8 @@ auto CSSValueConversion<TextSizeAdjust>::operator()(BuilderState& state, const C
         return CSS::Keyword::Auto { };
     }
 
-    return toStyleFromCSSValue<Percentage<CSS::Nonnegative, float>>(state, *primitiveValue);
+    return toStyleFromCSSValue<Percentage<CSS::Nonnegative, float>>(state, value);
 }
 
 } // namespace Style
 } // namespace WebCore
-
-#endif // ENABLE(TEXT_AUTOSIZING)

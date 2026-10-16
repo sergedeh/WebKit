@@ -26,12 +26,13 @@
 #include "config.h"
 #include "WaiterListManager.h"
 
-#include "DeferredWorkTimerInlines.h"
 #include "HeapCellInlines.h"
 #include "JSGlobalObject.h"
 #include "JSLock.h"
 #include "JSObjectInlines.h"
 #include "ObjectConstructor.h"
+#include "VMManager.h"
+#include "VMTrapsInlines.h"
 #include <wtf/DataLog.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/RawPointer.h>
@@ -56,6 +57,7 @@ Waiter::Waiter(VM* vm)
 
 Waiter::Waiter(JSPromise* promise)
     : m_vm(&promise->vm())
+    , m_globalObject(promise->realm())
     , m_ticket(m_vm->deferredWorkTimer->addPendingWork(DeferredWorkTimer::WorkType::AtSomePoint, *m_vm, promise, { }))
     , m_isAsync(true)
 {
@@ -81,7 +83,13 @@ WaiterListManager::WaitSyncResult WaiterListManager::waitSyncImpl(VM& vm, ValueT
     Ref<WaiterList> list = findOrCreateList(ptr);
     MonotonicTime time = MonotonicTime::timePointFromNow(timeout);
 
+    auto isTerminating = [&] {
+        return vm.hasTerminationRequest() || vm.traps().needHandling(VMTraps::NeedTermination);
+    };
+
     {
+        VMBlockingScope waitScope(vm, StopTheWorldEvent::AtomicsWaitBlocked);
+
         Locker listLocker { list->lock };
         if (WTF::atomicLoad(ptr) != expectedValue)
             return WaitSyncResult::NotEqual;
@@ -89,8 +97,16 @@ WaiterListManager::WaitSyncResult WaiterListManager::waitSyncImpl(VM& vm, ValueT
         list->addLast(listLocker, syncWaiter);
         dataLogLnIf(WaiterListsManagerInternal::verbose, "<WaiterListManager> <Thread:", Thread::currentSingleton(), "> added a new SyncWaiter=", syncWaiter.get(), " to a waiterList for ptr ", RawPointer(ptr));
 
-        while (syncWaiter->isOnList() && time.now() < time && !vm.hasTerminationRequest())
-            syncWaiter->condition().waitUntil(list->lock, time.approximateWallTime());
+        while (syncWaiter->isOnList() && time.now() < time && !isTerminating())
+            syncWaiter->condition().waitUntil(list->lock, time.approximate<WallTime>());
+
+        if (isTerminating()) {
+            if (syncWaiter->isOnList()) {
+                bool removed = list->findAndRemove(listLocker, syncWaiter);
+                ASSERT_UNUSED(removed, removed);
+            }
+            return WaitSyncResult::Terminated;
+        }
 
         // At this point, syncWaiter should be either notified (dequeued) or timeout (not dequeued).
         bool didGetDequeued = !syncWaiter->isOnList();
@@ -99,7 +115,7 @@ WaiterListManager::WaitSyncResult WaiterListManager::waitSyncImpl(VM& vm, ValueT
 
         didGetDequeued = list->findAndRemove(listLocker, syncWaiter);
         ASSERT(didGetDequeued);
-        return vm.hasTerminationRequest() ? WaitSyncResult::Terminated : WaitSyncResult::TimedOut;
+        return WaitSyncResult::TimedOut;
     }
 }
 
@@ -129,7 +145,7 @@ JSValue WaiterListManager::waitAsyncImpl(JSGlobalObject* globalObject, VM& vm, V
             list->addLast(listLocker, waiter);
 
             if (timeout != Seconds::infinity()) {
-                Ref<RunLoop::DispatchTimer> timer = RunLoop::currentSingleton().dispatchAfter(timeout, [this, ptr, waiter = waiter.copyRef()]() mutable {
+                Ref<RunLoop::DispatchTimer> timer = RunLoop::currentSingleton().scheduleTimer(timeout, [this, ptr, waiter = waiter.copyRef()]() mutable {
                     timeoutAsyncWaiter(ptr, WTF::move(waiter));
                 });
                 waiter->setTimer(listLocker, WTF::move(timer));
@@ -204,12 +220,12 @@ void WaiterListManager::notifyWaiterImpl(const AbstractLocker& listLocker, Ref<W
     ASSERT(!waiter->isOnList());
 
     if (waiter->isAsync()) {
-        waiter->scheduleWorkAndClear(listLocker, [resolveResult](DeferredWorkTimer::Ticket ticket) {
-            JSPromise* promise = jsCast<JSPromise*>(ticket->target());
-            JSGlobalObject* globalObject = promise->globalObject();
+        waiter->scheduleWorkAndClear(listLocker, [resolveResult](DeferredWorkTimer::Ticket& ticket) {
+            JSPromise* promise = uncheckedDowncast<JSPromise>(ticket.target());
+            JSGlobalObject* globalObject = promise->realm();
             VM& vm = promise->vm();
             JSValue result = resolveResult == ResolveResult::Ok ? vm.smallStrings.okString() : vm.smallStrings.timedOutString();
-            promise->resolve(globalObject, result);
+            promise->resolve(globalObject, vm, result);
         });
         return;
     }
@@ -243,10 +259,8 @@ size_t WaiterListManager::totalWaiterCount()
 void Waiter::scheduleWorkAndClear(const AbstractLocker& listLocker, DeferredWorkTimer::Task&& task)
 {
     ASSERT(m_isAsync && m_vm && !isOnList());
-    if (auto ticket = this->ticket(listLocker)) {
-        m_vm->deferredWorkTimer->scheduleWorkSoon(ticket.get(), WTF::move(task));
+    if (m_vm->deferredWorkTimer->scheduleWorkSoonIfActive(m_ticket, WTF::move(task)))
         clearTicket(listLocker);
-    }
     clearTimer(listLocker);
 }
 
@@ -254,8 +268,7 @@ void Waiter::cancelAndClear(const AbstractLocker& listLocker)
 {
     ASSERT(m_isAsync);
     if (auto ticket = this->ticket(listLocker)) {
-        m_vm->deferredWorkTimer->cancelPendingWork(ticket.get());
-        m_vm->deferredWorkTimer->scheduleWorkSoon(ticket.get(), [](DeferredWorkTimer::Ticket) { });
+        m_vm->deferredWorkTimer->cancelPendingWork(*ticket);
         clearTicket(listLocker);
     }
     clearTimer(listLocker);
@@ -292,16 +305,14 @@ void WaiterListManager::unregister(JSGlobalObject* globalObject)
         Ref<WaiterList> list = entry.value;
         Locker listLocker { list->lock };
         list->removeIf(listLocker, [&](Waiter* waiter) {
-            if (waiter->isAsync()) {
-                if (auto ticket = waiter->ticket(listLocker); ticket && !ticket->isCancelled() && ticket->target()->globalObject() == globalObject) {
-                    dataLogLnIf(WaiterListsManagerInternal::verbose,
-                        "<WaiterListManager> <Thread:", Thread::currentSingleton(),
-                        "> unregister JSGlobalObject is cancelling waiter=", *waiter,
-                        " in WaiterList for ptr ", RawPointer(entry.key));
+            if (waiter->isAsync() && waiter->globalObject() == globalObject) {
+                dataLogLnIf(WaiterListsManagerInternal::verbose,
+                    "<WaiterListManager> <Thread:", Thread::currentSingleton(),
+                    "> unregister JSGlobalObject is cancelling waiter=", *waiter,
+                    " in WaiterList for ptr ", RawPointer(entry.key));
 
-                    waiter->cancelAndClear(listLocker);
-                    return true;
-                }
+                waiter->cancelAndClear(listLocker);
+                return true;
             }
             return false;
         });
@@ -351,7 +362,7 @@ Ref<WaiterList> WaiterListManager::findOrCreateList(void* ptr)
 {
     Locker waiterListsLocker { m_waiterListsLock };
     return m_waiterLists.ensure(ptr, [] {
-        return adoptRef(*new WaiterList()); 
+        return adoptRef(*new WaiterList());
     }).iterator->value.get();
 }
 
@@ -374,9 +385,9 @@ void Waiter::dump(PrintStream& out) const
 
     auto ticket = this->ticket(NoLockingNecessary);
     out.print(", ticket=", RawPointer(ticket.get()));
+    out.print(", globalObject=", RawPointer(m_globalObject));
     if (ticket && !ticket->isCancelled()) {
-        out.print(", m_ticket->globalObject=", RawPointer(ticket->target()->globalObject()));
-        out.print(", m_ticket->target=", RawPointer(jsCast<JSObject*>(ticket->dependencies().last())));
+        out.print(", m_ticket->target=", RawPointer(uncheckedDowncast<JSObject>(ticket->dependencies().last())));
         out.print(", m_ticket->scriptExecutionOwner=", RawPointer(ticket->scriptExecutionOwner()));
     }
 

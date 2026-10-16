@@ -28,12 +28,16 @@
 
 #if ENABLE(WEBASSEMBLY)
 
+#include "Error.h"
+#include "ExceptionScope.h"
 #include "JSCJSValueInlines.h"
 #include "JSGlobalObjectInlines.h"
 #include "JSObjectInlines.h"
 #include "JSWebAssemblyHelpers.h"
 #include "JSWebAssemblyTable.h"
-#include "StructureInlines.h"
+#include "StructureCreateInlines.h"
+#include "WasmAddressType.h"
+#include "WasmLimits.h"
 #include "WebAssemblyTablePrototype.h"
 
 namespace JSC {
@@ -57,7 +61,28 @@ JSC_DEFINE_HOST_FUNCTION(constructJSWebAssemblyTable, (JSGlobalObject* globalObj
         JSValue argument = callFrame->argument(0);
         if (!argument.isObject())
             return throwVMTypeError(globalObject, throwScope, "WebAssembly.Table expects its first argument to be an object"_s);
-        memoryDescriptor = jsCast<JSObject*>(argument);
+        memoryDescriptor = uncheckedDowncast<JSObject>(argument);
+    }
+
+    Wasm::AddressType addressType = Wasm::AddressType::I32;
+    Identifier addressIdent = Identifier::fromString(vm, "address"_s);
+    JSValue addressTypeValue = memoryDescriptor->get(globalObject, addressIdent);
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    if (!addressTypeValue.isUndefined()) {
+        String addressTypeString = addressTypeValue.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+
+        if (addressTypeString == "i64"_s)
+            addressType =  Wasm::AddressType::I64;
+        else if (addressTypeString != "i32"_s) {
+            throwTypeError(globalObject, throwScope, "WebAssembly.Table 'address' must be a string of value 'i32' or 'i64'"_s);
+            return { };
+        }
+
+        if (addressType.is64Bit() && !Options::useWasmMemory64()) {
+            throwTypeError(globalObject, throwScope, "WebAssembly.Table 'address' of 'i64' requires Memory64 to be enabled"_s);
+            return { };
+        }
     }
 
     Wasm::TableElementType type;
@@ -87,24 +112,29 @@ JSC_DEFINE_HOST_FUNCTION(constructJSWebAssemblyTable, (JSGlobalObject* globalObj
     if (!minSizeValue.isUndefined())
         initialSizeValue = minSizeValue;
 
-    uint32_t initial = toNonWrappingUint32(globalObject, initialSizeValue);
+    uint64_t initial64 = addressValueToUint64(globalObject, initialSizeValue, addressType);
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+
+    if (!Wasm::Table::isValidLength(initial64))
+        return throwVMRangeError(globalObject, throwScope, WTF::makeString("WebAssembly.Table 'initial' value is above the upper bound "_s, Wasm::maxTableEntries));
+
+    uint32_t initial = static_cast<uint32_t>(initial64);
 
     // In WebIDL, "present" means that [[Get]] result is undefined, not [[HasProperty]] result.
     // https://webidl.spec.whatwg.org/#idl-dictionaries
-    std::optional<uint32_t> maximum;
+    std::optional<uint64_t> maximum;
     Identifier maximumIdent = Identifier::fromString(vm, "maximum"_s);
     JSValue maxSizeValue = memoryDescriptor->get(globalObject, maximumIdent);
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     if (!maxSizeValue.isUndefined()) {
-        maximum = toNonWrappingUint32(globalObject, maxSizeValue);
+        maximum = addressValueToUint64(globalObject, maxSizeValue, addressType);
         RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-
         if (initial > *maximum)
             return throwVMRangeError(globalObject, throwScope, "'maximum' property must be greater than or equal to the 'initial' property"_s);
     }
 
-    RefPtr<Wasm::Table> wasmTable = Wasm::Table::tryCreate(vm, initial, maximum, type, type == Wasm::TableElementType::Funcref ? Wasm::funcrefType() : Wasm::externrefType());
+
+    RefPtr<Wasm::Table> wasmTable = Wasm::Table::tryCreate(vm, initial, maximum, type, type == Wasm::TableElementType::Funcref ? Wasm::funcrefType() : Wasm::externrefType(), addressType);
     if (!wasmTable)
         return throwVMRangeError(globalObject, throwScope, "couldn't create Table"_s);
 
@@ -113,17 +143,11 @@ JSC_DEFINE_HOST_FUNCTION(constructJSWebAssemblyTable, (JSGlobalObject* globalObj
     JSValue defaultValue = callFrame->argumentCount() < 2
         ? defaultValueForReferenceType(jsWebAssemblyTable->table()->wasmType())
         : callFrame->uncheckedArgument(1);
-    WebAssemblyFunction* wasmFunction = nullptr;
-    WebAssemblyWrapperFunction* wasmWrapperFunction = nullptr;
-    if (jsWebAssemblyTable->table()->isFuncrefTable() && !defaultValue.isNull() && !isWebAssemblyHostFunction(defaultValue, wasmFunction, wasmWrapperFunction))
+    if (jsWebAssemblyTable->table()->isFuncrefTable() && !defaultValue.isNull() && !isWebAssemblyHostFunction(defaultValue))
         return throwVMTypeError(globalObject, throwScope, "WebAssembly.Table.prototype.constructor expects the second argument to be null or an instance of WebAssembly.Function"_s);
-    for (uint32_t tableIndex = 0; tableIndex < initial; ++tableIndex) {
-        if (jsWebAssemblyTable->table()->isFuncrefTable() && wasmFunction)
-            jsWebAssemblyTable->set(tableIndex, wasmFunction);
-        if (jsWebAssemblyTable->table()->isExternrefTable())
-            jsWebAssemblyTable->set(tableIndex, defaultValue);
-        RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    }
+
+    if (!defaultValue.isNull())
+        jsWebAssemblyTable->table()->fill(vm, defaultValue);
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(jsWebAssemblyTable));
 }

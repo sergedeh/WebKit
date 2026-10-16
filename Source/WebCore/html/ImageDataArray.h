@@ -39,21 +39,19 @@ namespace WebCore {
 class ImageDataArray {
 public:
     static constexpr bool isSupported(JSC::TypedArrayType type) { return !!toImageDataPixelFormat(type); }
-    static bool isSupported(const JSC::ArrayBufferView&);
+    static bool LEGACY_NODELETE isSupported(const JSC::ArrayBufferView&);
 
-    ImageDataArray(Ref<JSC::Uint8ClampedArray>&&);
-    ImageDataArray(Ref<JSC::Float16Array>&&);
+    ImageDataArray(Ref<JSC::ArrayBufferView>&&);
     ImageDataArray(ImageDataArray&& original, std::optional<ImageDataPixelFormat> overridingPixelFormat);
 
     static std::optional<ImageDataArray> tryCreate(size_t, ImageDataPixelFormat, std::span<const uint8_t> = { });
 
-    ImageDataPixelFormat pixelFormat() const;
+    ImageDataPixelFormat LEGACY_NODELETE pixelFormat() const;
     size_t length() const;
 
     JSC::ArrayBufferView& arrayBufferView() const { return m_arrayBufferView.get(); }
-    Ref<JSC::ArrayBufferView> protectedArrayBufferView() const { return m_arrayBufferView; }
-    auto byteLength() const { return protectedArrayBufferView()->byteLength(); }
-    auto isDetached() const { return protectedArrayBufferView()->isDetached(); }
+    auto byteLength() const { return protect(arrayBufferView())->byteLength(); }
+    auto isDetached() const { return protect(arrayBufferView())->isDetached(); }
 
     Ref<JSC::Uint8ClampedArray> asUint8ClampedArray() const;
     Ref<JSC::Float16Array> asFloat16Array() const;
@@ -61,13 +59,11 @@ public:
     Ref<JSON::Value> copyToJSONArray() const;
 
 private:
-    ImageDataArray(Ref<JSC::ArrayBufferView>&&);
-
     Ref<ArrayBufferView> extractBufferViewWithPixelFormat(std::optional<ImageDataPixelFormat>) &&;
 
     // Needed by `toJS<IDLUnion<IDLUint8ClampedArray, ...>, const ImageDataArray&>()`
     template<typename IDL, bool needsState, bool needsGlobalObject> friend struct JSConverterOverloader;
-    using DataVariant = Variant<RefPtr<JSC::Uint8ClampedArray>, RefPtr<JSC::Float16Array>>;
+    using DataVariant = Variant<Ref<JSC::Uint8ClampedArray>, Ref<JSC::Float16Array>>;
     operator DataVariant() const;
 
     Ref<JSC::ArrayBufferView> m_arrayBufferView;

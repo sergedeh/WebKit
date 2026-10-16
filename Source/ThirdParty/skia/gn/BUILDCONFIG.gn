@@ -105,6 +105,17 @@ if (!is_clang && !is_win) {
                          "value")
 }
 
+# True if the compiler is Apple's Xcode Clang.
+is_xcode = false
+if ((is_mac || is_ios) && is_clang) {
+  is_xcode = exec_script("//gn/is_xcode.py",
+                         [
+                           cc,
+                           cxx,
+                         ],
+                         "value")
+}
+
 if (is_android) {
   ndk_host = ""
   ndk_target = ""
@@ -197,6 +208,9 @@ if (is_trivial_abi) {
 if (!is_official_build) {
   default_configs += [ "//gn/skia:debug_symbols" ]
 }
+if (is_wasm) {
+  default_configs += [ "//gn/skia:wasm" ]
+}
 default_configs += [ "//gn/skia:extra_flags" ]
 
 set_defaults("executable") {
@@ -241,7 +255,7 @@ if (is_win) {
 } else if (is_wasm) {
   set_default_toolchain("//gn/toolchain:wasm")
   default_toolchain_name = "wasm"
-  host_toolchain = "wasm"
+  host_toolchain = "gcc_like_host"
 } else {
   # GCC-like toolchains, including Clang.
   set_default_toolchain("//gn/toolchain:gcc_like")

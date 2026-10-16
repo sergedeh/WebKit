@@ -47,7 +47,12 @@ String BasicCredential::type() const
 {
     switch (m_type) {
     case Type::DigitalCredential:
-        return "digital-credential"_s;
+        return "digital"_s;
+
+#if ENABLE(PHONE_NUMBER_POSSESSION)
+    case Type::PhoneNumberPossession:
+        return "phone-number-possession"_s;
+#endif
 
     case Type::PublicKey:
         return "public-key"_s;

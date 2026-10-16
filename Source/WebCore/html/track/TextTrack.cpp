@@ -147,13 +147,8 @@ TextTrack::~TextTrack()
             client.textTrackRemoveCues(*this, *m_cues);
         });
         for (size_t i = 0; i < m_cues->length(); ++i)
-            m_cues->protectedItem(i)->setTrack(nullptr);
+            protect(m_cues->item(i))->setTrack(nullptr);
     }
-}
-
-inline RefPtr<TextTrackCueList> TextTrack::protectedCues() const
-{
-    return m_cues.copyRef();
 }
 
 void TextTrack::didMoveToNewDocument(Document& newDocument)
@@ -275,7 +270,7 @@ void TextTrack::setKindKeywordIgnoringASCIICase(StringView keyword)
     }
 }
 
-void TextTrack::setMode(Mode mode)
+void TextTrack::setMode(Mode mode, ModeChangeType changeType)
 {
     // On setting, if the new value isn't equal to what the attribute would currently
     // return, the new value must be processed as follows ...
@@ -294,13 +289,13 @@ void TextTrack::setMode(Mode mode)
 
     if (mode != Mode::Showing && m_cues) {
         for (size_t i = 0; i < m_cues->length(); ++i)
-            m_cues->protectedItem(i)->removeDisplayTree();
+            protect(m_cues->item(i))->removeDisplayTree();
     }
 
     m_mode = mode;
 
-    m_clients.forEach([this](auto& client) {
-        client.textTrackModeChanged(*this);
+    m_clients.forEach([this, changeType](auto& client) {
+        client.textTrackModeChanged(*this, changeType);
     });
 }
 
@@ -316,11 +311,6 @@ TextTrackCueList* TextTrack::cues()
     return &ensureTextTrackCueList();
 }
 
-RefPtr<TextTrackCueList> TextTrack::protectedCues()
-{
-    return cues();
-}
-
 void TextTrack::removeAllCues()
 {
     if (!m_cues)
@@ -333,7 +323,7 @@ void TextTrack::removeAllCues()
     });
 
     for (size_t i = 0; i < m_cues->length(); ++i)
-        m_cues->protectedItem(i)->setTrack(nullptr);
+        protect(m_cues->item(i))->setTrack(nullptr);
 
     m_cues->clear();
 }
@@ -383,7 +373,7 @@ ExceptionOr<void> TextTrack::addCue(Ref<TextTrackCue>&& cue)
 
     // 2. Add cue to the method's TextTrack object's text track's text track list of cues.
     cue->setTrack(this);
-    ensureProtectedTextTrackCueList()->add(cue.copyRef());
+    protect(ensureTextTrackCueList())->add(cue.copyRef());
 
     m_clients.forEach([this, cue](auto& client) {
         client.textTrackAddCue(*this, cue);
@@ -448,7 +438,7 @@ void TextTrack::removeCuesNotInTimeRanges(const PlatformTimeRanges& buffered)
 VTTRegionList& TextTrack::ensureVTTRegionList()
 {
     if (!m_regions)
-        m_regions = VTTRegionList::create();
+        lazyInitialize(m_regions, VTTRegionList::create());
 
     return *m_regions;
 }
@@ -466,11 +456,6 @@ VTTRegionList* TextTrack::regions()
     return &ensureVTTRegionList();
 }
 
-RefPtr<VTTRegionList> TextTrack::protectedRegions()
-{
-    return regions();
-}
-
 void TextTrack::cueWillChange(TextTrackCue& cue)
 {
     m_clients.forEach([&](auto& client) {
@@ -484,7 +469,7 @@ void TextTrack::cueDidChange(TextTrackCue& cue, bool updateCueOrder)
 {
     // Make sure the TextTrackCueList order is up-to-date.
     if (updateCueOrder)
-        ensureProtectedTextTrackCueList()->updateCueIndex(cue);
+        protect(ensureTextTrackCueList())->updateCueIndex(cue);
 
     // ... and add it back again.
     m_clients.forEach([&](auto& client) {
@@ -522,15 +507,10 @@ TextTrackCueList& TextTrack::ensureTextTrackCueList()
     return *m_cues;
 }
 
-Ref<TextTrackCueList> TextTrack::ensureProtectedTextTrackCueList()
-{
-    return ensureTextTrackCueList();
-}
-
 int TextTrack::trackIndexRelativeToRenderedTracks()
 {
     if (!m_renderedTrackIndex) {
-        RefPtr textTrackList = this->textTrackList();
+        auto* textTrackList = this->textTrackList();
         if (!textTrackList)
             return 0;
 
@@ -563,7 +543,7 @@ RefPtr<TextTrackCue> TextTrack::matchCue(TextTrackCue& cue, TextTrackCue::CueMat
 
             // If there is more than one cue with the same start time, back up to first one so we
             // consider all of them.
-            while (searchStart >= 2 && cue.hasEquivalentStartTime(*m_cues->protectedItem(searchStart - 2)))
+            while (searchStart >= 2 && cue.hasEquivalentStartTime(*protect(m_cues->item(searchStart - 2))))
                 --searchStart;
             
             bool firstCompare = true;
@@ -603,8 +583,8 @@ bool TextTrack::isMainProgramContent() const
     // "Main program" content is intrinsic to the presentation of the media file, regardless of locale. Content such as
     // directors commentary is not "main program" because it is not essential for the presentation. HTML5 doesn't have
     // a way to express this in a machine-reable form, it is typically done with the track label, so we assume that caption
-    // tracks are main content and all other track types are not.
-    return m_kind == Kind::Captions;
+    // and subtitle tracks are main content and all other track types are not.
+    return m_kind == Kind::Captions || m_kind == Kind::Subtitles;
 }
 
 bool TextTrack::containsOnlyForcedSubtitles() const
@@ -658,11 +638,6 @@ void TextTrack::newCuesAvailable(const TextTrackCueList& list)
 ScriptExecutionContext* TextTrack::scriptExecutionContext() const
 {
     return ActiveDOMObject::scriptExecutionContext();
-}
-
-RefPtr<ScriptExecutionContext> TextTrack::protectedScriptExecutionContext() const
-{
-    return scriptExecutionContext();
 }
 
 } // namespace WebCore

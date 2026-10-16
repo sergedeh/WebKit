@@ -27,6 +27,7 @@
 
 #if ENABLE(B3_JIT)
 
+#include "B3AbstractHeapRepository.h"
 #include "B3Origin.h"
 #include "B3PCToOriginMap.h"
 #include "B3SparseCollection.h"
@@ -47,6 +48,7 @@
 #include <wtf/TZoneMalloc.h>
 #include <wtf/TriState.h>
 #include <wtf/Vector.h>
+#include <wtf/text/WTFString.h>
 
 namespace JSC {
 
@@ -98,6 +100,9 @@ public:
     // Usually you use this via OriginDump, though it's cool to use it directly.
     void printOrigin(PrintStream& out, Origin origin) const;
 
+    void setName(String name) { m_name = WTF::move(name); }
+    const String& name() const { return m_name; }
+
     // This is a debugging hack. Sometimes while debugging B3 you need to break the abstraction
     // and get at the DFG Graph, or whatever data structure the frontend used to describe the
     // program. The FTL passes the DFG Graph.
@@ -123,9 +128,9 @@ public:
 
     JS_EXPORT_PRIVATE Type addTuple(Vector<Type>&& types);
     const Vector<Vector<Type>>& tuples() const { return m_tuples; };
-    bool isValidTuple(Type tuple) const;
+    bool LEGACY_NODELETE isValidTuple(Type tuple) const;
     Type extractFromTuple(Type tuple, unsigned index) const;
-    JS_EXPORT_PRIVATE const Vector<Type>& tupleForType(Type tuple) const;
+    JS_EXPORT_PRIVATE const Vector<Type>& LEGACY_NODELETE tupleForType(Type tuple) const;
 
     unsigned resultCount(Type type) const { return type.isTuple() ? tupleForType(type).size() : type.isNumeric(); }
     Type typeAtOffset(Type type, unsigned index) const { ASSERT(index < resultCount(type)); return type.isTuple() ? extractFromTuple(type, index) : type; }
@@ -149,7 +154,7 @@ public:
     // Returns null for TriState::Indeterminate.
     Value* addBoolConstant(Origin, TriState);
 
-    void resetValueOwners();
+    void LEGACY_NODELETE resetValueOwners();
     JS_EXPORT_PRIVATE void resetReachability();
 
     // This destroys CFG analyses. If we ask for them again, we will recompute them. Usually you
@@ -173,14 +178,15 @@ public:
     SparseCollection<Air::StackSlot>& stackSlots();
     const SparseCollection<Air::StackSlot>& stackSlots() const;
 
-    SparseCollection<Variable>& variables() { return m_variables; }
-    const SparseCollection<Variable>& variables() const { return m_variables; }
+    SparseCollection<Variable>& variables() LIFETIME_BOUND { return m_variables; }
+    const SparseCollection<Variable>& variables() const LIFETIME_BOUND { return m_variables; }
 
     // Short for variables().remove(). It's better to call this method since it's out of line.
     void deleteVariable(Variable*);
+    void deleteAllVariables();
 
-    SparseCollection<Value>& values() { return m_values; }
-    const SparseCollection<Value>& values() const { return m_values; }
+    SparseCollection<Value>& values() LIFETIME_BOUND { return m_values; }
+    const SparseCollection<Value>& values() const LIFETIME_BOUND { return m_values; }
 
     // Short for values().remove(). It's better to call this method since it's out of line.
     void deleteValue(Value*);
@@ -196,10 +202,10 @@ public:
     Dominators& dominators();
     JS_EXPORT_PRIVATE NaturalLoops& naturalLoops();
     BackwardsCFG& backwardsCFG();
-    BackwardsDominators& backwardsDominators();
+    JS_EXPORT_PRIVATE BackwardsDominators& backwardsDominators();
 
     void addFastConstant(const ValueKey&);
-    bool isFastConstant(const ValueKey&);
+    bool LEGACY_NODELETE isFastConstant(const ValueKey&);
     
     unsigned numEntrypoints() const { return m_numEntrypoints; }
     JS_EXPORT_PRIVATE void setNumEntrypoints(unsigned);
@@ -244,13 +250,13 @@ public:
     const Air::Code& code() const { return *m_code; }
     Air::Code& code() { return *m_code; }
 
-    unsigned callArgAreaSizeInBytes() const;
+    unsigned LEGACY_NODELETE callArgAreaSizeInBytes() const;
     void requestCallArgAreaSizeInBytes(unsigned size);
 
     // This tells the register allocators to stay away from this register.
     JS_EXPORT_PRIVATE void pinRegister(Reg);
     
-    JS_EXPORT_PRIVATE void setOptLevel(unsigned value);
+    JS_EXPORT_PRIVATE void LEGACY_NODELETE setOptLevel(unsigned value);
     unsigned optLevel() const { return m_optLevel; }
     
     // You can turn off used registers calculation. This may speed up compilation a bit. But if
@@ -259,10 +265,10 @@ public:
     void setNeedsUsedRegisters(bool value) { m_needsUsedRegisters = value; }
     bool needsUsedRegisters() const { return m_needsUsedRegisters; }
 
-    JS_EXPORT_PRIVATE unsigned frameSize() const;
+    JS_EXPORT_PRIVATE unsigned LEGACY_NODELETE frameSize() const;
     JS_EXPORT_PRIVATE RegisterAtOffsetList calleeSaveRegisterAtOffsetList() const;
 
-    PCToOriginMap& pcToOriginMap() { return m_pcToOriginMap; }
+    PCToOriginMap& pcToOriginMap() LIFETIME_BOUND { return m_pcToOriginMap; }
     PCToOriginMap releasePCToOriginMap()
     {
         RELEASE_ASSERT(needsPCToOriginMap());
@@ -277,17 +283,17 @@ public:
         setWasmBoundsCheckGenerator(RefPtr<WasmBoundsCheckGenerator>(createSharedTask<WasmBoundsCheckGeneratorFunction>(functor)));
     }
 
-    JS_EXPORT_PRIVATE RegisterSetBuilder mutableGPRs();
+    JS_EXPORT_PRIVATE RegisterSet mutableGPRs();
 
-    void setNeedsPCToOriginMap();
+    void LEGACY_NODELETE setNeedsPCToOriginMap();
     bool needsPCToOriginMap() { return m_needsPCToOriginMap; }
 
     JS_EXPORT_PRIVATE void freeUnneededB3ValuesAfterLowering();
 
     bool shouldDumpIR() const { return m_shouldDumpIR; }
-    JS_EXPORT_PRIVATE void setShouldDumpIR();
+    JS_EXPORT_PRIVATE void LEGACY_NODELETE setShouldDumpIR();
 
-    void setUsessSIMD()
+    void setUsesSIMD()
     { 
         RELEASE_ASSERT(Options::useWasmSIMD());
         m_usesSIMD = true;
@@ -306,6 +312,26 @@ public:
 
     void setIonGraphPasses(Ref<JSON::Array>&&);
     void appendIonGraphPass(ASCIILiteral);
+
+    AbstractHeapRepository& heaps() { return m_heaps.get(); }
+    const AbstractHeapRepository& heaps() const { return m_heaps.get(); }
+
+    void setIsWasm(bool flag) { m_isWasm = flag; }
+    bool isWasm() const { return m_isWasm; }
+
+    void setUsesWasmGCStructAllocations(bool flag = true) { m_usesWasmGCStructAllocations = flag; }
+    bool usesWasmGCStructAllocations() const { return m_usesWasmGCStructAllocations; }
+    void setUsesWasmGCArrayAllocations(bool flag = true) { m_usesWasmGCArrayAllocations = flag; }
+    bool usesWasmGCArrayAllocations() const { return m_usesWasmGCArrayAllocations; }
+    void setUsesWasmGCAccesses(bool flag = true) { m_usesWasmGCAccesses = flag; }
+    bool usesWasmGCAccesses() const { return m_usesWasmGCAccesses; }
+
+    void setUsesColdCCall(bool flag) { m_usesColdCCall = flag; }
+    bool usesColdCCall() const { return m_usesColdCCall; }
+    void setUsesShuffle(bool flag) { m_usesShuffle = flag; }
+    bool usesShuffle() const { return m_usesShuffle; }
+    void setUsesEntrySwitch(bool flag) { m_usesEntrySwitch = flag; }
+    bool usesEntrySwitch() const { return m_usesEntrySwitch; }
 
 private:
     friend class BlockInsertionSet;
@@ -326,17 +352,26 @@ private:
     const char* m_lastPhaseName;
     std::unique_ptr<OpaqueByproducts> m_byproducts;
     std::unique_ptr<Air::Code> m_code;
+    UniqueRef<AbstractHeapRepository> m_heaps;
     RefPtr<SharedTask<void(PrintStream&, Origin)>> m_originPrinter;
     const void* m_frontendData;
+    String m_name;
     PCToOriginMap m_pcToOriginMap;
     RefPtr<JSON::Array> m_ionGraphPasses;
     unsigned m_numEntrypoints { 1 };
     unsigned m_optLevel { defaultOptLevel() };
-    bool m_needsUsedRegisters { true };
-    bool m_hasQuirks { false };
-    bool m_needsPCToOriginMap { false };
-    bool m_shouldDumpIR { false };
-    bool m_usesSIMD { false };
+    bool m_needsUsedRegisters : 1 { true };
+    bool m_hasQuirks : 1 { false };
+    bool m_needsPCToOriginMap : 1 { false };
+    bool m_shouldDumpIR : 1 { false };
+    bool m_usesSIMD : 1 { false };
+    bool m_isWasm : 1 { false };
+    bool m_usesWasmGCStructAllocations : 1 { false };
+    bool m_usesWasmGCArrayAllocations : 1 { false };
+    bool m_usesWasmGCAccesses : 1 { false };
+    bool m_usesColdCCall : 1 { false };
+    bool m_usesShuffle : 1 { false };
+    bool m_usesEntrySwitch : 1 { false };
 };
     
 } } // namespace JSC::B3

@@ -25,8 +25,8 @@
 
 #pragma once
 
+#include <WebCore/Document.h>
 #include <WebCore/DocumentSettingsValues.h>
-#include <WebCore/DocumentView.h>
 
 namespace WebCore {
 
@@ -40,6 +40,8 @@ public:
         document->addToContextsMap();
         return document;
     }
+
+    ~XMLDocument();
 
     WEBCORE_EXPORT static Ref<XMLDocument> createXHTML(LocalFrame*, const Settings&, const URL&);
 

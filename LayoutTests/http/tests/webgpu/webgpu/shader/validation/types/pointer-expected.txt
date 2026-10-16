@@ -37,28 +37,8 @@ PASS :access_mode:aspace="private";access="read_write";comma=""
 PASS :access_mode:aspace="private";access="read_write";comma=","
 PASS :access_mode:aspace="storage";access="read";comma=""
 PASS :access_mode:aspace="storage";access="read";comma=","
-FAIL :access_mode:aspace="storage";access="write";comma="" assert_unreached:
-  - VALIDATION FAILED: Missing expected compilationInfo 'error' message.
-
-
-    ---- shader ----
-    alias T = ptr<storage, u32, write>;
-    expectCompileResult@http://127.0.0.1:8000/webgpu/webgpu/shader/validation/shader_validation_test.js:73:28
-    @http://127.0.0.1:8000/webgpu/webgpu/shader/validation/types/pointer.spec.js:63:24
-  - EXPECTATION FAILED: Expected validation error
-      at (elided: below max severity)
- Reached unreachable code
-FAIL :access_mode:aspace="storage";access="write";comma="," assert_unreached:
-  - VALIDATION FAILED: Missing expected compilationInfo 'error' message.
-
-
-    ---- shader ----
-    alias T = ptr<storage, u32, write,>;
-    expectCompileResult@http://127.0.0.1:8000/webgpu/webgpu/shader/validation/shader_validation_test.js:73:28
-    @http://127.0.0.1:8000/webgpu/webgpu/shader/validation/types/pointer.spec.js:63:24
-  - EXPECTATION FAILED: Expected validation error
-      at (elided: below max severity)
- Reached unreachable code
+PASS :access_mode:aspace="storage";access="write";comma=""
+PASS :access_mode:aspace="storage";access="write";comma=","
 PASS :access_mode:aspace="storage";access="read_write";comma=""
 PASS :access_mode:aspace="storage";access="read_write";comma=","
 PASS :access_mode:aspace="uniform";access="read";comma=""
@@ -98,22 +78,7 @@ PASS :type:case="struct_S"
 PASS :type:case="struct_T"
 PASS :type:case="ptr_function_u32"
 PASS :type:case="ptr_workgroup_bool"
-FAIL :type:case="sampler" assert_unreached:
-  - VALIDATION FAILED: Missing expected compilationInfo 'error' message.
-
-
-    ---- shader ----
-
-        override o : u32;
-        struct S { x : u32 }
-        struct T { s : array<S> }
-        alias u32_alias = u32;
-        alias Type = ptr<storage, sampler>;
-    expectCompileResult@http://127.0.0.1:8000/webgpu/webgpu/shader/validation/shader_validation_test.js:73:28
-    @http://127.0.0.1:8000/webgpu/webgpu/shader/validation/types/pointer.spec.js:139:24
-  - EXPECTATION FAILED: Expected validation error
-      at (elided: below max severity)
- Reached unreachable code
+PASS :type:case="sampler"
 PASS :type:case="texture_2d"
 PASS :type:case="alias"
 PASS :type:case="reference"

@@ -92,6 +92,13 @@ void RemoteImageBufferSet::updateConfiguration(const RemoteImageBufferSetConfigu
     clearBuffers();
 }
 
+void RemoteImageBufferSet::submitDrawingCommands()
+{
+    RefPtr frontBuffer = m_frontBuffer;
+    if (frontBuffer)
+        frontBuffer->submitDrawingCommands();
+}
+
 void RemoteImageBufferSet::endPrepareForDisplay(RenderingUpdateID renderingUpdateID, CompletionHandler<void(ImageBufferSetPrepareBufferForDisplayOutputData, RenderingUpdateID)>&& completionHandler)
 {
     m_context.reset();
@@ -113,6 +120,10 @@ void RemoteImageBufferSet::endPrepareForDisplay(RenderingUpdateID renderingUpdat
     }
 
     outputData.bufferCacheIdentifiers = BufferIdentifierSet { bufferIdentifier(frontBuffer), bufferIdentifier(m_backBuffer), bufferIdentifier(m_secondaryBackBuffer) };
+    // If we failed to allocate a front buffer then nothing was painted, so let the web process
+    // know that it needs to repaint the whole layer next time.
+    if (!frontBuffer)
+        outputData.displayRequirement = SwapBuffersDisplayRequirement::NeedsFullDisplay;
     completionHandler(WTF::move(outputData), renderingUpdateID);
 }
 
@@ -121,9 +132,9 @@ void RemoteImageBufferSet::ensureBufferForDisplay(ImageBufferSetPrepareBufferFor
 {
     assertIsCurrent(workQueue());
     LOG_WITH_STREAM(RemoteLayerBuffers, stream << "GPU Process: ::ensureFrontBufferForDisplay " << " - front "
-        << m_frontBuffer << " (in-use " << (m_frontBuffer && protectedFrontBuffer()->isInUse()) << ") "
-        << m_backBuffer << " (in-use " << (m_backBuffer && protectedBackBuffer()->isInUse()) << ") "
-        << m_secondaryBackBuffer << " (in-use " << (m_secondaryBackBuffer && protectedSecondaryBackBuffer()->isInUse()) << ") ");
+        << m_frontBuffer << " (in-use " << (m_frontBuffer && protect(m_frontBuffer)->isInUse()) << ") "
+        << m_backBuffer << " (in-use " << (m_backBuffer && protect(m_backBuffer)->isInUse()) << ") "
+        << m_secondaryBackBuffer << " (in-use " << (m_secondaryBackBuffer && protect(m_secondaryBackBuffer)->isInUse()) << ") ");
 
     displayRequirement = swapBuffersForDisplay(inputData.hasEmptyDirtyRegion, inputData.supportsPartialRepaint && !isSmallLayerBacking({ m_configuration.logicalSize, m_configuration.resolutionScale, m_configuration.colorSpace, m_configuration.bufferFormat, m_configuration.renderingPurpose }));
     if (displayRequirement == SwapBuffersDisplayRequirement::NeedsFullDisplay) {
@@ -139,6 +150,13 @@ void RemoteImageBufferSet::ensureBufferForDisplay(ImageBufferSetPrepareBufferFor
             creationContext.dynamicContentScalingResourceCache = ensureDynamicContentScalingResourceCache();
 #endif
         m_frontBuffer = m_renderingBackend->allocateImageBuffer(m_configuration.logicalSize, m_configuration.renderingMode, m_configuration.renderingPurpose, m_configuration.resolutionScale, m_configuration.colorSpace, m_configuration.bufferFormat, WTF::move(creationContext));
+        if (!m_frontBuffer) {
+            TextStream stream(TextStream::LineMode::SingleLine);
+            stream << "size " << m_configuration.logicalSize << " scale " << m_configuration.resolutionScale << " colorSpace " << m_configuration.colorSpace
+                << " pixelFormat " << m_configuration.bufferFormat.pixelFormat << " lossless " << (m_configuration.bufferFormat.useLosslessCompression == WebCore::UseLosslessCompression::Yes)
+                << " renderingMode " << m_configuration.renderingMode << " renderingPurpose " << m_configuration.renderingPurpose;
+            RELEASE_LOG_ERROR(RemoteLayerBuffers, "RemoteImageBufferSet %" PRIu64 " failed to allocate front buffer: %" PUBLIC_LOG_STRING, m_identifier.toUInt64(), stream.release().utf8());
+        }
         m_frontBufferIsCleared = true;
     }
 
@@ -148,7 +166,7 @@ void RemoteImageBufferSet::ensureBufferForDisplay(ImageBufferSetPrepareBufferFor
     if (displayRequirement != SwapBuffersDisplayRequirement::NeedsNoDisplay) {
         RefPtr imageBuffer = m_frontBuffer;
         if (!imageBuffer) {
-            imageBuffer = WebCore::ImageBuffer::create<WebCore::NullImageBufferBackend>({ 0, 0 }, 1, WebCore::DestinationColorSpace::SRGB(), { WebCore::PixelFormat::BGRA8 }, WebCore::RenderingPurpose::Unspecified, { });
+            imageBuffer = WebCore::ImageBuffer::create<WebCore::NullImageBufferBackend>({ 0, 0 }, 1, WebCore::ColorSpace::SRGB(), { WebCore::PixelFormat::BGRA8 }, WebCore::RenderingPurpose::Unspecified, { });
             RELEASE_ASSERT(imageBuffer);
         }
         m_context = RemoteImageBufferGraphicsContext::create(*imageBuffer, m_contextIdentifier, m_renderingBackend);
@@ -195,6 +213,7 @@ bool RemoteImageBufferSet::makeBuffersVolatile(OptionSet<BufferInSetType> reques
 #if ENABLE(RE_DYNAMIC_CONTENT_SCALING)
 void RemoteImageBufferSet::dynamicContentScalingDisplayList(CompletionHandler<void(std::optional<WebCore::DynamicContentScalingDisplayList>&&)>&& completionHandler)
 {
+    MESSAGE_CHECK(!isPreparingForDisplay(), "DynamicContentScalingDisplayList requested while preparing for display");
     std::optional<WebCore::DynamicContentScalingDisplayList> displayList;
     if (m_frontBuffer)
         displayList = m_frontBuffer->dynamicContentScalingDisplayList();

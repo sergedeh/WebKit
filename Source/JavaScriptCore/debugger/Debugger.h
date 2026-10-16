@@ -22,28 +22,38 @@
 #pragma once
 
 #include <JavaScriptCore/Breakpoint.h>
-#include <JavaScriptCore/CallData.h>
-#include <JavaScriptCore/DebuggerCallFrame.h>
 #include <JavaScriptCore/DebuggerParseData.h>
 #include <JavaScriptCore/DebuggerPrimitives.h>
 #include <JavaScriptCore/JSCJSValue.h>
 #include <JavaScriptCore/JSRunLoopTimer.h>
+#include <JavaScriptCore/Microtask.h>
 #include <JavaScriptCore/Weak.h>
 #include <wtf/DoublyLinkedList.h>
 #include <wtf/Forward.h>
 #include <wtf/ListHashSet.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/URL.h>
+#include <wtf/text/TextPosition.h>
 
 namespace JSC {
 
 class CallFrame;
 class CodeBlock;
+class DebuggerCallFrame;
 class Exception;
-class JSGenerator;
+class InternalFunction;
+class JSAsyncFunctionGenerator;
 class JSGlobalObject;
 class Microtask;
+class NativeExecutable;
 class SourceProvider;
 class VM;
+
+#if ENABLE(WEBASSEMBLY)
+class JSWebAssemblyModule;
+#endif
+
+enum class ProfilingReason : uint8_t;
 
 class Debugger : public DoublyLinkedListNode<Debugger> {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(Debugger, JS_EXPORT_PRIVATE);
@@ -62,9 +72,9 @@ public:
     };
     JS_EXPORT_PRIVATE void attach(JSGlobalObject*);
     JS_EXPORT_PRIVATE void detach(JSGlobalObject*, ReasonForDetach);
-    JS_EXPORT_PRIVATE bool isAttached(JSGlobalObject*);
+    JS_EXPORT_PRIVATE bool LEGACY_NODELETE isAttached(JSGlobalObject*);
 
-    void forEachBreakpointLocation(SourceID, SourceProvider*, int startLine, int startColumn, int endLine, int endColumn, Function<void(int, int)>&&);
+    void forEachBreakpointLocation(SourceID, SourceProvider*, int startLine, int startColumn, int endLine, int endColumn, NOESCAPE const Function<void(int, int)>&);
 
     bool resolveBreakpoint(Breakpoint&, SourceProvider*);
     bool setBreakpoint(Breakpoint&);
@@ -113,7 +123,7 @@ public:
     BreakpointID pausingBreakpointID() const { return m_pausingBreakpointID; }
 
     void schedulePauseAtNextOpportunity();
-    void cancelPauseAtNextOpportunity();
+    void LEGACY_NODELETE cancelPauseAtNextOpportunity();
     bool schedulePauseForSpecialBreakpoint(Breakpoint&);
     bool cancelPauseForSpecialBreakpoint(Breakpoint&);
     void breakProgram(RefPtr<Breakpoint>&& specialBreakpoint = nullptr);
@@ -131,7 +141,7 @@ public:
     using BlackboxFlags = OptionSet<BlackboxFlag>;
     using BlackboxConfiguration = UncheckedKeyHashMap<BlackboxRange, BlackboxFlags>;
     void setBlackboxConfiguration(SourceID, BlackboxConfiguration&&);
-    void setBlackboxBreakpointEvaluations(bool);
+    void LEGACY_NODELETE setBlackboxBreakpointEvaluations(bool);
     void clearBlackbox();
 
     bool isPaused() const { return m_isPaused; }
@@ -141,6 +151,9 @@ public:
     void setSuppressAllPauses(bool suppress) { m_suppressAllPauses = suppress; }
 
     JS_EXPORT_PRIVATE virtual void sourceParsed(JSGlobalObject*, SourceProvider*, int errorLineNumber, const WTF::String& errorMessage);
+#if ENABLE(WEBASSEMBLY)
+    JS_EXPORT_PRIVATE virtual void sourceParsed(JSGlobalObject*, JSWebAssemblyModule*);
+#endif
 
     void exception(JSGlobalObject*, CallFrame*, JSValue exceptionValue, bool hasCatchHandler);
     void atStatement(CallFrame*);
@@ -163,6 +176,8 @@ public:
 
     void didCreateNativeExecutable(NativeExecutable&);
     void willCallNativeExecutable(CallFrame*);
+    void didCreateInternalFunction(InternalFunction&);
+    void willCallInternalFunction(InternalFunction&);
 
     class Client {
     public:
@@ -176,14 +191,16 @@ public:
     };
 
     Client* client() const { return m_client; }
-    void setClient(Client*);
+    void LEGACY_NODELETE setClient(Client*);
 
     // FIXME: <https://webkit.org/b/162773> Web Inspector: Simplify Debugger::Script to use SourceProvider
     struct Script {
         String url;
         String source;
+        String displayName;
         String sourceURL;
         String sourceMappingURL;
+        uint64_t requestIdentifier { 0 };
         RefPtr<SourceProvider> sourceProvider;
         int startLine { 0 };
         int startColumn { 0 };
@@ -196,11 +213,13 @@ public:
     public:
         virtual ~Observer() { }
 
-        virtual void didParseSource(SourceID, const Debugger::Script&) { }
+        virtual void didParseSource(JSGlobalObject*, SourceID, const Debugger::Script&) { }
         virtual void failedToParseSource(const String& /* url */, const String& /* data */, int /* firstLine */, int /* errorLine */, const String& /* errorMessage */) { }
 
         virtual void didCreateNativeExecutable(NativeExecutable&) { }
         virtual void willCallNativeExecutable(CallFrame*) { }
+        virtual void didCreateInternalFunction(InternalFunction&) { }
+        virtual void willCallInternalFunction(InternalFunction&) { }
 
         virtual void willEnter(CallFrame*) { }
 
@@ -229,8 +248,10 @@ public:
         virtual void didEvaluateScript(Seconds startTime, ProfilingReason) = 0;
     };
 
-    void setProfilingClient(ProfilingClient*);
+    void LEGACY_NODELETE setProfilingClient(ProfilingClient*);
     bool hasProfilingClient() const { return m_profilingClient != nullptr; }
+    // Lets a client find the debuggers it installed itself into without keeping pointers to them.
+    bool hasProfilingClient(const ProfilingClient& client) const { return m_profilingClient == &client; }
     bool isAlreadyProfiling() const { return m_profilingClient && m_profilingClient->isAlreadyProfiling(); }
     JS_EXPORT_PRIVATE Seconds willEvaluateScript();
     JS_EXPORT_PRIVATE void didEvaluateScript(Seconds startTime, ProfilingReason);
@@ -259,7 +280,11 @@ protected:
     virtual void didContinue(JSGlobalObject*) { }
     virtual void runEventLoopWhilePaused() { }
 
+    virtual bool isPauseBlockedByAnotherDebugger() const { return false; }
+
     virtual bool isContentScript(JSGlobalObject*) const { return false; }
+
+    virtual URL sourceURLBase(JSGlobalObject*) const { return { }; }
 
     // NOTE: Currently all exceptions are reported at the API boundary through reportAPIException.
     // Until a time comes where an exception can be caused outside of the API (e.g. setTimeout
@@ -290,7 +315,7 @@ private:
     void updateCallFrameInternal(JSC::CallFrame*);
     void pauseIfNeeded(JSC::JSGlobalObject*);
     void resetImmediatePauseState();
-    void resetEventualPauseState();
+    void LEGACY_NODELETE resetEventualPauseState();
     void resetAsyncPauseState();
 
     enum SteppingMode {
@@ -311,12 +336,13 @@ private:
     void clearDebuggerRequests(JSGlobalObject*);
     void clearParsedData();
 
-    bool canDispatchFunctionToObservers() const;
+    bool LEGACY_NODELETE canDispatchFunctionToObservers() const;
     void dispatchFunctionToObservers(Function<void(Observer&)>);
 
     VM& m_vm;
     UncheckedKeyHashSet<JSGlobalObject*> m_globalObjects;
     UncheckedKeyHashMap<SourceID, DebuggerParseData, WTF::IntHash<SourceID>, WTF::UnsignedWithZeroKeyHashTraits<SourceID>> m_parseDataMap;
+    UncheckedKeyHashSet<SourceID, WTF::IntHash<SourceID>, WTF::UnsignedWithZeroKeyHashTraits<SourceID>> m_reportedSourceIDs;
     UncheckedKeyHashMap<SourceID, BlackboxConfiguration, WTF::IntHash<SourceID>, WTF::UnsignedWithZeroKeyHashTraits<SourceID>> m_blackboxConfigurations;
     bool m_blackboxBreakpointEvaluations : 1;
 
@@ -334,7 +360,7 @@ private:
     JSValue m_currentException;
     CallFrame* m_pauseOnCallFrame { nullptr };
     CallFrame* m_currentCallFrame { nullptr };
-    Weak<JSGenerator> m_pauseForAwaitInGenerator;
+    Weak<JSAsyncFunctionGenerator> m_pauseForAwaitInGenerator;
     bool m_didPauseInAwait { false };
     unsigned m_lastExecutedLine;
     SourceID m_lastExecutedSourceID;

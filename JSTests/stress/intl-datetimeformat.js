@@ -8,6 +8,15 @@ function shouldBeOneOf(actual, expectedArray) {
         throw new Error('bad value: ' + actual + ' expected values: ' + expectedArray);
 }
 
+const icuVersion = $vm.icuVersion();
+function shouldBeOneOfForICUVersion(minimumVersion, actual, expectedArray) {
+    if (icuVersion < minimumVersion)
+        return;
+
+    if (!expectedArray.some((value) => value === actual))
+        throw new Error('bad value: ' + actual + ' expected values: ' + expectedArray);
+}
+
 function shouldNotThrow(func) {
     func();
 }
@@ -253,7 +262,10 @@ shouldBe(Intl.DateTimeFormat('en', { timeZone: 'AMERICA/LOS_ANGELES' }).resolved
 // Default time zone is a valid canonical time zone.
 shouldBe(Intl.DateTimeFormat('en', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone }).resolvedOptions().timeZone, Intl.DateTimeFormat().resolvedOptions().timeZone);
 
-// Time zone should be preserved and not canonicalized.
+// Time zone identifier is preserved (case-normalized) in resolvedOptions.
+// Per spec, resolvedOptions().timeZone returns [[Identifier]] (the accepted
+// form), not [[PrimaryIdentifier]]. The canonicalization to the IANA primary
+// happens internally for ICU formatting.
 shouldBe(Intl.DateTimeFormat('en', { timeZone: 'Australia/ACT' }).resolvedOptions().timeZone, 'Australia/ACT');
 shouldBe(Intl.DateTimeFormat('en', { timeZone: 'Australia/North' }).resolvedOptions().timeZone, 'Australia/North');
 shouldBe(Intl.DateTimeFormat('en', { timeZone: 'Australia/South' }).resolvedOptions().timeZone, 'Australia/South');
@@ -302,7 +314,7 @@ shouldBe(Intl.DateTimeFormat('en-u-ca-ethiopic').resolvedOptions().calendar, 'et
 shouldBe(Intl.DateTimeFormat('ar-SA-u-ca-gregory').resolvedOptions().calendar, 'gregory');
 shouldBe(Intl.DateTimeFormat('en-u-ca-hebrew').resolvedOptions().calendar, 'hebrew');
 shouldBe(Intl.DateTimeFormat('en-u-ca-indian').resolvedOptions().calendar, 'indian');
-shouldBe(Intl.DateTimeFormat('en-u-ca-islamic').resolvedOptions().calendar, 'islamic');
+shouldBe(Intl.DateTimeFormat('en-u-ca-islamic').resolvedOptions().calendar, 'islamic-tbla');
 shouldBe(Intl.DateTimeFormat('en-u-ca-islamicc').resolvedOptions().calendar, 'islamic-civil');
 shouldBe(Intl.DateTimeFormat('en-u-ca-ISO8601').resolvedOptions().calendar, 'iso8601');
 shouldBe(Intl.DateTimeFormat('en-u-ca-japanese').resolvedOptions().calendar, 'japanese');
@@ -312,29 +324,123 @@ shouldBe(Intl.DateTimeFormat('en-u-ca-ethiopic-amete-alem').resolvedOptions().ca
 shouldBe(Intl.DateTimeFormat('en-u-ca-islamic-umalqura').resolvedOptions().calendar, 'islamic-umalqura');
 shouldBe(Intl.DateTimeFormat('en-u-ca-islamic-tbla').resolvedOptions().calendar, 'islamic-tbla');
 shouldBe(Intl.DateTimeFormat('en-u-ca-islamic-civil').resolvedOptions().calendar, 'islamic-civil');
-shouldBe(Intl.DateTimeFormat('en-u-ca-islamic-rgsa').resolvedOptions().calendar, 'islamic-rgsa');
+shouldBe(Intl.DateTimeFormat('en-u-ca-islamic-rgsa').resolvedOptions().calendar, 'gregory');
 
 // Calendar-sensitive format().
 shouldBe(Intl.DateTimeFormat('en-u-ca-buddhist', { timeZone: 'America/Los_Angeles' }).format(1451099872641), '12/25/2558 BE');
 shouldBeOneOf(Intl.DateTimeFormat('en-u-ca-chinese', { timeZone: 'America/Los_Angeles' }).format(1451099872641), ['11/15/2015', '2015-11-15']);
-shouldBe(Intl.DateTimeFormat('en-u-ca-coptic', { timeZone: 'America/Los_Angeles' }).format(1451099872641), '4/15/1732 ERA1');
+shouldBeOneOf(Intl.DateTimeFormat('en-u-ca-coptic', { timeZone: 'America/Los_Angeles' }).format(1451099872641), ['4/15/1732 ERA1', '4/15/1732 AM']);
 shouldBeOneOf(Intl.DateTimeFormat('en-u-ca-dangi', { timeZone: 'America/Los_Angeles' }).format(1451099872641), ['11/15/2015', '2015-11-15']);
-shouldBe(Intl.DateTimeFormat('en-u-ca-ethioaa', { timeZone: 'America/Los_Angeles' }).format(1451099872641), '4/15/7508 ERA0');
-shouldBe(Intl.DateTimeFormat('en-u-ca-ethiopic', { timeZone: 'America/Los_Angeles' }).format(1451099872641), '4/15/2008 ERA1');
+shouldBeOneOf(Intl.DateTimeFormat('en-u-ca-ethioaa', { timeZone: 'America/Los_Angeles' }).format(1451099872641), ['4/15/7508 ERA0', '4/15/7508 AA']);
+shouldBeOneOf(Intl.DateTimeFormat('en-u-ca-ethiopic', { timeZone: 'America/Los_Angeles' }).format(1451099872641), ['4/15/2008 ERA1', '4/15/2008 AM']);
 shouldBe(Intl.DateTimeFormat('en-u-ca-gregory', { timeZone: 'America/Los_Angeles' }).format(1451099872641), '12/25/2015');
 shouldBe(Intl.DateTimeFormat('en-u-ca-hebrew', { timeZone: 'America/Los_Angeles' }).format(1451099872641), '13 Tevet 5776');
-shouldBe(Intl.DateTimeFormat('en-u-ca-indian', { timeZone: 'America/Los_Angeles' }).format(1451099872641), '10/4/1937 Saka');
+shouldBeOneOf(Intl.DateTimeFormat('en-u-ca-indian', { timeZone: 'America/Los_Angeles' }).format(1451099872641), ['10/4/1937 Saka', '10/4/1937 Śaka']);
 shouldBe(Intl.DateTimeFormat('en-u-ca-islamic', { timeZone: 'America/Los_Angeles' }).format(1451099872641), '3/14/1437 AH');
 shouldBe(Intl.DateTimeFormat('en-u-ca-islamicc', { timeZone: 'America/Los_Angeles' }).format(1451099872641), '3/13/1437 AH');
 shouldBeOneOf(Intl.DateTimeFormat('en-u-ca-ISO8601', { timeZone: 'America/Los_Angeles' }).format(1451099872641), ['12/25/2015', '2015-12-25']);
 shouldBeOneOf(Intl.DateTimeFormat('en-u-ca-japanese', { timeZone: 'America/Los_Angeles' }).format(1451099872641), [ '12/25/27 H', '12/25/H27' ]);
 shouldBe(Intl.DateTimeFormat('en-u-ca-persian', { timeZone: 'America/Los_Angeles' }).format(1451099872641), '10/4/1394 AP');
 shouldBe(Intl.DateTimeFormat('en-u-ca-roc', { timeZone: 'America/Los_Angeles' }).format(1451099872641), '12/25/104 Minguo');
-shouldBe(Intl.DateTimeFormat('en-u-ca-ethiopic-amete-alem', { timeZone: 'America/Los_Angeles' }).format(1451099872641), '4/15/7508 ERA0');
+shouldBeOneOf(Intl.DateTimeFormat('en-u-ca-ethiopic-amete-alem', { timeZone: 'America/Los_Angeles' }).format(1451099872641), ['4/15/7508 ERA0', '4/15/7508 AA']);
 shouldBe(Intl.DateTimeFormat('en-u-ca-islamic-umalqura', { timeZone: 'America/Los_Angeles' }).format(1451099872641), '3/14/1437 AH');
 shouldBe(Intl.DateTimeFormat('en-u-ca-islamic-tbla', { timeZone: 'America/Los_Angeles' }).format(1451099872641), '3/14/1437 AH');
 shouldBe(Intl.DateTimeFormat('en-u-ca-islamic-civil', { timeZone: 'America/Los_Angeles' }).format(1451099872641), '3/13/1437 AH');
-shouldBe(Intl.DateTimeFormat('en-u-ca-islamic-rgsa', { timeZone: 'America/Los_Angeles' }).format(1451099872641), '3/14/1437 AH');
+shouldBe(Intl.DateTimeFormat('en-u-ca-islamic-rgsa', { timeZone: 'America/Los_Angeles' }).format(1451099872641), '12/25/2015');
+
+{
+    const opts = { year: 'numeric', era: 'long', timeZone: 'UTC' };
+    // islamic-civil/islamic-umalqura epoch is ISO 622-07-19T07:52:58.000Z; islamic-tbla's is one
+    // day earlier. A date in February 622 is before both real epochs but was previously missed by
+    // an overly early hardcoded threshold, so it incorrectly reported "Anno Hegirae".
+    // Year is 1 - year (no year zero), matching Temporal's eraYear; used to show the raw ICU year (0).
+    shouldBeOneOf(Intl.DateTimeFormat('en-u-ca-islamic-civil', opts).format(Date.UTC(622, 1, 1)), ['Before Hijra 1', '1 Before Hijra']);
+    // Well before the epoch, not just at the boundary -- the only case that distinguishes "1 - year" from other conventions.
+    shouldBeOneOf(Intl.DateTimeFormat('en-u-ca-islamic-civil', opts).format(Date.UTC(300, 0, 1)), ['Before Hijra 333', '333 Before Hijra']);
+    // year:"2-digit": the flip must use the true year, not ICU's already-truncated 2-digit text
+    // (raw year -199 renders as "-99" under 2-digit; flipping -99 gives 100, not the correct
+    // 00 = (1 - (-199)) mod 100).
+    shouldBeOneOf(Intl.DateTimeFormat('en-u-ca-islamic-civil', { year: '2-digit', era: 'long', timeZone: 'UTC' }).format(Date.UTC(429, 0, 1)), ['Before Hijra 00', '00 Before Hijra']);
+    // ICU < 78 has no distinct long-form "Anno Hegirae" era string for islamic-civil in this locale and falls back to the short form ("AH").
+    shouldBeOneOfForICUVersion(78, Intl.DateTimeFormat('en-u-ca-islamic-civil', opts).format(Date.UTC(650, 0, 1)), ['Anno Hegirae 29', '29 Anno Hegirae']);
+    shouldBeOneOf(Intl.DateTimeFormat('en-u-ca-islamic-tbla', opts).format(Date.UTC(622, 1, 1)), ['Before Hijra 1', '1 Before Hijra']);
+    shouldBeOneOf(Intl.DateTimeFormat('en-u-ca-islamic-umalqura', opts).format(Date.UTC(622, 1, 1)), ['Before Hijra 1', '1 Before Hijra']);
+    // coptic AM epoch is ISO 284-08-29T07:52:58.000Z.
+    shouldBeOneOf(Intl.DateTimeFormat('en-u-ca-coptic', opts).format(Date.UTC(200, 0, 1)), ['Anno Martyrum 85', '85 Anno Martyrum']);
+    // ICU < 78 has no distinct long-form "Anno Martyrum" era string for coptic in this locale and falls back to the generic "ERA1" placeholder.
+    shouldBeOneOfForICUVersion(78, Intl.DateTimeFormat('en-u-ca-coptic', opts).format(Date.UTC(400, 0, 1)), ['Anno Martyrum 116', '116 Anno Martyrum']);
+}
+
+// The pre-Hijra/pre-AM era-text override must only apply when era was actually requested.
+{
+    const noEraOpts = { month: 'long', day: 'numeric', timeZone: 'UTC' };
+    const civilNoEra = Intl.DateTimeFormat('en-u-ca-islamic-civil', noEraOpts).format(Date.UTC(622, 1, 1));
+    if (civilNoEra.includes('Hijra'))
+        throw new Error(`islamic-civil pre-epoch format() with no era option must not include era text, got: ${civilNoEra}`);
+    const copticNoEra = Intl.DateTimeFormat('en-u-ca-coptic', noEraOpts).format(Date.UTC(200, 0, 1));
+    if (copticNoEra.includes('Martyrum'))
+        throw new Error(`coptic pre-epoch format() with no era option must not include era text, got: ${copticNoEra}`);
+}
+
+{
+    const pre = Date.UTC(622, 1, 1); // islamic-civil pre-Hijra
+    const base = { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' };
+
+    // Width ignored: long/short/narrow all produce the same text.
+    for (const width of ['long', 'short', 'narrow']) {
+        const eraPart = Intl.DateTimeFormat('en-u-ca-islamic-civil', { ...base, era: width }).formatToParts(pre).find(p => p.type === 'era');
+        shouldBe(eraPart && eraPart.value, 'Before Hijra');
+    }
+
+    // The year part's VALUE must also be flipped -- formatToParts is a separate codepath from
+    // format()'s string splicing, with its own copy of this logic.
+    const yearPart = Intl.DateTimeFormat('en-u-ca-islamic-civil', { ...base, era: 'long' }).formatToParts(pre).find(p => p.type === 'year');
+    shouldBe(yearPart && yearPart.value, '1');
+
+    // Locale ignored: ja gets the English text glued onto Japanese-formatted output.
+    const ja = Intl.DateTimeFormat('ja-u-ca-islamic-civil', { ...base, era: 'long' }).format(pre);
+    if (!ja.includes('Before Hijra'))
+        throw new Error(`islamic-civil pre-epoch ja locale expected (incorrect) "Before Hijra", got: ${ja}`);
+
+    // Pattern position ignored: ja's real era position is first (see the post-epoch date, which
+    // ICU formats natively), but the override always appends last instead.
+    const postParts = Intl.DateTimeFormat('ja-u-ca-coptic', { ...base, era: 'long' }).formatToParts(Date.UTC(400, 0, 1)).map(p => p.type);
+    shouldBe(postParts[0], 'era');
+
+    // ICU4C-WORKAROUND: rdar://183226206 - below ICU 78, the coptic calendar emits a native
+    // era field even for pre-AM dates (ICU 78+ emits none there), so the override replaces
+    // that field in place instead of appending a new part. Only verifying current (78+)
+    // behavior here; not pinning down the old-ICU shape.
+    const preParts = Intl.DateTimeFormat('ja-u-ca-coptic', { ...base, era: 'long' }).formatToParts(Date.UTC(200, 0, 1)).map(p => p.type);
+    if (icuVersion >= 78)
+        shouldBe(preParts[preParts.length - 1], 'era');
+}
+
+// FIXME: rdar://182953351 (icu-issues/05) - formatRange/formatRangeToParts don't apply the
+// pre-Hijra/pre-AM override at all, unlike format()/formatToParts. Wait for ICU to select the
+// right era natively rather than threading this through more call sites; flip to `if (true)`
+// once fixed.
+if (false) {
+    const rangeOpts = { year: 'numeric', month: 'long', day: 'numeric', era: 'long', timeZone: 'UTC' };
+
+    const civilRange = Intl.DateTimeFormat('en-u-ca-islamic-civil', rangeOpts).formatRange(Date.UTC(622, 1, 1), Date.UTC(622, 1, 2));
+    if (civilRange.includes('Anno Hegirae') || !civilRange.includes('Before Hijra'))
+        throw new Error(`islamic-civil pre-epoch formatRange must say "Before Hijra", got: ${civilRange}`);
+
+    const civilPartsEra = Intl.DateTimeFormat('en-u-ca-islamic-civil', rangeOpts)
+        .formatRangeToParts(Date.UTC(622, 1, 1), Date.UTC(622, 1, 1))
+        .filter(p => p.type === 'era');
+    shouldBe(civilPartsEra.length, 1, "islamic-civil pre-epoch formatRangeToParts must include exactly one era part");
+    if (civilPartsEra.length)
+        shouldBe(civilPartsEra[0].value, 'Before Hijra', "islamic-civil pre-epoch formatRangeToParts era value (currently shows raw ICU text)");
+
+    const copticPartsEra = Intl.DateTimeFormat('en-u-ca-coptic', rangeOpts)
+        .formatRangeToParts(Date.UTC(200, 0, 1), Date.UTC(200, 0, 1))
+        .filter(p => p.type === 'era');
+    shouldBe(copticPartsEra.length, 1, "coptic pre-AM formatRangeToParts must include exactly one era part (currently emits none)");
+    if (copticPartsEra.length)
+        shouldBe(copticPartsEra[0].value, 'Anno Martyrum', "coptic pre-AM formatRangeToParts era value");
+}
 
 shouldBe(Intl.DateTimeFormat('en', { numberingSystem: 'gujr' }).resolvedOptions().numberingSystem, 'gujr');
 shouldBe(Intl.DateTimeFormat('en-u-nu-bogus').resolvedOptions().locale, 'en');
@@ -697,7 +803,7 @@ shouldBe(JSON.stringify(Intl.DateTimeFormat('zh', { era: 'short', year: 'numeric
     {
         let dtf = new Intl.DateTimeFormat("en", {hour: "numeric", minute: "numeric", second: "numeric", fractionalSecondDigits: 1});
         shouldBe(dtf.format(t), `7:00:23.1 AM`);
-        shouldBe(JSON.stringify(dtf.resolvedOptions()), `{"locale":"en","calendar":"gregory","numberingSystem":"latn","timeZone":"America/Los_Angeles","hourCycle":"h12","hour12":true,"dayPeriod":"short","hour":"numeric","minute":"2-digit","second":"2-digit","fractionalSecondDigits":1}`);
+        shouldBe(JSON.stringify(dtf.resolvedOptions()), `{"locale":"en","calendar":"gregory","numberingSystem":"latn","timeZone":"America/Los_Angeles","hourCycle":"h12","hour12":true,"hour":"numeric","minute":"2-digit","second":"2-digit","fractionalSecondDigits":1}`);
     }
     shouldThrow(() => {
         new Intl.DateTimeFormat("en", {hour: "numeric", minute: "numeric", second: "numeric", fractionalSecondDigits: 0});
@@ -754,11 +860,14 @@ shouldBe(JSON.stringify(Intl.DateTimeFormat('zh', { era: 'short', year: 'numeric
     shouldBe(year.value, "2021")
 }
 
-shouldThrow(() => {
+{
+    let reads = 0;
     Function.prototype.__defineGetter__('prototype', function () {
-        this.call(0x1234);
+        reads++;
+        return Object.prototype;
     });
-    
+
     const dateTimeFormat = new Intl.DateTimeFormat();
-    1 instanceof dateTimeFormat.format;
-}, TypeError)
+    shouldBe(1 instanceof dateTimeFormat.format, false);
+    shouldBe(reads, 0);
+}

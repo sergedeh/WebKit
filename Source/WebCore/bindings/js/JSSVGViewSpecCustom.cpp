@@ -32,12 +32,13 @@
 namespace WebCore {
 
 template<typename Visitor>
-void JSSVGViewSpec::visitAdditionalChildren(Visitor& visitor)
+void JSSVGViewSpec::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
-    ASSERT(wrapped().contextElementConcurrently().get());
-    addWebCoreOpaqueRoot(visitor, wrapped().contextElementConcurrently().get());
+    ASSERT(wrapped().contextElementConcurrently());
+    // Cannot ref on the GC thread.
+    SUPPRESS_UNCOUNTED_ARG SUPPRESS_UNCHECKED_ARG addWebCoreOpaqueRoot(visitor, wrapped().contextElementConcurrently());
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSSVGViewSpec);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSSVGViewSpec);
 
 } // namespace WebCore

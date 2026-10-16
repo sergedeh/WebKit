@@ -12,6 +12,8 @@
 #ifndef AOM_AOM_MEM_AOM_MEM_H_
 #define AOM_AOM_MEM_AOM_MEM_H_
 
+#include <assert.h>
+
 #include "aom/aom_integer.h"
 #include "config/aom_config.h"
 
@@ -40,7 +42,7 @@ void aom_free(void *memblk);
 static inline void *aom_memset16(void *dest, int val, size_t length) {
   size_t i;
   uint16_t *dest16 = (uint16_t *)dest;
-  for (i = 0; i < length; i++) *dest16++ = val;
+  for (i = 0; i < length; i++) *dest16++ = (uint16_t)val;
   return dest;
 }
 
@@ -57,6 +59,7 @@ static inline void *aom_memset16(void *dest, int val, size_t length) {
 #if CONFIG_DEBUG
 #define AOM_CHECK_MEM_ERROR(error_info, lval, expr)                         \
   do {                                                                      \
+    assert((error_info)->setjmp);                                           \
     lval = (expr);                                                          \
     if (!lval)                                                              \
       aom_internal_error(error_info, AOM_CODEC_MEM_ERROR,                   \
@@ -66,6 +69,7 @@ static inline void *aom_memset16(void *dest, int val, size_t length) {
 #else
 #define AOM_CHECK_MEM_ERROR(error_info, lval, expr)       \
   do {                                                    \
+    assert((error_info)->setjmp);                         \
     lval = (expr);                                        \
     if (!lval)                                            \
       aom_internal_error(error_info, AOM_CODEC_MEM_ERROR, \

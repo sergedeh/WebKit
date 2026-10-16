@@ -180,6 +180,7 @@ enum class WebCore::WebGPU::VertexFormat : uint8_t {
     Sint32x2,
     Sint32x3,
     Sint32x4,
+    Snorm1010102,
     Unorm1010102,
     Unorm8x4Bgra,
 };
@@ -301,6 +302,24 @@ enum class WebCore::WebGPU::TextureViewDimension : uint8_t {
     _3d,
 };
 
+header: <WebCore/WebGPUTextureComponentSwizzle.h>
+enum class WebCore::WebGPU::ComponentSwizzle : uint8_t {
+    Zero,
+    One,
+    R,
+    G,
+    B,
+    A,
+};
+
+header: <WebCore/WebGPUTextureComponentSwizzle.h>
+[AdditionalEncoder=StreamConnectionEncoder, CustomHeader] struct WebCore::WebGPU::TextureComponentSwizzle {
+    WebCore::WebGPU::ComponentSwizzle r;
+    WebCore::WebGPU::ComponentSwizzle g;
+    WebCore::WebGPU::ComponentSwizzle b;
+    WebCore::WebGPU::ComponentSwizzle a;
+};
+
 header: <WebCore/WebGPUVertexStepMode.h>
 enum class WebCore::WebGPU::VertexStepMode : uint8_t {
     Vertex,
@@ -319,6 +338,7 @@ enum class WebCore::WebGPU::BufferUsage : uint16_t {
     Storage,
     Indirect,
     QueryResolve,
+    Invalid,
 };
 
 header: <WebCore/WebGPUTextureUsage.h>
@@ -328,6 +348,8 @@ header: <WebCore/WebGPUTextureUsage.h>
     TextureBinding,
     StorageBinding,
     RenderAttachment,
+    Transient,
+    Invalid,
 };
 
 using WebCore::WebGPU::TextureUsageFlags = OptionSet<WebCore::WebGPU::TextureUsage>;

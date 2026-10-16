@@ -28,9 +28,17 @@ use lib "$FindBin::Bin/../bindings/scripts";
 use Getopt::Long;
 
 my $defines;
-my $preprocessor;
+my $definesFile;
 GetOptions('defines=s' => \$defines,
-           'preprocessor=s' => \$preprocessor);
+           'defines-file=s' => \$definesFile);
+
+if (defined $definesFile) {
+    open(my $df, '<', $definesFile) or die "Cannot open --defines-file $definesFile: $!";
+    local $/;
+    my $extra = <$df>;
+    close($df);
+    $defines = join(' ', grep { defined && length } $defines, $extra);
+}
 
 my $header = $ARGV[0];
 shift;
@@ -54,7 +62,7 @@ for my $in (@ARGV) {
     # Slurp in the CSS file.
     my $text;
     require preprocessor;
-    $text = join('', applyPreprocessor($in, $defines, $preprocessor));
+    $text = join('', applyPreprocessor($in, $defines));
 
     # Remove comments in a simple-minded way that will work fine for our files.
     # Could do this a fancier way if we were worried about arbitrary CSS source.

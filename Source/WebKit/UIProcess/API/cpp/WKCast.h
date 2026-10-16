@@ -46,6 +46,7 @@ TYPE_CHECKER(WKContextMenuItemRef, WKContextMenuItemGetTypeID);
 TYPE_CHECKER(WKDataRef, WKDataGetTypeID);
 TYPE_CHECKER(WKDictionaryRef, WKDictionaryGetTypeID);
 TYPE_CHECKER(WKDoubleRef, WKDoubleGetTypeID);
+TYPE_CHECKER(WKFrameHandleRef, WKFrameHandleGetTypeID);
 TYPE_CHECKER(WKJSHandleRef, WKJSHandleGetTypeID);
 TYPE_CHECKER(WKStringRef, WKStringGetTypeID);
 TYPE_CHECKER(WKUInt64Ref, WKUInt64GetTypeID);
@@ -70,4 +71,4 @@ template<typename T, typename U> inline WKRetainPtr<T> dynamic_wk_cast(RetainPtr
 
 using WebKit::dynamic_wk_cast;
 
-#endif
+#endif // __cplusplus

@@ -35,7 +35,6 @@
 #include "JSLock.h"
 #include "RemoteInspector.h"
 #include <wtf/TZoneMallocInlines.h>
-#include <wtf/threads/BinarySemaphore.h>
 
 using namespace Inspector;
 
@@ -66,7 +65,7 @@ void JSGlobalObjectDebuggable::connect(FrontendChannel& frontendChannel, bool au
         return;
 
     JSLockHolder locker(&m_globalObject->vm());
-    m_globalObject->checkedInspectorController()->connectFrontend(frontendChannel, automaticInspection, immediatelyPause);
+    protect(m_globalObject->inspectorController())->connectFrontend(frontendChannel, automaticInspection, immediatelyPause);
 }
 
 void JSGlobalObjectDebuggable::disconnect(FrontendChannel& frontendChannel)
@@ -76,7 +75,7 @@ void JSGlobalObjectDebuggable::disconnect(FrontendChannel& frontendChannel)
 
     JSLockHolder locker(&m_globalObject->vm());
 
-    m_globalObject->checkedInspectorController()->disconnectFrontend(frontendChannel);
+    protect(m_globalObject->inspectorController())->disconnectFrontend(frontendChannel);
 }
 
 void JSGlobalObjectDebuggable::dispatchMessageFromRemote(String&& message)
@@ -86,7 +85,7 @@ void JSGlobalObjectDebuggable::dispatchMessageFromRemote(String&& message)
 
     JSLockHolder locker(&m_globalObject->vm());
 
-    m_globalObject->checkedInspectorController()->dispatchMessageFromFrontend(WTF::move(message));
+    protect(m_globalObject->inspectorController())->dispatchMessageFromFrontend(WTF::move(message));
 }
 
 void JSGlobalObjectDebuggable::pauseWaitingForAutomaticInspection()

@@ -44,9 +44,10 @@ using namespace WebCore;
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ImageBufferShareableAllocator);
 
 #if HAVE(IOSURFACE)
-ImageBufferShareableAllocator::ImageBufferShareableAllocator(const ProcessIdentity& resourceOwner, IOSurfacePool* ioSurfacePool)
+ImageBufferShareableAllocator::ImageBufferShareableAllocator(const ProcessIdentity& resourceOwner, IOSurfacePool* ioSurfacePool, bool useIOSurfaceWebKitBehavior)
     : m_resourceOwner(resourceOwner)
     , m_ioSurfacePool(ioSurfacePool)
+    , m_useIOSurfaceWebKitBehavior(useIOSurfaceWebKitBehavior)
 {
 }
 #else
@@ -56,7 +57,7 @@ ImageBufferShareableAllocator::ImageBufferShareableAllocator(const ProcessIdenti
 }
 #endif
 
-RefPtr<ImageBuffer> ImageBufferShareableAllocator::createImageBuffer(const FloatSize& size, const DestinationColorSpace& colorSpace, RenderingMode renderingMode) const
+RefPtr<ImageBuffer> ImageBufferShareableAllocator::createImageBuffer(const FloatSize& size, const ColorSpace& colorSpace, RenderingMode renderingMode) const
 {
 #if HAVE(IOSURFACE)
     if (renderingMode == RenderingMode::Accelerated) {
@@ -64,6 +65,7 @@ RefPtr<ImageBuffer> ImageBufferShareableAllocator::createImageBuffer(const Float
         creationContext.resourceOwner = m_resourceOwner;
         if (m_ioSurfacePool)
             creationContext.surfacePool = m_ioSurfacePool.get();
+        creationContext.useIOSurfaceWebKitBehavior = m_useIOSurfaceWebKitBehavior;
 
         return ImageBuffer::create<ImageBufferIOSurfaceBackend>(size, 1, colorSpace, { PixelFormat::BGRA8 }, RenderingPurpose::Unspecified, creationContext);
     }
@@ -94,7 +96,7 @@ RefPtr<PixelBuffer> ImageBufferShareableAllocator::createPixelBuffer(const Pixel
     if (!pixelBuffer)
         return nullptr;
 
-    auto handle = pixelBuffer->protectedData()->createHandle(SharedMemory::Protection::ReadOnly);
+    auto handle = protect(pixelBuffer->data())->createHandle(SharedMemory::Protection::ReadOnly);
     if (!handle)
         return nullptr;
 

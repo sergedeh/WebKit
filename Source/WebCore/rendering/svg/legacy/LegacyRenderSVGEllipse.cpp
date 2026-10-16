@@ -28,17 +28,17 @@
 #include "LegacyRenderSVGEllipse.h"
 
 #include "LegacyRenderSVGShapeInlines.h"
-#include "RenderStyle+GettersInlines.h"
 #include "SVGCircleElement.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGEllipseElement.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(LegacyRenderSVGEllipse);
 
-LegacyRenderSVGEllipse::LegacyRenderSVGEllipse(SVGGraphicsElement& element, RenderStyle&& style)
+LegacyRenderSVGEllipse::LegacyRenderSVGEllipse(SVGGraphicsElement& element, Style::ComputedStyle&& style)
     : LegacyRenderSVGShape(Type::LegacySVGEllipse, element, WTF::move(style))
 {
 }
@@ -54,6 +54,7 @@ void LegacyRenderSVGEllipse::updateShapeFromElement()
     m_fillBoundingBox = FloatRect();
     m_strokeBoundingBox = std::nullopt;
     m_approximateStrokeBoundingBox = std::nullopt;
+    m_hitTestStrokeBoundingBox = std::nullopt;
     m_center = FloatPoint();
     m_radii = FloatSize();
 
@@ -76,7 +77,7 @@ void LegacyRenderSVGEllipse::updateShapeFromElement()
 
     m_fillBoundingBox = FloatRect(m_center.x() - m_radii.width(), m_center.y() - m_radii.height(), 2 * m_radii.width(), 2 * m_radii.height());
     m_strokeBoundingBox = m_fillBoundingBox;
-    if (style().hasStroke())
+    if (!style().stroke().isNone())
         m_strokeBoundingBox->inflate(strokeWidth() / 2);
 }
 
@@ -84,11 +85,12 @@ void LegacyRenderSVGEllipse::calculateRadiiAndCenter()
 {
     Ref graphicsElement = this->graphicsElement();
     SVGLengthContext lengthContext(graphicsElement.ptr());
+    auto zoom = style().usedZoomForLength();
     m_center = FloatPoint(
-        lengthContext.valueForLength(style().cx(), Style::ZoomNeeded { }, SVGLengthMode::Width),
-        lengthContext.valueForLength(style().cy(), Style::ZoomNeeded { }, SVGLengthMode::Height));
+        lengthContext.valueForLength(style().cx(), zoom, SVGLengthMode::Width),
+        lengthContext.valueForLength(style().cy(), zoom, SVGLengthMode::Height));
     if (is<SVGCircleElement>(graphicsElement)) {
-        float radius = lengthContext.valueForLength(style().r(), Style::ZoomNeeded { });
+        float radius = lengthContext.valueForLength(style().r(), zoom);
         m_radii = FloatSize(radius, radius);
         return;
     }
@@ -98,8 +100,8 @@ void LegacyRenderSVGEllipse::calculateRadiiAndCenter()
     auto& rx = style().rx();
     auto& ry = style().ry();
     m_radii = FloatSize(
-        lengthContext.valueForLength(rx.isAuto() ? ry : rx, Style::ZoomNeeded { }, SVGLengthMode::Width),
-        lengthContext.valueForLength(ry.isAuto() ? rx : ry, Style::ZoomNeeded { }, SVGLengthMode::Height));
+        lengthContext.valueForLength(rx.isAuto() ? ry : rx, zoom, SVGLengthMode::Width),
+        lengthContext.valueForLength(ry.isAuto() ? rx : ry, zoom, SVGLengthMode::Height));
     if (rx.isAuto())
         m_radii.setWidth(m_radii.height());
     else if (ry.isAuto())
@@ -117,7 +119,7 @@ void LegacyRenderSVGEllipse::fillShape(GraphicsContext& context) const
 
 void LegacyRenderSVGEllipse::strokeShape(GraphicsContext& context) const
 {
-    if (!style().hasStroke() || !style().strokeWidth().isPossiblyPositive())
+    if (style().stroke().isNone() || !style().strokeWidth().isPossiblyPositive())
         return;
     if (hasPath()) {
         LegacyRenderSVGShape::strokeShape(context);

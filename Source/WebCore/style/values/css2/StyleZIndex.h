@@ -27,13 +27,11 @@
 #include <WebCore/StylePrimitiveNumeric.h>
 
 namespace WebCore {
-
-class RenderStyleProperties;
-
 namespace Style {
 
 class BoxData;
 class ComputedStyleBase;
+class ComputedStyleProperties;
 
 // <'z-index'> = auto | <integer>
 // https://drafts.csswg.org/css2/#propdef-z-index
@@ -66,7 +64,7 @@ struct ZIndex {
     constexpr bool isValue() const { return !m_isAuto; }
     constexpr std::optional<Value> tryValue() const { return isValue() ? std::make_optional(m_value) : std::nullopt; }
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
@@ -85,8 +83,6 @@ private:
     friend class BoxData;
     friend class ComputedStyleBase;
     friend class ComputedStyleProperties;
-    friend class WebCore::RenderStyle;
-    friend class WebCore::RenderStyleProperties;
 
     constexpr ZIndex(bool isAuto, Value value)
         : m_isAuto { isAuto }
@@ -105,7 +101,7 @@ template<> struct CSSValueConversion<ZIndex> { auto operator()(BuilderState&, co
 // MARK: - Blending
 
 template<> struct Blending<ZIndex> {
-    auto canBlend(const ZIndex&, const ZIndex&) -> bool;
+    bool LEGACY_NODELETE canBlend(const ZIndex&, const ZIndex&);
     auto blend(const ZIndex&, const ZIndex&, const BlendingContext&) -> ZIndex;
 };
 

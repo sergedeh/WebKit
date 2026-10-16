@@ -1,3 +1,0 @@
-
-FAIL Custom Functions: @container responds to changes assert_equals: --actual before resize expected "A" but got "D"
-

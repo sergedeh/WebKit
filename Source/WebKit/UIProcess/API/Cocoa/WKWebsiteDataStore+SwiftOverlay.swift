@@ -21,14 +21,14 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
 // THE POSSIBILITY OF SUCH DAMAGE.
 
-import Network
+public import Network
 
 extension WKWebsiteDataStore {
     /// Gets or sets the proxy configurations to be used to override networking in all WKWebViews that use this WKWebsiteDataStore.
     ///
     /// Changing the proxy configurations might interrupt current networking operations in any WKWebView that use this WKWebsiteDataStore,
     /// so it is encouraged to finish setting the proxy configurations before starting any page loads.
-    @available(iOS 17.0, macOS 14.0, visionOS 1.0, *)
+    @available(anyAppleOSAndDownlevels 17.0, *)
     @available(watchOS, unavailable)
     @available(tvOS, unavailable)
     public var proxyConfigurations: [ProxyConfiguration] {

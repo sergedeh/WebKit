@@ -38,50 +38,50 @@
 namespace WebCore {
 namespace CSSPropertyParserHelpers {
 
-static RefPtr<CSSValue> consumeAlignmentBaseline(CSSParserTokenRange& range, CSS::PropertyParserState&)
+static RefPtr<CSSValue> LEGACY_NODELETE consumeAlignmentBaseline(CSSParserTokenRange& range, CSS::PropertyParserState&)
 {
-    ASSERT(range.peek().id() == CSSValueBaseline);
+    ASSERT(range.peek().id() == CSSValueID::Baseline);
 
     // FIXME: The spec states that <baseline-position> is defined as `<baseline-position> = [ first | last ]? && baseline`, allowing any ordering, but tests expect `[ first | last ]` to always be precede `baseline`.
 
     range.consumeIncludingWhitespace();
-    return CSSPrimitiveValue::create(CSSValueBaseline);
+    return CSSKeywordValue::create(CSSValueID::Baseline);
 }
 
 static RefPtr<CSSValue> consumeAlignmentFirstBaseline(CSSParserTokenRange& range, CSS::PropertyParserState&)
 {
-    ASSERT(range.peek().id() == CSSValueFirst);
+    ASSERT(range.peek().id() == CSSValueID::First);
 
     auto copy = range;
     copy.consumeIncludingWhitespace();
-    if (copy.peek().id() != CSSValueBaseline)
+    if (copy.peek().id() != CSSValueID::Baseline)
         return nullptr;
 
     range = copy;
     range.consumeIncludingWhitespace();
-    return CSSPrimitiveValue::create(CSSValueBaseline);
+    return CSSKeywordValue::create(CSSValueID::Baseline);
 }
 
 static RefPtr<CSSValue> consumeAlignmentLastBaseline(CSSParserTokenRange& range, CSS::PropertyParserState&)
 {
-    ASSERT(range.peek().id() == CSSValueLast);
+    ASSERT(range.peek().id() == CSSValueID::Last);
 
     auto copy = range;
     copy.consumeIncludingWhitespace();
-    if (copy.peek().id() != CSSValueBaseline)
+    if (copy.peek().id() != CSSValueID::Baseline)
         return nullptr;
 
     range = copy;
     range.consumeIncludingWhitespace();
     return CSSValuePair::create(
-        CSSPrimitiveValue::create(CSSValueLast),
-        CSSPrimitiveValue::create(CSSValueBaseline)
+        CSSKeywordValue::create(CSSValueID::Last),
+        CSSKeywordValue::create(CSSValueID::Baseline)
     );
 }
 
-template<typename F> static RefPtr<CSSValue> consumeAlignmentOverflowPosition(CSSParserTokenRange& range, CSS::PropertyParserState&, CSSValueID overflowSafety, F&& predicate)
+template<typename F> static RefPtr<CSSValue> consumeAlignmentOverflowPosition(CSSParserTokenRange& range, CSS::PropertyParserState&, CSSValueID overflowSafety, NOESCAPE const F& predicate)
 {
-    ASSERT(range.peek().id() == CSSValueSafe || range.peek().id() == CSSValueUnsafe);
+    ASSERT(range.peek().id() == CSSValueID::Safe || range.peek().id() == CSSValueID::Unsafe);
 
     auto copy = range;
     copy.consumeIncludingWhitespace();
@@ -89,8 +89,8 @@ template<typename F> static RefPtr<CSSValue> consumeAlignmentOverflowPosition(CS
         range = copy;
         range.consumeIncludingWhitespace();
         return CSSValuePair::create(
-            CSSPrimitiveValue::create(overflowSafety),
-            CSSPrimitiveValue::create(position)
+            CSSKeywordValue::create(overflowSafety),
+            CSSKeywordValue::create(position)
         );
     }
     return nullptr;
@@ -103,39 +103,39 @@ RefPtr<CSSValue> consumeAlignContent(CSSParserTokenRange& range, CSS::PropertyPa
 
     switch (auto initial = range.peek().id(); initial) {
     // normal
-    case CSSValueNormal:
+    case CSSValueID::Normal:
     // <content-distribution>
-    case CSSValueSpaceBetween:
-    case CSSValueSpaceAround:
-    case CSSValueSpaceEvenly:
-    case CSSValueStretch:
+    case CSSValueID::SpaceBetween:
+    case CSSValueID::SpaceAround:
+    case CSSValueID::SpaceEvenly:
+    case CSSValueID::Stretch:
     // <content-position>
-    case CSSValueStart:
-    case CSSValueEnd:
-    case CSSValueCenter:
-    case CSSValueFlexStart:
-    case CSSValueFlexEnd:
+    case CSSValueID::Start:
+    case CSSValueID::End:
+    case CSSValueID::Center:
+    case CSSValueID::FlexStart:
+    case CSSValueID::FlexEnd:
         range.consumeIncludingWhitespace();
-        return CSSPrimitiveValue::create(initial);
+        return CSSKeywordValue::create(initial);
 
     // <baseline-position>
-    case CSSValueFirst:
+    case CSSValueID::First:
         return consumeAlignmentFirstBaseline(range, state);
-    case CSSValueLast:
+    case CSSValueID::Last:
         return consumeAlignmentLastBaseline(range, state);
-    case CSSValueBaseline:
+    case CSSValueID::Baseline:
         return consumeAlignmentBaseline(range, state);
 
     // <overflow-position>? <content-position>
-    case CSSValueUnsafe:
-    case CSSValueSafe:
+    case CSSValueID::Unsafe:
+    case CSSValueID::Safe:
         return consumeAlignmentOverflowPosition(range, state, initial, [](auto second) {
             switch (second) {
-            case CSSValueStart:
-            case CSSValueEnd:
-            case CSSValueCenter:
-            case CSSValueFlexStart:
-            case CSSValueFlexEnd:
+            case CSSValueID::Start:
+            case CSSValueID::End:
+            case CSSValueID::Center:
+            case CSSValueID::FlexStart:
+            case CSSValueID::FlexEnd:
                 return true;
             default:
                 return false;
@@ -154,35 +154,35 @@ RefPtr<CSSValue> consumeJustifyContent(CSSParserTokenRange& range, CSS::Property
 
     switch (auto initial = range.peek().id(); initial) {
     // normal
-    case CSSValueNormal:
+    case CSSValueID::Normal:
     // <content-distribution>
-    case CSSValueSpaceBetween:
-    case CSSValueSpaceAround:
-    case CSSValueSpaceEvenly:
-    case CSSValueStretch:
+    case CSSValueID::SpaceBetween:
+    case CSSValueID::SpaceAround:
+    case CSSValueID::SpaceEvenly:
+    case CSSValueID::Stretch:
     // [ <content-position> | left | right ]
-    case CSSValueStart:
-    case CSSValueEnd:
-    case CSSValueCenter:
-    case CSSValueFlexStart:
-    case CSSValueFlexEnd:
-    case CSSValueLeft:
-    case CSSValueRight:
+    case CSSValueID::Start:
+    case CSSValueID::End:
+    case CSSValueID::Center:
+    case CSSValueID::FlexStart:
+    case CSSValueID::FlexEnd:
+    case CSSValueID::Left:
+    case CSSValueID::Right:
         range.consumeIncludingWhitespace();
-        return CSSPrimitiveValue::create(initial);
+        return CSSKeywordValue::create(initial);
 
     // <overflow-position>? [ <content-position> | left | right ]
-    case CSSValueUnsafe:
-    case CSSValueSafe:
+    case CSSValueID::Unsafe:
+    case CSSValueID::Safe:
         return consumeAlignmentOverflowPosition(range, state, initial, [](auto second) {
             switch (second) {
-            case CSSValueStart:
-            case CSSValueEnd:
-            case CSSValueCenter:
-            case CSSValueFlexStart:
-            case CSSValueFlexEnd:
-            case CSSValueLeft:
-            case CSSValueRight:
+            case CSSValueID::Start:
+            case CSSValueID::End:
+            case CSSValueID::Center:
+            case CSSValueID::FlexStart:
+            case CSSValueID::FlexEnd:
+            case CSSValueID::Left:
+            case CSSValueID::Right:
                 return true;
             default:
                 return false;
@@ -196,58 +196,53 @@ RefPtr<CSSValue> consumeJustifyContent(CSSParserTokenRange& range, CSS::Property
 
 RefPtr<CSSValue> consumeAlignSelf(CSSParserTokenRange& range, CSS::PropertyParserState& state)
 {
-    // <'align-self'> = auto | normal | stretch | <baseline-position> | <overflow-position>? <self-position>
+    // <'align-self'> = auto | <overflow-position>? normal | stretch | <baseline-position> | <overflow-position>? <self-position>
     // https://drafts.csswg.org/css-align/#propdef-align-self
 
     switch (auto initial = range.peek().id(); initial) {
     // auto
-    case CSSValueAuto:
+    case CSSValueID::Auto:
     // normal
-    case CSSValueNormal:
+    case CSSValueID::Normal:
     // stretch
-    case CSSValueStretch:
+    case CSSValueID::Stretch:
         range.consumeIncludingWhitespace();
-        return CSSPrimitiveValue::create(initial);
+        return CSSKeywordValue::create(initial);
 
     // <self-position>
-    case CSSValueAnchorCenter:
-        if (!state.context.propertySettings.cssAnchorPositioningEnabled)
-            return nullptr;
-        [[fallthrough]];
-    case CSSValueStart:
-    case CSSValueEnd:
-    case CSSValueCenter:
-    case CSSValueSelfStart:
-    case CSSValueSelfEnd:
-    case CSSValueFlexStart:
-    case CSSValueFlexEnd:
+    case CSSValueID::AnchorCenter:
+    case CSSValueID::Start:
+    case CSSValueID::End:
+    case CSSValueID::Center:
+    case CSSValueID::SelfStart:
+    case CSSValueID::SelfEnd:
+    case CSSValueID::FlexStart:
+    case CSSValueID::FlexEnd:
         range.consumeIncludingWhitespace();
-        return CSSPrimitiveValue::create(initial);
+        return CSSKeywordValue::create(initial);
 
     // <baseline-position>
-    case CSSValueFirst:
+    case CSSValueID::First:
         return consumeAlignmentFirstBaseline(range, state);
-    case CSSValueLast:
+    case CSSValueID::Last:
         return consumeAlignmentLastBaseline(range, state);
-    case CSSValueBaseline:
+    case CSSValueID::Baseline:
         return consumeAlignmentBaseline(range, state);
 
     // <overflow-position>? <self-position>
-    case CSSValueUnsafe:
-    case CSSValueSafe:
+    case CSSValueID::Unsafe:
+    case CSSValueID::Safe:
         return consumeAlignmentOverflowPosition(range, state, initial, [&](auto second) {
             switch (second) {
-            case CSSValueAnchorCenter:
-                if (!state.context.propertySettings.cssAnchorPositioningEnabled)
-                    return false;
-                [[fallthrough]];
-            case CSSValueStart:
-            case CSSValueEnd:
-            case CSSValueCenter:
-            case CSSValueSelfStart:
-            case CSSValueSelfEnd:
-            case CSSValueFlexStart:
-            case CSSValueFlexEnd:
+            case CSSValueID::Normal:
+            case CSSValueID::AnchorCenter:
+            case CSSValueID::Start:
+            case CSSValueID::End:
+            case CSSValueID::Center:
+            case CSSValueID::SelfStart:
+            case CSSValueID::SelfEnd:
+            case CSSValueID::FlexStart:
+            case CSSValueID::FlexEnd:
                 return true;
             default:
                 return false;
@@ -261,62 +256,57 @@ RefPtr<CSSValue> consumeAlignSelf(CSSParserTokenRange& range, CSS::PropertyParse
 
 RefPtr<CSSValue> consumeJustifySelf(CSSParserTokenRange& range, CSS::PropertyParserState& state)
 {
-    // <'justify-self'> = auto | normal | stretch | <baseline-position> | <overflow-position>? [ <self-position> | left | right ]
+    // <'justify-self'> = auto | <overflow-position>? normal | stretch | <baseline-position> | <overflow-position>? [ <self-position> | left | right ]
     // https://drafts.csswg.org/css-align/#propdef-justify-self
 
     switch (auto initial = range.peek().id(); initial) {
     // auto
-    case CSSValueAuto:
+    case CSSValueID::Auto:
     // normal
-    case CSSValueNormal:
+    case CSSValueID::Normal:
     // stretch
-    case CSSValueStretch:
+    case CSSValueID::Stretch:
         range.consumeIncludingWhitespace();
-        return CSSPrimitiveValue::create(initial);
+        return CSSKeywordValue::create(initial);
 
     // [ <self-position> | left | right ]
-    case CSSValueAnchorCenter:
-        if (!state.context.propertySettings.cssAnchorPositioningEnabled)
-            return nullptr;
-        [[fallthrough]];
-    case CSSValueStart:
-    case CSSValueEnd:
-    case CSSValueCenter:
-    case CSSValueSelfStart:
-    case CSSValueSelfEnd:
-    case CSSValueFlexStart:
-    case CSSValueFlexEnd:
-    case CSSValueLeft:
-    case CSSValueRight:
+    case CSSValueID::AnchorCenter:
+    case CSSValueID::Start:
+    case CSSValueID::End:
+    case CSSValueID::Center:
+    case CSSValueID::SelfStart:
+    case CSSValueID::SelfEnd:
+    case CSSValueID::FlexStart:
+    case CSSValueID::FlexEnd:
+    case CSSValueID::Left:
+    case CSSValueID::Right:
         range.consumeIncludingWhitespace();
-        return CSSPrimitiveValue::create(initial);
+        return CSSKeywordValue::create(initial);
 
     // <baseline-position>
-    case CSSValueFirst:
+    case CSSValueID::First:
         return consumeAlignmentFirstBaseline(range, state);
-    case CSSValueLast:
+    case CSSValueID::Last:
         return consumeAlignmentLastBaseline(range, state);
-    case CSSValueBaseline:
+    case CSSValueID::Baseline:
         return consumeAlignmentBaseline(range, state);
 
     // <overflow-position>? [ <self-position> | left | right ]
-    case CSSValueUnsafe:
-    case CSSValueSafe:
+    case CSSValueID::Unsafe:
+    case CSSValueID::Safe:
         return consumeAlignmentOverflowPosition(range, state, initial, [&](auto second) {
             switch (second) {
-            case CSSValueAnchorCenter:
-                if (!state.context.propertySettings.cssAnchorPositioningEnabled)
-                    return false;
-                [[fallthrough]];
-            case CSSValueStart:
-            case CSSValueEnd:
-            case CSSValueCenter:
-            case CSSValueSelfStart:
-            case CSSValueSelfEnd:
-            case CSSValueFlexStart:
-            case CSSValueFlexEnd:
-            case CSSValueLeft:
-            case CSSValueRight:
+            case CSSValueID::Normal:
+            case CSSValueID::AnchorCenter:
+            case CSSValueID::Start:
+            case CSSValueID::End:
+            case CSSValueID::Center:
+            case CSSValueID::SelfStart:
+            case CSSValueID::SelfEnd:
+            case CSSValueID::FlexStart:
+            case CSSValueID::FlexEnd:
+            case CSSValueID::Left:
+            case CSSValueID::Right:
                 return true;
             default:
                 return false;
@@ -330,56 +320,51 @@ RefPtr<CSSValue> consumeJustifySelf(CSSParserTokenRange& range, CSS::PropertyPar
 
 RefPtr<CSSValue> consumeAlignItems(CSSParserTokenRange& range, CSS::PropertyParserState& state)
 {
-    // <'align-items'> = normal | stretch | <baseline-position> | <overflow-position>? <self-position>
+    // <'align-items'> = <overflow-position>? normal | stretch | <baseline-position> | <overflow-position>? <self-position>
     // https://drafts.csswg.org/css-align/#propdef-align-items
 
     switch (auto initial = range.peek().id(); initial) {
     // normal
-    case CSSValueNormal:
+    case CSSValueID::Normal:
     // stretch
-    case CSSValueStretch:
+    case CSSValueID::Stretch:
         range.consumeIncludingWhitespace();
-        return CSSPrimitiveValue::create(initial);
+        return CSSKeywordValue::create(initial);
 
     // <self-position>
-    case CSSValueAnchorCenter:
-        if (!state.context.propertySettings.cssAnchorPositioningEnabled)
-            return nullptr;
-        [[fallthrough]];
-    case CSSValueStart:
-    case CSSValueEnd:
-    case CSSValueCenter:
-    case CSSValueSelfStart:
-    case CSSValueSelfEnd:
-    case CSSValueFlexStart:
-    case CSSValueFlexEnd:
+    case CSSValueID::AnchorCenter:
+    case CSSValueID::Start:
+    case CSSValueID::End:
+    case CSSValueID::Center:
+    case CSSValueID::SelfStart:
+    case CSSValueID::SelfEnd:
+    case CSSValueID::FlexStart:
+    case CSSValueID::FlexEnd:
         range.consumeIncludingWhitespace();
-        return CSSPrimitiveValue::create(initial);
+        return CSSKeywordValue::create(initial);
 
     // <baseline-position>
-    case CSSValueFirst:
+    case CSSValueID::First:
         return consumeAlignmentFirstBaseline(range, state);
-    case CSSValueLast:
+    case CSSValueID::Last:
         return consumeAlignmentLastBaseline(range, state);
-    case CSSValueBaseline:
+    case CSSValueID::Baseline:
         return consumeAlignmentBaseline(range, state);
 
     // <overflow-position>? <self-position>
-    case CSSValueUnsafe:
-    case CSSValueSafe:
+    case CSSValueID::Unsafe:
+    case CSSValueID::Safe:
         return consumeAlignmentOverflowPosition(range, state, initial, [&](auto second) {
             switch (second) {
-            case CSSValueAnchorCenter:
-                if (!state.context.propertySettings.cssAnchorPositioningEnabled)
-                    return false;
-                [[fallthrough]];
-            case CSSValueStart:
-            case CSSValueEnd:
-            case CSSValueCenter:
-            case CSSValueSelfStart:
-            case CSSValueSelfEnd:
-            case CSSValueFlexStart:
-            case CSSValueFlexEnd:
+            case CSSValueID::Normal:
+            case CSSValueID::AnchorCenter:
+            case CSSValueID::Start:
+            case CSSValueID::End:
+            case CSSValueID::Center:
+            case CSSValueID::SelfStart:
+            case CSSValueID::SelfEnd:
+            case CSSValueID::FlexStart:
+            case CSSValueID::FlexEnd:
                 return true;
             default:
                 return false;
@@ -393,57 +378,52 @@ RefPtr<CSSValue> consumeAlignItems(CSSParserTokenRange& range, CSS::PropertyPars
 
 RefPtr<CSSValue> consumeJustifyItems(CSSParserTokenRange& range, CSS::PropertyParserState& state)
 {
-    // <'justify-items'> = normal | stretch | <baseline-position> | <overflow-position>? [ <self-position> | left | right ] | legacy | legacy && [ left | right | center ]
+    // <'justify-items'> = <overflow-position>? normal | stretch | <baseline-position> | <overflow-position>? [ <self-position> | left | right ] | legacy | legacy && [ left | right | center ]
     // https://drafts.csswg.org/css-align/#propdef-justify-items
 
     switch (auto initial = range.peek().id(); initial) {
     // normal
-    case CSSValueNormal:
+    case CSSValueID::Normal:
     // stretch
-    case CSSValueStretch:
+    case CSSValueID::Stretch:
         range.consumeIncludingWhitespace();
-        return CSSPrimitiveValue::create(initial);
+        return CSSKeywordValue::create(initial);
 
     // [ <self-position> | left | right ] - NOTE: `left`, `right`, and `center` handled further below to account for additional `legacy` keyword.
-    case CSSValueAnchorCenter:
-        if (!state.context.propertySettings.cssAnchorPositioningEnabled)
-            return nullptr;
-        [[fallthrough]];
-    case CSSValueStart:
-    case CSSValueEnd:
-    case CSSValueSelfStart:
-    case CSSValueSelfEnd:
-    case CSSValueFlexStart:
-    case CSSValueFlexEnd:
+    case CSSValueID::AnchorCenter:
+    case CSSValueID::Start:
+    case CSSValueID::End:
+    case CSSValueID::SelfStart:
+    case CSSValueID::SelfEnd:
+    case CSSValueID::FlexStart:
+    case CSSValueID::FlexEnd:
         range.consumeIncludingWhitespace();
-        return CSSPrimitiveValue::create(initial);
+        return CSSKeywordValue::create(initial);
 
     // <baseline-position>
-    case CSSValueFirst:
+    case CSSValueID::First:
         return consumeAlignmentFirstBaseline(range, state);
-    case CSSValueLast:
+    case CSSValueID::Last:
         return consumeAlignmentLastBaseline(range, state);
-    case CSSValueBaseline:
+    case CSSValueID::Baseline:
         return consumeAlignmentBaseline(range, state);
 
     // <overflow-position>? [ <self-position> | left | right ]
-    case CSSValueUnsafe:
-    case CSSValueSafe:
+    case CSSValueID::Unsafe:
+    case CSSValueID::Safe:
         return consumeAlignmentOverflowPosition(range, state, initial, [&](auto second) {
             switch (second) {
-            case CSSValueAnchorCenter:
-                if (!state.context.propertySettings.cssAnchorPositioningEnabled)
-                    return false;
-                [[fallthrough]];
-            case CSSValueStart:
-            case CSSValueEnd:
-            case CSSValueCenter:
-            case CSSValueSelfStart:
-            case CSSValueSelfEnd:
-            case CSSValueFlexStart:
-            case CSSValueFlexEnd:
-            case CSSValueLeft:
-            case CSSValueRight:
+            case CSSValueID::Normal:
+            case CSSValueID::AnchorCenter:
+            case CSSValueID::Start:
+            case CSSValueID::End:
+            case CSSValueID::Center:
+            case CSSValueID::SelfStart:
+            case CSSValueID::SelfEnd:
+            case CSSValueID::FlexStart:
+            case CSSValueID::FlexEnd:
+            case CSSValueID::Left:
+            case CSSValueID::Right:
                 return true;
             default:
                 return false;
@@ -451,37 +431,37 @@ RefPtr<CSSValue> consumeJustifyItems(CSSParserTokenRange& range, CSS::PropertyPa
         });
 
     // legacy | legacy && [ left | right | center ]
-    case CSSValueLegacy: {
+    case CSSValueID::Legacy: {
         range.consumeIncludingWhitespace();
 
         switch (auto second = range.peek().id(); second) {
-        case CSSValueLeft:
-        case CSSValueRight:
-        case CSSValueCenter:
+        case CSSValueID::Left:
+        case CSSValueID::Right:
+        case CSSValueID::Center:
             range.consumeIncludingWhitespace();
             return CSSValuePair::create(
-                CSSPrimitiveValue::create(initial),
-                CSSPrimitiveValue::create(second)
+                CSSKeywordValue::create(initial),
+                CSSKeywordValue::create(second)
             );
         default:
-            return CSSPrimitiveValue::create(initial);
+            return CSSKeywordValue::create(initial);
         }
     }
-    case CSSValueCenter:
-    case CSSValueLeft:
-    case CSSValueRight: {
+    case CSSValueID::Center:
+    case CSSValueID::Left:
+    case CSSValueID::Right: {
         range.consumeIncludingWhitespace();
 
         switch (auto second = range.peek().id(); second) {
-        case CSSValueLegacy:
+        case CSSValueID::Legacy:
             range.consumeIncludingWhitespace();
             // NOTE: Order is flipped to canonicalize to 'legacy *foo*' for serialization.
             return CSSValuePair::create(
-                CSSPrimitiveValue::create(second),
-                CSSPrimitiveValue::create(initial)
+                CSSKeywordValue::create(second),
+                CSSKeywordValue::create(initial)
             );
         default:
-            return CSSPrimitiveValue::create(initial);
+            return CSSKeywordValue::create(initial);
         }
     }
     default:

@@ -37,6 +37,7 @@
 #include "SVGFilterElement.h"
 #include "SVGFilterPrimitiveStandardAttributes.h"
 #include "SVGNames.h"
+#include "SVGParserUtilities.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -44,7 +45,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGFELightElement);
 
 SVGFELightElement::SVGFELightElement(const QualifiedName& tagName, Document& document)
-    : SVGElement(tagName, document, makeUniqueRef<PropertyRegistry>(*this))
+    : SVGElement(tagName, document, PropertyRegistry::singleton())
 {
     static bool didRegistration = false;
     if (!didRegistration) [[unlikely]] {
@@ -57,15 +58,15 @@ SVGFELightElement::SVGFELightElement(const QualifiedName& tagName, Document& doc
         PropertyRegistry::registerProperty<SVGNames::pointsAtXAttr, &SVGFELightElement::m_pointsAtX>();
         PropertyRegistry::registerProperty<SVGNames::pointsAtYAttr, &SVGFELightElement::m_pointsAtY>();
         PropertyRegistry::registerProperty<SVGNames::pointsAtZAttr, &SVGFELightElement::m_pointsAtZ>();
-        PropertyRegistry::registerProperty<SVGNames::specularExponentAttr, &SVGFELightElement::m_specularExponent>();
+        PropertyRegistry::registerProperty<SVGNames::specularExponentAttr, &SVGFELightElement::m_specularExponent>(initialSpecularExponentValue);
         PropertyRegistry::registerProperty<SVGNames::limitingConeAngleAttr, &SVGFELightElement::m_limitingConeAngle>();
     }
 }
 
 SVGFELightElement* SVGFELightElement::findLightElement(const SVGElement* svgElement)
 {
-    for (Ref child : childrenOfType<SVGElement>(*svgElement)) {
-        if (auto* element = dynamicDowncast<SVGFELightElement>(child.get()))
+    for (auto& child : childrenOfType<SVGElement>(*svgElement)) {
+        if (auto* element = dynamicDowncast<SVGFELightElement>(child))
             return const_cast<SVGFELightElement*>(element);
     }
     return nullptr;
@@ -75,34 +76,34 @@ void SVGFELightElement::attributeChanged(const QualifiedName& name, const AtomSt
 {
     switch (name.nodeName()) {
     case AttributeNames::azimuthAttr:
-        Ref { m_azimuth }->setBaseValInternal(newValue.toFloat());
+        m_azimuth->setBaseValInternal(parseNumber(newValue));
         break;
     case AttributeNames::elevationAttr:
-        Ref { m_elevation }->setBaseValInternal(newValue.toFloat());
+        m_elevation->setBaseValInternal(parseNumber(newValue));
         break;
     case AttributeNames::xAttr:
-        Ref { m_x }->setBaseValInternal(newValue.toFloat());
+        m_x->setBaseValInternal(parseNumber(newValue));
         break;
     case AttributeNames::yAttr:
-        Ref { m_y }->setBaseValInternal(newValue.toFloat());
+        m_y->setBaseValInternal(parseNumber(newValue));
         break;
     case AttributeNames::zAttr:
-        Ref { m_z }->setBaseValInternal(newValue.toFloat());
+        m_z->setBaseValInternal(parseNumber(newValue));
         break;
     case AttributeNames::pointsAtXAttr:
-        Ref { m_pointsAtX }->setBaseValInternal(newValue.toFloat());
+        m_pointsAtX->setBaseValInternal(parseNumber(newValue));
         break;
     case AttributeNames::pointsAtYAttr:
-        Ref { m_pointsAtY }->setBaseValInternal(newValue.toFloat());
+        m_pointsAtY->setBaseValInternal(parseNumber(newValue));
         break;
     case AttributeNames::pointsAtZAttr:
-        Ref { m_pointsAtZ }->setBaseValInternal(newValue.toFloat());
+        m_pointsAtZ->setBaseValInternal(parseNumber(newValue));
         break;
     case AttributeNames::specularExponentAttr:
-        Ref { m_specularExponent }->setBaseValInternal(newValue.toFloat());
+        m_specularExponent->setBaseValInternal(parseNumber(newValue));
         break;
     case AttributeNames::limitingConeAngleAttr:
-        Ref { m_limitingConeAngle }->setBaseValInternal(newValue.toFloat());
+        m_limitingConeAngle->setBaseValInternal(parseNumber(newValue));
         break;
     default:
         break;

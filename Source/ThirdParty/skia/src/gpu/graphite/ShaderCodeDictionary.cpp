@@ -9,13 +9,13 @@
 
 #include "include/core/SkTileMode.h"
 #include "include/effects/SkRuntimeEffect.h"
+#include "include/private/SkLog.h"
 #include "src/core/SkColorSpaceXformSteps.h"
+#include "src/core/SkMeshPriv.h"
 #include "src/core/SkRuntimeEffectPriv.h"
 #include "src/gpu/BlendFormula.h"
 #include "src/gpu/graphite/Caps.h"
 #include "src/gpu/graphite/ContextUtils.h"
-#include "src/gpu/graphite/Log.h"
-#include "src/gpu/graphite/ReadSwizzle.h"
 #include "src/gpu/graphite/Renderer.h"
 #include "src/gpu/graphite/RuntimeEffectDictionary.h"
 #include "src/gpu/graphite/ShaderInfo.h"
@@ -35,9 +35,9 @@ namespace {
 
 const char* get_known_rte_name(StableKey key) {
     switch (key) {
-#define M(type) case StableKey::k##type : return "KnownRuntimeEffect_" #type;
+#define M(type) case StableKey::k##type : return "$" #type;
 #define M1(type)
-#define M2(type, initializer) case StableKey::k##type : return "KnownRuntimeEffect_" #type;
+#define M2(type, initializer) case StableKey::k##type : return "$" #type;
         SK_ALL_STABLEKEYS(M, M1, M2)
 #undef M2
 #undef M1
@@ -147,9 +147,9 @@ void append_uniforms(TArray<std::string>* list,
         list->push_back(get_mangled_sampler_name(entry->fTexturesAndSamplers[i], node->keyIndex()));
     }
 
-    // Append gradient buffer.
-    if (node->requiredFlags() & SnippetRequirementFlags::kGradientBuffer) {
-        list->push_back(ShaderInfo::kGradientBufferName);
+    // Append storage buffer.
+    if (node->requiredFlags() & SnippetRequirementFlags::kStorageBuffer) {
+        list->push_back(ShaderInfo::kStorageBufferName);
     }
 
     // Append child output names.
@@ -519,6 +519,52 @@ std::string GenerateComposePreamble(const ShaderInfo& shaderInfo, const ShaderNo
     return SkSL::String::printf("%s { return %s; }", decl.c_str(), invokeOuter.c_str());
 }
 
+#if defined(SK_DEBUG)
+// The toLinearSRGB and fromLinearSRGB RTE built-ins should only be colorspace transform functions.
+// This recurses the node to make sure it contains only Compose, Passthrough, or CSXform blocks.
+void validate_linearsrgb_node(const ShaderNode* node) {
+    if (node->codeSnippetId() == (int) BuiltInCodeSnippetID::kCompose) {
+        for (const ShaderNode* child : node->children()) {
+            validate_linearsrgb_node(child);
+        }
+    } else {
+        SkASSERT(node->numChildren() == 0);
+        SkASSERT(node->codeSnippetId() < kBuiltInCodeSnippetIDCount);
+        switch ((BuiltInCodeSnippetID) node->codeSnippetId()) {
+            case BuiltInCodeSnippetID::kPriorOutput:
+            case BuiltInCodeSnippetID::kCSXform_sRGB:
+            case BuiltInCodeSnippetID::kCSXform_PQ:
+            case BuiltInCodeSnippetID::kCSXform_HLG:
+            case BuiltInCodeSnippetID::kCSXform_HLGInv:
+            case BuiltInCodeSnippetID::kCSXform_Gamut:
+                // Valid stage
+                break;
+
+            // The to/fromLinearSRGB builtins trigger CSXform specialization, so we shouldn't be
+            // seeding these generic stage blocks.
+            case BuiltInCodeSnippetID::kCSXform_PreAlpha:
+            case BuiltInCodeSnippetID::kCSXform_PostAlpha:
+                SkASSERT(false);
+                break;
+
+            // The to/fromLinearSRGB builtins have kOpaque alpha type, so since they are specialized
+            // there shouldn't be any alpha stage blocks at all.
+            case BuiltInCodeSnippetID::kCSXform_AlphaOnly:
+            case BuiltInCodeSnippetID::kCSXform_ForceOpaque:
+            case BuiltInCodeSnippetID::kCSXform_Unpremul:
+            case BuiltInCodeSnippetID::kCSXform_Premul:
+                SkASSERT(false);
+                break;
+
+            // Anything else is invalid
+            default:
+                SkASSERT(false);
+                break;
+        }
+    }
+}
+#endif
+
 //--------------------------------------------------------------------------------------------------
 class GraphitePipelineCallbacks : public SkSL::PipelineStage::Callbacks {
 public:
@@ -591,12 +637,7 @@ public:
         // conversion *to* linear srgb is the second-to-last child node, and the conversion *from*
         // linear srgb is the last child node.)
         const ShaderNode* toLinearSrgbNode = fNode->child(fNode->numChildren() - 2);
-        SkASSERT(toLinearSrgbNode->codeSnippetId() ==
-                         (int)BuiltInCodeSnippetID::kColorSpaceXformColorFilter ||
-                 toLinearSrgbNode->codeSnippetId() ==
-                         (int)BuiltInCodeSnippetID::kColorSpaceXformPremul ||
-                 toLinearSrgbNode->codeSnippetId() ==
-                         (int)BuiltInCodeSnippetID::kColorSpaceXformSRGB);
+        SkDEBUGCODE(validate_linearsrgb_node(toLinearSrgbNode));
 
         ShaderSnippet::Args args = ShaderSnippet::kDefaultArgs;
         args.fPriorStageOutput = SkSL::String::printf("(%s).rgb1", color.c_str());
@@ -612,12 +653,7 @@ public:
         // conversion *to* linear srgb is the second-to-last child node, and the conversion *from*
         // linear srgb is the last child node.
         const ShaderNode* fromLinearSrgbNode = fNode->child(fNode->numChildren() - 1);
-        SkASSERT(fromLinearSrgbNode->codeSnippetId() ==
-                         (int)BuiltInCodeSnippetID::kColorSpaceXformColorFilter ||
-                 fromLinearSrgbNode->codeSnippetId() ==
-                         (int)BuiltInCodeSnippetID::kColorSpaceXformPremul ||
-                 fromLinearSrgbNode->codeSnippetId() ==
-                         (int)BuiltInCodeSnippetID::kColorSpaceXformSRGB);
+        SkDEBUGCODE(validate_linearsrgb_node(fromLinearSrgbNode));
 
         ShaderSnippet::Args args = ShaderSnippet::kDefaultArgs;
         args.fPriorStageOutput = SkSL::String::printf("(%s).rgb1", color.c_str());
@@ -635,6 +671,10 @@ private:
     std::string* fPreamble;
     SkDEBUGCODE(const SkRuntimeEffect* fEffect;)
 };
+
+std::string NoopPreamble(const ShaderInfo& shaderInfo, const ShaderNode* node) {
+    return "";
+}
 
 std::string GenerateRuntimeShaderPreamble(const ShaderInfo& shaderInfo,
                                           const ShaderNode* node) {
@@ -864,6 +904,52 @@ int ShaderCodeDictionary::findOrCreateRuntimeEffectSnippet(const SkRuntimeEffect
     return newCodeSnippetID;
 }
 
+int ShaderCodeDictionary::findOrCreateMeshSnippet(const SkMeshSpecification* spec) {
+    SkAutoSpinlock lock{fSpinLock};
+
+    // Use the combination of SkMeshSpecification hash, attribute stride, and uniform stride
+    // as our key. In the event of a hash collision, due to differing shader code, color space, or
+    // alpha type, we will still have the correct uniform size and attribute stride to prevent
+    // unexpected memory sizes for allocated buffers.
+    MeshSpecKey key;
+    key.fHash = SkMeshSpecificationPriv::Hash(*spec);
+    key.fAttributeStride = static_cast<uint32_t>(spec->stride());
+    key.fUniformSize = static_cast<uint32_t>(spec->uniformSize());
+
+    int32_t* existingCodeSnippetID = fMeshMap.find(key);
+    if (existingCodeSnippetID) {
+        return *existingCodeSnippetID;
+    }
+
+    ShaderSnippet snippet = this->convertMeshShader(spec);
+    fUserDefinedCodeSnippets.push_back(std::move(snippet));
+    int newCodeSnippetID = kUnknownRuntimeEffectIDStart + fUserDefinedCodeSnippets.size() - 1;
+
+    fMeshMap.set(key, newCodeSnippetID);
+    return newCodeSnippetID;
+}
+
+ShaderSnippet ShaderCodeDictionary::convertMeshShader(const SkMeshSpecification* spec) {
+    int numChildren = SkTo<int>(spec->children().size());
+
+     // We emit uniforms for mesh geometry manually at the end of the uniform list where
+     // RenderStep uniforms would normally be written. This allows the MeshRenderStep to
+     // be responsible for writing the uniform data, since it is where render step
+     // uniforms normally reside.
+     //
+     // We also provide a Noop preamble so any children runtime effects that the user's
+     // fragment main function relies on are emitted before we emit their main function.
+     // Then after emitting all other preambles, we emit the user's main function at the
+     // very end since only the MeshRenderStep relies on it.
+    return ShaderSnippet("MeshShader",
+                         /*staticFn=*/nullptr,
+                         SnippetRequirementFlags::kNone,
+                         /*uniforms=*/{},
+                         /*texturesAndSamplers=*/{},
+                         NoopPreamble,
+                         numChildren);
+}
+
 void ShaderCodeDictionary::registerUserDefinedKnownRuntimeEffects(
         SkSpan<sk_sp<SkRuntimeEffect>> userDefinedKnownRuntimeEffects) {
     // This is a formality to guard 'fRuntimeEffectMap'. This method should only be called by
@@ -876,7 +962,7 @@ void ShaderCodeDictionary::registerUserDefinedKnownRuntimeEffects(
         }
 
         if (fUserDefinedKnownCodeSnippets.size() >= kUserDefinedKnownRuntimeEffectsReservedCnt) {
-            SKGPU_LOG_W("Too many user-defined known runtime effects. Only %d out of %zu "
+            SKIA_LOG_W("Too many user-defined known runtime effects. Only %d out of %zu "
                         "will be known.\n",
                         kUserDefinedKnownRuntimeEffectsReservedCnt,
                         userDefinedKnownRuntimeEffects.size());
@@ -1016,7 +1102,7 @@ ShaderCodeDictionary::ShaderCodeDictionary(
     fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kLinearGradientShaderBuffer] = {
             /*name=*/"LinearGradientBuffer",
             /*staticFn=*/"sk_linear_grad_buf_shader",
-            SnippetRequirementFlags::kLocalCoords | SnippetRequirementFlags::kGradientBuffer,
+            SnippetRequirementFlags::kLocalCoords | SnippetRequirementFlags::kStorageBuffer,
             /*uniforms=*/{{{ "numStops",     SkSLType::kInt },
                            { "bufferOffset", SkSLType::kInt },
                            { "tilemode",     SkSLType::kInt },
@@ -1056,7 +1142,7 @@ ShaderCodeDictionary::ShaderCodeDictionary(
     fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kRadialGradientShaderBuffer] = {
             /*name=*/"RadialGradientBuffer",
             /*staticFn=*/"sk_radial_grad_buf_shader",
-            SnippetRequirementFlags::kLocalCoords | SnippetRequirementFlags::kGradientBuffer,
+            SnippetRequirementFlags::kLocalCoords | SnippetRequirementFlags::kStorageBuffer,
             /*uniforms=*/{{{ "numStops",     SkSLType::kInt },
                            { "bufferOffset", SkSLType::kInt },
                            { "tilemode",     SkSLType::kInt },
@@ -1102,7 +1188,7 @@ ShaderCodeDictionary::ShaderCodeDictionary(
     fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kSweepGradientShaderBuffer] = {
             /*name=*/"SweepGradientBuffer",
             /*staticFn=*/"sk_sweep_grad_buf_shader",
-            SnippetRequirementFlags::kLocalCoords | SnippetRequirementFlags::kGradientBuffer,
+            SnippetRequirementFlags::kLocalCoords | SnippetRequirementFlags::kStorageBuffer,
             /*uniforms=*/{{{ "bias",         SkSLType::kFloat },
                            { "scale",        SkSLType::kFloat },
                            { "numStops",     SkSLType::kInt },
@@ -1156,7 +1242,7 @@ ShaderCodeDictionary::ShaderCodeDictionary(
     fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kConicalGradientShaderBuffer] = {
             /*name=*/"ConicalGradientBuffer",
             /*staticFn=*/"sk_conical_grad_buf_shader",
-            SnippetRequirementFlags::kLocalCoords | SnippetRequirementFlags::kGradientBuffer,
+            SnippetRequirementFlags::kLocalCoords | SnippetRequirementFlags::kStorageBuffer,
             /*uniforms=*/{{{ "radius0",      SkSLType::kFloat },
                            { "dRadius",      SkSLType::kFloat },
                            { "a",            SkSLType::kFloat },
@@ -1384,34 +1470,84 @@ ShaderCodeDictionary::ShaderCodeDictionary(
             SnippetRequirementFlags::kPriorStageOutput,
             /*uniforms=*/{}
     };
-    fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kColorSpaceXformColorFilter] = {
-            /*name=*/"ColorSpaceTransform",
-            /*staticFn=*/"sk_color_space_transform",
+
+    // Initial CS alpha stages
+    fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kCSXform_AlphaOnly] = {
+            /*name=*/"AlphaOnly",
+            /*staticFn=*/"sk_csxform_alphaonly",
             SnippetRequirementFlags::kPriorStageOutput,
-            /*uniforms=*/{{{ "gamut",        SkSLType::kHalf3x3 },
-                           { "srcGABC",      SkSLType::kFloat4 },
-                           { "srcDEF_args",  SkSLType::kFloat4 },
-                           { "dstGABC",      SkSLType::kFloat4 },
-                           { "dstDEF_args",  SkSLType::kFloat4 },
-                           { "srcOOTF_args", SkSLType::kFloat4 },
-                           { "dstOOTF_args", SkSLType::kFloat4 }}}
+            /*uniforms=*/{{{ "mode", SkSLType::kHalf }}}
+    };
+    fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kCSXform_PreAlpha] = {
+            /*name=*/"PreAlpha",
+            /*staticFn=*/"sk_csxform_prealpha",
+            SnippetRequirementFlags::kPriorStageOutput,
+            /*uniforms=*/{{{ "mode", SkSLType::kHalf }}}
+    };
+    fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kCSXform_Unpremul] = {
+            /*name=*/"Unpremul",
+            /*staticFn=*/"unpremul",
+            SnippetRequirementFlags::kPriorStageOutput,
+            /*uniforms=*/{}
+    };
+    fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kCSXform_ForceOpaque] = {
+            /*name=*/"ForceOpaque",
+            /*staticFn=*/"sk_rgb_opaque",
+            SnippetRequirementFlags::kPriorStageOutput,
+            /*uniforms=*/{}
     };
 
-    fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kColorSpaceXformPremul] = {
-            /*name=*/"ColorSpaceTransformPremul",
-            /*staticFn=*/"sk_color_space_transform_premul",
+    // Transfer functions
+    fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kCSXform_sRGB] = {
+            /*name=*/"sRGB",
+            /*staticFn=*/"sk_csxform_srgb",
             SnippetRequirementFlags::kPriorStageOutput,
-            /*uniforms=*/{{{ "args", SkSLType::kHalf2 }}}
+            /*uniforms=*/{{{ "gabc", SkSLType::kFloat4 },
+                           { "def",  SkSLType::kFloat3 }}}
     };
-    fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kColorSpaceXformSRGB] = {
-            /*name=*/"ColorSpaceTransformSRGB",
-            /*staticFn=*/"sk_color_space_transform_srgb",
+    fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kCSXform_PQ] = {
+            /*name=*/"PQ",
+            /*staticFn=*/"sk_csxform_pq",
             SnippetRequirementFlags::kPriorStageOutput,
-            /*uniforms=*/{{{ "gamut",       SkSLType::kHalf3x3 },
-                           { "srcGABC",     SkSLType::kFloat4 },
-                           { "srcDEF_args", SkSLType::kFloat4 },
-                           { "dstGABC",     SkSLType::kFloat4 },
-                           { "dstDEF_args", SkSLType::kFloat4 }}}
+            /*uniforms=*/{{{ "abc", SkSLType::kFloat3 },
+                           { "def", SkSLType::kFloat3 }}}
+    };
+    fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kCSXform_HLG] = {
+            /*name=*/"HLG",
+            /*staticFn=*/"sk_csxform_hlg",
+            SnippetRequirementFlags::kPriorStageOutput,
+            /*uniforms=*/{{{ "ootf", SkSLType::kFloat4 },
+                           { "abc",  SkSLType::kFloat3 },
+                           { "def",  SkSLType::kFloat3 }}}
+    };
+    fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kCSXform_HLGInv] = {
+            /*name=*/"HLG^-1",
+            /*staticFn=*/"sk_csxform_hlginv",
+            SnippetRequirementFlags::kPriorStageOutput,
+            /*uniforms=*/{{{ "ootf", SkSLType::kFloat4 },
+                           { "abc",  SkSLType::kFloat3 },
+                           { "def",  SkSLType::kFloat3 }}}
+    };
+
+    fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kCSXform_Gamut] = {
+            /*name=*/"Gamut",
+            /*staticFn=*/"sk_csxform_gamut",
+            SnippetRequirementFlags::kPriorStageOutput,
+            /*uniforms=*/{{{ "gamut", SkSLType::kHalf3x3 }}}
+    };
+
+    // Final CS alpha stages
+    fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kCSXform_PostAlpha] = {
+            /*name=*/"PostAlpha",
+            /*staticFn=*/"sk_csxform_postalpha",
+            SnippetRequirementFlags::kPriorStageOutput,
+            /*uniforms=*/{{{ "mode", SkSLType::kHalf }}}
+    };
+    fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kCSXform_Premul] = {
+            /*name=*/"Premul",
+            /*staticFn=*/"premul",
+            SnippetRequirementFlags::kPriorStageOutput,
+            /*uniforms=*/{}
     };
 
     fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kPrimitiveColor] = {
@@ -1421,9 +1557,10 @@ ShaderCodeDictionary::ShaderCodeDictionary(
             /*uniforms=*/{}
     };
 
+#if defined(SK_GRAPHITE_USE_LEGACY_RRECT_CLIP_SHADER)
     fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kAnalyticClip] = {
             /*name=*/"AnalyticClip",
-            /*staticFn=*/"sk_analytic_clip",
+            /*staticFn=*/"sk_analytic_clip_legacy",
             SnippetRequirementFlags::kLocalCoords,
             /*uniforms=*/{{{ "rect",           SkSLType::kFloat4 },
                            { "radiusPlusHalf", SkSLType::kFloat2 },
@@ -1432,7 +1569,7 @@ ShaderCodeDictionary::ShaderCodeDictionary(
 
     fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kAnalyticAndAtlasClip] = {
             /*name=*/"AnalyticAndAtlasClip",
-            /*staticFn=*/"sk_analytic_and_atlas_clip",
+            /*staticFn=*/"sk_analytic_and_atlas_clip_legacy",
             SnippetRequirementFlags::kLocalCoords,
             /*uniforms=*/{{{ "rect",           SkSLType::kFloat4 },
                            { "radiusPlusHalf", SkSLType::kFloat2 },
@@ -1442,6 +1579,29 @@ ShaderCodeDictionary::ShaderCodeDictionary(
                            { "invAtlasSize",   SkSLType::kFloat2 }}},
             /*texturesAndSamplers=*/{{"atlasSampler"}}
     };
+#else
+    fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kAnalyticClip] = {
+            /*name=*/"AnalyticClip",
+            /*staticFn=*/"sk_analytic_clip",
+            SnippetRequirementFlags::kLocalCoords,
+            /*uniforms=*/{{{ "xform",            SkSLType::kFloat4 },
+                           { "rect",             SkSLType::kFloat4 },
+                           { "radiiWithInverse", SkSLType::kFloat4 }}}
+    };
+
+    fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kAnalyticAndAtlasClip] = {
+            /*name=*/"AnalyticAndAtlasClip",
+            /*staticFn=*/"sk_analytic_and_atlas_clip",
+            SnippetRequirementFlags::kLocalCoords,
+            /*uniforms=*/{{{ "xform",            SkSLType::kFloat4 },
+                           { "rect",             SkSLType::kFloat4 },
+                           { "radiiWithInverse", SkSLType::kFloat4 },
+                           { "maskBounds",       SkSLType::kFloat4 },
+                           { "texCoordOffset",   SkSLType::kFloat2 },
+                           { "invAtlasSize",     SkSLType::kFloat2 }}},
+            /*texturesAndSamplers=*/{{"atlasSampler"}}
+    };
+#endif
 
     fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kCompose] = {
             /*name=*/"Compose",

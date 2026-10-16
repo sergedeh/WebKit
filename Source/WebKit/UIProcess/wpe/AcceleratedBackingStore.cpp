@@ -35,26 +35,22 @@
 #include <WebCore/ShareableBitmap.h>
 #include <wpe/wpe-platform.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/glib/GLibExtras.h>
+#include <wtf/glib/GSpanExtras.h>
 #include <wtf/glib/GUniquePtr.h>
 
 #if OS(ANDROID)
 #include <drm/drm_fourcc.h>
 #elif USE(LIBDRM)
 #include <drm_fourcc.h>
-#elif OS(ANDROID)
-#include <drm/drm_fourcc.h>
 #endif
 
-#if USE(SKIA)
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkColorSpace.h>
 #include <skia/core/SkPixmap.h>
 #include <skia/core/SkStream.h>
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // Skia port
 #include <skia/encode/SkPngEncoder.h>
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
-#endif
 
 namespace WebKit {
 
@@ -117,7 +113,7 @@ void AcceleratedBackingStore::updateSurfaceID(uint64_t surfaceID)
     m_surfaceID = surfaceID;
     if (m_surfaceID && m_webPage) {
         m_legacyMainFrameProcess = m_webPage->legacyMainFrameProcess();
-        Ref { *m_legacyMainFrameProcess }->addMessageReceiver(Messages::AcceleratedBackingStore::messageReceiverName(), m_surfaceID, *this);
+        protect(*m_legacyMainFrameProcess)->addMessageReceiver(Messages::AcceleratedBackingStore::messageReceiverName(), m_surfaceID, *this);
     }
 }
 
@@ -142,13 +138,13 @@ void AcceleratedBackingStore::notifyBufferConfigurationIfNeeded()
     wpe_view_buffers_changed(m_wpeView.get(), buffersSpan.data(), buffersSpan.size());
 }
 
-void AcceleratedBackingStore::didCreateDMABufBuffer(uint64_t id, const WebCore::IntSize& size, uint32_t format, Vector<WTF::UnixFileDescriptor>&& fds, Vector<uint32_t>&& offsets, Vector<uint32_t>&& strides, uint64_t modifier, RendererBufferFormat::Usage usage)
+void AcceleratedBackingStore::didCreateDMABufBuffer(uint64_t id, WebCore::DMABufBufferAttributes&& dmaBufAttributes, RendererBufferFormat::Usage usage)
 {
     Vector<int> fileDescriptors;
-    fileDescriptors.reserveInitialCapacity(fds.size());
-    for (auto& fd : fds)
+    fileDescriptors.reserveInitialCapacity(dmaBufAttributes.fds.size());
+    for (auto& fd : dmaBufAttributes.fds)
         fileDescriptors.append(fd.release());
-    GRefPtr<WPEBuffer> buffer = adoptGRef(WPE_BUFFER(wpe_buffer_dma_buf_new(wpe_view_get_display(m_wpeView.get()), size.width(), size.height(), format, fds.size(), fileDescriptors.mutableSpan().data(), offsets.mutableSpan().data(), strides.mutableSpan().data(), modifier)));
+    GRefPtr<WPEBuffer> buffer = adoptGRef(WPE_BUFFER(wpe_buffer_dma_buf_new(wpe_view_get_display(m_wpeView.get()), dmaBufAttributes.size.width(), dmaBufAttributes.size.height(), dmaBufAttributes.fourcc.value, dmaBufAttributes.fds.size(), fileDescriptors.mutableSpan().data(), dmaBufAttributes.offsets.mutableSpan().data(), dmaBufAttributes.strides.mutableSpan().data(), dmaBufAttributes.modifier)));
     g_object_set_data(G_OBJECT(buffer.get()), "wk-buffer-format-usage", GUINT_TO_POINTER(usage));
     m_bufferIDs.add(buffer.get(), id);
     m_buffers.add(id, WTF::move(buffer));
@@ -215,8 +211,7 @@ void AcceleratedBackingStore::frame(uint64_t bufferID, Rects&& damageRects, WTF:
         m_fenceMonitor.addFileDescriptor(WTF::move(renderingFenceFD));
 }
 
-#if USE(SKIA)
-static Expected<SkImageInfo, String> getImageInfoFromBuffer(const  GRefPtr<WPEBuffer>& buffer)
+static std::expected<SkImageInfo, String> getImageInfoFromBuffer(const  GRefPtr<WPEBuffer>& buffer)
 {
     auto width = wpe_buffer_get_width(buffer.get());
     auto height = wpe_buffer_get_height(buffer.get());
@@ -236,7 +231,7 @@ static Expected<SkImageInfo, String> getImageInfoFromBuffer(const  GRefPtr<WPEBu
     return makeUnexpected("Failed to extract snapshot pixel information"_s);
 }
 
-static Expected<Ref<ViewSnapshot>, String> saveBufferSnapshot(const GRefPtr<WPEBuffer>& buffer, std::optional<WebCore::IntRect>&& clipRect)
+static std::expected<Ref<ViewSnapshot>, String> saveBufferSnapshot(const GRefPtr<WPEBuffer>& buffer, std::optional<WebCore::IntRect>&& clipRect)
 {
     GUniqueOutPtr<GError> error;
     GBytes* pixels = wpe_buffer_import_to_pixels(buffer.get(), &error.outPtr());
@@ -246,9 +241,7 @@ static Expected<Ref<ViewSnapshot>, String> saveBufferSnapshot(const GRefPtr<WPEB
         return makeUnexpected("Failed to read current WPEBuffer for snapshot"_s);
     }
 
-    gsize pixelsDataSize;
-    const auto* pixelsData = g_bytes_get_data(pixels, &pixelsDataSize);
-    GRefPtr<GBytes> bytes = adoptGRef(g_bytes_new(pixelsData, pixelsDataSize));
+    GRefPtr bytes = gBytesNew(span(pixels));
 
     auto info = getImageInfoFromBuffer(buffer);
     if (!info)
@@ -275,15 +268,13 @@ static Expected<Ref<ViewSnapshot>, String> saveBufferSnapshot(const GRefPtr<WPEB
     return { ViewSnapshot::create(WTF::move(image)) };
 }
 
-Expected<Ref<ViewSnapshot>, String> AcceleratedBackingStore::takeSnapshot(std::optional<WebCore::IntRect>&& clipRect)
+std::expected<Ref<ViewSnapshot>, String> AcceleratedBackingStore::takeSnapshot(std::optional<WebCore::IntRect>&& clipRect)
 {
     if (!m_committedBuffer && !m_pendingBuffer) [[unlikely]]
         return makeUnexpected("No buffer to create snapshot from"_s);
 
     return saveBufferSnapshot(m_committedBuffer ? m_committedBuffer : m_pendingBuffer, WTF::move(clipRect));
 }
-
-#endif
 
 void AcceleratedBackingStore::renderPendingBuffer()
 {

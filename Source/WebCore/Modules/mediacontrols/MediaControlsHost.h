@@ -27,6 +27,7 @@
 
 #if ENABLE(VIDEO)
 
+#include "HTMLMediaElementEnums.h"
 #include "JSValueInWrappedObject.h"
 #include "MediaSession.h"
 #include <wtf/Ref.h>
@@ -40,6 +41,7 @@ class AudioTrack;
 class AudioTrackList;
 class ContextMenuItem;
 class DOMPromise;
+class DOMRect;
 class Element;
 class WeakPtrImplWithEventTargetData;
 class HTMLElement;
@@ -52,8 +54,6 @@ class VTTCue;
 class VoidCallback;
 
 struct MediaControlsContextMenuItem;
-
-enum class HTMLMediaElementSourceType : uint8_t;
 
 class MediaControlsHost final
     : public CanMakeWeakPtr<MediaControlsHost>
@@ -69,7 +69,7 @@ public:
     ~MediaControlsHost();
 
 #if ENABLE(MEDIA_SESSION)
-    WEBCORE_EXPORT void ref() const final;
+    WEBCORE_EXPORT void LEGACY_NODELETE ref() const final;
     WEBCORE_EXPORT void deref() const final;
 #else
     WEBCORE_EXPORT void ref() const;
@@ -88,7 +88,7 @@ public:
     Vector<Ref<TextTrack>> sortedTrackListForMenu(TextTrackList&);
     Vector<Ref<AudioTrack>> sortedTrackListForMenu(AudioTrackList&);
 
-    using TextOrAudioTrack = Variant<RefPtr<TextTrack>, RefPtr<AudioTrack>>;
+    using TextOrAudioTrack = Variant<Ref<TextTrack>, Ref<AudioTrack>>;
     String displayNameForTrack(const std::optional<TextOrAudioTrack>&);
 
     static TextTrack& captionMenuOffItem();
@@ -98,18 +98,23 @@ public:
     void setSelectedTextTrack(TextTrack*);
     Element* textTrackContainer();
     void updateTextTrackContainer();
-    TextTrackRepresentation* textTrackRepresentation() const;
+    TextTrackRepresentation* LEGACY_NODELETE textTrackRepresentation() const;
     bool allowsInlineMediaPlayback() const;
     bool supportsFullscreen() const;
-    bool isVideoLayerInline() const;
-    bool isInMediaDocument() const;
+    bool LEGACY_NODELETE isVideoLayerInline() const;
+    bool LEGACY_NODELETE isInMediaDocument() const;
     bool userGestureRequired() const;
     bool shouldForceControlsDisplay() const;
     bool supportsSeeking() const;
-    bool inWindowFullscreen() const;
+    bool LEGACY_NODELETE inWindowFullscreen() const;
     bool supportsRewind() const;
     bool needsChromeMediaControlsPseudoElement() const;
     bool isMediaControlsMacInlineSizeSpecsEnabled() const;
+    bool spatialVideoRenderingEnabled() const;
+    String spatialVideoProjectionKind() const;
+    std::optional<int32_t> spatialVideoHorizontalFieldOfView() const;
+    void spatialCameraDidMove(double yaw, double pitch, double fieldOfView);
+    bool LEGACY_NODELETE isAVExperienceControllerFullscreenEnabled() const;
 
     void captionPreferencesChanged();
     enum class ForceUpdate : bool { No, Yes };
@@ -120,11 +125,12 @@ public:
     void requiresTextTrackRepresentationChanged();
 
     String externalDeviceDisplayName() const;
+    String externalDeviceRouteName() const;
 
     enum class DeviceType { None, Airplay, Tvout };
     DeviceType externalDeviceType() const;
 
-    bool controlsDependOnPageScaleFactor() const;
+    bool LEGACY_NODELETE controlsDependOnPageScaleFactor() const;
     void setControlsDependOnPageScaleFactor(bool v);
 
     static String generateUUID();
@@ -134,6 +140,7 @@ public:
 
 #if ENABLE(MEDIA_CONTROLS_CONTEXT_MENUS)
     Vector<MediaControlsContextMenuItem> mediaControlsContextMenuItemsForBindings(String&& optionsJSONString);
+    Ref<DOMRect> mediaControlsContextMenuAnchorRectForBindings(HTMLElement&);
     bool showMediaControlsContextMenu(HTMLElement&, String&& optionsJSONString, Ref<VoidCallback>&&);
     void showCaptionDisplaySettingsPreview();
     void hideCaptionDisplaySettingsPreview();
@@ -148,12 +155,14 @@ public:
     void ensureMediaSessionObserver();
 #endif
 
-    const JSValueInWrappedObject& controllerWrapper() const { return m_controllerWrapper; }
-    JSValueInWrappedObject& controllerWrapper() { return m_controllerWrapper; }
+    const JSValueInWrappedObject& controllerWrapper() const LIFETIME_BOUND { return m_controllerWrapper; }
+    JSValueInWrappedObject& controllerWrapper() LIFETIME_BOUND { return m_controllerWrapper; }
 
 private:
     void savePreviouslySelectedTextTrackIfNecessary();
     void restorePreviouslySelectedTextTrackIfNecessary();
+    void handleCaptionVisibilityInFullscreenAndPictureInPictureQuirk();
+    bool needsCaptionVisibilityInFullscreenAndPictureInPictureQuirk() const;
 
     MediaControlTextTrackContainerElement* ensureTextTrackContainer();
 
@@ -192,10 +201,8 @@ private:
     std::pair<Vector<MenuItem>, MenuDataMap> mediaControlsContextMenuItems(String&& optionsJSONString);
 #endif
 
-    Ref<HTMLMediaElement> protectedMediaElement() const;
-
     WeakRef<HTMLMediaElement> m_mediaElement;
-    RefPtr<MediaControlTextTrackContainerElement> m_textTrackContainer;
+    const RefPtr<MediaControlTextTrackContainerElement> m_textTrackContainer;
     RefPtr<TextTrack> m_previouslySelectedTextTrack;
 
 #if ENABLE(MEDIA_CONTROLS_CONTEXT_MENUS)

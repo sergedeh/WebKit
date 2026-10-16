@@ -28,6 +28,7 @@
 #include <wtf/Platform.h>
 #if ENABLE(VIDEO)
 
+#include <wtf/HashMap.h>
 #include <wtf/RetainPtr.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/text/StringHash.h>
@@ -65,7 +66,7 @@ public:
     bool operator==(const SerializedPlatformDataCueValue&) const;
 #endif
 
-    const std::optional<Data>& data() const { return m_data; }
+    const std::optional<Data>& data() const LIFETIME_BOUND { return m_data; }
 private:
     std::optional<Data> m_data;
 };

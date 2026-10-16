@@ -27,6 +27,7 @@
 #include "LegacyRenderSVGShape.h"
 #include "NodeName.h"
 #include "RenderSVGShape.h"
+#include "SVGElementTypeHelpers.h"
 #include "SVGLengthValue.h"
 #include "SVGParsingError.h"
 #include "SVGPropertyOwnerRegistry.h"
@@ -37,7 +38,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGLineElement);
 
 inline SVGLineElement::SVGLineElement(const QualifiedName& tagName, Document& document)
-    : SVGGeometryElement(tagName, document, makeUniqueRef<PropertyRegistry>(*this))
+    : SVGGeometryElement(tagName, document, PropertyRegistry::singleton())
 {
     ASSERT(hasTagName(SVGNames::lineTag));
 
@@ -87,10 +88,10 @@ void SVGLineElement::svgAttributeChanged(const QualifiedName& attrName)
         InstanceInvalidationGuard guard(*this);
         updateRelativeLengthsInformation();
 
-        if (CheckedPtr shape = dynamicDowncast<RenderSVGShape>(renderer()))
+        if (auto* shape = dynamicDowncast<RenderSVGShape>(renderer()))
             shape->setNeedsShapeUpdate();
 
-        if (CheckedPtr shape = dynamicDowncast<LegacyRenderSVGShape>(renderer()))
+        if (auto* shape = dynamicDowncast<LegacyRenderSVGShape>(renderer()))
             shape->setNeedsShapeUpdate();
 
         updateSVGRendererForElementChange();

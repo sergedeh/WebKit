@@ -82,7 +82,7 @@ public:
     WEBCORE_EXPORT void resetState();
     WEBCORE_EXPORT void reset();
     WEBCORE_EXPORT void invalidate();
-    const webm::Status& status() const { return m_status; }
+    const webm::Status& status() const LIFETIME_BOUND { return m_status; }
 
     void provideMediaData(MediaSamplesBlock&&);
 
@@ -100,6 +100,7 @@ public:
         VariableFrameDuration,
         ReaderFailed,
         ParserShutdown,
+        NonMonotonicTimecode,
     };
 
     enum class State : uint8_t {
@@ -146,7 +147,7 @@ public:
         virtual ~TrackData() = default;
 
         CodecType codec() const { return m_codec; }
-        webm::TrackEntry& track() { return m_track; }
+        webm::TrackEntry& track() LIFETIME_BOUND { return m_track; }
         TrackInfo::TrackType trackType() const { return m_trackType; }
 
         RefPtr<TrackInfo> formatDescription() const { return m_formatDescription.copyRef(); }
@@ -166,6 +167,19 @@ public:
         }
 
         virtual void consumeAdditionalBlockData(const webm::BlockAdditions&) { }
+
+        // Tracks the highest absolute timecode seen in the current cluster. Equal timecodes are
+        // allowed: frames sharing a presentation time are to be decoded but not displayed.
+        // Returns false if the timecode goes backwards.
+        bool updateLastAbsoluteTimecode(const MediaTime& presentationTime)
+        {
+            if (m_lastAbsoluteTimecode && presentationTime < *m_lastAbsoluteTimecode)
+                return false;
+            m_lastAbsoluteTimecode = presentationTime;
+            return true;
+        }
+
+        void resetLastAbsoluteTimecode() { m_lastAbsoluteTimecode.reset(); }
 
         virtual void resetCompletedFramesState()
         {
@@ -193,7 +207,7 @@ public:
     protected:
         RefPtr<SharedBuffer> contiguousCompleteBlockBuffer(size_t offset, size_t length) const;
         webm::Status readFrameData(webm::Reader&, const webm::FrameMetadata&, uint64_t* bytesRemaining);
-        WTFLogChannel& logChannel() const { return m_parser.logChannel(); }
+        WTFLogChannel& logChannel() const LIFETIME_BOUND { return m_parser.logChannel(); }
         MediaSamplesBlock m_processedMediaSamples;
         MediaSamplesBlock::MediaSampleDataType m_completeFrameData;
         RefPtr<TrackInfo> m_trackInfo;
@@ -209,6 +223,7 @@ public:
         std::optional<size_t> m_completePacketSize;
         // Size of the currently incomplete parsed packet.
         size_t m_partialBytesRead { 0 };
+        std::optional<MediaTime> m_lastAbsoluteTimecode;
     };
 
     class VideoTrackData : public TrackData {
@@ -225,6 +240,7 @@ public:
         }
 
         void flushPendingSamples();
+        void discardPendingSamples();
 
     private:
         ASCIILiteral logClassName() const { return "VideoTrackData"_s; }
@@ -272,10 +288,11 @@ public:
 
     void allowLimitedMatroska() { m_allowLimitedMatroska = true; }
 private:
-    TrackData* trackDataForTrackNumber(uint64_t);
+    TrackData* LEGACY_NODELETE trackDataForTrackNumber(uint64_t);
     bool isSupportedVideoCodec(StringView);
     bool isSupportedAudioCodec(StringView);
     void flushPendingVideoSamples();
+    void discardPendingVideoSamples();
 
     // webm::Callback
     webm::Status OnElementBegin(const webm::ElementMetadata&, webm::Action*) final;
@@ -336,10 +353,10 @@ public:
 
     ~SourceBufferParserWebM();
 
-    static bool isAvailable();
+    static bool LEGACY_NODELETE isAvailable();
 
     Type type() const { return Type::WebM; }
-    WEBCORE_EXPORT Expected<void, PlatformMediaError> appendData(Ref<const SharedBuffer>&&, AppendFlags = AppendFlags::None) final;
+    WEBCORE_EXPORT std::expected<void, PlatformMediaError> appendData(Ref<const SharedBuffer>&&, AppendFlags = AppendFlags::None) final;
     void flushPendingMediaData() final;
     void resetParserState() final { m_parser.resetState(); }
     void invalidate() final;

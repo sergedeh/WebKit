@@ -26,9 +26,11 @@
 #include "config.h"
 #include <wtf/NumberOfCores.h>
 
+#include <array>
 #include <cstdio>
-#include <mutex>
+#include <wtf/text/ASCIILiteral.h>
 #include <wtf/text/StringToIntegerConversion.h>
+#include <wtf/text/UTF8CStringView.h>
 
 #if OS(DARWIN)
 #include <sys/sysctl.h>
@@ -50,22 +52,28 @@ int numberOfProcessorCores()
     if (s_numberOfCores > 0)
         return s_numberOfCores;
     
-    if (CString coresEnv = getenv("WTF_numberOfProcessorCores"); !coresEnv.isNull()) {
+    ASCIILiteral coresEnvName = "WTF_numberOfProcessorCores";
+    auto coresEnv = UTF8CStringView::unsafeFromUTF8(getenv(coresEnvName));
+    if (coresEnv.isNull()) {
+        coresEnvName = "NUMBER_OF_PROCESSORS";
+        coresEnv = UTF8CStringView::unsafeFromUTF8(getenv(coresEnvName));
+    }
+    if (!coresEnv.isNull()) {
         if (auto numberOfCores = parseInteger<unsigned>(coresEnv.span())) {
             s_numberOfCores = *numberOfCores;
             return s_numberOfCores;
         }
-        SAFE_FPRINTF(stderr, "WARNING: failed to parse WTF_numberOfProcessorCores=%s\n", coresEnv);
+        SAFE_FPRINTF(stderr, "WARNING: failed to parse %s=%s\n", coresEnvName, coresEnv);
     }
 
 #if OS(DARWIN)
     unsigned result;
     size_t length = sizeof(result);
-    int name[] = {
+    std::array name {
             CTL_HW,
             HW_AVAILCPU
     };
-    int sysctlResult = sysctl(name, sizeof(name) / sizeof(int), &result, &length, 0, 0);
+    int sysctlResult = sysctl(name.data(), name.size(), &result, &length, 0, 0);
 
     s_numberOfCores = sysctlResult < 0 ? defaultIfUnavailable : result;
 #elif OS(LINUX) || OS(AIX) || OS(OPENBSD) || OS(NETBSD) || OS(FREEBSD) || OS(HAIKU)

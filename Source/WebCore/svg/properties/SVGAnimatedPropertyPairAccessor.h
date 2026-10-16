@@ -36,45 +36,57 @@ class SVGAnimatedPropertyPairAccessor : public SVGMemberAccessor<OwnerType> {
     using Base = SVGMemberAccessor<OwnerType>;
 
 public:
-    SVGAnimatedPropertyPairAccessor(Ref<AnimatedPropertyType1> OwnerType::*property1, Ref<AnimatedPropertyType2> OwnerType::*property2)
+    SVGAnimatedPropertyPairAccessor(const Ref<AnimatedPropertyType1> OwnerType::*property1, const Ref<AnimatedPropertyType2> OwnerType::*property2)
         : m_accessor1(property1)
         , m_accessor2(property2)
     {
     }
 
+    template<typename ValueType1, typename ValueType2>
+    SVGAnimatedPropertyPairAccessor(const Ref<AnimatedPropertyType1> OwnerType::*property1, ValueType1 initialValue1, const Ref<AnimatedPropertyType2> OwnerType::*property2, ValueType2 initialValue2)
+        : m_accessor1(property1, initialValue1)
+        , m_accessor2(property2, initialValue2)
+    {
+    }
+
 protected:
-    template<typename AccessorType, Ref<AnimatedPropertyType1> OwnerType::*property1, Ref<AnimatedPropertyType2> OwnerType::*property2>
+    template<typename AccessorType, auto property1, auto property2>
     static SVGMemberAccessor<OwnerType>& singleton()
     {
         static NeverDestroyed<AccessorType> propertyAccessor { property1, property2 };
         return propertyAccessor;
     }
 
-    bool isAnimatedProperty() const override { return true; }
-
-    Ref<AnimatedPropertyType1>& property1(OwnerType& owner) const { return m_accessor1.property(owner); }
-    const Ref<AnimatedPropertyType1>& property1(const OwnerType& owner) const { return m_accessor1.property(owner); }
-
-    Ref<AnimatedPropertyType2>& property2(OwnerType& owner) const { return m_accessor2.property(owner); }
-    const Ref<AnimatedPropertyType2>& property2(const OwnerType& owner) const { return m_accessor2.property(owner); }
-
-    Ref<AnimatedPropertyType1> propertyProperty1(const OwnerType& owner) const
+    // The properties are template arguments for the reason given in
+    // SVGAnimatedPrimitivePropertyAccessor::singleton(); the initial values need not be.
+    template<typename AccessorType, auto property1, auto property2, typename ValueType1, typename ValueType2>
+    static SVGMemberAccessor<OwnerType>& singleton(ValueType1 initialValue1, ValueType2 initialValue2)
     {
-        return property1(owner);
+        static NeverDestroyed<AccessorType> propertyAccessor { property1, initialValue1, property2, initialValue2 };
+        return propertyAccessor;
     }
 
-    Ref<AnimatedPropertyType2> propertyProperty2(const OwnerType& owner) const
+    bool isAnimatedProperty() const override { return true; }
+
+    const Ref<AnimatedPropertyType1>& property1(OwnerType& owner) const { return m_accessor1.property(owner); }
+    const Ref<AnimatedPropertyType1>& property1(const OwnerType& owner) const { return m_accessor1.property(owner); }
+
+    const Ref<AnimatedPropertyType2>& property2(OwnerType& owner) const { return m_accessor2.property(owner); }
+    const Ref<AnimatedPropertyType2>& property2(const OwnerType& owner) const { return m_accessor2.property(owner); }
+
+    void resetBaseVal(const OwnerType& owner) const override
     {
-        return property2(owner);
+        m_accessor1.resetBaseVal(owner);
+        m_accessor2.resetBaseVal(owner);
     }
 
     void detach(const OwnerType& owner) const override
     {
-        propertyProperty1(owner)->detach();
-        propertyProperty2(owner)->detach();
+        property1(owner)->detach();
+        property2(owner)->detach();
     }
 
-    bool matches(const OwnerType& owner, const SVGAnimatedProperty& animatedProperty) const override
+    bool matches(const OwnerType& owner, const SVGAnimatedPropertyBase& animatedProperty) const override
     {
         return m_accessor1.matches(owner, animatedProperty) || m_accessor2.matches(owner, animatedProperty);
     }

@@ -62,10 +62,9 @@ public:
     const AudioSourceProviderClient* client() const { return m_client.get(); }
 
     void handleNewDeinterleavePad(GstPad*);
-    void deinterleavePadsConfigured();
     void handleRemovedDeinterleavePad(GstPad*);
 
-    GstFlowReturn handleSample(GstAppSink*, bool isPreroll);
+    GstFlowReturn handleSample(GstAppSink*);
     void clearAdapters();
 
 private:
@@ -75,24 +74,26 @@ private:
     void initialize();
     void copyGStreamerBuffersToAudioChannel(GstAdapter*, AudioBus&, int, size_t);
 
+    void determineSampleRate(const GstCaps*);
+
 #if ENABLE(MEDIA_STREAM)
     WeakPtr<MediaStreamTrackPrivate> m_captureSource;
-    RefPtr<MediaStreamPrivate> m_streamPrivate;
+    const RefPtr<MediaStreamPrivate> m_streamPrivate;
     GRefPtr<GstElement> m_pipeline;
 #endif
     enum MainThreadNotification {
         DeinterleavePadsConfigured = 1 << 0,
     };
-    Ref<MainThreadNotifier<MainThreadNotification>> m_notifier;
+    const Ref<MainThreadNotifier<MainThreadNotification>> m_notifier;
     GRefPtr<GstElement> m_audioSinkBin;
     WeakPtr<AudioSourceProviderClient> m_client;
     int m_deinterleaveSourcePads { 0 };
+    int m_deinterleaveConfiguredSourcePads { 0 };
     HashMap<int, GRefPtr<GstAdapter>> m_adapters WTF_GUARDED_BY_LOCK(m_adapterLock);
     unsigned long m_deinterleavePadAddedHandlerId { 0 };
-    unsigned long m_deinterleaveNoMorePadsHandlerId { 0 };
     unsigned long m_deinterleavePadRemovedHandlerId { 0 };
     Lock m_adapterLock;
-    CString m_providerId;
+    ASCIICString m_providerId;
 };
 
 }

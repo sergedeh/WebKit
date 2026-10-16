@@ -34,13 +34,11 @@ namespace WebCore {
 inline bool RenderLayer::canPaintTransparencyWithSetOpacity() const { return isBitmapOnly() && !hasNonOpacityTransparency() && !hasFilter(); }
 inline bool RenderLayer::hasBackdropFilter() const { return renderer().hasBackdropFilter(); }
 inline bool RenderLayer::hasFilter() const { return renderer().hasFilter(); }
-inline bool RenderLayer::hasPerspective() const { return renderer().style().hasPerspective(); }
 inline bool RenderLayer::isTransparent() const { return renderer().isTransparent() || renderer().hasMask(); }
 inline bool RenderLayer::overlapBoundsIncludeChildren() const { return hasFilter() && renderer().style().filter().hasFilterThatMovesPixels(); }
-inline bool RenderLayer::preserves3D() const { return renderer().style().preserves3D(); }
+inline bool RenderLayer::preserves3D() const { return renderer().style().usedTransformStyle3D() == TransformStyle3D::Preserve3D; }
 inline int RenderLayer::zIndex() const { return renderer().style().usedZIndex().tryValue().value_or(0).value; }
 inline Page& RenderLayer::page() const { return renderer().page(); }
-inline Ref<Page> RenderLayer::protectedPage() const { return renderer().page(); }
 
 #if HAVE(CORE_MATERIAL)
 inline bool RenderLayer::hasAppleVisualEffect() const { return renderer().hasAppleVisualEffect(); }
@@ -92,26 +90,68 @@ inline bool RenderLayer::hasNonOpacityTransparency() const
     return false;
 }
 
-inline RenderSVGHiddenContainer* RenderLayer::enclosingSVGHiddenOrResourceContainer() const
+inline const LayoutPoint& RenderLayer::location() const LIFETIME_BOUND
 {
-    return m_enclosingSVGHiddenOrResourceContainer.get();
-}
-
-inline const LayoutPoint& RenderLayer::location() const
-{
-    ASSERT(!renderer().view().frameView().layerAccessPrevented());
+    ASSERT(!renderer().layerAccessPreventedSlow());
     return m_topLeft;
 }
 
-inline const IntSize& RenderLayer::size() const
+inline const IntSize& RenderLayer::size() const LIFETIME_BOUND
 {
-    ASSERT(!renderer().view().frameView().layerAccessPrevented());
+    ASSERT(!renderer().layerAccessPreventedSlow());
     return m_layerSize;
 }
 
 inline LayoutRect RenderLayer::rect() const
 {
     return LayoutRect(location(), size());
+}
+
+enum class AncestorTraversal { Continue, Stop };
+
+// This is a simplified version of containing block walking that only handles absolute and fixed position.
+template<typename Function>
+AncestorTraversal traverseAncestorLayers(const RenderLayer& layer, NOESCAPE const Function& function)
+{
+    auto positioningBehavior = layer.renderer().style().position();
+    CheckedPtr nextPaintOrderParent = layer.paintOrderParent();
+
+    for (CheckedPtr<const RenderLayer> ancestorLayer = layer.parent(); ancestorLayer; ancestorLayer = ancestorLayer->parent()) {
+        bool inContainingBlockChain = true;
+
+        switch (positioningBehavior) {
+        case PositionType::Static:
+        case PositionType::Relative:
+        case PositionType::Sticky:
+            break;
+        case PositionType::Absolute:
+            inContainingBlockChain = ancestorLayer->renderer().canContainAbsolutelyPositionedObjects();
+            break;
+        case PositionType::Fixed:
+            inContainingBlockChain = ancestorLayer->renderer().canContainFixedPositionObjects();
+            break;
+        }
+
+        if (function(*ancestorLayer, inContainingBlockChain, ancestorLayer == nextPaintOrderParent) == AncestorTraversal::Stop)
+            return AncestorTraversal::Stop;
+
+        if (inContainingBlockChain)
+            positioningBehavior = ancestorLayer->renderer().style().position();
+
+        if (ancestorLayer == nextPaintOrderParent)
+            nextPaintOrderParent = ancestorLayer->paintOrderParent();
+    }
+
+    return AncestorTraversal::Continue;
+}
+
+inline bool ancestorLayerMayClip(const RenderLayer& layer, const RenderLayer& ancestorLayer, bool isContainingBlockChain)
+{
+    // Surprisingly, the deprecated CSS "clip" property on abspos ancestors of fixedpos elements clips them <https://github.com/w3c/csswg-drafts/issues/8336>.
+    if (layer.renderer().isFixedPositioned() && ancestorLayer.renderer().hasClip())
+        return true;
+
+    return isContainingBlockChain && ancestorLayer.renderer().hasClipOrNonVisibleOverflow();
 }
 
 } // namespace WebCore

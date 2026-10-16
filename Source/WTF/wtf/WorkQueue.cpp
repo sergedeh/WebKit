@@ -27,11 +27,7 @@
 #include "config.h"
 #include <wtf/WorkQueue.h>
 
-#include <mutex>
-#include <wtf/Condition.h>
-#include <wtf/Deque.h>
 #include <wtf/Function.h>
-#include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/NumberOfCores.h>
 #include <wtf/Ref.h>
@@ -190,6 +186,11 @@ WorkQueue::WorkQueue(ASCIILiteral name, QOS qos)
 void WorkQueue::dispatch(Function<void()>&& function)
 {
     WorkQueueBase::dispatch(WTF::move(function));
+}
+
+void WorkQueue::dispatchAfter(Seconds delay, Function<void()>&& function)
+{
+    WorkQueueBase::dispatchAfter(delay, WTF::move(function));
 }
 
 bool WorkQueue::isCurrent() const

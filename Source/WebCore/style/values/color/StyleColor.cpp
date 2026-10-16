@@ -34,21 +34,25 @@
 #include "StyleColor.h"
 
 #include "AnimationUtilities.h"
+#include "CSSColorInlines.h"
 #include "CSSColorValue.h"
 #include "CSSKeywordColor.h"
 #include "CSSValuePool.h"
 #include "ColorBlending.h"
+#include "DeprecatedCSSOMValue.h"
 #include "Document.h"
-#include "RenderStyle.h"
 #include "RenderTheme.h"
 #include "StyleAbsoluteColor.h"
 #include "StyleColorLayers.h"
 #include "StyleColorMix.h"
 #include "StyleColorResolutionState.h"
+#include "StyleColorResolver.h"
+#include "StyleComputedStyle.h"
 #include "StyleContrastColor.h"
 #include "StyleHexColor.h"
 #include "StyleKeywordColor.h"
 #include "StyleLightDarkColor.h"
+#include "StyleRelativeAlphaColor.h"
 #include "StyleRelativeColor.h"
 #include <wtf/text/TextStream.h>
 
@@ -105,6 +109,11 @@ Color::Color(ResolvedColor&& color)
 {
 }
 
+Color::Color(CurrentAccentColor&& color)
+    : value { WTF::move(color) }
+{
+}
+
 Color::Color(CurrentColor&& color)
     : value { WTF::move(color) }
 {
@@ -122,6 +131,11 @@ Color::Color(ColorMix&& colorMix)
 
 Color::Color(ContrastColor&& contrastColor)
     : value { makeIndirectColor(WTF::move(contrastColor)) }
+{
+}
+
+Color::Color(RelativeAlphaColor&& relativeAlphaColor)
+    : value { makeIndirectColor(WTF::move(relativeAlphaColor)) }
 {
 }
 
@@ -241,16 +255,16 @@ Color::ColorKind Color::copy(const Color::ColorKind& other)
     );
 }
 
-String Color::debugDescription() const
+WTF::String Color::debugDescription() const
 {
     TextStream ts;
     ts << *this;
     return ts.release();
 }
 
-WebCore::Color Color::resolveColor(const WebCore::Color& currentColor) const
+WebCore::Color Color::resolveColor(const ResolvedColors& resolvedColors) const
 {
-    return switchOn([&](const auto& kind) { return WebCore::Style::resolveColor(kind, currentColor); });
+    return switchOn([&](const auto& kind) { return WebCore::Style::resolveColor(kind, resolvedColors); });
 }
 
 bool Color::containsCurrentColor() const
@@ -271,6 +285,11 @@ bool Color::isColorMix() const
 bool Color::isContrastColor() const
 {
     return std::holds_alternative<UniqueRef<ContrastColor>>(value);
+}
+
+bool Color::isRelativeAlphaColor() const
+{
+    return std::holds_alternative<UniqueRef<RelativeAlphaColor>>(value);
 }
 
 bool Color::isRelativeColor() const
@@ -314,9 +333,9 @@ template<typename T> Color::ColorKind Color::makeIndirectColor(T&& colorType)
     return { makeUniqueRef<T>(WTF::move(colorType)) };
 }
 
-WebCore::Color resolveColor(const Color& value, const WebCore::Color& currentColor)
+WebCore::Color resolveColor(const Color& value, const ResolvedColors& resolvedColors)
 {
-    return value.resolveColor(currentColor);
+    return value.resolveColor(resolvedColors);
 }
 
 bool containsCurrentColor(const Color& value)
@@ -326,7 +345,7 @@ bool containsCurrentColor(const Color& value)
 
 // MARK: - Serialization
 
-String serializationForCSSTokenization(const CSS::SerializationContext& context, const Color& value)
+WTF::String serializationForCSSTokenization(const CSS::SerializationContext& context, const Color& value)
 {
     return WTF::switchOn(value, [&](const auto& kind) { return WebCore::Style::serializationForCSSTokenization(context, kind); });
 }
@@ -336,7 +355,7 @@ void serializationForCSSTokenization(StringBuilder& builder, const CSS::Serializ
     WTF::switchOn(value, [&](const auto& kind) { WebCore::Style::serializationForCSSTokenization(builder, context, kind); });
 }
 
-void Serialize<Color>::operator()(StringBuilder& builder, const CSS::SerializationContext&, const RenderStyle& style, const Color& value)
+void Serialize<Color>::operator()(StringBuilder& builder, const CSS::SerializationContext&, const Style::ComputedStyle& style, const Color& value)
 {
     // NOTE: The specialization of Style::Serialize is used for computed value serialization, so the resolved "used" value is used.
     ColorResolver colorResolver { style };
@@ -361,23 +380,7 @@ Color toStyleColor(const CSS::Color& value, ColorResolutionState& state)
     return WTF::switchOn(value, [&](const auto& color) { return toStyleColor(color, state); });
 }
 
-Color toStyleColor(const CSS::Color& value, Ref<const Document> document, const ComputedStyle& style, const CSSToLengthConversionData& conversionData, ForVisitedLink forVisitedLink)
-{
-    auto resolutionState = ColorResolutionState {
-        .document = document,
-        .style = style,
-        .conversionData = conversionData,
-        .forVisitedLink = forVisitedLink
-    };
-    return toStyleColor(value, resolutionState);
-}
-
-Color toStyleColor(const CSS::Color& value, const BuilderState& builderState, ForVisitedLink forVisitedLink)
-{
-    return toStyleColor(value, builderState.document(), builderState.style(), builderState.cssToLengthConversionData(), forVisitedLink);
-}
-
-auto ToCSS<Color>::operator()(const Color& value, const RenderStyle& style) -> CSS::Color
+auto ToCSS<Color>::operator()(const Color& value, const Style::ComputedStyle& style) -> CSS::Color
 {
     ColorResolver colorResolver { style };
     return CSS::Color { CSS::ResolvedColor { colorResolver.colorResolvingCurrentColor(value) } };
@@ -385,7 +388,13 @@ auto ToCSS<Color>::operator()(const Color& value, const RenderStyle& style) -> C
 
 auto ToStyle<CSS::Color>::operator()(const CSS::Color& value, const BuilderState& builderState, ForVisitedLink forVisitedLink) -> Color
 {
-    return toStyleColor(value, builderState.document(), builderState.style(), builderState.cssToLengthConversionData(), forVisitedLink);
+    auto resolutionState = ColorResolutionState {
+        .document = builderState.document(),
+        .style = builderState.style(),
+        .conversionData = builderState.cssToLengthConversionData(),
+        .forVisitedLink = forVisitedLink
+    };
+    return toStyleColor(value, resolutionState);
 }
 
 auto ToStyle<CSS::Color>::operator()(const CSS::Color& value, const BuilderState& builderState) -> Color
@@ -401,8 +410,10 @@ auto CSSValueConversion<Color>::operator()(BuilderState& builderState, const CSS
     if (RefPtr color = dynamicDowncast<CSSColorValue>(value))
         return toStyle(color->color(), builderState, forVisitedLink);
 
-    if (CSS::isColorKeyword(value.valueID()))
-        return toStyle(CSS::Color { CSS::KeywordColor { value.valueID() } }, builderState, forVisitedLink);
+    if (RefPtr keywordValue = dynamicDowncast<CSSKeywordValue>(value)) {
+        if (auto valueID = keywordValue->valueID(); CSS::isColorKeyword(valueID))
+            return toStyle(CSS::Color { CSS::KeywordColor { valueID } }, builderState, forVisitedLink);
+    }
 
     builderState.setCurrentPropertyInvalidAtComputedValueTime();
     return Color { WebCore::Color { } };
@@ -413,15 +424,20 @@ auto CSSValueConversion<Color>::operator()(BuilderState& builderState, const CSS
     return this->operator()(builderState, value, ForVisitedLink::No);
 }
 
-Ref<CSSValue> CSSValueCreation<Color>::operator()(CSSValuePool& pool, const RenderStyle& style, const Color& value)
+Ref<CSSValue> CSSValueCreation<Color>::operator()(CSSValuePool& pool, const Style::ComputedStyle& style, const Color& value)
 {
     ColorResolver colorResolver { style };
     return pool.createColorValue(colorResolver.colorResolvingCurrentColor(value));
 }
 
+Ref<DeprecatedCSSOMValue> DeprecatedCSSOMValueCreation<Color>::operator()(CSSValuePool& pool, const Style::ComputedStyle& style, CSSStyleDeclaration& owner, const Color& value)
+{
+    return CSS::createDeprecatedCSSOMValue(pool, owner, toCSS(value, style));
+}
+
 // MARK: - Blending
 
-auto Blending<Color>::equals(const Color& a, const Color& b, const RenderStyle& aStyle, const RenderStyle& bStyle) -> bool
+auto Blending<Color>::equals(const Color& a, const Color& b, const Style::ComputedStyle& aStyle, const Style::ComputedStyle& bStyle) -> bool
 {
     if (a.isCurrentColor() && b.isCurrentColor())
         return true;
@@ -442,7 +458,7 @@ auto Blending<Color>::canBlend(const Color& a, const Color& b) -> bool
     return !(a.isCurrentColor() && b.isCurrentColor());
 }
 
-auto Blending<Color>::blend(const Color& a, const Color& b, const RenderStyle& aStyle, const RenderStyle& bStyle, const BlendingContext& context) -> Color
+auto Blending<Color>::blend(const Color& a, const Color& b, const Style::ComputedStyle& aStyle, const Style::ComputedStyle& bStyle, const BlendingContext& context) -> Color
 {
     ColorResolver aColorResolver { aStyle };
     ColorResolver bColorResolver { bStyle };

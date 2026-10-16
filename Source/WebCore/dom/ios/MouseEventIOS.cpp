@@ -28,7 +28,11 @@
 
 #if ENABLE(TOUCH_EVENTS) && PLATFORM(IOS_FAMILY)
 
+#import "DocumentView.h"
 #import "EventNames.h"
+#import "LocalFrame.h"
+#import "LocalFrameView.h"
+#import "WindowProxy.h"
 
 namespace WebCore {
 
@@ -48,11 +52,77 @@ static AtomString mouseEventType(PlatformTouchPoint::TouchPhaseType phase)
     return nullAtom();
 }
 
-Ref<MouseEvent> MouseEvent::create(const PlatformTouchEvent& event, unsigned index, Ref<WindowProxy>&& view, IsCancelable cancelable)
+static DoublePoint computeMovementDelta(const PlatformTouchEvent& event, unsigned index)
 {
-    return adoptRef(*new MouseEvent(EventInterfaceType::MouseEvent, mouseEventType(event.touchPhaseAtIndex(index)), CanBubble::Yes, cancelable, IsComposed::Yes,
-        event.timestamp(), WTF::move(view), 0, event.touchLocationInRootViewAtIndex(index), event.touchLocationInRootViewAtIndex(index), 0, 0,
-        event.modifiers(), MouseButton::Left, 0, nullptr, 0, SyntheticClickType::NoTap, { }, { }, IsSimulated::No, IsTrusted::Yes));
+    const auto phase = event.touchPhaseAtIndex(index);
+
+    switch (phase) {
+    case PlatformTouchPoint::TouchPhaseBegan:
+        return { };
+    case PlatformTouchPoint::TouchPhaseMoved:
+    case PlatformTouchPoint::TouchPhaseStationary: {
+        auto currentPosition = event.touchLocationInRootViewAtIndex(index);
+        auto previousPosition = event.touchPreviousLocationInRootViewAtIndex(index);
+        return DoublePoint { currentPosition - previousPosition };
+    }
+    case PlatformTouchPoint::TouchPhaseEnded:
+    case PlatformTouchPoint::TouchPhaseCancelled:
+        return { };
+    }
+    ASSERT_NOT_REACHED();
+    return { };
+}
+
+DoublePoint MouseEvent::screenLocationForTouchAtIndex(const PlatformTouchEvent& event, unsigned index, const WindowProxy& view)
+{
+    // On iOS a screen location is a point in the top-level page's root view rather than device screen space.
+    // A touch location is in the local root frame's root view, which with site isolation can be a cross-origin
+    // iframe's, so map it up across any remote ancestor frames.
+    auto location = event.touchLocationInRootViewAtIndex(index);
+    RefPtr frame = dynamicDowncast<LocalFrame>(view.frame());
+    if (!frame)
+        return location;
+    Ref localRootFrame = frame->rootFrame();
+    if (localRootFrame->isMainFrame())
+        return location;
+    RefPtr localRootView = localRootFrame->view();
+    if (!localRootView)
+        return location;
+    return localRootView->convertToRootViewAcrossIsolatedFrames(FloatPoint { location });
+}
+
+Ref<MouseEvent> MouseEvent::create(const PlatformTouchEvent& event, unsigned index, Ref<WindowProxy>&& view, IsCancelable cancelable, ShouldComputeMovementDelta shouldComputeMovementDelta)
+{
+    const auto movementDelta = shouldComputeMovementDelta == ShouldComputeMovementDelta::Yes ? computeMovementDelta(event, index) : DoublePoint { };
+    auto screenLocation = screenLocationForTouchAtIndex(event, index, view);
+
+    return adoptRef(
+        *new MouseEvent(
+            EventInterfaceType::MouseEvent,
+            mouseEventType(event.touchPhaseAtIndex(index)),
+            CanBubble::Yes,
+            cancelable,
+            IsComposed::Yes,
+            event.timestamp(),
+            WTF::move(view),
+            0,
+            screenLocation,
+            event.touchLocationInRootViewAtIndex(index),
+            movementDelta.x(),
+            movementDelta.y(),
+            event.modifiers(),
+            MouseButton::Left,
+            0,
+            nullptr,
+            0,
+            SyntheticClickType::NoTap,
+            { },
+            { },
+            std::nullopt,
+            IsSimulated::No,
+            IsTrusted::Yes
+        )
+    );
 }
 
 } // namespace WebCore

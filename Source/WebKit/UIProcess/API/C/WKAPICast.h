@@ -82,10 +82,13 @@ class GeolocationPermissionRequest;
 class MediaKeySystemPermissionCallback;
 class NotificationPermissionRequest;
 class QueryPermissionResultCallback;
-class SpeechRecognitionPermissionCallback;
-class UserMediaPermissionCheckProxy;
 class UserMediaPermissionRequestProxy;
+#if ENABLE(BACK_FORWARD_LIST_SWIFT)
+class WebBackForwardListWrapper;
+#else
 class WebBackForwardList;
+using WebBackForwardListWrapper = WebBackForwardList;
+#endif
 class WebBackForwardListItem;
 class WebColorPickerResultListenerProxy;
 class WebContextMenuListenerProxy;
@@ -116,7 +119,7 @@ class WebsiteDataStoreConfiguration;
 WK_ADD_API_MAPPING(WKAuthenticationChallengeRef, AuthenticationChallengeProxy)
 WK_ADD_API_MAPPING(WKAuthenticationDecisionListenerRef, AuthenticationDecisionListener)
 WK_ADD_API_MAPPING(WKBackForwardListItemRef, WebBackForwardListItem)
-WK_ADD_API_MAPPING(WKBackForwardListRef, WebBackForwardList)
+WK_ADD_API_MAPPING(WKBackForwardListRef, WebBackForwardListWrapper)
 WK_ADD_API_MAPPING(WKBundleHitTestResultMediaType, BundleHitTestResultMediaType)
 WK_ADD_API_MAPPING(WKCaptionUserPreferencesTestingModeTokenRef, API::CaptionUserPreferencesTestingModeToken)
 WK_ADD_API_MAPPING(WKColorPickerResultListenerRef, WebColorPickerResultListenerProxy)
@@ -160,12 +163,10 @@ WK_ADD_API_MAPPING(WKProtectionSpaceRef, WebProtectionSpace)
 WK_ADD_API_MAPPING(WKResourceLoadStatisticsManagerRef, WebResourceLoadStatisticsManager)
 WK_ADD_API_MAPPING(WKScriptMessageRef, API::ScriptMessage)
 WK_ADD_API_MAPPING(WKSessionStateRef, API::SessionState)
-WK_ADD_API_MAPPING(WKSpeechRecognitionPermissionCallbackRef, SpeechRecognitionPermissionCallback)
 WK_ADD_API_MAPPING(WKTextCheckerRef, WebTextChecker)
 WK_ADD_API_MAPPING(WKUserContentControllerRef, WebUserContentControllerProxy)
 WK_ADD_API_MAPPING(WKUserContentExtensionStoreRef, API::ContentRuleListStore)
 WK_ADD_API_MAPPING(WKUserContentFilterRef, API::ContentRuleList)
-WK_ADD_API_MAPPING(WKUserMediaPermissionCheckRef, UserMediaPermissionCheckProxy)
 WK_ADD_API_MAPPING(WKUserMediaPermissionRequestRef, UserMediaPermissionRequestProxy)
 WK_ADD_API_MAPPING(WKUserScriptRef, API::UserScript)
 WK_ADD_API_MAPPING(WKViewportAttributesRef, WebViewportAttributes)

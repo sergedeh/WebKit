@@ -30,6 +30,7 @@
 
 #include "CSSPrimitiveValue.h"
 #include "RenderStyleConstants.h"
+#include <wtf/Function.h>
 
 namespace WebCore {
 
@@ -49,8 +50,8 @@ public:
 
     String customCSSText(const CSS::SerializationContext&) const;
 
-    const RefPtr<CSSValue>& scroller() const { return m_scroller; }
-    const RefPtr<CSSValue>& axis() const { return m_axis; }
+    CSSValue* scroller() const { return m_scroller; }
+    CSSValue* axis() const { return m_axis; }
 
     bool equals(const CSSScrollValue&) const;
 
@@ -75,8 +76,8 @@ private:
     {
     }
 
-    RefPtr<CSSValue> m_scroller;
-    RefPtr<CSSValue> m_axis;
+    const RefPtr<CSSValue> m_scroller;
+    const RefPtr<CSSValue> m_axis;
 };
 
 } // namespace WebCore

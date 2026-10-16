@@ -28,19 +28,22 @@
 
 #include "ContentExtensionsDebugging.h"
 #include <wtf/StdLibExtras.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/CString.h>
 
 #if ENABLE(CONTENT_EXTENSIONS)
 
 namespace WebCore::ContentExtensions {
 
+WTF_MAKE_TZONE_ALLOCATED_IMPL(DFABytecodeInterpreter);
+
 template <typename IntType>
-static IntType getBits(std::span<const uint8_t> bytecode, uint32_t index)
+static IntType LEGACY_NODELETE getBits(std::span<const uint8_t> bytecode, uint32_t index)
 {
     return reinterpretCastSpanStartTo<const IntType>(bytecode.subspan(index));
 }
 
-static uint32_t get24BitsUnsigned(std::span<const uint8_t> bytecode, uint32_t index)
+static uint32_t LEGACY_NODELETE get24BitsUnsigned(std::span<const uint8_t> bytecode, uint32_t index)
 {
     ASSERT(index + UInt24Size <= bytecode.size());
     uint32_t highBits = getBits<uint8_t>(bytecode, index + sizeof(uint16_t));
@@ -48,12 +51,12 @@ static uint32_t get24BitsUnsigned(std::span<const uint8_t> bytecode, uint32_t in
     return (highBits << 16) | lowBits;
 }
 
-static DFABytecodeInstruction getInstruction(std::span<const uint8_t> bytecode, uint32_t index)
+static DFABytecodeInstruction LEGACY_NODELETE getInstruction(std::span<const uint8_t> bytecode, uint32_t index)
 {
     return static_cast<DFABytecodeInstruction>(getBits<uint8_t>(bytecode, index) & DFABytecodeInstructionMask);
 }
 
-static size_t jumpSizeInBytes(DFABytecodeJumpSize jumpSize)
+static size_t LEGACY_NODELETE jumpSizeInBytes(DFABytecodeJumpSize jumpSize)
 {
     switch (jumpSize) {
     case DFABytecodeJumpSize::Int8:
@@ -68,18 +71,18 @@ static size_t jumpSizeInBytes(DFABytecodeJumpSize jumpSize)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-template<typename T> uint32_t consumeInteger(std::span<const uint8_t> bytecode, uint32_t& programCounter)
+template<typename T> uint32_t LEGACY_NODELETE consumeInteger(std::span<const uint8_t> bytecode, uint32_t& programCounter)
 {
     programCounter += sizeof(T);
     return getBits<T>(bytecode, programCounter - sizeof(T));
 }
-static uint32_t consume24BitUnsignedInteger(std::span<const uint8_t> bytecode, uint32_t& programCounter)
+static uint32_t LEGACY_NODELETE consume24BitUnsignedInteger(std::span<const uint8_t> bytecode, uint32_t& programCounter)
 {
     programCounter += UInt24Size;
     return get24BitsUnsigned(bytecode, programCounter - UInt24Size);
 }
 
-static constexpr bool hasFlags(DFABytecodeInstruction instruction)
+static constexpr bool LEGACY_NODELETE hasFlags(DFABytecodeInstruction instruction)
 {
     switch (instruction) {
     case DFABytecodeInstruction::TestFlagsAndAppendAction:
@@ -98,7 +101,7 @@ static constexpr bool hasFlags(DFABytecodeInstruction instruction)
     return false;
 }
 
-static constexpr bool hasAction(DFABytecodeInstruction instruction)
+static constexpr bool LEGACY_NODELETE hasAction(DFABytecodeInstruction instruction)
 {
     switch (instruction) {
     case DFABytecodeInstruction::TestFlagsAndAppendAction:
@@ -117,7 +120,7 @@ static constexpr bool hasAction(DFABytecodeInstruction instruction)
     return false;
 }
 
-static ResourceFlags consumeResourceFlagsAndInstruction(std::span<const uint8_t> bytecode, uint32_t& programCounter)
+static ResourceFlags LEGACY_NODELETE consumeResourceFlagsAndInstruction(std::span<const uint8_t> bytecode, uint32_t& programCounter)
 {
     ASSERT_UNUSED(hasFlags, hasFlags(getInstruction(bytecode, programCounter)));
     switch (static_cast<DFABytecodeFlagsSize>(bytecode[programCounter++] & DFABytecodeFlagsSizeMask)) {
@@ -134,7 +137,7 @@ static ResourceFlags consumeResourceFlagsAndInstruction(std::span<const uint8_t>
     return 0;
 }
 
-static uint32_t consumeAction(std::span<const uint8_t> bytecode, uint32_t& programCounter, uint32_t instructionLocation)
+static uint32_t LEGACY_NODELETE consumeAction(std::span<const uint8_t> bytecode, uint32_t& programCounter, uint32_t instructionLocation)
 {
     ASSERT_UNUSED(hasAction, hasAction(getInstruction(bytecode, instructionLocation)));
     ASSERT(programCounter > instructionLocation);
@@ -152,7 +155,7 @@ static uint32_t consumeAction(std::span<const uint8_t> bytecode, uint32_t& progr
     return 0;
 }
 
-static DFABytecodeJumpSize getJumpSize(std::span<const uint8_t> bytecode, uint32_t index)
+static DFABytecodeJumpSize LEGACY_NODELETE getJumpSize(std::span<const uint8_t> bytecode, uint32_t index)
 {
     auto jumpSize = static_cast<DFABytecodeJumpSize>(getBits<uint8_t>(bytecode, index) & DFABytecodeJumpSizeMask);
     ASSERT(jumpSize == DFABytecodeJumpSize::Int32
@@ -162,7 +165,7 @@ static DFABytecodeJumpSize getJumpSize(std::span<const uint8_t> bytecode, uint32
     return jumpSize;
 }
 
-static int32_t getJumpDistance(std::span<const uint8_t> bytecode, uint32_t index, DFABytecodeJumpSize jumpSize)
+static int32_t LEGACY_NODELETE getJumpDistance(std::span<const uint8_t> bytecode, uint32_t index, DFABytecodeJumpSize jumpSize)
 {
     switch (jumpSize) {
     case DFABytecodeJumpSize::Int8:
@@ -246,9 +249,15 @@ auto DFABytecodeInterpreter::actionsMatchingEverything() -> Actions
     return actions;
 }
 
+DFABytecodeInterpreter::DFABytecodeInterpreter(std::span<const uint8_t> bytecode, EnableResumeCache enableCache)
+    : m_bytecode(bytecode)
+    , m_resumeCache(enableCache == EnableResumeCache::Yes ? makeUnique<ResumeSlots>() : nullptr)
+{
+}
+
 auto DFABytecodeInterpreter::interpret(const String& urlString, ResourceFlags flags) -> Actions
 {
-    CString urlCString;
+    UTF8CString urlCString;
     std::span<const Latin1Character> url;
     if (urlString.is8Bit()) [[likely]]
         url = urlString.span8();
@@ -258,9 +267,45 @@ auto DFABytecodeInterpreter::interpret(const String& urlString, ResourceFlags fl
         url = byteCast<Latin1Character>(urlCString.span());
     }
     ASSERT(url.data());
-    
+
+    uint32_t checkpointURLIndex = 0;
+    auto urlView = StringView(urlString);
+    if (auto schemeEnd = urlView.find("://"_s); schemeEnd != notFound) {
+        if (auto slash = urlView.find('/', schemeEnd + 3); slash != notFound && slash < std::numeric_limits<uint32_t>::max())
+            checkpointURLIndex = static_cast<uint32_t>(slash);
+    }
+
+    bool canResume = false;
+    if (checkpointURLIndex && m_resumeCache) {
+        auto& cache = *m_resumeCache;
+        if (cache.isEmpty())
+            cache.grow(4);
+        auto urlPrefix = urlView.left(checkpointURLIndex + 1);
+        for (size_t i = 0; i < cache.size(); ++i) {
+            auto& slot = cache[i];
+            if (slot.flags == flags && !slot.perDFA.isEmpty() && StringView(slot.url).startsWith(urlPrefix)) {
+                if (i)
+                    std::swap(cache[0], slot);
+                canResume = true;
+                break;
+            }
+        }
+        if (!canResume) {
+            for (size_t i = cache.size() - 1; i > 0; --i)
+                cache[i] = WTF::move(cache[i - 1]);
+            cache[0] = { urlString, flags, { } };
+        }
+    }
+
     Actions actions;
-    
+    size_t dfaIndex = 0;
+    Actions dfaDelta;
+
+    auto recordCheckpoint = [&](uint32_t pc) {
+        if (m_resumeCache && checkpointURLIndex && !canResume)
+            (*m_resumeCache)[0].perDFA.append({ pc, dfaDelta });
+    };
+
     uint32_t programCounter = 0;
     while (programCounter < m_bytecode.size()) {
 
@@ -269,30 +314,49 @@ auto DFABytecodeInterpreter::interpret(const String& urlString, ResourceFlags fl
         uint32_t dfaBytecodeLength = getBits<uint32_t>(m_bytecode, programCounter);
         programCounter += sizeof(uint32_t);
 
-        // Skip the actions without flags on the DFA root. These are accessed via actionsMatchingEverything.
-        if (!dfaStart) {
+        uint32_t urlIndex = 0;
+        bool snapshottedThisDFA = false;
+        dfaDelta.clear();
+
+        if (canResume && dfaIndex < (*m_resumeCache)[0].perDFA.size()) {
+            const auto& checkpoint = (*m_resumeCache)[0].perDFA[dfaIndex];
+            actions.addAll(checkpoint.actions);
+            if (checkpoint.programCounter == DFACheckpoint::terminatedBeforeCheckpoint)
+                goto nextDFA;
+            programCounter = checkpoint.programCounter;
+            urlIndex = checkpointURLIndex;
+            snapshottedThisDFA = true;
+        } else if (!dfaStart) {
+            // Skip the actions without flags on the DFA root. These are accessed via actionsMatchingEverything.
             while (programCounter < dfaBytecodeLength) {
                 DFABytecodeInstruction instruction = getInstruction(m_bytecode, programCounter);
                 if (instruction == DFABytecodeInstruction::AppendAction) {
                     auto instructionLocation = programCounter++;
                     consumeAction(m_bytecode, programCounter, instructionLocation);
                 } else if (instruction == DFABytecodeInstruction::TestFlagsAndAppendAction)
-                    interpretTestFlagsAndAppendAction(programCounter, flags, actions);
+                    interpretTestFlagsAndAppendAction(programCounter, flags, dfaDelta);
                 else
                     break;
             }
-            if (programCounter >= m_bytecode.size())
-                return actions;
+            if (programCounter >= m_bytecode.size()) {
+                recordCheckpoint(DFACheckpoint::terminatedBeforeCheckpoint);
+                actions.addAll(dfaDelta);
+                break;
+            }
         } else {
             ASSERT_WITH_MESSAGE(getInstruction(m_bytecode, programCounter) != DFABytecodeInstruction::AppendAction
                 && getInstruction(m_bytecode, programCounter) != DFABytecodeInstruction::TestFlagsAndAppendAction,
                 "Triggers that match everything should only be in the first DFA.");
         }
-        
+
         // Interpret the bytecode from this DFA.
         // This should always terminate if interpreting correctly compiled bytecode.
-        uint32_t urlIndex = 0;
         while (true) {
+            if (!snapshottedThisDFA && checkpointURLIndex && urlIndex >= checkpointURLIndex) {
+                recordCheckpoint(programCounter);
+                snapshottedThisDFA = true;
+            }
+
             ASSERT(programCounter <= m_bytecode.size());
             switch (getInstruction(m_bytecode, programCounter)) {
 
@@ -388,11 +452,11 @@ auto DFABytecodeInterpreter::interpret(const String& urlString, ResourceFlags fl
             }
                     
             case DFABytecodeInstruction::AppendAction:
-                interpretAppendAction(programCounter, actions);
+                interpretAppendAction(programCounter, dfaDelta);
                 break;
-                    
+
             case DFABytecodeInstruction::TestFlagsAndAppendAction:
-                interpretTestFlagsAndAppendAction(programCounter, flags, actions);
+                interpretTestFlagsAndAppendAction(programCounter, flags, dfaDelta);
                 break;
                     
             default:
@@ -403,9 +467,14 @@ auto DFABytecodeInterpreter::interpret(const String& urlString, ResourceFlags fl
         }
         RELEASE_ASSERT_NOT_REACHED(); // The while loop can only be exited using goto nextDFA.
         nextDFA:
+        if (!snapshottedThisDFA)
+            recordCheckpoint(DFACheckpoint::terminatedBeforeCheckpoint);
+        actions.addAll(dfaDelta);
+        ++dfaIndex;
         ASSERT(dfaBytecodeLength);
         programCounter = dfaStart + dfaBytecodeLength;
     }
+
     return actions;
 }
 

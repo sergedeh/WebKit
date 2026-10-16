@@ -33,6 +33,8 @@
 namespace WebCore {
 namespace Style {
 
+class ResolvedColors;
+
 struct Color;
 struct ColorResolutionState;
 
@@ -46,7 +48,7 @@ struct ResolvedColor {
 
 Color toStyleColor(const CSS::ResolvedColor&, ColorResolutionState&);
 
-inline WebCore::Color resolveColor(const ResolvedColor& absoluteColor, const WebCore::Color&)
+inline WebCore::Color resolveColor(const ResolvedColor& absoluteColor, const ResolvedColors&)
 {
     return absoluteColor.color;
 }
@@ -57,7 +59,7 @@ constexpr bool containsCurrentColor(const ResolvedColor&)
 }
 
 void serializationForCSSTokenization(StringBuilder&, const CSS::SerializationContext&, const ResolvedColor&);
-String serializationForCSSTokenization(const CSS::SerializationContext&, const ResolvedColor&);
+WTF::String serializationForCSSTokenization(const CSS::SerializationContext&, const ResolvedColor&);
 
 WTF::TextStream& operator<<(WTF::TextStream&, const ResolvedColor&);
 

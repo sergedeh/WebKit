@@ -56,7 +56,7 @@ WKURLRequestRef WKDownloadCopyRequest(WKDownloadRef download)
 
 void WKDownloadCancel(WKDownloadRef download, const void* functionContext, WKDownloadCancelCallback callback)
 {
-    return toProtectedImpl(download)->cancel([functionContext, callback](auto* resumeData) {
+    return protect(toImpl(download))->cancel([functionContext, callback](auto* resumeData) {
         if (callback)
             callback(toAPI(resumeData), functionContext);
     });
@@ -64,7 +64,7 @@ void WKDownloadCancel(WKDownloadRef download, const void* functionContext, WKDow
 
 WKPageRef WKDownloadGetOriginatingPage(WKDownloadRef download)
 {
-    RefPtr originatingPage = toProtectedImpl(download)->originatingPage();
+    RefPtr originatingPage = toImpl(download)->originatingPage();
     return toAPI(originatingPage.get());
 }
 
@@ -107,7 +107,7 @@ void WKDownloadSetClient(WKDownloadRef download, WKDownloadClientBase* client)
                 completionHandler(WebKit::AllowOverwrite::No, { });
                 return;
             }
-            auto destination = adoptRef(toImpl(m_client.decideDestinationWithResponse(toAPI(download), toAPI(response), toAPI(suggestedFilename.impl()), m_client.base.clientInfo)));
+            RefPtr destination = adoptRef(toImpl(m_client.decideDestinationWithResponse(toAPI(download), toAPI(response), toAPI(suggestedFilename), m_client.base.clientInfo)));
             if (!destination) {
                 completionHandler(WebKit::AllowOverwrite::No, { });
                 return;
@@ -148,5 +148,5 @@ void WKDownloadSetClient(WKDownloadRef download, WKDownloadClientBase* client)
         }
     };
 
-    toProtectedImpl(download)->setClient(adoptRef(*new DownloadClient(client)));
+    protect(toImpl(download))->setClient(adoptRef(*new DownloadClient(client)));
 }

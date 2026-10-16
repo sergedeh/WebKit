@@ -38,13 +38,19 @@
 #include "AXTreeStore.h"
 #include "AXTreeStoreInlines.h"
 #include "AXUtilities.h"
-#include "AccessibilityObjectInlines.h"
 #include "AccessibilityNodeObject.h"
+#include "AccessibilityNodeObjectInlines.h"
+#include "AccessibilityObjectInlines.h"
+#include "AccessibilityScrollView.h"
+#include "Chrome.h"
+#include "ChromeClient.h"
 #include "DocumentPage.h"
 #include "DocumentView.h"
 #include "FrameSelection.h"
 #include "HTMLNames.h"
 #include "LocalFrameView.h"
+#include "Logging.h"
+#include "Settings.h"
 #include <wtf/MonotonicTime.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/SetForScope.h>
@@ -62,6 +68,8 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(AXIDAndCharacterRange);
 
 static const Seconds CreationFeedbackInterval { 3_s };
 
+std::atomic<bool> AXIsolatedTree::s_anyTreeNeedsTearDown { false };
+
 HashMap<FrameIdentifier, Ref<AXIsolatedTree>>& AXIsolatedTree::treeFrameCache()
 {
     static NeverDestroyed<HashMap<FrameIdentifier, Ref<AXIsolatedTree>>> map;
@@ -76,6 +84,19 @@ AXIsolatedTree::AXIsolatedTree(AXObjectCache& axObjectCache)
 {
     AXTRACE("AXIsolatedTree::AXIsolatedTree"_s);
     AX_ASSERT(isMainThread());
+
+    // If any of these are null at construction, the cached m_isMainFrame and
+    // m_siteIsolationEnabled values below will be wrong for the tree's entire
+    // lifetime. We _should_ always have a valid document, frame, and page, hence
+    // the asserts. If this assumption proves to be wrong, we can investigate further.
+    RefPtr document = axObjectCache.document();
+    AX_ASSERT(document);
+    RefPtr frame = document ? document->frame() : nullptr;
+    AX_ASSERT(frame);
+    RefPtr page = frame ? frame->page() : nullptr;
+    AX_ASSERT(page);
+    m_isMainFrame = frame && frame->isMainFrame();
+    m_siteIsolationEnabled = page && page->settings().siteIsolationEnabled();
 }
 
 AXIsolatedTree::~AXIsolatedTree()
@@ -89,7 +110,19 @@ void AXIsolatedTree::queueForDestruction()
     AX_ASSERT(isMainThread());
 
     Locker locker { m_changeLogLock };
+    // Publish anything still in the working buffer before the AX thread tears this tree down.
+    // Teardown (clearTreeContentsLocked) only clears m_committedChanges, and every NodeChange
+    // left behind holds a Ref to this tree (IsolatedObjectData::tree), so stranding them would
+    // be a self-reference cycle that keeps the tree alive forever.
+    commitWorkingChangesLocked();
+    // Note that setting m_hasPendingChanges here is deliberately redundant (since commitWorkingChages
+    // also sets it). It's repeated here because teardown depends on it, and would fail silently without
+    // it, since applyPendingChangesOrTearDown early-exits if not set. Setting it here makes queueForDestruction()
+    // correct no matter what commitWorkingChanges() does, now or in the future.
+    m_hasPendingChanges.store(true);
+
     m_queuedForDestruction = true;
+    s_anyTreeNeedsTearDown.store(true, std::memory_order_relaxed);
 }
 
 Ref<AXIsolatedTree> AXIsolatedTree::createEmpty(AXObjectCache& axObjectCache)
@@ -98,14 +131,19 @@ Ref<AXIsolatedTree> AXIsolatedTree::createEmpty(AXObjectCache& axObjectCache)
     AX_ASSERT(isMainThread());
 
     auto tree = adoptRef(*new AXIsolatedTree(axObjectCache));
+    axObjectCache.initializeIsolatedTreeGeometry();
 
-    if (RefPtr axRoot = axObjectCache.document() ? axObjectCache.getOrCreate(axObjectCache.document()->view()) : nullptr) {
+    if (RefPtr axRoot = axObjectCache.document() ? axObjectCache.getOrCreate(protect(protect(axObjectCache.document())->view())) : nullptr) {
         tree->updatingSubtree(axRoot.get());
         tree->createEmptyContent(*axRoot);
     }
 
     tree->updateLoadingProgress(axObjectCache.loadingProgress());
     tree->m_processingProgress = 0;
+
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+    tree->updateFrameGeometryAndScrollPositionIfNeeded(axObjectCache);
+#endif
 
     // Now that the tree is ready to take client requests, add it to the tree maps so that it can be found.
     storeTree(axObjectCache, tree);
@@ -117,35 +155,37 @@ void AXIsolatedTree::createEmptyContent(AccessibilityObject& axRoot)
 {
     AX_ASSERT(isMainThread());
     AX_ASSERT(!axRoot.isDetached());
-    AX_ASSERT(axRoot.isScrollView() && !axRoot.parentObject());
+    AX_ASSERT(axRoot.isScrollArea() && !axRoot.parentObject());
 
     // An empty content tree consists only of the ScrollView and WebArea objects.
     m_isEmptyContentTree = true;
 
     // Create the IsolatedObjects for the root/ScrollView and WebArea.
     auto rootData = createIsolatedObjectData(axRoot, *this);
+#if !ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+    // When ACCESSIBILITY_LOCAL_FRAME is enabled, the root's screen-relative position is
+    // derived dynamically from the tree's frame geometry, so we don't need to cache it.
     rootData.setProperty(AXProperty::ScreenRelativePosition, axRoot.screenRelativePosition());
-    NodeChange rootAppend { WTF::move(rootData), axRoot.wrapper() };
+#endif
+    NodeChange rootAppend { WTF::move(rootData), axRoot.wrapper(), nextChangeSequence() };
 
     RefPtr axWebArea = Accessibility::findUnignoredChild(axRoot, [] (auto& object) {
         return object->isWebArea();
     });
     if (!axWebArea) {
-        AX_ASSERT_NOT_REACHED();
+        // FIXME: Can hit this almost 100% of the time on google.com with ENABLE(ACCESSIBILITY_LOCAL_FRAME).
+        AX_BROKEN_ASSERT_NOT_REACHED();
         return;
     }
     auto webAreaData = createIsolatedObjectData(*axWebArea, *this);
     webAreaData.setProperty(AXProperty::ScreenRelativePosition, axWebArea->screenRelativePosition());
-    NodeChange webAreaAppend { WTF::move(webAreaData), axWebArea->wrapper() };
+    NodeChange webAreaAppend { WTF::move(webAreaData), axWebArea->wrapper(), nextChangeSequence() };
 
     m_nodeMap.set(axRoot.objectID(), ParentChildrenIDs { std::nullopt, { axWebArea->objectID() } });
     m_nodeMap.set(axWebArea->objectID(), ParentChildrenIDs { axRoot.objectID(), { } });
 
-    {
-        Locker locker { m_changeLogLock };
-        setPendingRootNodeIDLocked(axRoot.objectID());
-        m_pendingFocusedNodeID = axWebArea->objectID();
-    }
+    setPendingRootNodeID(axRoot.objectID());
+    markDirtyAndGetWorkingChanges().focusedNodeID = Markable<AXID> { axWebArea->objectID() };
     Vector<NodeChange> appends;
     appends.reserveInitialCapacity(2);
     appends.append(WTF::move(rootAppend));
@@ -161,29 +201,25 @@ RefPtr<AXIsolatedTree> AXIsolatedTree::create(AXObjectCache& axObjectCache)
     auto tree = adoptRef(*new AXIsolatedTree(axObjectCache));
     if (RefPtr existingTree = isolatedTreeForID(tree->treeID()))
         tree->m_replacingTree = existingTree;
+    axObjectCache.initializeIsolatedTreeGeometry();
 
     RefPtr document = axObjectCache.document();
     if (!document)
         return nullptr;
 
     if (AXObjectCache::isAppleInternalInstall()) [[unlikely]]
-        WTFBeginSignpostAlways(tree.ptr(), InitialAccessibilityIsolatedTreeBuild, "building isolated tree for AXObjectCache: %" PRIVATE_LOG_STRING ", is the top-document: %d", axObjectCache.debugDescription().utf8().data(), document->isTopDocument());
+        WTFBeginSignpostAlways(tree.ptr(), InitialAccessibilityIsolatedTreeBuild, "building isolated tree for AXObjectCache: %" PRIVATE_LOG_STRING ", is the top-document: %d", axObjectCache.debugDescription().utf8(), document->isTopDocument());
 
     if (!Accessibility::inRenderTreeOrStyleUpdate(*document))
         document->updateLayoutIgnorePendingStylesheets();
 
     // Generate the nodes of the tree and set its root and focused objects.
     // For this, we need the root and focused objects of the AXObject tree.
-    RefPtr axRoot = axObjectCache.getOrCreate(document->view());
+    RefPtr axRoot = axObjectCache.getOrCreate(protect(document->view()));
     if (axRoot)
         tree->generateSubtree(*axRoot);
 
-#if ENABLE_ACCESSIBILITY_LOCAL_FRAME
-    RefPtr axFocus = axObjectCache.focusedObjectForLocalFrame();
-#else
-    RefPtr axFocus = axObjectCache.focusedObjectForPage(document->page());
-#endif
-    if (axFocus)
+    if (RefPtr axFocus = axObjectCache.focusedObjectForPage(protect(document->page())))
         tree->setFocusedNodeID(axFocus->objectID());
     tree->setSelectedTextMarkerRange(document->selection().selection());
     tree->setInitialSortedLiveRegions(axIDs(axObjectCache.sortedLiveRegions()));
@@ -191,12 +227,26 @@ RefPtr<AXIsolatedTree> AXIsolatedTree::create(AXObjectCache& axObjectCache)
     tree->updateLoadingProgress(axObjectCache.loadingProgress());
 
     auto relations = axObjectCache.relations();
-    for (auto& relatedObjectID : relations.keys()) {
-        RefPtr axObject = axObjectCache.objectForID(relatedObjectID);
-        if (axObject && axObject->isIgnored())
+    // Add unconnected nodes for relation origins and targets that are either
+    // ignored or have no renderer (e.g., inside display:none containers).
+    auto addUnconnectedNodeIfNeeded = [&tree, &axObjectCache] (AXID objectID) {
+        RefPtr axObject = axObjectCache.objectForID(objectID);
+        if (axObject && (axObject->isIgnored() || !axObject->renderer()))
             tree->addUnconnectedNode(axObject.releaseNonNull());
-    }
+    };
+
+    // relations.keys() gives us all objects that are the origin of a relation.
+    for (auto& relatedObjectID : relations.keys())
+        addUnconnectedNodeIfNeeded(relatedObjectID);
+
+    // relationTargetIDs() gives us all objects that are the target of a relation.
+    for (auto& targetID : axObjectCache.relationTargetIDs())
+        addUnconnectedNodeIfNeeded(targetID);
     tree->updateRelations(WTF::move(relations));
+
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+    tree->updateFrameGeometryAndScrollPositionIfNeeded(axObjectCache);
+#endif
 
     // Now that the tree is ready to take client requests, add it to the tree maps so that it can be found.
     storeTree(axObjectCache, tree);
@@ -206,35 +256,13 @@ RefPtr<AXIsolatedTree> AXIsolatedTree::create(AXObjectCache& axObjectCache)
     return tree;
 }
 
-void AXIsolatedTree::applyPendingRootNodeLocked()
-{
-    AX_ASSERT(!isMainThread());
-    AX_ASSERT(m_changeLogLock.isLocked());
-
-    if (m_pendingRootNodeID) {
-        if (RefPtr root = objectForID(m_pendingRootNodeID)) {
-            m_rootNode = WTF::move(root);
-            m_pendingRootNodeID = std::nullopt;
-
-#if ASSERT_ENABLED
-            auto markReachableNodes = [](AXCoreObject* object, HashSet<AXID>& reachableNodes, auto& self) -> void {
-                reachableNodes.add(object->objectID());
-                for (auto& child : object->children())
-                    self(&child.get(), reachableNodes, self);
-            };
-            HashSet<AXID> reachableNodes;
-            if (m_rootNode) {
-                markReachableNodes(m_rootNode.get(), reachableNodes, markReachableNodes);
-                ASSERT_WITH_MESSAGE(reachableNodes.size() == m_readerThreadNodeMap.size(), "AX: After applying pending root node, %u reachable nodes but %u are in the node map", reachableNodes.size(), m_readerThreadNodeMap.size());
-            }
-#endif
-        }
-    }
-}
-
 void AXIsolatedTree::storeTree(AXObjectCache& cache, const Ref<AXIsolatedTree>& tree)
 {
     AX_ASSERT(isMainThread());
+
+    // Atomically publish any working-buffer writes into m_committedChanges before the tree
+    // becomes externally visible.
+    auto shouldEagerlyApply = tree->commitWorkingChanges();
 
     // Once we've added this new tree to the AXTreeStore, clients will be able to use
     // it off the main-thread. Make any final state mutations while we are the only thread
@@ -242,8 +270,15 @@ void AXIsolatedTree::storeTree(AXObjectCache& cache, const Ref<AXIsolatedTree>& 
     cache.setIsolatedTree(tree);
     AXTreeStore::set(tree->treeID(), tree.ptr());
     tree->m_replacingTree = nullptr;
-    Locker locker { s_storeLock };
-    treeFrameCache().set(cache.frameID(), tree.copyRef());
+
+    {
+        Locker locker { s_storeLock };
+        treeFrameCache().set(cache.frameID(), tree.copyRef());
+    }
+    AX_ASSERT(!tree->m_workingChangesDirty);
+
+    // Now that the tree is reachable off the main thread, hand the initial contents over.
+    tree->dispatchEagerApplyIfNeeded(shouldEagerlyApply);
 }
 
 double AXIsolatedTree::loadingProgress()
@@ -265,7 +300,7 @@ void AXIsolatedTree::reportLoadingProgress(double processingProgress)
     String title = AXProcessingPage(loadingProgress());
     AXLOG(title);
 
-    WeakPtr cache = axObjectCache();
+    CheckedPtr cache = axObjectCache();
     if (RefPtr axWebArea = cache ? cache->rootWebArea() : nullptr) {
         AXPropertyVector properties;
         properties.append({ AXProperty::WebAreaTitle, WTF::move(title) });
@@ -293,11 +328,6 @@ RefPtr<AXIsolatedTree> AXIsolatedTree::treeForFrameID(FrameIdentifier frameID)
     return treeFrameCache().get(frameID);
 }
 
-RefPtr<AXIsolatedTree> AXIsolatedTree::treeForFrameIDAlreadyLocked(FrameIdentifier frameID)
-{
-    return treeFrameCache().get(frameID);
-}
-
 void AXIsolatedTree::generateSubtree(AccessibilityObject& axObject)
 {
     AXTRACE("AXIsolatedTree::generateSubtree"_s);
@@ -307,7 +337,7 @@ void AXIsolatedTree::generateSubtree(AccessibilityObject& axObject)
         return;
 
     // We're about to a lot of read-only work, so start the attribute cache.
-    AXAttributeCacheScope enableCache(axObject.axObjectCache());
+    AXAttributeCacheScope enableCache(protect(axObject.axObjectCache()));
     collectNodeChangesForSubtree(axObject);
     queueRemovalsAndUnresolvedChanges();
 }
@@ -322,7 +352,7 @@ bool AXIsolatedTree::shouldCreateNodeChange(AccessibilityObject& axObject)
             || m_unconnectedNodes.contains(axObject.objectID()));
 }
 
-std::optional<AXIsolatedTree::NodeChange> AXIsolatedTree::nodeChangeForObject(Ref<AccessibilityObject> axObject)
+std::optional<AXIsolatedTree::NodeChange> AXIsolatedTree::nodeChangeForObject(Ref<AccessibilityObject> axObject, std::optional<uint64_t> sequence)
 {
     AX_ASSERT(isMainThread());
     AX_ASSERT(!axObject->isDetached());
@@ -333,8 +363,18 @@ std::optional<AXIsolatedTree::NodeChange> AXIsolatedTree::nodeChangeForObject(Re
     AX_ASSERT(axObject->wrapper());
     auto data = createIsolatedObjectData(axObject, *this);
     Markable parentID = data.parentID;
-    m_nodeMap.set(axObject->objectID(), ParentChildrenIDs { parentID, data.childrenIDs });
-    NodeChange nodeChange { WTF::move(data), axObject->wrapper() };
+    auto iterator = m_nodeMap.find(axObject->objectID());
+    if (iterator == m_nodeMap.end())
+        m_nodeMap.set(axObject->objectID(), ParentChildrenIDs { parentID, data.childrenIDs });
+    else {
+        // We don't want to update the childrenIDs for an existing object, as |updateChildren| relies on
+        // knowing what children have changed (which are new, which are old) to decide what objects to create
+        // and destroy. If we were to update childrenIDs here, |updateChildren| would either fail to create
+        // objects for new children, and / or leak old ones. |collectNodeChangesForSubtree| has the same behavior.
+        iterator->value.parentID = parentID;
+    }
+
+    NodeChange nodeChange { WTF::move(data), axObject->wrapper(), sequence.value_or(nextChangeSequence()) };
 
     if (axObject->isRoot())
         setPendingRootNodeID(axObject->objectID());
@@ -344,21 +384,45 @@ std::optional<AXIsolatedTree::NodeChange> AXIsolatedTree::nodeChangeForObject(Re
 void AXIsolatedTree::queueChange(NodeChange&& nodeChange)
 {
     AX_ASSERT(isMainThread());
-    AX_ASSERT(m_changeLogLock.isLocked());
 
     AXID objectID = nodeChange.data.axID;
     Markable parentID = nodeChange.data.parentID;
-    m_pendingAppends.append(WTF::move(nodeChange));
+    bool isTextControl = AXCoreObject::isTextControl(nodeChange.data.role);
+    auto& pending = markDirtyAndGetWorkingChanges();
+    pending.appends.append(WTF::move(nodeChange));
+
+    // An append carries a full, fresh copy of the node's properties, so it supersedes a SelectedTextRange
+    // update already queued for this object in an earlier cycle. Drop that stale update; without this it
+    // would apply after the append on the reader thread (appends are applied before property changes) and
+    // clobber the fresh selection. Updates queued after this append are preserved (last-writer-wins).
+    // Only text controls carry a SelectedTextRange, so this is safely scoped to them, which also avoids
+    // scanning propertyChanges on the common non-text-control append.
+    //
+    // FIXME: An append supersedes *any* earlier-queued property change for the same object (as the
+    // same-cycle dedup in processQueuedNodeUpdates() already assumes), but we limit this to SelectedTextRange
+    // for now since other properties may intentionally be pushed as targeted updates. Consider generalizing.
+    if (isTextControl) {
+        for (auto& change : pending.propertyChanges) {
+            if (change.axID == objectID) {
+                change.properties.removeAllMatching([] (const auto& property) {
+                    return property.first == AXProperty::SelectedTextRange;
+                });
+            }
+        }
+        pending.propertyChanges.removeAllMatching([] (const auto& change) {
+            return change.properties.isEmpty();
+        });
+    }
 
     if (parentID) {
         auto siblingsIDs = m_nodeMap.get(*parentID).childrenIDs;
-        m_pendingChildrenUpdates.append({ *parentID, WTF::move(siblingsIDs) });
+        pending.childrenUpdates.append({ *parentID, WTF::move(siblingsIDs) });
     }
 
-    ASSERT_WITH_MESSAGE(objectID != parentID, "object ID was the same as its parent ID (%s) when queueing a node change", objectID.loggingString().utf8().data());
-    ASSERT_WITH_MESSAGE(m_nodeMap.contains(objectID), "node map should've contained objectID: %s", objectID.loggingString().utf8().data());
+    ASSERT_WITH_MESSAGE(objectID != parentID, "object ID was the same as its parent ID (%s) when queueing a node change", objectID.loggingString().utf8());
+    ASSERT_WITH_MESSAGE(m_nodeMap.contains(objectID), "node map should've contained objectID: %s", objectID.loggingString().utf8());
     auto childrenIDs = m_nodeMap.get(objectID).childrenIDs;
-    m_pendingChildrenUpdates.append({ objectID, WTF::move(childrenIDs) });
+    pending.childrenUpdates.append({ objectID, WTF::move(childrenIDs) });
 }
 
 void AXIsolatedTree::addUnconnectedNode(Ref<AccessibilityObject> axObject)
@@ -379,34 +443,36 @@ void AXIsolatedTree::addUnconnectedNode(Ref<AccessibilityObject> axObject)
     }
     AXLOG(makeString("AXIsolatedTree::addUnconnectedNode creating isolated object from live object ID "_s, objectID.loggingString()));
 
+    // Mark this as an unconnected node before creating its isolated data below, as
+    // createIsolatedObjectData() gates caching of the full property set on isUnconnectedNode().
+    m_unconnectedNodes.add(objectID);
+
     // Because we are queuing a change for an object not intended to be connected to the rest of the tree,
-    // we don't need to update m_nodeMap or m_pendingChildrenUpdates for this object or its parent as is
+    // we don't need to update m_nodeMap or m_workingChanges.childrenUpdates for this object or its parent as is
     // done in AXIsolatedTree::nodeChangeForObject and AXIsolatedTree::queueChange.
     //
     // Instead, just directly create and queue the node change so m_readerThreadNodeMap can hold a reference
     // to it. It will be removed from m_readerThreadNodeMap when the corresponding DOM element, renderer, or
     // other entity is removed from the page.
-    NodeChange nodeChange { createIsolatedObjectData(axObject, *this), axObject->wrapper() };
-    Locker locker { m_changeLogLock };
-    m_pendingAppends.append(WTF::move(nodeChange));
-    m_unconnectedNodes.add(objectID);
+    NodeChange nodeChange { createIsolatedObjectData(axObject, *this), axObject->wrapper(), nextChangeSequence() };
+    auto& workingChanges = markDirtyAndGetWorkingChanges();
+    workingChanges.appends.append(WTF::move(nodeChange));
+#if ASSERT_ENABLED
+    workingChanges.unconnectedNodeIDs.append(objectID);
+#endif
 }
 
-void AXIsolatedTree::queueRemovals(Vector<AXID>&& subtreeRemovals)
+void AXIsolatedTree::queueRemovals(Vector<NodeAndParentID>&& subtreeRemovals)
 {
     AX_ASSERT(isMainThread());
 
-    Locker locker { m_changeLogLock };
-    queueRemovalsLocked(WTF::move(subtreeRemovals));
-}
+    // Bail before touching the working buffer when there's nothing to queue.
+    if (subtreeRemovals.isEmpty() && m_protectedFromDeletionIDs.isEmpty())
+        return;
 
-void AXIsolatedTree::queueRemovalsLocked(Vector<AXID>&& subtreeRemovals)
-{
-    AX_ASSERT(isMainThread());
-    AX_ASSERT(m_changeLogLock.isLocked());
-
-    m_pendingSubtreeRemovals.addAll(WTF::move(subtreeRemovals));
-    m_pendingProtectedFromDeletionIDs.addAll(std::exchange(m_protectedFromDeletionIDs, { }));
+    auto& pending = markDirtyAndGetWorkingChanges();
+    pending.subtreeRemovals.appendVector(WTF::move(subtreeRemovals));
+    pending.protectedFromDeletionIDs.addAll(std::exchange(m_protectedFromDeletionIDs, { }));
 }
 
 void AXIsolatedTree::queueRemovalsAndUnresolvedChanges()
@@ -434,42 +500,46 @@ Vector<AXIsolatedTree::NodeChange> AXIsolatedTree::resolveAppends()
     // The process of resolving appends can add more IDs to m_unresolvedPendingAppends as we iterate over it, so
     // iterate over an exchanged map instead. Any late-appended IDs will get picked up in the next cycle.
     auto unresolvedPendingAppends = std::exchange(m_unresolvedPendingAppends, { });
-    for (const auto& axID : unresolvedPendingAppends) {
-        if (m_replacingTree) {
+    RefPtr replacingTree = m_replacingTree;
+    for (const auto& [axID, sequence] : unresolvedPendingAppends) {
+        if (replacingTree) {
             ++counter;
             if (MonotonicTime::now() - lastFeedbackTime > CreationFeedbackInterval) {
-                m_replacingTree->reportLoadingProgress(counter / unresolvedPendingAppends.size());
+                replacingTree->reportLoadingProgress(counter / unresolvedPendingAppends.size());
                 lastFeedbackTime = MonotonicTime::now();
             }
         }
 
         if (RefPtr axObject = cache->objectForID(axID)) {
-            if (std::optional nodeChange = nodeChangeForObject(*axObject))
+            // Pass along the sequence that was recorded when the decision to make this append
+            // was decided. The sequence captures when the *decision* to make the append was
+            // made, not the timing of when that append is actually resolved (now). Creating
+            // a fresh sequence ID here would be logically incorrect and potentially cause bugs.
+            if (std::optional nodeChange = nodeChangeForObject(*axObject, sequence))
                 resolvedAppends.append(WTF::move(*nodeChange));
         }
     }
     resolvedAppends.shrinkToFit();
 
-    if (m_replacingTree)
-        m_replacingTree->reportLoadingProgress(1);
+    if (replacingTree)
+        replacingTree->reportLoadingProgress(1);
     return resolvedAppends;
 }
 
-void AXIsolatedTree::queueAppendsAndRemovals(Vector<NodeChange>&& appends, Vector<AXID>&& subtreeRemovals)
+void AXIsolatedTree::queueAppendsAndRemovals(Vector<NodeChange>&& appends, Vector<NodeAndParentID>&& subtreeRemovals)
 {
     AX_ASSERT(isMainThread());
 
     auto parentUpdateIDs = std::exchange(m_needsParentUpdate, { });
-    Locker locker { m_changeLogLock };
     for (auto&& append : appends)
         queueChange(WTF::move(append));
 
     for (const auto& axID : parentUpdateIDs) {
-        ASSERT_WITH_MESSAGE(m_nodeMap.contains(axID), "An object marked as needing a parent update should've had an entry in the node map by now. ID was %s", axID.loggingString().utf8().data());
-        m_pendingParentUpdates.set(axID, *m_nodeMap.get(axID).parentID);
+        ASSERT_WITH_MESSAGE(m_nodeMap.contains(axID), "An object marked as needing a parent update should've had an entry in the node map by now. ID was %s", axID.loggingString().utf8());
+        markDirtyAndGetWorkingChanges().parentUpdates.set(axID, *m_nodeMap.get(axID).parentID);
     }
 
-    queueRemovalsLocked(WTF::move(subtreeRemovals));
+    queueRemovals(WTF::move(subtreeRemovals));
 }
 
 void AXIsolatedTree::collectNodeChangesForSubtree(AccessibilityObject& axObject)
@@ -491,7 +561,7 @@ void AXIsolatedTree::collectNodeChangesForSubtree(AccessibilityObject& axObject)
 
     auto iterator = m_nodeMap.find(axObject.objectID());
     if (iterator == m_nodeMap.end()) {
-        m_unresolvedPendingAppends.add(axObject.objectID());
+        m_unresolvedPendingAppends.set(axObject.objectID(), nextChangeSequence());
 
         Vector<AXID> axChildrenIDs;
         axChildrenIDs.reserveInitialCapacity(axChildrenCopy.size());
@@ -546,7 +616,7 @@ void AXIsolatedTree::updateNode(AccessibilityObject& axObject)
     // AccessibilityRenderObject::updateRoleAfterChildrenCreation), queue the append up to be resolved with the rest
     // of the collected changes. This prevents us from creating two node changes for the same object.
     if (isCollectingNodeChanges() || !m_unresolvedPendingAppends.isEmpty()) {
-        m_unresolvedPendingAppends.add(axObject.objectID());
+        m_unresolvedPendingAppends.set(axObject.objectID(), nextChangeSequence());
         return;
     }
 
@@ -554,7 +624,6 @@ void AXIsolatedTree::updateNode(AccessibilityObject& axObject)
     // In both cases, we can't attach the wrapper immediately on the main thread, since the wrapper could be in use
     // on the AX thread (because this function updates an existing node).
     if (auto change = nodeChangeForObject(axObject)) {
-        Locker locker { m_changeLogLock };
         queueChange(WTF::move(*change));
         return;
     }
@@ -567,10 +636,8 @@ void AXIsolatedTree::updateNode(AccessibilityObject& axObject)
     if (!axParent)
         return;
 
-    if (auto change = nodeChangeForObject(downcast<AccessibilityObject>(*axParent))) {
-        Locker locker { m_changeLogLock };
+    if (auto change = nodeChangeForObject(downcast<AccessibilityObject>(*axParent)))
         queueChange(WTF::move(*change));
-    }
 }
 
 void AXIsolatedTree::objectChangedIgnoredState(const AccessibilityObject& object)
@@ -588,7 +655,7 @@ void AXIsolatedTree::objectChangedIgnoredState(const AccessibilityObject& object
     }
 
     if (object.isLink()) {
-        CheckedPtr axObjectCache = m_axObjectCache.get();
+        CheckedPtr axObjectCache = m_axObjectCache;
         if (RefPtr webArea = axObjectCache ? axObjectCache->rootWebArea() : nullptr)
             queueNodeUpdate(webArea->objectID(), { AXProperty::DocumentLinks });
     }
@@ -642,6 +709,9 @@ void AXIsolatedTree::updateNodeProperties(AccessibilityObject& axObject, const A
         case AXProperty::ARIALevel:
             properties.append({ AXProperty::ARIALevel, axObject.ariaLevel() });
             break;
+        case AXProperty::HeadingLevel:
+            properties.append({ AXProperty::HeadingLevel, axObject.computedHeadingLevel() });
+            break;
         case AXProperty::ValueAutofillButtonType:
             properties.append({ AXProperty::ValueAutofillButtonType, static_cast<int>(axObject.valueAutofillButtonType()) });
             properties.append({ AXProperty::IsValueAutofillAvailable, axObject.isValueAutofillAvailable() });
@@ -684,6 +754,25 @@ void AXIsolatedTree::updateNodeProperties(AccessibilityObject& axObject, const A
         case AXProperty::ColumnIndexRange:
             properties.append({ AXProperty::ColumnIndexRange, axObject.columnIndexRange() });
             break;
+        case AXProperty::IsFocusedWebArea:
+            AX_ASSERT(axObject.isWebArea());
+            properties.append({ AXProperty::IsFocusedWebArea, axObject.isFocused() });
+            break;
+#if ENABLE_ACCESSIBILITY_LOCAL_FRAME
+        case AXProperty::CrossFrameParentAXID: {
+            // The parent's frame ID is only meaningful alongside its AXID, so update both.
+            RefPtr crossFrameParent = axObject.isScrollArea() && !axObject.parentObject() ? axObject.crossFrameParentObject() : nullptr;
+            WeakPtr parentCache = crossFrameParent ? crossFrameParent->axObjectCache() : nullptr;
+            if (parentCache) {
+                properties.append({ AXProperty::CrossFrameParentFrameID, parentCache->frameID() });
+                properties.append({ AXProperty::CrossFrameParentAXID, Markable { crossFrameParent->objectID() } });
+            } else {
+                properties.append({ AXProperty::CrossFrameParentFrameID, nullptr });
+                properties.append({ AXProperty::CrossFrameParentAXID, nullptr });
+            }
+            break;
+        }
+#endif // ENABLE_ACCESSIBILITY_LOCAL_FRAME
         case AXProperty::CurrentState:
             properties.append({ AXProperty::CurrentState, static_cast<int>(axObject.currentState()) });
             break;
@@ -701,6 +790,9 @@ void AXIsolatedTree::updateNodeProperties(AccessibilityObject& axObject, const A
                 properties.append({ AXProperty::ExplicitOrientation, *orientation });
             break;
         }
+        case AXProperty::Description:
+            properties.append({ AXProperty::Description, axObject.description().isolatedCopy() });
+            break;
         case AXProperty::ExtendedDescription:
             properties.append({ AXProperty::ExtendedDescription, axObject.extendedDescription().isolatedCopy() });
             break;
@@ -738,6 +830,9 @@ void AXIsolatedTree::updateNodeProperties(AccessibilityObject& axObject, const A
             break;
         case AXProperty::IsHiddenUntilFoundContainer:
             properties.append({ AXProperty::IsHiddenUntilFoundContainer, axObject.isHiddenUntilFoundContainer() });
+            break;
+        case AXProperty::IsARIAHidden:
+            properties.append({ AXProperty::IsARIAHidden, axObject.isARIAHidden() });
             break;
         case AXProperty::IsIgnored:
             properties.append({ AXProperty::IsIgnored, axObject.isIgnored() });
@@ -801,11 +896,17 @@ void AXIsolatedTree::updateNodeProperties(AccessibilityObject& axObject, const A
         case AXProperty::HasCursorPointer:
             properties.append({ AXProperty::HasCursorPointer, axObject.hasCursorPointer() });
             break;
+        case AXProperty::InvalidStatus:
+            properties.append({ AXProperty::InvalidStatus, axObject.invalidStatusIncludingInferred().isolatedCopy() });
+            break;
         case AXProperty::RadioButtonGroupMembers:
             properties.append({ AXProperty::RadioButtonGroupMembers, axIDs(axObject.radioButtonGroup()) });
             break;
         case AXProperty::ScreenRelativePosition:
             properties.append({ AXProperty::ScreenRelativePosition, axObject.screenRelativePosition() });
+            break;
+        case AXProperty::SelectedOptionCheckmark:
+            properties.append({ AXProperty::SelectedOptionCheckmark, axObject.selectedOptionCheckmark().isolatedCopy() });
             break;
         case AXProperty::SelectedTextRange:
             properties.append({ AXProperty::SelectedTextRange, axObject.selectedTextRange() });
@@ -878,12 +979,11 @@ void AXIsolatedTree::updateNodeProperties(AccessibilityObject& axObject, const A
         case AXProperty::LinethroughColor:
             properties.append({ AXProperty::LinethroughColor, axObject.lineDecorationStyle().linethroughColor });
             break;
-        case AXProperty::RevealableText:
-            // We should only cache this property for ignored objects.
-            AX_ASSERT(axObject.isIgnored());
+        case AXProperty::RevealableText: {
             if (String text = axObject.revealableText(); !text.isEmpty())
                 properties.append({ AXProperty::RevealableText, WTF::move(text).isolatedCopy() });
             break;
+        }
         case AXProperty::TextColor: {
             if (RefPtr parent = axObject.parentObject()) {
                 auto color = axObject.textColor();
@@ -922,8 +1022,7 @@ void AXIsolatedTree::updateNodeProperties(AccessibilityObject& axObject, const A
     if (properties.isEmpty())
         return;
 
-    Locker locker { m_changeLogLock };
-    m_pendingPropertyChanges.append({ axObject.objectID(), WTF::move(properties) });
+    markDirtyAndGetWorkingChanges().propertyChanges.append({ axObject.objectID(), WTF::move(properties) });
 }
 
 void AXIsolatedTree::overrideNodeProperties(AXID axID, AXPropertyVector&& properties)
@@ -933,8 +1032,7 @@ void AXIsolatedTree::overrideNodeProperties(AXID axID, AXPropertyVector&& proper
     if (properties.isEmpty())
         return;
 
-    Locker locker { m_changeLogLock };
-    m_pendingPropertyChanges.append({ axID, WTF::move(properties) });
+    markDirtyAndGetWorkingChanges().propertyChanges.append({ axID, WTF::move(properties) });
 }
 
 void AXIsolatedTree::updateDependentProperties(AccessibilityObject& axObject)
@@ -950,6 +1048,19 @@ void AXIsolatedTree::updateDependentProperties(AccessibilityObject& axObject)
     };
     updateRelatedObjects(axObject);
 
+    // An <img> with neither alt nor title takes its accessible name from an ancestor <figure>'s <figcaption>.
+    // If this is a <figure>, update image text underneath.
+    auto updateFigureCaptionedImages = [this] (AccessibilityObject& object) {
+        if (!object.isFigureElement())
+            return;
+
+        Accessibility::enumerateDescendantsIncludingIgnored<AXCoreObject>(object, false, [this, protectedThis = Ref { *this }] (auto& descendant) {
+            if (descendant.isImage())
+                queueNodeUpdate(descendant.objectID(), { { AXProperty::AccessibilityText, AXProperty::Description } });
+        });
+    };
+    updateFigureCaptionedImages(axObject);
+
     // When a row gains or loses cells, or a table changes rows in a row group, the column count of the table can change.
     bool updateTableAncestorColumns = axObject.isExposedTableRow() || isRowGroup(axObject.node());
     for (RefPtr ancestor = axObject.parentObject(); ancestor; ancestor = ancestor->parentObject()) {
@@ -963,6 +1074,7 @@ void AXIsolatedTree::updateDependentProperties(AccessibilityObject& axObject)
         }
 
         updateRelatedObjects(*ancestor);
+        updateFigureCaptionedImages(*ancestor);
     }
 }
 
@@ -981,18 +1093,26 @@ void AXIsolatedTree::updateChildren(AccessibilityObject& axObject, ResolveNodeCh
         return;
     }
 
-    if (!axObject.document() || !axObject.document()->hasLivingRenderTree())
+    if (!axObject.document() || axObject.document()->renderTreeState() != Document::RenderTreeState::Built)
         return;
 
     // We're about to do a lot of work, so start the attribute cache.
-    AXAttributeCacheScope enableCache(axObject.axObjectCache());
+    AXAttributeCacheScope enableCache(protect(axObject.axObjectCache()));
 
     // updateChildren may be called as the result of a children changed
     // notification for an axObject that has no associated isolated object.
     // An example of this is when an empty element such as a <canvas> or <div>
     // has added a new child. So find the closest ancestor of axObject that has
     // an associated isolated object and update its children.
-    auto* axAncestor = &axObject;
+    //
+    // This behavior is important despite the isolated tree including ignored
+    // objects (and thus every object being "in-tree"). Without it, if we build
+    // the isolated tree from a main-thread tree that has only a scroll area and
+    // web area, the incremental tree updates that follow may not actually ever
+    // update the webarea's empty children, leaving the whole tree empty forever.
+    RefPtr axAncestor = &axObject;
+    while (axAncestor && !m_nodeMap.contains(axAncestor->objectID()))
+        axAncestor = downcast<AccessibilityObject>(axAncestor->parentInCoreTree());
 
     if (!axAncestor || axAncestor->isDetached()) {
         // This update was triggered before the isolated tree has been repopulated.
@@ -1001,7 +1121,9 @@ void AXIsolatedTree::updateChildren(AccessibilityObject& axObject, ResolveNodeCh
         return;
     }
 
-    // FIXME: This copy out of the hashmap seems unnecessary — can we use HashMap::find instead?
+    // This must be a copy, not a reference via HashMap::find, because collectNodeChangesForSubtree
+    // (called below) can insert into m_nodeMap, potentially triggering a rehash that would
+    // invalidate any iterator or reference into the map.
     auto oldIDs = m_nodeMap.get(axAncestor->objectID());
     auto& oldChildrenIDs = oldIDs.childrenIDs;
 
@@ -1066,7 +1188,9 @@ void AXIsolatedTree::updateChildren(AccessibilityObject& axObject, ResolveNodeCh
         updateDependentProperties(*axAncestor);
     }
 
-    m_subtreesToRemove.appendVector(WTF::move(oldChildrenIDs));
+    AXID parentID = axAncestor->objectID();
+    for (AXID childID : oldChildrenIDs)
+        m_subtreesToRemove.append({ childID, parentID, nextChangeSequence() });
     if (resolveNodeChanges == ResolveNodeChanges::Yes)
         queueRemovalsAndUnresolvedChanges();
 }
@@ -1078,7 +1202,7 @@ void AXIsolatedTree::updateChildrenForObjects(const ListHashSet<Ref<Accessibilit
     if (isUpdatingSubtree())
         return;
 
-    AXAttributeCacheScope enableCache(axObjectCache());
+    AXAttributeCacheScope enableCache(protect(axObjectCache()));
     for (auto& axObject : axObjects)
         queueNodeUpdate(axObject->objectID(), NodeUpdateOptions::childrenUpdate());
 
@@ -1096,12 +1220,6 @@ void AXIsolatedTree::setPageActivityState(OptionSet<ActivityState> state)
 OptionSet<ActivityState> AXIsolatedTree::pageActivityState() const
 {
     Locker locker { s_storeLock };
-    return m_pageActivityState;
-}
-
-OptionSet<ActivityState> AXIsolatedTree::lockedPageActivityState() const
-{
-    AX_ASSERT(s_storeLock.isLocked());
     return m_pageActivityState;
 }
 
@@ -1134,10 +1252,12 @@ void AXIsolatedTree::setInitialSortedNonRootWebAreas(Vector<AXID> webAreaIDs)
 std::optional<AXID> AXIsolatedTree::focusedNodeID()
 {
     AX_ASSERT(!isMainThread());
-    // applyPendingChanges can destroy `this` tree, so protect it until the end of this method.
-    Ref protectedThis { *this };
     // Apply pending changes in case focus has changed and hasn't been updated.
-    applyPendingChanges();
+    // Use applyPendingChangesUnlessQueuedForDestruction() because this method may be called
+    // while s_storeLock is held (e.g., from findAXTree() callback). If we used applyPendingChanges()
+    // on a tree queued for destruction, it would try to call AXTreeStore::remove() which requires
+    // s_storeLock, causing a deadlock.
+    applyPendingChangesUnlessQueuedForDestruction();
     return m_focusedNodeID;
 }
 
@@ -1167,8 +1287,14 @@ bool AXIsolatedTree::unsafeHasObjectForID(AXID axID) const
 
 std::optional<AXID> AXIsolatedTree::pendingRootNodeID()
 {
+    // The root the main thread has published or is about to publish, regardless of which buffer
+    // currently holds it. This should only be used on the main-thread.
+    AX_ASSERT(isMainThread());
+
+    if (m_workingChanges.rootNodeID)
+        return m_workingChanges.rootNodeID;
     Locker locker { m_changeLogLock };
-    return m_pendingRootNodeID;
+    return m_committedChanges.rootNodeID;
 }
 
 RefPtr<AXIsolatedObject> AXIsolatedTree::rootWebArea()
@@ -1184,17 +1310,10 @@ RefPtr<AXIsolatedObject> AXIsolatedTree::rootWebArea()
 
 void AXIsolatedTree::setPendingRootNodeID(AXID axID)
 {
-    Locker locker { m_changeLogLock };
-    setPendingRootNodeIDLocked(axID);
-}
-
-void AXIsolatedTree::setPendingRootNodeIDLocked(AXID axID)
-{
-    AXTRACE("AXIsolatedTree::setPendingRootNodeIDLocked"_s);
+    AXTRACE("AXIsolatedTree::setPendingRootNodeID"_s);
     AX_ASSERT(isMainThread());
-    AX_ASSERT(m_changeLogLock.isLocked());
 
-    m_pendingRootNodeID = axID;
+    markDirtyAndGetWorkingChanges().rootNodeID = axID;
 }
 
 void AXIsolatedTree::setFocusedNodeID(std::optional<AXID> axID)
@@ -1203,8 +1322,7 @@ void AXIsolatedTree::setFocusedNodeID(std::optional<AXID> axID)
     AXLOG(makeString("axID "_s, axID ? axID->loggingString() : ""_str));
     AX_ASSERT(isMainThread());
 
-    Locker locker { m_changeLogLock };
-    m_pendingFocusedNodeID = axID;
+    markDirtyAndGetWorkingChanges().focusedNodeID = Markable<AXID> { axID };
 }
 
 void AXIsolatedTree::updateRelations(HashMap<AXID, AXRelations>&& relations)
@@ -1213,8 +1331,7 @@ void AXIsolatedTree::updateRelations(HashMap<AXID, AXRelations>&& relations)
     AX_ASSERT(isMainThread());
 
     m_relationsNeedUpdate = false;
-    Locker locker { m_changeLogLock };
-    m_pendingRelations = WTF::move(relations);
+    markDirtyAndGetWorkingChanges().relations = WTF::move(relations);
 }
 
 void AXIsolatedTree::setSelectedTextMarkerRange(AXTextMarkerRange&& range)
@@ -1222,9 +1339,29 @@ void AXIsolatedTree::setSelectedTextMarkerRange(AXTextMarkerRange&& range)
     AXTRACE("AXIsolatedTree::setSelectedTextMarkerRange"_s);
     AX_ASSERT(isMainThread());
 
-    Locker locker { m_changeLogLock };
-    m_pendingSelectedTextMarkerRange = WTF::move(range);
+    markDirtyAndGetWorkingChanges().selectedTextMarkerRange = WTF::move(range);
 }
+
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+void AXIsolatedTree::setFrameGeometry(AXFrameGeometry&& geometry, IntPoint viewOriginScrollPosition)
+{
+    auto& pending = markDirtyAndGetWorkingChanges();
+    pending.frameGeometry = WTF::move(geometry);
+    pending.frameViewOriginScrollPosition = viewOriginScrollPosition;
+}
+
+void AXIsolatedTree::updateFrameGeometryAndScrollPositionIfNeeded(AXObjectCache& cache)
+{
+    if (std::optional geometry = cache.getAndUpdateFrameGeometry()) {
+        IntPoint viewOriginScrollPosition;
+        if (CheckedPtr view = protect(cache.document())->view()) {
+            // FIXME: Remove suppression once rdar://189998444 is fixed.
+            SUPPRESS_MEMORY_UNSAFE_CAST viewOriginScrollPosition = IntPoint(view->documentScrollPositionRelativeToViewOrigin());
+        }
+        setFrameGeometry(AXFrameGeometry { *geometry }, viewOriginScrollPosition);
+    }
+}
+#endif
 
 void AXIsolatedTree::updateLoadingProgress(double newProgressValue)
 {
@@ -1234,6 +1371,16 @@ void AXIsolatedTree::updateLoadingProgress(double newProgressValue)
 
     m_loadingProgress = newProgressValue;
 }
+
+#if ENABLE(WRITING_TOOLS)
+void AXIsolatedTree::setWritingToolsAvailable(bool isAvailable)
+{
+    AXTRACE("AXIsolatedTree::setWritingToolsAvailable"_s);
+    AX_ASSERT(isMainThread());
+
+    m_writingToolsAvailable = isAvailable;
+}
+#endif // ENABLE(WRITING_TOOLS)
 
 void AXIsolatedTree::updateFrame(AXID axID, IntRect&& newFrame)
 {
@@ -1247,8 +1394,7 @@ void AXIsolatedTree::updateFrame(AXID axID, IntRect&& newFrame)
     properties.append({ AXProperty::RelativeFrame, WTF::move(newFrame) });
     // We can clear the initially-cached rough frame, since the object's frame has been cached.
     properties.append({ AXProperty::InitialLocalRect, FloatRect() });
-    Locker locker { m_changeLogLock };
-    m_pendingPropertyChanges.append({ axID, WTF::move(properties) });
+    markDirtyAndGetWorkingChanges().propertyChanges.append({ axID, WTF::move(properties) });
 }
 
 void AXIsolatedTree::updateRootScreenRelativePosition()
@@ -1256,9 +1402,15 @@ void AXIsolatedTree::updateRootScreenRelativePosition()
     AXTRACE("AXIsolatedTree::updateRootScreenRelativePosition"_s);
     AX_ASSERT(isMainThread());
 
-    CheckedPtr cache = m_axObjectCache.get();
-    if (RefPtr axRoot = cache && cache->document() ? cache->getOrCreate(cache->document()->view()) : nullptr)
+    CheckedPtr cache = m_axObjectCache;
+    if (RefPtr axRoot = cache && cache->document() ? dynamicDowncast<AccessibilityScrollView>(cache->getOrCreate(protect(protect(cache->document())->view()))) : nullptr) {
         queueNodeUpdate(axRoot->objectID(), { AXProperty::ScreenRelativePosition });
+
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+        // Sync current cache value to isolated tree and fire async request to keep it up-to-date.
+        updateFrameGeometryAndScrollPositionIfNeeded(*cache);
+#endif
+    }
 }
 
 void AXIsolatedTree::removeNode(AXID axID, std::optional<AXID> parentID)
@@ -1269,7 +1421,7 @@ void AXIsolatedTree::removeNode(AXID axID, std::optional<AXID> parentID)
 
     m_unresolvedPendingAppends.remove(axID);
     removeSubtreeFromNodeMap(axID, parentID);
-    queueRemovals({ axID });
+    queueRemovals({ { axID, parentID, nextChangeSequence() } });
 }
 
 void AXIsolatedTree::removeSubtreeFromNodeMap(std::optional<AXID> objectID, std::optional<AXID> axParentID)
@@ -1327,99 +1479,459 @@ std::optional<ListHashSet<AXID>> AXIsolatedTree::relatedObjectIDsFor(const AXIso
 
 void AXIsolatedTree::applyPendingChanges()
 {
-    Locker locker { m_changeLogLock };
-    applyPendingChangesLocked();
+    AX_ASSERT(!isMainThread());
+
+    if (!hasPendingChanges())
+        return;
+
+    PendingChanges committedChanges;
+    {
+        Locker locker { m_changeLogLock };
+        // Release the lock before applying committedChanges locally, since
+        // doing so can take time, and we don't want to block the main-thread
+        // unnecessarily.
+        committedChanges = takeCommittedChangesLocked();
+    }
+    applyCommittedChanges(WTF::move(committedChanges));
 }
 
 void AXIsolatedTree::applyPendingChangesUnlessQueuedForDestruction()
 {
     AX_ASSERT(!isMainThread());
 
-    Locker locker { m_changeLogLock };
-
-    if (m_queuedForDestruction)
+    if (!hasPendingChanges())
         return;
-    applyPendingChangesLocked();
+
+    PendingChanges committedChanges;
+    {
+        Locker locker { m_changeLogLock };
+        if (m_queuedForDestruction) [[unlikely]]
+            return;
+        committedChanges = takeCommittedChangesLocked();
+    }
+    applyCommittedChanges(WTF::move(committedChanges));
 }
 
-void AXIsolatedTree::applyPendingChangesLocked()
+DidTearDown AXIsolatedTree::applyPendingChangesOrTearDown()
 {
-    AXTRACE("AXIsolatedTree::applyPendingChanges"_s);
+    AX_ASSERT(!isMainThread());
+
+    PendingChanges committedChanges;
+    {
+        Locker locker { m_changeLogLock };
+
+        // Check for destruction before consulting m_hasPendingChanges. Any other thread can consume
+        // that flag via applyPendingChanges() between queueForDestruction() and this sweep, and if it
+        // does, the tree would never be torn down: the sweep clears s_anyTreeNeedsTearDown afterwards,
+        // so the teardown signal is lost for good and the stale tree keeps serving clients forever.
+        if (m_queuedForDestruction) [[unlikely]] {
+            clearTreeContentsLocked();
+            return DidTearDown::Yes;
+        }
+
+        if (!hasPendingChanges())
+            return DidTearDown::No;
+
+        committedChanges = takeCommittedChangesLocked();
+    }
+    applyCommittedChanges(WTF::move(committedChanges));
+    return DidTearDown::No;
+}
+
+void AXIsolatedTree::clearTreeContentsLocked()
+{
+    AXTRACE("AXIsolatedTree::clearTreeContentsLocked"_s);
     AX_ASSERT(!isMainThread());
     AX_ASSERT(m_changeLogLock.isLocked());
 
-    if (AXObjectCache::isAppleInternalInstall()) [[unlikely]]
-        WTFBeginSignpostAlways(this, AccessibilityIsolatedTreeApplyPendingChanges, "tree ID: %" PRIVATE_LOG_STRING "", treeID().loggingString().utf8().data());
+    for (const auto& object : m_readerThreadNodeMap.values())
+        object->detach(AccessibilityDetachmentType::CacheDestroyed);
 
-    if (m_queuedForDestruction) [[unlikely]] {
-        for (const auto& object : m_readerThreadNodeMap.values())
-            object->detach(AccessibilityDetachmentType::CacheDestroyed);
+    // Because each AXIsolatedObject holds a RefPtr to this tree, clear out any member variable
+    // that holds an AXIsolatedObject so the ref-cycle is broken and this tree can be destroyed.
+    //
+    // m_workingChanges.appends holds tree-referencing NodeChanges too, but deliberately isn't
+    // cleared here, since that can only used on the main-thread.
+    m_readerThreadNodeMap.clear();
+    m_committedChanges.appends.clear();
+    // We don't need to bother clearing out any other non-cycle-causing member variables as they
+    // will be cleaned up automatically when the tree is destroyed.
+}
 
-        // Because each AXIsolatedObject holds a RefPtr to this tree, clear out any member variable
-        // that holds an AXIsolatedObject so the ref-cycle is broken and this tree can be destroyed.
-        m_readerThreadNodeMap.clear();
-        m_rootNode = nullptr;
-        m_pendingAppends.clear();
-        // We don't need to bother clearing out any other non-cycle-causing member variables as they
-        // will be cleaned up automatically when the tree is destroyed.
-
-        AX_ASSERT(AXTreeStore::contains(treeID()));
-        AXTreeStore::remove(treeID());
-
-        if (AXObjectCache::isAppleInternalInstall()) [[unlikely]]
-            WTFEndSignpostAlways(this, AccessibilityIsolatedTreeApplyPendingChanges, "tree ID: %" PRIVATE_LOG_STRING "", treeID().loggingString().utf8().data());
-        return;
+// When a node is queued for both subtree removal and appending in the same batch (e.g. when an
+// in-process FrameHost is replaced with an out-of-process one due to site isolation), the old
+// subtree snapshot and the new one can both end up in m_committedChanges.appends. The removal root
+// may not yet be in the node map, so deleteSubtree won't encounter it, and removeStaleAppends is what
+// keeps the stale snapshot from being applied.
+//
+// More generally, a committed batch carries appends and subtree removals in two separate vectors,
+// and the same AXID can legitimately appear in both. Two independent guards keep that from
+// corrupting the tree, and it's worth being precise about which does what, because they serve
+// different purposes.
+//
+//   m_protectedFromDeletionIDs  "don't destroy a live object"
+//   removeStaleAppends          "don't resurrect a dead one"
+//
+// They also run at different times. applyCommittedChanges applies removals first, destroying
+// objects as it goes, and only then calls removeStaleAppends to filter the appends. So by the
+// time we get here, destruction has already happened (unless m_protectedFromDeletionIDs saved the object).
+//
+// These variables are relevant in several scenarios.
+//
+// Scenario 1: A reparent that queues no append at all. #child is moved under a new parent by
+// aria-owns, which changes its accessibility parent without touching the render tree:
+//
+//     <div id="oldParent"><span id="child"></span></div>
+//     <div id="newParent"></div>
+//     newParent.setAttribute("aria-owns", "child");
+//
+// #child's isolated object already exists, so collectNodeChangesForSubtree takes its
+// "already in the isolated tree" branch and deliberately does not build a NodeChange (because it's
+// expensive). It protects the ID and queues a parent update instead. Meanwhile updateChildren
+// for #oldParent queues a removal of #child. The batch therefore holds a removal for #child and
+// no append for it. Without m_protectedFromDeletionIDs, deleteSubtree destroys a live object
+// that #newParent's childrenUpdates still points at.
+//
+// Scenario 2: A genuine deletion with a leftover append. A new child is added and its whole
+// subtree is then torn down in the same tree-update cycle:
+//
+//     oldParent.appendChild(newSpan);   // queues an append of newSpan under oldParent
+//     oldParent.remove();               // queues the removal
+//
+// newSpan has never been applied, so it isn't in m_readerThreadNodeMap and deleteSubtree never
+// encounters it. There is nothing to protect and nothing to destroy. Only removeStaleAppends
+// helps, as without it we materialize an object whose parent no longer exists, and which holds a
+// Ref to this tree. The FrameHost replacement described at the top of this comment is an instance
+// of this shape -- a removal root that was never applied, and so is absent from the node map.
+//
+// Scenario 3: The same parent, removed and then re-added. Committed changes accumulate until the
+// AX thread applies them, so decisions from two main-thread cycles can share one batch.
+//
+//     owner.setAttribute("aria-owns", "child");  // cycle 1: remove child from parent,
+//                                                //          append child under owner
+//     owner.remove();                            // cycle 2: append child under parent again
+//
+// The last append and the removal both name the original parent, so comparing parents alone
+// calls the newer append stale and drops it, and the object disappears while its parent's
+// childrenUpdates still lists it as a child. The sequence IDs ensure correctness in this case,
+// leaning on the append having been decided after the removal and thus having a larger ID.
+//
+// Finally, it's worth explaining why we still compare parents even though we have sequence IDs.
+// A reparent inside a single cycle queues the removal from updateChildren(oldParent) and the
+// append from updateChildren(newParent). Which of those happens first (and thus has a smaller
+// sequence ID) depends solely on the order m_needsUpdateChildren is iterated, so if the new
+// parent is visited first, the append is older than the removal and would be discarded.
+//
+// Comparing parents says these two decisions concern different parents and cannot invalidate each
+// other, making the outcome iteration-order independent.
+//
+// For each unique appended ID, this function walks up its parent chain looking for a removal
+// that invalidates it. Results are memoized so each node is visited at most once across all
+// walks, giving O(n) total work.
+void AXIsolatedTree::removeStaleAppends(const Vector<NodeAndParentID>& removals, Vector<NodeChange>& pendingAppends)
+{
+    // Build maps from removed AXID to the parent it was removed from and when, for
+    // O(1) lookups during the ancestor walk. Kept as two maps rather than one keyed on
+    // NodeAndParentID because AXID isn't default-constructible, so it can't be a HashMap value.
+    HashMap<AXID, Markable<AXID>> removedNodeToParentMap;
+    HashMap<AXID, uint64_t> removedSequences;
+    for (const auto& removal : removals) {
+        removedNodeToParentMap.set(removal.nodeID, removal.parentID);
+        removedSequences.set(removal.nodeID, removal.sequence);
     }
 
-    if (m_pendingFocusedNodeID != m_focusedNodeID) {
-        AXLOG(makeString("focusedNodeID "_s, m_focusedNodeID ? m_focusedNodeID->loggingString() : ""_str, " pendingFocusedNodeID "_s, m_pendingFocusedNodeID ? m_pendingFocusedNodeID->loggingString() : ""_str));
-        m_focusedNodeID = m_pendingFocusedNodeID;
+    // Build maps from appended AXID to its final parentID and sequence (last entry wins,
+    // since later appends override earlier ones in the append loop).
+    HashMap<AXID, Markable<AXID>> appendedParentIDs;
+    HashMap<AXID, uint64_t> appendedSequences;
+    for (const auto& item : pendingAppends) {
+        appendedParentIDs.set(item.data.axID, item.data.parentID);
+        appendedSequences.set(item.data.axID, item.sequence);
     }
 
-    while (m_pendingSubtreeRemovals.size()) {
-        // WTF_IGNORES_THREAD_SAFETY_ANALYSIS because we _do_ hold the m_changeLogLock, but the thread-safety
-        // analysis throws a false-positive compile error when we access m_pendingProtectedFromDeletionIDs in
-        // this lambda.
-        std::function<void(Ref<AXCoreObject>&&)> deleteSubtree = [this, protectedThis = Ref { *this }, &deleteSubtree] (Ref<AXCoreObject>&& coreObjectToDelete) WTF_IGNORES_THREAD_SAFETY_ANALYSIS {
-            auto& objectToDelete = downcast<AXIsolatedObject>(coreObjectToDelete.get());
-            while (objectToDelete.m_children.size()) {
-                Ref child = objectToDelete.m_children.takeLast();
-                if (!m_pendingProtectedFromDeletionIDs.contains(child->objectID()))
-                    deleteSubtree(WTF::move(child));
+    // For each unique appended ID, walk up the parent chain looking for a removal that
+    // invalidates it. The memoized value is the sequence of the nearest such removal, or
+    // nullopt when there is none, so it doesn't depend on which descendant started the walk.
+    HashMap<AXID, std::optional<uint64_t>> invalidatingRemovalSequence;
+    HashSet<AXID> idsToRemove;
+
+    for (const auto& appendedID : appendedParentIDs.keys()) {
+        Vector<AXID> unresolvedAncestors;
+        AXID currentID = appendedID;
+        bool resolved = false;
+        std::optional<uint64_t> invalidatingSequence;
+
+        while (!resolved) {
+            auto cachedIterator = invalidatingRemovalSequence.find(currentID);
+            if (cachedIterator != invalidatingRemovalSequence.end()) {
+                invalidatingSequence = cachedIterator->value;
+                break;
             }
 
-            // There's no need to call the more comprehensive AXCoreObject::detach here since
-            // we're deleting the entire subtree of this object and thus don't need to `detachRemoteParts`.
-            objectToDelete.detachWrapper(AccessibilityDetachmentType::ElementDestroyed);
+            unresolvedAncestors.append(currentID);
 
-            auto deleteAXID = objectToDelete.objectID();
-            m_readerThreadNodeMap.remove(deleteAXID);
-            m_pendingSubtreeRemovals.remove(deleteAXID);
+            // Check if this node was removed. A removal doesn't invalidate the append when the
+            // parents are known and differ, since that's a reparent rather than a deletion.
+            // Otherwise it invalidates any append decided before it.
+            auto removedIterator = removedNodeToParentMap.find(currentID);
+            if (removedIterator != removedNodeToParentMap.end()) {
+                auto currentAppendIterator = appendedParentIDs.find(currentID);
+                Markable<AXID> appendedParentID = (currentAppendIterator != appendedParentIDs.end()) ? currentAppendIterator->value : Markable<AXID> { };
+                Markable<AXID> removedParentID = removedIterator->value;
+                bool isReparent = appendedParentID && removedParentID && *appendedParentID != *removedParentID;
+                if (!isReparent)
+                    invalidatingSequence = removedSequences.get(currentID);
+                resolved = true;
+                break;
+            }
 
-            for (const AXID& childID : objectToDelete.m_unresolvedChildrenIDs) {
-                // Ideally, assuming m_children has been initialized, there would be no unresolved children IDs.
-                // But sometimes when initializing m_children, AXIsolatedTree::objectForID fails for an unknown
-                // reason, and thus we are left with an entry in m_unresolvedChildrenIDs. See the ASSERT in
-                // AXIsolatedObject::children. In case any of our unresolved IDs got populated with an object
-                // later somehow, try to clean them up.
-                if (!m_pendingProtectedFromDeletionIDs.contains(childID)) {
-                    if (RefPtr child = m_readerThreadNodeMap.take(childID))
-                        deleteSubtree(child.releaseNonNull());
+            // Find this node's parent, first in pending appends, then in
+            // the existing tree.
+            auto appendedIterator = appendedParentIDs.find(currentID);
+            if (appendedIterator != appendedParentIDs.end() && appendedIterator->value) {
+                currentID = *appendedIterator->value;
+                continue;
+            }
+
+            if (auto* existingObject = objectForID(currentID)) {
+                if (auto existingParentID = existingObject->parent()) {
+                    currentID = *existingParentID;
+                    continue;
                 }
             }
-        };
 
-        // This dereference is safe because we checked m_pendingSubtreeRemovals.size() to get here.
-        auto axID = *m_pendingSubtreeRemovals.takeAny();
-        if (m_pendingProtectedFromDeletionIDs.contains(axID))
+            // Reached a root or dead end — no removed ancestor.
+            resolved = true;
+        }
+
+        for (const auto& axID : unresolvedAncestors)
+            invalidatingRemovalSequence.set(axID, invalidatingSequence);
+
+        // The append only survives if it was decided after the removal that would invalidate it.
+        // A same-parent remove-then-re-add lands here with a newer append and must be kept, or the
+        // object is deleted while its parent's childrenUpdates still lists it as a child.
+        if (invalidatingSequence && appendedSequences.get(appendedID) < *invalidatingSequence)
+            idsToRemove.add(appendedID);
+    }
+
+    if (!idsToRemove.isEmpty()) {
+        pendingAppends.removeAllMatching([&](const NodeChange& change) {
+            return idsToRemove.contains(change.data.axID);
+        });
+    }
+}
+
+void AXIsolatedTree::deleteSubtree(Ref<AXCoreObject>&& coreObjectToDelete, const HashSet<AXID>& protectedFromDeletionIDs)
+{
+    auto& objectToDelete = downcast<AXIsolatedObject>(coreObjectToDelete.get());
+    while (objectToDelete.m_children.size()) {
+        Ref child = objectToDelete.m_children.takeLast();
+        if (!protectedFromDeletionIDs.contains(child->objectID()))
+            deleteSubtree(WTF::move(child), protectedFromDeletionIDs);
+    }
+
+    // There's no need to call the more comprehensive AXCoreObject::detach here since
+    // we're deleting the entire subtree of this object and thus don't need to `detachRemoteParts`.
+    objectToDelete.detachWrapper(AccessibilityDetachmentType::ElementDestroyed);
+
+    AXID deleteAXID = objectToDelete.objectID();
+    m_readerThreadNodeMap.remove(deleteAXID);
+
+    for (const AXID& childID : objectToDelete.m_unresolvedChildrenIDs) {
+        // Ideally, assuming m_children has been initialized, there would be no unresolved children IDs.
+        // But sometimes when initializing m_children, AXIsolatedTree::objectForID fails for an unknown
+        // reason, and thus we are left with an entry in m_unresolvedChildrenIDs. See the ASSERT in
+        // AXIsolatedObject::children. In case any of our unresolved IDs got populated with an object
+        // later somehow, try to clean them up.
+        if (!protectedFromDeletionIDs.contains(childID)) {
+            if (RefPtr child = m_readerThreadNodeMap.take(childID))
+                deleteSubtree(child.releaseNonNull(), protectedFromDeletionIDs);
+        }
+    }
+}
+
+void AXIsolatedTree::PendingChanges::merge(PendingChanges&& source)
+{
+    // Vector concatenation: order matters for removeStaleAppends, and for the
+    // last-write-wins semantics that propertyChanges and childrenUpdates rely on
+    // when applyCommittedChanges replays them. When the destination is empty (the
+    // common case immediately after the AX thread takes a snapshot), move the
+    // source vector into place instead of allocating + copying.
+    auto mergeVector = [](auto& destinationVector, auto&& sourceVector) {
+        if (destinationVector.isEmpty())
+            destinationVector = WTF::move(sourceVector);
+        else
+            destinationVector.appendVector(WTF::move(sourceVector));
+    };
+    mergeVector(appends, WTF::move(source.appends));
+    mergeVector(subtreeRemovals, WTF::move(source.subtreeRemovals));
+    mergeVector(propertyChanges, WTF::move(source.propertyChanges));
+    mergeVector(childrenUpdates, WTF::move(source.childrenUpdates));
+#if ASSERT_ENABLED
+    mergeVector(unconnectedNodeIDs, WTF::move(source.unconnectedNodeIDs));
+#endif
+
+    // Set/map union: idempotent for protectedFromDeletionIDs; overwrite-by-key for parentUpdates.
+    // As an optimization, when the destination is empty, move-assign instead of element-by-element merge.
+    if (protectedFromDeletionIDs.isEmpty())
+        protectedFromDeletionIDs = WTF::move(source.protectedFromDeletionIDs);
+    else
+        protectedFromDeletionIDs.addAll(source.protectedFromDeletionIDs);
+
+    if (parentUpdates.isEmpty())
+        parentUpdates = WTF::move(source.parentUpdates);
+    else {
+        for (auto& parentUpdate : source.parentUpdates)
+            parentUpdates.set(parentUpdate.key, parentUpdate.value);
+    }
+
+    // Last-write-wins: only overwrite if source wrote a value this cycle. Otherwise the
+    // destination's existing value (which may be persistent state preserved across cycles,
+    // e.g. focusedNodeID and rootNodeID) is left untouched. Works for Markable and
+    // std::optional alike, since both are falsy when unset.
+    auto mergeIfSet = [](auto& destination, auto&& sourceValue) {
+        if (sourceValue)
+            destination = WTF::move(sourceValue);
+    };
+    mergeIfSet(focusedNodeID, WTF::move(source.focusedNodeID));
+    mergeIfSet(rootNodeID, WTF::move(source.rootNodeID));
+    mergeIfSet(selectedTextMarkerRange, WTF::move(source.selectedTextMarkerRange));
+    mergeIfSet(sortedLiveRegionIDs, WTF::move(source.sortedLiveRegionIDs));
+    mergeIfSet(sortedNonRootWebAreaIDs, WTF::move(source.sortedNonRootWebAreaIDs));
+    mergeIfSet(mostRecentlyPaintedText, WTF::move(source.mostRecentlyPaintedText));
+    mergeIfSet(relations, WTF::move(source.relations));
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+    mergeIfSet(frameGeometry, WTF::move(source.frameGeometry));
+    mergeIfSet(frameViewOriginScrollPosition, WTF::move(source.frameViewOriginScrollPosition));
+#endif
+}
+
+void AXIsolatedTree::scheduleQueuedNodeUpdateProcessing()
+{
+    AX_ASSERT(isMainThread());
+
+    m_hasQueuedNodeUpdates = true;
+    if (CheckedPtr cache = axObjectCache())
+        cache->startUpdateTreeSnapshotTimer();
+}
+
+void AXIsolatedTree::commitWorkingChangesLocked()
+{
+    AX_ASSERT(isMainThread());
+    AX_ASSERT(m_changeLogLock.isLocked());
+
+    m_committedChanges.merge(std::exchange(m_workingChanges, { }));
+    m_workingChangesDirty = false;
+    // m_hasPendingChanges is only ever written under the lock, from either thread, so that its
+    // state is exactly paired with the merge into / take from m_committedChanges. This isn't
+    // about memory ordering (the atomic covers that), it's mutual exclusion against
+    // takeCommittedChangesLocked. Writing it outside the lock would let the AX thread observe
+    // hasPendingChanges() == false while m_committedChanges actually holds committed changes,
+    // leaving them unapplied until the next commit.
+    m_hasPendingChanges.store(true);
+}
+
+AXIsolatedTree::ShouldEagerlyApply AXIsolatedTree::commitWorkingChanges()
+{
+    AX_ASSERT(isMainThread());
+
+    // Check before taking the lock, so a clean buffer costs nothing.
+    if (!m_workingChangesDirty)
+        return ShouldEagerlyApply::No;
+
+    Locker locker { m_changeLogLock };
+    commitWorkingChangesLocked();
+#if ENABLE(ACCESSIBILITY_THREAD_DISPATCHING)
+    // Claim the eager-apply dispatch if the AX thread isn't already applying, or queued to
+    // apply, the committed changes. Claimed here rather than in commitWorkingChangesLocked()
+    // because only callers that go on to dispatch should take the claim.
+    if (std::exchange(m_appliedOrApplyingCommittedChanges, false))
+        return ShouldEagerlyApply::Yes;
+#endif
+    return ShouldEagerlyApply::No;
+}
+
+void AXIsolatedTree::dispatchEagerApplyIfNeeded(ShouldEagerlyApply shouldEagerlyApply)
+{
+    AX_ASSERT(isMainThread());
+
+#if ENABLE(ACCESSIBILITY_THREAD_DISPATCHING)
+    if (shouldEagerlyApply == ShouldEagerlyApply::No)
+        return;
+
+    std::ignore = callOnAXThread([protectedThis = Ref { *this }] {
+        protectedThis->applyPendingChanges();
+    });
+#else
+    UNUSED_PARAM(shouldEagerlyApply);
+#endif
+}
+
+AXIsolatedTree::PendingChanges AXIsolatedTree::takeCommittedChangesLocked()
+{
+    AX_ASSERT(m_changeLogLock.isLocked());
+
+    auto committedChanges = std::exchange(m_committedChanges, { });
+
+    // focusedNodeID and rootNodeID represent persistent state (not a queue), so preserve them
+    // across cycles. Otherwise they get reset to empty and incorrectly clear the focused / root
+    // node on the next apply cycle. Re-sending the root every cycle also lets the accessibility
+    // thread re-affirm (and, if it ever drifted, repair) the root on every apply.
+    m_committedChanges.focusedNodeID = committedChanges.focusedNodeID;
+    m_committedChanges.rootNodeID = committedChanges.rootNodeID;
+
+    m_hasPendingChanges.store(false);
+#if ENABLE(ACCESSIBILITY_THREAD_DISPATCHING)
+    m_appliedOrApplyingCommittedChanges = true;
+#endif
+    return committedChanges;
+}
+
+void AXIsolatedTree::applyCommittedChanges(PendingChanges&& committedChanges)
+{
+    AXTRACE("AXIsolatedTree::applyCommittedChanges"_s);
+    AX_ASSERT(!isMainThread());
+
+    if (AXObjectCache::isAppleInternalInstall()) [[unlikely]]
+        WTFBeginSignpostAlways(this, AccessibilityIsolatedTreeApplyCommittedChanges, "tree ID: %" PRIVATE_LOG_STRING "", treeID().loggingString().utf8());
+
+    // Any structural change can affect some ancestor's stitchedUnignoredChildren result.
+    // Property changes that could affect the unignored-children result (IsIgnored, StitchGroups, etc.)
+    // are detected and cleared later, fused into the property-apply loop.
+    const bool hasTreeStructureChange = !committedChanges.appends.isEmpty()
+        || !committedChanges.subtreeRemovals.isEmpty()
+        || !committedChanges.childrenUpdates.isEmpty()
+        || !committedChanges.parentUpdates.isEmpty();
+    if (hasTreeStructureChange)
+        m_cachedUnignoredChildren.clear();
+
+#if ASSERT_ENABLED
+    m_readerThreadUnconnectedNodes.addAll(committedChanges.unconnectedNodeIDs);
+#endif
+
+    if (committedChanges.focusedNodeID && *committedChanges.focusedNodeID != m_focusedNodeID) {
+        AXLOG(makeString("focusedNodeID "_s, m_focusedNodeID ? m_focusedNodeID->loggingString() : ""_str, " pendingFocusedNodeID "_s, *committedChanges.focusedNodeID ? (*committedChanges.focusedNodeID)->loggingString() : ""_str));
+        m_focusedNodeID = *committedChanges.focusedNodeID;
+    }
+
+    // Capture the IDs pending subtree removal before processing, so we can
+    // use them to filter stale nodes from committedChanges.appends afterwards.
+    // This is necessary because a pending removal root may not yet be in the
+    // node map (e.g. when an in-process FrameHost is replaced with an
+    // out-of-process one during site isolation), so deleteSubtree won't
+    // encounter it.
+    for (const auto& removal : committedChanges.subtreeRemovals) {
+        if (committedChanges.protectedFromDeletionIDs.contains(removal.nodeID))
             continue;
 
-        if (RefPtr object = m_readerThreadNodeMap.take(axID))
-            deleteSubtree(object.releaseNonNull());
+        if (RefPtr object = m_readerThreadNodeMap.take(removal.nodeID))
+            deleteSubtree(object.releaseNonNull(), committedChanges.protectedFromDeletionIDs);
     }
-    m_pendingProtectedFromDeletionIDs.clear();
 
-    for (auto& item : m_pendingAppends) {
+    if (!committedChanges.subtreeRemovals.isEmpty())
+        removeStaleAppends(committedChanges.subtreeRemovals, committedChanges.appends);
+
+    for (auto& item : committedChanges.appends) {
         auto axID = item.data.axID;
         AXLOG(makeString("appending axID "_s, axID.loggingString()));
 
@@ -1441,78 +1953,127 @@ void AXIsolatedTree::applyPendingChangesLocked()
             object->attachPlatformWrapper(wrapper.get());
 
         // The object must have a wrapper by this point.
-        AX_ASSERT(object->wrapper());
+        // Can hit this on many tests with ITM + ENABLE_ACCESSIBILITY_LOCAL_FRAME (e.g. accessibility/deleting-iframe-destroys-axcache.html).
+        AX_BROKEN_ASSERT(object->wrapper());
         // The reference count of the just added IsolatedObject must be 2
-        // because it is referenced by m_readerThreadNodeMap and m_pendingAppends.
-        // When m_pendingAppends is cleared, the object will be held only by m_readerThreadNodeMap. The exception is the root node whose reference count is 3.
+        // because it is referenced by m_readerThreadNodeMap and committedChanges.appends.
+        // When committedChanges goes out of scope, the object will be held only by m_readerThreadNodeMap. The exception is the root node whose reference count is 3.
     }
-    m_pendingAppends.clear();
 
-    for (const auto& parentUpdate : m_pendingParentUpdates) {
-        if (RefPtr object = objectForID(parentUpdate.key))
+    for (const auto& parentUpdate : committedChanges.parentUpdates) {
+        if (auto* object = objectForID(parentUpdate.key))
             object->setParent(parentUpdate.value);
     }
-    m_pendingParentUpdates.clear();
 
-    for (auto& update : m_pendingChildrenUpdates) {
+    for (auto& update : committedChanges.childrenUpdates) {
         AXLOG(makeString("updating children for axID "_s, update.first.loggingString()));
         if (RefPtr object = objectForID(update.first))
             object->setChildrenIDs(WTF::move(update.second));
     }
-    m_pendingChildrenUpdates.clear();
 
-    for (auto& change : m_pendingPropertyChanges) {
+    bool hasUnignoredChildrenAffectingPropertyChange = false;
+    for (auto& change : committedChanges.propertyChanges) {
         if (RefPtr object = objectForID(change.axID)) {
-            for (auto& property : change.properties)
+            for (auto& property : change.properties) {
+                if (!hasTreeStructureChange && !hasUnignoredChildrenAffectingPropertyChange) {
+                    switch (property.first) {
+                    case AXProperty::IsIgnored:
+                    case AXProperty::IsExposableTable:
+                    case AXProperty::StitchGroups:
+                        hasUnignoredChildrenAffectingPropertyChange = true;
+                        break;
+                    default:
+                        break;
+                    }
+                }
                 object->setProperty(property.first, WTF::move(property.second));
+            }
             object->shrinkPropertiesAfterUpdates();
         }
     }
-    m_pendingPropertyChanges.clear();
 
-    if (m_pendingSortedLiveRegionIDs)
-        m_sortedLiveRegionIDs = std::exchange(m_pendingSortedLiveRegionIDs, std::nullopt).value();
+    if (hasUnignoredChildrenAffectingPropertyChange && !hasTreeStructureChange) {
+        // Something has changed that could affect any object's computed unignored children,
+        // so clear the cache.
+        m_cachedUnignoredChildren.clear();
+    }
 
-    if (m_pendingSortedNonRootWebAreaIDs)
-        m_sortedNonRootWebAreaIDs = std::exchange(m_pendingSortedNonRootWebAreaIDs, std::nullopt).value();
+    if (committedChanges.sortedLiveRegionIDs)
+        m_sortedLiveRegionIDs = WTF::move(*committedChanges.sortedLiveRegionIDs);
 
-    if (m_pendingMostRecentlyPaintedText)
-        m_mostRecentlyPaintedText = std::exchange(m_pendingMostRecentlyPaintedText, std::nullopt).value();
+    if (committedChanges.sortedNonRootWebAreaIDs)
+        m_sortedNonRootWebAreaIDs = WTF::move(*committedChanges.sortedNonRootWebAreaIDs);
 
-    if (m_pendingRelations)
-        m_relations = std::exchange(m_pendingRelations, std::nullopt).value();
+    if (committedChanges.mostRecentlyPaintedText)
+        m_mostRecentlyPaintedText = WTF::move(*committedChanges.mostRecentlyPaintedText);
 
-    if (m_pendingSelectedTextMarkerRange)
-        m_selectedTextMarkerRange = std::exchange(m_pendingSelectedTextMarkerRange, std::nullopt).value();
+    if (committedChanges.relations)
+        m_relations = WTF::move(*committedChanges.relations);
 
-    // Do this at the end because it requires looking up the root node by ID, so doing it at the end
-    // ensures all additions to m_readerThreadNodeMap have been made by now.
-    applyPendingRootNodeLocked();
+    if (committedChanges.selectedTextMarkerRange)
+        m_selectedTextMarkerRange = WTF::move(*committedChanges.selectedTextMarkerRange);
+
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+    if (committedChanges.frameGeometry) {
+        m_frameGeometry = WTF::move(*committedChanges.frameGeometry);
+        m_hasReceivedFrameGeometry = true;
+    }
+    if (committedChanges.frameViewOriginScrollPosition)
+        m_frameViewOriginScrollPosition = *committedChanges.frameViewOriginScrollPosition;
+#endif
+
+    // Do this at the end because it requires looking up the root node by ID (in the assert below),
+    // so doing it at the end ensures all additions to m_readerThreadNodeMap have been made by now.
+    if (committedChanges.rootNodeID != m_rootNodeID) {
+        m_rootNodeID = committedChanges.rootNodeID;
+
+#if ASSERT_ENABLED
+        // Check that the applied tree is fully reachable from the root. For performance, only do this
+        // when the root changes. Do this last so all additions to m_readerThreadNodeMap have been made by now.
+        if (RefPtr root = objectForID(m_rootNodeID)) {
+            auto markReachableNodes = [](AXCoreObject* object, HashSet<AXID>& reachableNodes, auto& self) -> void {
+                reachableNodes.add(object->objectID());
+                for (auto& child : object->children())
+                    self(&child.get(), reachableNodes, self);
+            };
+            HashSet<AXID> reachableNodes;
+            markReachableNodes(root.get(), reachableNodes, markReachableNodes);
+            // Unconnected nodes, such as relation targets without a renderer, aren't reachable from the root.
+            m_readerThreadUnconnectedNodes.removeIf([&](auto axID) {
+                RefPtr object = objectForID(axID);
+                if (!object)
+                    return true;
+                markReachableNodes(object.get(), reachableNodes, markReachableNodes);
+                return false;
+            });
+            ASSERT_WITH_MESSAGE(reachableNodes.size() == m_readerThreadNodeMap.size(), "AX: After applying pending root node, %u reachable nodes but %u are in the node map", reachableNodes.size(), m_readerThreadNodeMap.size());
+        }
+#endif // ASSERT_ENABLED
+    }
 
     if (AXObjectCache::isAppleInternalInstall()) [[unlikely]]
-        WTFEndSignpostAlways(this, AccessibilityIsolatedTreeApplyPendingChanges, "tree ID: %" PRIVATE_LOG_STRING "", treeID().loggingString().utf8().data());
+        WTFEndSignpostAlways(this, AccessibilityIsolatedTreeApplyCommittedChanges, "tree ID: %" PRIVATE_LOG_STRING "", treeID().loggingString().utf8());
 }
 
 void AXIsolatedTree::sortedLiveRegionsDidChange(Vector<AXID> liveRegionIDs)
 {
     AX_ASSERT(isMainThread());
 
-    Locker locker { m_changeLogLock };
-    m_pendingSortedLiveRegionIDs = WTF::move(liveRegionIDs);
+    markDirtyAndGetWorkingChanges().sortedLiveRegionIDs = WTF::move(liveRegionIDs);
 }
 
 void AXIsolatedTree::sortedNonRootWebAreasDidChange(Vector<AXID> webAreaIDs)
 {
     AX_ASSERT(isMainThread());
 
-    Locker locker { m_changeLogLock };
-    // FIXME: m_pendingSortedLiveRegionIDs and m_pendingSortedNonRootWebAreaIDs should be synced in AXIsolatedTree::processQueuedNodeUpdates(),
-    // not ad-hoc whenever the main-thread changes them. Otherwise we could sync IDs to the accessibility thread that don't have isolated objects
-    // until the next actual tree-update cycle.
-    m_pendingSortedNonRootWebAreaIDs = WTF::move(webAreaIDs);
+    // FIXME: PendingChanges::sortedLiveRegionIDs and PendingChanges::sortedNonRootWebAreaIDs
+    // should be synced in AXIsolatedTree::processQueuedNodeUpdates(), not ad-hoc whenever the
+    // main-thread changes them. Otherwise we could sync IDs to the accessibility thread that don't
+    // have isolated objects until the next actual tree-update cycle.
+    markDirtyAndGetWorkingChanges().sortedNonRootWebAreaIDs = WTF::move(webAreaIDs);
 }
 
-AXTreePtr findAXTree(Function<bool(AXTreePtr)>&& match)
+AXTreePtr findAXTree(NOESCAPE const Function<bool(AXTreePtr)>& match)
 {
     if (isMainThread()) {
         for (WeakPtr tree : AXTreeStore<AXObjectCache>::liveTreeMap().values()) {
@@ -1526,12 +2087,19 @@ AXTreePtr findAXTree(Function<bool(AXTreePtr)>&& match)
     }
 
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
-    Locker locker { AXTreeStore<AXIsolatedTree>::s_storeLock };
-    for (auto it = AXTreeStore<AXIsolatedTree>::isolatedTreeMap().begin(); it != AXTreeStore<AXIsolatedTree>::isolatedTreeMap().end(); ++it) {
-        RefPtr tree = it->value.get();
-        if (!tree)
-            continue;
-
+    // Snapshot all live trees while holding the lock, then release it before
+    // calling the match callback. The callback can trigger applyPendingChanges
+    // (e.g. via focusedNodeID), which can call treeForFrameID via
+    // crossFrameChildObject, which needs to acquire s_storeLock.
+    Vector<RefPtr<AXIsolatedTree>> trees;
+    {
+        Locker locker { AXTreeStore<AXIsolatedTree>::s_storeLock };
+        for (auto& entry : AXTreeStore<AXIsolatedTree>::isolatedTreeMap()) {
+            if (RefPtr tree = entry.value.get())
+                trees.append(WTF::move(tree));
+        }
+    }
+    for (auto& tree : trees) {
         if (match(tree))
             return tree;
     }
@@ -1560,8 +2128,7 @@ void AXIsolatedTree::queueNodeUpdate(AXID objectID, const NodeUpdateOptions& opt
     if (options.shouldUpdateNode)
         m_needsUpdateNode.add(objectID);
 
-    if (CheckedPtr cache = axObjectCache())
-        cache->startUpdateTreeSnapshotTimer();
+    scheduleQueuedNodeUpdateProcessing();
 }
 
 void AXIsolatedTree::queueNodeRemoval(const AccessibilityObject& axObject)
@@ -1582,20 +2149,29 @@ void AXIsolatedTree::queueNodeRemoval(const AccessibilityObject& axObject)
     std::optional<AXID> parentID = parent ? std::optional { parent->objectID() } : std::nullopt;
 
     m_needsNodeRemoval.add(axObject.objectID(), parentID);
-    if (axObjectCache)
-        axObjectCache->startUpdateTreeSnapshotTimer();
+    scheduleQueuedNodeUpdateProcessing();
 }
 
 void AXIsolatedTree::processQueuedNodeUpdates()
 {
     AX_ASSERT(isMainThread());
 
-    WeakPtr cache = axObjectCache();
-    if (!cache)
+    // Early-out so a scheduled tick does no work in the common case where nothing has been queued.
+    if (!m_hasQueuedNodeUpdates)
         return;
 
+    WeakPtr cache = axObjectCache();
+    if (!cache) {
+        // Leave m_hasQueuedNodeUpdates set so a later tick (with a non-null
+        // cache) processes the queued work instead of stranding it.
+        return;
+    }
+    m_hasQueuedNodeUpdates = false;
+
+    SetForScope processingScope(m_isProcessingQueuedNodeUpdates, true);
+
     if (AXObjectCache::isAppleInternalInstall()) [[unlikely]]
-        WTFBeginSignpostAlways(this, UpdateAccessibilityIsolatedTree, "updating isolated tree for AXObjectCache: %" PRIVATE_LOG_STRING "", cache ? CheckedPtr { cache.get() }->debugDescription().utf8().data() : "null");
+        WTFBeginSignpostAlways(this, UpdateAccessibilityIsolatedTree, "updating isolated tree for AXObjectCache: %" PRIVATE_LOG_STRING "", cache ? CheckedPtr { cache }->debugDescription().utf8() : "null"_s);
 
     for (const auto& nodeIDs : m_needsNodeRemoval)
         removeNode(nodeIDs.key, nodeIDs.value);
@@ -1605,52 +2181,42 @@ void AXIsolatedTree::processQueuedNodeUpdates()
         if (!cache)
             break;
 
-        if (RefPtr axObject = cache->objectForID(nodeID))
+        if (RefPtr axObject = protect(cache)->objectForID(nodeID))
             updateChildren(*axObject, ResolveNodeChanges::No);
     }
     m_needsUpdateChildren.clear();
 
     for (AXID objectID : m_needsUpdateNode)
-        m_unresolvedPendingAppends.add(objectID);
+        m_unresolvedPendingAppends.set(objectID, nextChangeSequence());
     m_needsUpdateNode.clear();
 
-    for (const auto& propertyUpdate : m_needsPropertyUpdates) {
+    // Updating properties can trigger side-effects (e.g. isIgnored() detecting an
+    // ignored-state change) that call queueNodeUpdate, adding more entries to
+    // m_needsPropertyUpdates. Exchange the map so we iterate a snapshot; any
+    // newly-queued updates are picked up in the next timer cycle.
+    auto propertyUpdates = std::exchange(m_needsPropertyUpdates, { });
+    for (const auto& propertyUpdate : propertyUpdates) {
         if (m_unresolvedPendingAppends.contains(propertyUpdate.key))
             continue;
 
         if (!cache)
             break;
 
-        if (RefPtr axObject = cache->objectForID(propertyUpdate.key))
+        if (RefPtr axObject = protect(cache)->objectForID(propertyUpdate.key))
             updateNodeProperties(*axObject, propertyUpdate.value);
     }
-    m_needsPropertyUpdates.clear();
 
-    if (m_relationsNeedUpdate)
-        updateRelations(cache->relations());
+    if (m_relationsNeedUpdate && cache)
+        updateRelations(protect(cache)->relations());
 
     if (m_mostRecentlyPaintedTextIsDirty) {
         m_mostRecentlyPaintedTextIsDirty = false;
-        // Resolving `mostRecentlyPaintedText()` can result in this sequence:
-        //   1. AXObjectCache::getOrCreate, which calls AccessibilityObject::recomputeIsIgnored
-        //   2. If the ignored state changes, AXObjectCache::objectBecameUnignored may be called
-        //   3. AXIsolatedTree::treeForFrameID() will be called to try to inform the isolated tree
-        //      of this change, which requires taking AXTreeStore::s_storeLock.
-        //
-        // If we (the main-thread) held the m_changeLogLock when the above sequence happened, we would deadlock
-        // if the accessibility thread was simultaneously running applyPendingChangesForAllIsolatedTrees(), which
-        // holds the s_storeLock for the length of the function. The main-thread would be waiting on the storeLock,
-        // and the accessibility thread would be waiting on the m_changeLogLock to run AXIsolatedTree::applyPendingChanges()
-        // while holding the s_storeLock. Thus, a deadlock.
-        //
-        // So it's crucial to resolve the mostRecentlyPaintedText structure before the m_changeLogLock critical section,
-        // and only perform a move or copy while in the critical section to avoid a deadlock.
-        auto mostRecentlyPaintedText = cache->mostRecentlyPaintedText();
-        Locker lock { m_changeLogLock };
-        m_pendingMostRecentlyPaintedText = WTF::move(mostRecentlyPaintedText);
+        markDirtyAndGetWorkingChanges().mostRecentlyPaintedText = cache ? protect(cache)->mostRecentlyPaintedText() : HashMap<AXID, LineRange> { };
     }
 
     queueRemovalsAndUnresolvedChanges();
+
+    dispatchEagerApplyIfNeeded(commitWorkingChanges());
 
     if (AXObjectCache::isAppleInternalInstall()) [[unlikely]]
         WTFEndSignpostAlways(this, UpdateAccessibilityIsolatedTree);
@@ -1674,7 +2240,7 @@ AXTextMarker AXIsolatedTree::lastMarker()
 
     const auto& children = root->unignoredChildren();
     // Start the `findLast` traversal from the last child of the root to reduce the amount of traversal done.
-    RefPtr endObject = children.isEmpty() ? root : dynamicDowncast<AXIsolatedObject>(children[children.size() - 1]);
+    RefPtr endObject = children.isEmpty() ? root.get() : dynamicDowncast<AXIsolatedObject>(children[children.size() - 1]);
     return endObject ? AXTextMarker { *endObject, 0 }.findLast() : AXTextMarker();
 }
 
@@ -1699,6 +2265,8 @@ std::optional<AXPropertyFlag> convertToPropertyFlag(AXProperty property)
         return AXPropertyFlag::HasPlainText;
     case AXProperty::HasPointerEventsNone:
         return AXPropertyFlag::HasPointerEventsNone;
+    case AXProperty::IsARIAHidden:
+        return AXPropertyFlag::IsARIAHidden;
     case AXProperty::IsBlockFlow:
         return AXPropertyFlag::IsBlockFlow;
     case AXProperty::IsEnabled:
@@ -1767,7 +2335,7 @@ void setPropertyIn(AXProperty property, AXPropertyValueVariant&& value, AXProper
         properties.append(std::pair(property, WTF::move(value)));
 }
 
-static bool shouldCacheElementName(ElementName name)
+static bool LEGACY_NODELETE shouldCacheElementName(ElementName name)
 {
     switch (name) {
     case ElementName::HTML_area:
@@ -1775,6 +2343,7 @@ static bool shouldCacheElementName(ElementName name)
     case ElementName::HTML_acronym:
     case ElementName::HTML_body:
     case ElementName::HTML_del:
+    case ElementName::HTML_fieldset:
     case ElementName::HTML_h1:
     case ElementName::HTML_h2:
     case ElementName::HTML_h3:
@@ -1790,6 +2359,7 @@ static bool shouldCacheElementName(ElementName name)
     case ElementName::HTML_tbody:
     case ElementName::HTML_tfoot:
     case ElementName::HTML_output:
+    case ElementName::HTML_option:
         return true;
     default:
         return false;
@@ -1815,7 +2385,9 @@ static bool canBeMultilineTextField(AccessibilityObject& object)
 static constexpr unsigned unignoredSizeToReserve = 2;
 IsolatedObjectData createIsolatedObjectData(const Ref<AccessibilityObject>& axObject, Ref<AXIsolatedTree> tree)
 {
-    auto& object = axObject.get();
+    // axObject is a Ref which keeps the object alive throughout this function. We avoid converting this local to Ref
+    // since it's used as AccessibilityObject& in hundreds of places in this function.
+    SUPPRESS_UNCOUNTED_LOCAL auto& object = axObject.get();
 
     bool getsGeometryFromChildren = false;
     AXPropertyVector properties;
@@ -1860,6 +2432,9 @@ IsolatedObjectData createIsolatedObjectData(const Ref<AccessibilityObject>& axOb
         setProperty(AXProperty::TitleAttribute, object.titleAttribute().isolatedCopy());
 
         setProperty(AXProperty::TextRuns, WTF::makeUnique<AXTextRuns>(object.textRuns()));
+        setProperty(AXProperty::IsReplacedElementForTextEmission, object.isReplacedElementForTextEmission());
+        setProperty(AXProperty::IsInUserAgentShadowTree, object.isInUserAgentShadowTree());
+        setProperty(AXProperty::IsInsideNativeTextControl, object.isInsideNativeTextControl());
         switch (object.textEmissionBehavior()) {
         case TextEmissionBehavior::DoubleNewline:
             propertyFlags.add(AXPropertyFlag::IsTextEmissionBehaviorDoubleNewline);
@@ -1873,27 +2448,41 @@ IsolatedObjectData createIsolatedObjectData(const Ref<AccessibilityObject>& axOb
         case TextEmissionBehavior::None:
             break;
         }
-        if (object.role() == AccessibilityRole::ListMarker) {
+        if (object.role() == AccessibilityRole::ListMarker)
             setProperty(AXProperty::ListMarkerText, object.listMarkerText().isolatedCopy());
-            setProperty(AXProperty::ListMarkerLineID, object.listMarkerLineID());
-        }
 
         String language = object.language();
         if (!language.isEmpty())
             setProperty(AXProperty::Language, WTF::move(language).isolatedCopy());
         setProperty(AXProperty::IsEnabled, object.isEnabled());
         setProperty(AXProperty::IsHiddenUntilFoundContainer, object.isHiddenUntilFoundContainer());
+        // AXCoreObject::hierarchicalLevel() walks the ancestor chain of a tree item looking for
+        // authored role="group" containers, and those containers are often ignored, so this has to
+        // be cached for ignored objects too.
+        setProperty(AXProperty::HasExplicitGroupRole, object.hasExplicitGroupRole());
         if (object.isBlockFlow()) {
             setProperty(AXProperty::IsBlockFlow, true);
             setProperty(AXProperty::StitchGroups, object.stitchGroups());
         }
+
+        if (AXIsolatedTree::shouldCacheIdentifierAttribute())
+            setProperty(AXProperty::IdentifierAttribute, object.identifierAttribute().isolatedCopy());
+
         appendBasePlatformProperties(properties, propertyFlags, axObject);
 
 #if ENABLE_ACCESSIBILITY_LOCAL_FRAME
         if (object.isLocalFrame()) {
-            if (auto* localFrame = dynamicDowncast<AXLocalFrame>(&object)) {
-                if (std::optional frameID = localFrame->frameID())
-                    setProperty(AXProperty::CrossFrameChildFrameID, *frameID);
+            RefPtr localFrame = dynamicDowncast<AXLocalFrame>(object);
+            if (auto frameID = localFrame ? localFrame->frameID() : std::nullopt)
+                setProperty(AXProperty::CrossFrameChildFrameID, *frameID);
+        }
+
+        if (object.isScrollArea() && !object.parentObject()) {
+            if (RefPtr crossFrameParent = object.crossFrameParentObject()) {
+                if (WeakPtr parentCache = crossFrameParent->axObjectCache()) {
+                    setProperty(AXProperty::CrossFrameParentFrameID, parentCache->frameID());
+                    setProperty(AXProperty::CrossFrameParentAXID, Markable { crossFrameParent->objectID() });
+                }
             }
         }
 #endif
@@ -1901,6 +2490,7 @@ IsolatedObjectData createIsolatedObjectData(const Ref<AccessibilityObject>& axOb
 
     bool isIgnored = object.isIgnored();
     setProperty(AXProperty::IsIgnored, isIgnored);
+    setProperty(AXProperty::IsARIAHidden, object.isARIAHidden());
 
     // Do not set any properties in this block, as this is before we reserve capacity for the property vector.
 
@@ -1940,15 +2530,10 @@ IsolatedObjectData createIsolatedObjectData(const Ref<AccessibilityObject>& axOb
         setProperty(AXProperty::MaxValueForRange, object.maxValueForRange());
         setProperty(AXProperty::MinValueForRange, object.minValueForRange());
         setProperty(AXProperty::SupportsARIAOwns, object.supportsARIAOwns());
-        setProperty(AXProperty::ExplicitPopupValue, object.explicitPopupValue().isolatedCopy());
-        setProperty(AXProperty::ExplicitInvalidStatus, object.explicitInvalidStatus().isolatedCopy());
+        setProperty(AXProperty::PopupValue, static_cast<int>(object.popupValue()));
+        setProperty(AXProperty::InvalidStatus, object.invalidStatusIncludingInferred().isolatedCopy());
         setProperty(AXProperty::SupportsExpanded, object.supportsExpanded());
         setProperty(AXProperty::SortDirection, static_cast<int>(object.sortDirection()));
-#if !LOG_DISABLED
-        // Eagerly cache ID when logging is enabled so that we can log isolated objects without constant deadlocks.
-        // Don't cache ID when logging is disabled because we don't expect non-test AX clients to actually request it.
-        setProperty(AXProperty::IdentifierAttribute, object.identifierAttribute().isolatedCopy());
-#endif
         // FIXME: We never update AXProperty::SupportsDropping.
         setProperty(AXProperty::SupportsDropping, object.supportsDropping());
         setProperty(AXProperty::SupportsDragging, object.supportsDragging());
@@ -1977,34 +2562,32 @@ IsolatedObjectData createIsolatedObjectData(const Ref<AccessibilityObject>& axOb
             setProperty(AXProperty::InputType, *inputType);
 
         bool isWebArea = axObject->isWebArea();
-        bool isScrollArea = axObject->isScrollView();
+        bool isScrollArea = axObject->isScrollArea();
         if (isScrollArea && !axObject->parentObject()) {
             // Eagerly cache the screen relative position for the root. AXIsolatedObject::screenRelativePosition()
             // of non-root objects depend on the root object's screen relative position, so make sure it's there
             // from the start. We keep this up-to-date via AXIsolatedTree::updateRootScreenRelativePosition().
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+            // When ACCESSIBILITY_LOCAL_FRAME is enabled, the root's screen-relative position is
+            // derived dynamically from the tree's frame geometry via convertFrameToSpace().
+#else
             setProperty(AXProperty::ScreenRelativePosition, axObject->screenRelativePosition());
-            // FIXME: We never update this property, e.g. when the iframe is moved in the hosting web content process.
+#endif
+#if !ENABLE(ACCESSIBILITY_LOCAL_FRAME)
             setProperty(AXProperty::RemoteFrameOffset, object.remoteFrameOffset());
-
-#if ENABLE_ACCESSIBILITY_LOCAL_FRAME
-            RefPtr crossFrameParent = axObject->crossFrameParentObject();
-            if (crossFrameParent) {
-                WeakPtr parentCache = crossFrameParent->axObjectCache();
-                if (parentCache) {
-                    setProperty(AXProperty::CrossFrameParentFrameID, parentCache->frameID());
-                    setProperty(AXProperty::CrossFrameParentAXID, Markable { crossFrameParent->objectID() });
-                }
-            }
-#endif // ENABLE_ACCESSIBILITY_LOCAL_FRAME
+#endif //
         }
 
         RefPtr geometryManager = tree->geometryManager();
         std::optional frame = geometryManager ? geometryManager->cachedRectForID(object.objectID()) : std::nullopt;
         if (frame)
             setProperty(AXProperty::RelativeFrame, WTF::move(*frame));
-        else if (isScrollArea || isWebArea || object.isScrollbar()) {
+        else if (isScrollArea || isWebArea || object.isScrollbar() || object.role() == AccessibilityRole::FrameHost) {
             // The GeometryManager does not have a relative frame for ScrollViews, WebAreas, or scrollbars yet. We need to get it from the
             // live object so that we don't need to hit the main thread in the case a request comes in while the whole isolated tree is being built.
+            //
+            // FrameHosts (the AccessibilityScrollView standing in for a cross-process iframe) are included
+            // because the remote frame is never painted in this process, so GeometryManager will never receive a rect for one.
             setProperty(AXProperty::RelativeFrame, enclosingIntRect(object.relativeFrame()));
         } else if (!object.renderer() && object.node() && is<AccessibilityNodeObject>(object) && !object.isImageMapLink()) {
             // The frame of node-only AX objects is made up of their children.
@@ -2016,13 +2599,13 @@ IsolatedObjectData createIsolatedObjectData(const Ref<AccessibilityObject>& axOb
         } else
             setProperty(AXProperty::InitialLocalRect, object.localRect());
 
-        if (isWebArea)
+        if (isWebArea) {
             setProperty(AXProperty::IsEditableWebArea, object.isEditableWebArea());
-
-        if (object.supportsPath()) {
-            setProperty(AXProperty::SupportsPath, true);
-            setProperty(AXProperty::Path, WTF::makeUnique<Path>(object.elementPath()));
+            setProperty(AXProperty::IsFocusedWebArea, object.isFocused());
         }
+
+        if (object.supportsPath())
+            setProperty(AXProperty::SupportsPath, true);
 
         if (object.supportsKeyShortcuts()) {
             setProperty(AXProperty::SupportsKeyShortcuts, true);
@@ -2110,10 +2693,6 @@ IsolatedObjectData createIsolatedObjectData(const Ref<AccessibilityObject>& axOb
         if (object.isImage())
             setProperty(AXProperty::EmbeddedImageDescription, object.embeddedImageDescription().isolatedCopy());
 
-        // On macOS, we only advertise support for the visible children attribute for lists and listboxes.
-        if (object.isList() || object.isListBox())
-            setObjectVectorProperty(AXProperty::VisibleChildren, object.visibleChildren());
-
         if (object.isDateTime()) {
             setProperty(AXProperty::DateTimeValue, object.dateTimeValue().isolatedCopy());
             setProperty(AXProperty::DateTimeComponentsType, object.dateTimeComponentsType());
@@ -2173,6 +2752,8 @@ IsolatedObjectData createIsolatedObjectData(const Ref<AccessibilityObject>& axOb
             setObjectProperty(AXProperty::VerticalScrollBar, object.scrollBar(AccessibilityOrientation::Vertical));
             setObjectProperty(AXProperty::HorizontalScrollBar, object.scrollBar(AccessibilityOrientation::Horizontal));
             setProperty(AXProperty::HasRemoteFrameChild, object.hasRemoteFrameChild());
+        } else if (object.role() == AccessibilityRole::FrameHost) {
+            setProperty(AXProperty::HasRemoteFrameChild, object.hasRemoteFrameChild());
         } else if (isWebArea && !tree->isEmptyContentTree()) {
             // We expose DocumentLinks only for the web area objects when the tree is not an empty content tree. This property is expensive and makes no sense in an empty content tree.
             // FIXME: compute DocumentLinks on the AX thread instead of caching it.
@@ -2211,6 +2792,9 @@ IsolatedObjectData createIsolatedObjectData(const Ref<AccessibilityObject>& axOb
         if (object.isHeading() || isExposedTableRow || isTreeItem)
             setProperty(AXProperty::ARIALevel, object.ariaLevel());
 
+        if (object.isHeading())
+            setProperty(AXProperty::HeadingLevel, object.computedHeadingLevel());
+
         // These properties are only needed on the AXCoreObject interface due to their use in ATSPI,
         // so only cache them for ATSPI.
 #if USE(ATSPI)
@@ -2219,7 +2803,6 @@ IsolatedObjectData createIsolatedObjectData(const Ref<AccessibilityObject>& axOb
             setProperty(AXProperty::IsVisible, object.isVisible());
 
         setProperty(AXProperty::ActionVerb, object.actionVerb().isolatedCopy());
-        setProperty(AXProperty::IsFieldset, object.isFieldset());
         setProperty(AXProperty::IsPressed, object.isPressed());
         setProperty(AXProperty::IsSelectedOptionActive, object.isSelectedOptionActive());
         setProperty(AXProperty::LocalizedActionVerb, object.localizedActionVerb().isolatedCopy());
@@ -2252,6 +2835,22 @@ IsolatedObjectData createIsolatedObjectData(const Ref<AccessibilityObject>& axOb
         getsGeometryFromChildren
     };
 }
+
+#if ENABLE(ACCESSIBILITY_THREAD_DISPATCHING)
+AXIsolatedTree::AXThreadDispatchResult AXIsolatedTree::callOnAXThread(Function<void()>&& function)
+{
+    AX_ASSERT(isMainThread());
+    return platformCallOnAXThread(WTF::move(function));
+}
+
+#if !PLATFORM(MAC)
+AXIsolatedTree::AXThreadDispatchResult AXIsolatedTree::platformCallOnAXThread(Function<void()>&&)
+{
+    AX_ASSERT_NOT_REACHED();
+    return AXThreadDispatchResult::Failed;
+}
+#endif
+#endif // ENABLE(ACCESSIBILITY_THREAD_DISPATCHING)
 
 } // namespace WebCore
 #endif // ENABLE(ACCESSIBILITY_ISOLATED_TREE)

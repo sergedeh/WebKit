@@ -65,19 +65,20 @@ public:
     // the next instruction may overwrite it.
     RegisterID* newTemporary();
     template<typename Functor>
-    void newTemporaries(size_t count, const Functor&);
+    void newTemporaries(size_t count, NOESCAPE const Functor&);
 
     void emitLabel(GenericLabel<Traits>&);
     void recordOpcode(typename Traits::OpcodeID);
-    void alignWideOpcode16();
-    void alignWideOpcode32();
 
-    void write(uint8_t);
-    void write(uint16_t);
-    void write(uint32_t);
-    void write(int8_t);
-    void write(int16_t);
-    void write(int32_t);
+    template<typename... Args>
+        requires (sizeof...(Args) > 0 && (... && std::integral<Args>))
+    void write(Args... args)
+    {
+        m_writer.write(args...);
+    }
+
+    template<OpcodeSize size, typename... Ops>
+    void writeOpcode(typename Traits::OpcodeTraits::OpcodeID, Ops...);
 
 protected:
     void reclaimFreeRegisters();

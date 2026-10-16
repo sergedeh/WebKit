@@ -26,58 +26,59 @@
 
 #pragma once
 
-#include "CSSPrimitiveKeywordList.h"
+#include "CSSKeywordList.h"
+#include "FontCascadeInlines.h"
 #include "InlineLevelBox.h"
 #include "LayoutBoxInlines.h"
-#include "RenderStyle+GettersInlines.h"
+#include "StyleComputedStyle+GettersInlines.h"
 
 namespace WebCore {
 namespace Layout {
 
-template<typename PreferredLineHeightFunctor> InlineLevelBox::VerticalAlignment toInlineBoxLevelVerticalAlign(const Style::VerticalAlign& verticalAlign, NOESCAPE PreferredLineHeightFunctor&& preferredLineHeightFunctor)
+template<typename PreferredLineHeightFunctor> InlineLevelBox::VerticalAlignment toInlineBoxLevelVerticalAlign(const Style::ComputedStyle& style, NOESCAPE const PreferredLineHeightFunctor& preferredLineHeightFunctor)
 {
-    return WTF::switchOn(verticalAlign,
-        [](CSS::PrimitiveKeyword auto const& keyword) -> InlineLevelBox::VerticalAlignment {
+    return WTF::switchOn(style.verticalAlign(),
+        [](CSS::SpecificKeyword auto const& keyword) -> InlineLevelBox::VerticalAlignment {
             return keyword;
         },
-        [&](const Style::VerticalAlign::Length& length) -> InlineLevelBox::VerticalAlignment {
-            return Style::evaluate<InlineLayoutUnit>(length, std::forward<PreferredLineHeightFunctor>(preferredLineHeightFunctor), Style::ZoomNeeded { });
+        [&](const Style::VerticalAlign::LengthPercentage& value) -> InlineLevelBox::VerticalAlignment {
+            return Style::evaluate<InlineLayoutUnit>(value, preferredLineHeightFunctor, style.usedZoomForLength());
         }
     );
 }
 
-inline InlineLevelBox::InlineLevelBox(const Box& layoutBox, const RenderStyle& style, InlineLayoutUnit logicalLeft, InlineLayoutSize logicalSize, Type type, EnumSet<PositionWithinLayoutBox> positionWithinLayoutBox)
+inline InlineLevelBox::InlineLevelBox(const Box& layoutBox, const WebCore::Style::ComputedStyle& style, InlineLayoutUnit logicalLeft, InlineLayoutSize logicalSize, Type type, EnumSet<PositionWithinLayoutBox> positionWithinLayoutBox)
     : m_layoutBox(layoutBox)
     , m_logicalRect({ }, logicalLeft, logicalSize.width(), logicalSize.height())
     , m_hasContent(layoutBox.isRubyBase() && layoutBox.associatedRubyAnnotationBox()) // Normally we set inline box's has-content state as we come across child content, but ruby annotations are not visible to inline layout.
     , m_isFirstWithinLayoutBox(positionWithinLayoutBox.contains(PositionWithinLayoutBox::First))
     , m_isLastWithinLayoutBox(positionWithinLayoutBox.contains(PositionWithinLayoutBox::Last))
     , m_type(type)
-    , m_style({ style.fontCascade().metricsOfPrimaryFont(), style.lineHeight(), style.textBoxTrim(), style.textBoxEdge(), style.lineFitEdge(), style.usedZoomForLength(), style.lineBoxContain(), InlineLayoutUnit(style.fontCascade().fontDescription().computedSize()), toInlineBoxLevelVerticalAlign(style.verticalAlign(), [this] { return preferredLineHeight(); }) })
+    , m_style({ style.fontCascade().metricsOfPrimaryFont(), style.textAutosizingAdjustedLineHeight(), style.textBoxTrim(), style.textBoxEdge(), style.lineFitEdge(), style.usedZoomForLength(), style.lineBoxContain(), InlineLayoutUnit(style.fontCascade().fontDescription().usedSize()), toInlineBoxLevelVerticalAlign(style, [this] { return preferredLineHeight(); }) })
 {
 }
 
-inline InlineLevelBox InlineLevelBox::createAtomicInlineBox(const Box& layoutBox, const RenderStyle& style, InlineLayoutUnit logicalLeft, InlineLayoutUnit logicalWidth)
+inline InlineLevelBox InlineLevelBox::createAtomicInlineBox(const Box& layoutBox, const WebCore::Style::ComputedStyle& style, InlineLayoutUnit logicalLeft, InlineLayoutUnit logicalWidth)
 {
     return { layoutBox, style, logicalLeft, { logicalWidth, { } }, Type::AtomicInlineBox };
 }
 
-inline InlineLevelBox InlineLevelBox::createGenericInlineLevelBox(const Box& layoutBox, const RenderStyle& style, InlineLayoutUnit logicalLeft)
+inline InlineLevelBox InlineLevelBox::createGenericInlineLevelBox(const Box& layoutBox, const WebCore::Style::ComputedStyle& style, InlineLayoutUnit logicalLeft)
 {
     return { layoutBox, style, logicalLeft, { }, Type::GenericInlineLevelBox };
 }
 
-inline InlineLevelBox InlineLevelBox::createInlineBox(const Box& layoutBox, const RenderStyle& style, InlineLayoutUnit logicalLeft, InlineLayoutUnit logicalWidth, LineSpanningInlineBox isLineSpanning)
+inline InlineLevelBox InlineLevelBox::createInlineBox(const Box& layoutBox, const WebCore::Style::ComputedStyle& style, InlineLayoutUnit logicalLeft, InlineLayoutUnit logicalWidth, LineSpanningInlineBox isLineSpanning)
 {
     return { layoutBox, style, logicalLeft, { logicalWidth, { } }, isLineSpanning == LineSpanningInlineBox::Yes ? Type::LineSpanningInlineBox : Type::InlineBox, { } };
 }
 
-inline InlineLevelBox InlineLevelBox::createLineBreakBox(const Box& layoutBox, const RenderStyle& style, InlineLayoutUnit logicalLeft)
+inline InlineLevelBox InlineLevelBox::createLineBreakBox(const Box& layoutBox, const WebCore::Style::ComputedStyle& style, InlineLayoutUnit logicalLeft)
 {
     return { layoutBox, style, logicalLeft, { }, Type::LineBreakBox };
 }
 
-inline InlineLevelBox InlineLevelBox::createRootInlineBox(const Box& layoutBox, const RenderStyle& style, InlineLayoutUnit logicalLeft, InlineLayoutUnit logicalWidth)
+inline InlineLevelBox InlineLevelBox::createRootInlineBox(const Box& layoutBox, const WebCore::Style::ComputedStyle& style, InlineLayoutUnit logicalLeft, InlineLayoutUnit logicalWidth)
 {
     return { layoutBox, style, logicalLeft, { logicalWidth, { } }, Type::RootInlineBox, { } };
 }

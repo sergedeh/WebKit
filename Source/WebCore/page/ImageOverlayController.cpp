@@ -45,8 +45,8 @@
 #include "PageOverlayController.h"
 #include "PlatformMouseEvent.h"
 #include "RenderElement.h"
-#include "RenderStyle+GettersInlines.h"
 #include "SimpleRange.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "VisiblePosition.h"
 #include <wtf/TZoneMallocInlines.h>
 
@@ -63,7 +63,7 @@ ImageOverlayController::ImageOverlayController(Page& page)
 
 void ImageOverlayController::selectionQuadsDidChange(LocalFrame& frame, const Vector<FloatQuad>& quads)
 {
-    if (!protectedPage()->chrome().client().needsImageOverlayControllerForSelectionPainting())
+    if (!m_page->chrome().client().needsImageOverlayControllerForSelectionPainting())
         return;
 
     if (frame.editor().ignoreSelectionChanges() || frame.editor().isGettingDictionaryPopupInfo())
@@ -90,7 +90,7 @@ void ImageOverlayController::selectionQuadsDidChange(LocalFrame& frame, const Ve
         return;
     }
 
-    auto overlayHostRenderer = overlayHost->renderer();
+    CheckedPtr overlayHostRenderer = overlayHost->renderer();
     if (!overlayHostRenderer) {
         uninstallPageOverlayIfNeeded();
         return;
@@ -106,7 +106,7 @@ void ImageOverlayController::selectionQuadsDidChange(LocalFrame& frame, const Ve
     m_selectionBackgroundColor = overlayHostRenderer->selectionBackgroundColor();
     m_selectionClipRect = overlayHostRenderer->absoluteBoundingBoxRect();
 
-    installPageOverlayIfNeeded().setNeedsDisplay();
+    protect(installPageOverlayIfNeeded())->setNeedsDisplay();
 }
 
 bool ImageOverlayController::shouldUsePageOverlayToPaintSelection(const RenderElement& renderer)
@@ -135,7 +135,7 @@ PageOverlay& ImageOverlayController::installPageOverlayIfNeeded()
         return *m_overlay;
 
     m_overlay = PageOverlay::create(*this, PageOverlay::OverlayType::Document);
-    protectedPage()->pageOverlayController().installPageOverlay(*protectedOverlay(), PageOverlay::FadeMode::DoNotFade);
+    m_page->pageOverlayController().installPageOverlay(*protect(m_overlay), PageOverlay::FadeMode::DoNotFade);
     return *m_overlay;
 }
 
@@ -154,12 +154,7 @@ void ImageOverlayController::uninstallPageOverlay()
     if (!overlayToUninstall)
         return;
 
-    protectedPage()->pageOverlayController().uninstallPageOverlay(*overlayToUninstall, PageOverlay::FadeMode::DoNotFade);
-}
-
-Ref<Page> ImageOverlayController::protectedPage() const
-{
-    return m_page.get();
+    m_page->pageOverlayController().uninstallPageOverlay(*overlayToUninstall, PageOverlay::FadeMode::DoNotFade);
 }
 
 void ImageOverlayController::ref() const

@@ -138,8 +138,6 @@ inline void*& CPUState::pc()
     return *reinterpret_cast<void**>(&spr(X86Registers::eip));
 #elif CPU(ARM64)
     return *reinterpret_cast<void**>(&spr(ARM64Registers::pc));
-#elif CPU(ARM_THUMB2)
-    return *reinterpret_cast<void**>(&gpr(ARMRegisters::pc));
 #elif CPU(RISCV64)
     return *reinterpret_cast<void**>(&spr(RISCV64Registers::pc));
 #else
@@ -153,8 +151,6 @@ inline void*& CPUState::fp()
     return *reinterpret_cast<void**>(&gpr(X86Registers::ebp));
 #elif CPU(ARM64)
     return *reinterpret_cast<void**>(&gpr(ARM64Registers::fp));
-#elif CPU(ARM_THUMB2)
-    return *reinterpret_cast<void**>(&gpr(ARMRegisters::fp));
 #elif CPU(RISCV64)
     return *reinterpret_cast<void**>(&gpr(RISCV64Registers::fp));
 #else
@@ -168,8 +164,6 @@ inline void*& CPUState::sp()
     return *reinterpret_cast<void**>(&gpr(X86Registers::esp));
 #elif CPU(ARM64)
     return *reinterpret_cast<void**>(&gpr(ARM64Registers::sp));
-#elif CPU(ARM_THUMB2)
-    return *reinterpret_cast<void**>(&gpr(ARMRegisters::sp));
 #elif CPU(RISCV64)
     return *reinterpret_cast<void**>(&gpr(RISCV64Registers::sp));
 #else
@@ -269,7 +263,7 @@ private:
     State* m_state;
     Stack m_stack;
 
-    friend JS_EXPORT_PRIVATE void* probeStateForContext(Context&); // Not for general use. This should only be for writing tests.
+    friend JS_EXPORT_PRIVATE void* LEGACY_NODELETE probeStateForContext(Context&); // Not for general use. This should only be for writing tests.
 };
 
 extern "C" void SYSV_ABI executeJSCJITProbe(State*) REFERENCED_FROM_ASM WTF_INTERNAL;

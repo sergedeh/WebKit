@@ -6,10 +6,6 @@
 
 // ProgramGL.cpp: Implements the class methods for ProgramGL.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #include "libANGLE/renderer/gl/ProgramGL.h"
 
 #include "common/WorkerThread.h"
@@ -226,11 +222,11 @@ angle::Result ProgramGL::load(const gl::Context *context,
     // Read the binary format, size and blob
     GLenum binaryFormat   = stream->readInt<GLenum>();
     GLint binaryLength    = stream->readInt<GLint>();
-    const uint8_t *binary = stream->data() + stream->offset();
+    angle::Span<const uint8_t> binary = stream->remainingSpan().first(binaryLength);
     stream->skip(binaryLength);
 
     // Load the binary
-    mFunctions->programBinary(mProgramID, binaryFormat, binary, binaryLength);
+    mFunctions->programBinary(mProgramID, binaryFormat, binary.data(), binaryLength);
 
     // Verify that the program linked.  Ensure failure if program binary is intentionally corrupted,
     // even if the corruption didn't really cause a failure.
@@ -270,7 +266,7 @@ void ProgramGL::save(const gl::Context *context, gl::BinaryOutputStream *stream)
         ++binary[0];
     }
 
-    stream->writeBytes(binary.data(), binaryLength);
+    stream->writeBytes(angle::as_byte_span(binary).first(binaryLength));
 
     // Re-apply UBO bindings to work around driver bugs.
     if (features.reapplyUBOBindingsAfterUsingBinaryProgram.enabled)
@@ -930,7 +926,7 @@ void ProgramGL::linkResources(const gl::ProgramLinkedResources &resources)
         mState.getAttachedShader(gl::ShaderType::Fragment);
     if (fragmentShader != nullptr)
     {
-        resources.pixelLocalStorageLinker.link(fragmentShader->pixelLocalStorageFormats);
+        resources.pixelLocalStorageLinker.link(fragmentShader->pixelLocalStorageLayouts);
     }
 }
 

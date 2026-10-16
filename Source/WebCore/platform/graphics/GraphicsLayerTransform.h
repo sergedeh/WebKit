@@ -30,13 +30,13 @@ namespace WebCore {
 class GraphicsLayerTransform {
 public:
     WEBCORE_EXPORT GraphicsLayerTransform();
-    void setPosition(const FloatPoint&);
-    void setSize(const FloatSize&);
-    void setAnchorPoint(const FloatPoint3D&);
-    void setFlattening(bool);
-    void setLocalTransform(const TransformationMatrix&);
-    void setChildrenTransform(const TransformationMatrix&);
-    const TransformationMatrix& combined() const;
+    void LEGACY_NODELETE setPosition(const FloatPoint&);
+    void LEGACY_NODELETE setSize(const FloatSize&);
+    void LEGACY_NODELETE setAnchorPoint(const FloatPoint3D&);
+    void LEGACY_NODELETE setFlattening(bool);
+    void LEGACY_NODELETE setLocalTransform(const TransformationMatrix&);
+    void LEGACY_NODELETE setChildrenTransform(const TransformationMatrix&);
+    const TransformationMatrix& LEGACY_NODELETE combined() const;
     const TransformationMatrix& combinedForChildren() const;
 
     void combineTransforms(const TransformationMatrix& parentTransform);

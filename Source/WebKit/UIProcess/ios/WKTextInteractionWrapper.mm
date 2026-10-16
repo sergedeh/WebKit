@@ -151,7 +151,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(HideEditMenuScope);
 #if USE(BROWSERENGINEKIT)
     [self stopShowEditMenuTimer];
     if (_asyncTextInteraction)
-        [_view removeInteraction:_asyncTextInteraction.get()];
+        [protect(_view) removeInteraction:_asyncTextInteraction.get()];
 #endif
 
     [super dealloc];
@@ -171,7 +171,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(HideEditMenuScope);
         return [_asyncTextInteraction textSelectionDisplayInteraction];
 #endif
 
-    for (id<UIInteraction> interaction in _view.interactions) {
+    for (id<UIInteraction> interaction in [protect(_view) interactions]) {
         if (auto* selectionInteraction = dynamic_objc_cast<UITextSelectionDisplayInteraction>(interaction))
             return selectionInteraction;
     }
@@ -201,6 +201,17 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(HideEditMenuScope);
 #else
     return nil;
 #endif
+}
+
+- (BOOL)areSelectionHandlesVisible
+{
+#if HAVE(UI_TEXT_SELECTION_DISPLAY_INTERACTION)
+    for (UIView *handleView in [self textSelectionDisplayInteraction].handleViews) {
+        if (!handleView.hidden)
+            return YES;
+    }
+#endif
+    return NO;
 }
 
 - (void)prepareToMoveSelectionContainer:(UIView *)newContainer
@@ -366,7 +377,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(HideEditMenuScope);
     if (_hideEditMenuScope)
         return;
 
-    auto deactivateSelection = [_view _shouldHideSelectionDuringOverflowScroll:scrollView] ? WebKit::DeactivateSelection::Yes : WebKit::DeactivateSelection::No;
+    auto deactivateSelection = [protect(_view) _shouldHideSelectionDuringOverflowScroll:scrollView] ? WebKit::DeactivateSelection::Yes : WebKit::DeactivateSelection::No;
     _hideEditMenuScope = WTF::makeUnique<WebKit::HideEditMenuScope>(self, deactivateSelection);
 }
 
@@ -386,7 +397,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(HideEditMenuScope);
     // FIXME: Adopt `HideEditMenuScope` here once `BETextInput` is used on all iOS-family platforms.
     [_textInteractionAssistant willStartScrollingOrZooming];
 #if USE(BROWSERENGINEKIT)
-    _shouldRestoreEditMenuAfterOverflowScrolling = _view.isPresentingEditMenu;
+    _shouldRestoreEditMenuAfterOverflowScrolling = [protect(_view) isPresentingEditMenu];
     [_asyncTextInteraction dismissEditMenuForSelection];
 #endif
 }

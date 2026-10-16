@@ -48,7 +48,7 @@ SVGAttributeAnimator* SVGAnimateElementBase::animator() const
     ASSERT(!hasInvalidCSSAttributeType());
 
     if (!m_animator)
-        m_animator = protectedTargetElement()->createAnimator(attributeName(), animationMode(), calcMode(), isAccumulated(), isAdditive());
+        m_animator = protect(targetElement())->createAnimator(attributeName(), animationMode(), calcMode(), isAccumulated(), isAdditive());
 
     return m_animator;
 }
@@ -58,7 +58,7 @@ bool SVGAnimateElementBase::hasValidAttributeType() const
     if (!targetElement() || hasInvalidCSSAttributeType())
         return false;
 
-    return protectedTargetElement()->isAnimatedAttribute(attributeName());
+    return protect(targetElement())->isAnimatedAttribute(attributeName());
 }
 
 bool SVGAnimateElementBase::hasInvalidCSSAttributeType() const
@@ -67,7 +67,7 @@ bool SVGAnimateElementBase::hasInvalidCSSAttributeType() const
         return false;
 
     if (!m_hasInvalidCSSAttributeType)
-        m_hasInvalidCSSAttributeType = hasValidAttributeName() && attributeType() == AttributeType::CSS && !isTargetAttributeCSSProperty(protectedTargetElement().get(), attributeName());
+        m_hasInvalidCSSAttributeType = hasValidAttributeName() && attributeType() == AttributeType::CSS && !isTargetAttributeCSSProperty(protect(targetElement()).get(), attributeName());
 
     return m_hasInvalidCSSAttributeType.value();
 }
@@ -106,10 +106,8 @@ bool SVGAnimateElementBase::setFromAndToValues(const String& fromString, const S
     if (!target)
         return false;
 
-    if (RefPtr animator = this->animator()) {
-        animator->setFromAndToValues(*target, animateRangeString(fromString), animateRangeString(toString));
-        return true;
-    }
+    if (RefPtr animator = this->animator())
+        return animator->setFromAndToValues(*target, animateRangeString(fromString), animateRangeString(toString));
     return false;
 }
 
@@ -125,10 +123,9 @@ bool SVGAnimateElementBase::setFromAndByValues(const String& fromString, const S
     if (animationMode() == AnimationMode::FromBy && isDiscreteAnimator())
         return false;
 
-    if (RefPtr animator = this->animator()) {
-        animator->setFromAndByValues(*target, animateRangeString(fromString), animateRangeString(byString));
-        return true;
-    }
+    if (RefPtr animator = this->animator())
+        return animator->setFromAndByValues(*target, animateRangeString(fromString), animateRangeString(byString));
+
     return false;
 }
 
@@ -141,10 +138,9 @@ bool SVGAnimateElementBase::setToAtEndOfDurationValue(const String& toAtEndOfDur
     if (isDiscreteAnimator())
         return true;
 
-    if (RefPtr animator = this->animator()) {
-        animator->setToAtEndOfDurationValue(*target, animateRangeString(toAtEndOfDurationString));
-        return true;
-    }
+    if (RefPtr animator = this->animator())
+        return animator->setToAtEndOfDurationValue(*target, animateRangeString(toAtEndOfDurationString));
+
     return false;
 }
 

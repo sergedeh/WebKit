@@ -25,6 +25,9 @@
 
 #pragma once
 
+#import <wtf/Compiler.h>
+#import <wtf/Platform.h>
+
 DECLARE_SYSTEM_HEADER
 
 #if PLATFORM(MAC)
@@ -48,10 +51,31 @@ DECLARE_SYSTEM_HEADER
 #import <AppKit/NSScrollPocket_Private.h>
 #endif
 
+#import <AppKit/NSGestureRecognizer_Private.h>
+#import <AppKit/NSMagnificationGestureRecognizer_Private.h>
 #import <AppKit/NSPanGestureRecognizer_Private.h>
+#import <AppKit/NSPressGestureRecognizer_Private.h>
+#import <AppKit/NSRotationGestureRecognizer_Private.h>
 
 #if HAVE(NSVIEW_CORNER_CONFIGURATION)
 #import <AppKit/NSViewCornerConfiguration_Private.h>
+#endif
+
+#if HAVE(APPKIT_GESTURES_SUPPORT)
+#import <AppKit/NSTextSelectionManager.h>
+#endif
+
+#if HAVE(LIQUID_GLASS)
+#import <AppKit/NSGlassEffectView_Private.h>
+#endif
+
+#if HAVE(APPKIT_SIRI_AFFORDANCE)
+#import <AppKit/NSCampoLightweightUIController.h>
+#endif
+
+#if HAVE(NSREFRESHCONTROLLER)
+#import <AppKit/NSRefreshControl_Private.h>
+#import <AppKit/NSRefreshController_Private.h>
 #endif
 
 #else
@@ -127,6 +151,9 @@ typedef NS_ENUM(NSInteger, NSScrollPocketEdge) {
 @property NSScrollPocketStyle style;
 @property (copy, nullable) NSColor *captureColor;
 @property (readonly, strong) NSView *captureView;
+#if HAVE(LIQUID_GLASS_ADJUSTMENTS)
+@property (nonatomic) BOOL allowsSeparator;
+#endif
 @end
 
 @interface NSView (NSConstraintBasedLayout)
@@ -144,6 +171,8 @@ typedef NS_ENUM(NSInteger, NSScrollPocketEdge) {
 + (_NSCornerRadius *)fixedRadius:(CGFloat)radius;
 @end
 
+// FIXME: Drop these and clean up the call sites once the supported configurations allow it.
+#if !defined(__has_include) || !__has_include(<AppKit/NSViewCornerRadii.h>)
 @interface NSViewCornerRadii : NSObject
 @property CGFloat topLeft;
 @property CGFloat topRight;
@@ -151,10 +180,17 @@ typedef NS_ENUM(NSInteger, NSScrollPocketEdge) {
 @property CGFloat bottomRight;
 @property (copy) CALayerCornerCurve cornerCurve;
 @end
+#endif
 
+#if !defined(__has_include) || !__has_include(<AppKit/NSViewCornerConfiguration.h>)
 @interface NSViewCornerConfiguration : NSObject
 + (NSViewCornerConfiguration *)configurationWithRadius:(_NSCornerRadius *)radius;
 + (instancetype)configurationWithTopLeftRadius:(nullable _NSCornerRadius *)topLeftRadius topRightRadius:(nullable _NSCornerRadius *)topRightRadius bottomLeftRadius:(nullable _NSCornerRadius *)bottomLeftRadius bottomRightRadius:(nullable _NSCornerRadius *)bottomRightRadius;
+@end
+#endif
+
+@interface NSPressGestureRecognizer (SPI)
+@property BOOL cancelPastAllowableMovement;
 @end
 
 @interface NSView (NSViewCornerConfiguration)
@@ -162,6 +198,45 @@ typedef NS_ENUM(NSInteger, NSScrollPocketEdge) {
 @property (readonly, nullable, copy) NSViewCornerConfiguration *_cornerConfiguration;
 - (void)_viewDidChangeEffectiveCornerRadii;
 - (void)_invalidateCornerConfiguration;
+@end
+
+#endif
+
+@interface NSGestureRecognizer (SPI)
+@property (readwrite) BOOL shouldBeArchived;
+#if !HAVE(NSGESTURERECOGNIZER_MODIFIER_FLAGS)
+- (NSEventModifierFlags)modifierFlags;
+#endif
+@end
+
+@protocol NSGestureRecognizerDelegatePrivate <NSGestureRecognizerDelegate>
+
+@optional
+
+- (BOOL)_gestureRecognizer:(NSGestureRecognizer *)preventingGestureRecognizer canPreventGestureRecognizer:(NSGestureRecognizer *)preventedGestureRecognizer;
+
+@end
+
+#if HAVE(LIQUID_GLASS)
+
+typedef NS_ENUM(NSInteger, _NSGlassEffectViewAdaptiveAppearance) {
+    _NSGlassEffectViewAdaptiveAppearanceAutomatic,
+    _NSGlassEffectViewAdaptiveAppearanceOff,
+    _NSGlassEffectViewAdaptiveAppearanceOn,
+} NS_REFINED_FOR_SWIFT;
+
+@interface NSGlassEffectView (SPI)
+@property _NSGlassEffectViewAdaptiveAppearance _adaptiveAppearance;
+@end
+
+#endif
+
+#if HAVE(APPKIT_SIRI_AFFORDANCE)
+
+@interface NSCampoLightweightUIController : NSObject
++ (instancetype)sharedInstance;
+- (void)dismiss;
+@property (nonatomic, readonly) BOOL isVisible;
 @end
 
 #endif
@@ -191,6 +266,65 @@ typedef NS_ENUM(NSInteger, NSScrollPocketEdge) {
 typedef void (^NSWindowSnapshotReadinessHandler) (void);
 - (NSWindowSnapshotReadinessHandler)_holdResizeSnapshotWithReason:(NSString *)reason;
 @end
+#endif
+
+#if HAVE(APPKIT_GESTURES_SUPPORT)
+
+NS_HEADER_AUDIT_BEGIN(nullability, sendability)
+
+@interface NSTextSelectionManager (WebKit_SPI)
+@property (weak) id /* <NSTextSelectionManagerDelegate> */ _webkitDelegate;
+@end
+
+// FIXME: Move this above once <rdar://problem/188247170> is in an SDK.
+@interface NSPanGestureRecognizer (Staging_188247170)
+- (NSPoint)_startLocationInView:(NSView *)view;
+@end
+
+@interface NSGestureRecognizer (IPI)
+@property (setter=_setIsScrollGestureRecognizer:) BOOL _isScrollGestureRecognizer;
+- (BOOL)_acceptsBeingFailureRequirementForGestureRecognizer:(NSGestureRecognizer *)otherGestureRecognizer;
+@end
+
+NS_HEADER_AUDIT_END(nullability, sendability)
+
+#endif // HAVE(APPKIT_GESTURES_SUPPORT)
+
+#if HAVE(NSREFRESHCONTROLLER)
+
+#if !defined(__has_include) || !__has_include(<AppKit/NSRefreshControl_Private.h>)
+@interface NSRefreshControl : NSView
+@end
+#endif
+
+@interface NSRefreshController (Staging_171939017)
+@property (strong, nonatomic, readonly) NSRefreshControl *refreshControl;
+@end
+
+@interface NSRefreshControl (Staging_170009747)
+- (void)update;
+@end
+
+// FIXME: <rdar://172142161> This should be SPI.
+@interface NSRefreshControl (IPI)
+@property (nonatomic, readonly) CGFloat refreshControlDynamicDampeningThreshold;
+@end
+
+// WebKit-Swift-Generated.h references this protocol, and AppKit declares it only in Swift, so
+// Objective-C needs it spelled out here. The Swift conformance uses AppKit_SPI, which cannot
+// replace this declaration.
+@protocol NSRefreshControlHosting <NSObject>
+@required
+@property (nonatomic, readonly) CGFloat refreshControlVisibleHeight;
+@property (nonatomic, readonly) NSRect refreshControlHostBounds;
+
+- (void)applyWithVerticalInset:(CGFloat)verticalInset animated:(BOOL)animated completion:(void (^ _Nullable)(void))completion;
+- (void)removeWithVerticalInset:(CGFloat)verticalInset animated:(BOOL)animated completion:(void (^ _Nullable)(void))completion;
+
+@optional
+@property (nonatomic, readonly) BOOL refreshControlHostIsTracking;
+@end
+
 #endif
 
 #endif // PLATFORM(MAC)

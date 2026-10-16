@@ -8,17 +8,27 @@
 #ifndef skgpu_graphite_VulkanBuffer_DEFINED
 #define skgpu_graphite_VulkanBuffer_DEFINED
 
+#include "include/core/SkRefCnt.h"
 #include "include/gpu/vk/VulkanMemoryAllocator.h"
+#include "include/private/SkTArray.h"
 #include "src/gpu/graphite/Buffer.h"
 #include "src/gpu/graphite/vk/VulkanSharedContext.h"
+
+#include <utility>
 
 namespace skgpu::graphite {
 
 class VulkanCommandBuffer;
+class VulkanDescriptorSet;
 
 class VulkanBuffer final : public Buffer {
 public:
-    static sk_sp<Buffer> Make(const VulkanSharedContext*, size_t, BufferType, AccessPattern);
+    static sk_sp<Buffer> Make(const VulkanSharedContext*,
+                              size_t,
+                              BufferType,
+                              AccessPattern,
+                              std::string_view label);
+
     void freeGpuData() override;
     VkBuffer vkBuffer() const { return fBuffer; }
     VkBufferUsageFlags bufferUsageFlags() const { return fBufferUsageFlags; }
@@ -29,6 +39,10 @@ public:
 
     bool bufferUsedForCpuRead() const { return fBufferUsedForCPURead; }
 
+    sk_sp<VulkanDescriptorSet> getCachedSingleBufferDescriptorSet(size_t bufferSize) const;
+
+    void addCachedSingleBufferDescriptorSet(size_t bufferSize, sk_sp<VulkanDescriptorSet>);
+
 private:
     VulkanBuffer(const VulkanSharedContext*,
                  size_t,
@@ -37,7 +51,8 @@ private:
                  VkBuffer,
                  const skgpu::VulkanAlloc&,
                  VkBufferUsageFlags,
-                 Protected isProtected);
+                 Protected isProtected,
+                 std::string_view label);
 
     void onMap() override;
     void onUnmap() override;
@@ -55,6 +70,12 @@ private:
     skgpu::VulkanAlloc fAlloc;
     const VkBufferUsageFlags fBufferUsageFlags;
     mutable VkAccessFlags fCurrentAccess = 0;
+
+    // If the underlying VkBuffer is a uniform or storage buffer, cache single-buffer descriptor
+    // sets for each encountered binding size. Otherwise, this can be ignored. We can use a simple
+    // unsorted data structure since we don't expect to encounter many unique binding sizes.
+    using SizeAndSet = std::pair<size_t, sk_sp<VulkanDescriptorSet>>;
+    skia_private::TArray<SizeAndSet> fCachedSingleBufferDescriptorSets;
 
     /**
      * Buffers can either be mapped for:

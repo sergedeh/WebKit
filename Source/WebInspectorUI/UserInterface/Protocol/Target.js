@@ -56,9 +56,8 @@ WI.Target = class Target extends WI.Object
         this._connection.target = this;
 
         // Agents we always expect in every target.
-        if (!(this instanceof WI.FrameTarget)) {
-            // FIXME: <https://webkit.org/b/298910> Add Runtime support for FrameTarget.
-            // FIXME: <https://webkit.org/b/298909> Add Debugger support for FrameTarget.
+        // COMPATIBILITY (macOS 26.4, iOS 26.4): Frame targets existed, but no domain supported them yet.
+        if (this.type !== WI.TargetType.Frame || !isEmptyObject(this._agents)) {
             console.assert(this.hasDomain("Target") || this.hasDomain("Runtime"));
             console.assert(this.hasDomain("Target") || this.hasDomain("Debugger"));
         }
@@ -155,6 +154,7 @@ WI.Target = class Target extends WI.Object
     get RuntimeAgent() { return this._agents.Runtime; }
     get ScriptProfilerAgent() { return this._agents.ScriptProfiler; }
     get ServiceWorkerAgent() { return this._agents.ServiceWorker; }
+    get StorageAgent() { return this._agents.Storage; }
     get TargetAgent() { return this._agents.Target; }
     get TimelineAgent() { return this._agents.Timeline; }
     get WorkerAgent() { return this._agents.Worker; }

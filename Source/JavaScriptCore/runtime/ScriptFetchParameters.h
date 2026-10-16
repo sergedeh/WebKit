@@ -38,6 +38,8 @@ public:
         JavaScript,
         WebAssembly,
         JSON,
+        Text,
+        CSS,
     };
 
     ScriptFetchParameters(Type type)
@@ -61,6 +63,10 @@ public:
     {
         if (string == "json"_s)
             return Type::JSON;
+        if (string == "text"_s)
+            return Type::Text;
+        if (string == "css"_s)
+            return Type::CSS;
         if (string == "webassembly"_s)
             return Type::WebAssembly;
         return std::nullopt;

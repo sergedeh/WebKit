@@ -26,10 +26,12 @@
 #include "Document.h"
 #include "LegacyRenderSVGResource.h"
 #include "RenderSVGGradientStop.h"
-#include "RenderStyle+GettersInlines.h"
+#include "SVGElementTypeHelpers.h"
 #include "SVGGradientElement.h"
 #include "SVGNames.h"
 #include "SVGParserUtilities.h"
+#include "StyleComputedStyle+GettersInlines.h"
+#include "StylePrimitiveNumericTypes+Evaluation.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -37,7 +39,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGStopElement);
 
 inline SVGStopElement::SVGStopElement(const QualifiedName& tagName, Document& document)
-    : SVGElement(tagName, document, makeUniqueRef<PropertyRegistry>(*this))
+    : SVGElement(tagName, document, PropertyRegistry::singleton())
     , m_offset { SVGAnimatedNumber::create(this, 0) }
 {
     ASSERT(hasTagName(SVGNames::stopTag));
@@ -64,12 +66,10 @@ void SVGStopElement::attributeChanged(const QualifiedName& name, const AtomStrin
             valueView = valueView.left(valueView.length() - 1);
 
         auto parsedValue = parseNumber(valueView, SuffixSkippingPolicy::DontSkip);
-        float value = parsedValue.value_or(0);
-
         if (parsedValue && isPercentage)
-            value /= 100.0f;
+            parsedValue = *parsedValue / 100.0f;
 
-        Ref { m_offset }->setBaseValInternal(value);
+        m_offset->setBaseValInternal(parsedValue);
     }
 
     SVGElement::attributeChanged(name, oldValue, newValue, attributeModificationReason);
@@ -87,12 +87,12 @@ void SVGStopElement::svgAttributeChanged(const QualifiedName& attrName)
     SVGElement::svgAttributeChanged(attrName);
 }
 
-RenderPtr<RenderElement> SVGStopElement::createElementRenderer(RenderStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> SVGStopElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
 {
     return createRenderer<RenderSVGGradientStop>(*this, WTF::move(style));
 }
 
-bool SVGStopElement::rendererIsNeeded(const RenderStyle&)
+bool SVGStopElement::rendererIsNeeded(const Style::ComputedStyle&)
 {
     return true;
 }
@@ -104,9 +104,9 @@ Color SVGStopElement::stopColorIncludingOpacity() const
     if (!renderer())
         return Color::black;
 
-    auto& style = renderer()->style();
-    auto stopColor = style.stopColorResolvingCurrentColor();
-    return stopColor.colorWithAlphaMultipliedBy(style.stopOpacity().value.value);
+    CheckedRef style = renderer()->style();
+    auto stopColor = style->stopColorResolvingCurrentColor();
+    return stopColor.colorWithAlphaMultipliedBy(Style::evaluate<float>(style->stopOpacity()));
 }
 
-}
+} // namespace WebCore

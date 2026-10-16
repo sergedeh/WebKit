@@ -26,11 +26,14 @@
 #include "config.h"
 #include "GPUTexture.h"
 
+#include "ExceptionOr.h"
 #include "GPUDevice.h"
 #include "GPUTextureDescriptor.h"
 #include "GPUTextureView.h"
 #include "GPUTextureViewDescriptor.h"
 #include "WebGPUTextureViewDescriptor.h"
+#include <bit>
+#include <wtf/CheckedArithmetic.h>
 
 namespace WebCore {
 
@@ -55,7 +58,7 @@ static uint32_t getDimension(auto& extent3D)
     });
 }
 
-GPUTexture::GPUTexture(Ref<WebGPU::Texture>&& backing, const GPUTextureDescriptor& descriptor, const GPUDevice& device)
+GPUTexture::GPUTexture(Ref<WebGPU::Texture>&& backing, const GPUTextureDescriptor& descriptor, GPUDevice& device, bool isCanvasBacking)
     : m_backing(WTF::move(backing))
     , m_format(descriptor.format)
     , m_width(getDimension<0>(descriptor.size))
@@ -66,10 +69,24 @@ GPUTexture::GPUTexture(Ref<WebGPU::Texture>&& backing, const GPUTextureDescripto
     , m_dimension(descriptor.dimension)
     , m_usage(descriptor.usage)
     , m_device(device)
+    , m_isCanvasBacking(isCanvasBacking)
 {
 }
 
-GPUTexture::~GPUTexture() = default;
+GPUTexture::~GPUTexture()
+{
+    m_device->willDestroyTexture(*this);
+}
+
+bool GPUTexture::hasActiveInspectorCanvasCallTracer() const
+{
+    return m_device->hasActiveInspectorCanvasCallTracer();
+}
+
+GPUDevice* GPUTexture::device() const
+{
+    return m_device.ptr();
+}
 
 String GPUTexture::label() const
 {
@@ -81,7 +98,7 @@ void GPUTexture::setLabel(String&& label)
     m_backing->setLabel(WTF::move(label));
 }
 
-static WebGPU::TextureViewDescriptor convertToBacking(const std::optional<GPUTextureViewDescriptor>& textureViewDescriptor)
+static std::optional<WebGPU::TextureViewDescriptor> LEGACY_NODELETE convertToBacking(const std::optional<GPUTextureViewDescriptor>& textureViewDescriptor)
 {
     if (!textureViewDescriptor)
         return WebGPU::TextureViewDescriptor { };
@@ -95,16 +112,24 @@ ExceptionOr<Ref<GPUTextureView>> GPUTexture::createView(const std::optional<GPUT
         if (auto error = m_device->errorValidatingSupportedFormat(*textureViewDescriptor->format))
             return Exception { ExceptionCode::TypeError, makeString("GPUTexture.createView: Unsupported texture format: "_s, *error) };
     }
-    RefPtr view = m_backing->createView(convertToBacking(textureViewDescriptor));
+    auto backingDescriptor = convertToBacking(textureViewDescriptor);
+    if (!backingDescriptor)
+        return Exception { ExceptionCode::TypeError, "GPUTexture.createView: swizzle must be four characters, each of which is one of \"rgba01\"."_s };
+    RefPtr view = m_backing->createView(backingDescriptor);
     if (!view)
         return Exception { ExceptionCode::InvalidStateError, "GPUTexture.createView: Unable to create view."_s };
-    return GPUTextureView::create(view.releaseNonNull());
+    return GPUTextureView::create(view.releaseNonNull(), *this);
 }
 
 void GPUTexture::destroy()
 {
+    if (m_isDestroyed)
+        return;
+
     m_isDestroyed = true;
+    m_memoryCost.store(0, std::memory_order_relaxed);
     m_backing->destroy();
+    m_device->didChangeTextureMemoryCost(*this);
 }
 
 GPUIntegerCoordinateOut GPUTexture::width() const
@@ -142,7 +167,14 @@ GPUFlagsConstant GPUTexture::usage() const
     return m_usage;
 }
 
-static GPUTextureFormat depthSpecificFormat(GPUTextureFormat textureFormat)
+// Only compatibility mode, which WebKit does not implement, gives a texture a binding view
+// dimension; undefined tells code written for that mode there is no restriction here.
+JSC::JSValue GPUTexture::textureBindingViewDimension() const
+{
+    return JSC::jsUndefined();
+}
+
+static GPUTextureFormat LEGACY_NODELETE depthSpecificFormat(GPUTextureFormat textureFormat)
 {
     // https://gpuweb.github.io/gpuweb/#aspect-specific-format
 
@@ -156,7 +188,7 @@ static GPUTextureFormat depthSpecificFormat(GPUTextureFormat textureFormat)
     }
 }
 
-static GPUTextureFormat stencilSpecificFormat(GPUTextureFormat textureFormat)
+static GPUTextureFormat LEGACY_NODELETE stencilSpecificFormat(GPUTextureFormat textureFormat)
 {
     // https://gpuweb.github.io/gpuweb/#aspect-specific-format
 
@@ -547,6 +579,68 @@ uint32_t GPUTexture::texelBlockHeight(GPUTextureFormat format)
         return 1;
     }
     return 0;
+}
+
+static uint32_t LEGACY_NODELETE texelBlockCount(uint32_t size, uint32_t blockSize)
+{
+    return size / blockSize + !!(size % blockSize);
+}
+
+// The most mip levels a texture this size can have.
+static uint32_t LEGACY_NODELETE maxMipLevelCount(GPUTextureDimension dimension, uint32_t width, uint32_t height, uint32_t depthOrArrayLayers)
+{
+    switch (dimension) {
+    case GPUTextureDimension::_1d:
+        return 1;
+    case GPUTextureDimension::_2d:
+        return static_cast<uint32_t>(std::bit_width(WTF::max(width, height)));
+    case GPUTextureDimension::_3d:
+        return static_cast<uint32_t>(std::bit_width(WTF::max(WTF::max(width, height), depthOrArrayLayers)));
+    }
+    ASSERT_NOT_REACHED();
+    return 0;
+}
+
+size_t GPUTexture::estimatedMemoryCost() const
+{
+    if (m_isDestroyed)
+        return 0;
+
+    // A texture with impossible mip levels or samples is invalid, so it holds no memory. Checking this also bounds the loop below.
+    if (m_mipLevelCount > maxMipLevelCount(m_dimension, m_width, m_height, m_depthOrArrayLayers) || (m_sampleCount != 1 && m_sampleCount != 4))
+        return 0;
+
+    // WebGPU does not expose allocation sizes, so estimate from its texture layout rules.
+    size_t bytesPerBlock = texelBlockSize(m_format);
+    if (!bytesPerBlock) {
+        bytesPerBlock = texelBlockSize(aspectSpecificFormat(m_format, GPUTextureAspect::DepthOnly));
+        bytesPerBlock += texelBlockSize(aspectSpecificFormat(m_format, GPUTextureAspect::StencilOnly));
+    }
+
+    auto blockWidth = texelBlockWidth(m_format);
+    auto blockHeight = texelBlockHeight(m_format);
+    if (!bytesPerBlock || !blockWidth || !blockHeight)
+        return 0;
+
+    CheckedSize result;
+    uint32_t width = m_width;
+    uint32_t height = m_height;
+    uint32_t depthOrArrayLayers = m_depthOrArrayLayers;
+    for (uint32_t level = 0; level < m_mipLevelCount; ++level) {
+        CheckedSize levelMemoryCost = texelBlockCount(width, blockWidth);
+        levelMemoryCost *= texelBlockCount(height, blockHeight);
+        levelMemoryCost *= depthOrArrayLayers;
+        levelMemoryCost *= bytesPerBlock;
+        levelMemoryCost *= m_sampleCount;
+        result += levelMemoryCost;
+
+        width = width > 1 ? width / 2 : 1;
+        height = height > 1 ? height / 2 : 1;
+        if (m_dimension == GPUTextureDimension::_3d)
+            depthOrArrayLayers = depthOrArrayLayers > 1 ? depthOrArrayLayers / 2 : 1;
+    }
+
+    return result.hasOverflowed() ? 0 : result.value();
 }
 
 }

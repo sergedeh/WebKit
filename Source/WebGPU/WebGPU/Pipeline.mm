@@ -26,7 +26,13 @@
 #import "Pipeline.h"
 
 #import "APIConversions.h"
+#import "Device.h"
+#import "Instance.h"
 #import "ShaderModule.h"
+#import "WGSLShaderModule.h"
+#import <memory>
+#import <wtf/BlockPtr.h>
+#import <wtf/Scope.h>
 
 #if !defined(NDEBUG) || (defined(ENABLE_LIBFUZZER) && ENABLE_LIBFUZZER && defined(ASAN_ENABLED) && ASAN_ENABLED)
 #include <csignal>
@@ -37,9 +43,13 @@
 #include <wtf/text/StringBuilder.h>
 #endif
 
-namespace WebGPU {
+namespace WebGPU::Metal {
 
-std::optional<LibraryCreationResult> createLibrary(id<MTLDevice> device, const ShaderModule& shaderModule, PipelineLayout* pipelineLayout, const String& entryPoint, NSString *label, std::span<const WGPUConstantEntry> constants, BufferBindingSizesForPipeline& mininumBufferSizes, NSError **error, String& metalShaderSource)
+#if !defined(NDEBUG) || (defined(ENABLE_LIBFUZZER) && ENABLE_LIBFUZZER && defined(ASAN_ENABLED) && ASAN_ENABLED)
+static bool enablePsoLogging();
+#endif
+
+std::optional<PreparedLibrary> prepareLibrary(const ShaderModule& shaderModule, PipelineLayout* pipelineLayout, const String& entryPoint, NSString *label, std::span<const WebGPU::ConstantEntry> constants, BufferBindingSizesForPipeline& mininumBufferSizes, NSError **error)
 {
     HashMap<String, WGSL::ConstantValue> wgslConstantValues;
 
@@ -50,7 +60,7 @@ std::optional<LibraryCreationResult> createLibrary(id<MTLDevice> device, const S
         if (const RefPtr pipelineLayoutHint = shaderModule.pipelineLayoutHint(entryPoint)) {
             if (*pipelineLayoutHint == *pipelineLayout) {
                 if (const auto* entryPointInformation = shaderModule.entryPointInformation(entryPoint))
-                    return { { shaderModule.library(), *entryPointInformation,  wgslConstantValues } };
+                    return { { shaderModule.library(), { }, label, { }, *entryPointInformation, wgslConstantValues } };
             }
         }
     }
@@ -76,14 +86,20 @@ std::optional<LibraryCreationResult> createLibrary(id<MTLDevice> device, const S
 
     const auto& entryPointInformation = iterator->value;
 
-    for (const auto entry : constants) {
-        auto keyEntry = fromAPI(entry.key);
+    for (const auto& entry : constants) {
+        auto& keyEntry = entry.key;
         auto indexIterator = entryPointInformation.specializationConstants.find(keyEntry);
-        if (indexIterator == entryPointInformation.specializationConstants.end())
+        if (indexIterator == entryPointInformation.specializationConstants.end()) {
+            // Per WebGPU spec: providing a value for an override declared in the
+            // shader module but not statically used by this entry point is valid
+            // and the value is ignored. Returning an invalid pipeline only when
+            // the identifier does not refer to any override in the module.
+            if (ast->containsOverride(keyEntry))
+                continue;
             return { };
+        }
 
         const auto& specializationConstant = indexIterator->value;
-        keyEntry = specializationConstant.mangledName;
         switch (specializationConstant.type) {
         case WGSL::Reflection::SpecializationConstantType::Boolean: {
             bool value = entry.value;
@@ -123,28 +139,6 @@ std::optional<LibraryCreationResult> createLibrary(id<MTLDevice> device, const S
         }
     }
 
-    for (auto& kvp : entryPointInformation.specializationConstants) {
-        auto& specializationConstant = kvp.value;
-        if (!specializationConstant.defaultValue || wgslConstantValues.contains(kvp.value.mangledName)) {
-            if (!specializationConstant.defaultValue && !wgslConstantValues.contains(kvp.value.mangledName)) {
-                if (error)
-                    *error = [NSError errorWithDomain:@"WebGPU" code:1 userInfo:@{ NSLocalizedDescriptionKey: [NSString stringWithFormat:@"Override %s is used in shader but not provided", kvp.key.utf8().data()] }];
-                return std::nullopt;
-            }
-
-            continue;
-        }
-
-        auto constantValue = WGSL::evaluate(*kvp.value.defaultValue, wgslConstantValues);
-        if (!constantValue) {
-            if (error)
-                *error = [NSError errorWithDomain:@"WebGPU" code:1 userInfo:@{ NSLocalizedDescriptionKey: @"Failed to evaluate override value" }];
-            return std::nullopt;
-        }
-        auto addResult = wgslConstantValues.add(kvp.value.mangledName, *constantValue);
-        ASSERT_UNUSED(addResult, addResult.isNewEntry);
-    }
-
     if (pipelineLayout) {
         for (unsigned i = 0; i < pipelineLayout->numberOfBindGroupLayouts(); ++i) {
             auto& wgslBindGroupLayout = wgslPipelineLayout->bindGroupLayouts[i];
@@ -173,20 +167,150 @@ std::optional<LibraryCreationResult> createLibrary(id<MTLDevice> device, const S
     }
     auto& msl = std::get<String>(generationResult);
 
-    auto library = ShaderModule::createLibrary(device, msl, label, error, WGSL::DeviceState {
+    return { { nil, msl, label, WGSL::DeviceState {
         .appleGPUFamily = shaderModule.device().appleGPUFamily(),
         .shaderValidationEnabled = shaderModule.device().isShaderValidationEnabled(),
         .usesInvariant = entryPointInformation.usesInvariant
-    });
-    if (error && *error)
-        return { };
+    }, entryPointInformation, wgslConstantValues } };
+}
 
+LibraryCompileRequest libraryCompileRequest(const PreparedLibrary& preparedLibrary)
+{
+    return {
+        preparedLibrary.library,
+        preparedLibrary.msl.createNSString().get(),
+        preparedLibrary.label.createNSString().get(),
+        preparedLibrary.deviceState
+    };
+}
+
+id<MTLLibrary> compileLibrary(id<MTLDevice> device, const LibraryCompileRequest& request, NSError **error)
+{
+    if (request.cachedLibrary)
+        return request.cachedLibrary;
+
+    return ShaderModule::createLibrary(device, request.msl, request.label, error, request.deviceState);
+}
+
+template<typename Result>
+static CompletionHandler<void(Result, NSError *)> callOnWebGPUThread(Instance& instance, CompletionHandler<void(Result, NSError *)>&& callback)
+{
+    using Callback = CompletionHandler<void(Result, NSError *)>;
+
+    auto* callbackToHopBack = new Callback(WTF::move(callback));
+    // Metal runs its completion handlers on its own queues, so the returned handler is called on an
+    // arbitrary thread. It is the hop below which returns to the thread `callback` was created on.
+    return Callback { [protectedInstance = Ref { instance }, callbackToHopBack](Result result, NSError *error) mutable {
+        protectedInstance->scheduleWork([callbackToHopBack, result, error]() mutable {
+            std::unique_ptr<Callback> callback(callbackToHopBack);
+            (*callback)(result, error);
+        });
+    }, CompletionHandlerCallThread::AnyThread };
+}
+
+void compileLibraryAsync(id<MTLDevice> device, Instance& instance, const LibraryCompileRequest& request, CompletionHandler<void(id<MTLLibrary>, NSError *)>&& callback)
+{
+    // A library which was already compiled needs no hop: this is still running on the WebGPU thread.
+    if (request.cachedLibrary) {
+        callback(request.cachedLibrary, nil);
+        return;
+    }
+
+    // nil device here means the device is either lost or destroyed, all which report no error
+    if (!device) {
+        callback(nil, nil);
+        return;
+    }
+
+    ShaderModule::createLibraryAsync(device, request.msl, request.label, request.deviceState, callOnWebGPUThread<id<MTLLibrary>>(instance, WTF::move(callback)));
+}
+
+void createComputePipelineStateAsync(id<MTLDevice> device, Instance& instance, MTLComputePipelineDescriptor *descriptor, CompletionHandler<void(id<MTLComputePipelineState>, NSError *)>&& callback)
+{
+    // See the comment in compileLibraryAsync(): a lost device is nil and would never call back.
+    if (!device) {
+        callback(nil, nil);
+        return;
+    }
+
+    [device newComputePipelineStateWithDescriptor:descriptor options:MTLPipelineOptionNone completionHandler:makeBlockPtr([hopBack = callOnWebGPUThread<id<MTLComputePipelineState>>(instance, WTF::move(callback))](id<MTLComputePipelineState> computePipelineState, MTLComputePipelineReflection *, NSError *error) mutable {
+        hopBack(computePipelineState, error);
+    }).get()];
+}
+
+void createRenderPipelineStateAsync(id<MTLDevice> device, Instance& instance, MTLRenderPipelineDescriptor *descriptor, CompletionHandler<void(id<MTLRenderPipelineState>, NSError *)>&& callback)
+{
+    // See the comment in compileLibraryAsync(): a lost device is nil and would never call back.
+    if (!device) {
+        callback(nil, nil);
+        return;
+    }
+
+    [device newRenderPipelineStateWithDescriptor:descriptor completionHandler:makeBlockPtr([hopBack = callOnWebGPUThread<id<MTLRenderPipelineState>>(instance, WTF::move(callback))](id<MTLRenderPipelineState> renderPipelineState, NSError *error) mutable {
+        hopBack(renderPipelineState, error);
+    }).get()];
+}
+
+ScopeExit<Function<void()>> scopedErrorReporting(Device& device, bool suppressErrors)
+{
+    bool wasErrorReportingPaused = device.pauseErrorReporting(suppressErrors);
+    return makeScopeExit(Function<void()> { [protectedDevice = protect(device), wasErrorReportingPaused] {
+        protectedDevice->pauseErrorReporting(wasErrorReportingPaused);
+    } });
+}
+
+Device::LibraryCompilation Device::asynchronousIfPossible()
+{
 #if !defined(NDEBUG) || (defined(ENABLE_LIBFUZZER) && ENABLE_LIBFUZZER && defined(ASAN_ENABLED) && ASAN_ENABLED)
-    metalShaderSource = msl;
-#else
-    UNUSED_PARAM(metalShaderSource);
+    if (enablePsoLogging())
+        return LibraryCompilation::Synchronous;
 #endif
-    return { { library, entryPointInformation, wgslConstantValues } };
+    return LibraryCompilation::Asynchronous;
+}
+
+void Device::compileLibrary(const LibraryCompileRequest& request, LibraryCompilation libraryCompilation, CompletionHandler<void(id<MTLLibrary>, NSError *)>&& callback)
+{
+    if (libraryCompilation == LibraryCompilation::Asynchronous) {
+        if (RefPtr protectedInstance = instance()) {
+            compileLibraryAsync(m_device, *protectedInstance, request, WTF::move(callback));
+            return;
+        }
+    }
+
+    NSError *error = nil;
+    id<MTLLibrary> library = WebGPU::Metal::compileLibrary(m_device, request, &error);
+    callback(library, error);
+}
+
+void Device::createComputePipelineState(MTLComputePipelineDescriptor *descriptor, String&& shaderSource, LibraryCompilation libraryCompilation, CompletionHandler<void(id<MTLComputePipelineState>)>&& callback)
+{
+    auto reportError = [](NSError *error) {
+        if (error)
+            WTFLogAlways("Pipeline state creation error: %@", error); // NOLINT
+    };
+
+    if (libraryCompilation == LibraryCompilation::Asynchronous) {
+        if (RefPtr protectedInstance = instance()) {
+            createComputePipelineStateAsync(m_device, *protectedInstance, descriptor, [reportError, callback = WTF::move(callback)](id<MTLComputePipelineState> computePipelineState, NSError *error) mutable {
+                reportError(error);
+                callback(computePipelineState);
+            });
+            return;
+        }
+    }
+
+    NSError *error = nil;
+#if !defined(NDEBUG) || (defined(ENABLE_LIBFUZZER) && ENABLE_LIBFUZZER && defined(ASAN_ENABLED) && ASAN_ENABLED)
+    dumpMetalReproCaseComputePSO(WTF::move(shaderSource), descriptor.computeFunction.name);
+#else
+    UNUSED_PARAM(shaderSource);
+#endif
+    id<MTLComputePipelineState> computePipelineState = [m_device newComputePipelineStateWithDescriptor:descriptor options:MTLPipelineOptionNone reflection:nil error:&error];
+#if !defined(NDEBUG) || (defined(ENABLE_LIBFUZZER) && ENABLE_LIBFUZZER && defined(ASAN_ENABLED) && ASAN_ENABLED)
+    clearMetalPSORepro();
+#endif
+    reportError(error);
+    callback(computePipelineState);
 }
 
 id<MTLFunction> createFunction(id<MTLLibrary> library, const WGSL::Reflection::EntryPointInformation& entryPointInformation, NSString *label)
@@ -220,7 +344,7 @@ NSString* errorValidatingBindGroup(const BindGroup& bindGroup, const BufferBindi
                 return [NSString stringWithFormat:@"Buffer size is missing for binding at index %u bind group", bindingIndex];
 
             uint64_t bufferSize = 0;
-            if (auto* bufferBinding = get_if<WGPUBufferBindingLayout>(&it->value.bindingLayout))
+            if (auto* bufferBinding = get_if<BindGroupLayout::BufferBindingLayout>(&it->value.bindingLayout))
                 bufferSize = bufferBinding->minBindingSize;
             if (mininumBufferSizes) {
                 if (auto bufferSizeIt = mininumBufferSizes->find(it->value.binding); bufferSizeIt != mininumBufferSizes->end()) {
@@ -298,7 +422,7 @@ static String psoPreamble()
 static void printPsoOnProgramExit(int sig)
 {
     if (psoReproStringBuilder().length())
-        /* NOLINT */ WTFLogAlways("// ------------------------------------------------------------------------\n// Dumping Metal repro case:\n// ------------------------------------------------------------------------\n%s\n// ------------------------------------------------------------------------\n// End of repro case\n// ------------------------------------------------------------------------", psoReproStringBuilder().toString().utf8().data());
+        /* NOLINT */ SAFE_WTFLOGALWAYS("// ------------------------------------------------------------------------\n// Dumping Metal repro case:\n// ------------------------------------------------------------------------\n%s\n// ------------------------------------------------------------------------\n// End of repro case\n// ------------------------------------------------------------------------", psoReproStringBuilder().toString().utf8());
 
     if (existingSigabortHandlers()[sig])
         existingSigabortHandlers()[sig](sig);
@@ -571,4 +695,4 @@ void clearMetalPSORepro()
 
 #endif
 
-} // namespace WebGPU
+} // namespace WebGPU::Metal

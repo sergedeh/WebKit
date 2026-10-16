@@ -79,7 +79,7 @@ public:
 
     DECLARE_VISIT_CHILDREN;
 
-    JSObject* target() const { return jsCast<JSObject*>(internalField(Field::Target).get()); }
+    JSObject* target() const { return uncheckedDowncast<JSObject>(internalField(Field::Target).get()); }
     JSValue handler() const { return internalField(Field::Handler).get(); }
 
     static void validateNegativeHasTrapResult(JSGlobalObject*, JSObject*, PropertyName);
@@ -91,13 +91,13 @@ public:
     bool putByIndexCommon(JSGlobalObject*, JSValue thisValue, unsigned propertyName, JSValue putValue, bool shouldThrow);
     JSValue performGetPrototype(JSGlobalObject*);
     void revoke(VM&);
-    bool isRevoked() const;
+    bool LEGACY_NODELETE isRevoked() const;
 
     const WriteBarrier<Unknown>& internalField(Field field) const { return Base::internalField(static_cast<uint32_t>(field)); }
     WriteBarrier<Unknown>& internalField(Field field) { return Base::internalField(static_cast<uint32_t>(field)); }
 
     JSObject* getHandlerTrap(JSGlobalObject*, JSObject*, CallData&, const Identifier&, HandlerTrap);
-    bool forwardsGetOwnPropertyNamesToTarget(DontEnumPropertiesMode);
+    bool LEGACY_NODELETE forwardsGetOwnPropertyNamesToTarget(DontEnumPropertiesMode);
 
 private:
     JS_EXPORT_PRIVATE ProxyObject(VM&, Structure*);
@@ -105,12 +105,12 @@ private:
     JS_EXPORT_PRIVATE static Structure* structureForTarget(JSGlobalObject*, JSValue target);
 
     bool isHandlerTrapsCacheValid(JSObject* handler);
-    void clearHandlerTrapsOffsetsCache();
+    void LEGACY_NODELETE clearHandlerTrapsOffsetsCache();
 
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
     static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned propertyName, PropertySlot&);
-    static CallData getCallData(JSCell*);
-    static CallData getConstructData(JSCell*);
+    static CallData LEGACY_NODELETE getCallData(JSCell*);
+    static CallData LEGACY_NODELETE getConstructData(JSCell*);
     static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
     static bool deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned propertyName);
     static bool preventExtensions(JSObject*, JSGlobalObject*);
@@ -144,7 +144,10 @@ private:
 
 ALWAYS_INLINE bool ProxyObject::isHandlerTrapsCacheValid(JSObject* handler)
 {
-    return handler->structureID() == m_handlerStructureID.value() && asObject(handler->getPrototypeDirect())->structureID() == m_handlerPrototypeStructureID.value();
+    if (handler->structureID() != m_handlerStructureID.value())
+        return false;
+    ASSERT(handler->structure()->hasMonoProto());
+    return asObject(handler->getPrototypeDirect())->structureID() == m_handlerPrototypeStructureID.value();
 }
 
 } // namespace JSC

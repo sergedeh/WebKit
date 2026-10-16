@@ -26,37 +26,37 @@
 
 #pragma once
 
+#include "CSSCustomIdent.h"
 #include "CSSValue.h"
-#include <wtf/text/WTFString.h>
 
 namespace WebCore {
 
 class CSSVariableData;
-class StyleImage;
 
 namespace Style {
 class BuilderState;
+class Image;
 }
 
 class CSSPaintImageValue final : public CSSValue {
 public:
-    static Ref<CSSPaintImageValue> create(String name, Ref<CSSVariableData> arguments)
+    static Ref<CSSPaintImageValue> create(CSS::CustomIdent&& name, Ref<CSSVariableData> arguments)
     {
         return adoptRef(*new CSSPaintImageValue(WTF::move(name), WTF::move(arguments)));
     }
     ~CSSPaintImageValue();
 
-    const String& name() const { return m_name; }
+    const CSS::CustomIdent& name() const LIFETIME_BOUND { return m_name; }
 
     bool equals(const CSSPaintImageValue& other) const { return m_name == other.m_name; }
     String customCSSText(const CSS::SerializationContext&) const;
 
-    RefPtr<StyleImage> createStyleImage(const Style::BuilderState&) const;
+    RefPtr<Style::Image> createStyleImage(const Style::BuilderState&) const;
 
 private:
-    explicit CSSPaintImageValue(String&&, Ref<CSSVariableData>&&);
+    explicit CSSPaintImageValue(CSS::CustomIdent&&, Ref<CSSVariableData>&&);
 
-    String m_name;
+    CSS::CustomIdent m_name;
     const Ref<CSSVariableData> m_arguments;
 };
 

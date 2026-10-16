@@ -30,7 +30,6 @@
 #include <WebCore/WritingMode.h>
 #include <array>
 #include <concepts>
-#include <wtf/OptionSet.h>
 #include <wtf/text/TextStream.h>
 
 namespace WebCore {
@@ -77,7 +76,7 @@ public:
     }
 
     template<typename U, typename Mapper>
-    static RectEdges<T> map(U&& other, NOESCAPE Mapper&& mapper)
+    static RectEdges<T> map(U&& other, NOESCAPE const Mapper& mapper)
     {
         return RectEdges<T> {
             mapper(other.top()),
@@ -94,12 +93,12 @@ public:
     T& bottom() { return at(BoxSide::Bottom); }
     T& left() { return at(BoxSide::Left); }
 
-    const T& at(BoxSide side) const { return m_sides[static_cast<size_t>(side)]; }
-    const T& operator[](BoxSide side) const { return m_sides[static_cast<size_t>(side)]; }
-    const T& top() const { return at(BoxSide::Top); }
-    const T& right() const { return at(BoxSide::Right); }
-    const T& bottom() const { return at(BoxSide::Bottom); }
-    const T& left() const { return at(BoxSide::Left); }
+    const T& at(BoxSide side) const LIFETIME_BOUND { return m_sides[static_cast<size_t>(side)]; }
+    const T& operator[](BoxSide side) const LIFETIME_BOUND { return m_sides[static_cast<size_t>(side)]; }
+    const T& top() const LIFETIME_BOUND { return at(BoxSide::Top); }
+    const T& right() const LIFETIME_BOUND { return at(BoxSide::Right); }
+    const T& bottom() const LIFETIME_BOUND { return at(BoxSide::Bottom); }
+    const T& left() const LIFETIME_BOUND { return at(BoxSide::Left); }
 
     void setAt(BoxSide side, const T& v) { at(side) = v; }
     void setTop(const T& top) { setAt(BoxSide::Top, top); }
@@ -114,9 +113,20 @@ public:
         copy.right() = left();
         return copy;
     }
+
     RectEdges<T> yFlippedCopy() const
     {
         RectEdges<T> copy { *this };
+        copy.top() = bottom();
+        copy.bottom() = top();
+        return copy;
+    }
+
+    RectEdges<T> xyFlippedCopy() const
+    {
+        RectEdges<T> copy { *this };
+        copy.left() = right();
+        copy.right() = left();
         copy.top() = bottom();
         copy.bottom() = top();
         return copy;
@@ -156,19 +166,31 @@ public:
         return yFlippedCopy();
     }
 
-    template<typename F> bool anyOf(F&& functor) const
+    void transpose()
     {
-        return std::ranges::any_of(m_sides, std::forward<F>(functor));
+        std::swap(m_sides[3], m_sides[2]);
+        std::swap(m_sides[2], m_sides[1]);
+        std::swap(m_sides[1], m_sides[0]);
     }
 
-    template<typename F> bool allOf(F&& functor) const
+    RectEdges<T> transposed() const
     {
-        return std::ranges::all_of(m_sides, std::forward<F>(functor));
+        return { left(), top(), right(), bottom() };
     }
 
-    template<typename F> bool noneOf(F&& functor) const
+    template<typename F> bool anyOf(NOESCAPE const F& functor) const
     {
-        return std::ranges::none_of(m_sides, std::forward<F>(functor));
+        return std::ranges::any_of(m_sides, functor);
+    }
+
+    template<typename F> bool allOf(NOESCAPE const F& functor) const
+    {
+        return std::ranges::all_of(m_sides, functor);
+    }
+
+    template<typename F> bool noneOf(NOESCAPE const F& functor) const
+    {
+        return std::ranges::none_of(m_sides, functor);
     }
 
     bool isZero() const
@@ -219,9 +241,8 @@ inline RectEdges<T>& operator-=(RectEdges<T>& a, const RectEdges<T>& b)
     return a;
 }
 
-
 template<typename T, typename F>
-inline RectEdges<T> blend(const RectEdges<T>& a, const RectEdges<T>& b, F&& functor)
+inline RectEdges<T> blend(const RectEdges<T>& a, const RectEdges<T>& b, NOESCAPE const F& functor)
 {
     return {
         functor(a.top(), b.top(), BoxSide::Top),
@@ -235,6 +256,15 @@ template<typename T>
 inline RectEdges<T> max(const RectEdges<T>& a, const RectEdges<T>& b)
 {
     return blend(a, b, [](const T& a, const T& b, BoxSide) { return std::max(a, b); });
+}
+
+inline RectEdges<bool> operator&=(RectEdges<bool>& a, const RectEdges<bool>& b)
+{
+    a.setTop(a.top() && b.top());
+    a.setBottom(a.bottom() && b.bottom());
+    a.setLeft(a.left() && b.left());
+    a.setRight(a.right() && b.right());
+    return a;
 }
 
 template<typename T>

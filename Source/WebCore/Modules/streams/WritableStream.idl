@@ -29,10 +29,12 @@
  */
 
 [
+    ExportMacro=WEBCORE_EXPORT,
     Exposed=*,
     PrivateIdentifier,
     PublicIdentifier,
-    SkipVTableValidation
+    SkipVTableValidation,
+    Transferable
 ] interface WritableStream {
     [CallWith=CurrentGlobalObject] constructor(optional object underlyingSink, optional object strategy);
 
@@ -40,5 +42,5 @@
 
     [Custom, ReturnsOwnPromise] Promise<any> abort(optional any reason);
     [Custom, ReturnsOwnPromise] Promise<any> close();
-    [Custom] WritableStreamDefaultWriter getWriter();
+    [CallWith=CurrentGlobalObject] WritableStreamDefaultWriter getWriter();
 };

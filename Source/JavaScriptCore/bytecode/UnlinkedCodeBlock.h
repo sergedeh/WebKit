@@ -167,13 +167,20 @@ public:
     bool isClassContext() const { return m_isClassContext; }
     bool hasTailCalls() const { return m_hasTailCalls; }
     void setHasTailCalls() { m_hasTailCalls = true; }
-    bool allowDirectEvalCache() const { return !(m_features & NoEvalCacheFeature); }
-    bool usesImportMeta() const { return m_features & ImportMetaFeature; }
+    bool isBuiltinDefaultClassConstructor() const { return m_isBuiltinDefaultClassConstructor; }
 
     bool hasExpressionInfo() { return !m_expressionInfo->isEmpty(); }
 
     bool hasCheckpoints() const { return m_hasCheckpoints; }
     void setHasCheckpoints() { m_hasCheckpoints = true; }
+
+    bool hasQuickDFGTierUpUpdated() const { return m_quickDFGTierUp != TriState::Indeterminate; }
+    bool isQuickDFGTierUp() const { return m_quickDFGTierUp == TriState::True; }
+    void setQuickDFGTierUp(TriState state) { m_quickDFGTierUp = state; }
+    TriState quickDFGTierUp() const { return m_quickDFGTierUp; }
+
+    bool isQuickFTLTierUp() const { return m_quickFTLTierUp; }
+    void setQuickFTLTierUp(bool value) { m_quickFTLTierUp = value; }
 
     // Special registers
     void setThisRegister(VirtualRegister thisRegister) { m_thisRegister = thisRegister; }
@@ -187,15 +194,15 @@ public:
 
     size_t numberOfIdentifiers() const { return m_identifiers.size(); }
     const Identifier& identifier(int index) const { return m_identifiers[index]; }
-    const FixedVector<Identifier>& identifiers() const { return m_identifiers; }
+    const FixedVector<Identifier>& identifiers() const LIFETIME_BOUND { return m_identifiers; }
 
     BitVector& bitVector(size_t i) { ASSERT(m_rareData); return m_rareData->m_bitVectors[i]; }
 
-    const FixedVector<WriteBarrier<Unknown>>& constantRegisters() { return m_constantRegisters; }
+    const FixedVector<WriteBarrier<Unknown>>& constantRegisters() LIFETIME_BOUND { return m_constantRegisters; }
     const WriteBarrier<Unknown>& constantRegister(VirtualRegister reg) const { return m_constantRegisters[reg.toConstantIndex()]; }
     WriteBarrier<Unknown>& constantRegister(VirtualRegister reg) { return m_constantRegisters[reg.toConstantIndex()]; }
     ALWAYS_INLINE JSValue getConstant(VirtualRegister reg) const { return m_constantRegisters[reg.toConstantIndex()].get(); }
-    const FixedVector<SourceCodeRepresentation>& constantsSourceCodeRepresentation() { return m_constantsSourceCodeRepresentation; }
+    const FixedVector<SourceCodeRepresentation>& constantsSourceCodeRepresentation() LIFETIME_BOUND { return m_constantsSourceCodeRepresentation; }
 
     SourceCodeRepresentation constantSourceCodeRepresentation(VirtualRegister reg) const
     {
@@ -211,13 +218,8 @@ public:
     unsigned numberOfConstantIdentifierSets() const { return m_rareData ? m_rareData->m_constantIdentifierSets.size() : 0; }
     const FixedVector<IdentifierSet>& constantIdentifierSets() { ASSERT(m_rareData); return m_rareData->m_constantIdentifierSets; }
 
-    // Jumps
-    size_t numberOfJumpTargets() const { return m_jumpTargets.size(); }
-    unsigned jumpTarget(int index) const { return m_jumpTargets[index]; }
-    unsigned lastJumpTarget() const { return m_jumpTargets.last(); }
-
-    UnlinkedHandlerInfo* handlerForBytecodeIndex(BytecodeIndex, RequiredHandler = RequiredHandler::AnyHandler);
-    UnlinkedHandlerInfo* handlerForIndex(unsigned, RequiredHandler = RequiredHandler::AnyHandler);
+    UnlinkedHandlerInfo* LEGACY_NODELETE handlerForBytecodeIndex(BytecodeIndex, RequiredHandler = RequiredHandler::AnyHandler);
+    UnlinkedHandlerInfo* LEGACY_NODELETE handlerForIndex(unsigned, RequiredHandler = RequiredHandler::AnyHandler);
 
     bool isBuiltinFunction() const { return m_isBuiltinFunction; }
 
@@ -225,7 +227,7 @@ public:
     SuperBinding superBinding() const { return static_cast<SuperBinding>(m_superBinding); }
     JSParserScriptMode scriptMode() const { return static_cast<JSParserScriptMode>(m_scriptMode); }
 
-    const JSInstructionStream& instructions() const;
+    const JSInstructionStream& LEGACY_NODELETE instructions() const;
     const JSInstruction* instructionAt(BytecodeIndex index) const { return instructions().at(index).ptr(); }
     unsigned bytecodeOffset(const JSInstruction* instruction)
     {
@@ -266,31 +268,8 @@ public:
     bool hasRareData() const { return m_rareData.get(); }
 
     ExpressionInfo::Entry expressionInfoForBytecodeIndex(BytecodeIndex);
-    LineColumn lineColumnForBytecodeIndex(BytecodeIndex);
 
     bool typeProfilerExpressionInfoForBytecodeOffset(unsigned bytecodeOffset, unsigned& startDivot, unsigned& endDivot);
-
-    void recordParse(CodeFeatures features, LexicallyScopedFeatures lexicallyScopedFeatures, bool hasCapturedVariables, unsigned lineCount, unsigned endColumn)
-    {
-        m_features = features;
-        m_lexicallyScopedFeatures = lexicallyScopedFeatures;
-        m_hasCapturedVariables = hasCapturedVariables;
-        m_lineCount = lineCount;
-        // For the UnlinkedCodeBlock, startColumn is always 0.
-        m_endColumn = endColumn;
-    }
-
-    StringImpl* sourceURLDirective() const { return m_sourceURLDirective.get(); }
-    StringImpl* sourceMappingURLDirective() const { return m_sourceMappingURLDirective.get(); }
-    void setSourceURLDirective(const String& sourceURL) { m_sourceURLDirective = sourceURL.impl(); }
-    void setSourceMappingURLDirective(const String& sourceMappingURL) { m_sourceMappingURLDirective = sourceMappingURL.impl(); }
-
-    CodeFeatures codeFeatures() const { return m_features; }
-    LexicallyScopedFeatures lexicallyScopedFeatures() const { return m_lexicallyScopedFeatures; }
-    bool hasCapturedVariables() const { return m_hasCapturedVariables; }
-    unsigned lineCount() const { return m_lineCount; }
-    ALWAYS_INLINE unsigned startColumn() const { return 0; }
-    unsigned endColumn() const { return m_endColumn; }
 
     const FixedVector<JSInstructionStream::Offset>& opProfileControlFlowBytecodeOffsets() const
     {
@@ -331,7 +310,7 @@ public:
         return PrivateBrandRequirement::None;
     }
 
-    void dump(PrintStream&) const;
+    void LEGACY_NODELETE dump(PrintStream&) const;
 
     BytecodeLivenessAnalysis& livenessAnalysis(CodeBlock* codeBlock)
     {
@@ -352,7 +331,7 @@ public:
         return hasExitSite(locker, site);
     }
 
-    DFG::ExitProfile& exitProfile() { return m_exitProfile; }
+    DFG::ExitProfile& exitProfile() LIFETIME_BOUND { return m_exitProfile; }
 #endif
 
     UnlinkedMetadataTable& metadata() { return m_metadata.get(); }
@@ -368,8 +347,8 @@ public:
         return !isBuiltinFunction();
     }
     void allocateSharedProfiles(unsigned numBinaryArithProfiles, unsigned numUnaryArithProfiles);
-    FixedVector<UnlinkedValueProfile>& unlinkedValueProfiles() { return m_valueProfiles; }
-    FixedVector<UnlinkedArrayProfile>& unlinkedArrayProfiles() { return m_arrayProfiles; }
+    FixedVector<UnlinkedValueProfile>& unlinkedValueProfiles() LIFETIME_BOUND { return m_valueProfiles; }
+    FixedVector<UnlinkedArrayProfile>& unlinkedArrayProfiles() LIFETIME_BOUND { return m_arrayProfiles; }
     unsigned numberOfValueProfiles() const { return m_valueProfiles.size(); }
     unsigned numberOfArrayProfiles() const { return m_arrayProfiles.size(); }
 
@@ -377,7 +356,7 @@ public:
     bool hasIdentifier(UniquedStringImpl*);
 #endif
 
-    int32_t thresholdForJIT(int32_t threshold);
+    int32_t LEGACY_NODELETE thresholdForJIT(int32_t threshold);
 
 protected:
     UnlinkedCodeBlock(VM&, Structure*, CodeType, const ExecutableInfo&, OptionSet<CodeGenerationMode>);
@@ -413,9 +392,9 @@ private:
     unsigned m_numCalleeLocals : 31;
     unsigned m_isConstructor : 1;
     unsigned m_numParameters : 31;
-    unsigned m_hasCapturedVariables : 1;
 
     unsigned m_isBuiltinFunction : 1;
+    unsigned m_isBuiltinDefaultClassConstructor : 1;
     unsigned m_superBinding : 1;
     unsigned m_scriptMode: 1;
     unsigned m_isArrowFunctionContext : 1;
@@ -428,24 +407,19 @@ private:
     unsigned m_age : 3;
     static_assert(((1U << 3) - 1) >= maxAge);
     bool m_hasCheckpoints : 1;
-    LexicallyScopedFeatures m_lexicallyScopedFeatures : bitWidthOfLexicallyScopedFeatures { 0 };
+    TriState m_quickDFGTierUp : 2 { TriState::Indeterminate };
+    bool m_quickFTLTierUp : 1 { false };
+
 public:
     ConcurrentJSLock m_lock;
 #if ENABLE(JIT)
     RefPtr<BaselineJITCode> m_unlinkedBaselineCode;
 #endif
 private:
-    CodeFeatures m_features { 0 };
     SourceParseMode m_parseMode;
     OptionSet<CodeGenerationMode> m_codeGenerationMode;
+    BaselineExecutionCounter m_llintExecuteCounter;
 
-    unsigned m_lineCount { 0 };
-    unsigned m_endColumn { UINT_MAX };
-
-    PackedRefPtr<StringImpl> m_sourceURLDirective;
-    PackedRefPtr<StringImpl> m_sourceMappingURLDirective;
-
-    FixedVector<JSInstructionStream::Offset> m_jumpTargets;
     const Ref<UnlinkedMetadataTable> m_metadata;
     std::unique_ptr<JSInstructionStream> m_instructions;
     std::unique_ptr<BytecodeLivenessAnalysis> m_liveness;
@@ -466,7 +440,7 @@ public:
     struct RareData {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(RareData, UnlinkedCodeBlock_RareData);
 
-        size_t sizeInBytes(const AbstractLocker&) const;
+        size_t LEGACY_NODELETE sizeInBytes(const AbstractLocker&) const;
 
         FixedVector<UnlinkedHandlerInfo> m_exceptionHandlers;
 
@@ -501,7 +475,7 @@ public:
     BinaryArithProfile& binaryArithProfile(unsigned i) { return m_binaryArithProfiles[i]; }
     UnaryArithProfile& unaryArithProfile(unsigned i) { return m_unaryArithProfiles[i]; }
 
-    BaselineExecutionCounter& llintExecuteCounter() { return m_llintExecuteCounter; }
+    BaselineExecutionCounter& llintExecuteCounter() LIFETIME_BOUND { return m_llintExecuteCounter; }
 
 private:
     using OutOfLineJumpTargets = UncheckedKeyHashMap<JSInstructionStream::Offset, int>;
@@ -509,7 +483,6 @@ private:
     OutOfLineJumpTargets m_outOfLineJumpTargets;
     std::unique_ptr<RareData> m_rareData;
     std::unique_ptr<ExpressionInfo> m_expressionInfo;
-    BaselineExecutionCounter m_llintExecuteCounter;
     FixedVector<UnlinkedValueProfile> m_valueProfiles;
     FixedVector<UnlinkedArrayProfile> m_arrayProfiles;
     FixedVector<BinaryArithProfile> m_binaryArithProfiles;

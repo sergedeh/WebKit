@@ -37,8 +37,10 @@
 
 namespace WebCore {
 
+class AffineTransform;
 class DOMMatrix;
 class DOMPoint;
+class Document;
 class ScriptExecutionContext;
 struct DOMPointInit;
 
@@ -68,6 +70,8 @@ public:
     static ExceptionOr<void> validateAndFixup(DOMMatrix2DInit&);
     static ExceptionOr<void> validateAndFixup(DOMMatrixInit&);
 
+    static ExceptionOr<AffineTransform> toAffineTransform(DOMMatrix2DInit&);
+
     double a() const { return m_matrix.a(); }
     double b() const { return m_matrix.b(); }
     double c() const { return m_matrix.c(); }
@@ -93,10 +97,9 @@ public:
     double m44() const { return m_matrix.m44(); }
 
     bool is2D() const { return m_is2D; }
-    bool isIdentity() const;
+    bool LEGACY_NODELETE isIdentity() const;
 
-    ExceptionOr<void> setMatrixValue(const String&);
-    ExceptionOr<void> setMatrixValue(const Vector<double>&);
+    ExceptionOr<void> setMatrixValue(Document&, const String&);
 
     Ref<DOMMatrix> translate(double tx = 0, double ty = 0, double tz = 0);
     ExceptionOr<Ref<DOMMatrix>> multiply(DOMMatrixInit&& other) const;
@@ -119,7 +122,7 @@ public:
 
     ExceptionOr<String> toString() const;
 
-    const TransformationMatrix& transformationMatrix() const { return m_matrix; }
+    const TransformationMatrix& transformationMatrix() const LIFETIME_BOUND { return m_matrix; }
     
     Ref<DOMMatrix> cloneAsDOMMatrix() const;
 
@@ -133,7 +136,7 @@ protected:
         bool is2D { true };
     };
 
-    static ExceptionOr<AbstractMatrix> parseStringIntoAbstractMatrix(const String&);
+    static ExceptionOr<AbstractMatrix> parseStringIntoAbstractMatrix(Document&, const String&);
 
     template <typename T>
     static ExceptionOr<Ref<T>> fromMatrixHelper(DOMMatrixInit&&);

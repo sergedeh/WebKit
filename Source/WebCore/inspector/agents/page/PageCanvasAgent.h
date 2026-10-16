@@ -42,12 +42,12 @@ public:
     ~PageCanvasAgent();
 
     // CanvasBackendDispatcherHandler
-    Inspector::Protocol::ErrorStringOr<Inspector::Protocol::DOM::NodeId> requestNode(const Inspector::Protocol::Canvas::CanvasId&) override;
-    Inspector::Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Inspector::Protocol::DOM::NodeId>>> requestClientNodes(const Inspector::Protocol::Canvas::CanvasId&) override;
+    Inspector::Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Inspector::Protocol::DOM::NodeId>>> requestNodes(const Inspector::Protocol::Canvas::CanvasId&) override;
+    Inspector::Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Inspector::Protocol::DOM::NodeId>>> requestCSSCanvasClientNodes(const Inspector::Protocol::Canvas::CanvasId&) override;
 
     // InspectorInstrumentation
     void frameNavigated(LocalFrame&);
-    void didChangeCSSCanvasClientNodes(CanvasBase&);
+    void didChangeGPUDeviceClientNodes(GPUDevice&) override;
 
 private:
     bool enabled() const override;
@@ -57,7 +57,10 @@ private:
 
     bool matchesCurrentContext(ScriptExecutionContext*) const override;
 
+    bool isSiteIsolationEnabled() const;
+
     WeakRef<Page> m_inspectedPage;
+    bool m_enabledUnderSiteIsolation { false };
 };
 
 } // namespace WebCore

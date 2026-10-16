@@ -34,16 +34,20 @@
 #include "ScriptWrappable.h"
 #include <JavaScriptCore/Forward.h>
 #include <JavaScriptCore/TypedArrayAdaptersForwardDeclarations.h>
+#include <wtf/FixedVector.h>
 #include <wtf/Lock.h>
-#include <wtf/Vector.h>
+#include <wtf/ThreadSafeRefCounted.h>
 
 namespace WebCore {
 
 class AudioBus;
+class JSDOMGlobalObject;
 class WebCoreOpaqueRoot;
 template<typename> class ExceptionOr;
 
-class AudioBuffer : public ScriptWrappable, public RefCounted<AudioBuffer> {
+// Destruction is marshalled to the main thread because the final deref may happen on the audio
+// thread, and releasing the channels touches Float32Array / JS wrappers.
+class AudioBuffer : public ScriptWrappable, public ThreadSafeRefCounted<AudioBuffer, WTF::DestructionThread::Main> {
     WTF_MAKE_TZONE_ALLOCATED(AudioBuffer);
 public:
     enum class LegacyPreventDetaching : bool { No, Yes };
@@ -83,7 +87,7 @@ public:
 
     size_t memoryCost() const;
 
-    template<typename Visitor> void visitChannelWrappers(Visitor&);
+    template<typename Visitor> void visitChannelWrappersInGCThread(Visitor&);
 
     bool copyTo(AudioBuffer&) const;
 
@@ -119,6 +123,6 @@ private:
     float m_noiseInjectionMultiplier { 0 };
 };
 
-WebCoreOpaqueRoot root(AudioBuffer*);
+WebCoreOpaqueRoot LEGACY_NODELETE root(AudioBuffer*);
 
 } // namespace WebCore

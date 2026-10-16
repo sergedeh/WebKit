@@ -1,6 +1,6 @@
 /*
  * Copyright (C) Research In Motion Limited 2010. All rights reserved.
- * Copyright (C) 2015-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2026 Apple Inc. All rights reserved.
  * Copyright (C) 2017 Google Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
@@ -23,40 +23,35 @@
 #include "SVGTextChunk.h"
 
 #include "RenderSVGInlineText.h"
-#include "RenderStyle+GettersInlines.h"
-#include "SVGInlineTextBoxInlines.h"
 #include "SVGTextContentElement.h"
 #include "SVGTextFragment.h"
-#include <ranges>
+#include "StyleComputedStyle+GettersInlines.h"
 
 namespace WebCore {
 
-SVGTextChunk::SVGTextChunk(const Vector<InlineIterator::SVGTextBoxIterator>& lineLayoutBoxes, unsigned first, unsigned limit, SVGTextFragmentMap& fragmentMap)
+SVGTextChunk::SVGTextChunk(const RenderSVGInlineText& firstText)
 {
-    ASSERT(first < limit);
-    ASSERT(limit <= lineLayoutBoxes.size());
+    CheckedRef style = firstText.style();
 
-    auto firstBox = lineLayoutBoxes[first];
-    auto& style = firstBox->renderer().style();
+    if (style->writingMode().isBidiRTL())
+        m_chunkStyle.add(ChunkStyle::RightToLeftText);
 
-    if (style.writingMode().isBidiRTL())
-        m_chunkStyle |= SVGTextChunk::RightToLeftText;
+    if (style->writingMode().isVertical())
+        m_chunkStyle.add(ChunkStyle::VerticalText);
 
-    if (style.writingMode().isVertical())
-        m_chunkStyle |= SVGTextChunk::VerticalText;
-    
-    switch (style.textAnchor()) {
+    switch (style->textAnchor()) {
     case TextAnchor::Start:
         break;
     case TextAnchor::Middle:
-        m_chunkStyle |= MiddleAnchor;
+        m_chunkStyle.add(ChunkStyle::MiddleAnchor);
         break;
     case TextAnchor::End:
-        m_chunkStyle |= EndAnchor;
+        m_chunkStyle.add(ChunkStyle::EndAnchor);
         break;
     }
 
-    if (RefPtr textContentElement = SVGTextContentElement::elementFromRenderer(firstBox->renderer().parent())) {
+    if (RefPtr textContentElement = SVGTextContentElement::elementFromRenderer(firstText.parent())) {
+        m_textContentElement = textContentElement.get();
         SVGLengthContext lengthContext(textContentElement.get());
         m_desiredTextLength = textContentElement->specifiedTextLength().value(lengthContext);
 
@@ -64,27 +59,34 @@ SVGTextChunk::SVGTextChunk(const Vector<InlineIterator::SVGTextBoxIterator>& lin
         case SVGLengthAdjustUnknown:
             break;
         case SVGLengthAdjustSpacing:
-            m_chunkStyle |= LengthAdjustSpacing;
+            m_chunkStyle.add(ChunkStyle::LengthAdjustSpacing);
             break;
         case SVGLengthAdjustSpacingAndGlyphs:
-            m_chunkStyle |= LengthAdjustSpacingAndGlyphs;
+            m_chunkStyle.add(ChunkStyle::LengthAdjustSpacingAndGlyphs);
             break;
         }
     }
+}
 
-    for (auto box : lineLayoutBoxes.subspan(first, limit - first)) {
-        auto it = fragmentMap.find(makeKey(*box));
-        if (it == fragmentMap.end())
-            continue;
-        m_boxes.append({ box, it->value });
-    }
+void SVGTextChunk::appendFragments(std::span<SVGTextFragment> fragments)
+{
+    if (fragments.empty())
+        return;
+    m_fragmentRanges.constructAndAppend(fragments);
+}
+
+const SVGTextFragment* SVGTextChunk::firstFragment() const
+{
+    if (m_fragmentRanges.isEmpty())
+        return nullptr;
+    return &m_fragmentRanges.first().front();
 }
 
 unsigned SVGTextChunk::totalCharacters() const
 {
     unsigned characters = 0;
-    for (auto& box : m_boxes) {
-        for (auto& fragment : box.fragments)
+    for (auto fragments : m_fragmentRanges) {
+        for (auto& fragment : fragments)
             characters += fragment.length;
     }
     return characters;
@@ -92,51 +94,35 @@ unsigned SVGTextChunk::totalCharacters() const
 
 float SVGTextChunk::totalLength() const
 {
-    const SVGTextFragment* firstFragment = nullptr;
-    const SVGTextFragment* lastFragment = nullptr;
-
-    for (auto& box : m_boxes) {
-        if (box.fragments.size()) {
-            firstFragment = &box.fragments.first();
-            break;
-        }
-    }
-
-    for (auto& box : m_boxes | std::views::reverse) {
-        if (box.fragments.size()) {
-            lastFragment = &box.fragments.last();
-            break;
-        }
-    }
-
-    ASSERT(!firstFragment == !lastFragment);
-    if (!firstFragment)
+    if (m_fragmentRanges.isEmpty())
         return 0;
 
-    if (m_chunkStyle & VerticalText)
-        return (lastFragment->y + lastFragment->height) - firstFragment->y;
+    auto& firstFragment = m_fragmentRanges.first().front();
+    auto& lastFragment = m_fragmentRanges.last().back();
 
-    return (lastFragment->x + lastFragment->width) - firstFragment->x;
+    if (isVerticalText())
+        return (lastFragment.y + lastFragment.height) - firstFragment.y;
+
+    return (lastFragment.x + lastFragment.width) - firstFragment.x;
 }
 
 float SVGTextChunk::totalAnchorShift() const
 {
     float length = totalLength();
-    if (m_chunkStyle & MiddleAnchor)
+    if (m_chunkStyle.contains(ChunkStyle::MiddleAnchor))
         return -length / 2;
-    if (m_chunkStyle & EndAnchor)
-        return m_chunkStyle & RightToLeftText ? 0 : -length;
-    return m_chunkStyle & RightToLeftText ? -length : 0;
+    return (m_chunkStyle.contains(ChunkStyle::EndAnchor) == m_chunkStyle.contains(ChunkStyle::RightToLeftText)) ? 0 : -length;
 }
 
-void SVGTextChunk::layout(SVGChunkTransformMap& textBoxTransformations) const
+void SVGTextChunk::layout() const
 {
-    if (hasDesiredTextLength()) {
+    // ElementGroup mode: textLength was already applied by SVGTextChunkBuilder. webkit.org/b/61855.
+    if (hasDesiredTextLength() && m_textLengthLayoutMode == TextLengthLayoutMode::SingleChunk) {
         if (hasLengthAdjustSpacing())
             processTextLengthSpacingCorrection();
         else {
             ASSERT(hasLengthAdjustSpacingAndGlyphs());
-            buildBoxTransformations(textBoxTransformations);
+            applySpacingAndGlyphsTransform();
         }
     }
 
@@ -150,11 +136,11 @@ void SVGTextChunk::processTextLengthSpacingCorrection() const
     if (totalCharacters() > 1)
         textLengthShift = (desiredTextLength() - totalLength()) / (totalCharacters() - 1);
 
-    bool isVerticalText = m_chunkStyle & VerticalText;
+    bool isVerticalText = this->isVerticalText();
     unsigned atCharacter = 0;
 
-    for (auto& box : m_boxes) {
-        for (auto& fragment : box.fragments) {
+    for (auto fragments : m_fragmentRanges) {
+        for (auto& fragment : fragments) {
             if (isVerticalText)
                 fragment.y += textLengthShift * atCharacter;
             else
@@ -165,48 +151,44 @@ void SVGTextChunk::processTextLengthSpacingCorrection() const
     }
 }
 
-void SVGTextChunk::buildBoxTransformations(SVGChunkTransformMap& textBoxTransformations) const
+void SVGTextChunk::applySpacingAndGlyphsTransform() const
 {
-    AffineTransform spacingAndGlyphsTransform;
-    bool foundFirstFragment = false;
+    auto* fragment = firstFragment();
+    if (!fragment)
+        return;
 
-    for (auto& box : m_boxes) {
-        if (!foundFirstFragment) {
-            if (!boxSpacingAndGlyphsTransform(box.fragments, spacingAndGlyphsTransform))
-                continue;
-            foundFirstFragment = true;
-        }
-
-        textBoxTransformations.set(makeKey(*box.box), spacingAndGlyphsTransform);
-    }
-}
-
-bool SVGTextChunk::boxSpacingAndGlyphsTransform(const Vector<SVGTextFragment>& fragments, AffineTransform& spacingAndGlyphsTransform) const
-{
-    if (fragments.isEmpty())
-        return false;
-
-    const SVGTextFragment& fragment = fragments.first();
     float scale = desiredTextLength() / totalLength();
 
-    spacingAndGlyphsTransform.translate(fragment.x, fragment.y);
+    AffineTransform spacingAndGlyphsTransform;
+    spacingAndGlyphsTransform.translate(fragment->x, fragment->y);
 
-    if (m_chunkStyle & VerticalText)
+    if (isVerticalText())
         spacingAndGlyphsTransform.scaleNonUniform(1, scale);
     else
         spacingAndGlyphsTransform.scaleNonUniform(scale, 1);
 
-    spacingAndGlyphsTransform.translate(-fragment.x, -fragment.y);
-    return true;
+    spacingAndGlyphsTransform.translate(-fragment->x, -fragment->y);
+
+    setLengthAdjustTransform(spacingAndGlyphsTransform);
+}
+
+void SVGTextChunk::setLengthAdjustTransform(const AffineTransform& transform) const
+{
+    for (auto fragments : m_fragmentRanges) {
+        for (auto& fragment : fragments) {
+            ASSERT(fragment.lengthAdjustTransform.isIdentity());
+            fragment.lengthAdjustTransform = transform;
+        }
+    }
 }
 
 void SVGTextChunk::processTextAnchorCorrection() const
 {
     float textAnchorShift = totalAnchorShift();
-    bool isVerticalText = m_chunkStyle & VerticalText;
+    bool isVerticalText = this->isVerticalText();
 
-    for (auto& box : m_boxes) {
-        for (auto& fragment : box.fragments) {
+    for (auto fragments : m_fragmentRanges) {
+        for (auto& fragment : fragments) {
             if (isVerticalText)
                 fragment.y += textAnchorShift;
             else

@@ -35,12 +35,14 @@
 #include "HTMLImageElement.h"
 #include "HTMLVideoElement.h"
 #include "ImageBitmap.h"
+#include "JSDOMConvertDictionary.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JSWebCodecsVideoDecoderSupport.h"
 #include "OffscreenCanvas.h"
 #include "SVGImageElement.h"
 #include "Settings.h"
 #include "ScriptExecutionContextInlines.h"
+#include "VP9Utilities.h"
 #include "WebCodecsControlMessage.h"
 #include "WebCodecsEncodedVideoChunk.h"
 #include "WebCodecsErrorCallback.h"
@@ -48,6 +50,7 @@
 #include "WebCodecsVideoFrame.h"
 #include "WebCodecsVideoFrameOutputCallback.h"
 #include <wtf/ASCIICType.h>
+#include <wtf/Scope.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -70,12 +73,32 @@ WebCodecsVideoDecoder::WebCodecsVideoDecoder(ScriptExecutionContext& context, In
 
 WebCodecsVideoDecoder::~WebCodecsVideoDecoder() = default;
 
+static bool isSupportedVP9DecoderCodec(const String& codec, const SettingsValues& settings)
+{
+#if !ENABLE(WEB_RTC)
+    UNUSED_PARAM(settings);
+#endif
+    auto parameters = parseVPCodecParametersIgnoringColorFields(codec);
+    if (!parameters)
+        return false;
+
+    bool is420 = parameters->chromaSubsampling <= VPConfigurationChromaSubsampling::Subsampling_420_Colocated;
+    switch (parameters->profile) {
+    case 0:
+        return parameters->bitDepth == 8 && is420;
+#if ENABLE(WEB_RTC)
+    case 2:
+        return settings.webRTCVP9Profile2CodecEnabled && parameters->bitDepth == 10 && is420;
+#endif
+    default:
+        return false;
+    }
+}
+
 static bool isSupportedDecoderCodec(const String& codec, const SettingsValues& settings)
 {
-    return codec.startsWith("vp8"_s) || codec.startsWith("vp09.00"_s) || codec.startsWith("avc1."_s)
-#if ENABLE(WEB_RTC)
-        || (codec.startsWith("vp09.02"_s) && settings.webRTCVP9Profile2CodecEnabled)
-#endif
+    return codec.startsWith("vp8"_s) || codec.startsWith("avc1."_s)
+        || (codec.startsWith("vp09."_s) && isSupportedVP9DecoderCodec(codec, settings))
         || (codec.startsWith("hev1."_s) && settings.webCodecsHEVCEnabled)
         || (codec.startsWith("hvc1."_s) && settings.webCodecsHEVCEnabled)
         || (codec.startsWith("av01.0"_s) && settings.webCodecsAV1Enabled);
@@ -109,7 +132,7 @@ static bool isValidDecoderConfig(const WebCodecsVideoDecoderConfig& config)
         return false;
 
     // 6. If description is [detached], return false.
-    if (config.description && WTF::visit([](auto& view) { return view->isDetached(); }, *config.description))
+    if (config.description && config.description->switchOn([](auto& buffer) { return buffer->isDetached(); }))
         return false;
 
     // 7. Return true.
@@ -120,9 +143,7 @@ static VideoDecoder::Config createVideoDecoderConfig(const WebCodecsVideoDecoder
 {
     Vector<uint8_t> description;
     if (config.description) {
-        auto data = WTF::visit([](auto& buffer) {
-            return buffer ? buffer->span() : std::span<const uint8_t> { };
-        }, *config.description);
+        auto data = config.description->span();
         if (!data.empty())
             description = data;
     }
@@ -148,7 +169,7 @@ ExceptionOr<void> WebCodecsVideoDecoder::configure(ScriptExecutionContext& conte
     m_isKeyChunkRequired = true;
 
     bool isSupportedCodec = isSupportedDecoderCodec(config.codec, context.settingsValues());
-    queueControlMessageAndProcess({ *this, [this, codec = config.codec, config = createVideoDecoderConfig(config), isSupportedCodec]() mutable {
+    queueControlMessageAndProcess({ *this, [this, protectedThis = Ref { *this }, codec = config.codec, config = createVideoDecoderConfig(config), isSupportedCodec]() mutable {
         RefPtr context = scriptExecutionContext();
 
         auto identifier = context->identifier();
@@ -157,6 +178,7 @@ ExceptionOr<void> WebCodecsVideoDecoder::configure(ScriptExecutionContext& conte
         if (!isSupportedCodec) {
             postTaskToCodec<WebCodecsVideoDecoder>(identifier, *this, [] (auto& decoder) {
                 decoder.closeDecoder(Exception { ExceptionCode::NotSupportedError, "Codec is not supported"_s });
+                decoder.unblockControlMessageQueue();
             });
             return WebCodecsControlMessageOutcome::Processed;
         }
@@ -172,16 +194,17 @@ ExceptionOr<void> WebCodecsVideoDecoder::configure(ScriptExecutionContext& conte
                 }
 
                 auto decodedResult = WTF::move(result).value();
+                Ref frame = WTF::move(decodedResult.frame);
                 WebCodecsVideoFrame::BufferInit init {
-                    .format = convertVideoFramePixelFormat(decodedResult.frame->pixelFormat()),
-                    .codedWidth = static_cast<size_t>(decodedResult.frame->presentationSize().width()),
-                    .codedHeight = static_cast<size_t>(decodedResult.frame->presentationSize().height()),
+                    .format = convertVideoFramePixelFormat(frame->pixelFormat()),
+                    .codedWidth = static_cast<size_t>(frame->presentationSize().width()),
+                    .codedHeight = static_cast<size_t>(frame->presentationSize().height()),
                     .timestamp = decodedResult.timestamp,
                     .duration = decodedResult.duration,
-                    .colorSpace = decodedResult.frame->colorSpace()
+                    .colorSpace = frame->colorSpace()
                 };
 
-                auto videoFrame = WebCodecsVideoFrame::create(*decoder.scriptExecutionContext(), WTF::move(decodedResult.frame), WTF::move(init));
+                auto videoFrame = WebCodecsVideoFrame::create(protect(*decoder.scriptExecutionContext()), WTF::move(frame), WTF::move(init));
                 decoder.m_output->invoke(WTF::move(videoFrame));
             });
         });
@@ -190,12 +213,14 @@ ExceptionOr<void> WebCodecsVideoDecoder::configure(ScriptExecutionContext& conte
             auto protectedThis = weakThis.get();
             if (!protectedThis)
                 return;
+            auto scopeExit = makeScopeExit([protectedThis] {
+                protectedThis->unblockControlMessageQueue();
+            });
             if (!result) {
                 protectedThis->closeDecoder(Exception { ExceptionCode::NotSupportedError, WTF::move(result.error()) });
                 return;
             }
             protectedThis->setInternalDecoder(WTF::move(*result));
-            protectedThis->unblockControlMessageQueue();
         });
 
         return WebCodecsControlMessageOutcome::Processed;
@@ -214,10 +239,10 @@ ExceptionOr<void> WebCodecsVideoDecoder::decode(Ref<WebCodecsEncodedVideoChunk>&
         m_isKeyChunkRequired = false;
     }
 
-    queueCodecControlMessageAndProcess({ *this, [this, chunk = WTF::move(chunk)]() mutable {
+    queueCodecControlMessageAndProcess({ *this, [this, protectedThis = Ref { *this }, data = chunk->encodedData()] mutable {
         incrementCodecOperationCount();
         Ref internalDecoder = *m_internalDecoder;
-        protectedScriptExecutionContext()->enqueueTaskWhenSettled(internalDecoder->decode({ chunk->span(), chunk->type() == WebCodecsEncodedVideoChunkType::Key, chunk->timestamp(), chunk->duration() }), TaskSource::MediaElement, [weakThis = ThreadSafeWeakPtr { * this }, pendingActivity = makePendingActivity(*this)] (auto&& result) {
+        protect(scriptExecutionContext())->enqueueTaskWhenSettled(internalDecoder->decode(WTF::move(data)), TaskSource::MediaElement, [weakThis = ThreadSafeWeakPtr { * this }, pendingActivity = makePendingActivity(*this)] (auto&& result) {
             RefPtr protectedThis = weakThis.get();
             if (!protectedThis)
                 return;
@@ -240,9 +265,9 @@ ExceptionOr<void> WebCodecsVideoDecoder::flush(Ref<DeferredPromise>&& promise)
 
     m_isKeyChunkRequired = true;
     m_pendingFlushPromises.append(promise);
-    queueControlMessageAndProcess({ *this, [this, promise = WTF::move(promise)]() mutable {
+    queueControlMessageAndProcess({ *this, [this, protectedThis = Ref { *this }, promise = WTF::move(promise)]() mutable {
         Ref internalDecoder = *m_internalDecoder;
-        protectedScriptExecutionContext()->enqueueTaskWhenSettled(internalDecoder->flush(), TaskSource::MediaElement, [weakThis = ThreadSafeWeakPtr { *this }, pendingActivity = makePendingActivity(*this), promise = WTF::move(promise)] (auto&&) {
+        protect(scriptExecutionContext())->enqueueTaskWhenSettled(internalDecoder->flush(), TaskSource::MediaElement, [weakThis = ThreadSafeWeakPtr { *this }, pendingActivity = makePendingActivity(*this), promise = WTF::move(promise)] (auto&&) {
             promise->resolve();
             if (RefPtr protectedThis = weakThis.get())
                 protectedThis->m_pendingFlushPromises.removeFirstMatching([&](auto& flushPromise) { return promise.ptr() == flushPromise.ptr(); });

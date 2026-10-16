@@ -103,21 +103,28 @@ void MediaElementAudioSourceNode::setFormat(size_t numberOfChannels, float sourc
         m_sourceNumberOfChannels = numberOfChannels;
         m_sourceSampleRate = sourceSampleRate;
 
-        if (sourceSampleRate != sampleRate()) {
-            double scaleFactor = sourceSampleRate / sampleRate();
-            m_multiChannelResampler = makeUnique<MultiChannelResampler>(scaleFactor, numberOfChannels, AudioUtilities::renderQuantumSize, std::bind(&MediaElementAudioSourceNode::provideInput, this, std::placeholders::_1, std::placeholders::_2));
-        } else {
-            // Bypass resampling.
-            m_multiChannelResampler = nullptr;
-        }
+        updateResamplerIfNeeded();
 
         {
             // The context must be locked when changing the number of output channels.
             Locker contextLocker { context().graphLock() };
 
             // Do any necesssary re-configuration to the output's number of channels.
-            checkedOutput(0)->setNumberOfChannels(numberOfChannels);
+            protect(output(0))->setNumberOfChannels(numberOfChannels);
         }
+    }
+}
+
+void MediaElementAudioSourceNode::updateResamplerIfNeeded()
+{
+    if (m_sourceSampleRate != sampleRate()) {
+        double scaleFactor = m_sourceSampleRate / sampleRate();
+        m_multiChannelResampler = makeUnique<MultiChannelResampler>(scaleFactor, m_sourceNumberOfChannels, AudioUtilities::renderQuantumSize, [this, checkedThis = CheckedRef { *this }](AudioBus& bus, size_t framesToProcess) {
+            provideInput(bus, framesToProcess);
+        });
+    } else {
+        // Bypass resampling.
+        m_multiChannelResampler = nullptr;
     }
 }
 
@@ -134,7 +141,7 @@ void MediaElementAudioSourceNode::provideInput(AudioBus& bus, size_t framesToPro
 
 bool MediaElementAudioSourceNode::wouldTaintOrigin()
 {
-    if (RefPtr origin = context().origin())
+    if (RefPtr origin = protect(context())->origin())
         return m_mediaElement->taintsOrigin(*origin);
 
     return true;
@@ -142,7 +149,7 @@ bool MediaElementAudioSourceNode::wouldTaintOrigin()
 
 void MediaElementAudioSourceNode::process(size_t numberOfFrames)
 {
-    Ref outputBus = checkedOutput(0)->bus();
+    Ref outputBus = output(0)->bus();
 
     // Use tryLock() to avoid contention in the real-time audio thread.
     // If we fail to acquire the lock then the HTMLMediaElement must be in the middle of
@@ -161,11 +168,9 @@ void MediaElementAudioSourceNode::process(size_t numberOfFrames)
     }
 
     if (m_multiChannelResampler) {
-        ASSERT(m_sourceSampleRate != sampleRate());
         m_multiChannelResampler->process(outputBus.get(), numberOfFrames);
     } else {
-        // Bypass the resampler completely if the source is at the context's sample-rate.
-        ASSERT(m_sourceSampleRate == sampleRate());
+        // Bypass the resampler completely if no resampling is needed.
         provideInput(outputBus, numberOfFrames);
     }
 }

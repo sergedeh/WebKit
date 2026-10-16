@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 Samuel Weinig <sam@webkit.org>
+ * Copyright (C) 2024-2026 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,7 +34,7 @@
 namespace WebCore {
 namespace CSSCalc {
 
-static void collectComputedStyleDependencies(const Child& root, ComputedStyleDependencies& dependencies)
+void collectComputedStyleDependencies(const Child& root, ComputedStyleDependencies& dependencies)
 {
     WTF::switchOn(root,
         [&](const Number&) {
@@ -55,18 +55,24 @@ static void collectComputedStyleDependencies(const Child& root, ComputedStyleDep
                 CSS::collectComputedStyleDependencies(dependencies, *lengthUnit);
         },
         [&](const SiblingCount&) {
-            // No potential dependencies.
+            dependencies.siblingFunctions = true;
         },
         [&](const SiblingIndex&) {
-            // No potential dependencies.
+            dependencies.siblingFunctions = true;
+        },
+        [&](const IndirectNode<CalcMix>& root) {
+            for (const auto& item : root->children) {
+                collectComputedStyleDependencies(item.value, dependencies);
+                CSS::collectComputedStyleDependencies(dependencies, item.weight);
+            }
         },
         [&](const IndirectNode<Anchor>& anchor) {
-            dependencies.anchors = true;
+            dependencies.anchorFunctions = true;
             if (anchor->fallback)
                 collectComputedStyleDependencies(*anchor->fallback, dependencies);
         },
         [&](const IndirectNode<AnchorSize>& anchorSize) {
-            dependencies.anchors = true;
+            dependencies.anchorFunctions = true;
             if (anchorSize->fallback)
                 collectComputedStyleDependencies(*anchorSize->fallback, dependencies);
         },

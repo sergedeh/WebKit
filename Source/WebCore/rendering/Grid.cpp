@@ -32,11 +32,6 @@
 
 namespace WebCore {
 
-Grid::Grid(RenderGrid& grid)
-    : m_orderIterator(grid)
-{
-}
-
 unsigned Grid::numTracks(Style::GridTrackSizingDirection direction) const
 {
     if (direction == Style::GridTrackSizingDirection::Rows)
@@ -186,23 +181,7 @@ GridSpan Grid::gridItemSpan(const RenderBox& gridItem, Style::GridTrackSizingDir
     return gridItemArea(gridItem).span(direction);
 }
 
-GridSpan Grid::gridItemSpanIgnoringCollapsedTracks(const RenderBox& gridItem, Style::GridTrackSizingDirection direction) const
-{
-    auto span = gridItemSpan(gridItem, direction);
-    if (!span.startLine() || !hasAutoRepeatEmptyTracks(direction))
-        return span;
-    unsigned currentLine = span.startLine() - 1;
-
-    while (currentLine && isEmptyAutoRepeatTrack(direction, currentLine))
-        currentLine--;
-    if (currentLine)
-        return GridSpan::translatedDefiniteGridSpan(currentLine + 1, span.integerSpan());
-
-    // Still need to check if the first track is empty
-    return isEmptyAutoRepeatTrack(direction, currentLine) ? GridSpan::translatedDefiniteGridSpan(currentLine, span.integerSpan()) : GridSpan::translatedDefiniteGridSpan(currentLine + 1, span.integerSpan());
-}
-
-void Grid::setupGridForMasonryLayout()
+void Grid::setupForGridLanesLayout()
 {
     // FIXME(248472): See if we can resize grid instead of clearing it here: https://bugs.webkit.org/show_bug.cgi?id=248472
     m_grid.clear();
@@ -220,6 +199,7 @@ void Grid::setNeedsItemsPlacement(bool needsItemsPlacement)
 
     m_grid.shrink(0);
     m_gridItemArea.clear();
+    m_orderIterator.clear();
     m_explicitRowStart = 0;
     m_explicitColumnStart = 0;
     m_autoRepeatEmptyColumns = nullptr;
@@ -318,7 +298,7 @@ std::optional<GridArea> GridIterator::nextEmptyGridArea(unsigned fixedTrackSpan,
 GridIterator GridIterator::createForSubgrid(const RenderGrid& subgrid, const GridIterator& outer, GridSpan subgridSpanInOuter)
 {
     ASSERT(subgrid.isSubgridInParentDirection(outer.direction()));
-    CheckedPtr parent = downcast<RenderGrid>(subgrid.parent());
+    auto* parent = downcast<RenderGrid>(subgrid.parent());
 
     // Translate the current row/column indices into the coordinate
     // space of the subgrid.

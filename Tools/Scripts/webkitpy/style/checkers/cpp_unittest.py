@@ -293,6 +293,7 @@ class CppStyleTestBase(unittest.TestCase):
                              '+build/include',
                              '+build/include_order',
                              '+build/namespaces',
+                             '+build/objc_runtime_header',
                              '+runtime/rtti',
                              '+security/javascriptcore_wtf_blockptr')
         return self.perform_lint(code, filename, basic_error_rules, lines_to_check=lines_to_check)
@@ -311,6 +312,11 @@ class CppStyleTestBase(unittest.TestCase):
     def perform_leaky_pattern_check(self, code):
         basic_error_rules = ('-', '+runtime/leaky_pattern')
         return self.perform_lint(code, 'test.cpp', basic_error_rules)
+
+    # Only keep UTF8CString construction errors.
+    def perform_utf8cstring_from_utf8_check(self, code, filename='test.cpp'):
+        basic_error_rules = ('-', '+runtime/utf8cstring_from_utf8')
+        return self.perform_lint(code, filename, basic_error_rules)
 
     # Only include what you use errors.
     def perform_include_what_you_use(self, code, filename='foo.h', io=codecs):
@@ -1867,11 +1873,36 @@ class CppStyleTest(CppStyleTestBase):
     def test_dispatch_set_target_queue(self):
         self.assert_lint(
             '''\
-            globalQueue = dispatch_queue_create("My Serial Queue", DISPATCH_QUEUE_SERIAL);
+            globalQueue = dispatch_queue_create("My Serial Queue", serialQueueWithAutoreleasePoolAttrSingleton());
             dispatch_set_target_queue(globalQueue, globalDispatchQueueSingleton(DISPATCH_QUEUE_PRIORITY_HIGH, 0));''',
             'Never use dispatch_set_target_queue.  Use dispatch_queue_create_with_target instead.'
             '  [runtime/dispatch_set_target_queue] [5]')
-        self.assert_lint('globalQueue = dispatch_queue_create_with_target("My Serial Queue", DISPATCH_QUEUE_SERIAL, globalDispatchQueueSingleton(DISPATCH_QUEUE_PRIORITY_HIGH, 0));', '')
+        self.assert_lint('globalQueue = dispatch_queue_create_with_target("My Serial Queue", serialQueueWithAutoreleasePoolAttrSingleton(), globalDispatchQueueSingleton(DISPATCH_QUEUE_PRIORITY_HIGH, 0));', '')
+
+    def test_dispatch_queue_autorelease_pool(self):
+        self.assert_lint(
+            'globalQueue = dispatch_queue_create("My Serial Queue", DISPATCH_QUEUE_SERIAL);',
+            'Use serialQueueWithAutoreleasePoolAttrSingleton() instead of DISPATCH_QUEUE_SERIAL so that each work '
+            'item runs with its own autorelease pool.'
+            '  [runtime/dispatch_queue_autorelease_pool] [5]')
+        self.assert_lint(
+            'globalQueue = dispatch_queue_create("My Concurrent Queue", DISPATCH_QUEUE_CONCURRENT);',
+            'Use concurrentQueueWithAutoreleasePoolAttrSingleton() instead of DISPATCH_QUEUE_CONCURRENT so that '
+            'each work item runs with its own autorelease pool.'
+            '  [runtime/dispatch_queue_autorelease_pool] [5]')
+        self.assert_lint(
+            'globalQueue = dispatch_queue_create("My Serial Queue", DISPATCH_QUEUE_SERIAL_WITH_AUTORELEASE_POOL);',
+            'Use serialQueueWithAutoreleasePoolAttrSingleton() instead of DISPATCH_QUEUE_SERIAL_WITH_AUTORELEASE_POOL '
+            'so that static analysis knows the attribute does not need to be retained.'
+            '  [runtime/dispatch_queue_autorelease_pool] [5]')
+        self.assert_lint(
+            'globalQueue = dispatch_queue_create("My Concurrent Queue", DISPATCH_QUEUE_CONCURRENT_WITH_AUTORELEASE_POOL);',
+            'Use concurrentQueueWithAutoreleasePoolAttrSingleton() instead of '
+            'DISPATCH_QUEUE_CONCURRENT_WITH_AUTORELEASE_POOL so that static analysis knows the attribute does not '
+            'need to be retained.'
+            '  [runtime/dispatch_queue_autorelease_pool] [5]')
+        self.assert_lint('globalQueue = dispatch_queue_create("My Serial Queue", serialQueueWithAutoreleasePoolAttrSingleton());', '')
+        self.assert_lint('globalQueue = dispatch_queue_create("My Concurrent Queue", concurrentQueueWithAutoreleasePoolAttrSingleton());', '')
 
     def test_retainptr_pointer(self):
         self.assert_lint(
@@ -2253,7 +2284,7 @@ class CppStyleTest(CppStyleTestBase):
             '}\n',
             '')
         self.assert_multi_line_lint(
-            '[]() {\n'
+            '[](int x) {\n'
             '}\n',
             '')
         self.assert_multi_line_lint(
@@ -2394,15 +2425,52 @@ class CppStyleTest(CppStyleTestBase):
         self.assert_lint('        m_taskFunction = [callee, method, arguments...] {', '')
         self.assert_lint('int main(int argc, char* agrv [])', 'Extra space before [.  [whitespace/brackets] [5]')
         self.assert_lint('    str [strLength] = \'\\0\';', 'Extra space before [.  [whitespace/brackets] [5]')
+        self.assert_lint('define FOO [[noreturn]];', '')
+        self.assert_lint('define FOO [[return]];', 'Extra space before [.  [whitespace/brackets] [5]')
 
     def test_cpp_lambda_functions(self):
-        self.assert_lint('        [&] (Type argument) {', '')
+        self.assert_lint('        [&](Type argument) {', '')
         self.assert_lint('        [] {', '')
         self.assert_lint('        [foo call:@[ bar, baz ]] completionHandler:^{', '', 'foo.mm')
-        self.assert_lint('        [ =] (Type argument) {', 'Extra space in capture list.  [whitespace/brackets] [4]')
+        self.assert_lint('        [ =](Type argument) {', 'Extra space in capture list.  [whitespace/brackets] [4]')
         self.assert_lint('        [var, var_ref&] {', '')
         self.assert_lint('        [var , var_ref&] {', 'Extra space in capture list.  [whitespace/brackets] [4]')
         self.assert_lint('        [var,var_ref&] {', 'Missing space after ,  [whitespace/comma] [3]')
+
+    def test_cpp_lambda_parameter_list(self):
+        omit_parentheses = 'Omit () for a lambda without parameters.  [readability/lambda_parens] [4]'
+        extra_space = 'Extra space before ( in lambda.  [whitespace/parens] [4]'
+        self.assert_lint('    callOnMainThread([] {', '')
+        self.assert_lint('    callOnMainThread([]() {', omit_parentheses)
+        self.assert_lint('    callOnMainThread([] () {', omit_parentheses)
+        self.assert_lint('    callOnMainThread([weakThis = WeakPtr { *this }, url = WTF::move(url)]() {', omit_parentheses)
+        self.assert_lint('    return [weakThis = WeakPtr { *this }]() {', omit_parentheses)
+        self.assert_lint('    auto task = [this] mutable {', '')
+        self.assert_lint('    auto task = [this]() mutable {', omit_parentheses)
+        self.assert_lint('    auto isValid = [&] -> bool {', '')
+        self.assert_lint('    auto isValid = [&]() -> bool {', omit_parentheses)
+        self.assert_lint('    auto isValid = [&]() noexcept {', omit_parentheses)
+        self.assert_lint('    auto next = [&]() ALWAYS_INLINE_LAMBDA {', omit_parentheses)
+        self.assert_lint('    auto next = [&]() WTF_REQUIRES_LOCK(m_lock) {', '')
+        self.assert_lint('    auto next = [&] () WTF_REQUIRES_LOCK(m_lock) {', extra_space)
+        self.assert_lint('    forEach([](auto& item) {', '')
+        self.assert_lint('    forEach([] (auto& item) {', extra_space)
+        self.assert_lint('    forEach([&] (auto& item) mutable {', extra_space)
+        self.assert_lint('    return [protectedThis = Ref { *this }] (auto&& result) {', extra_space)
+        self.assert_lint('    visit([&]<typename T>() {', omit_parentheses)
+        self.assert_lint('    visit([&]<typename T, typename U = Vector<T>>() {', omit_parentheses)
+        self.assert_lint('    visit([&]<typename T>(T& value) {', '')
+        self.assert_lint('    visit([&]<typename T> (T& value) {', extra_space)
+        self.assert_lint('    run([]() {', omit_parentheses, 'foo.mm')
+        self.assert_lint('    run([] (int value) {', extra_space, 'foo.mm')
+        self.assert_lint('    function([] () { }, [] (int value) { });', [omit_parentheses, extra_space])
+        self.assert_lint('    // [] () { }', '')
+        self.assert_lint('    m_handlers[index] (event);', '')
+        self.assert_lint('    m_factories[type]()->create();', '')
+        self.assert_lint('    return m_items.operator[] (index);', '')
+        self.assert_lint('    [self completionHandler] (YES);', '', 'foo.mm')
+        self.assert_lint('    [self handlerForKey:key] (YES);', '', 'foo.mm')
+        self.assert_lint('    [self completionHandler]();', '', 'foo.mm')
 
     def test_objective_c_block(self):
         self.assert_lint('        ^(var, var_ref) {', '', 'foo.mm')
@@ -2509,6 +2577,21 @@ class CppStyleTest(CppStyleTestBase):
         self.assert_multi_line_lint('#if __has_include(<ApplicationServices/ApplicationServicesPriv.h>)\n', '')
         self.assert_multi_line_lint('#elif __has_include(<ApplicationServices/ApplicationServicesPriv.h>)\n', '')
         self.assert_multi_line_lint('#endif // __has_include(<ApplicationServices/ApplicationServicesPriv.h>)\n', '')
+        # The '/' in an include path within __has_include(<...>) is not a division operator,
+        # even when the __has_include lands on a preprocessor continuation line that does not
+        # itself begin with #if/#elif.
+        self.assert_multi_line_lint('#if !defined(HAVE_FOO) \\\n'
+                                    '    && __has_include(<Foo/Bar.h>)\n'
+                                    '#define HAVE_FOO 1\n'
+                                    '#endif\n', '')
+        self.assert_multi_line_lint('#if PLATFORM(FOO) \\\n'
+                                    '    || __has_include(<Foo/Bar/Baz.h>)\n'
+                                    '#endif\n', '')
+        # But genuine division on a continuation line is still flagged.
+        self.assert_multi_line_lint('#if FOO \\\n'
+                                    '    && (a/b)\n'
+                                    '#endif\n',
+                                    'Missing spaces around /  [whitespace/operators] [3]')
         self.assert_lint('Foo&& a = bar();', '')
 
     def test_operator_methods(self):
@@ -3044,6 +3127,31 @@ class CppStyleTest(CppStyleTestBase):
             'Missing #pragma once for header guard.'
             '  [build/header_guard_missing] [5]')
 
+        # libpas headers must use #ifndef/#define guards, not #pragma once.
+        libpas_header = 'Source/bmalloc/libpas/src/libpas/pas_foo.h'
+
+        # No warning for libpas header with #ifndef/#define guard.
+        self.assert_header_guard(
+            '#ifndef PAS_FOO_H\n'
+            '#define PAS_FOO_H\n'
+            '#endif /* PAS_FOO_H */\n',
+            '',
+            libpas_header)
+
+        # Warning if a libpas header uses #pragma once.
+        self.assert_header_guard(
+            '#pragma once\n',
+            'Do not use #pragma once in libpas; use #ifndef/#define header guards instead.'
+            '  [build/header_guard] [5]',
+            libpas_header)
+
+        # Warning for libpas header with no guard at all.
+        self.assert_header_guard(
+            '',
+            'Missing #ifndef/#define header guard.'
+            '  [build/header_guard_missing] [5]',
+            libpas_header)
+
     def test_build_printf_format(self):
         self.assert_lint(
             r'SAFE_PRINTF("\%%d", value);',
@@ -3563,6 +3671,23 @@ class OrderOfIncludesTest(CppStyleTestBase):
             'BlockPtr<void(WebItemProviderFileCallback)> _callback;\n',
             '',
             file_name='Source/WebCore/foo.mm')
+
+    def test_check_objc_runtime_header_include(self):
+        expected = ('Do not include <objc/objc-runtime.h>; it is not available in all SDKs.'
+                    '  Include <objc/message.h> and/or <objc/runtime.h> instead.'
+                    '  [build/objc_runtime_header] [5]')
+        self.assert_language_rules_check('Source/JavaScriptCore/API/JSWrapperMap.h',
+                                         '#import <objc/objc-runtime.h>\n', expected)
+        self.assert_language_rules_check('Source/WebCore/foo.mm',
+                                         '#import <objc/objc-runtime.h>\n', expected)
+        self.assert_language_rules_check('Source/WebCore/foo.mm',
+                                         '#include <objc/objc-runtime.h>\n', expected)
+
+        # The individual headers the umbrella pulls in are allowed.
+        self.assert_language_rules_check('Source/WebCore/foo.mm',
+                                         '#import <objc/message.h>\n', '')
+        self.assert_language_rules_check('Source/WebCore/foo.mm',
+                                         '#import <objc/runtime.h>\n', '')
 
     def test_check_line_break_after_own_header(self):
         self.assert_language_rules_check('foo.cpp',
@@ -4458,6 +4583,18 @@ class NoNonVirtualDestructorsTest(CppStyleTestBase):
 
         self.assert_lint(
             '''enum class Type : uint8_t { Uno, Dos };''',
+            '')
+
+        self.assert_lint(
+            '''enum class Type : uint8_t { I32, I64 };''',
+            '')
+
+        self.assert_lint(
+            '''enum class Type : uint8_t { A, B };''',
+            '')
+
+        self.assert_lint(
+            '''enum class Type : uint8_t { A1, B2 };''',
             '')
 
         self.assert_lint(
@@ -6008,6 +6145,35 @@ class WebKitStyleTest(CppStyleTestBase):
             "  [build/using_namespace] [4]",
             'foo.h')
 
+        self.assert_lint(
+            'using namespace WebCore;',
+            "Do not use 'using namespace WebCore;' at file or namespace scope; "
+            "global using namespace is likely to cause name collisions in the unified build."
+            "  [build/using_namespace] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'using namespace WebKit;',
+            "Do not use 'using namespace WebKit;' at file or namespace scope; "
+            "global using namespace is likely to cause name collisions in the unified build."
+            "  [build/using_namespace] [4]",
+            'foo.mm')
+
+        # Function-scope (indented) using-directives are fine.
+        self.assert_lint('    using namespace WebCore;', '', 'foo.cpp')
+
+        # Inside a namespace body the directive is contained, which is the
+        # recommended fix for unified-build collisions.
+        self.assert_multi_line_lint(
+            'namespace WebCore {\n'
+            'using namespace JSC;\n'
+            '}\n',
+            '', 'foo.cpp')
+
+        # std::literals namespaces are exempt at file scope.
+        self.assert_lint('using namespace std::literals;', '', 'foo.cpp')
+        self.assert_lint('using namespace std::literals::chrono_literals;', '', 'foo.cpp')
+
     def test_max_macro(self):
         self.assert_lint(
             'int i = MAX(0, 1);',
@@ -6091,6 +6257,112 @@ class WebKitStyleTest(CppStyleTestBase):
             "  [runtime/wtf_checked_size] [5]",
             'foo.cpp')
 
+    def test_auto_with_adopt(self):
+        self.assert_lint(
+            'RetainPtr webView = adoptNS([[TestWKWebView alloc] init]);',
+            '',
+            'foo.mm')
+        self.assert_lint(
+            'auto webView = adoptNS([[TestWKWebView alloc] init]);',
+            "Use 'RetainPtr' instead of 'auto' with 'adoptNS()'."
+            "  [runtime/auto_with_adopt] [4]",
+            'foo.mm')
+        self.assert_lint(
+            'auto context = adoptCF(CGBitmapContextCreate(0, 0, 0, 0, 0, 0, 0));',
+            "Use 'RetainPtr' instead of 'auto' with 'adoptCF()'."
+            "  [runtime/auto_with_adopt] [4]",
+            'foo.cpp')
+        self.assert_lint(
+            'auto obj = adoptRef(*new MyClass);',
+            "Use 'Ref/RefPtr' instead of 'auto' with 'adoptRef()'."
+            "  [runtime/auto_with_adopt] [4]",
+            'foo.cpp')
+        self.assert_lint(
+            'auto queue = adoptOSObject(dispatch_queue_create("foo", serialQueueWithAutoreleasePoolAttrSingleton()));',
+            "Use 'OSObjectPtr' instead of 'auto' with 'adoptOSObject()'."
+            "  [runtime/auto_with_adopt] [4]",
+            'foo.cpp')
+        self.assert_lint(
+            'auto dc = adoptGDIObject(CreateDC());',
+            "Use 'GDIObject' instead of 'auto' with 'adoptGDIObject()'."
+            "  [runtime/auto_with_adopt] [4]",
+            'foo.cpp')
+        self.assert_lint(
+            'Ref obj = adoptRef(*new MyClass);',
+            '',
+            'foo.cpp')
+        self.assert_lint(
+            'auto x = someOtherFunction();',
+            '',
+            'foo.cpp')
+        self.assert_lint(
+            'GRefPtr caps = adoptGRef(gst_caps_new_empty_simple("bleh"));',
+            '',
+            'foo.cpp')
+        self.assert_lint(
+            'auto caps = adoptGRef(gst_caps_new_empty_simple("bleh"));',
+            "Use 'GRefPtr' instead of 'auto' with 'adoptGRef()'."
+            "  [runtime/auto_with_adopt] [4]",
+            'foo.cpp')
+
+    def test_adopt_of_dynamic_cast(self):
+        self.assert_lint(
+            'RetainPtr array = adoptCF(dynamic_cf_cast<CFArrayRef>(SecTaskCopyValueForEntitlement(task, key, nullptr)));',
+            "Adopt the value before casting, e.g. 'dynamic_cf_cast<>(adoptCF(...))', otherwise the value leaks on type mismatch."
+            "  [runtime/adopt_dynamic_cast] [4]",
+            'foo.mm')
+        self.assert_lint(
+            'RetainPtr value = adoptNS(dynamic_objc_cast<NSString>([obj copyValue]));',
+            "Adopt the value before casting, e.g. 'dynamic_objc_cast<>(adoptNS(...))', otherwise the value leaks on type mismatch."
+            "  [runtime/adopt_dynamic_cast] [4]",
+            'foo.mm')
+        # The correct pattern (adopt before cast) should not be flagged.
+        self.assert_lint(
+            'RetainPtr array = dynamic_cf_cast<CFArrayRef>(adoptCF(SecTaskCopyValueForEntitlement(task, key, nullptr)));',
+            '',
+            'foo.mm')
+        # adoptCF of a plain Copy function (no cast) is fine.
+        self.assert_lint(
+            'RetainPtr context = adoptCF(CGBitmapContextCreate(0, 0, 0, 0, 0, 0, 0));',
+            '',
+            'foo.cpp')
+
+    def test_likelihood_attribute_placement(self):
+        message = "[[unlikely]] after '{' applies to the first statement in the block, not to the branch. Put it before the '{', e.g. 'if (condition) [[unlikely]] {'.  [readability/braces] [4]"
+        # The existing whitespace checks also complain about this form, so only look for the new error.
+        self.assertIn(message, self.perform_multi_line_lint(
+            '''void f()
+{
+    if (x) { [[unlikely]]
+        g();
+        h();
+    }
+}
+''', 'h'))
+        self.assert_multi_line_lint(
+            '''void f()
+{
+    if (x) {
+        [[unlikely]]
+        g();
+        h();
+    }
+}
+''',
+            message)
+        # Inside a macro definition, where every line ends with a backslash.
+        self.assertIn(message, self.perform_multi_line_lint(
+            '''#define CHECK_THING(x) \\
+    do { \\
+        if (!(x)) { [[unlikely]] \\
+            handleFailure(); \\
+            return; \\
+        } \\
+    } while (0)
+''', 'h'))
+        self.assert_lint('if (x) [[unlikely]] {', '', 'foo.cpp')
+        self.assert_lint('else [[likely]] {', '', 'foo.cpp')
+        self.assert_lint('case 1: [[likely]] {', '', 'foo.cpp')
 
     def test_wtf_make_unique(self):
         self.assert_lint(
@@ -6151,6 +6423,167 @@ class WebKitStyleTest(CppStyleTestBase):
             "Use 'WTF::move()' instead of 'std::move()'."
             "  [runtime/wtf_move] [4]",
             'foo.mm')
+
+    def test_wtf_to_array(self):
+        self.assert_lint(
+            'auto a = WTF::toArray<int>({ 1, 2, 3 });',
+            '',
+            'foo.cpp')
+
+        self.assert_lint(
+            'auto a = std::to_array<int>({ 1, 2, 3 });',
+            "Use 'WTF::toArray()' instead of 'std::to_array()'."
+            "  [runtime/wtf_to_array] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'auto a = std::to_array(src);',
+            "Use 'WTF::toArray()' instead of 'std::to_array()'."
+            "  [runtime/wtf_to_array] [4]",
+            'foo.cpp')
+
+    def test_utf8cstring_from_utf8(self):
+        message = ("Use 'UTF8CString::unsafeFromUTF8()' or 'UTF8CString::fromUTF8()' instead of constructing a UTF8CString from 'byteCast<char8_t>()'."
+                   "  [runtime/utf8cstring_from_utf8] [4]")
+
+        def assert_utf8cstring_lint(code, expected_message, file_name='foo.cpp'):
+            self.assertEqual(expected_message, self.perform_utf8cstring_from_utf8_check(code, file_name))
+
+        assert_utf8cstring_lint('auto string = UTF8CString::unsafeFromUTF8(g_get_prgname());', '')
+        assert_utf8cstring_lint('auto string = UTF8CString::fromUTF8(std::span { data, size });', '')
+        assert_utf8cstring_lint('auto view = UTF8CStringView::fromUTF8(byteCast<char8_t>(span));', '')
+        assert_utf8cstring_lint('UTF8CString string { span };', '')
+
+        assert_utf8cstring_lint('return UTF8CString { byteCast<char8_t>(g_get_prgname()) };', message)
+        assert_utf8cstring_lint('return UTF8CString(byteCast<char8_t>(data));', message)
+        assert_utf8cstring_lint('UTF8CString string { byteCast<char8_t>(path) };', message)
+        assert_utf8cstring_lint('UTF8CString string(byteCast<char8_t>(path));', message)
+        assert_utf8cstring_lint('return UTF8CString { byteCast<char8_t>(path.fileSystemRepresentation) };', message, 'foo.mm')
+
+    def _construct_and_append_message(self, type_name):
+        return ("If this is a WTF::Vector, SegmentedVector, or Deque of '%s', use 'constructAndAppend()'; if its element type is a "
+                "WTF::Variant with a '%s' alternative, use 'constructAndAppend(WTF::InPlaceType<%s>)'.  Either constructs the element in place "
+                "instead of constructing, moving from, and destroying a '%s' temporary, which costs code size and caller stack space."
+                "  [runtime/construct_and_append] [4]" % (type_name, type_name, type_name, type_name))
+
+    _construct_and_append_empty_braces_message = (
+        "If this is a WTF::Vector or Deque, use 'constructAndAppend()' to construct the element in place "
+        "instead of constructing, moving from, and destroying a value-initialized temporary, which costs code size and caller stack space."
+        "  [runtime/construct_and_append] [4]")
+
+    def test_construct_and_append(self):
+        expected_message = self._construct_and_append_message
+
+        self.assert_lint('vector.append(Foo { });', expected_message('Foo'), 'foo.cpp')
+        self.assert_lint('vector.append(Foo{});', [
+            expected_message('Foo'),
+            'Missing space before {  [whitespace/braces] [5]',
+            'Missing space inside { }.  [whitespace/braces] [5]'], 'foo.cpp')
+        self.assert_lint('vector.append(Foo());', expected_message('Foo'), 'foo.cpp')
+        self.assert_lint('m_stack.append(NestingContext { });', expected_message('NestingContext'), 'foo.cpp')
+        self.assert_lint('m_stack.append(NestingContext { });', expected_message('NestingContext'), 'foo.mm')
+        self.assert_lint('vector->append(Foo { });', expected_message('Foo'), 'foo.cpp')
+        self.assert_lint('segments().append(Foo { });', expected_message('Foo'), 'foo.cpp')
+        self.assert_lint('v.append(WTF::Foo { });', expected_message('WTF::Foo'), 'foo.cpp')
+        self.assert_lint('v.append(::Foo());', expected_message('::Foo'), 'foo.cpp')
+        self.assert_lint('v.append(Foo<Bar> { });', expected_message('Foo<Bar>'), 'foo.cpp')
+        self.assert_lint('v.append(Foo<Bar>());', expected_message('Foo<Bar>'), 'foo.cpp')
+        self.assert_lint('v.append(Vector<Foo<Bar>, 4>());', expected_message('Vector<Foo<Bar>, 4>'), 'foo.cpp')
+        self.assert_lint('v.append(WTF::Vector<WebCore::Foo> { });', expected_message('WTF::Vector<WebCore::Foo>'), 'foo.cpp')
+        self.assert_lint('return m_stack.append(Foo { });', expected_message('Foo'), 'foo.cpp')
+
+    def test_construct_and_append_empty_braces(self):
+        self.assert_lint('vector.append({ });', self._construct_and_append_empty_braces_message, 'foo.cpp')
+        self.assert_lint('m_fetchedRecords.append({ });', self._construct_and_append_empty_braces_message, 'foo.cpp')
+        self.assert_lint('data.views->append({ });', self._construct_and_append_empty_braces_message, 'foo.mm')
+        self.assert_lint('vector.append({});', [
+            self._construct_and_append_empty_braces_message,
+            'Missing space inside { }.  [whitespace/braces] [5]'], 'foo.cpp')
+        self.assert_lint('append({ });', self._construct_and_append_empty_braces_message, 'foo.cpp')
+
+    def test_construct_and_append_std_types(self):
+        expected_message = self._construct_and_append_message
+
+        # std::optional and std::pair are the only lowercase type names recognized.
+        self.assert_lint('v.append(std::pair<int, int>());', expected_message('std::pair<int, int>'), 'foo.cpp')
+        self.assert_lint('v.append(std::pair<int, int> { });', expected_message('std::pair<int, int>'), 'foo.cpp')
+        self.assert_lint('v.append(std::optional<Foo> { });', expected_message('std::optional<Foo>'), 'foo.cpp')
+        self.assert_lint('v.append(std::optional<Foo>());', expected_message('std::optional<Foo>'), 'foo.cpp')
+        self.assert_lint('v.append(std::optional<std::pair<int, int>> { });', expected_message('std::optional<std::pair<int, int>>'), 'foo.cpp')
+
+    def test_construct_and_append_without_receiver(self):
+        expected_message = self._construct_and_append_message
+
+        # Calls from inside a Vector-derived class: a bare or base-qualified append() that is not a declaration.
+        self.assert_lint('append(Foo { });', expected_message('Foo'), 'foo.cpp')
+        self.assert_lint('    append(Foo());', expected_message('Foo'), 'foo.cpp')
+        self.assert_lint('return append(Foo { });', expected_message('Foo'), 'foo.cpp')
+        self.assert_lint('foo(append(Foo { }));', expected_message('Foo'), 'foo.cpp')
+        self.assert_lint('foo(x, append(Foo { }));', expected_message('Foo'), 'foo.cpp')
+        self.assert_lint('auto result = append(Foo { });', expected_message('Foo'), 'foo.cpp')
+        self.assert_lint('if (x) { append(Foo { }); }', [
+            expected_message('Foo'),
+            'More than one command on the same line in if  [whitespace/parens] [4]'], 'foo.cpp')
+        self.assert_lint('x ? append(Foo { }) : void();', expected_message('Foo'), 'foo.cpp')
+        self.assert_lint('foo(); append(Foo { });', [
+            'More than one command on the same line  [whitespace/newline] [4]',
+            expected_message('Foo')], 'foo.cpp')
+        self.assert_lint('Vector::append(Foo { });', expected_message('Foo'), 'foo.cpp')
+        self.assert_lint('Base::append(Foo());', expected_message('Foo'), 'foo.cpp')
+        self.assert_lint('WTF::Vector<Foo, 4>::append(Foo { });', expected_message('Foo'), 'foo.cpp')
+        self.assert_lint('return Base::append(Foo { });', expected_message('Foo'), 'foo.cpp')
+        self.assert_lint('append(std::optional<Foo> { });', expected_message('std::optional<Foo>'), 'foo.cpp')
+
+    def test_construct_and_append_allowed(self):
+        # Constructing in place, or appending a temporary built from arguments, is fine.
+        self.assert_lint('vector.constructAndAppend();', '', 'foo.cpp')
+        self.assert_lint('vector.constructAndAppend(Foo { });', '', 'foo.cpp')
+        self.assert_lint('vector.constructAndAppend({ });', '', 'foo.cpp')
+        self.assert_lint('vector.uncheckedConstructAndAppend();', '', 'foo.cpp')
+        self.assert_lint('vector.constructAndAppend(WTF::InPlaceType<Foo>);', '', 'foo.cpp')
+        self.assert_lint('vector.append(WTF::InPlaceType<Foo>);', '', 'foo.cpp')
+        self.assert_lint('vector.append(Foo { 1 });', '', 'foo.cpp')
+        self.assert_lint('vector.append(Foo { x, y });', '', 'foo.cpp')
+        self.assert_lint('vector.append(Foo(x));', '', 'foo.cpp')
+        self.assert_lint('vector.append(Foo { }, 1);', '', 'foo.cpp')
+        self.assert_lint('vector.append(Foo { }.bar());', '', 'foo.cpp')
+        self.assert_lint('vector.append({ 1, 2 });', '', 'foo.cpp')
+        self.assert_lint('vector.append({ x });', '', 'foo.cpp')
+        self.assert_lint('vector.append(Foo::create());', '', 'foo.cpp')
+        self.assert_lint('vector.append(makeFoo<Bar>());', '', 'foo.cpp')
+        # A lowercase callee is a function call, not a type.
+        self.assert_lint('vector.append(foo());', '', 'foo.cpp')
+        self.assert_lint('builder.append(ContainerNode::description());', '', 'foo.cpp')
+        self.assert_lint('builder.append(WebCore::CharacterData::debugDescription());', '', 'foo.cpp')
+        self.assert_lint('builder.append(Foo<Bar>::create());', '', 'foo.cpp')
+        self.assert_lint('vector.append(WTF::move(x));', '', 'foo.cpp')
+        self.assert_lint('vector.append(x);', '', 'foo.cpp')
+        self.assert_lint('vector.appendVector(Foo());', '', 'foo.cpp')
+        self.assert_lint('vector.unsafeAppendWithoutCapacityCheck(Foo());', '', 'foo.cpp')
+        # Other std:: names are not recognized as types, and std:: function calls are not temporaries.
+        self.assert_lint('v.append(std::tuple<int>());', '', 'foo.cpp')
+        self.assert_lint('v.append(std::unique_ptr<Foo>());', '', 'foo.cpp')
+        self.assert_lint('v.append(std::numeric_limits<int>::max());', '', 'foo.cpp')
+        self.assert_lint('v.append(std::rand());',
+                         'Consider using rand_r(...) instead of rand(...) for improved thread safety.  [runtime/threadsafe_fn] [2]', 'foo.cpp')
+        self.assert_lint('v.append(std::this_thread::get_id());', '', 'foo.cpp')
+        self.assert_lint('v.append(std::make_pair(a, b));', '', 'foo.cpp')
+        self.assert_lint('v.append(std::optional<Foo>(x));', '', 'foo.cpp')
+        self.assert_lint('v.append(std::pair<int, int> { 1, 2 });', '', 'foo.cpp')
+        # Declarations of append() with an unnamed function-type or default-constructed parameter are not calls.
+        self.assert_lint('void append(Foo());', '', 'foo.cpp')
+        self.assert_lint('ALWAYS_INLINE void append(Foo());', '', 'foo.cpp')
+        self.assert_lint('bool append(Foo { });', '', 'foo.cpp')
+        self.assert_lint('void Base::append(Foo());', '', 'foo.cpp')
+        self.assert_lint('appendFoo(Foo());', '', 'foo.cpp')
+        self.assert_lint('myappend(Foo { });', '', 'foo.cpp')
+        # Comments and strings are ignored.
+        self.assert_lint('// vector.append(Foo { });', '', 'foo.cpp')
+        self.assert_lint('const char* s = "vector.append(Foo { });";', '', 'foo.cpp')
+        # C and Objective-C files have no WTF::Vector.
+        self.assert_lint('vector.append(Foo { });', '', 'foo.c')
+        self.assert_lint('vector.append(Foo { });', '', 'foo.m')
+        self.assert_lint('vector.append({ });', '', 'foo.m')
 
     def test_protected_getter(self):
         # Regular getter is fine.
@@ -6267,6 +6700,90 @@ class WebKitStyleTest(CppStyleTestBase):
             "  [runtime/unsafe_get_ptr] [5]",
             'foo.mm')
 
+    def test_redundant_get(self):
+        construct_ref_ptr = "Omit '.get()': construct the 'RefPtr' from the smart pointer itself.  [readability/redundant_get] [4]"
+        construct_ref = "Omit '.get()': construct the 'Ref' from the smart pointer itself.  [readability/redundant_get] [4]"
+        dynamic_downcast = "Omit '.get()': 'dynamicDowncast<>()' takes the smart pointer itself.  [readability/redundant_get] [4]"
+        downcast = "Omit '.get()': 'downcast<>()' takes the smart pointer itself.  [readability/redundant_get] [4]"
+        is_ = "Omit '.get()': 'is<>()' takes the smart pointer itself.  [readability/redundant_get] [4]"
+        unchecked_downcast = "Omit '.get()': 'uncheckedDowncast<>()' takes the smart pointer itself.  [readability/redundant_get] [4]"
+        self.assert_lint('    RefPtr protectedThis = weakThis.get();', construct_ref_ptr)
+        self.assert_lint('    RefPtr<Frame> frame = protectedThis->m_frame.get();', construct_ref_ptr)
+        self.assert_lint('    if (RefPtr page = m_page.get())', construct_ref_ptr)
+        self.assert_lint('    if (RefPtr page = m_page.get(); page && !page->isClosed())', construct_ref_ptr)
+        self.assert_lint('    for (RefPtr node = m_nodes[0].get(); node; node = node->parentNode())', construct_ref_ptr)
+        self.assert_lint('    RefPtr connection = m_connections.get(identifier).get();', construct_ref_ptr)
+        self.assert_lint('    WTF::RefPtr<Node> node(m_node.get());', construct_ref_ptr)
+        self.assert_lint('    completionHandler(RefPtr { m_node.get() });', construct_ref_ptr)
+        self.assert_lint('    Ref document = m_document.get();', construct_ref)
+        self.assert_lint('    Ref { m_instrumentingAgents.get() }->enable();', construct_ref)
+        self.assert_lint('    if (RefPtr element = dynamicDowncast<Element>(m_node.get()))', dynamic_downcast)
+        self.assert_lint('    auto& input = downcast<HTMLInputElement>(m_element.get());', downcast)
+        self.assert_lint('    if (is<HTMLInputElement>(m_element.get()))', is_)
+        self.assert_lint('    auto& input = uncheckedDowncast<HTMLInputElement>(m_element.get());', unchecked_downcast)
+        self.assert_lint('    RefPtr element = dynamicDowncast<Element>(m_node.get());', dynamic_downcast)
+        self.assert_lint('    RefPtr protectedThis = weakThis.get();', construct_ref_ptr, 'foo.mm')
+        self.assert_lint('    RefPtr protectedThis = weakThis;', '')
+        self.assert_lint('    if (RefPtr element = dynamicDowncast<Element>(m_node))', '')
+        self.assert_lint('    auto ptr = obj.get();', '')
+        self.assert_lint('    auto* node = m_node.get();', '')
+        self.assert_lint('    const RefPtr<Node>& node = m_node.get();', '')
+        self.assert_lint('    append(Vector<RefPtr<Node>> { m_node.get() });', '')
+        self.assert_lint('    append(HashMap<String, RefPtr<Node>> { { name, m_node.get() } });', '')
+        self.assert_lint('    RefPtr frame = m_page.get()->mainFrame();', '')
+        self.assert_lint('    RefPtr node = m_node.get() ? m_node.get() : m_parent.get();', '')
+        self.assert_lint('    RefPtr node = *m_node.get();', '')
+        self.assert_lint('    CheckedPtr renderer = m_renderer.get();', '')
+        self.assert_lint('    process(m_node.get());', '')
+        self.assert_lint('    return m_node.get();', '')
+        self.assert_lint('    if (m_node.get() == node)', '')
+        self.assert_lint('    auto* element = dynamicDowncast<Element>(m_node.get()->parentNode());', '')
+        self.assert_lint('    auto* title = dynamic_objc_cast<NSString>(m_object.get());', '', 'foo.mm')
+        self.assert_lint('    RefPtr page = [webView _page].get();', '', 'foo.mm')
+        self.assert_lint('    if (value.is<String>(m_node.get()))', '')
+        self.assert_lint('    // RefPtr protectedThis = weakThis.get();', '')
+        self.assert_lint('    RefPtr protectedThis = weakThis.get();', construct_ref_ptr, 'Source/JavaScriptCore/runtime/Foo.cpp')
+        self.assert_lint('    auto* function = dynamicDowncast<JSFunction>(m_callee.get());', '', 'Source/JavaScriptCore/runtime/Foo.cpp')
+        self.assert_lint('    return downcast<Target>(source.get());', '', 'Source/WTF/wtf/Foo.h')
+
+    def test_redundant_get_declared_source(self):
+        def assert_redundant_get(code, expected, header=None):
+            unit_test_config = {cpp_style.INCLUDE_IO_INJECTION_KEY: MockIo(header.split('\n'))} if header is not None else {}
+            self.assertEqual(expected, self.perform_lint(code, 'foo.cpp', ('-', '+readability/redundant_get'), unit_test_config))
+
+        def construct(type):
+            return "Omit '.get()': construct the '%s' from the smart pointer itself.  [readability/redundant_get] [4]" % type
+
+        assert_redundant_get('CheckedPtr<RenderObject> m_renderer;\nCheckedPtr renderer = m_renderer.get();', construct('CheckedPtr'))
+        assert_redundant_get('CheckedPtr renderer = m_renderer.get();', construct('CheckedPtr'), '    std::unique_ptr<RenderObject> m_renderer;')
+        assert_redundant_get('CheckedRef layer = m_layer.get();', construct('CheckedRef'), '    const UniqueRef<RenderLayer> m_layer;')
+        assert_redundant_get('void run(const RefPtr<Node>& node)\n{\n    WeakPtr weakNode = node.get();\n}', construct('WeakPtr'))
+        assert_redundant_get('void run(Ref<Node>&& node)\n{\n    SingleThreadWeakPtr weakNode = node.get();\n}', construct('SingleThreadWeakPtr'))
+        assert_redundant_get('ThreadSafeWeakPtr<Client> m_client;\nThreadSafeWeakPtr<Client> client = m_client.get();', construct('ThreadSafeWeakPtr'))
+        assert_redundant_get('auto task = [weakThis = WeakPtr { *this }] {\n    CheckedPtr checkedThis = weakThis.get();\n};', construct('CheckedPtr'))
+        assert_redundant_get('CheckedPtr layer = m_layer.get();', '')
+        assert_redundant_get('CheckedPtr layer = m_layer.get();', '', '    InlineWeakPtr<RenderLayer> m_layer;')
+        assert_redundant_get('CheckedPtr<Frame> m_frame;\nWeakPtr frame = m_frame.get();', '')
+        assert_redundant_get('RefPtr<Node> m_node;\nWeakPtr<Node> m_node;\nCheckedPtr node = m_node.get();', '')
+        assert_redundant_get('RefPtr document = m_document.get();', '', '    WeakRef<Document, WeakPtrImplWithEventTargetData> m_document;')
+        assert_redundant_get('RefPtr document = m_document.get();', construct('RefPtr'), '    WeakPtr<Document, WeakPtrImplWithEventTargetData> m_document;')
+        assert_redundant_get('Ref page = m_page.get();', '', '    RefPtr<Page> m_page;')
+        assert_redundant_get('RetainPtr<NSString> m_title;\nRetainPtr title = m_title.get();', construct('RetainPtr'))
+        assert_redundant_get('RetainPtr view = m_view.get();', '', '    WeakObjCPtr<NSView> m_view;')
+        assert_redundant_get('void run(Ref<Client>&& client)\n{\n    ThreadSafeWeakPtr<Client> weakClient { client.get() };\n}', construct('ThreadSafeWeakPtr'))
+        assert_redundant_get('void run(Ref<Client>&& client)\n{\n    ThreadSafeWeakPtr weakClient { client.get() };\n}', '')
+        dynamic_downcast = "Omit '.get()': 'dynamicDowncast<>()' takes the smart pointer itself.  [readability/redundant_get] [4]"
+        is_ = "Omit '.get()': 'is<>()' takes the smart pointer itself.  [readability/redundant_get] [4]"
+        downcast = "Omit '.get()': 'downcast<>()' takes the smart pointer itself.  [readability/redundant_get] [4]"
+        unchecked_downcast = "Omit '.get()': 'uncheckedDowncast<>()' takes the smart pointer itself.  [readability/redundant_get] [4]"
+        assert_redundant_get('auto* context = dynamicDowncast<GPUCanvasContext>(m_context.get());', dynamic_downcast, '    std::unique_ptr<CanvasRenderingContext> m_context;')
+        assert_redundant_get('auto& runLoop = downcast<WorkerMainRunLoop>(m_runLoop.get());', downcast, '    const UniqueRef<WorkerRunLoop> m_runLoop;')
+        assert_redundant_get('auto& node = uncheckedDowncast<Expression>(m_node.get());', unchecked_downcast, '    std::unique_ptr<Node> m_node;')
+        assert_redundant_get('bool isGPU = is<GPUCanvasContext>(m_context.get());', is_, '    std::unique_ptr<CanvasRenderingContext> m_context;')
+        assert_redundant_get('auto* element = dynamicDowncast<Element>(m_node.get());', dynamic_downcast, '    WeakPtr<Node, WeakPtrImplWithEventTargetData> m_node;')
+        assert_redundant_get('auto& element = uncheckedDowncast<Element>(m_node.get());', '', '    WeakPtr<Node, WeakPtrImplWithEventTargetData> m_node;')
+        assert_redundant_get('auto& part = downcast<ButtonPart>(m_owningPart.get());', '', '    ThreadSafeWeakRef<ControlPart> m_owningPart;')
+
     def test_wtf_never_destroyed(self):
         self.assert_lint(
              'static NeverDestroyed<Foo> foo;',
@@ -6338,20 +6855,22 @@ class WebKitStyleTest(CppStyleTestBase):
 
     def test_wtf_os_object_ptr(self):
         self.assert_lint(
-            'auto queue = adoptOSObject(dispatch_queue_create("foo", DISPATCH_QUEUE_SERIAL));',
+            'auto queue = adoptOSObject(dispatch_queue_create("foo", serialQueueWithAutoreleasePoolAttrSingleton()));',
+            "Use 'OSObjectPtr' instead of 'auto' with 'adoptOSObject()'."
+            "  [runtime/auto_with_adopt] [4]",
+            'foo.cpp')
+        self.assert_lint(
+            'OSObjectPtr queue = adoptOSObject(dispatch_queue_create("foo", serialQueueWithAutoreleasePoolAttrSingleton()));',
             '',
             'foo.cpp')
         self.assert_lint(
-            'OSObjectPtr queue = adoptOSObject(dispatch_queue_create("foo", DISPATCH_QUEUE_SERIAL));',
-            '',
-            'foo.cpp')
-        self.assert_lint(
-            'OSObjectPtr<dispatch_queue_t> queue = adoptOSObject(dispatch_queue_create("foo", DISPATCH_QUEUE_SERIAL));',
+            'OSObjectPtr<dispatch_queue_t> queue = adoptOSObject(dispatch_queue_create("foo", serialQueueWithAutoreleasePoolAttrSingleton()));',
             '',
             'foo.cpp')
         self.assert_lint(
             'auto group = adoptOSObject(dispatch_group_create());',
-            '',
+            "Use 'OSObjectPtr' instead of 'auto' with 'adoptOSObject()'."
+            "  [runtime/auto_with_adopt] [4]",
             'foo.cpp')
         self.assert_lint(
             'RetainPtr<dispatch_queue_t> m_queue;',
@@ -6373,66 +6892,658 @@ class WebKitStyleTest(CppStyleTestBase):
             "Use 'OSObjectPtr' instead of 'RetainPtr' for dispatch objects."
             "  [runtime/wtf_os_object_ptr] [4]",
             'foo.mm')
-        self.assert_lint(
-            'auto queue = adoptNS(dispatch_queue_create("foo", DISPATCH_QUEUE_SERIAL));',
-            "Use 'adoptOSObject()' instead of 'adoptNS()' for dispatch objects."
-            "  [runtime/wtf_os_object_ptr] [4]",
+        self.assert_lint_one_of_many_errors_re(
+            'auto queue = adoptNS(dispatch_queue_create("foo", serialQueueWithAutoreleasePoolAttrSingleton()));',
+            r"Use 'adoptOSObject\(\)' instead of 'adoptNS\(\)' for dispatch objects.",
             'foo.mm')
-        self.assert_lint(
+        self.assert_lint_one_of_many_errors_re(
             'auto group = adoptNS(dispatch_group_create());',
-            "Use 'adoptOSObject()' instead of 'adoptNS()' for dispatch objects."
-            "  [runtime/wtf_os_object_ptr] [4]",
+            r"Use 'adoptOSObject\(\)' instead of 'adoptNS\(\)' for dispatch objects.",
             'foo.mm')
-        self.assert_lint(
-            'auto queue = adoptOSObject(dispatch_queue_create("foo", RetainPtr { DISPATCH_QUEUE_CONCURRENT }.get()));',
-            "Use 'OSObjectPtr' instead of 'RetainPtr' for dispatch objects."
-            "  [runtime/wtf_os_object_ptr] [4]",
+        self.assert_lint_one_of_many_errors_re(
+            'auto queue = adoptOSObject(dispatch_queue_create("foo", RetainPtr { DISPATCH_QUEUE_CONCURRENT_WITH_AUTORELEASE_POOL }.get()));',
+            r"Use 'OSObjectPtr' instead of 'RetainPtr' for dispatch objects.",
             'foo.mm')
-        self.assert_lint(
-            'auto queue = adoptOSObject(dispatch_queue_create("foo", RetainPtr { DISPATCH_QUEUE_SERIAL }.get()));',
-            "Use 'OSObjectPtr' instead of 'RetainPtr' for dispatch objects."
-            "  [runtime/wtf_os_object_ptr] [4]",
+        self.assert_lint_one_of_many_errors_re(
+            'auto queue = adoptOSObject(dispatch_queue_create("foo", RetainPtr { DISPATCH_QUEUE_SERIAL_WITH_AUTORELEASE_POOL }.get()));',
+            r"Use 'OSObjectPtr' instead of 'RetainPtr' for dispatch objects.",
             'foo.mm')
-        self.assert_lint(
-            'auto queue = adoptOSObject(dispatch_queue_create("foo", retainPtr(DISPATCH_QUEUE_CONCURRENT).get()));',
-            "Use 'OSObjectPtr' instead of 'RetainPtr' for dispatch objects."
-            "  [runtime/wtf_os_object_ptr] [4]",
+        self.assert_lint_one_of_many_errors_re(
+            'auto queue = adoptOSObject(dispatch_queue_create("foo", retainPtr(DISPATCH_QUEUE_CONCURRENT_WITH_AUTORELEASE_POOL).get()));',
+            r"Use 'OSObjectPtr' instead of 'RetainPtr' for dispatch objects.",
             'foo.mm')
-        self.assert_lint(
-            'auto queue = adoptOSObject(dispatch_queue_create("foo", retainPtr(DISPATCH_QUEUE_SERIAL).get()));',
-            "Use 'OSObjectPtr' instead of 'RetainPtr' for dispatch objects."
-            "  [runtime/wtf_os_object_ptr] [4]",
+        self.assert_lint_one_of_many_errors_re(
+            'auto queue = adoptOSObject(dispatch_queue_create("foo", retainPtr(DISPATCH_QUEUE_SERIAL_WITH_AUTORELEASE_POOL).get()));',
+            r"Use 'OSObjectPtr' instead of 'RetainPtr' for dispatch objects.",
             'foo.mm')
 
     def test_wtf_xpc_object_ptr(self):
         self.assert_lint(
-            'XPCObjectPtr<xpc_connection_t> connection = adoptXPCObject(xpc_connection_create_from_endpoint(endpoint));',
+            'OSObjectPtr<xpc_connection_t> connection = adoptOSObject(xpc_connection_create_from_endpoint(endpoint));',
             '',
             'foo.cpp')
 
         self.assert_lint(
             'RetainPtr<xpc_connection_t> m_connection;',
-            "Use 'XPCObjectPtr' instead of 'RetainPtr' for XPC objects."
+            "Use 'OSObjectPtr' instead of 'RetainPtr' for XPC objects."
             "  [runtime/wtf_xpc_object_ptr] [4]",
             'foo.mm')
 
         self.assert_lint(
             'OSObjectPtr<xpc_connection_t> m_connection;',
-            "Use 'XPCObjectPtr' instead of 'OSObjectPtr' for XPC objects."
-            "  [runtime/wtf_xpc_object_ptr] [4]",
+            '',
             'foo.mm')
 
-        self.assert_lint(
+        self.assert_lint_one_of_many_errors_re(
             'auto connection = adoptNS(xpc_connection_create_from_endpoint(endpoint));',
-            "Use 'adoptXPCObject()' instead of 'adoptNS()' for XPC objects."
-            "  [runtime/wtf_xpc_object_ptr] [4]",
+            r"Use 'adoptOSObject\(\)' instead of 'adoptNS\(\)' for XPC objects.",
             'foo.mm')
 
         self.assert_lint(
             'auto connection = adoptOSObject(xpc_connection_create_from_endpoint(endpoint));',
-            "Use 'adoptXPCObject()' instead of 'adoptOSObject()' for XPC objects."
-            "  [runtime/wtf_xpc_object_ptr] [4]",
+            "Use 'OSObjectPtr' instead of 'auto' with 'adoptOSObject()'."
+            "  [runtime/auto_with_adopt] [4]",
             'foo.mm')
+
+    def test_glib_string_wrappers(self):
+        self.assert_lint(
+            'g_key_file_load_from_data(keyFile, data.legacyCStringPointer(), -1, G_KEY_FILE_NONE, &error);',
+            "Use 'gKeyFileLoadFromData()' from <wtf/glib/GLibExtras.h> instead of 'g_key_file_load_from_data()', and pass the typed string instead of calling legacyCStringPointer()."
+            "  [runtime/glib_string_wrappers] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'auto escaped = GMallocString::unsafeAdoptFromUTF8(g_markup_escape_text(label.utf8().legacyCStringPointer(), -1));',
+            "Use 'gMarkupEscapeText()' from <wtf/glib/GLibExtras.h> instead of 'g_markup_escape_text()', and pass the typed string instead of calling legacyCStringPointer()."
+            "  [runtime/glib_string_wrappers] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'char* copy = g_strdup(string.utf8().legacyCStringPointer());',
+            "Use 'gStrdup()' from <wtf/glib/GLibExtras.h> instead of 'g_strdup()', and pass the typed string instead of calling legacyCStringPointer()."
+            "  [runtime/glib_string_wrappers] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'GVariant* variant = g_variant_new_string(string.legacyCStringPointer());',
+            "Use 'gVariantNewString()' from <wtf/glib/GLibExtras.h> instead of 'g_variant_new_string()', and pass the typed string instead of calling legacyCStringPointer()."
+            "  [runtime/glib_string_wrappers] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'GVariant* variant = g_variant_new("(so)", name, path.utf8().legacyCStringPointer());',
+            "Use 'gVariantNew()' from <wtf/glib/GLibExtras.h> instead of 'g_variant_new()', and pass the typed string instead of calling legacyCStringPointer()."
+            "  [runtime/glib_string_wrappers] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'GUniquePtr<char> path(g_build_filename(directory.legacyCStringPointer(), "file", nullptr));',
+            "Use 'gBuildFilename()' from <wtf/glib/GLibExtras.h> instead of 'g_build_filename()', and pass the typed string instead of calling legacyCStringPointer()."
+            "  [runtime/glib_string_wrappers] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'GUniquePtr<char> message(g_strdup_printf("The site says: %s", realm.utf8().legacyCStringPointer()));',
+            "Use 'SAFE_G_STRDUP_PRINTF()' from <wtf/glib/GLibExtras.h> instead of 'g_strdup_printf()', and pass the typed string instead of calling legacyCStringPointer()."
+            "  [runtime/glib_string_wrappers] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid host \'%s\'", host.utf8().legacyCStringPointer());',
+            "Use 'SAFE_G_SET_ERROR()' from <wtf/glib/GLibExtras.h> instead of 'g_set_error()', and pass the typed string instead of calling legacyCStringPointer()."
+            "  [runtime/glib_string_wrappers] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'g_warning("Failed at %s: %s", address.legacyCStringPointer(), error->message);',
+            "Use 'SAFE_G_WARNING()' from <wtf/glib/GLibExtras.h> instead of 'g_warning()', and pass the typed string instead of calling legacyCStringPointer()."
+            "  [runtime/glib_string_wrappers] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'SAFE_G_SET_ERROR(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid host \'%s\'", host.utf8());',
+            '',
+            'foo.cpp')
+
+        self.assert_lint(
+            'char* replyHTML = g_strdup_printf(handler.reply.legacyCStringPointer(), requestPath);',
+            '',
+            'foo.cpp')
+
+        self.assert_lint(
+            'g_set_error(error, domain, code, format.legacyCStringPointer(), host.utf8().legacyCStringPointer());',
+            "Use 'SAFE_G_SET_ERROR()' from <wtf/glib/GLibExtras.h> instead of 'g_set_error()', and pass the typed string instead of calling legacyCStringPointer()."
+            "  [runtime/glib_string_wrappers] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'g_variant_builder_add(&builder, "{sv}", "reason", g_variant_new_string(reason.utf8().legacyCStringPointer()));',
+            "Use 'gVariantNewString()' from <wtf/glib/GLibExtras.h> instead of 'g_variant_new_string()', and pass the typed string instead of calling legacyCStringPointer()."
+            "  [runtime/glib_string_wrappers] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'g_value_set_string(value, isNull ? first.legacyCStringPointer() : second.legacyCStringPointer());',
+            "Use 'gValueSetString()' from <wtf/glib/GLibExtras.h> instead of 'g_value_set_string()', and pass the typed string instead of calling legacyCStringPointer()."
+            "  [runtime/glib_string_wrappers] [4]",
+            'foo.cpp')
+
+        self.assert_multi_line_lint(
+            'GVariant* variant = g_variant_new("(so)",\n'
+            '    path.utf8().legacyCStringPointer(), name);\n',
+            "Use 'gVariantNew()' from <wtf/glib/GLibExtras.h> instead of 'g_variant_new()', and pass the typed string instead of calling legacyCStringPointer()."
+            "  [runtime/glib_string_wrappers] [4]",
+            'foo.cpp')
+
+        self.assert_multi_line_lint(
+            'auto* object = g_object_new(TYPE, "id", id.utf8().legacyCStringPointer(),\n'
+            '    nullptr);\n',
+            "Use 'gObjectNew()' from <wtf/glib/GLibExtras.h> instead of 'g_object_new()', and pass the typed string instead of calling legacyCStringPointer()."
+            "  [runtime/glib_string_wrappers] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'g_dbus_connection_emit_signal(connection, nullptr, path.utf8().legacyCStringPointer(), "org.a11y.atspi.Event.Object", "StateChanged", nullptr, nullptr);',
+            "Use 'gDBusConnectionEmitSignal()' from <wtf/glib/GLibExtras.h> instead of 'g_dbus_connection_emit_signal()', and pass the typed string instead of calling legacyCStringPointer()."
+            "  [runtime/glib_string_wrappers] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'gst_structure_set(headers.get(), key.utf8().legacyCStringPointer(), G_TYPE_STRING, value.utf8().legacyCStringPointer(), nullptr);',
+            "Use 'gstStructureSet()' from \"GStreamerCommon.h\" instead of 'gst_structure_set()', and pass the typed string instead of calling legacyCStringPointer()."
+            "  [runtime/glib_string_wrappers] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'GUniquePtr<GstStructure> properties(gst_structure_new("stream-properties", "media.role", G_TYPE_STRING, role.utf8().legacyCStringPointer(), nullptr));',
+            "Use 'gstStructureNew()' from \"GStreamerCommon.h\" instead of 'gst_structure_new()', and pass the typed string instead of calling legacyCStringPointer()."
+            "  [runtime/glib_string_wrappers] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'char* copy = g_strdup(convert(string.utf8().legacyCStringPointer()));',
+            '',
+            'foo.cpp')
+
+        self.assert_lint(
+            'char* copy = gStrdup(string.utf8());',
+            '',
+            'foo.cpp')
+
+        self.assert_lint(
+            'char* copy = g_strdup(otherCString);',
+            '',
+            'foo.cpp')
+
+        self.assert_lint(
+            'GVariant* variant = g_variant_new_string("default");',
+            '',
+            'foo.cpp')
+
+        self.assert_lint(
+            'const char* name = string.legacyCStringPointer();',
+            '',
+            'foo.cpp')
+
+    def test_legacy_cstring_pointer_with_length(self):
+        self.assert_lint(
+            'GRefPtr<GBytes> bytes = adoptGRef(g_bytes_new(markup.legacyCStringPointer(), markup.length()));',
+            "Store 'markup.span()', or 'byteCast<char>(markup.span())' for a const char* parameter, in a local and pass its data() and size() "
+            "instead of calling legacyCStringPointer(), since the length is passed too. Use 'gBytesNew()' or 'gBytesNewStatic()' from "
+            "<wtf/glib/GLibExtras.h> instead of 'g_bytes_new()' or 'g_bytes_new_static()'."
+            "  [runtime/legacy_cstring_pointer_with_length] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'send(socket, message.utf8().legacyCStringPointer(), message.utf8().size(), 0);',
+            "Store 'message.utf8().span()', or 'byteCast<char>(message.utf8().span())' for a const char* parameter, in a local and pass its data() and size() "
+            "instead of calling legacyCStringPointer(), since the length is passed too. Use 'gBytesNew()' or 'gBytesNewStatic()' from "
+            "<wtf/glib/GLibExtras.h> instead of 'g_bytes_new()' or 'g_bytes_new_static()'."
+            "  [runtime/legacy_cstring_pointer_with_length] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'gtk_im_context_set_surrounding(context, priv->text.legacyCStringPointer(), priv->text.length(), cursor);',
+            "Store 'priv->text.span()', or 'byteCast<char>(priv->text.span())' for a const char* parameter, in a local and pass its data() and size() "
+            "instead of calling legacyCStringPointer(), since the length is passed too. Use 'gBytesNew()' or 'gBytesNewStatic()' from "
+            "<wtf/glib/GLibExtras.h> instead of 'g_bytes_new()' or 'g_bytes_new_static()'."
+            "  [runtime/legacy_cstring_pointer_with_length] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'loadFromData(file, data.utf8().legacyCStringPointer(), data.length());',
+            '',
+            'foo.cpp')
+
+        self.assert_lint(
+            'gdk_clipboard_set_text(clipboard, string.legacyCStringPointer());',
+            '',
+            'foo.cpp')
+
+    def test_log_string_conversions(self):
+        self.assert_lint(
+            'RELEASE_LOG(Network, "Loading %s", url.string().utf8().legacyCStringPointer());',
+            "Pass the typed string instead of calling legacyCStringPointer(). 'RELEASE_LOG()' converts typed strings itself."
+            "  [runtime/log_string_conversion] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'WEBPAGEPROXY_RELEASE_LOG(Loading, "Loading %s", url.string().utf8().legacyCStringPointer());',
+            "Pass the typed string instead of calling legacyCStringPointer(). 'WEBPAGEPROXY_RELEASE_LOG()' converts typed strings itself."
+            "  [runtime/log_string_conversion] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'LOG(Network, "Loading %s", url.string().ascii().data());',
+            "Pass '.utf8()' instead of '.ascii().data()' to 'LOG()'. It converts typed strings itself, and ASCII conversion loses non-ASCII characters."
+            "  [runtime/log_string_conversion] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'SAFE_PRINTF("Loading %s", url.string().latin1().data());',
+            "Pass '.utf8()' instead of '.latin1().data()' to 'SAFE_PRINTF()'. It converts typed strings itself, and a Latin-1 pointer loses non-ASCII characters."
+            "  [runtime/log_string_conversion] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'RELEASE_LOG(Network, "Loading %s", url.string().utf8());',
+            '',
+            'foo.cpp')
+
+        self.assert_lint(
+            'RELEASE_LOG(Network, "Name has %zu bytes", strlen(name.legacyCStringPointer()));',
+            '',
+            'foo.cpp')
+
+        self.assert_lint(
+            'RELEASE_LOG_FORWARDABLE(Loading, MESSAGE_NAME, name.legacyCStringPointer());',
+            '',
+            'foo.cpp')
+
+    def test_printstream_printf(self):
+        self.assert_lint(
+            'out.printf(" %8s ", str.legacyCStringPointer());',
+            "Use SAFE_PRINTSTREAM_PRINTF() instead of calling printf() on a PrintStream, and pass the typed string instead of calling legacyCStringPointer()."
+            "  [safercpp/printf] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'stream->printf(templateHTML, substitute.utf8().legacyCStringPointer(), other.utf8().legacyCStringPointer());',
+            "Use SAFE_PRINTSTREAM_PRINTF() instead of calling printf() on a PrintStream, and pass the typed string instead of calling legacyCStringPointer()."
+            "  [safercpp/printf] [4]",
+            'foo.mm')
+
+        self.assert_lint(
+            'out.printf(" %c%8s %c ", SAFE_PRINTF_TYPE(d, str, d));',
+            "Use SAFE_PRINTSTREAM_PRINTF() instead of passing SAFE_PRINTF_TYPE() arguments to printf() on a PrintStream."
+            "  [safercpp/printf] [4]",
+            'foo.cpp')
+
+        self.assert_multi_line_lint(
+            'out.printf(" %c%8s <- %18s %c ", d, str.legacyCStringPointer(),\n'
+            '    recoveryStr.legacyCStringPointer(), d);\n',
+            ["Use SAFE_PRINTSTREAM_PRINTF() instead of calling printf() on a PrintStream, and pass the typed string instead of calling legacyCStringPointer()."
+             "  [safercpp/printf] [4]"] * 2,
+            'foo.cpp')
+
+        self.assert_lint(
+            'SAFE_PRINTSTREAM_PRINTF(out, " %c%8s %c ", d, str, d);',
+            '',
+            'foo.cpp')
+
+        self.assert_lint(
+            'out.printf("%zu", strlen(name.legacyCStringPointer()));',
+            '',
+            'foo.cpp')
+
+        self.assert_lint(
+            'out.printf("test %d", value);',
+            '',
+            'foo.cpp')
+
+        self.assert_lint(
+            'file.write(name.legacyCStringPointer());',
+            '',
+            'foo.cpp')
+
+        self.assert_multi_line_lint(
+            '#define SAFE_PRINTSTREAM_PRINTF(stream, format, ...) \\\n'
+            '    (stream).printf(format __VA_OPT__(, SAFE_PRINTF_TYPE(__VA_ARGS__)))\n',
+            '',
+            'foo.h')
+
+    def test_safe_logging_macros(self):
+        self.assert_lint(
+            'WTFLog(&channel, "%s", message.utf8().legacyCStringPointer());',
+            "Use 'SAFE_WTFLOG()' from <wtf/StdLibExtras.h> instead of 'WTFLog()'. It converts typed strings itself, so pass them without unwrapping them."
+            "  [safercpp/printf] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'WTFLogVerbose(file, line, function, &channel, "%s", message);',
+            "Use 'SAFE_WTFLOG_VERBOSE()' from <wtf/StdLibExtras.h> instead of 'WTFLogVerbose()'. It converts typed strings itself, so pass them without unwrapping them."
+            "  [safercpp/printf] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'os_log_error(OS_LOG_DEFAULT, "Failed: %{public}s", message);',
+            "Use 'SAFE_OS_LOG_ERROR()' from <wtf/StdLibExtras.h> instead of 'os_log_error()'. It converts typed strings itself, so pass them without unwrapping them."
+            "  [safercpp/printf] [4]",
+            'foo.mm')
+
+        self.assert_lint(
+            'os_log_with_type(log, type, "%{public}s", message);',
+            "Use 'SAFE_OS_LOG_WITH_TYPE()' from <wtf/StdLibExtras.h> instead of 'os_log_with_type()'. It converts typed strings itself, so pass them without unwrapping them."
+            "  [safercpp/printf] [4]",
+            'foo.mm')
+
+        self.assert_lint(
+            '__android_log_print(ANDROID_LOG_VERBOSE, tag, "%s", message);',
+            "Use 'SAFE_ANDROID_LOG_PRINT()' from <wtf/StdLibExtras.h> instead of '__android_log_print()'. It converts typed strings itself, so pass them without unwrapping them."
+            "  [safercpp/printf] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'sd_journal_send("MESSAGE=%s", message, nullptr);',
+            "Use 'SAFE_SD_JOURNAL_SEND()' from <wtf/StdLibExtras.h> instead of 'sd_journal_send()'. It converts typed strings itself, so pass them without unwrapping them."
+            "  [safercpp/printf] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'sd_journal_send_with_location(file, line, function, "MESSAGE=%s", message, nullptr);',
+            "Use 'SAFE_SD_JOURNAL_SEND_WITH_LOCATION()' from <wtf/StdLibExtras.h> instead of 'sd_journal_send_with_location()'. It converts typed strings itself, so pass them without unwrapping them."
+            "  [safercpp/printf] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'gst_printerrln("Start error: %s", error->message);',
+            "Use 'SAFE_GST_PRINTERRLN()' from \"GStreamerCommon.h\" instead of 'gst_printerrln()'. It converts typed strings itself, so pass them without unwrapping them."
+            "  [safercpp/printf] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'gst_debug_log(category, level, file, function, line, nullptr, "%s", message);',
+            "Use 'SAFE_GST_DEBUG_LOG()' from \"GStreamerCommon.h\" instead of 'gst_debug_log()'. It converts typed strings itself, so pass them without unwrapping them."
+            "  [safercpp/printf] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'gst_debug_log_id_literal(category, level, file, function, line, id, message);',
+            "Use 'SAFE_GST_DEBUG_LOG_ID_LITERAL()' from \"GStreamerCommon.h\" instead of 'gst_debug_log_id_literal()'. It converts typed strings itself, so pass them without unwrapping them."
+            "  [safercpp/printf] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            '::os_log(log, "%{public}s", message);',
+            "Use 'SAFE_OS_LOG()' from <wtf/StdLibExtras.h> instead of 'os_log()'. It converts typed strings itself, so pass them without unwrapping them."
+            "  [safercpp/printf] [4]",
+            'foo.mm')
+
+        self.assert_lint(
+            'SAFE_OS_LOG(log, "%{public}s", message);',
+            '',
+            'foo.mm')
+
+        self.assert_lint(
+            'SAFE_WTFLOG(&channel, "%s", message.utf8());',
+            '',
+            'foo.cpp')
+
+        self.assert_lint(
+            'SAFE_GST_PRINTERRLN("Start error: %s", UTF8CStringView::unsafeFromUTF8(error->message));',
+            '',
+            'foo.cpp')
+
+        self.assert_lint(
+            'OSObjectPtr log = adoptOSObject(os_log_create("com.apple.WebKit", "Process"));',
+            '',
+            'foo.mm')
+
+        self.assert_lint(
+            'logger.os_log(message);',
+            '',
+            'foo.cpp')
+
+        self.assert_lint(
+            'WTF_EXPORT_PRIVATE void WTFLog(WTFLogChannel*, const char* format, ...) WTF_ATTRIBUTE_NSSTRING(2, 3);',
+            '',
+            'Source/WTF/wtf/Assertions.h')
+
+        self.assert_lint(
+            '#define RELEASE_LOG_ERROR(channel, format, ...) os_log_error(LOG_CHANNEL(channel).osLogChannel, format WTF_LOG_PRINTF_ARGS(__VA_ARGS__))',
+            '',
+            'foo.h')
+
+        self.assert_multi_line_lint(
+            '#define notImplemented() do { \\\n'
+            '        WTFLogVerbose(__FILE__, __LINE__, WTF_PRETTY_FUNCTION, channel, "UNIMPLEMENTED: "); \\\n'
+            '    } while (0)\n',
+            '',
+            'foo.h')
+
+        self.assert_lint(
+            'os_log_debug(osLog(), "%s\\n", m_buffer);',
+            '',
+            'Source/bmalloc/bmalloc/TZoneLog.cpp')
+
+        self.assert_lint(
+            'SAFE_OS_LOG(log, "%{public}s", message.legacyCStringPointer());',
+            "Pass the typed string instead of calling legacyCStringPointer(). 'SAFE_OS_LOG()' converts typed strings itself."
+            "  [runtime/log_string_conversion] [4]",
+            'foo.mm')
+
+    def test_darwin_string_wrappers(self):
+        self.assert_lint(
+            'return !sandbox_check(pid, "mach-lookup", SANDBOX_FILTER_GLOBAL_NAME, service.utf8().legacyCStringPointer());',
+            "Use 'sandboxCheck()' from <wtf/darwin/DarwinExtras.h> instead of 'sandbox_check()', and pass the typed string instead of calling legacyCStringPointer()."
+            "  [runtime/darwin_string_wrappers] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'if (rootless_check_datavault_flag(directoryPath.legacyCStringPointer(), storageClass))',
+            "Use 'rootlessCheckDatavaultFlag()' from <wtf/darwin/DarwinExtras.h> instead of 'rootless_check_datavault_flag()', and pass the typed string instead of calling legacyCStringPointer()."
+            "  [runtime/darwin_string_wrappers] [4]",
+            'foo.mm')
+
+        self.assert_lint(
+            'osLog = adoptOSObject(os_log_create(subsystem.legacyCStringPointer(), category.legacyCStringPointer()));',
+            "Use 'osLogCreate()' from <wtf/darwin/DarwinExtras.h> instead of 'os_log_create()', and pass the typed string instead of calling legacyCStringPointer()."
+            "  [runtime/darwin_string_wrappers] [4]",
+            'foo.mm')
+
+        self.assert_lint(
+            'RetainPtr<Class> objectClass = objc_lookUpClass(className.legacyCStringPointer());',
+            "Use 'objcLookUpClass()' from <wtf/darwin/DarwinExtras.h> instead of 'objc_lookUpClass()', and pass the typed string instead of calling legacyCStringPointer()."
+            "  [runtime/darwin_string_wrappers] [4]",
+            'foo.mm')
+
+        self.assert_lint(
+            'xpc_dictionary_set_string(message.get(), key.utf8().legacyCStringPointer(), value.utf8().legacyCStringPointer());',
+            "Use 'xpcDictionarySetString()' from <wtf/darwin/XPCExtras.h> instead of 'xpc_dictionary_set_string()', and pass the typed string instead of calling legacyCStringPointer()."
+            "  [runtime/darwin_string_wrappers] [4]",
+            'foo.mm')
+
+        self.assert_lint(
+            'm_connection = adoptOSObject(xpc_connection_create_mach_service(m_machServiceName.legacyCStringPointer(), queue, 0));',
+            "Use 'xpcConnectionCreateMachService()' from <wtf/darwin/XPCExtras.h> instead of 'xpc_connection_create_mach_service()', and pass the typed string instead of calling legacyCStringPointer()."
+            "  [runtime/darwin_string_wrappers] [4]",
+            'foo.mm')
+
+        self.assert_multi_line_lint(
+            'SandboxProfilePtr sandboxProfile { sandbox_compile_file(\n'
+            '    profilePath.legacyCStringPointer(), parameters, &error) };',
+            "Use 'sandboxCompileFile()' from <wtf/darwin/DarwinExtras.h> instead of 'sandbox_compile_file()', and pass the typed string instead of calling legacyCStringPointer()."
+            "  [runtime/darwin_string_wrappers] [4]",
+            'foo.mm')
+
+        self.assert_lint(
+            'xpc_dictionary_set_string(message.get(), "message-name", "bootstrap");',
+            '',
+            'foo.mm')
+
+        self.assert_lint(
+            'OSObjectPtr log = adoptOSObject(os_log_create("com.apple.WebKit", "Process"));',
+            '',
+            'foo.mm')
+
+        self.assert_lint(
+            'return !sandboxCheck(pid, "mach-lookup", SANDBOX_FILTER_GLOBAL_NAME, service.utf8());',
+            '',
+            'foo.cpp')
+
+    def test_icu_string_wrappers(self):
+        self.assert_lint(
+            'm_numberFormat = unum_open(UNUM_DECIMAL, 0, 0, m_locale.legacyCStringPointer(), 0, &status);',
+            "Use 'unumOpen()' from <wtf/text/icu/UnicodeExtras.h> instead of 'unum_open()', and pass the typed string instead of calling legacyCStringPointer()."
+            "  [runtime/icu_string_wrappers] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'm_iterator = ubrk_open(type, locale.string().utf8().legacyCStringPointer(), nullptr, 0, &status);',
+            "Use 'ubrkOpen()' from <wtf/text/icu/UnicodeExtras.h> instead of 'ubrk_open()', and pass the typed string instead of calling legacyCStringPointer()."
+            "  [runtime/icu_string_wrappers] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'auto length = u_strToTitle(destination, capacity, source, sourceLength, nullptr, localeUTF8.legacyCStringPointer(), &status);',
+            "Use 'uStrToTitle()' from <wtf/text/icu/UnicodeExtras.h> instead of 'u_strToTitle()', and pass the typed string instead of calling legacyCStringPointer()."
+            "  [runtime/icu_string_wrappers] [4]",
+            'foo.cpp')
+
+        self.assert_multi_line_lint(
+            'UStringSearch* searcher = usearch_open(pattern, 1, text, 1,\n'
+            '    collatorName.utf8().legacyCStringPointer(), 0, &status);',
+            "Use 'usearchOpen()' from <wtf/text/icu/UnicodeExtras.h> instead of 'usearch_open()', and pass the typed string instead of calling legacyCStringPointer()."
+            "  [runtime/icu_string_wrappers] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'm_iterator = ubrk_open(type, "", nullptr, 0, &status);',
+            '',
+            'foo.cpp')
+
+        self.assert_lint(
+            'm_numberFormat = unumOpen(UNUM_DECIMAL, 0, 0, m_locale, 0, &status);',
+            '',
+            'foo.cpp')
+
+    def test_sqlite_wrappers(self):
+        self.assert_lint(
+            'sqlite3_bind_blob(statement, index, data, size, SQLITE_TRANSIENT);',
+            'Use sqliteBindBlob() instead of sqlite3_bind_blob() or sqlite3_bind_blob64().  [safercpp/sqlite3_bind_blob] [4]',
+            'foo.cpp')
+
+        self.assert_lint(
+            'sqlite3_bind_text(statement, index, text, -1, SQLITE_TRANSIENT);',
+            'Use sqliteBindText() instead of sqlite3_bind_text().  [safercpp/sqlite3_bind_text] [4]',
+            'foo.cpp')
+
+        self.assert_lint(
+            'auto* name = sqlite3_column_name(statement, index);',
+            'Use sqliteColumnName() instead of sqlite3_column_name().  [safercpp/sqlite3_column_name] [4]',
+            'foo.cpp')
+
+        self.assert_lint(
+            'auto* text = sqlite3_value_text(value);',
+            'Use sqliteValueText() instead of sqlite3_value_text().  [safercpp/sqlite3_value_text] [4]',
+            'foo.cpp')
+
+        self.assert_lint(
+            'auto* text = sqlite3_column_text(statement, index);',
+            'Use sqliteColumnText() instead of sqlite3_column_text().  [safercpp/sqlite3_column_text] [4]',
+            'foo.cpp')
+
+        self.assert_lint(
+            'auto* blob = sqlite3_column_blob(statement, index);',
+            'Use sqliteColumnBlob() instead of sqlite3_column_blob().  [safercpp/sqlite3_column_blob] [4]',
+            'foo.cpp')
+
+        self.assert_lint(
+            'int result = sqlite3_open_v2(path.legacyCStringPointer(), &m_db, flags, nullptr);',
+            'Use sqliteOpen() instead of sqlite3_open_v2().  [safercpp/sqlite3_open_v2] [4]',
+            'foo.cpp')
+
+        self.assert_lint(
+            'int result = sqlite3_prepare_v2(m_db, query.data(), query.size(), &statement, &tail);',
+            'Use sqlitePrepare() instead of sqlite3_prepare_v2().  [safercpp/sqlite3_prepare_v2] [4]',
+            'foo.cpp')
+
+        self.assert_lint(
+            'sqlite3_create_collation_v2(m_db, name.legacyCStringPointer(), SQLITE_UTF8, function, compare, destroy);',
+            'Use sqliteCreateCollation() instead of sqlite3_create_collation_v2().  [safercpp/sqlite3_create_collation_v2] [4]',
+            'foo.cpp')
+
+        self.assert_lint(
+            'sqlite3_result_error(context, message.legacyCStringPointer(), -1);',
+            'Use sqliteResultError() instead of sqlite3_result_error().  [safercpp/sqlite3_result_error] [4]',
+            'foo.cpp')
+
+        self.assert_lint(
+            'sqlite3_result_error_code(context, SQLITE_ERROR);',
+            '',
+            'foo.cpp')
+
+        self.assert_lint(
+            'int result = sqlitePrepare(m_db, query.utf8(), &statement);',
+            '',
+            'foo.cpp')
+
+    def test_posix_string_wrappers(self):
+        self.assert_lint(
+            'int fd = open(path.legacyCStringPointer(), O_RDONLY);',
+            "Use 'posixOpen()' from <wtf/posix/POSIXExtras.h> instead of 'open()', and pass the typed string instead of calling legacyCStringPointer()."
+            "  [runtime/posix_string_wrappers] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'int fd = ::open(path.legacyCStringPointer(), O_RDONLY);',
+            "Use 'posixOpen()' from <wtf/posix/POSIXExtras.h> instead of 'open()', and pass the typed string instead of calling legacyCStringPointer()."
+            "  [runtime/posix_string_wrappers] [4]",
+            'foo.mm')
+
+        self.assert_lint(
+            'FILE* file = fopen(fileName.utf8().legacyCStringPointer(), "rb");',
+            "Use 'posixFopen()' from <wtf/posix/POSIXExtras.h> instead of 'fopen()', and pass the typed string instead of calling legacyCStringPointer()."
+            "  [runtime/posix_string_wrappers] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'rename(oldPath.legacyCStringPointer(), newPath.legacyCStringPointer());',
+            "Use 'posixRename()' from <wtf/posix/POSIXExtras.h> instead of 'rename()', and pass the typed string instead of calling legacyCStringPointer()."
+            "  [runtime/posix_string_wrappers] [4]",
+            'foo.cpp')
+
+        self.assert_multi_line_lint(
+            'int fd = open(path.legacyCStringPointer(),\n'
+            '    O_CREAT | O_RDWR, 0666);\n',
+            "Use 'posixOpen()' from <wtf/posix/POSIXExtras.h> instead of 'open()', and pass the typed string instead of calling legacyCStringPointer()."
+            "  [runtime/posix_string_wrappers] [4]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'bool opened = file.open(path.legacyCStringPointer());',
+            '',
+            'foo.cpp')
+
+        self.assert_lint(
+            'int fd = Foo::open(path.legacyCStringPointer(), O_RDONLY);',
+            '',
+            'foo.cpp')
+
+        self.assert_lint(
+            'int fd = posixOpen(path, O_RDONLY);',
+            '',
+            'foo.cpp')
+
+        self.assert_lint(
+            'int fd = open(otherCString, O_RDONLY);',
+            '',
+            'foo.cpp')
+
+        self.assert_lint(
+            'int fd = open(path.legacyCStringPointer(), O_RDONLY);',
+            '',
+            'foo.c')
 
     def test_lock_guard(self):
         self.assert_lint(
@@ -6645,6 +7756,21 @@ class WebKitStyleTest(CppStyleTestBase):
             'snprintf is unsafe. Use SAFE_SPRINTF instead.  [safercpp/printf] [4]',
             'foo.cpp')
 
+        self.assert_lint(
+            'dataLogF("%s", s);',
+            'dataLogF is unsafe. Use SAFE_DATALOGF instead.  [safercpp/printf] [4]',
+            'foo.cpp')
+
+        self.assert_lint(
+            'SAFE_DATALOGF("%s", s.utf8());',
+            '',
+            'foo.cpp')
+
+        self.assert_lint(
+            'dataLogFIf(verbose, "%s", s);',
+            '',
+            'foo.cpp')
+
         # Method calls should not trigger warnings (PrintStream::printf is safe)
         self.assert_lint(
             'out.printf("%s", s);',
@@ -6799,7 +7925,7 @@ class WebKitStyleTest(CppStyleTestBase):
         self.assert_lint('auto foo = protectedFoo()->bar();', '')
         self.assert_lint('postTask([foo = protectedFoo()] {', '')
         self.assert_lint('postTask([foo = protectedFoo(), bar] {', '')
-        self.assert_lint('postTask([foo = protectedFoo(), bar]() {', '')
+        self.assert_lint('postTask([foo = protectedFoo(), bar]() {', 'Omit () for a lambda without parameters.  [readability/lambda_parens] [4]')
         self.assert_lint('postTask([foo = protectedFoo(), bar](ScriptExecutionContext& context) {', '')
         self.assert_lint('postTask([foo = bar().protectedFoo(), bar](ScriptExecutionContext& context) {', '')
         self.assert_lint('bool ancestorsRevealed = revealClosedDetailsAndHiddenUntilFoundAncestors(simpleRange->protectedStartContainer());', '')
@@ -6808,9 +7934,55 @@ class WebKitStyleTest(CppStyleTestBase):
         self.assert_lint('auto foo = checkedFoo()->bar();', '')
         self.assert_lint('postTask([foo = checkedFoo()] {', '')
         self.assert_lint('postTask([foo = checkedFoo(), bar] {', '')
-        self.assert_lint('postTask([foo = checkedFoo(), bar]() {', '')
+        self.assert_lint('postTask([foo = checkedFoo(), bar]() {', 'Omit () for a lambda without parameters.  [readability/lambda_parens] [4]')
         self.assert_lint('postTask([foo = checkedFoo(), bar](ScriptExecutionContext& context) {', '')
         self.assert_lint('postTask([foo = bar().checkedFoo(), bar](ScriptExecutionContext& context) {', '')
+
+        # Tests for protect() free function used in variable initialization (should warn)
+        self.assert_lint(
+            'auto foo = protect(m_foo);',
+            'Do not use protect() for variable initialization. Use the declared type (not auto) and remove the call to protect().  [safercpp/protected_getter_for_init] [4]',
+            'foo.cpp')
+
+        self.assert_lint(
+            'Ref foo = protect(m_foo);',
+            'Do not use protect() for variable initialization. Use the declared type (not auto) and remove the call to protect().  [safercpp/protected_getter_for_init] [4]',
+            'foo.cpp')
+
+        self.assert_lint(
+            'RefPtr foo = protect(m_foo);',
+            'Do not use protect() for variable initialization. Use the declared type (not auto) and remove the call to protect().  [safercpp/protected_getter_for_init] [4]',
+            'foo.cpp')
+
+        self.assert_lint(
+            'CheckedRef foo = protect(m_foo);',
+            'Do not use protect() for variable initialization. Use the declared type (not auto) and remove the call to protect().  [safercpp/protected_getter_for_init] [4]',
+            'foo.cpp')
+
+        self.assert_lint(
+            'CheckedPtr foo = protect(m_foo);',
+            'Do not use protect() for variable initialization. Use the declared type (not auto) and remove the call to protect().  [safercpp/protected_getter_for_init] [4]',
+            'foo.cpp')
+
+        self.assert_lint(
+            'if (RefPtr bar = protect(m_bar)) {',
+            'Do not use protect() for variable initialization. Use the declared type (not auto) and remove the call to protect().  [safercpp/protected_getter_for_init] [4]',
+            'foo.cpp')
+
+        # Valid uses of protect() - should NOT warn
+        self.assert_lint('protect(foo)->doSomething();', '', 'foo.cpp')
+        self.assert_lint('protect(foo).doSomething();', '', 'foo.cpp')
+        self.assert_lint('RefPtr foo = protect(bar())->foo();', '', 'foo.cpp')
+        self.assert_lint('someFunction(protect(foo));', '', 'foo.cpp')
+        self.assert_lint('return protect(m_foo);', '', 'foo.cpp')
+        self.assert_lint('postTask([foo = protect(m_foo)] {', '', 'foo.cpp')
+        self.assert_lint('postTask([foo = protect(m_foo), bar] {', '', 'foo.cpp')
+
+        # Nested function calls - should NOT warn (protect/protectedFoo/checkedFoo is an argument, not the direct initializer)
+        self.assert_lint('if (RefPtr bar = someFunc(protect(foo())))', '', 'foo.cpp')
+        # FIXME: Remove protectedFoo() and checkedFoo() test cases once all these getters are removed from WebKit.
+        self.assert_lint('if (RefPtr document = viewportDocumentForFrame(protectedMainFrame()))', '', 'foo.cpp')
+        self.assert_lint('if (RefPtr foo = someFunction(checkedBar()))', '', 'foo.cpp')
 
     def test_ctype_fucntion(self):
         self.assert_lint(
@@ -6831,6 +8003,10 @@ class WebKitStyleTest(CppStyleTestBase):
         self.assert_lint('size_t buffer_size;',
                          'buffer_size' + name_underscore_error_message)
         self.assert_lint('short m_length;', '')
+        self.assert_lint('SUPPRESS_UNRETAINED_LOCAL SAFE_OS_LOG(channel.osLogChannel, "%{public}s", message);', '', 'foo.mm')
+        self.assert_lint('SUPPRESS_UNRETAINED_ARG RELEASE_LOG_FAULT(IPC, "Failed: %s", name);', '')
+        self.assert_lint('SUPPRESS_UNCOUNTED_LOCAL size_t buffer_size = 0;',
+                         'buffer_size' + name_underscore_error_message)
         self.assert_lint('short _length;',
                          '_length' + name_underscore_error_message)
         self.assert_lint('short length_;',
@@ -7451,6 +8627,95 @@ class WebKitStyleTest(CppStyleTestBase):
 
         self.assert_lint('MYMACRO(a ? b() : c);', '')
 
+        self.assert_multi_line_lint(
+            'RetainPtr dict = @{\n'
+            '    // Policy errors\n'
+            '    @(WebKitErrorCannotShowMIMEType): WebKitErrorDescriptionCannotShowMIMEType,\n'
+            '    @(WebKitErrorCannotShowURL): WebKitErrorDescriptionCannotShowURL,\n'
+            '\n'
+            '    @(WebKitErrorGeolocationLocationUnknown): WebKitErrorDescriptionGeolocationLocationUnknown\n'
+            '};\n'
+            '\n'
+            '+ (void)registerErrors\n'
+            '{\n'
+            '}',
+            '', file_name='foo.mm')
+
+        self.assert_multi_line_lint(
+            'NSDictionary *actions = @{\n'
+            '    NSStringFromSelector(@selector(zoomIn:)): @(WebMenuItemPDFZoomIn),\n'
+            '    bridge_cast(kLSQuarantineTypeKey): bridge_cast(kLSQuarantineTypeWebDownload),\n'
+            '    @"nested": @{\n'
+            '        @(WebKitErrorCannotShowURL): @YES,\n'
+            '    },\n'
+            '};',
+            '', file_name='foo.mm')
+
+        self.assert_multi_line_lint(
+            'RetainPtr dict = @{\n'
+            '    @(WebKitErrorCannotShowURL): WebKitErrorDescriptionCannotShowURL,\n'
+            '};\n'
+            '\n'
+            'MyClass::MyClass(Document* doc) :\n'
+            '    MySuperClass(),\n'
+            '    m_doc(0)\n'
+            '{ }',
+            ['Should be indented on a separate line, with the colon or comma first on that line.'
+             '  [whitespace/indent] [4]',
+             'Comma should be at the beginning of the line in a member initialization list.'
+             '  [whitespace/init] [4]'],
+            file_name='foo.mm')
+
+    def test_objective_c_multi_line_method_declaration(self):
+        self.assert_multi_line_lint(
+            '- (id)_initWithPluginErrorCode:(NSInteger)code\n'
+            '                    contentURL:(id)contentURL\n'
+            '                 pluginPageURL:(id)pluginPageURL\n'
+            '                    pluginName:(id)pluginName\n'
+            '                      MIMEType:(id)MIMEType\n'
+            '{\n'
+            '    return nil;\n'
+            '}',
+            '', file_name='foo.mm')
+
+        self.assert_multi_line_lint(
+            '+ (std::optional<int>)valueForKey:(id)key\n'
+            '                      withDefault:(NSInteger)defaultValue\n'
+            '{\n'
+            '    return std::nullopt;\n'
+            '}',
+            '', file_name='foo.mm')
+
+        self.assert_multi_line_lint(
+            '- (void)didUpdateVisibleRect:(CGRect)visibleRect\n'
+            '    unobscuredRect:(CGRect)unobscuredRect\n'
+            '{\n'
+            '}',
+            '', file_name='foo.mm')
+
+        self.assert_multi_line_lint(
+            '@interface Foo : NSObject\n'
+            '- (void)drawInContext:(CGContextRef)context\n'
+            '          pixelFormat:(CGPixelFormat)pixelFormat;\n'
+            '@end',
+            '', file_name='foo.h')
+
+        self.assert_multi_line_lint(
+            '- (id)_initWithPluginErrorCode:(NSInteger)code\n'
+            '                 contentURL:(id)contentURL\n'
+            '{\n'
+            '}',
+            'Weird number of spaces at line-start.  Are you using a 4-space indent?  [whitespace/indent] [3]',
+            file_name='foo.mm')
+
+        self.assert_multi_line_lint(
+            '-(id)_initWithPluginErrorCode:(NSInteger)code\n'
+            '    contentURL:(id)contentURL\n'
+            '{\n'
+            '}',
+            'This { should be at the end of the previous line  [whitespace/braces] [4]',
+            file_name='foo.mm')
+
     def test_arguments_for_wk_api_available(self):
         self.assert_lint('WK_API_AVAILABLE(macosx(10.2.3))', 'macosx() is deprecated; use macos() instead  [build/wk_api_available] [5]')
         self.assert_lint('WK_API_AVAILABLE(macosx(WK_MAC_TBA))', 'macosx() is deprecated; use macos() instead  [build/wk_api_available] [5]')
@@ -7495,6 +8760,58 @@ class WebKitStyleTest(CppStyleTestBase):
                          ['ios(WK_MAC_TBA) is invalid; expected WK_IOS_TBA or a major.minor version  [build/wk_api_available] [5]',
                           'visionos(WK_MAC_TBA) is invalid; expected WK_XROS_TBA or a major.minor version  [build/wk_api_available] [5]'])
 
+    def test_wk_macros(self):
+        header = 'Source/WebKit/UIProcess/API/Cocoa/WKWebView.h'
+
+        self.assert_lint('WK_HEADER_AUDIT_BEGIN(nullability, sendability)',
+                         "Use 'NS_HEADER_AUDIT_BEGIN' instead of 'WK_HEADER_AUDIT_BEGIN'.  [build/wk_macros] [5]", header)
+        self.assert_lint('WK_HEADER_AUDIT_END(nullability, sendability)',
+                         "Use 'NS_HEADER_AUDIT_END' instead of 'WK_HEADER_AUDIT_END'.  [build/wk_macros] [5]", header)
+        self.assert_lint('@property (nonatomic, readonly, copy) NSString * WK_NULLABLE_RESULT title;',
+                         "Use 'NS_NULLABLE_RESULT' instead of 'WK_NULLABLE_RESULT'.  [build/wk_macros] [5]", header)
+        self.assert_lint('- (void)fooWithCompletionHandler:(void (^)(void))completionHandler WK_SWIFT_ASYNC(2);',
+                         "Use 'NS_SWIFT_ASYNC' instead of 'WK_SWIFT_ASYNC'.  [build/wk_macros] [5]", header)
+        self.assert_lint('- (void)fooWithCompletionHandler:(void (^)(void))completionHandler WK_SWIFT_ASYNC_NAME(foo());',
+                         "Use 'NS_SWIFT_ASYNC_NAME' instead of 'WK_SWIFT_ASYNC_NAME'.  [build/wk_macros] [5]", header)
+        self.assert_lint('- (void)fooWithCompletionHandler:(void (^)(BOOL))completionHandler WK_SWIFT_ASYNC_THROWS_ON_FALSE(1);',
+                         "Use 'NS_SWIFT_ASYNC_THROWS_ON_FALSE' instead of 'WK_SWIFT_ASYNC_THROWS_ON_FALSE'.  [build/wk_macros] [5]", header)
+        self.assert_lint('- (void)foo:(WK_SWIFT_UI_ACTOR void (^)(void))handler;',
+                         "Use 'NS_SWIFT_UI_ACTOR' instead of 'WK_SWIFT_UI_ACTOR'.  [build/wk_macros] [5]", header)
+
+        # Multiple macros on one line are all reported.
+        self.assert_lint('- (void)foo:(void (^)(void))handler WK_SWIFT_ASYNC_NAME(foo()) WK_SWIFT_ASYNC(1);',
+                         ["Use 'NS_SWIFT_ASYNC' instead of 'WK_SWIFT_ASYNC'.  [build/wk_macros] [5]",
+                          "Use 'NS_SWIFT_ASYNC_NAME' instead of 'WK_SWIFT_ASYNC_NAME'.  [build/wk_macros] [5]"], header)
+
+        # The NS_ spellings and other WK_ macros are fine.
+        self.assert_lint('NS_HEADER_AUDIT_BEGIN(nullability, sendability)', '', header)
+        self.assert_lint('- (void)foo WK_API_AVAILABLE(macos(WK_MAC_TBA));', '', header)
+        self.assert_lint('- (void)foo:(NS_SWIFT_UI_ACTOR void (^)(void))handler;', '', header)
+        self.assert_lint('- (void)foo:(void (^)(void))handler NS_SWIFT_ASYNC_NAME(foo());', '', header)
+
+        # WKFoundation.h is where these macros are defined.
+        self.assert_lint('#define WK_SWIFT_ASYNC_NAME(...) NS_SWIFT_ASYNC_NAME(__VA_ARGS__)', '',
+                         'Source/WebKit/Shared/API/Cocoa/WKFoundation.h')
+        self.assert_lint('#define WK_SWIFT_UI_ACTOR NS_SWIFT_UI_ACTOR', '',
+                         'Source/WebKit/Shared/API/Cocoa/WKFoundation.h')
+        self.assert_lint('#define WK_HEADER_AUDIT_BEGIN NS_HEADER_AUDIT_BEGIN', '',
+                         'Source/WebKit/Shared/API/Cocoa/WKFoundation.h')
+
+    def test_header_audit(self):
+        header = 'Source/WebKit/UIProcess/API/Cocoa/WKWebView.h'
+
+        self.assert_lint('NS_ASSUME_NONNULL_BEGIN',
+                         "Use 'NS_HEADER_AUDIT_BEGIN(nullability, sendability)' instead of 'NS_ASSUME_NONNULL_BEGIN'.  [build/header_audit] [5]", header)
+        self.assert_lint('NS_ASSUME_NONNULL_END',
+                         "Use 'NS_HEADER_AUDIT_END(nullability, sendability)' instead of 'NS_ASSUME_NONNULL_END'.  [build/header_audit] [5]", header)
+
+        self.assert_lint('NS_HEADER_AUDIT_BEGIN(nullability, sendability)', '', header)
+        self.assert_lint('NS_HEADER_AUDIT_END(nullability, sendability)', '', header)
+
+        # WKFoundation.h defines WK_HEADER_AUDIT_BEGIN / WK_HEADER_AUDIT_END in terms of these.
+        self.assert_lint('#define WK_HEADER_AUDIT_BEGIN(...) NS_ASSUME_NONNULL_BEGIN', '',
+                         'Source/WebKit/Shared/API/Cocoa/WKFoundation.h')
+
     def test_os_version_checks(self):
         self.assert_lint('#if PLATFORM(IOS_FAMILY) && __IPHONE_OS_VERSION_MIN_REQUIRED < 110000', 'Misplaced OS version check. Please use a named macro in one of headers in the wtf/Platform.h suite of files or an appropriate internal file.  [build/version_check] [5]')
         self.assert_lint('#if PLATFORM(MAC) && __MAC_OS_X_VERSION_MAX_ALLOWED >= 130000', 'Misplaced OS version check. Please use a named macro in one of headers in the wtf/Platform.h suite of files or an appropriate internal file.  [build/version_check] [5]')
@@ -7510,6 +8827,27 @@ class WebKitStyleTest(CppStyleTestBase):
     def test_other(self):
         # FIXME: Implement this.
         pass
+
+    def test_line_numbers_filters_errors(self):
+        code = ['void f() {', '\tint x;', '}', '']
+        error_collector = ErrorCollector(self.assertTrue, FilterConfiguration(('-', '+whitespace/tab')))
+        checker = CppChecker('foo.cpp', 'cpp', error_collector, self.min_confidence, {})
+        checker.check(code, line_numbers=[1])
+        self.assertEqual('', error_collector.results())
+
+    def test_line_numbers_reports_errors_on_listed_lines(self):
+        code = ['void f() {', '\tint x;', '}', '']
+        error_collector = ErrorCollector(self.assertTrue, FilterConfiguration(('-', '+whitespace/tab')))
+        checker = CppChecker('foo.cpp', 'cpp', error_collector, self.min_confidence, {})
+        checker.check(code, line_numbers=[2])
+        self.assertNotEqual('', error_collector.results())
+
+    def test_empty_line_numbers_suppresses_all_errors(self):
+        code = ['void f() {', '\tint x;', '}', '']
+        error_collector = ErrorCollector(self.assertTrue, FilterConfiguration(('-', '+whitespace/tab')))
+        checker = CppChecker('foo.cpp', 'cpp', error_collector, self.min_confidence, {})
+        checker.check(code, line_numbers=[])
+        self.assertEqual('', error_collector.results())
 
 
 class CppCheckerTest(unittest.TestCase):

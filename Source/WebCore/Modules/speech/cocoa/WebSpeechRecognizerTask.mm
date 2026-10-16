@@ -30,6 +30,7 @@
 
 #import <pal/spi/cocoa/SpeechSPI.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/Markable.h>
 #import <wtf/WeakObjCPtr.h>
 
 #import <pal/cocoa/SpeechSoftLink.h>
@@ -41,7 +42,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 @interface WebSpeechRecognizerTaskImpl : NSObject<SFSpeechRecognitionTaskDelegate, SFSpeechRecognizerDelegate> {
 @private
-    Markable<WebCore::SpeechRecognitionConnectionClientIdentifier> _identifier;
+    WTF::Markable<WebCore::SpeechRecognitionConnectionClientIdentifier> _identifier;
     BlockPtr<void(const WebCore::SpeechRecognitionUpdate&)> _delegateCallback;
     bool _doMultipleRecognitions;
     uint64_t _maxAlternatives;
@@ -112,10 +113,12 @@ NS_ASSUME_NONNULL_BEGIN
 {
     Vector<WebCore::SpeechRecognitionAlternativeData> alternatives;
     alternatives.reserveInitialCapacity(_maxAlternatives);
-    for (SFTranscription* transcription in transcriptions) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL SFTranscription* transcription in transcriptions) {
         // FIXME: <rdar://73629573> get confidence of SFTranscription when possible.
         double maxConfidence = 0.0;
-        for (SFTranscriptionSegment* segment in [transcription segments]) {
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL SFTranscriptionSegment* segment in [transcription segments]) {
             double confidence = [segment confidence];
             maxConfidence = maxConfidence < confidence ? confidence : maxConfidence;
         }

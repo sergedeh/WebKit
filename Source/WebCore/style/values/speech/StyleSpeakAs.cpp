@@ -25,6 +25,7 @@
 #include "config.h"
 #include "StyleSpeakAs.h"
 
+#include "CSSKeywordValue.h"
 #include "StyleBuilderChecking.h"
 
 namespace WebCore {
@@ -32,18 +33,18 @@ namespace Style {
 
 auto CSSValueConversion<SpeakAs>::operator()(BuilderState& state, const CSSValue& value) -> SpeakAs
 {
-    if (RefPtr primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value)) {
-        switch (primitiveValue->valueID()) {
-        case CSSValueNone:
-        case CSSValueNormal:
+    if (auto* keywordValue = dynamicDowncast<CSSKeywordValue>(value)) {
+        switch (keywordValue->valueID()) {
+        case CSSValueID::None:
+        case CSSValueID::Normal:
             return CSS::Keyword::Normal { };
-        case CSSValueSpellOut:
+        case CSSValueID::SpellOut:
             return { SpeakAsValue::SpellOut };
-        case CSSValueDigits:
+        case CSSValueID::Digits:
             return { SpeakAsValue::Digits };
-        case CSSValueLiteralPunctuation:
+        case CSSValueID::LiteralPunctuation:
             return { SpeakAsValue::LiteralPunctuation };
-        case CSSValueNoPunctuation:
+        case CSSValueID::NoPunctuation:
             return { SpeakAsValue::NoPunctuation };
         default:
             state.setCurrentPropertyInvalidAtComputedValueTime();
@@ -51,27 +52,27 @@ auto CSSValueConversion<SpeakAs>::operator()(BuilderState& state, const CSSValue
         }
     }
 
-    auto list = requiredListDowncast<CSSValueList, CSSPrimitiveValue>(state, value);
+    auto list = requiredListDowncast<CSSValueList, CSSKeywordValue>(state, value);
     if (!list)
         return CSS::Keyword::Normal { };
 
     SpeakAsValueEnumSet result;
-    for (Ref item : *list) {
-        switch (item->valueID()) {
-        case CSSValueSpellOut:
+    for (auto& item : *list) {
+        switch (item.valueID()) {
+        case CSSValueID::SpellOut:
             result.value.add(SpeakAsValue::SpellOut);
             break;
-        case CSSValueDigits:
+        case CSSValueID::Digits:
             result.value.add(SpeakAsValue::Digits);
             break;
-        case CSSValueLiteralPunctuation:
+        case CSSValueID::LiteralPunctuation:
             if (result.contains(SpeakAsValue::NoPunctuation)) {
                 state.setCurrentPropertyInvalidAtComputedValueTime();
                 return CSS::Keyword::Normal { };
             }
             result.value.add(SpeakAsValue::LiteralPunctuation);
             break;
-        case CSSValueNoPunctuation:
+        case CSSValueID::NoPunctuation:
             if (result.contains(SpeakAsValue::LiteralPunctuation)) {
                 state.setCurrentPropertyInvalidAtComputedValueTime();
                 return CSS::Keyword::Normal { };

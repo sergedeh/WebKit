@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2024 Apple Inc. All rights reserved.
- * Copyright (C) 2025 Samuel Weinig <sam@webkit.org>
+ * Copyright (C) 2025-2026 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,8 +26,8 @@
 
 #pragma once
 
-#include "CSSColorMix.h"
 #include "StyleColor.h"
+#include "StyleColorInterpolationMethod.h"
 #include "StylePrimitiveNumericTypes.h"
 #include <optional>
 #include <wtf/UniqueRef.h>
@@ -36,7 +36,13 @@ namespace WebCore {
 
 class Color;
 
+namespace CSS {
+struct ColorMix;
+}
+
 namespace Style {
+
+class ResolvedColors;
 
 struct ColorResolutionState;
 
@@ -53,8 +59,7 @@ struct ColorMix {
     };
 
     ColorInterpolationMethod colorInterpolationMethod;
-    Component mixComponents1;
-    Component mixComponents2;
+    CommaSeparatedVector<Component> components;
 
     bool operator==(const ColorMix&) const = default;
 };
@@ -65,11 +70,11 @@ inline bool operator==(const UniqueRef<ColorMix>& a, const UniqueRef<ColorMix>& 
 }
 
 Color toStyleColor(const CSS::ColorMix&, ColorResolutionState&);
-WebCore::Color resolveColor(const ColorMix&, const WebCore::Color& currentColor);
+WebCore::Color resolveColor(const ColorMix&, const ResolvedColors&);
 bool containsCurrentColor(const ColorMix&);
 
 void serializationForCSSTokenization(StringBuilder&, const CSS::SerializationContext&, const ColorMix&);
-String serializationForCSSTokenization(const CSS::SerializationContext&, const ColorMix&);
+WTF::String serializationForCSSTokenization(const CSS::SerializationContext&, const ColorMix&);
 
 WTF::TextStream& operator<<(WTF::TextStream&, const ColorMix&);
 

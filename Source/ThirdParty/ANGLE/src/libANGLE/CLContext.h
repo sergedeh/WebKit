@@ -9,9 +9,18 @@
 #ifndef LIBANGLE_CLCONTEXT_H_
 #define LIBANGLE_CLCONTEXT_H_
 
+#include <angle_cl.h>
+
+#include "libANGLE/CLBitField.h"
 #include "libANGLE/CLDevice.h"
+#include "libANGLE/CLMemory.h"
+#include "libANGLE/CLObject.h"
 #include "libANGLE/CLPlatform.h"
+#include "libANGLE/cl_utils.h"
 #include "libANGLE/renderer/CLContextImpl.h"
+
+#include <cstddef>
+#include <string>
 
 namespace cl
 {
@@ -27,6 +36,8 @@ class Context final : public _cl_context, public Object
                           size_t valueSize,
                           void *value,
                           size_t *valueSizeRet) const;
+
+    angle::Result setDestructorCallback(ContextCB pfnNotify, void *userData);
 
     cl_command_queue createCommandQueueWithProperties(cl_device_id device,
                                                       const cl_queue_properties *properties);
@@ -64,7 +75,7 @@ class Context final : public _cl_context, public Object
                                            MemObjectType imageType,
                                            cl_uint numEntries,
                                            cl_image_format *imageFormats,
-                                           cl_uint *numImageFormats);
+                                           cl_uint *numImageFormats) const;
 
     cl_sampler createSamplerWithProperties(const cl_sampler_properties *properties);
 
@@ -115,10 +126,13 @@ class Context final : public _cl_context, public Object
     bool supportsBuiltInKernel(const std::string &name) const;
     bool supportsImage2DFromBuffer() const;
 
+  public:
     static void CL_CALLBACK ErrorCallback(const char *errinfo,
                                           const void *privateInfo,
                                           size_t cb,
                                           void *userData);
+    static Memory::PropArray ConvertArmMemPropToMemProp(const cl_import_properties_arm *properties,
+                                                        const void *handle);
 
   private:
     Context(Platform &platform,
@@ -141,6 +155,8 @@ class Context final : public _cl_context, public Object
     void *const mUserData;
     rx::CLContextImpl::Ptr mImpl;
     DevicePtrs mDevices;
+
+    DestructorCallbacks<ContextCB> mDestructorCallbacks;
 
     friend class Object;
 };

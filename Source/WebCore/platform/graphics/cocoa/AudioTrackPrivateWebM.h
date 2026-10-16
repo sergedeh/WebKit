@@ -46,16 +46,16 @@ public:
     String language() const final;
     int trackIndex() const final;
     std::optional<bool> defaultEnabled() const final;
-    std::optional<MediaTime> codecDelay() const;
-    void setDiscardPadding(const MediaTime&);
+    std::optional<MediaTime> LEGACY_NODELETE codecDelay() const;
+    void LEGACY_NODELETE setDiscardPadding(const MediaTime&);
     std::optional<MediaTime> discardPadding() const;
 
 private:
     AudioTrackPrivateWebM(webm::TrackEntry&&);
 
     String codec() const;
-    uint32_t sampleRate() const;
-    uint32_t numberOfChannels() const;
+    uint32_t LEGACY_NODELETE sampleRate() const;
+    uint32_t LEGACY_NODELETE numberOfChannels() const;
     void setFormatDescription(Ref<AudioInfo>&&) final;
     void updateConfiguration();
 

@@ -37,16 +37,24 @@ class RenderVideo final : public RenderMedia {
     WTF_MAKE_TZONE_ALLOCATED(RenderVideo);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderVideo);
 public:
-    RenderVideo(HTMLVideoElement&, RenderStyle&&);
+    RenderVideo(HTMLVideoElement&, Style::ComputedStyle&&);
     virtual ~RenderVideo();
 
-    WEBCORE_EXPORT HTMLVideoElement& videoElement() const;
-    WEBCORE_EXPORT Ref<HTMLVideoElement> protectedVideoElement() const;
+    WEBCORE_EXPORT HTMLVideoElement& LEGACY_NODELETE videoElement() const;
 
     IntRect videoBox() const;
-    WEBCORE_EXPORT IntRect videoBoxInRootView() const;
+    WEBCORE_EXPORT IntRect videoBoxInMainFrameView() const;
+    LayoutRect croppedVideoBoxForCompositing() const;
+    LayoutRect inlineVideoBox() const;
 
-    static IntSize defaultSize();
+    // True once a fullscreen-to-Picture-in-Picture transition has settled, at which point
+    // object-view-box cropping is bypassed in favor of showing the full natural video (see
+    // videoBox()). Shared by RenderLayerBacking::updateContentsRects() so the compositing
+    // contents/clip rects agree with videoBox()/croppedVideoBoxForCompositing() on when the
+    // bypass is active.
+    bool isBypassingObjectViewBoxForPictureInPicture() const;
+
+    static IntSize LEGACY_NODELETE defaultSize();
 
     bool supportsAcceleratedRendering() const;
     void acceleratedRenderingStateChanged();
@@ -57,6 +65,9 @@ public:
     bool failedToLoadPosterImage() const;
 
     void updateFromElement() final;
+
+    WEBCORE_EXPORT RefPtr<ShareableBitmap> createShareableBitmap(const CreateShareableBitmapFromImageOptions& = { }) const final;
+
     bool hasVideoMetadata() const;
     bool hasPosterFrameSize() const;
     bool hasDefaultObjectSize() const;
@@ -65,10 +76,15 @@ private:
     void willBeDestroyed() override;
     void mediaElement() const = delete;
 
+    NaturalDimensions zoomedNaturalDimensions() const final;
+
     void intrinsicSizeChanged() final;
     LayoutSize calculateIntrinsicSizeInternal();
     LayoutSize calculateIntrinsicSize();
     bool updateIntrinsicSize();
+
+    std::optional<LayoutRect> objectFitContentsRectForFullscreenCompositing(const LayoutRect&) const;
+    LayoutSize posterAwareIntrinsicSize() const;
 
     void imageChanged(WrappedImagePtr, const IntRect*) final;
 
@@ -79,11 +95,11 @@ private:
     void paintReplaced(PaintInfo&, const LayoutPoint&) final;
 
     void layout() final;
-    void styleDidChange(Style::Difference, const RenderStyle* oldStyle) final;
+    void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) final;
 
     void visibleInViewportStateChanged() final;
 
-    LayoutUnit computeReplacedLogicalWidth(ShouldComputePreferred  = ShouldComputePreferred::ComputeActual) const final;
+    LayoutUnit computeReplacedLogicalWidth(IsComputingIntrinsicSize  = IsComputingIntrinsicSize::No) const final;
     LayoutUnit minimumReplacedHeight() const final;
 
     bool updatePlayer();

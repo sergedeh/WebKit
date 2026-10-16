@@ -10,12 +10,12 @@
 #include "include/core/SkClipOp.h"
 #include "include/core/SkColorType.h"
 #include "include/core/SkImageInfo.h"
+#include "include/core/SkPoint.h"
 #include "include/core/SkSize.h"
 #include "include/gpu/graphite/Recorder.h"
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkMalloc.h"
-#include "include/private/base/SkPoint_impl.h"
-#include "include/private/base/SkTArray.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkMalloc.h"
+#include "include/private/SkTArray.h"
 #include "src/core/SkAutoPixmapStorage.h"
 #include "src/gpu/graphite/Caps.h"
 #include "src/gpu/graphite/ProxyCache.h"
@@ -134,12 +134,11 @@ sk_sp<TextureProxy> ClipAtlasManager::findOrCreateEntry(uint32_t stackRecordID,
             fRecorder, maskKey, &context,
             [](const void* ctx) {
                 const ClipDrawContext* cdc = static_cast<const ClipDrawContext*>(ctx);
-                auto translate =
-                        -cdc->fMaskDeviceBounds.topLeft() + SkIVector{kEntryPadding, kEntryPadding};
+                auto translate = -cdc->fMaskDeviceBounds.topLeft();
                 auto [bm, helper] =
                         RasterMaskHelper::Allocate(cdc->fMaskDeviceBounds.size(),
                                                    translate,
-                                                   0,
+                                                   kEntryPadding,
                                                    initial_alpha_for_elements(*cdc->fElementList));
 
                 render_elements(&helper, *cdc->fElementList);
@@ -177,15 +176,15 @@ ClipAtlasManager::DrawAtlasMgr::DrawAtlasMgr(size_t width, size_t height,
                                              size_t plotWidth, size_t plotHeight,
                                              DrawAtlas::UseStorageTextures useStorageTextures,
                                              std::string_view label, const Caps* caps) {
-    static constexpr SkColorType kColorType = kAlpha_8_SkColorType;
-    fDrawAtlas = DrawAtlas::Make(kColorType,
-                                 SkColorTypeBytesPerPixel(kColorType),
+    static constexpr auto kMaskFormat = MaskFormat::kA8;
+
+    fDrawAtlas = DrawAtlas::Make(kMaskFormat,
                                  width, height,
                                  plotWidth, plotHeight,
                                  /*generationCounter=*/this,
-                                 caps->allowMultipleAtlasTextures() ?
-                                         DrawAtlas::AllowMultitexturing::kYes :
-                                         DrawAtlas::AllowMultitexturing::kNo,
+                                 caps->allowMultipleAtlasTextures()
+                                         ? DrawAtlas::AllowMultitexturing::kYes
+                                         : DrawAtlas::AllowMultitexturing::kNo,
                                  useStorageTextures,
                                  /*evictor=*/this,
                                  label);
@@ -219,7 +218,7 @@ sk_sp<TextureProxy> ClipAtlasManager::DrawAtlasMgr::findOrCreateEntry(
         entry = entry->fNext;
     }
 
-    AtlasLocator locator;
+    DrawAtlas::AtlasLocator locator;
     sk_sp<TextureProxy> proxy = this->addToAtlas(recorder, elementList, maskDeviceBounds, outPos,
                                                  &locator);
     if (!proxy) {
@@ -262,11 +261,11 @@ sk_sp<TextureProxy> ClipAtlasManager::DrawAtlasMgr::findOrCreateEntry(
 }
 
 sk_sp<TextureProxy> ClipAtlasManager::DrawAtlasMgr::addToAtlas(
-            Recorder* recorder,
-            const ClipStack::ElementList* elementsForMask,
-            SkIRect maskDeviceBounds,
-            SkIPoint* outPos,
-            AtlasLocator* locator) {
+        Recorder* recorder,
+        const ClipStack::ElementList* elementsForMask,
+        SkIRect maskDeviceBounds,
+        SkIPoint* outPos,
+        DrawAtlas::AtlasLocator* locator) {
     // Render mask.
     SkISize maskSize = maskDeviceBounds.size();
     if (maskSize.isEmpty()) {
@@ -308,7 +307,7 @@ bool ClipAtlasManager::DrawAtlasMgr::recordUploads(DrawContext* dc, Recorder* re
     return (fDrawAtlas && !fDrawAtlas->recordUploads(dc, recorder));
 }
 
-void ClipAtlasManager::DrawAtlasMgr::evict(PlotLocator plotLocator) {
+void ClipAtlasManager::DrawAtlasMgr::evict(DrawAtlas::PlotLocator plotLocator) {
     // Remove all entries for this Plot from the MaskCache
     uint32_t index = fDrawAtlas->getListIndex(plotLocator);
     MaskKeyList::Iter iter;

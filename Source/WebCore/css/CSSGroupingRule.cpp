@@ -36,6 +36,7 @@
 #include "CSSStyleSheet.h"
 #include "StylePropertiesInlines.h"
 #include "StyleRule.h"
+#include "StyleSheetContents.h"
 #include <wtf/text/StringBuilder.h>
 
 namespace WebCore {
@@ -54,16 +55,6 @@ CSSGroupingRule::~CSSGroupingRule()
         if (wrapper)
             wrapper->setParentRule(nullptr);
     }
-}
-
-Ref<const StyleRuleGroup> CSSGroupingRule::protectedGroupRule() const
-{
-    return m_groupRule;
-}
-
-Ref<StyleRuleGroup> CSSGroupingRule::protectedGroupRule()
-{
-    return m_groupRule;
 }
 
 ExceptionOr<unsigned> CSSGroupingRule::insertRule(const String& ruleString, unsigned index)
@@ -86,12 +77,12 @@ ExceptionOr<unsigned> CSSGroupingRule::insertRule(const String& ruleString, unsi
         // Find the context in the ancestor chain.
         return nestedContext();
     }();
-    RefPtr newRule = CSSParser::parseRule(ruleString, parserContext(), styleSheet ? &styleSheet->contents() : nullptr, CSSParser::AllowedRules::ImportRules, nestedContextWithCurrentRule);
+    RefPtr newRule = CSSParser::parseRule(ruleString, parserContext(), styleSheet ? protect(styleSheet->contents()).ptr() : nullptr, CSSParser::AllowedRules::ImportRules, nestedContextWithCurrentRule);
     if (!newRule) {
         // CSSNestedDeclarations parsing is allowed if there is an ancestor style rule or an ancestor scope rule.
         if (!nestedContextWithCurrentRule)
             return Exception { ExceptionCode::SyntaxError };
-        newRule = CSSParser::parseNestedDeclarations(parserContext(), ruleString);
+        newRule = CSSParser::parseNestedDeclarations(ruleString, parserContext());
         if (!newRule)
             return Exception { ExceptionCode::SyntaxError };
     }
@@ -112,7 +103,7 @@ ExceptionOr<unsigned> CSSGroupingRule::insertRule(const String& ruleString, unsi
 
     CSSStyleSheet::RuleMutationScope mutationScope(this);
 
-    m_groupRule->wrapperInsertRule(index, newRule.releaseNonNull());
+    protect(m_groupRule)->wrapperInsertRule(index, newRule.releaseNonNull());
 
     m_childRuleCSSOMWrappers.insert(index, RefPtr<CSSRule>());
     return index;
@@ -130,7 +121,7 @@ ExceptionOr<void> CSSGroupingRule::deleteRule(unsigned index)
 
     CSSStyleSheet::RuleMutationScope mutationScope(this);
 
-    m_groupRule->wrapperRemoveRule(index);
+    protect(m_groupRule)->wrapperRemoveRule(index);
 
     if (m_childRuleCSSOMWrappers[index])
         m_childRuleCSSOMWrappers[index]->setParentRule(nullptr);
@@ -161,7 +152,7 @@ void CSSGroupingRule::cssTextForRules(StringBuilder& rules) const
 {
     auto& childRules = m_groupRule->childRules();
     for (unsigned index = 0; index < childRules.size(); ++index) {
-        auto ruleText = item(index)->cssText();
+        auto ruleText = protect(item(index))->cssText();
         if (!ruleText.isEmpty())
             rules.append("\n  "_s, WTF::move(ruleText));
     }
@@ -209,7 +200,7 @@ CSSRule* CSSGroupingRule::item(unsigned index) const
     ASSERT(m_childRuleCSSOMWrappers.size() == m_groupRule->childRules().size());
     auto& rule = m_childRuleCSSOMWrappers[index];
     if (!rule)
-        rule = m_groupRule->childRules()[index]->createCSSOMWrapper(const_cast<CSSGroupingRule&>(*this));
+        rule = protect(m_groupRule->childRules()[index])->createCSSOMWrapper(const_cast<CSSGroupingRule&>(*this));
     return rule.get();
 }
 
@@ -225,7 +216,7 @@ void CSSGroupingRule::reattach(StyleRuleBase& rule)
     m_groupRule = downcast<StyleRuleGroup>(rule);
     for (unsigned i = 0; i < m_childRuleCSSOMWrappers.size(); ++i) {
         if (m_childRuleCSSOMWrappers[i])
-            m_childRuleCSSOMWrappers[i]->reattach(m_groupRule->childRules()[i]);
+            protect(m_childRuleCSSOMWrappers[i])->reattach(m_groupRule->childRules()[i]);
     }
 }
 

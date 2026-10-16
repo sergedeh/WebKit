@@ -34,7 +34,6 @@
 #include "Event.h"
 #include "EventLoop.h"
 #include "EventNames.h"
-#include "EventTargetInlines.h"
 #include "EventTargetInterfaces.h"
 #include "JSDOMPromise.h"
 #include "JSDOMPromiseDeferred.h"
@@ -51,8 +50,10 @@
 #include "ServiceWorkerTypes.h"
 #include "WebCoreOpaqueRoot.h"
 #include "WorkerGlobalScope.h"
+#include <JavaScriptCore/HeapCellInlines.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Vector.h>
+#include <wtf/text/TextStream.h>
 
 #define REGISTRATION_RELEASE_LOG(fmt, ...) RELEASE_LOG(ServiceWorker, "%p - ServiceWorkerRegistration::" fmt, this, ##__VA_ARGS__)
 #define REGISTRATION_RELEASE_LOG_ERROR(fmt, ...) RELEASE_LOG_ERROR(ServiceWorker, "%p - ServiceWorkerRegistration::" fmt, this, ##__VA_ARGS__)
@@ -78,7 +79,7 @@ ServiceWorkerRegistration::ServiceWorkerRegistration(ScriptExecutionContext& con
     , m_registrationData(WTF::move(registrationData))
     , m_container(WTF::move(container))
 {
-    LOG(ServiceWorker, "Creating registration %p for registration key %s", this, m_registrationData.key.loggingString().utf8().data());
+    LOG_WITH_STREAM(ServiceWorker, stream << "Creating registration "_s << this << " for registration key "_s << m_registrationData.key.loggingString());
 
     if (m_registrationData.installingWorker)
         m_installingWorker = ServiceWorker::getOrCreate(context, WTF::move(*m_registrationData.installingWorker));
@@ -90,13 +91,11 @@ ServiceWorkerRegistration::ServiceWorkerRegistration(ScriptExecutionContext& con
     REGISTRATION_RELEASE_LOG("ServiceWorkerRegistration: ID %" PRIu64 ", installing=%" PRIu64 ", waiting=%" PRIu64 ", active=%" PRIu64, identifier().toUInt64(), m_installingWorker ? m_installingWorker->identifier().toUInt64() : 0, m_waitingWorker ? m_waitingWorker->identifier().toUInt64() : 0, m_activeWorker ? m_activeWorker->identifier().toUInt64() : 0);
 
     m_container->addRegistration(*this);
-
-    relaxAdoptionRequirement();
 }
 
 ServiceWorkerRegistration::~ServiceWorkerRegistration()
 {
-    LOG(ServiceWorker, "Deleting registration %p for registration key %s", this, m_registrationData.key.loggingString().utf8().data());
+    LOG_WITH_STREAM(ServiceWorker, stream << "Deleting registration "_s << this << " for registration key "_s << m_registrationData.key.loggingString());
 
     m_container->removeRegistration(*this);
 }
@@ -273,7 +272,7 @@ bool ServiceWorkerRegistration::virtualHasPendingActivity() const
 NavigationPreloadManager& ServiceWorkerRegistration::navigationPreload()
 {
     if (!m_navigationPreload)
-        m_navigationPreload = std::unique_ptr<NavigationPreloadManager>(new NavigationPreloadManager(*this));
+        lazyInitialize(m_navigationPreload, std::unique_ptr<NavigationPreloadManager>(new NavigationPreloadManager(*this)));
     return *m_navigationPreload;
 }
 
@@ -331,8 +330,8 @@ void ServiceWorkerRegistration::showNotification(ScriptExecutionContext& context
 #endif
 
         if (RefPtr pushEvent = serviceWorkerGlobalScope->pushEvent()) {
-            auto& globalObject = *JSC::jsCast<JSDOMGlobalObject*>(promise->globalObject());
-            auto& jsPromise = *JSC::jsCast<JSC::JSPromise*>(promise->promise());
+            auto& globalObject = *promise->globalObject();
+            auto& jsPromise = *downcast<JSC::JSPromise>(promise->promise());
             pushEvent->waitUntil(DOMPromise::create(globalObject, jsPromise));
         }
 
@@ -358,7 +357,7 @@ void ServiceWorkerRegistration::getNotifications(const GetNotificationOptions& f
 CookieStoreManager& ServiceWorkerRegistration::cookies()
 {
     if (!m_cookieStoreManager)
-        m_cookieStoreManager = CookieStoreManager::create(*this);
+        lazyInitialize(m_cookieStoreManager, CookieStoreManager::create(*this));
     return *m_cookieStoreManager;
 }
 
@@ -377,7 +376,7 @@ void ServiceWorkerRegistration::addCookieChangeSubscriptions(Vector<CookieStoreG
         if (subscription.url.isNull())
             url = scope();
         else {
-            url = protectedScriptExecutionContext()->completeURL(subscription.url).string();
+            url = protect(scriptExecutionContext())->encodingParseURL(subscription.url).string();
             if (!url.startsWith(scope())) {
                 promise->reject(Exception { ExceptionCode::TypeError, "The service worker cannot subcribe to cookie changes for URLs outside of its scope"_s });
                 return;
@@ -405,7 +404,7 @@ void ServiceWorkerRegistration::removeCookieChangeSubscriptions(Vector<CookieSto
         if (subscription.url.isNull())
             url = scope();
         else {
-            url = protectedScriptExecutionContext()->completeURL(subscription.url).string();
+            url = protect(scriptExecutionContext())->encodingParseURL(subscription.url).string();
             if (!url.startsWith(scope())) {
                 promise->reject(Exception { ExceptionCode::TypeError, "The service worker cannot unsubcribe from cookie changes for URLs outside of its scope"_s });
                 return;

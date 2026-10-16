@@ -39,12 +39,13 @@ Filter::Filter(Filter::Type filterType, std::optional<RenderingResourceIdentifie
 {
 }
 
-Filter::Filter(Filter::Type filterType, const FilterGeometry& geometry, std::optional<RenderingResourceIdentifier> renderingResourceIdentifier)
+Filter::Filter(Filter::Type filterType, const FilterGeometry& geometry, OptionSet<FilterRenderingOption> renderingOptions, std::optional<RenderingResourceIdentifier> renderingResourceIdentifier)
     : FilterFunction(filterType, renderingResourceIdentifier)
     , m_geometry(geometry)
 #if USE(CORE_IMAGE)
     , m_enclosingFilterRegion(geometry.filterRegion)
 #endif
+    , m_renderingOptions(renderingOptions)
 {
 }
 
@@ -132,7 +133,7 @@ RefPtr<FilterImage> Filter::apply(ImageBuffer* sourceImage, const FloatRect& sou
         return nullptr;
 
     result->correctPremultipliedPixelBuffer();
-    result->transformToColorSpace(DestinationColorSpace::SRGB());
+    result->transformToColorSpace(ColorSpace::SRGB());
     return result;
 }
 

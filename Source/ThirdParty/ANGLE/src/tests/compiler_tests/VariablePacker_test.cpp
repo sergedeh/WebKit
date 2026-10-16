@@ -4,10 +4,9 @@
 // found in the LICENSE file.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
+#include <array>
 
+#include "common/unsafe_buffers.h"
 #include "gtest/gtest.h"
 
 #include "angle_gl.h"
@@ -18,7 +17,7 @@
 namespace
 {
 
-static sh::GLenum types[] = {
+static constexpr std::array<sh::GLenum, 42> types = {
     GL_FLOAT_MAT4,                     // 0
     GL_FLOAT_MAT2,                     // 1
     GL_FLOAT_VEC4,                     // 2
@@ -63,8 +62,9 @@ static sh::GLenum types[] = {
     GL_UNSIGNED_INT_SAMPLER_2D_ARRAY,  // 41
 };
 
-static sh::GLenum nonSqMatTypes[] = {GL_FLOAT_MAT2x3, GL_FLOAT_MAT2x4, GL_FLOAT_MAT3x2,
-                                     GL_FLOAT_MAT3x4, GL_FLOAT_MAT4x2, GL_FLOAT_MAT4x3};
+static constexpr std::array<sh::GLenum, 6> nonSqMatTypes = {GL_FLOAT_MAT2x3, GL_FLOAT_MAT2x4,
+                                                            GL_FLOAT_MAT3x2, GL_FLOAT_MAT3x4,
+                                                            GL_FLOAT_MAT4x2, GL_FLOAT_MAT4x3};
 
 // Creates either a single variable or an array variable depending on numVars.
 sh::ShaderVariable CreateShaderVariable(sh::GLenum type, int numVars)
@@ -86,9 +86,8 @@ TEST(VariablePacking, Pack)
     // test no vars.
     EXPECT_TRUE(CheckVariablesInPackingLimits(kMaxRows, vars));
 
-    for (size_t tt = 0; tt < ArraySize(types); ++tt)
+    for (sh::GLenum type : types)
     {
-        sh::GLenum type            = types[tt];
         int num_rows               = sh::GetTypePackingRows(type);
         int num_components_per_row = sh::GetTypePackingComponentsPerRow(type);
         // Check 1 of the type.
@@ -138,10 +137,8 @@ TEST(VariablePacking, Pack)
 
 TEST(VariablePacking, PackSizes)
 {
-    for (size_t tt = 0; tt < ArraySize(types); ++tt)
+    for (sh::GLenum type : types)
     {
-        sh::GLenum type = types[tt];
-
         int expectedComponents = gl::VariableComponentCount(type);
         int expectedRows       = gl::VariableRowCount(type);
 
@@ -165,11 +162,8 @@ TEST(VariablePacking, PackSizes)
 TEST(VariablePacking, NonSquareMats)
 {
 
-    for (size_t mt = 0; mt < ArraySize(nonSqMatTypes); ++mt)
+    for (sh::GLenum type : nonSqMatTypes)
     {
-
-        sh::GLenum type = nonSqMatTypes[mt];
-
         int rows       = gl::VariableRowCount(type);
         int cols       = gl::VariableColumnCount(type);
         int squareSize = std::max(rows, cols);

@@ -42,7 +42,7 @@ private:
 
     // ModelPlayerProvider overrides.
     RefPtr<ModelPlayer> createModelPlayer(ModelPlayerClient&) final;
-    void deleteModelPlayer(ModelPlayer&) final;
+    void LEGACY_NODELETE deleteModelPlayer(ModelPlayer&) final;
 };
 
 }

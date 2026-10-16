@@ -46,14 +46,12 @@ private:
     void doReapply() override;
     void executeApply();
 
-    RefPtr<HTMLElement> protectedDummySpan() const { return m_dummySpan; }
-
 #ifndef NDEBUG
     void getNodesInCommand(NodeSet&) override;
 #endif
 
     const Ref<Element> m_element;
-    RefPtr<HTMLElement> m_dummySpan;
+    const RefPtr<HTMLElement> m_dummySpan;
 };
 
 } // namespace WebCore

@@ -1,5 +1,11 @@
 const isDebug = false;
 
+// Mock video presentation mode is required so tests that enter Picture-in-Picture
+// (or otherwise transition presentation mode) do not compete for the singleton system
+// PiP window when tests run in parallel.
+if (window.internals && window.internals.setMockVideoPresentationModeEnabled)
+    window.internals.setMockVideoPresentationModeEnabled(true);
+
 function logDebug(msg) {
     if (isDebug)
         console.log(msg);
@@ -18,6 +24,40 @@ function pause(duration) {
 }
 
 /**
+ * Compute the offset to add to an action's coordinates for the action's origin.
+ *
+ * For an element origin that is the center of the element's bounding box, in root-view
+ * coordinates: events are dispatched from the top window, so an origin inside a subframe must be
+ * shifted out of that frame's coordinate space. The shift ignores CSS transforms on an ancestor
+ * <iframe> (webkit.org/b/318752). Any other origin ("viewport") contributes no offset.
+ *
+ * @param {Element | String | undefined} origin
+ * @returns {{ x: Number, y: Number }}
+ */
+function originOffset(origin)
+{
+    const originWindow = origin?.ownerDocument?.defaultView;
+    if (!originWindow || !(origin instanceof originWindow.Element))
+        return { x: 0, y: 0 };
+
+    const bounds = origin.getBoundingClientRect();
+    logDebug(`${origin.id} [${bounds.left}, ${bounds.top}, ${bounds.width}, ${bounds.height}]`);
+
+    const offset = {
+        x: bounds.left + (bounds.width / 2.0),
+        y: bounds.top + (bounds.height / 2.0),
+    };
+
+    if (originWindow !== originWindow.top && originWindow.internals) {
+        const rootViewBounds = originWindow.internals.boundingBoxInMainFrameViewCoordinates(origin);
+        offset.x += rootViewBounds.left - bounds.left;
+        offset.y += rootViewBounds.top - bounds.top;
+    }
+
+    return offset;
+}
+
+/**
  *
  * @param {object[]} actions
  * @param {"pointerMove" | "pointerDown" | "pointerUp" | "pause"} pointerType
@@ -32,24 +72,17 @@ async function dispatchMouseActions(actions, pointerType)
     for (let action of actions) {
         switch (action.type) {
         case "pointerMove":
-            const origin = { x: 0, y: 0 };
-            const actionWindow = action.origin?.ownerDocument?.defaultView;
-            if (actionWindow && action.origin instanceof actionWindow.Element) {
-                const bounds = action.origin.getBoundingClientRect();
-                logDebug(`${action.origin.id} [${bounds.left}, ${bounds.top}, ${bounds.width}, ${bounds.height}]`);
-                origin.x = bounds.left + (bounds.width / 2.0);
-                origin.y = bounds.top + (bounds.height / 2.0);
-            }
+            const origin = originOffset(action.origin);
             logDebug(`eventSender.mouseMoveTo(${action.x + origin.x}, ${action.y + origin.y})`);
-            eventSender.mouseMoveTo(action.x + origin.x, action.y + origin.y, pointerType);
+            await eventSender.asyncMouseMoveTo(action.x + origin.x, action.y + origin.y, pointerType);
             break;
         case "pointerDown":
             logDebug(`eventSender.mouseDown()`);
-            eventSender.mouseDown(action.button, [], pointerType);
+            await eventSender.asyncMouseDown(action.button, [], pointerType);
             break;
         case "pointerUp":
             logDebug(`eventSender.mouseUp()`);
-            eventSender.mouseUp(action.button, [], pointerType);
+            await eventSender.asyncMouseUp(action.button, [], pointerType);
             break;
         case "pause":
             logDebug(`pause(${action.duration})`);
@@ -98,12 +131,9 @@ async function dispatchTouchActions(actions, options = { insertPauseAfterPointer
         switch (action.type) {
         case "pointerMove":
             touch.phase = "moved";
-            const actionWindow = action.origin?.ownerDocument?.defaultView;
-            if (actionWindow && action.origin instanceof actionWindow.Element) {
-                const bounds = action.origin.getBoundingClientRect();
-                touch.x += bounds.left + (bounds.width / 2.0);
-                touch.y += bounds.top + (bounds.height / 2.0);
-            }
+            const offset = originOffset(action.origin);
+            touch.x += offset.x;
+            touch.y += offset.y;
             break;
         case "pointerDown":
             pointerDown = true;
@@ -148,8 +178,9 @@ async function dispatchTouchActions(actions, options = { insertPauseAfterPointer
     logDebug(stream);
 
     return new Promise(resolve => testRunner.runUIScript(`(function() {
-        (function() { uiController.sendEventStream('${stream}') })();
-        uiController.uiScriptComplete();
+        uiController.sendEventStream('${stream}', function() {
+            uiController.uiScriptComplete();
+        });
     })();`, resolve));
 }
 
@@ -226,41 +257,78 @@ async function dispatchWheelActions(actions)
             await pause(action.duration);
             break;
         case "scroll":
-            // FIXME(261810): Follow tick-based event dispatch logic rather than sending scroll events instantaneously
             // https://w3c.github.io/webdriver/#dfn-perform-a-scroll
             let { x, y, origin, deltaX, deltaY, duration } = action;
             if ((x < 0) || (x > window.innerWidth) || (y < 0) || (y > window.innerHeight))
                 throw new Error('Move target out of bounds');
             if (duration === undefined)
                 duration = computeTickDuration(actions, "wheel");
+ 
+            const offset = originOffset(origin);
+            x += offset.x;
+            y += offset.y;
 
-            const originWindow = origin?.ownerDocument?.defaultView;
-            if (originWindow && origin instanceof originWindow.Element) {
-                const bounds = origin.getBoundingClientRect();
-                logDebug(() => `${origin.id} [${bounds.left}, ${bounds.top}, ${bounds.width}, ${bounds.height}]`);
-                x += bounds.left + (bounds.width / 2.0);
-                y += bounds.top + (bounds.height / 2.0);
-            }
-            const scrollEvents = [
-                {
-                    type : "wheel",
-                    viewX : x,
-                    viewY : y,
-                    deltaX : 0,
-                    deltaY : -deltaY,
-                    phase : "began"
-                },
-                {
-                    type : "wheel",
-                    deltaX : -deltaX,
-                    deltaY : 0,
-                    phase : "changed"
-                },
-                {
-                    type : "wheel",
-                    momentumPhase : "ended"
+            const eventInterval = 1000. / 60.; // Matches the hardcoded interval in sendEventStream()
+            const eventCount = Math.ceil(duration / eventInterval);
+            const scrollEvents = [];
+
+            if (eventCount === 1 && deltaX && deltaY) {
+                // Special-case single-event cases; separate out the X and Y deltas into different events,
+                // to avoid the axis-locking code from zeroing out one of them.
+                scrollEvents.push({
+                        type : "wheel",
+                        viewX : x,
+                        viewY : y,
+                        deltaX : 0,
+                        deltaY : -deltaY,
+                        phase : "began"
+                    });
+                scrollEvents.push({
+                        type : "wheel",
+                        deltaX : -deltaX,
+                        deltaY : 0,
+                        phase : "changed"
+                    });
+            } else {
+                const perEventDeltaX = Math.floor(deltaX / eventCount);
+                const perEventDeltaY = Math.floor(deltaY / eventCount);
+
+                scrollEvents.push({
+                        type : "wheel",
+                        viewX : x,
+                        viewY : y,
+                        deltaX : -perEventDeltaX,
+                        deltaY : -perEventDeltaY,
+                        phase : "began"
+                    });
+
+                for (let i = 1; i < eventCount; ++i) {
+                    scrollEvents.push({
+                            type : "wheel",
+                            deltaX : -perEventDeltaX,
+                            deltaY : -perEventDeltaY,
+                            phase : "changed"
+                        });
                 }
-            ];
+
+                const remainingDeltaX = deltaX - (eventCount * perEventDeltaX);
+                const remainingDeltaY = deltaY - (eventCount * perEventDeltaY);
+
+                if (remainingDeltaX || remainingDeltaY) {
+                    scrollEvents.push({
+                            type : "wheel",
+                            deltaX : -remainingDeltaX,
+                            deltaY : -remainingDeltaY,
+                            phase : "changed"
+                        });
+                }
+            }
+
+            scrollEvents.push({
+                    type : "wheel",
+                    phase : "ended"
+                });
+
             eventSender.monitorWheelEvents();
             await ensurePresentationUpdate();
             const eventStreamAsString = JSON.stringify({ events: scrollEvents });
@@ -325,7 +393,7 @@ const SeleniumCharCodeToEventSenderKey = {
     0xE050: { key: 'rightShift', modifier: 'shiftKey' },
     0xE051: { key: 'rightControl', modifier: 'ctrlKey' },
     0xE052: { key: 'rightAlt', modifier: 'altKey' },
-    0xE052: { key: 'rightMeta', modifier: 'metaKey' }, // a.k.a. commandKey
+    0xE053: { key: 'rightMeta', modifier: 'metaKey' }, // a.k.a. commandKey
 };
 
 function convertSeleniumKeyCode(key)
@@ -364,7 +432,7 @@ window.test_driver_internal.send_keys = async function(element, keys)
     }
 
     for (const key of keyList)
-        eventSender.keyDown(key, modifiers);
+        await eventSender.asyncKeyDown(key, modifiers);
 }
 
 /**
@@ -375,19 +443,44 @@ window.test_driver_internal.send_keys = async function(element, keys)
  */
 window.test_driver_internal.click = async function (element, coords)
 {
-    if (testRunner.isIOSFamily && testRunner.isWebKit2) {
+    // Use the eventSender from the element's window so that events are
+    // dispatched to the correct view (e.g. a popup opened via window.open).
+    const targetWindow = element.ownerDocument.defaultView || window;
+    const targetEventSender = targetWindow.eventSender || eventSender;
+
+    // coords are frame-local; when the element is in a subframe, shift them to main-frame-view
+    // coordinates (which, unlike root-view coordinates, cross process boundaries under site
+    // isolation) since the click is hit-tested from the top window. A top-level element needs no
+    // shift. The shift ignores CSS transforms on an ancestor <iframe> (webkit.org/b/318752).
+    let point = coords;
+    const elementWindow = element.ownerDocument.defaultView;
+    if (elementWindow && elementWindow !== elementWindow.top) {
+        // Under site isolation, the offsets of ancestor frames in other processes come from frame
+        // geometry each process broadcasts during its rendering update. runUIScript waits for a
+        // presentation update in every web process, so that geometry is current before we use it.
+        if (testRunner?.isWebKit2 && testRunner?.runUIScript)
+            await new Promise((resolve) => testRunner.runUIScript(`uiController.uiScriptComplete()`, resolve));
+        const rootView = targetWindow.internals.boundingBoxInMainFrameViewCoordinates(element);
+        const frameLocal = element.getBoundingClientRect();
+        point = {
+            x: coords.x + rootView.left - frameLocal.left,
+            y: coords.y + rootView.top - frameLocal.top,
+        };
+    }
+
+    if (testRunner?.isIOSFamily && testRunner?.isWebKit2) {
         await new Promise((resolve) => {
             testRunner.runUIScript(`
-                uiController.singleTapAtPoint(${coords.x}, ${coords.y}, function() {
+                uiController.singleTapAtPoint(${point.x}, ${point.y}, function() {
                     uiController.uiScriptComplete();
                 });`, resolve);
         });
         return;
     }
 
-    eventSender.mouseMoveTo(coords.x, coords.y);
-    eventSender.mouseDown();
-    eventSender.mouseUp();
+    await targetEventSender.asyncMouseMoveTo(point.x, point.y);
+    await targetEventSender.asyncMouseDown();
+    await targetEventSender.asyncMouseUp();
 }
 
 /**
@@ -446,8 +539,11 @@ window.test_driver_internal.action_sequence = async function(sources)
                 break;
             }
             case 'pause':
-                // FIXME: Use eventSender.leapForward.
-                throw new Error('testdriver-vendor.js for WebKit does not yet support pause key action');
+                // A tick in which the key source has no action of its own is serialized by
+                // testdriver-actions.js as a pause with no duration, so there is nothing to wait for.
+                if (action.duration > 0)
+                    events.push({type: 'leapForward', arguments: [action.duration]});
+                break;
             default:
                 throw new Error(`Unknown key action type "${action.type}" encountered in testdriver-vendor.js`);
             }
@@ -545,12 +641,27 @@ window.test_driver_internal.set_permission = async function(permission_params)
     case "screen-wake-lock":
         testRunner.setScreenWakeLockPermission(permission_params.state == "granted");
         break;
+    case "local-network":
+        await testRunner.setLocalNetworkAccessPermission(permission_params.state === "granted", false);
+        break;
+    case "loopback-network":
+        await testRunner.setLocalNetworkAccessPermission(permission_params.state === "granted", true);
+        break;
     case "storage-access":
         await testRunner.setStorageAccessPermission(permission_params.state === "granted", location.href);
         break;
     default:
         throw new Error(`Unsupported permission name "${permission_params.descriptor.name}".`);
     }
+};
+
+// Digital Credentials virtual wallet actuation; see webkit.org/b/306292.
+window.test_driver_internal.set_virtual_wallet_behavior = async function(action, protocol = null, response = null, context = null)
+{
+    context = context ?? window;
+    if (!context.testRunner || !context.testRunner.setVirtualWalletBehavior)
+        throw new Error("set_virtual_wallet_behavior is not supported.");
+    context.testRunner.setVirtualWalletBehavior(String(action), protocol != null ? String(protocol) : "", response != null ? JSON.stringify(response) : "");
 };
 
 /**
@@ -718,4 +829,22 @@ window.test_driver_internal.set_storage_access = async function (origin, embeddi
 
     context = context ?? window;
     await context.testRunner.setStorageAccess(blocked);
+}
+
+/**
+ *
+ * @returns {Promise<boolean>}
+ */
+window.test_driver_internal.get_global_privacy_control = function() {
+    return Promise.resolve({ gpc: testRunner.getGlobalPrivacyControl() });
+}
+
+/**
+ *
+ * @param {value} bool
+ * @returns {Promise<void>}
+ */
+window.test_driver_internal.set_global_privacy_control = function(value) {
+    testRunner.setGlobalPrivacyControl(value);
+    return Promise.resolve({ gpc: value });
 }

@@ -53,7 +53,7 @@ static ASCIILiteral logClassName()
     return "MediaKeySystemPermissionRequestManagerProxy"_s;
 }
 
-static WTFLogChannel& logChannel()
+static WTFLogChannel& LEGACY_NODELETE logChannel()
 {
     return JOIN_LOG_CHANNEL_WITH_PREFIX(LOG_CHANNEL_PREFIX, EME);
 }
@@ -62,7 +62,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(MediaKeySystemPermissionRequestManagerProxy);
 
 const Logger& MediaKeySystemPermissionRequestManagerProxy::logger() const
 {
-    return protect(m_page.get())->logger();
+    return protect(m_page)->logger();
 }
 #endif
 
@@ -96,7 +96,9 @@ void MediaKeySystemPermissionRequestManagerProxy::denyRequest(MediaKeySystemPerm
     ALWAYS_LOG(LOGIDENTIFIER, request.mediaKeySystemID().toUInt64(), ", reason: ", message);
 
 #if ENABLE(ENCRYPTED_MEDIA)
-    protect(page->legacyMainFrameProcess())->send(Messages::WebPage::MediaKeySystemWasDenied(request.mediaKeySystemID(), message), page->webPageIDInMainFrameProcess());
+    if (!WebFrameProxy::webFrame(request.frameID()))
+        return;
+    page->sendToProcessContainingFrame(request.frameID(), Messages::WebPage::MediaKeySystemWasDenied(request.mediaKeySystemID(), message));
 #else
     UNUSED_PARAM(message);
 #endif
@@ -111,7 +113,9 @@ void MediaKeySystemPermissionRequestManagerProxy::grantRequest(MediaKeySystemPer
 #if ENABLE(ENCRYPTED_MEDIA)
     ALWAYS_LOG(LOGIDENTIFIER, request.mediaKeySystemID().toUInt64(), ", keySystem: ", request.keySystem());
 
-    protect(page->legacyMainFrameProcess())->send(Messages::WebPage::MediaKeySystemWasGranted { request.mediaKeySystemID(), request.mediaKeysHashSalt() }, page->webPageIDInMainFrameProcess());
+    if (!WebFrameProxy::webFrame(request.frameID()))
+        return;
+    page->sendToProcessContainingFrame(request.frameID(), Messages::WebPage::MediaKeySystemWasGranted { request.mediaKeySystemID(), request.mediaKeysHashSalt() });
 #else
     UNUSED_PARAM(request);
 #endif
@@ -126,7 +130,7 @@ void MediaKeySystemPermissionRequestManagerProxy::createRequestForFrame(MediaKey
 
     Ref mediaKeyRequestDocumentSecurityOrigin = request->mediaKeyRequestSecurityOrigin();
     Ref topLevelDocumentSecurityOrigin = request->topLevelDocumentSecurityOrigin();
-    protect(page->websiteDataStore())->ensureProtectedDeviceIdHashSaltStorage()->deviceIdHashSaltForOrigin(mediaKeyRequestDocumentSecurityOrigin, topLevelDocumentSecurityOrigin, [request = WTF::move(request), completionHandler = WTF::move(completionHandler)] (String&& mediaKeysHashSalt) mutable {
+    protect(protect(page->websiteDataStore())->ensureDeviceIdHashSaltStorage())->deviceIdHashSaltForOrigin(mediaKeyRequestDocumentSecurityOrigin, topLevelDocumentSecurityOrigin, [request = WTF::move(request), completionHandler = WTF::move(completionHandler)] (String&& mediaKeysHashSalt) mutable {
         request->setMediaKeysHashSalt(WTF::move(mediaKeysHashSalt));
         completionHandler(WTF::move(request));
     });

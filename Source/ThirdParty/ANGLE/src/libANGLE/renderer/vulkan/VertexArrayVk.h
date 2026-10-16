@@ -23,26 +23,6 @@ enum class BufferBindingDirty
     Yes,
 };
 
-struct AttributeRange
-{
-    // Stream vertex attribute start pointer address.
-    uintptr_t startAddr;
-    // Stream vertex attribute end pointer address.
-    uintptr_t endAddr;
-    // Stream vertex attribute first used pointer address.
-    // ie. startAddr + startVertex * stride.
-    uintptr_t copyStartAddr;
-    AttributeRange() : startAddr(0), endAddr(0), copyStartAddr(0) {}
-    AttributeRange(uintptr_t start, uintptr_t end, uintptr_t copyStart)
-        : startAddr(start), endAddr(end), copyStartAddr(copyStart)
-    {}
-};
-
-ANGLE_INLINE bool operator<(const AttributeRange &a, const AttributeRange &b)
-{
-    return a.startAddr == b.startAddr ? a.endAddr < b.endAddr : a.startAddr < b.startAddr;
-}
-
 class VertexArrayVk : public VertexArrayImpl
 {
   public:
@@ -62,14 +42,21 @@ class VertexArrayVk : public VertexArrayImpl
                             gl::VertexArray::DirtyAttribBitsArray *attribBits,
                             gl::VertexArray::DirtyBindingBitsArray *bindingBits) override;
 
-    angle::Result updateDefaultAttrib(ContextVk *contextVk, size_t attribIndex);
+    angle::Result updateDefaultAttribs(ContextVk *contextVk,
+                                       const gl::AttributesMask &dirtyDefaultAttribsMask);
 
     angle::Result updateStreamedAttribs(const gl::Context *context,
+                                        const gl::AttributesMask activeStreamingAttribsMask,
                                         GLint firstVertex,
                                         GLsizei vertexOrIndexCount,
+                                        GLuint baseInstance,
                                         GLsizei instanceCount,
                                         gl::DrawElementsType indexTypeOrInvalid,
-                                        const void *indices);
+                                        const void *indices,
+                                        gl::AttributesMask *strideDirtyAttribMaskOut);
+
+    void updateCurrentActiveStreamingAttribsMask(const gl::Context *context,
+                                                 vk::BufferHelper &emptyBuffer);
 
     angle::Result handleLineLoop(ContextVk *contextVk,
                                  GLint firstVertex,
@@ -155,6 +142,15 @@ class VertexArrayVk : public VertexArrayImpl
         return mCurrentArrayBuffers;
     }
 
+    void assertEmptyBufferConsistency(const vk::BufferHelper &emptyBuffer) const
+    {
+        for (size_t attribIndex = 0; attribIndex < mCurrentArrayBuffers.size(); ++attribIndex)
+        {
+            ASSERT(mCurrentEmptyBufferMask.test(attribIndex) ==
+                   (mCurrentArrayBuffers[attribIndex] == &emptyBuffer));
+        }
+    }
+
     angle::Result convertIndexBufferGPU(ContextVk *contextVk,
                                         BufferVk *bufferVk,
                                         const void *indices);
@@ -171,22 +167,15 @@ class VertexArrayVk : public VertexArrayImpl
                                         BufferBindingDirty *bufferBindingDirty);
 
     gl::AttributesMask getStreamingVertexAttribsMask() const { return mStreamingVertexAttribsMask; }
-
-    gl::ComponentTypeMask getCurrentVertexAttributesTypeMask() const
-    {
-        return mCurrentVertexAttributesTypeMask;
-    }
-
     gl::AttributesMask getCurrentEnabledAttribsMask() const { return mCurrentEnabledAttribsMask; }
+    gl::AttributesMask getCurrentDefaultAttribsMask() const { return mCurrentDefaultAttribsMask; }
+
+    void syncDirtyDisabledAttribs(ContextVk *contextVk,
+                                  const gl::AttributesMask &disabledAttributesMask);
+    void resetInactiveStreamingAttribs(const gl::AttributesMask inactiveAttribMask,
+                                       vk::BufferHelper &emptyBuffer);
 
   private:
-    gl::AttributesMask mergeClientAttribsRange(
-        vk::Renderer *renderer,
-        const gl::AttributesMask activeStreamedAttribs,
-        size_t startVertex,
-        size_t endVertex,
-        std::array<AttributeRange, gl::MAX_VERTEX_ATTRIBS> &mergeRangesOut,
-        std::array<size_t, gl::MAX_VERTEX_ATTRIBS> &mergedIndexesOut) const;
 
     void setDefaultPackedInput(ContextVk *contextVk,
                                size_t attribIndex,
@@ -204,23 +193,18 @@ class VertexArrayVk : public VertexArrayImpl
                                          const angle::Format &dstFormat,
                                          const VertexCopyFunction vertexLoadFunction);
 
-    angle::Result syncDirtyEnabledNonStreamingAttrib(
+    void syncDirtyEnabledNonStreamingAttrib(
         ContextVk *contextVk,
         const gl::VertexAttribute &attrib,
         const gl::VertexBinding &binding,
         size_t attribIndex,
         const gl::VertexArray::DirtyAttribBits &dirtyAttribBits);
 
-    angle::Result syncDirtyEnabledStreamingAttrib(
-        ContextVk *contextVk,
-        const gl::VertexAttribute &attrib,
-        const gl::VertexBinding &binding,
-        size_t attribIndex,
-        const gl::VertexArray::DirtyAttribBits &dirtyAttribBits);
-
-    angle::Result syncDirtyDisabledAttrib(ContextVk *contextVk,
-                                          const gl::VertexAttribute &attrib,
-                                          size_t attribIndex);
+    void syncDirtyEnabledStreamingAttrib(ContextVk *contextVk,
+                                         const gl::VertexAttribute &attrib,
+                                         const gl::VertexBinding &binding,
+                                         size_t attribIndex,
+                                         const gl::VertexArray::DirtyAttribBits &dirtyAttribBits);
 
     angle::Result syncNeedsConversionAttrib(ContextVk *contextVk,
                                             const gl::VertexAttribute &attrib,
@@ -243,6 +227,8 @@ class VertexArrayVk : public VertexArrayImpl
     gl::AttribArray<vk::BufferSerial> mCurrentArrayBufferSerial;
     // Tracks the default attribute format ID
     gl::AttribArray<angle::FormatID> mDefaultAttribFormatIDs;
+    // The bit is set when mCurrentArrayBuffers is pointing to empty buffer.
+    gl::AttributesMask mCurrentEmptyBufferMask;
 
     // These struct are defined by VK_EXT_vertex_input_dynamic_state, for convenience, we these to
     // store offset/divisor even when vertexInputDynamicState not supported.
@@ -265,15 +251,19 @@ class VertexArrayVk : public VertexArrayImpl
 
     gl::BufferBindingMask mDivisorExceedMaxSupportedValueBindingMask;
 
+    // Equivalent to mState.getEnabledAttributesMask(), but used for detect from enabled to disabled
+    // transition.
     gl::AttributesMask mCurrentEnabledAttribsMask;
+    // The bit is set when the attribute is updated by VertexArrayVk::updateDefaultAttribs call
+    gl::AttributesMask mCurrentDefaultAttribsMask;
+
     // Track client and/or emulated attribs that we have to stream their buffer contents
     gl::AttributesMask mStreamingVertexAttribsMask;
     gl::AttributesMask mNeedsConversionAttribsMask;
 
-    gl::ComponentTypeMask mCurrentVertexAttributesTypeMask;
-
-    // This maybe 0 or 1 depends on feature bit
-    uint32_t mZeroDivisor;
+    // Divisor value if vertex inputRate is VK_VERTEX_INPUT_RATE_VERTEX. This maybe 0 or 1 depends
+    // on feature bit.
+    uint32_t mDivisorForVertexInputRateVertex;
 };
 }  // namespace rx
 

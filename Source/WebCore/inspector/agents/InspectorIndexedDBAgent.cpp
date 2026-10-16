@@ -32,7 +32,6 @@
 #include "config.h"
 #include "InspectorIndexedDBAgent.h"
 
-#include "AddEventListenerOptionsInlines.h"
 #include "DOMStringList.h"
 #include "DocumentSecurityOrigin.h"
 #include "DocumentView.h"
@@ -53,13 +52,13 @@
 #include "IDBOpenDBRequest.h"
 #include "IDBRequest.h"
 #include "IDBTransaction.h"
-#include "InspectorResourceUtilities.h"
 #include "InstrumentingAgents.h"
 #include "JSDOMWindowCustom.h"
 #include "LocalDOMWindow.h"
 #include "LocalFrame.h"
 #include "LocalFrameInlines.h"
 #include "SecurityOrigin.h"
+#include "Settings.h"
 #include "WindowOrWorkerGlobalScopeIndexedDatabase.h"
 #include <JavaScriptCore/HeapInlines.h>
 #include <JavaScriptCore/InjectedScript.h>
@@ -88,9 +87,7 @@ public:
     void start(IDBFactory*, SecurityOrigin*, const String& databaseName);
     virtual void execute(IDBDatabase&) = 0;
     virtual BackendDispatcher::CallbackBase& requestCallback() = 0;
-    Ref<BackendDispatcher::CallbackBase> protectedRequestCallback() { return requestCallback(); }
-    ScriptExecutionContext* context() const { return m_context.get(); }
-    RefPtr<ScriptExecutionContext> protectedContext() const { return context(); }
+    ScriptExecutionContext* LEGACY_NODELETE context() const { return m_context.get(); }
 private:
     WeakPtr<ScriptExecutionContext> m_context;
 };
@@ -105,7 +102,7 @@ public:
     void handleEvent(ScriptExecutionContext&, Event& event) final
     {
         if (event.type() != eventNames().successEvent) {
-            m_executableWithDatabase->protectedRequestCallback()->sendFailure("Unexpected event type."_s);
+            protect(m_executableWithDatabase->requestCallback())->sendFailure("Unexpected event type."_s);
             return;
         }
 
@@ -113,18 +110,18 @@ public:
 
         auto result = request->result();
         if (result.hasException()) {
-            m_executableWithDatabase->protectedRequestCallback()->sendFailure("Could not get result in callback."_s);
+            protect(m_executableWithDatabase->requestCallback())->sendFailure("Could not get result in callback."_s);
             return;
         }
 
         auto resultValue = result.releaseReturnValue();
-        if (!std::holds_alternative<RefPtr<IDBDatabase>>(resultValue)) {
-            m_executableWithDatabase->protectedRequestCallback()->sendFailure("Unexpected result type."_s);
+        if (!std::holds_alternative<Ref<IDBDatabase>>(resultValue)) {
+            protect(m_executableWithDatabase->requestCallback())->sendFailure("Unexpected result type."_s);
             return;
         }
 
-        auto databaseResult = std::get<RefPtr<IDBDatabase>>(resultValue);
-        m_executableWithDatabase->execute(*databaseResult);
+        Ref databaseResult = std::get<Ref<IDBDatabase>>(resultValue);
+        m_executableWithDatabase->execute(databaseResult);
         databaseResult->close();
     }
 
@@ -138,18 +135,17 @@ private:
 void ExecutableWithDatabase::start(IDBFactory* idbFactory, SecurityOrigin*, const String& databaseName)
 {
     if (!context()) {
-        protectedRequestCallback()->sendFailure("Could not open database."_s);
+        protect(requestCallback())->sendFailure("Could not open database."_s);
         return;
     }
 
-    auto result = idbFactory->open(*protectedContext(), databaseName, std::nullopt);
+    auto result = idbFactory->open(*protect(context()), databaseName, std::nullopt);
     if (result.hasException()) {
-        protectedRequestCallback()->sendFailure("Could not open database."_s);
+        protect(requestCallback())->sendFailure("Could not open database."_s);
         return;
     }
 
-    // FIXME: This is a safer cpp false positive (rdar://160082559).
-    SUPPRESS_UNCOUNTED_ARG result.releaseReturnValue()->addEventListener(eventNames().successEvent, OpenDatabaseCallback::create(*this), false);
+    protect(result.returnValue())->addEventListener(eventNames().successEvent, OpenDatabaseCallback::create(*this));
 }
 
 
@@ -360,12 +356,12 @@ public:
         }
         
         auto resultValue = result.releaseReturnValue();
-        if (!std::holds_alternative<RefPtr<IDBCursor>>(resultValue)) {
+        if (!std::holds_alternative<Ref<IDBCursor>>(resultValue)) {
             end(false);
             return;
         }
 
-        auto cursor = std::get<RefPtr<IDBCursor>>(resultValue);
+        auto cursor = std::get<Ref<IDBCursor>>(resultValue);
 
         if (m_skipCount) {
             if (cursor->advance(m_skipCount).hasException())
@@ -387,11 +383,11 @@ public:
 
         auto* lexicalGlobalObject = context.globalObject();
 
-        auto key = m_injectedScript.wrapObject(toJS(*lexicalGlobalObject, *lexicalGlobalObject, cursor->protectedKey().get()), String(), true);
+        auto key = m_injectedScript.wrapObject(toJS(*lexicalGlobalObject, *lexicalGlobalObject, protect(cursor->key()).get()), String(), true);
         if (!key)
             return;
 
-        auto primaryKey = m_injectedScript.wrapObject(toJS(*lexicalGlobalObject, *lexicalGlobalObject, cursor->protectedPrimaryKey().get()), String(), true);
+        auto primaryKey = m_injectedScript.wrapObject(toJS(*lexicalGlobalObject, *lexicalGlobalObject, protect(cursor->primaryKey()).get()), String(), true);
         if (!primaryKey)
             return;
 
@@ -481,11 +477,11 @@ public:
         }
 
         auto openCursorCallback = OpenCursorCallback::create(m_injectedScript, m_requestCallback.copyRef(), m_skipCount, m_pageSize);
-        idbRequest->addEventListener(eventNames().successEvent, WTF::move(openCursorCallback), false);
+        idbRequest->addEventListener(eventNames().successEvent, WTF::move(openCursorCallback));
     }
 
     BackendDispatcher::CallbackBase& requestCallback() override { return m_requestCallback.get(); }
-    DataLoader(ScriptExecutionContext* scriptExecutionContext, Ref<IndexedDBBackendDispatcherHandler::RequestDataCallback>&& requestCallback, const InjectedScript& injectedScript, const String& objectStoreName, const String& indexName, RefPtr<IDBKeyRange> idbKeyRange, int skipCount, unsigned pageSize)
+    DataLoader(ScriptExecutionContext* scriptExecutionContext, Ref<IndexedDBBackendDispatcherHandler::RequestDataCallback>&& requestCallback, const InjectedScript& injectedScript, const String& objectStoreName, const String& indexName, RefPtr<IDBKeyRange>&& idbKeyRange, int skipCount, unsigned pageSize)
         : ExecutableWithDatabase(scriptExecutionContext)
         , m_requestCallback(WTF::move(requestCallback))
         , m_injectedScript(injectedScript)
@@ -505,20 +501,14 @@ public:
 
 } // namespace
 
-InspectorIndexedDBAgent::InspectorIndexedDBAgent(PageAgentContext& context)
+InspectorIndexedDBAgent::InspectorIndexedDBAgent(WebAgentContext& context)
     : InspectorAgentBase("IndexedDB"_s, context)
     , m_injectedScriptManager(context.injectedScriptManager)
     , m_backendDispatcher(Inspector::IndexedDBBackendDispatcher::create(Ref { context.backendDispatcher }, this))
-    , m_inspectedPage(context.inspectedPage)
 {
 }
 
 InspectorIndexedDBAgent::~InspectorIndexedDBAgent() = default;
-
-Ref<Page> InspectorIndexedDBAgent::protectedInspectedPage() const
-{
-    return m_inspectedPage.get();
-}
 
 void InspectorIndexedDBAgent::didCreateFrontendAndBackend()
 {
@@ -556,12 +546,12 @@ static Inspector::Protocol::ErrorStringOr<RefPtr<IDBFactory>> IDBFactoryFromDocu
 
     RefPtr idbFactory = WindowOrWorkerGlobalScopeIndexedDatabase::indexedDB(*window);
     if (!idbFactory)
-        makeUnexpected("Missing IndexedDB factory of window for given document"_s);
+        return makeUnexpected("Missing IndexedDB factory of window for given document"_s);
     
     return { WTF::move(idbFactory) };
 }
 
-static bool getDocumentAndIDBFactoryFromFrameOrSendFailure(LocalFrame* frame, Document*& outDocument, IDBFactory*& outIDBFactory, BackendDispatcher::CallbackBase& callback)
+static bool getDocumentAndIDBFactoryFromFrameOrSendFailure(LocalFrame* frame, RefPtr<Document>& outDocument, RefPtr<IDBFactory>& outIDBFactory, BackendDispatcher::CallbackBase& callback)
 {
     auto document = documentFromFrame(frame);
     if (!document.has_value()) {
@@ -587,10 +577,15 @@ static bool getDocumentAndIDBFactoryFromFrameOrSendFailure(LocalFrame* frame, Do
     
 void InspectorIndexedDBAgent::requestDatabaseNames(const String& securityOrigin, Ref<RequestDatabaseNamesCallback>&& callback)
 {
-    RefPtr frame = ResourceUtilities::findFrameWithSecurityOrigin(protectedInspectedPage(), securityOrigin);
-    Document* document;
-    IDBFactory* idbFactory;
-    if (!getDocumentAndIDBFactoryFromFrameOrSendFailure(frame.get(), document, idbFactory, callback))
+    auto frame = frameForSecurityOrigin(securityOrigin);
+    if (!frame) {
+        callback->sendFailure(frame.error());
+        return;
+    }
+
+    RefPtr<Document> document;
+    RefPtr<IDBFactory> idbFactory;
+    if (!getDocumentAndIDBFactoryFromFrameOrSendFailure(frame->ptr(), document, idbFactory, callback))
         return;
 
     idbFactory->getAllDatabaseNames(*document, [callback = WTF::move(callback)](auto& databaseNames) {
@@ -607,22 +602,32 @@ void InspectorIndexedDBAgent::requestDatabaseNames(const String& securityOrigin,
 
 void InspectorIndexedDBAgent::requestDatabase(const String& securityOrigin, const String& databaseName, Ref<RequestDatabaseCallback>&& callback)
 {
-    RefPtr frame = ResourceUtilities::findFrameWithSecurityOrigin(protectedInspectedPage(), securityOrigin);
-    Document* document;
-    IDBFactory* idbFactory;
-    if (!getDocumentAndIDBFactoryFromFrameOrSendFailure(frame.get(), document, idbFactory, callback))
+    auto frame = frameForSecurityOrigin(securityOrigin);
+    if (!frame) {
+        callback->sendFailure(frame.error());
+        return;
+    }
+
+    RefPtr<Document> document;
+    RefPtr<IDBFactory> idbFactory;
+    if (!getDocumentAndIDBFactoryFromFrameOrSendFailure(frame->ptr(), document, idbFactory, callback))
         return;
 
     Ref databaseLoader = DatabaseLoader::create(document, WTF::move(callback));
-    databaseLoader->start(idbFactory, document->protectedSecurityOrigin().ptr(), databaseName);
+    databaseLoader->start(idbFactory, protect(document->securityOrigin()).ptr(), databaseName);
 }
 
 void InspectorIndexedDBAgent::requestData(const String& securityOrigin, const String& databaseName, const String& objectStoreName, const String& indexName, int skipCount, int pageSize, RefPtr<JSON::Object>&& keyRange, Ref<RequestDataCallback>&& callback)
 {
-    RefPtr frame = ResourceUtilities::findFrameWithSecurityOrigin(protectedInspectedPage(), securityOrigin);
-    Document* document;
-    IDBFactory* idbFactory;
-    if (!getDocumentAndIDBFactoryFromFrameOrSendFailure(frame.get(), document, idbFactory, callback))
+    auto frame = frameForSecurityOrigin(securityOrigin);
+    if (!frame) {
+        callback->sendFailure(frame.error());
+        return;
+    }
+
+    RefPtr<Document> document;
+    RefPtr<IDBFactory> idbFactory;
+    if (!getDocumentAndIDBFactoryFromFrameOrSendFailure(frame->ptr(), document, idbFactory, callback))
         return;
 
     RefPtr<IDBKeyRange> idbKeyRange;
@@ -634,9 +639,9 @@ void InspectorIndexedDBAgent::requestData(const String& securityOrigin, const St
         }
     }
 
-    auto injectedScript = m_injectedScriptManager.injectedScriptFor(&mainWorldGlobalObject(*frame));
+    auto injectedScript = m_injectedScriptManager->injectedScriptFor(&mainWorldGlobalObject(*frame));
     auto dataLoader = DataLoader::create(document, WTF::move(callback), injectedScript, objectStoreName, indexName, WTF::move(idbKeyRange), skipCount, pageSize);
-    dataLoader->start(idbFactory, document->protectedSecurityOrigin().ptr(), databaseName);
+    dataLoader->start(idbFactory, protect(document->securityOrigin()).ptr(), databaseName);
 }
 
 namespace {
@@ -711,7 +716,7 @@ public:
             return;
         }
 
-        idbTransaction->addEventListener(eventNames().completeEvent, ClearObjectStoreListener::create(m_requestCallback.copyRef()), false);
+        idbTransaction->addEventListener(eventNames().completeEvent, ClearObjectStoreListener::create(m_requestCallback.copyRef()));
     }
 
     BackendDispatcher::CallbackBase& requestCallback() override { return m_requestCallback.get(); }
@@ -724,14 +729,19 @@ private:
 
 void InspectorIndexedDBAgent::clearObjectStore(const String& securityOrigin, const String& databaseName, const String& objectStoreName, Ref<ClearObjectStoreCallback>&& callback)
 {
-    RefPtr frame = ResourceUtilities::findFrameWithSecurityOrigin(protectedInspectedPage(), securityOrigin);
-    Document* document;
-    IDBFactory* idbFactory;
-    if (!getDocumentAndIDBFactoryFromFrameOrSendFailure(frame.get(), document, idbFactory, callback))
+    auto frame = frameForSecurityOrigin(securityOrigin);
+    if (!frame) {
+        callback->sendFailure(frame.error());
+        return;
+    }
+
+    RefPtr<Document> document;
+    RefPtr<IDBFactory> idbFactory;
+    if (!getDocumentAndIDBFactoryFromFrameOrSendFailure(frame->ptr(), document, idbFactory, callback))
         return;
 
     Ref<ClearObjectStore> clearObjectStore = ClearObjectStore::create(document, objectStoreName, WTF::move(callback));
-    clearObjectStore->start(idbFactory, document->protectedSecurityOrigin().ptr(), databaseName);
+    clearObjectStore->start(idbFactory, protect(document->securityOrigin()).ptr(), databaseName);
 }
 
 } // namespace WebCore

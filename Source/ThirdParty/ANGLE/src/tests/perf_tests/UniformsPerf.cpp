@@ -7,11 +7,8 @@
 //   Performance test for setting uniform data.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #include "ANGLEPerfTest.h"
+#include "common/unsafe_buffers.h"
 
 #include <array>
 #include <iostream>
@@ -421,7 +418,7 @@ void UniformsBenchmark::drawBenchmark()
             auto setFunc = [=](const std::vector<GLuint> &locations, const MatrixData &matrixData,
                                size_t uniform, size_t frameIndex) {
                 glUniformMatrix4fv(locations[uniform], 1, transpose,
-                                   matrixData[frameIndex][uniform].data);
+                                   matrixData[frameIndex][uniform].data.data());
             };
 
             drawLoop<false>(setFunc);
@@ -432,7 +429,7 @@ void UniformsBenchmark::drawBenchmark()
             auto setFunc = [=](const std::vector<GLuint> &locations, const MatrixData &matrixData,
                                size_t uniform, size_t frameIndex) {
                 glUniformMatrix3x4fv(locations[uniform], 1, transpose,
-                                     matrixData[frameIndex][uniform].data);
+                                     matrixData[frameIndex][uniform].data.data());
             };
 
             drawLoop<false>(setFunc);
@@ -443,7 +440,7 @@ void UniformsBenchmark::drawBenchmark()
             auto setFunc = [=](const std::vector<GLuint> &locations, const MatrixData &matrixData,
                                size_t uniform, size_t frameIndex) {
                 glUniformMatrix3fv(locations[uniform], 1, transpose,
-                                   matrixData[frameIndex][uniform].data);
+                                   matrixData[frameIndex][uniform].data.data());
             };
 
             drawLoop<false>(setFunc);
@@ -521,7 +518,6 @@ ANGLE_INSTANTIATE_TEST(
     VectorUniforms(METAL(), DataMode::REPEAT),
     VectorUniforms(OPENGL_OR_GLES(), DataMode::UPDATE),
     VectorUniforms(OPENGL_OR_GLES(), DataMode::REPEAT),
-    VectorUniforms(OPENGL_OR_GLES_NULL(), DataMode::UPDATE),
     MatrixUniforms(D3D11(), DataMode::UPDATE, DataType::MAT4x4, MatrixLayout::NO_TRANSPOSE),
     MatrixUniforms(METAL(), DataMode::UPDATE, DataType::MAT4x4, MatrixLayout::NO_TRANSPOSE),
     MatrixUniforms(OPENGL_OR_GLES(),

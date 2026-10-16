@@ -29,6 +29,7 @@
 #include "Document.h"
 #include "ElementRareData.h"
 #include "FormAssociatedCustomElement.h"
+#include "ShadowRoot.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -87,22 +88,22 @@ FormAssociatedCustomElement* HTMLMaybeFormAssociatedCustomElement::formAssociate
 
 bool HTMLMaybeFormAssociatedCustomElement::matchesValidPseudoClass() const
 {
-    return isFormAssociatedCustomElement() && formAssociatedCustomElementUnsafe().matchesValidPseudoClass();
+    return isFormAssociatedCustomElement() && protect(formAssociatedCustomElementUnsafe())->matchesValidPseudoClass();
 }
 
 bool HTMLMaybeFormAssociatedCustomElement::matchesInvalidPseudoClass() const
 {
-    return isFormAssociatedCustomElement() && formAssociatedCustomElementUnsafe().matchesInvalidPseudoClass();
+    return isFormAssociatedCustomElement() && protect(formAssociatedCustomElementUnsafe())->matchesInvalidPseudoClass();
 }
 
 bool HTMLMaybeFormAssociatedCustomElement::matchesUserValidPseudoClass() const
 {
-    return isFormAssociatedCustomElement() && formAssociatedCustomElementUnsafe().matchesUserValidPseudoClass();
+    return isFormAssociatedCustomElement() && protect(formAssociatedCustomElementUnsafe())->matchesUserValidPseudoClass();
 }
 
 bool HTMLMaybeFormAssociatedCustomElement::matchesUserInvalidPseudoClass() const
 {
-    return isFormAssociatedCustomElement() && formAssociatedCustomElementUnsafe().matchesUserInvalidPseudoClass();
+    return isFormAssociatedCustomElement() && protect(formAssociatedCustomElementUnsafe())->matchesUserInvalidPseudoClass();
 }
 
 bool HTMLMaybeFormAssociatedCustomElement::supportsFocus() const
@@ -120,49 +121,49 @@ bool HTMLMaybeFormAssociatedCustomElement::isDisabledFormControl() const
     return isFormAssociatedCustomElement() && formAssociatedCustomElementUnsafe().isDisabled();
 }
 
-Node::InsertedIntoAncestorResult HTMLMaybeFormAssociatedCustomElement::insertedIntoAncestor(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
+Node::NeedsPostConnectionSteps HTMLMaybeFormAssociatedCustomElement::insertionSteps(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
 {
-    HTMLElement::insertedIntoAncestor(insertionType, parentOfInsertedTree);
+    HTMLElement::insertionSteps(insertionType, parentOfInsertedTree);
     if (isFormAssociatedCustomElement())
-        formAssociatedCustomElementUnsafe().insertedIntoAncestor(insertionType, parentOfInsertedTree);
+        protect(formAssociatedCustomElementUnsafe())->insertionSteps(insertionType, parentOfInsertedTree);
     if (!insertionType.connectedToDocument)
-        return InsertedIntoAncestorResult::Done;
-    return InsertedIntoAncestorResult::NeedsPostInsertionCallback;
+        return NeedsPostConnectionSteps::No;
+    return NeedsPostConnectionSteps::Yes;
 }
 
-void HTMLMaybeFormAssociatedCustomElement::didFinishInsertingNode()
+void HTMLMaybeFormAssociatedCustomElement::postConnectionSteps()
 {
-    HTMLElement::didFinishInsertingNode();
+    HTMLElement::postConnectionSteps();
     if (isFormAssociatedCustomElement())
-        formAssociatedCustomElementUnsafe().didFinishInsertingNode();
+        protect(formAssociatedCustomElementUnsafe())->postConnectionSteps();
 }
 
 void HTMLMaybeFormAssociatedCustomElement::didMoveToNewDocument(Document& oldDocument, Document& newDocument)
 {
     HTMLElement::didMoveToNewDocument(oldDocument, newDocument);
     if (isFormAssociatedCustomElement())
-        formAssociatedCustomElementUnsafe().didMoveToNewDocument();
+        protect(formAssociatedCustomElementUnsafe())->didMoveToNewDocument();
 }
 
-void HTMLMaybeFormAssociatedCustomElement::removedFromAncestor(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
+void HTMLMaybeFormAssociatedCustomElement::removingSteps(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
 {
-    HTMLElement::removedFromAncestor(removalType, oldParentOfRemovedTree);
+    HTMLElement::removingSteps(removalType, oldParentOfRemovedTree);
     if (isFormAssociatedCustomElement())
-        formAssociatedCustomElementUnsafe().removedFromAncestor(removalType, oldParentOfRemovedTree);
+        protect(formAssociatedCustomElementUnsafe())->removingSteps(removalType, oldParentOfRemovedTree);
 }
 
 void HTMLMaybeFormAssociatedCustomElement::attributeChanged(const QualifiedName& name, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason attributeModificationReason)
 {
     HTMLElement::attributeChanged(name, oldValue, newValue, attributeModificationReason);
     if (isFormAssociatedCustomElement())
-        formAssociatedCustomElementUnsafe().parseAttribute(name, newValue);
+        protect(formAssociatedCustomElementUnsafe())->parseAttribute(name, newValue);
 }
 
 void HTMLMaybeFormAssociatedCustomElement::finishParsingChildren()
 {
     HTMLElement::finishParsingChildren();
     if (isFormAssociatedCustomElement())
-        formAssociatedCustomElementUnsafe().finishParsingChildren();
+        protect(formAssociatedCustomElementUnsafe())->finishParsingChildren();
 }
 
 void HTMLMaybeFormAssociatedCustomElement::setInterfaceIsFormAssociated()
@@ -181,7 +182,7 @@ void HTMLMaybeFormAssociatedCustomElement::willUpgradeFormAssociated()
 void HTMLMaybeFormAssociatedCustomElement::didUpgradeFormAssociated()
 {
     ASSERT(isFormAssociatedCustomElement());
-    formAssociatedCustomElementUnsafe().didUpgrade();
+    protect(formAssociatedCustomElementUnsafe())->didUpgrade();
 }
 
 } // namespace WebCore

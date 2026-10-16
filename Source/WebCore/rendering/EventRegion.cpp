@@ -33,9 +33,10 @@
 #include "PathUtilities.h"
 #include "RenderAncestorIterator.h"
 #include "RenderBox.h"
+#include "RenderElementInlines.h"
 #include "RenderObjectInlines.h"
-#include "RenderStyle+GettersInlines.h"
 #include "SimpleRange.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "WindRule.h"
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/TextStream.h>
@@ -51,7 +52,7 @@ EventRegionContext::EventRegionContext(EventRegion& eventRegion)
 
 EventRegionContext::~EventRegionContext() = default;
 
-void EventRegionContext::unite(const FloatRoundedRect& roundedRect, const RenderObject& renderer, const RenderStyle& style, bool overrideUserModifyIsEditable)
+void EventRegionContext::unite(const FloatRoundedRect& roundedRect, const RenderObject& renderer, const Style::ComputedStyle& style, bool overrideUserModifyIsEditable, ContributeToInteractionRegions contributeToInteractionRegions)
 {
     auto transformAndClipIfNeeded = [&](auto input, auto transform) {
         if (m_transformStack.isEmpty() && m_clipStack.isEmpty())
@@ -70,6 +71,9 @@ void EventRegionContext::unite(const FloatRoundedRect& roundedRect, const Render
     m_eventRegion.unite(region, renderer, style, overrideUserModifyIsEditable);
 
 #if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
+    if (contributeToInteractionRegions == ContributeToInteractionRegions::No)
+        return;
+
     auto rect = roundedRect.rect();
     if (auto* modelObject = dynamicDowncast<RenderLayerModelObject>(renderer))
         rect = snapRectToDevicePixelsIfNeeded(rect, *modelObject);
@@ -92,6 +96,7 @@ void EventRegionContext::unite(const FloatRoundedRect& roundedRect, const Render
     uniteInteractionRegions(renderer, layerBounds, clipOffset, transform);
 #else
     UNUSED_PARAM(renderer);
+    UNUSED_PARAM(contributeToInteractionRegions);
 #endif
 }
 
@@ -165,8 +170,10 @@ void EventRegionContext::uniteInteractionRegions(const RenderObject& renderer, c
             return;
 
         bool defaultContentHint = interactionRegion->contentHint == InteractionRegion::ContentHint::Default;
-        if (defaultContentHint && shouldConsolidateInteractionRegion(renderer, rectForTracking, interactionRegion->nodeIdentifier))
+        if (defaultContentHint && shouldConsolidateInteractionRegion(renderer, rectForTracking, interactionRegion->nodeIdentifier)) {
+            m_consolidatedElements.add(interactionRegion->nodeIdentifier);
             return;
+        }
 
         // This region might be a container we can remove later.
         bool hasNoVisualBorders = !renderer.hasVisibleBoxDecorations();
@@ -259,22 +266,27 @@ bool EventRegionContext::shouldConsolidateInteractionRegion(const RenderObject& 
     return false;
 }
 
-void EventRegionContext::convertGuardContainersToInterationIfNeeded(float minimumCornerRadius)
+void EventRegionContext::resolveGuardContainers(float minimumCornerRadius)
 {
-    for (auto& region : m_interactionRegions) {
+    m_interactionRegions.removeAllMatching([&](auto& region) {
         if (region.type != InteractionRegion::Type::Guard)
-            continue;
+            return false;
 
-        if (!m_discoveredRegionsByElement.contains(region.nodeIdentifier)) {
-            auto rectForTracking = enclosingIntRect(region.rectInLayerCoordinates);
-            auto result = m_interactionRectsAndContentHints.add(rectForTracking, region.contentHint);
-            if (result.isNewEntry) {
-                region.type = InteractionRegion::Type::Interaction;
-                region.cornerRadius = minimumCornerRadius;
-                m_discoveredRegionsByElement.add(region.nodeIdentifier, Vector<InteractionRegion>({ region }));
-            }
+        if (m_discoveredRegionsByElement.contains(region.nodeIdentifier))
+            return false;
+
+        if (m_consolidatedElements.contains(region.nodeIdentifier))
+            return true;
+
+        auto rectForTracking = enclosingIntRect(region.rectInLayerCoordinates);
+        auto result = m_interactionRectsAndContentHints.add(rectForTracking, region.contentHint);
+        if (result.isNewEntry) {
+            region.type = InteractionRegion::Type::Interaction;
+            region.cornerRadius = minimumCornerRadius;
+            m_discoveredRegionsByElement.add(region.nodeIdentifier, Vector<InteractionRegion>({ region }));
         }
-    }
+        return false;
+    });
 }
 
 void EventRegionContext::shrinkWrapInteractionRegions()
@@ -296,7 +308,7 @@ void EventRegionContext::shrinkWrapInteractionRegions()
         }
 
         FloatRect layerBounds;
-        bool canUseSingleRect = true;
+        Region coveredRegion;
         Vector<InteractionRegion> toAddAfterMerge;
         Vector<FloatRect> discoveredRects;
         Vector<Path> discoveredClipPaths;
@@ -304,15 +316,18 @@ void EventRegionContext::shrinkWrapInteractionRegions()
         discoveredRects.reserveInitialCapacity(discoveredRegions.size());
         discoveredClipPaths.reserveInitialCapacity(discoveredRegions.size());
 
+        // Small gaps don't prevent the regions from filling a single rect.
+        constexpr float looseCoverageMargin = 3;
+
         for (const auto& discoveredRegion : discoveredRegions) {
             auto previousArea = layerBounds.area();
             auto rect = discoveredRegion.rectInLayerCoordinates;
-            auto overlap = rect;
-            overlap.intersect(layerBounds);
             layerBounds.unite(rect);
             auto growth = layerBounds.area() - previousArea;
-            if (growth > rect.area() - overlap.area() + std::numeric_limits<float>::epsilon())
-                canUseSingleRect = false;
+
+            auto coveredRect = rect;
+            coveredRect.inflate(looseCoverageMargin);
+            coveredRegion.unite(enclosingIntRect(coveredRect));
 
             auto rectForTracking = enclosingIntRect(rect);
             auto hint = m_interactionRectsAndContentHints.get(rectForTracking);
@@ -341,6 +356,12 @@ void EventRegionContext::shrinkWrapInteractionRegions()
             }
         }
 
+        auto layerBoundsForTracking = enclosingIntRect(layerBounds);
+        bool canUseSingleRect = coveredRegion.contains(layerBoundsForTracking);
+        // The clip path of this region is relative to its own rect, and only describes its own shape.
+        if (region.clipPath && layerBoundsForTracking != enclosingIntRect(region.rectInLayerCoordinates))
+            canUseSingleRect = false;
+
         if (canUseSingleRect)
             region.rectInLayerCoordinates = layerBounds;
         else {
@@ -359,14 +380,23 @@ void EventRegionContext::shrinkWrapInteractionRegions()
         }
 
         auto finalRegionRectForTracking = enclosingIntRect(region.rectInLayerCoordinates);
+
+        // Do not insert a new region if it creates a duplicated Interaction Rect, use its content hint instead.
+        bool hasDuplicatedRect = toAddAfterMerge.containsIf([&](const auto& extraRegion) {
+            return enclosingIntRect(extraRegion.rectInLayerCoordinates) == finalRegionRectForTracking;
+        });
+        if (hasDuplicatedRect)
+            region.contentHint = m_interactionRectsAndContentHints.get(finalRegionRectForTracking);
+
+        bool coversRegionsWithContentHint = canUseSingleRect && !region.clipPath;
+        auto contentHint = region.contentHint;
         for (auto& extraRegion : toAddAfterMerge) {
             auto extraRectForTracking = enclosingIntRect(extraRegion.rectInLayerCoordinates);
-            // Do not insert a new region if it creates a duplicated Interaction Rect.
-            if (finalRegionRectForTracking == extraRectForTracking) {
-                region.contentHint = m_interactionRectsAndContentHints.get(extraRectForTracking);
+            if (finalRegionRectForTracking == extraRectForTracking)
                 continue;
-            }
             extraRegion.contentHint = m_interactionRectsAndContentHints.get(extraRectForTracking);
+            if (coversRegionsWithContentHint && extraRegion.contentHint == contentHint)
+                continue;
             m_interactionRegions.insert(++i, WTF::move(extraRegion));
         }
     }
@@ -410,7 +440,7 @@ void EventRegionContext::removeSuperfluousInteractionRegions()
 
 void EventRegionContext::copyInteractionRegionsToEventRegion(float minimumCornerRadius)
 {
-    convertGuardContainersToInterationIfNeeded(minimumCornerRadius);
+    resolveGuardContainers(minimumCornerRadius);
     removeSuperfluousInteractionRegions();
     shrinkWrapInteractionRegions();
     m_eventRegion.appendInteractionRegions(m_interactionRegions);
@@ -463,7 +493,7 @@ EventRegion::EventRegion(Region&& region
 {
 }
 
-void EventRegion::unite(const Region& region, const RenderObject& renderer, const RenderStyle& style, bool overrideUserModifyIsEditable)
+void EventRegion::unite(const Region& region, const RenderObject& renderer, const Style::ComputedStyle& style, bool overrideUserModifyIsEditable)
 {
     if (renderer.usedPointerEvents() == PointerEvents::None)
         return;
@@ -471,7 +501,10 @@ void EventRegion::unite(const Region& region, const RenderObject& renderer, cons
     m_region.unite(region);
 
 #if ENABLE(TOUCH_ACTION_REGIONS)
-    uniteTouchActions(region, Style::toPlatform(style.usedTouchAction()));
+    if (auto touchAction = style.usedTouchAction(); !touchAction.isAuto())
+        uniteTouchActions(region, Style::toPlatform(touchAction));
+    else if (!m_touchActionRegions.isEmpty())
+        subtractAutoFromTouchActions(region);
 #endif
 
     uniteEventListeners(region, style.eventListenerRegionTypes());
@@ -582,6 +615,12 @@ void EventRegion::uniteTouchActions(const Region& touchRegion, OptionSet<TouchAc
     }
 }
 
+void EventRegion::subtractAutoFromTouchActions(const Region& region)
+{
+    for (auto& regionEntry : m_touchActionRegions)
+        regionEntry.subtract(region);
+}
+
 const Region* EventRegion::regionForTouchAction(TouchAction action) const
 {
     unsigned actionIndex = toIndex(action);
@@ -628,7 +667,7 @@ OptionSet<EventListenerRegionType> touchEventTypes =
     , EventListenerRegionType::PointerUp, EventListenerRegionType::NonPassivePointerUp
     , EventListenerRegionType::MouseMove, EventListenerRegionType::NonPassiveMouseMove
     , EventListenerRegionType::MouseDown, EventListenerRegionType::NonPassiveMouseDown
-    , EventListenerRegionType::MouseMove, EventListenerRegionType::NonPassiveMouseMove
+    , EventListenerRegionType::MouseUp, EventListenerRegionType::NonPassiveMouseUp
     , EventListenerRegionType::GestureChange, EventListenerRegionType::NonPassiveGestureChange
     , EventListenerRegionType::GestureEnd, EventListenerRegionType::NonPassiveGestureEnd
     , EventListenerRegionType::GestureStart, EventListenerRegionType::NonPassiveGestureStart
@@ -693,9 +732,9 @@ static EventTrackingRegionsEventType eventTypeForEventListenerType(EventListener
     case EventListenerRegionType::NonPassiveMouseDown:
         return EventTrackingRegionsEventType::Mousedown;
     case EventListenerRegionType::NonPassiveMouseUp:
-        return EventTrackingRegionsEventType::Mousemove;
-    case EventListenerRegionType::NonPassiveMouseMove:
         return EventTrackingRegionsEventType::Mouseup;
+    case EventListenerRegionType::NonPassiveMouseMove:
+        return EventTrackingRegionsEventType::Mousemove;
     case EventListenerRegionType::NonPassiveGestureChange:
         return EventTrackingRegionsEventType::Gesturechange;
     case EventListenerRegionType::NonPassiveGestureEnd:

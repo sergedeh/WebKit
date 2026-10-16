@@ -77,7 +77,7 @@ GPU* WorkerNavigator::gpu()
         if (!gpu)
             return nullptr;
 
-        m_gpuForWebGPU = GPU::create(*gpu);
+        lazyInitialize(m_gpuForWebGPU, GPU::create(*gpu));
     }
 
     return m_gpuForWebGPU.get();
@@ -86,11 +86,11 @@ GPU* WorkerNavigator::gpu()
 #endif
 }
 
-void WorkerNavigator::setAppBadge(std::optional<unsigned long long> badge, Ref<DeferredPromise>&& promise)
+void WorkerNavigator::setAppBadge(ScriptExecutionContext&, std::optional<unsigned long long> badge, Ref<DeferredPromise>&& promise)
 {
 #if ENABLE(DECLARATIVE_WEB_PUSH)
-    if (RefPtr context = dynamicDowncast<ServiceWorkerGlobalScope>(scriptExecutionContext())) {
-        if (RefPtr declarativePushEvent = context->declarativePushEvent()) {
+    if (auto* context = dynamicDowncast<ServiceWorkerGlobalScope>(scriptExecutionContext())) {
+        if (auto* declarativePushEvent = context->declarativePushEvent()) {
             declarativePushEvent->setUpdatedAppBadge(WTF::move(badge));
             return;
         }
@@ -108,9 +108,9 @@ void WorkerNavigator::setAppBadge(std::optional<unsigned long long> badge, Ref<D
     promise->resolve();
 }
 
-void WorkerNavigator::clearAppBadge(Ref<DeferredPromise>&& promise)
+void WorkerNavigator::clearAppBadge(ScriptExecutionContext& context, Ref<DeferredPromise>&& promise)
 {
-    setAppBadge(0, WTF::move(promise));
+    setAppBadge(context, 0, WTF::move(promise));
 }
 
 NavigatorUAData& WorkerNavigator::userAgentData() const

@@ -40,36 +40,36 @@ class FEConvolveMatrix final : public FilterEffect {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(FEConvolveMatrix);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(FEConvolveMatrix);
 public:
-    WEBCORE_EXPORT static Ref<FEConvolveMatrix> create(const IntSize& kernelSize, float divisor, float bias, const IntPoint& targetOffset, EdgeModeType, const FloatPoint& kernelUnitLength, bool preserveAlpha, const Vector<float>& kernelMatrix, DestinationColorSpace = DestinationColorSpace::SRGB());
+    WEBCORE_EXPORT static Ref<FEConvolveMatrix> create(const IntSize& kernelSize, float divisor, float bias, const IntPoint& targetOffset, EdgeModeType, const FloatPoint& kernelUnitLength, bool preserveAlpha, const Vector<float>& kernelMatrix, ColorSpace = ColorSpace::SRGB());
 
     bool operator==(const FEConvolveMatrix&) const;
 
     IntSize kernelSize() const { return m_kernelSize; }
-    void setKernelSize(const IntSize&);
+    void LEGACY_NODELETE setKernelSize(const IntSize&);
 
-    const Vector<float>& kernel() const { return m_kernelMatrix; }
+    const Vector<float>& kernel() const LIFETIME_BOUND { return m_kernelMatrix; }
     void setKernel(const Vector<float>&);
 
     float divisor() const { return m_divisor; }
-    bool setDivisor(float);
+    bool LEGACY_NODELETE setDivisor(float);
 
     float bias() const { return m_bias; }
-    bool setBias(float);
+    bool LEGACY_NODELETE setBias(float);
 
     IntPoint targetOffset() const { return m_targetOffset; }
-    bool setTargetOffset(const IntPoint&);
+    bool LEGACY_NODELETE setTargetOffset(const IntPoint&);
 
     EdgeModeType edgeMode() const { return m_edgeMode; }
-    bool setEdgeMode(EdgeModeType);
+    bool LEGACY_NODELETE setEdgeMode(EdgeModeType);
 
     FloatPoint kernelUnitLength() const { return m_kernelUnitLength; }
-    bool setKernelUnitLength(const FloatPoint&);
+    bool LEGACY_NODELETE setKernelUnitLength(const FloatPoint&);
 
     bool preserveAlpha() const { return m_preserveAlpha; }
-    bool setPreserveAlpha(bool);
+    bool LEGACY_NODELETE setPreserveAlpha(bool);
 
 private:
-    FEConvolveMatrix(const IntSize& kernelSize, float divisor, float bias, const IntPoint& targetOffset, EdgeModeType, const FloatPoint& kernelUnitLength, bool preserveAlpha, const Vector<float>& kernelMatrix, DestinationColorSpace);
+    FEConvolveMatrix(const IntSize& kernelSize, float divisor, float bias, const IntPoint& targetOffset, EdgeModeType, const FloatPoint& kernelUnitLength, bool preserveAlpha, const Vector<float>& kernelMatrix, ColorSpace);
 
     bool operator==(const FilterEffect& other) const override { return areEqual<FEConvolveMatrix>(*this, other); }
 

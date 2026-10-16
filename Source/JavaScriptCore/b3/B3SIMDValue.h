@@ -97,13 +97,25 @@ public:
         case VectorExtaddPairwise:
         case VectorMulSat:
         case VectorSwizzle:
+        case VectorUnzipEven:
+        case VectorUnzipOdd:
+        case VectorZipLower:
+        case VectorZipHigher:
+        case VectorTransposeEven:
+        case VectorTransposeOdd:
+        case VectorReverse:
+        case VectorExtractPair:
         case VectorMulByElement:
-        case VectorShiftByVector:
         case VectorDotProduct:
         case VectorRelaxedSwizzle:
         case VectorRelaxedMAdd:
         case VectorRelaxedNMAdd:
         case VectorRelaxedLaneSelect:
+        case VectorRelaxedMin:
+        case VectorRelaxedMax:
+        case VectorRelaxedQ15Mulr:
+        case VectorRelaxedDotI8x16I7x16:
+        case VectorRelaxedDotI8x16I7x16Add:
             return true;
         default:
             return false;

@@ -68,7 +68,7 @@ static WeakPtr<ReportingScope> reportingScopeForContext(ScriptExecutionContext& 
     if (RefPtr document = dynamicDowncast<Document>(scriptExecutionContext))
         return document->reportingScope();
 
-    if (RefPtr workerGlobalScope = dynamicDowncast<WorkerGlobalScope>(scriptExecutionContext))
+    if (auto* workerGlobalScope = dynamicDowncast<WorkerGlobalScope>(scriptExecutionContext))
         return workerGlobalScope->reportingScope();
 
     RELEASE_ASSERT_NOT_REACHED();
@@ -138,7 +138,7 @@ void ReportingObserver::appendQueuedReportIfCorrectType(const Ref<Report>& repor
     ASSERT(m_reportingScope && scriptExecutionContext() == m_reportingScope->scriptExecutionContext());
 
     // Step 4.3.4: Queue a task to § 4.4
-    queueTaskKeepingObjectAlive(*this, TaskSource::Reporting, [protectedCallback = Ref { m_callback }](ReportingObserver& observer) {
+    queueTaskKeepingObjectAlive(*this, TaskSource::Reporting, [protectedCallback = protect(m_callback)](ReportingObserver& observer) {
         RefPtr context = observer.scriptExecutionContext();
         ASSERT(context);
         if (!context)
@@ -157,7 +157,7 @@ void ReportingObserver::appendQueuedReportIfCorrectType(const Ref<Report>& repor
 
 bool ReportingObserver::virtualHasPendingActivity() const
 {
-    // We cannot ref `m_reportingScope` here since this function may get called on the GC thread.
+    // We cannot ref `m_reportingScope` here since this function may get called on a GC thread.
     SUPPRESS_UNCOUNTED_ARG return m_reportingScope && m_reportingScope->containsObserver(*this);
 }
 

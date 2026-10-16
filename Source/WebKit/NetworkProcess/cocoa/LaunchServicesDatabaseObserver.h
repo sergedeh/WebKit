@@ -25,26 +25,30 @@
 
 #pragma once
 
-#include "NetworkProcess.h"
-#include "NetworkProcessSupplement.h"
 #include "XPCEndpoint.h"
 #include <wtf/Lock.h>
 #include <wtf/OSObjectPtr.h>
 #include <wtf/RetainPtr.h>
 #include <wtf/TZoneMalloc.h>
 
+namespace IPC {
+class Connection;
+}
+
 namespace WebKit {
 
-class LaunchServicesDatabaseObserver : public WebKit::XPCEndpoint, public NetworkProcessSupplement {
+class LaunchServicesDatabaseObserver : public WebKit::XPCEndpoint {
     WTF_MAKE_TZONE_ALLOCATED(LaunchServicesDatabaseObserver);
 public:
-    LaunchServicesDatabaseObserver(NetworkProcess&);
+    static Ref<LaunchServicesDatabaseObserver> create();
     virtual ~LaunchServicesDatabaseObserver();
 
-    static ASCIILiteral supplementName();
+    void initializeConnection(IPC::Connection*);
 
 private:
-    void startObserving(XPCObjectPtr<xpc_connection_t>);
+    LaunchServicesDatabaseObserver();
+
+    void startObserving(OSObjectPtr<xpc_connection_t>);
 
     // XPCEndpoint
     ASCIILiteral xpcEndpointMessageNameKey() const override;
@@ -52,12 +56,9 @@ private:
     ASCIILiteral xpcEndpointNameKey() const override;
     void handleEvent(xpc_connection_t, xpc_object_t) override;
 
-    // NetworkProcessSupplement
-    void initializeConnection(IPC::Connection*) final;
-
-    RetainPtr<id> m_observer;
+    const RetainPtr<id> m_observer;
     Lock m_connectionsLock;
-    Vector<XPCObjectPtr<xpc_connection_t>> m_connections WTF_GUARDED_BY_LOCK(m_connectionsLock);
+    Vector<OSObjectPtr<xpc_connection_t>> m_connections WTF_GUARDED_BY_LOCK(m_connectionsLock);
 };
 
 }

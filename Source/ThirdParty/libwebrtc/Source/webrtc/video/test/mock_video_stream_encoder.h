@@ -36,10 +36,6 @@ class MockVideoStreamEncoder : public VideoStreamEncoderInterface {
               AddAdaptationResource,
               (scoped_refptr<Resource>),
               (override));
-  MOCK_METHOD(std::vector<scoped_refptr<Resource>>,
-              GetAdaptationResources,
-              (),
-              (override));
   MOCK_METHOD(void,
               SetSource,
               (VideoSourceInterface<VideoFrame>*, const DegradationPreference&),
@@ -73,12 +69,12 @@ class MockVideoStreamEncoder : public VideoStreamEncoderInterface {
   // gtest generates implicit copy which is not allowed on VideoEncoderConfig,
   // so we can't mock ConfigureEncoder directly.
   void ConfigureEncoder(VideoEncoderConfig config,
-                        size_t max_data_payload_length) {
+                        size_t max_data_payload_length) override {
     MockedConfigureEncoder(config, max_data_payload_length);
   }
   void ConfigureEncoder(VideoEncoderConfig config,
                         size_t max_data_payload_length,
-                        SetParametersCallback) {
+                        SetParametersCallback) override {
     MockedConfigureEncoder(config, max_data_payload_length);
   }
 };

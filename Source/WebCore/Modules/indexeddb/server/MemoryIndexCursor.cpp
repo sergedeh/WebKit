@@ -34,6 +34,7 @@
 #include "MemoryIndex.h"
 #include "MemoryObjectStore.h"
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebCore {
 namespace IDBServer {
@@ -49,7 +50,7 @@ MemoryIndexCursor::MemoryIndexCursor(MemoryIndex& index, const IDBCursorInfo& cu
     : MemoryCursor(cursorInfo, transaction)
     , m_index(index)
 {
-    LOG(IndexedDB, "MemoryIndexCursor::MemoryIndexCursor %s", cursorInfo.range().loggingString().utf8().data());
+    LOG_WITH_STREAM(IndexedDB, stream << "MemoryIndexCursor::MemoryIndexCursor "_s << cursorInfo.range().loggingString());
 
     CheckedPtr valueStore = index.valueStore();
     if (!valueStore)
@@ -80,16 +81,17 @@ void MemoryIndexCursor::currentData(IDBGetResult& getResult)
     if (info().cursorType() == IndexedDB::CursorType::KeyOnly)
         getResult = { m_currentKey, m_currentPrimaryKey };
     else {
-        IDBValue value = { m_index->protectedObjectStore()->valueForKey(m_currentPrimaryKey), { }, { } };
-        getResult = { m_currentKey, m_currentPrimaryKey, WTF::move(value), m_index->protectedObjectStore()->info().keyPath() };
+        RefPtr objectStore = m_index->objectStore();
+        IDBValue value = { objectStore->valueForKey(m_currentPrimaryKey), { }, { } };
+        getResult = { m_currentKey, m_currentPrimaryKey, WTF::move(value), objectStore->info().keyPath() };
     }
 }
 
 void MemoryIndexCursor::iterate(const IDBKeyData& key, const IDBKeyData& primaryKey, uint32_t count, IDBGetResult& getResult)
 {
-    LOG(IndexedDB, "MemoryIndexCursor::iterate to key %s, %u count", key.loggingString().utf8().data(), count);
+    LOG_WITH_STREAM(IndexedDB, stream << "MemoryIndexCursor::iterate to key "_s << key.loggingString() << ", "_s << count << " count"_s);
 
-#ifndef NDEBUG
+#if ASSERT_ENABLED
     if (primaryKey.isValid())
         ASSERT(key.isValid());
 #endif
@@ -220,7 +222,12 @@ void MemoryIndexCursor::indexRecordsAllChanged()
 
 void MemoryIndexCursor::indexValueChanged(const IDBKeyData& key, const IDBKeyData& primaryKey)
 {
-    if (m_currentKey != key || m_currentPrimaryKey != primaryKey)
+    // For Prev/Prevunique cursors, m_currentIterator wraps std::set reverse_iterators
+    // whose stored base() points one element past the logical position. Erasing that
+    // adjacent element leaves base() dangling even though m_currentKey/m_currentPrimaryKey
+    // are unchanged, so for reverse cursors we must invalidate on any index mutation
+    // and let iterate() re-seek via reverseFind().
+    if (info().isDirectionForward() && (m_currentKey != key || m_currentPrimaryKey != primaryKey))
         return;
 
     m_currentIterator.invalidate();

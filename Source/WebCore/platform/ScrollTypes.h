@@ -79,8 +79,14 @@ enum class ScrollAnimationStatus : uint8_t {
 };
 
 enum class ScrollIsAnimated : bool { No, Yes };
+enum class InterruptScrollAnimation : bool { No, Yes };
 
 enum class OverflowAnchor : bool {
+    Auto,
+    None
+};
+
+enum class ScrollAxisLock : uint8_t {
     Auto,
     None
 };
@@ -306,10 +312,20 @@ enum class ScrollbarStyle : uint8_t {
     Overlay
 };
 
+enum class ScrollbarHitTestTolerance : uint8_t {
+    None,
+    Expanded
+};
+
 enum class ScrollbarOverlayStyle : uint8_t {
     Default,
     Dark,
     Light
+};
+
+enum class ScrollbarRevealBehavior : bool {
+    DontReveal,
+    Default,
 };
 
 enum class ScrollPinningBehavior : uint8_t {
@@ -321,6 +337,11 @@ enum class ScrollPinningBehavior : uint8_t {
 enum class ScrollClamping : bool {
     Unclamped,
     Clamped
+};
+
+enum class ScrollInterruptsAnimation : bool {
+    No,
+    Yes
 };
 
 enum class ScrollBehaviorForFixedElements : bool {
@@ -348,13 +369,13 @@ enum class ScrollPositioningBehavior : uint8_t {
     Stationary
 };
 
-// This value controls the method used to select snap points during scrolling. This may either
-// be "directional" or "closest." The directional method only chooses snap points that are at or
-// beyond the scroll destination in the direction of the scroll. The "closest" method does not
-// have this constraint.
+// Directional: chooses snap points that are at or beyond the scroll destination in the direction of the scroll.
+// Closest: chooses snap points that are closest in the direction of the scroll.
+// Paging: chooses the farthest snap point that is within one page of the current position in the scroll direction, otherwise the nearest snap point beyond it.
 enum class ScrollSnapPointSelectionMethod : uint8_t {
     Directional,
     Closest,
+    Paging,
 };
 
 using ScrollbarControlState = unsigned;
@@ -362,10 +383,11 @@ using ScrollbarControlPartMask = unsigned;
 
 struct ScrollPositionChangeOptions {
     ScrollType type;
-    ScrollClamping clamping = ScrollClamping::Clamped;
-    ScrollIsAnimated animated = ScrollIsAnimated::No;
-    ScrollSnapPointSelectionMethod snapPointSelectionMethod = ScrollSnapPointSelectionMethod::Closest;
-    std::optional<FloatSize> originalScrollDelta = std::nullopt;
+    ScrollClamping clamping { ScrollClamping::Clamped };
+    ScrollIsAnimated animated { ScrollIsAnimated::No };
+    ScrollSnapPointSelectionMethod snapPointSelectionMethod { ScrollSnapPointSelectionMethod::Closest };
+    std::optional<FloatSize> originalScrollDelta { };
+    ScrollInterruptsAnimation interruptsAnimation { ScrollInterruptsAnimation::Yes };
 
     static ScrollPositionChangeOptions createProgrammatic()
     {
@@ -401,7 +423,9 @@ WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, ScrollBehavior);
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, ScrollElasticity);
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, RubberBandingBehavior);
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, ScrollbarMode);
+WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, ScrollbarRevealBehavior);
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, OverflowAnchor);
+WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, ScrollAxisLock);
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, ScrollDirection);
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, ScrollGranularity);
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, NativeScrollbarVisibility);

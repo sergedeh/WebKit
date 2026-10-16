@@ -37,20 +37,20 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(RadioButtonGroups);
 class RadioButtonGroup {
     WTF_MAKE_TZONE_ALLOCATED(RadioButtonGroup);
 public:
-    bool isEmpty() const { return m_members.isEmptyIgnoringNullReferences(); }
-    bool isRequired() const { return m_requiredCount; }
-    RefPtr<HTMLInputElement> checkedButton() const { return m_checkedButton; }
+    bool LEGACY_NODELETE isEmpty() const { return m_members.isEmptyIgnoringNullReferences(); }
+    bool LEGACY_NODELETE isRequired() const { return m_requiredCount; }
+    RefPtr<HTMLInputElement> LEGACY_NODELETE checkedButton() const { return m_checkedButton; }
     void add(HTMLInputElement&);
     void updateCheckedState(HTMLInputElement&);
     void requiredStateChanged(HTMLInputElement&);
     void remove(HTMLInputElement&);
-    bool contains(HTMLInputElement&) const;
+    bool LEGACY_NODELETE contains(HTMLInputElement&) const;
     Vector<Ref<HTMLInputElement>> members() const;
 
 private:
     void setNeedsStyleRecalcForAllButtons();
     void updateValidityForAllButtons();
-    bool isValid() const;
+    bool LEGACY_NODELETE isValid() const;
     void setCheckedButton(HTMLInputElement*);
 
     WeakHashSet<HTMLInputElement, WeakPtrImplWithEventTargetData> m_members;
@@ -60,7 +60,7 @@ private:
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RadioButtonGroup);
 
-inline bool RadioButtonGroup::isValid() const
+inline bool LEGACY_NODELETE RadioButtonGroup::isValid() const
 {
     return !isRequired() || m_checkedButton;
 }
@@ -191,7 +191,7 @@ void RadioButtonGroup::updateValidityForAllButtons()
     }
 }
 
-bool RadioButtonGroup::contains(HTMLInputElement& button) const
+bool LEGACY_NODELETE RadioButtonGroup::contains(HTMLInputElement& button) const
 {
     return m_members.contains(button);
 }
@@ -219,7 +219,7 @@ void RadioButtonGroups::addButton(HTMLInputElement& element)
         group = makeUnique<RadioButtonGroup>();
     group->add(element);
 
-    if (CheckedPtr cache = element.protectedDocument()->existingAXObjectCache())
+    if (CheckedPtr cache = protect(element.document())->existingAXObjectCache())
         cache->onRadioGroupMembershipChanged(element);
 }
 
@@ -269,7 +269,7 @@ bool RadioButtonGroups::hasCheckedButton(const HTMLInputElement& element) const
     if (name.isEmpty())
         return element.checked();
     auto* group = m_nameToGroupMap.get(name.impl());
-    // FIXME: Update the radio button group before author script had a chance to run in didFinishInsertingNode().
+    // FIXME: Update the radio button group before author script had a chance to run in postConnectionSteps().
     return group && group->checkedButton();
 }
 
@@ -296,7 +296,7 @@ void RadioButtonGroups::removeButton(HTMLInputElement& element)
     if (it->value->isEmpty())
         m_nameToGroupMap.remove(it);
 
-    if (CheckedPtr cache = element.protectedDocument()->existingAXObjectCache())
+    if (CheckedPtr cache = protect(element.document())->existingAXObjectCache())
         cache->onRadioGroupMembershipChanged(element);
 }
 

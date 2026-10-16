@@ -42,6 +42,7 @@
 #include "WorkerGlobalScope.h"
 #include "WorkerThread.h"
 #include <JavaScriptCore/JSLock.h>
+#include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/SourceProvider.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -71,7 +72,7 @@ ScheduledAction::ScheduledAction(DOMWrapperWorld& isolatedWorld, String&& code)
     : m_isolatedWorld(isolatedWorld)
     , m_function(isolatedWorld.vm())
     , m_code(WTF::move(code))
-    , m_sourceTaintedOrigin(JSC::computeNewSourceTaintedOriginFromStack(isolatedWorld.vm(), isolatedWorld.vm().topCallFrame))
+    , m_sourceTaintedOrigin(JSC::computeNewSourceTaintednessFromStack(isolatedWorld.vm(), isolatedWorld.vm().topCallFrame))
 {
 }
 
@@ -107,7 +108,7 @@ void ScheduledAction::executeFunctionInContext(JSGlobalObject* globalObject, JSV
     if (callData.type == CallData::Type::None)
         return;
 
-    auto* jsFunctionGlobalObject = jsFunction->globalObject();
+    auto* jsFunctionGlobalObject = jsFunction->realm();
 
     JSGlobalObject* lexicalGlobalObject = globalObject;
 
@@ -134,18 +135,21 @@ void ScheduledAction::executeFunctionInContext(JSGlobalObject* globalObject, JSV
 
 void ScheduledAction::execute(Document& document)
 {
-    auto* window = toJSDOMWindow(document.frame(), m_isolatedWorld);
+    auto* window = toJSDOMWindow(protect(document.frame()), m_isolatedWorld);
     if (!window)
         return;
 
     RefPtr frame = dynamicDowncast<LocalFrame>(window->wrapped().frame());
-    if (!frame || !frame->script().canExecuteScripts(ReasonForCallingCanExecuteScripts::AboutToExecuteScript))
+    if (!frame)
+        return;
+    CheckedRef script = frame->script();
+    if (!script->canExecuteScripts(ReasonForCallingCanExecuteScripts::AboutToExecuteScript))
         return;
 
     if (m_function)
         executeFunctionInContext(window, &window->proxy(), document);
     else
-        frame->script().executeScriptInWorldIgnoringException(m_isolatedWorld, m_code, m_sourceTaintedOrigin);
+        script->executeScriptInWorldIgnoringException(m_isolatedWorld, m_code, m_sourceTaintedOrigin);
 }
 
 void ScheduledAction::execute(WorkerGlobalScope& workerGlobalScope)

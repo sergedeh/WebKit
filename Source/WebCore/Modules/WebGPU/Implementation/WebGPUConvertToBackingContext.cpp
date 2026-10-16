@@ -169,6 +169,24 @@ WGPUCompilationMessageType ConvertToBackingContext::convertToBacking(Compilation
     }
 }
 
+WGPUComponentSwizzle ConvertToBackingContext::convertToBacking(ComponentSwizzle componentSwizzle)
+{
+    switch (componentSwizzle) {
+    case ComponentSwizzle::Zero:
+        return WGPUComponentSwizzle_Zero;
+    case ComponentSwizzle::One:
+        return WGPUComponentSwizzle_One;
+    case ComponentSwizzle::R:
+        return WGPUComponentSwizzle_R;
+    case ComponentSwizzle::G:
+        return WGPUComponentSwizzle_G;
+    case ComponentSwizzle::B:
+        return WGPUComponentSwizzle_B;
+    case ComponentSwizzle::A:
+        return WGPUComponentSwizzle_A;
+    }
+}
+
 WGPUCullMode ConvertToBackingContext::convertToBacking(CullMode cullMode)
 {
     switch (cullMode) {
@@ -236,6 +254,12 @@ WGPUFeatureName ConvertToBackingContext::convertToBacking(FeatureName featureNam
         return WGPUFeatureName_CoreFeaturesAndLimits;
     case FeatureName::TextureFormatsTier1:
         return WGPUFeatureName_TextureFormatsTier1;
+    case FeatureName::TextureFormatsTier2:
+        return WGPUFeatureName_TextureFormatsTier2;
+    case FeatureName::PrimitiveIndex:
+        return WGPUFeatureName_PrimitiveIndex;
+    case FeatureName::Subgroups:
+        return WGPUFeatureName_Subgroups;
     }
 }
 
@@ -297,6 +321,25 @@ WGPUPowerPreference ConvertToBackingContext::convertToBacking(PowerPreference po
     case PowerPreference::HighPerformance:
         return WGPUPowerPreference_HighPerformance;
     }
+}
+
+WGPUColorSpace ConvertToBackingContext::convertToBacking(PredefinedColorSpace colorSpace)
+{
+    switch (colorSpace) {
+    case PredefinedColorSpace::SRGB:
+        return WGPUColorSpace::SRGB;
+    case PredefinedColorSpace::SRGBLinear:
+        return WGPUColorSpace::SRGBLinear;
+#if ENABLE(PREDEFINED_COLOR_SPACE_DISPLAY_P3)
+    case PredefinedColorSpace::DisplayP3:
+        return WGPUColorSpace::DisplayP3;
+    case PredefinedColorSpace::DisplayP3Linear:
+        return WGPUColorSpace::DisplayP3Linear;
+#endif
+    }
+
+    ASSERT_NOT_REACHED();
+    return WGPUColorSpace::SRGB;
 }
 
 WGPUPrimitiveTopology ConvertToBackingContext::convertToBacking(PrimitiveTopology primitiveTopology)
@@ -728,6 +771,8 @@ WGPUVertexFormat ConvertToBackingContext::convertToBacking(VertexFormat vertexFo
         return WGPUVertexFormat_Sint32x3;
     case VertexFormat::Sint32x4:
         return WGPUVertexFormat_Sint32x4;
+    case VertexFormat::Snorm1010102:
+        return WGPUVertexFormat_Snorm1010102;
     case VertexFormat::Unorm1010102:
         return WGPUVertexFormat_Unorm1010102;
     case VertexFormat::Unorm8x4Bgra:
@@ -745,12 +790,12 @@ WGPUVertexStepMode ConvertToBackingContext::convertToBacking(VertexStepMode vert
     }
 }
 
-static constexpr bool compare(BufferUsage a, unsigned b)
+static constexpr bool LEGACY_NODELETE compare(BufferUsage a, unsigned b)
 {
     return static_cast<unsigned>(a) == b;
 }
 
-WGPUBufferUsageFlags ConvertToBackingContext::convertBufferUsageFlagsToBacking(BufferUsageFlags bufferUsageFlags)
+WGPUBufferUsage ConvertToBackingContext::convertBufferUsageFlagsToBacking(BufferUsageFlags bufferUsageFlags)
 {
     static_assert(compare(BufferUsage::MapRead, WGPUBufferUsage_MapRead), "BufferUsageFlags mismatch");
     static_assert(compare(BufferUsage::MapWrite, WGPUBufferUsage_MapWrite), "BufferUsageFlags mismatch");
@@ -762,26 +807,27 @@ WGPUBufferUsageFlags ConvertToBackingContext::convertBufferUsageFlagsToBacking(B
     static_assert(compare(BufferUsage::Storage, WGPUBufferUsage_Storage), "BufferUsageFlags mismatch");
     static_assert(compare(BufferUsage::Indirect, WGPUBufferUsage_Indirect), "BufferUsageFlags mismatch");
     static_assert(compare(BufferUsage::QueryResolve, WGPUBufferUsage_QueryResolve), "BufferUsageFlags mismatch");
+    static_assert(compare(BufferUsage::Invalid, WGPUBufferUsage_Invalid), "BufferUsageFlags mismatch");
 
-    return static_cast<WGPUBufferUsageFlags>(bufferUsageFlags);
+    return static_cast<WGPUBufferUsage>(bufferUsageFlags);
 }
 
-static constexpr bool compare(auto a, auto b)
+static constexpr bool LEGACY_NODELETE compare(auto a, auto b)
 {
     return static_cast<unsigned>(a) == static_cast<unsigned>(b);
 }
-WGPUColorWriteMaskFlags ConvertToBackingContext::convertColorWriteFlagsToBacking(ColorWriteFlags colorWriteFlags)
+WGPUColorWriteMask ConvertToBackingContext::convertColorWriteFlagsToBacking(ColorWriteFlags colorWriteFlags)
 {
     static_assert(compare(ColorWrite::Red, WGPUColorWriteMask_Red), "color masks have different values");
     static_assert(compare(ColorWrite::Green, WGPUColorWriteMask_Green), "color masks have different values");
     static_assert(compare(ColorWrite::Blue, WGPUColorWriteMask_Blue), "color masks have different values");
     static_assert(compare(ColorWrite::Alpha, WGPUColorWriteMask_Alpha), "color masks have different values");
-    return static_cast<WGPUColorWriteMaskFlags>(colorWriteFlags);
+    return static_cast<WGPUColorWriteMask>(colorWriteFlags);
 }
 
-WGPUMapModeFlags ConvertToBackingContext::convertMapModeFlagsToBacking(MapModeFlags mapModeFlags)
+WGPUMapMode ConvertToBackingContext::convertMapModeFlagsToBacking(MapModeFlags mapModeFlags)
 {
-    WGPUMapModeFlags result = 0;
+    WGPUMapMode result = 0;
     if (mapModeFlags.contains(MapMode::Read))
         result |= WGPUMapMode_Read;
     if (mapModeFlags.contains(MapMode::Write))
@@ -789,9 +835,9 @@ WGPUMapModeFlags ConvertToBackingContext::convertMapModeFlagsToBacking(MapModeFl
     return result;
 }
 
-WGPUShaderStageFlags ConvertToBackingContext::convertShaderStageFlagsToBacking(ShaderStageFlags shaderStageFlags)
+WGPUShaderStage ConvertToBackingContext::convertShaderStageFlagsToBacking(ShaderStageFlags shaderStageFlags)
 {
-    WGPUShaderStageFlags result = 0;
+    WGPUShaderStage result = 0;
     if (shaderStageFlags.contains(ShaderStage::Vertex))
         result |= WGPUShaderStage_Vertex;
     if (shaderStageFlags.contains(ShaderStage::Fragment))
@@ -801,9 +847,9 @@ WGPUShaderStageFlags ConvertToBackingContext::convertShaderStageFlagsToBacking(S
     return result;
 }
 
-WGPUTextureUsageFlags ConvertToBackingContext::convertTextureUsageFlagsToBacking(TextureUsageFlags textureUsageFlags)
+WGPUTextureUsage ConvertToBackingContext::convertTextureUsageFlagsToBacking(TextureUsageFlags textureUsageFlags)
 {
-    WGPUTextureUsageFlags result = 0;
+    WGPUTextureUsage result = 0;
     if (textureUsageFlags.contains(TextureUsage::CopySource))
         result |= WGPUTextureUsage_CopySrc;
     if (textureUsageFlags.contains(TextureUsage::CopyDestination))
@@ -814,7 +860,29 @@ WGPUTextureUsageFlags ConvertToBackingContext::convertTextureUsageFlagsToBacking
         result |= WGPUTextureUsage_StorageBinding;
     if (textureUsageFlags.contains(TextureUsage::RenderAttachment))
         result |= WGPUTextureUsage_RenderAttachment;
+    if (textureUsageFlags.contains(TextureUsage::Transient))
+        result |= WGPUTextureUsage_Transient;
+    if (textureUsageFlags.contains(TextureUsage::Invalid))
+        result |= WGPUTextureUsage_Invalid;
     return result;
+}
+
+WGPUOptionalBool ConvertToBackingContext::convertToBacking(std::optional<bool> value)
+{
+    if (!value)
+        return WGPUOptionalBool_Undefined;
+    return *value ? WGPUOptionalBool_True : WGPUOptionalBool_False;
+}
+
+uint32_t ConvertToBackingContext::convertDepthSliceToBacking(std::optional<IntegerCoordinate> depthSlice)
+{
+    if (!depthSlice)
+        return WGPU_DEPTH_SLICE_UNDEFINED;
+    // An explicit depthSlice equal to WGPU_DEPTH_SLICE_UNDEFINED must not be treated as undefined.
+    // Such depthSlice is invalid for all attachments, so pass another value that is invalid for all attachments.
+    if (*depthSlice == WGPU_DEPTH_SLICE_UNDEFINED)
+        return WGPU_DEPTH_SLICE_UNDEFINED - 1;
+    return *depthSlice;
 }
 
 WGPUColor ConvertToBackingContext::convertToBacking(const Color& color)
@@ -885,6 +953,16 @@ WGPUOrigin3D ConvertToBackingContext::convertToBacking(const Origin3D& origin3D)
             origin.z,
         };
     });
+}
+
+WGPUTextureComponentSwizzle ConvertToBackingContext::convertToBacking(const TextureComponentSwizzle& swizzle)
+{
+    return WGPUTextureComponentSwizzle {
+        convertToBacking(swizzle.r),
+        convertToBacking(swizzle.g),
+        convertToBacking(swizzle.b),
+        convertToBacking(swizzle.a),
+    };
 }
 
 } // namespace WebCore::WebGPU

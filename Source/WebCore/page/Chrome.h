@@ -22,8 +22,10 @@
 #pragma once
 
 #include <WebCore/Cursor.h>
+#include <WebCore/DigitalCredentialsRequestData.h>
 #include <WebCore/DisabledAdaptations.h>
 #include <WebCore/FocusDirection.h>
+#include <WebCore/FrameIdentifier.h>
 #include <WebCore/HostWindow.h>
 #include <WebCore/ImageBufferFormat.h>
 #include <wtf/CompletionHandler.h>
@@ -33,6 +35,7 @@
 #include <wtf/RefPtr.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/UniqueRef.h>
+#include <wtf/Variant.h>
 #include <wtf/Vector.h>
 
 #if PLATFORM(COCOA)
@@ -71,10 +74,12 @@ class FloatRect;
 class Frame;
 class Element;
 class Geolocation;
+class GraphicsContext;
 class HitTestResult;
 class IntPoint;
 class IntRect;
 class LocalFrame;
+class NativeImage;
 class NavigationAction;
 class Page;
 class PopupMenu;
@@ -95,8 +100,6 @@ struct WindowFeatures;
 
 #if ENABLE(WEB_AUTHN)
 class SecurityOriginData;
-
-struct DigitalCredentialsRequestData;
 struct DigitalCredentialsResponseData;
 struct ExceptionData;
 struct MobileDocumentRequest;
@@ -108,8 +111,8 @@ public:
     Chrome(Page&, UniqueRef<ChromeClient>&&);
     virtual ~Chrome();
 
-    ChromeClient& client() { return m_client; }
-    const ChromeClient& client() const { return m_client; }
+    ChromeClient& client() LIFETIME_BOUND { return m_client; }
+    const ChromeClient& client() const LIFETIME_BOUND { return m_client; }
 
     // HostWindow methods.
     void invalidateRootView(const IntRect&) override;
@@ -130,8 +133,14 @@ public:
     void setCursor(const Cursor&) override;
     void setCursorHiddenUntilMouseMoves(bool) override;
 
-    RefPtr<ImageBuffer> createImageBuffer(const FloatSize&, RenderingMode, RenderingPurpose, float resolutionScale, const DestinationColorSpace&, ImageBufferFormat) const override;
+    RefPtr<ImageBuffer> createImageBuffer(const FloatSize&, RenderingMode, RenderingPurpose, float resolutionScale, const ColorSpace&, ImageBufferFormat) const override;
     RefPtr<WebCore::ImageBuffer> sinkIntoImageBuffer(std::unique_ptr<WebCore::SerializedImageBuffer>) override;
+    RefPtr<WebCore::ImageBuffer> createImageBufferFromTransferHandle(const ImageBufferTransferHandle&) override;
+    WEBCORE_EXPORT RefPtr<NativePromise<Ref<NativeImage>, void>> createDisplayOnlyImage(FrameIdentifier, const FloatSize&, float scale, const ColorSpace&, NOESCAPE const Function<void(GraphicsContext&)>& paint);
+
+#if ENABLE(OFFSCREEN_CANVAS)
+    RefPtr<PlaceholderRenderingContextSource> createPlaceholderRenderingContextSource(const RemotePlaceholderRenderingContextIdentifier&) override;
+#endif
 
 #if ENABLE(WEBGL)
     RefPtr<GraphicsContextGL> createGraphicsContextGL(const GraphicsContextGLAttributes&) const override;
@@ -144,7 +153,10 @@ public:
     RefPtr<ShapeDetection::FaceDetector> createFaceDetector(const ShapeDetection::FaceDetectorOptions&) const;
     RefPtr<ShapeDetection::TextDetector> createTextDetector() const;
 
-    PlatformDisplayID displayID() const override;
+    PlatformDisplayID LEGACY_NODELETE displayID() const override;
+#if HAVE(IOSURFACE)
+    bool useIOSurfaceWebKitBehavior() const override;
+#endif
     void windowScreenDidChange(PlatformDisplayID, std::optional<FramesPerSecond>) override;
 
     FloatSize screenSize() const override;
@@ -156,6 +168,7 @@ public:
     WEBCORE_EXPORT void scrollMainFrameToRevealRect(const IntRect&) const;
 
     void contentsSizeChanged(LocalFrame&, const IntSize&) const;
+    void scrollOriginDidChange(const LocalFrame&) const;
 
     WEBCORE_EXPORT void setWindowRect(const FloatRect&);
     WEBCORE_EXPORT FloatRect windowRect() const;
@@ -177,10 +190,7 @@ public:
     bool canRunModal() const;
     void runModal();
 
-    bool toolbarsVisible() const;
-    bool statusbarVisible() const;
-    bool scrollbarsVisible() const;
-    bool menubarVisible() const;
+    bool isPopup() const;
 
     void setResizable(bool);
 
@@ -209,12 +219,13 @@ public:
     std::unique_ptr<WorkerClient> createWorkerClient(SerialFunctionDispatcher&);
 
     void runOpenPanel(LocalFrame&, FileChooser&);
+    void transcodeChosenFiles(Vector<String>&& transcodingPaths, String&& destinationUTI, String&& destinationExtension, CompletionHandler<void(Vector<String>&&)>&&);
     void showShareSheet(ShareDataWithParsedURL&&, CompletionHandler<void(bool)>&&);
     void showContactPicker(ContactsRequestData&&, CompletionHandler<void(std::optional<Vector<ContactInfo>>&&)>&&);
 
 #if ENABLE(WEB_AUTHN)
-    void showDigitalCredentialsPicker(const DigitalCredentialsRequestData&, WTF::CompletionHandler<void(Expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData>&&)>&&);
-    void dismissDigitalCredentialsPicker(CompletionHandler<void(bool)>&&);
+    void showDigitalCredentialsChooser(const DigitalCredentialsRequestData&, WTF::CompletionHandler<void(std::expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData>&&)>&&);
+    void dismissDigitalCredentialsChooser(CompletionHandler<void(bool)>&&);
 #endif
 
     void loadIconForFiles(const Vector<String>&, FileIconLoader&);
@@ -245,7 +256,6 @@ public:
 
 private:
     void notifyPopupOpeningObservers() const;
-    Ref<Page> protectedPage() const;
 
     WeakRef<Page> m_page;
     const UniqueRef<ChromeClient> m_client;

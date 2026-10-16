@@ -64,11 +64,11 @@ public:
 
     void setSelected(bool) override;
 
-    AVPlayerItemTrack* playerItemTrack();
+    AVPlayerItemTrack* LEGACY_NODELETE playerItemTrack();
 
-    AVAssetTrack* assetTrack();
+    AVAssetTrack* LEGACY_NODELETE assetTrack();
 
-    MediaSelectionOptionAVFObjC* mediaSelectionOption();
+    MediaSelectionOptionAVFObjC* LEGACY_NODELETE mediaSelectionOption();
 
 private:
     friend class MediaPlayerPrivateAVFoundationObjC;

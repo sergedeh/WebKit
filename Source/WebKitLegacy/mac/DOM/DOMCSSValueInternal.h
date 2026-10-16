@@ -24,10 +24,11 @@
  */
 
 #import <WebKitLegacy/DOMCSSValue.h>
+#import <wtf/Compiler.h>
 
 namespace WebCore {
 class DeprecatedCSSOMValue;
 }
 
-DOMCSSValue *kit(WebCore::DeprecatedCSSOMValue*);
+DOMCSSValue * LEGACY_NODELETE kit(WebCore::DeprecatedCSSOMValue*);
 Class kitClass(WebCore::DeprecatedCSSOMValue*);

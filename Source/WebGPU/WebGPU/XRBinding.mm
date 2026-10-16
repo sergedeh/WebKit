@@ -31,7 +31,7 @@
 #import <wtf/CheckedArithmetic.h>
 #import <wtf/StdLibExtras.h>
 
-namespace WebGPU {
+namespace WebGPU::Metal {
 
 XRBinding::XRBinding(bool, Device& device)
     : m_device(device)
@@ -62,27 +62,39 @@ bool XRBinding::isValid() const
     return true;
 }
 
-} // namespace WebGPU
+} // namespace WebGPU::Metal
 
 #pragma mark WGPU Stubs
 
-void wgpuXRBindingReference(WGPUXRBinding binding)
+void LEGACY_NODELETE wgpuXRBindingAddRef(WGPUXRBinding binding)
 {
-    WebGPU::fromAPI(binding).ref();
+    WebGPU::Metal::fromAPI(binding).ref();
 }
 
 void wgpuXRBindingRelease(WGPUXRBinding binding)
 {
-    WebGPU::fromAPI(binding).deref();
+    WebGPU::Metal::fromAPI(binding).deref();
 }
 
-WGPUXRProjectionLayer wgpuBindingCreateXRProjectionLayer(WGPUXRBinding binding, WGPUTextureFormat colorFormat, WGPUTextureFormat* optionalDepthStencilFormat, WGPUTextureUsageFlags flags, double scale)
+WGPUXRProjectionLayer wgpuBindingCreateXRProjectionLayer(WGPUXRBinding binding, WGPUTextureFormat colorFormat, WGPUTextureFormat* optionalDepthStencilFormat, WGPUTextureUsage flags, double scale)
 {
-    return WebGPU::releaseToAPI(WebGPU::protectedFromAPI(binding)->createXRProjectionLayer(colorFormat, optionalDepthStencilFormat, flags, scale));
+    Ref protectedBinding = WebGPU::Metal::fromAPI(binding);
+    auto apiColorFormat = WebGPU::Metal::fromAPI(colorFormat);
+    auto apiDepthStencilFormat = optionalDepthStencilFormat ? WebGPU::Metal::fromAPI(*optionalDepthStencilFormat) : std::nullopt;
+    auto textureUsage = WebGPU::Metal::textureUsageFromAPI(flags);
+    // An invalid format or usage makes an invalid layer.
+    if (!apiColorFormat || (optionalDepthStencilFormat && !apiDepthStencilFormat) || !textureUsage)
+        return WebGPU::Metal::releaseToAPI(WebGPU::Metal::XRProjectionLayer::createInvalid(protectedBinding->device()));
+    return WebGPU::Metal::releaseToAPI(protectedBinding->createProjectionLayer({
+        .colorFormat = *apiColorFormat,
+        .depthStencilFormat = apiDepthStencilFormat,
+        .textureUsage = *textureUsage,
+        .scaleFactor = scale,
+    }));
 }
 
 WGPUXRSubImage wgpuBindingGetViewSubImage(WGPUXRBinding binding, WGPUXRProjectionLayer layer)
 {
-    return WebGPU::releaseToAPI(WebGPU::protectedFromAPI(binding)->getViewSubImage(WebGPU::protectedFromAPI(layer)));
+    return WebGPU::Metal::releaseToAPI(protect(WebGPU::Metal::fromAPI(binding))->getViewSubImage(protect(WebGPU::Metal::fromAPI(layer))));
 }
 

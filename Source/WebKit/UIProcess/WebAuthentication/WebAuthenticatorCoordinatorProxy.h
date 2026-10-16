@@ -25,6 +25,8 @@
 
 #pragma once
 
+#include "Untrusted.h"
+
 #if ENABLE(WEB_AUTHN)
 
 #include "MessageReceiver.h"
@@ -92,8 +94,11 @@ public:
 
     std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
 
+    // IPC::MessageReceiver.
+    void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
+
 #if HAVE(WEB_AUTHN_AS_MODERN)
-    static WeakPtr<WebAuthenticatorCoordinatorProxy>& activeConditionalMediationProxy();
+    static WeakPtr<WebAuthenticatorCoordinatorProxy>& LEGACY_NODELETE activeConditionalMediationProxy();
     void pauseConditionalAssertion(CompletionHandler<void()>&&);
     void unpauseConditionalAssertion();
     void makeActiveConditionalAssertion();
@@ -105,19 +110,16 @@ private:
 
     using QueryCompletionHandler = CompletionHandler<void(bool)>;
 
-    // IPC::MessageReceiver.
-    void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
-
     // Receivers.
-    void makeCredential(WebCore::FrameIdentifier, FrameInfoData&&, WebCore::PublicKeyCredentialCreationOptions&&, WebCore::MediationRequirement, RequestCompletionHandler&&);
-    void getAssertion(WebCore::FrameIdentifier, FrameInfoData&&, WebCore::PublicKeyCredentialRequestOptions&&, WebCore::MediationRequirement, std::optional<WebCore::SecurityOriginData>, RequestCompletionHandler&&);
-    void isUserVerifyingPlatformAuthenticatorAvailable(const WebCore::SecurityOriginData&, QueryCompletionHandler&&);
-    void isConditionalMediationAvailable(const WebCore::SecurityOriginData&, QueryCompletionHandler&&);
-    void getClientCapabilities(const WebCore::SecurityOriginData&, CapabilitiesCompletionHandler&&);
+    void makeCredential(IPC::Connection&, WebCore::FrameIdentifier, FrameInfoData&&, WebCore::PublicKeyCredentialCreationOptions&&, WebCore::MediationRequirement, RequestCompletionHandler&&);
+    void getAssertion(IPC::Connection&, WebCore::FrameIdentifier, FrameInfoData&&, WebCore::PublicKeyCredentialRequestOptions&&, WebCore::MediationRequirement, IPC::Untrusted<std::optional<WebCore::SecurityOriginData>>&&, RequestCompletionHandler&&);
+    void isUserVerifyingPlatformAuthenticatorAvailable(IPC::Connection&, IPC::Untrusted<WebCore::SecurityOriginData>&&, QueryCompletionHandler&&);
+    void isConditionalMediationAvailable(IPC::Connection&, IPC::Untrusted<WebCore::SecurityOriginData>&&, QueryCompletionHandler&&);
+    void getClientCapabilities(IPC::Connection&, IPC::Untrusted<WebCore::SecurityOriginData>&&, CapabilitiesCompletionHandler&&);
 
-    void signalUnknownCredential(const WebCore::SecurityOriginData&, WebCore::UnknownCredentialOptions&&, CompletionHandler<void(std::optional<WebCore::ExceptionData>)>&&);
-    void signalAllAcceptedCredentials(const WebCore::SecurityOriginData&, WebCore::AllAcceptedCredentialsOptions&&, CompletionHandler<void(std::optional<WebCore::ExceptionData>)>&&);
-    void signalCurrentUserDetails(const WebCore::SecurityOriginData&, WebCore::CurrentUserDetailsOptions&&, CompletionHandler<void(std::optional<WebCore::ExceptionData>)>&&);
+    void signalUnknownCredential(IPC::Connection&, IPC::Untrusted<WebCore::SecurityOriginData>&&, WebCore::UnknownCredentialOptions&&, CompletionHandler<void(std::optional<WebCore::ExceptionData>)>&&);
+    void signalAllAcceptedCredentials(IPC::Connection&, IPC::Untrusted<WebCore::SecurityOriginData>&&, WebCore::AllAcceptedCredentialsOptions&&, CompletionHandler<void(std::optional<WebCore::ExceptionData>)>&&);
+    void signalCurrentUserDetails(IPC::Connection&, IPC::Untrusted<WebCore::SecurityOriginData>&&, WebCore::CurrentUserDetailsOptions&&, CompletionHandler<void(std::optional<WebCore::ExceptionData>)>&&);
 
     void cancel(CompletionHandler<void()>&&);
 
@@ -139,6 +141,7 @@ private:
 #endif
 
     void performRequest(WebAuthenticationRequestData&&, RequestCompletionHandler&&);
+    void performRequestWithValidatedRelyingPartyIdentifier(WebAuthenticationRequestData&&, RequestCompletionHandler&&);
 
 #if HAVE(UNIFIED_ASC_AUTH_UI)
     RetainPtr<ASCCredentialRequestContext> contextForRequest(WebAuthenticationRequestData&&);

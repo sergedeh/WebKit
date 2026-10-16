@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2004-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2004-2026 Apple Inc. All rights reserved.
  * Copyright (C) 2007 Alp Toker <alp@atoker.com>
  * Copyright (C) 2010 Torch Mobile (Beijing) Co. Ltd. All rights reserved.
  *
@@ -30,6 +30,8 @@
 #include <JavaScriptCore/JSCJSValue.h>
 #include <WebCore/ActiveDOMObject.h>
 #include <WebCore/CanvasBase.h>
+#include <WebCore/CanvasContent.h>
+#include <WebCore/CanvasElementImage.h>
 #include <WebCore/Document.h>
 #include <WebCore/FloatRect.h>
 #include <WebCore/GraphicsTypes.h>
@@ -44,9 +46,11 @@
 
 namespace WebCore {
 
+class BitmapImage;
 class BlobCallback;
 class CanvasRenderingContext;
 class CanvasRenderingContext2D;
+class DOMMatrix;
 class GPU;
 class GPUCanvasContext;
 class GraphicsContext;
@@ -62,6 +66,7 @@ class WebCoreOpaqueRoot;
 struct CanvasRenderingContext2DSettings;
 struct ImageBitmapRenderingContextSettings;
 struct UncachedString;
+struct UpdateElementGeometryOptions;
 
 class HTMLCanvasElement final : public HTMLElement, public ActiveDOMObject, public CanvasBase {
     WTF_MAKE_TZONE_ALLOCATED(HTMLCanvasElement);
@@ -73,11 +78,22 @@ public:
     static Ref<HTMLCanvasElement> create(const QualifiedName&, Document&);
     virtual ~HTMLCanvasElement();
 
-    using HTMLElement::protectedScriptExecutionContext;
-
     WEBCORE_EXPORT ExceptionOr<void> setWidth(unsigned);
     WEBCORE_EXPORT ExceptionOr<void> setHeight(unsigned);
-    void setCSSCanvasContextSize(const IntSize& newSize);
+
+    const AtomString& canvasContentForBindings() const;
+    CanvasContent canvasContent() const;
+    bool hasDrawableContent() const;
+
+    void requestPaint();
+    void dispatchPaintEvent();
+
+    std::optional<CanvasElementSnapshot> canvasDrawableSnapshot(Element&) const;
+    ExceptionOr<Ref<CanvasElementImage>> captureElementImage(Element&) const;
+
+    ExceptionOr<void> updateElementGeometry(const CanvasElementImageSource&, std::optional<UpdateElementGeometryOptions>);
+    ExceptionOr<void> clearElementGeometry(const CanvasElementImageSource&);
+    ExceptionOr<Ref<DOMMatrix>> getElementTransform(const Element&);
 
     CanvasRenderingContext* renderingContext() const final { return m_context.get(); }
     ExceptionOr<std::optional<RenderingContext>> getContext(JSC::JSGlobalObject&, const String& contextId, FixedVector<JSC::Strong<JSC::Unknown>>&& arguments);
@@ -111,7 +127,7 @@ public:
 #endif
 
     // Used for rendering
-    void didDraw(const std::optional<FloatRect>&, ShouldApplyPostProcessingToDirtyRect) final;
+    void willUpdateContents(const std::optional<FloatRect>&, ShouldApplyPostProcessingToDirtyRect) final;
 
     void paint(GraphicsContext&, const LayoutRect&);
 
@@ -125,25 +141,21 @@ public:
 
     std::unique_ptr<CSSParserContext> createCSSParserContext() const final;
 
-    Image* copiedImage() const final;
-    void clearCopiedImage() const final;
+    BitmapImage* copiedImage() const;
     RefPtr<ImageData> getImageData();
 
     SecurityOrigin* securityOrigin() const final;
 
-    // FIXME(https://bugs.webkit.org/show_bug.cgi?id=275100): Only some canvas rendering contexts need an ImageBuffer.
-    // It would be better to have the contexts own the buffers.
-    void setImageBufferAndMarkDirty(RefPtr<ImageBuffer>&&) final;
-
     bool needsPreparationForDisplay();
     void prepareForDisplay();
+    bool usesContentsAsLayerContents() const;
     void dynamicRangeLimitDidChange(PlatformDynamicRangeLimit);
     WEBCORE_EXPORT std::optional<double> getContextEffectiveDynamicRangeLimitValue() const;
 
     void setIsSnapshotting(bool isSnapshotting) { m_isSnapshotting = isSnapshotting; }
     bool isSnapshotting() const { return m_isSnapshotting; }
 
-    bool isControlledByOffscreen() const;
+    bool LEGACY_NODELETE isControlledByOffscreen() const;
 
     void queueTaskKeepingObjectAlive(TaskSource, Function<void(CanvasBase&)>&&) final;
     void dispatchEvent(Event&) final;
@@ -153,6 +165,8 @@ public:
     void deref() const final { HTMLElement::deref(); }
 
     using HTMLElement::scriptExecutionContext;
+
+    void setSizeForControllingContext(IntSize) final;
 
 private:
     HTMLCanvasElement(const QualifiedName&, Document&);
@@ -168,28 +182,19 @@ private:
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) final;
     bool hasPresentationalHintsForAttribute(const QualifiedName&) const final;
     void collectPresentationalHintsForAttribute(const QualifiedName&, const AtomString&, MutableStyleProperties&) final;
-    RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) final;
-    bool isReplaced(const RenderStyle* = nullptr) const final;
+    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
+    bool isReplaced(const Style::ComputedStyle* = nullptr) const final;
 
     bool canContainRangeEndPoint() const final;
     bool canStartSelection() const final;
 
     void didUpdateSizeProperties();
 
-    void createImageBuffer() const final;
-    void clearImageBuffer() const;
-
-    bool usesContentsAsLayerContents() const;
-
     ScriptExecutionContext* canvasBaseScriptExecutionContext() const final { return HTMLElement::scriptExecutionContext(); }
-    RefPtr<ScriptExecutionContext> protectedCanvasBaseScriptExecutionContext() const { return canvasBaseScriptExecutionContext(); }
 
     void didMoveToNewDocument(Document& oldDocument, Document& newDocument) final;
 
-    std::optional<FloatRect> computeDirtyRectangleIfNeeded(const std::optional<FloatRect>&) const;
-
     bool m_ignoreDidUpdateSizeProperties { false };
-    mutable bool m_didClearImageBuffer { false };
 #if ENABLE(WEBGL)
     bool m_hasRelevantWebGLEventListener { false };
 #endif
@@ -197,7 +202,7 @@ private:
 
     std::unique_ptr<CanvasRenderingContext> m_context;
     PlatformDynamicRangeLimit m_dynamicRangeLimit { PlatformDynamicRangeLimit::initialValue() };
-    mutable RefPtr<Image> m_copiedImage; // FIXME: This is temporary for platforms that have to copy the image buffer to render (and for CSSCanvasValue).
+    mutable RefPtr<BitmapImage> m_copiedImage; // For CSSCanvasValue.
 };
 
 WebCoreOpaqueRoot root(HTMLCanvasElement*);

@@ -27,6 +27,7 @@
 #include "FontCache.h"
 
 #include "Font.h"
+#include "FontCustomPlatformData.h"
 #include "FontDescription.h"
 #include "StyleFontSizeFunctions.h"
 #include <wtf/Assertions.h>
@@ -117,7 +118,7 @@ static std::pair<bool, bool> computeSynthesisProperties(const SkTypeface& typefa
 
     bool allowsSyntheticBold = fontDescription.hasAutoFontSynthesisWeight() && !synthesisOptions.contains(FontLookupOptions::DisallowBoldSynthesis);
     bool syntheticBold = allowsSyntheticBold && isFontWeightBold(fontDescription.weight()) && !typeface.isBold();
-    bool allowsSyntheticOblique = fontDescription.hasAutoFontSynthesisStyle() && !synthesisOptions.contains(FontLookupOptions::DisallowObliqueSynthesis);
+    bool allowsSyntheticOblique = fontDescription.allowsItalicOrObliqueFontSynthesisStyle() && !synthesisOptions.contains(FontLookupOptions::DisallowObliqueSynthesis);
     bool syntheticOblique = allowsSyntheticOblique && isItalic(fontDescription.fontStyleSlope()) && !typeface.isItalic();
     return { syntheticBold, syntheticOblique };
 }
@@ -138,9 +139,9 @@ RefPtr<Font> FontCache::systemFallbackForCharacterCluster(const FontDescription&
     Vector<const char*, 1> bcp47;
     if (isEmoji)
         bcp47.append("und-Zsye");
-    auto typeface = fontManager().matchFamilyStyleCharacter(nullptr, skiaFontStyle(description), bcp47.mutableSpan().data(), bcp47.size(), baseCharacter);
+    auto typeface = fontManager().matchFamilyStyleCharacter(nullptr, { }, bcp47.mutableSpan().data(), bcp47.size(), baseCharacter);
 #else
-    auto typeface = m_skiaSystemFallbackFontCache.fontForCharacterCluster(skiaFontStyle(description), isEmoji ? "und-Zsye"_s : description.computedLocale(), stringView);
+    auto typeface = m_skiaSystemFallbackFontCache.fontForCharacterCluster(isEmoji ? "und-Zsye"_s : description.usedLocale(), stringView);
 #endif
     if (!typeface)
         return nullptr;
@@ -150,7 +151,7 @@ RefPtr<Font> FontCache::systemFallbackForCharacterCluster(const FontDescription&
 
     // @font-face size-adjust does not affect fallback font sizes, but font-size-adjust does.
     // We initialize FontPlatformData with the computed size, then apply font-size-adjust if required.
-    auto size = description.computedSize();
+    auto size = description.usedSize();
     FontPlatformData alternateFontData(WTF::move(typeface), size, syntheticBold, syntheticOblique, description.orientation(), description.widthVariant(), description.textRenderingMode(), WTF::move(features));
     alternateFontData.updateSizeWithFontSizeAdjust(description.fontSizeAdjust(), size);
 
@@ -194,7 +195,7 @@ Ref<Font> FontCache::lastResortFallbackFont(const FontDescription& fontDescripti
     }
 
     auto [syntheticBold, syntheticOblique] = computeSynthesisProperties(*typeface, fontDescription, { });
-    FontPlatformData platformData(WTF::move(typeface), fontDescription.computedSize(), syntheticBold, syntheticOblique,
+    FontPlatformData platformData(WTF::move(typeface), fontDescription.usedSize(), syntheticBold, syntheticOblique,
         fontDescription.orientation(), fontDescription.widthVariant(), fontDescription.textRenderingMode(), computeFeatures(fontDescription, { }));
     return fontForPlatformData(platformData);
 }
@@ -204,8 +205,24 @@ Vector<FontSelectionCapabilities> FontCache::getFontSelectionCapabilitiesInFamil
     return { };
 }
 
+#if PLATFORM(GTK) || (PLATFORM(WPE) && ENABLE(WPE_PLATFORM))
+static bool isSystemUIFamilyFont(const String& family)
+{
+    return family == "-webkit-system-font"_s
+        || family == "-webkit-system-ui"_s
+        || family == "system-font"_s
+        || family == "system-ui"_s
+        || family == "ui-sans-serif"_s;
+}
+#endif
+
 static String getFamilyNameStringFromFamily(const String& family)
 {
+#if PLATFORM(GTK) || (PLATFORM(WPE) && ENABLE(WPE_PLATFORM))
+    if (isSystemUIFamilyFont(family))
+        return SystemSettings::singleton().defaultSystemFont();
+#endif
+
     // If we're creating a fallback font (e.g. "-webkit-monospace"), convert the name into
     // the fallback name (like "monospace") that fontconfig understands.
     if (family.length() && !family.startsWith("-webkit-"_s))
@@ -223,11 +240,6 @@ static String getFamilyNameStringFromFamily(const String& family)
         return "fantasy"_s;
     if (family == *familyNamesData->at(FamilyNamesIndex::MathFamily))
         return "math"_s;
-
-#if PLATFORM(GTK) || (PLATFORM(WPE) && ENABLE(WPE_PLATFORM))
-    if (family == *familyNamesData->at(FamilyNamesIndex::SystemUiFamily) || family == "-webkit-system-font"_s)
-        return SystemSettings::singleton().defaultSystemFont();
-#endif
 
     return emptyString();
 }
@@ -266,15 +278,18 @@ Vector<hb_feature_t> FontCache::computeFeatures(const FontDescription& fontDescr
         featuresToBeApplied.set(fontFeatureTag("clig"), 0);
     }
 
-    // dlig is off by default in HarfBuzz.
-    auto discretionaryLigatures = fontDescription.variantDiscretionaryLigatures();
-    if (!shouldDisableLigaturesForSpacing && discretionaryLigatures == FontVariantLigatures::Yes)
-        featuresToBeApplied.set(fontFeatureTag("dlig"), 1);
+    if (shouldDisableLigaturesForSpacing) {
+        featuresToBeApplied.set(fontFeatureTag("dlig"), 0);
+        featuresToBeApplied.set(fontFeatureTag("hlig"), 0);
+    } else {
+        auto discretionaryLigatures = fontDescription.variantDiscretionaryLigatures();
+        if (discretionaryLigatures == FontVariantLigatures::Yes)
+            featuresToBeApplied.set(fontFeatureTag("dlig"), 1);
 
-    // hlig is off by default in HarfBuzz.
-    auto historicalLigatures = fontDescription.variantHistoricalLigatures();
-    if (!shouldDisableLigaturesForSpacing && historicalLigatures == FontVariantLigatures::Yes)
-        featuresToBeApplied.set(fontFeatureTag("hlig"), 1);
+        auto historicalLigatures = fontDescription.variantHistoricalLigatures();
+        if (historicalLigatures == FontVariantLigatures::Yes)
+            featuresToBeApplied.set(fontFeatureTag("hlig"), 1);
+    }
 
     // calt is on by default in HarfBuzz.
     auto contextualAlternates = fontDescription.variantContextualAlternates();
@@ -390,20 +405,28 @@ Vector<hb_feature_t> FontCache::computeFeatures(const FontDescription& fontDescr
     return features;
 }
 
+static bool isUnsupportedFamilyFont(const AtomString& family)
+{
+    return family == "-apple-system"
+        || family == "-apple-system-font";
+}
+
 std::unique_ptr<FontPlatformData> FontCache::createFontPlatformData(const FontDescription& fontDescription, const AtomString& family, const FontCreationContext& fontCreationContext, OptionSet<FontLookupOptions> options)
 {
+    if (isUnsupportedFamilyFont(family))
+        return nullptr;
     auto familyName = getFamilyNameStringFromFamily(family);
     auto skFontStyle = skiaFontStyle(fontDescription);
-    auto typeface = fontManager().matchFamilyStyle(familyName.utf8().data(), skFontStyle);
+    auto typeface = fontManager().matchFamilyStyle(familyName.utf8().legacyCStringPointer(), skFontStyle);
     if (!typeface)
         return nullptr;
 
     auto size = fontDescription.adjustedSizeForFontFace(fontCreationContext.sizeAdjust());
     auto features = computeFeatures(fontDescription, fontCreationContext);
     auto [syntheticBold, syntheticOblique] = computeSynthesisProperties(*typeface, fontDescription, options);
-    FontPlatformData platformData(WTF::move(typeface), size, syntheticBold, syntheticOblique, fontDescription.orientation(), fontDescription.widthVariant(), fontDescription.textRenderingMode(), WTF::move(features));
+    FontPlatformData platformData(WTF::move(typeface), size, syntheticBold, syntheticOblique, fontDescription.orientation(), fontDescription.widthVariant(), fontDescription.textRenderingMode(), WTF::move(features), fontCreationContext.metricsOverrides());
 
-    platformData.updateSizeWithFontSizeAdjust(fontDescription.fontSizeAdjust(), fontDescription.computedSize());
+    platformData.updateSizeWithFontSizeAdjust(fontDescription.fontSizeAdjust(), fontDescription.usedSize());
     auto platformDataUniquePtr = makeUnique<FontPlatformData>(platformData);
 
     return platformDataUniquePtr;
@@ -412,6 +435,16 @@ std::unique_ptr<FontPlatformData> FontCache::createFontPlatformData(const FontDe
 ASCIILiteral FontCache::platformAlternateFamilyName(const String&)
 {
     return { };
+}
+
+void FontCache::platformReleaseNoncriticalMemory()
+{
+    for (auto& entry : m_fontCascadeCache.m_entries.values()) {
+        entry->fonts->forEachRealizedFont([](const Font& font) {
+            if (const auto* customPlatformData = font.platformData().customPlatformData())
+                customPlatformData->clearVariationTypefacesCache();
+        });
+    }
 }
 
 void FontCache::platformInvalidate()

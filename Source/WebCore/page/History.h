@@ -29,6 +29,7 @@
 #include "FrameLoaderTypes.h"
 #include "JSValueInWrappedObject.h"
 #include "LocalDOMWindowProperty.h"
+#include "NavigationHistoryBehavior.h"
 #include "ScriptWrappable.h"
 #include "SerializedScriptValue.h"
 #include <wtf/WallTime.h>
@@ -57,8 +58,8 @@ public:
     void setTotalStateObjectPayloadLimitOverride(std::optional<uint32_t> limit) { m_totalStateObjectPayloadLimitOverride = limit; }
 
     ExceptionOr<SerializedScriptValue*> state();
-    JSValueInWrappedObject& cachedState();
-    JSValueInWrappedObject& cachedStateForGC() { return m_cachedState; }
+    JSValueInWrappedObject& LEGACY_NODELETE cachedState() LIFETIME_BOUND;
+    JSValueInWrappedObject& cachedStateForGC() LIFETIME_BOUND { return m_cachedState; }
 
     ExceptionOr<void> back();
     ExceptionOr<void> forward();
@@ -68,7 +69,7 @@ public:
     ExceptionOr<void> forward(Document&);
     ExceptionOr<void> go(Document&, int);
 
-    bool isSameAsCurrentState(SerializedScriptValue*) const;
+    bool LEGACY_NODELETE isSameAsCurrentState(SerializedScriptValue*) const;
 
     ExceptionOr<void> pushState(RefPtr<SerializedScriptValue>&& data, const String&, const String& urlString);
     ExceptionOr<void> replaceState(RefPtr<SerializedScriptValue>&& data, const String&, const String& urlString);
@@ -78,10 +79,10 @@ private:
 
     ExceptionOr<void> stateObjectAdded(RefPtr<SerializedScriptValue>&&, const String& url, NavigationHistoryBehavior);
     ExceptionOr<void> updateAndCheckStateObjectQuota(const URL&, SerializedScriptValue*, NavigationHistoryBehavior);
-    bool stateChanged() const;
+    bool LEGACY_NODELETE stateChanged() const;
 
-    SerializedScriptValue* stateInternal() const;
-    uint32_t totalStateObjectPayloadLimit() const;
+    SerializedScriptValue* LEGACY_NODELETE stateInternal() const;
+    uint32_t LEGACY_NODELETE totalStateObjectPayloadLimit() const;
 
     RefPtr<SerializedScriptValue> m_lastStateObjectRequested;
     JSValueInWrappedObject m_cachedState;

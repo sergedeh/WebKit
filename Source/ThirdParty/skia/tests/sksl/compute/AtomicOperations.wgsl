@@ -1,5 +1,6 @@
 diagnostic(off, derivative_uniformity);
 diagnostic(off, chromium.unreachable_code);
+enable f16;
 struct CSIn {
   @builtin(local_invocation_id) sk_LocalInvocationID: vec3<u32>,
 };
@@ -17,6 +18,8 @@ fn _skslMain(_stageIn: CSIn) {
     }
     workgroupBarrier();
     atomicAdd(&localCounter, 1u);
+    atomicMin(&localCounter, 10u);
+    atomicMax(&localCounter, 5u);
     workgroupBarrier();
     if _stageIn.sk_LocalInvocationID.x == 0u {
       {

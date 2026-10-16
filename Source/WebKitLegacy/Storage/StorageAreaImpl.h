@@ -54,7 +54,7 @@ public:
     void clear(WebCore::LocalFrame& sourceFrame) override;
     bool contains(const String& key) override;
 
-    WebCore::StorageType storageType() const override;
+    WebCore::StorageType storageType() const override { return m_storageType; }
 
     size_t memoryBytesUsedByCache() override;
 
@@ -85,11 +85,11 @@ private:
     void dispatchStorageEvent(const String& key, const String& oldValue, const String& newValue, WebCore::LocalFrame& sourceFrame);
 
     WebCore::StorageType m_storageType;
-    Ref<const WebCore::SecurityOrigin> m_securityOrigin;
+    const Ref<const WebCore::SecurityOrigin> m_securityOrigin;
     WebCore::StorageMap m_storageMap;
 
     RefPtr<StorageAreaSync> m_storageAreaSync;
-    RefPtr<WebCore::StorageSyncManager> m_storageSyncManager;
+    const RefPtr<WebCore::StorageSyncManager> m_storageSyncManager;
 
 #if ASSERT_ENABLED
     bool m_isShutdown { false };

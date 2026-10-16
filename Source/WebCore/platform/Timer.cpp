@@ -35,6 +35,7 @@
 #include <wtf/MainThread.h>
 #include <wtf/RuntimeApplicationChecks.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/Threading.h>
 #include <wtf/Vector.h>
 
 #if PLATFORM(IOS_FAMILY)
@@ -90,7 +91,7 @@ public:
     { }
 
     TimerHeapReference operator*() const;
-    Ref<ThreadTimerHeapItem>& operator->() const { return *m_pointer; }
+    Ref<ThreadTimerHeapItem>& LEGACY_NODELETE operator->() const { return *m_pointer; }
 private:
     Ref<ThreadTimerHeapItem>* m_pointer;
 };
@@ -106,7 +107,7 @@ public:
     { }
 
     operator Ref<ThreadTimerHeapItem>&() const { return m_reference; }
-    TimerHeapPointer operator&() const { return &m_reference; }
+    TimerHeapPointer LEGACY_NODELETE operator&() const { return &m_reference; }
     TimerHeapReference& operator=(TimerHeapReference&&);
     TimerHeapReference& operator=(Ref<ThreadTimerHeapItem>&&);
 
@@ -139,21 +140,21 @@ inline TimerHeapReference& TimerHeapReference::operator=(Ref<ThreadTimerHeapItem
     return *this;
 }
 
-inline void TimerHeapReference::swap(TimerHeapReference& other)
+inline void LEGACY_NODELETE TimerHeapReference::swap(TimerHeapReference& other)
 {
     m_reference.swap(other.m_reference);
     updateHeapIndex();
     other.updateHeapIndex();
 }
 
-inline void TimerHeapReference::updateHeapIndex()
+inline void LEGACY_NODELETE TimerHeapReference::updateHeapIndex()
 {
     auto& heap = m_reference->timerHeap();
     if (&m_reference >= heap.begin() && &m_reference < heap.end())
         m_reference->setHeapIndex(&m_reference - heap.begin());
 }
 
-inline void swap(TimerHeapReference a, TimerHeapReference b)
+inline void LEGACY_NODELETE swap(TimerHeapReference a, TimerHeapReference b)
 {
     a.swap(b);
 }
@@ -177,22 +178,22 @@ public:
         ASSERT(m_index <= m_container.size());
     }
 
-    TimerHeapIterator& operator++() { ++m_index; return *this; }
-    TimerHeapIterator operator++(int) { return TimerHeapIterator(m_container, m_index++); }
+    TimerHeapIterator& LEGACY_NODELETE operator++() { ++m_index; return *this; }
+    TimerHeapIterator LEGACY_NODELETE operator++(int) { return TimerHeapIterator(m_container, m_index++); }
 
-    TimerHeapIterator& operator--() { --m_index; return *this; }
-    TimerHeapIterator operator--(int) { return TimerHeapIterator(m_container, m_index--); }
+    TimerHeapIterator& LEGACY_NODELETE operator--() { --m_index; return *this; }
+    TimerHeapIterator LEGACY_NODELETE operator--(int) { return TimerHeapIterator(m_container, m_index--); }
 
-    TimerHeapIterator& operator+=(ptrdiff_t i) { m_index += i; return *this; }
-    TimerHeapIterator& operator-=(ptrdiff_t i) { m_index -= i; return *this; }
+    TimerHeapIterator& LEGACY_NODELETE operator+=(ptrdiff_t i) { m_index += i; return *this; }
+    TimerHeapIterator& LEGACY_NODELETE operator-=(ptrdiff_t i) { m_index -= i; return *this; }
 
-    TimerHeapReference operator[](ptrdiff_t i) const { return TimerHeapReference(m_container[m_index + i]); }
+    TimerHeapReference LEGACY_NODELETE operator[](ptrdiff_t i) const { return TimerHeapReference(m_container[m_index + i]); }
 
-    TimerHeapReference operator*() const { return TimerHeapReference(m_container[m_index]); }
-    Ref<ThreadTimerHeapItem>& operator->() const { return m_container[m_index]; }
+    TimerHeapReference LEGACY_NODELETE operator*() const { return TimerHeapReference(m_container[m_index]); }
+    Ref<ThreadTimerHeapItem>& LEGACY_NODELETE operator->() const { return m_container[m_index]; }
 
     auto operator<=>(TimerHeapIterator other) const { ASSERT(hasSameContainerAs(other)); return m_index <=> other.m_index; }
-    bool operator==(TimerHeapIterator other) const { ASSERT(hasSameContainerAs(other)); return m_index == other.m_index; }
+    bool LEGACY_NODELETE operator==(TimerHeapIterator other) const { ASSERT(hasSameContainerAs(other)); return m_index == other.m_index; }
 
 #if ASSERT_ENABLED
     bool hasSameContainerAs(TimerHeapIterator other) const
@@ -214,22 +215,22 @@ private:
     size_t m_index;
 };
 
-inline TimerHeapIterator operator+(TimerHeapIterator a, size_t b) { return TimerHeapIterator(a.m_container, a.m_index + b); }
-inline TimerHeapIterator operator+(size_t a, TimerHeapIterator b) { return TimerHeapIterator(b.m_container, a + b.m_index); }
+inline TimerHeapIterator LEGACY_NODELETE operator+(TimerHeapIterator a, size_t b) { return TimerHeapIterator(a.m_container, a.m_index + b); }
+inline TimerHeapIterator LEGACY_NODELETE operator+(size_t a, TimerHeapIterator b) { return TimerHeapIterator(b.m_container, a + b.m_index); }
 
-inline TimerHeapIterator operator-(TimerHeapIterator a, size_t b) { return TimerHeapIterator(a.m_container, a.m_index - b); }
-inline ptrdiff_t operator-(TimerHeapIterator a, TimerHeapIterator b) { ASSERT(a.hasSameContainerAs(b)); return static_cast<ptrdiff_t>(a.m_index) - static_cast<ptrdiff_t>(b.m_index); }
+inline TimerHeapIterator LEGACY_NODELETE operator-(TimerHeapIterator a, size_t b) { return TimerHeapIterator(a.m_container, a.m_index - b); }
+inline ptrdiff_t LEGACY_NODELETE operator-(TimerHeapIterator a, TimerHeapIterator b) { ASSERT(a.hasSameContainerAs(b)); return static_cast<ptrdiff_t>(a.m_index) - static_cast<ptrdiff_t>(b.m_index); }
 
 // ----------------
 
 class TimerHeapLessThanFunction {
 public:
-    static bool compare(const TimerBase& a, const Ref<ThreadTimerHeapItem>& b)
+    static bool LEGACY_NODELETE compare(const TimerBase& a, const Ref<ThreadTimerHeapItem>& b)
     {
         return compare(a.m_heapItemWithBitfields.pointer()->time, a.m_heapItemWithBitfields.pointer()->insertionOrder, b->time, b->insertionOrder);
     }
 
-    static bool compare(const Ref<ThreadTimerHeapItem>& a, const TimerBase& b)
+    static bool LEGACY_NODELETE compare(const Ref<ThreadTimerHeapItem>& a, const TimerBase& b)
     {
         return compare(a->time, a->insertionOrder, b.m_heapItemWithBitfields.pointer()->time, b.m_heapItemWithBitfields.pointer()->insertionOrder);
     }
@@ -240,7 +241,7 @@ public:
     }
 
 private:
-    static bool compare(MonotonicTime aTime, unsigned aOrder, MonotonicTime bTime, unsigned bOrder)
+    static bool LEGACY_NODELETE compare(MonotonicTime aTime, unsigned aOrder, MonotonicTime bTime, unsigned bOrder)
     {
         // The comparisons below are "backwards" because the heap puts the largest
         // element first and we want the lowest time to be the first one in the heap.
@@ -255,17 +256,6 @@ private:
 
 // ----------------
 
-static bool shouldSuppressThreadSafetyCheck()
-{
-#if PLATFORM(IOS_FAMILY)
-    return WebThreadIsEnabled() || !linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::TimerThreadSafetyChecks);
-#elif PLATFORM(MAC)
-    return !isInWebProcess() && !linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::TimerThreadSafetyChecks);
-#else
-    return false;
-#endif
-}
-
 struct SameSizeAsTimer {
     virtual ~SameSizeAsTimer() { }
 
@@ -275,7 +265,9 @@ struct SameSizeAsTimer {
 #if CPU(ADDRESS32)
     uint8_t bitfields;
 #endif
-    void* pointer;
+#if ASSERT_ENABLED
+    uint32_t threadID;
+#endif
 };
 
 static_assert(sizeof(Timer) == sizeof(SameSizeAsTimer), "Timer should stay small");
@@ -295,8 +287,7 @@ TimerBase::TimerBase()
 
 TimerBase::~TimerBase()
 {
-    ASSERT(canCurrentThreadAccessThreadLocalData(m_thread));
-    RELEASE_ASSERT(canCurrentThreadAccessThreadLocalData(m_thread) || shouldSuppressThreadSafetyCheck());
+    ASSERT(canCurrentThreadIDAccessThreadLocalData(m_creationThreadID));
     stop();
     ASSERT(!inHeap());
     if (auto* item = m_heapItemWithBitfields.pointer())
@@ -306,15 +297,26 @@ TimerBase::~TimerBase()
 
 void TimerBase::start(Seconds nextFireInterval, Seconds repeatInterval)
 {
-    ASSERT(canCurrentThreadAccessThreadLocalData(m_thread));
+    ASSERT(canCurrentThreadIDAccessThreadLocalData(m_creationThreadID));
 
     m_repeatInterval = repeatInterval;
     setNextFireTime(MonotonicTime::now() + nextFireInterval);
 }
 
+void TimerBase::startOneShotBeforeDueTimers()
+{
+    ASSERT(canCurrentThreadIDAccessThreadLocalData(m_creationThreadID));
+    ASSERT(!m_alignment);
+
+    static constexpr auto fireTimeBeforeDueTimers = MonotonicTime::fromRawSeconds(std::numeric_limits<double>::min());
+
+    m_repeatInterval = 0_s;
+    setNextFireTime(fireTimeBeforeDueTimers);
+}
+
 void TimerBase::stopSlowCase()
 {
-    ASSERT(canCurrentThreadAccessThreadLocalData(m_thread));
+    ASSERT(canCurrentThreadIDAccessThreadLocalData(m_creationThreadID));
 
     m_repeatInterval = 0_s;
     setNextFireTime(MonotonicTime { });
@@ -442,7 +444,7 @@ void TimerBase::heapDeleteNullMin(ThreadTimerHeap& heap)
     heap.removeLast();
 }
 
-static inline bool parentHeapPropertyHolds(const TimerBase* current, const ThreadTimerHeap& heap, unsigned currentIndex)
+static inline bool LEGACY_NODELETE parentHeapPropertyHolds(const TimerBase* current, const ThreadTimerHeap& heap, unsigned currentIndex)
 {
     if (!currentIndex)
         return true;
@@ -450,7 +452,7 @@ static inline bool parentHeapPropertyHolds(const TimerBase* current, const Threa
     return TimerHeapLessThanFunction::compare(*current, heap[parentIndex]);
 }
 
-static inline bool childHeapPropertyHolds(const TimerBase* current, const ThreadTimerHeap& heap, unsigned childIndex)
+static inline bool LEGACY_NODELETE childHeapPropertyHolds(const TimerBase* current, const ThreadTimerHeap& heap, unsigned childIndex)
 {
     if (childIndex >= heap.size())
         return true;
@@ -460,7 +462,7 @@ static inline bool childHeapPropertyHolds(const TimerBase* current, const Thread
 bool TimerBase::hasValidHeapPosition() const
 {
     ASSERT(nextFireTime());
-    RefPtr item = m_heapItemWithBitfields.pointer();
+    auto* item = m_heapItemWithBitfields.pointer();
     ASSERT(item);
     if (!inHeap())
         return false;
@@ -513,8 +515,7 @@ void TimerBase::setNextFireTime(MonotonicTime newTime)
 #if USE(WEB_THREAD)
     RELEASE_ASSERT(WebThreadIsLockedOrDisabledInMainOrWebThread());
 #endif
-    ASSERT(canCurrentThreadAccessThreadLocalData(m_thread));
-    RELEASE_ASSERT(canCurrentThreadAccessThreadLocalData(m_thread) || shouldSuppressThreadSafetyCheck());
+    ASSERT(canCurrentThreadIDAccessThreadLocalData(m_creationThreadID));
     bool timerHasBeenDeleted = m_unalignedNextFireTime.isNaN();
     RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(!timerHasBeenDeleted);
 

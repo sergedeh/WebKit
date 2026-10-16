@@ -32,6 +32,7 @@
 #include <wtf/Function.h>
 #include <wtf/HashSet.h>
 #include <wtf/JSONValues.h>
+#include <wtf/ListHashSet.h>
 #include <wtf/OptionSet.h>
 #include <wtf/RefCounted.h>
 #include <wtf/StdLibExtras.h>
@@ -48,22 +49,6 @@ namespace WebDriver {
 
 class CommandResult;
 class SessionHost;
-
-#if ENABLE(WEBDRIVER_BIDI)
-using EventSubscriptionID = String;
-
-struct EventSubscription {
-    EventSubscriptionID id;
-    Vector<AtomString> events;
-    Vector<String> browsingContextIDs;
-    Vector<String> userContextIDs;
-
-    bool isGlobal() const
-    {
-        return browsingContextIDs.isEmpty() && userContextIDs.isEmpty();
-    }
-};
-#endif
 
 class Session :
 #if ENABLE(WEBDRIVER_BIDI)
@@ -155,6 +140,7 @@ public:
     void isElementEnabled(const String& elementID, Function<void(CommandResult&&)>&&);
     void getComputedRole(const String& elementID, Function<void(CommandResult&&)>&&);
     void getComputedLabel(const String& elementID, Function<void(CommandResult&&)>&&);
+    void consumeUserActivation(Function<void(CommandResult&&)>&&);
     void isElementDisplayed(const String& elementID, Function<void(CommandResult&&)>&&);
     void elementClick(const String& elementID, Function<void(CommandResult&&)>&&);
     void elementClear(const String& elementID, Function<void(CommandResult&&)>&&);
@@ -175,9 +161,6 @@ public:
     void takeScreenshot(std::optional<String> elementID, std::optional<bool> scrollIntoView, Function<void(CommandResult&&)>&&);
 
 #if ENABLE(WEBDRIVER_BIDI)
-    void subscribeForEvents(const Vector<String>& events, Vector<String>&& browsingContextIDs, Vector<String>&& userContextIDs, Function<void(CommandResult&&)>&&);
-    void unsubscribeByIDs(const Vector<EventSubscriptionID>&, Function<void(CommandResult&&)>&&);
-    void unsubscribeByEventName(const Vector<String>& events, Function<void(CommandResult&&)>&&);
     void dispatchBidiMessage(RefPtr<JSON::Object>&&);
     void relayBidiCommand(const String&, unsigned commandId, Function<void(WebSocketMessageHandler::Message&&)>&&);
 #endif
@@ -198,6 +181,7 @@ private:
     void getToplevelBrowsingContextRect(Function<void(CommandResult&&)>&&);
 
     std::optional<String> pageLoadStrategyString() const;
+    bool clearBrowsingContextsOnError(const CommandResult&);
 
     void handleUserPrompts(Function<void(CommandResult&&)>&&);
     void handleUnexpectedAlertOpen(Function<void(CommandResult&&)>&&);
@@ -210,8 +194,8 @@ private:
     RefPtr<JSON::Object> createShadowRoot(RefPtr<JSON::Value>&&);
     RefPtr<JSON::Object> extractElement(const JSON::Value&);
     String extractElementID(const JSON::Value&);
-    Expected<Ref<JSON::Value>, CommandResult> replaceReferences(Ref<JSON::Value>&&);
-    Expected<Ref<JSON::Value>, CommandResult> replaceReferences(Ref<JSON::Value>&&, HashSet<Ref<JSON::Value>>&);
+    std::expected<Ref<JSON::Value>, CommandResult> replaceReferences(Ref<JSON::Value>&&);
+    std::expected<Ref<JSON::Value>, CommandResult> replaceReferences(Ref<JSON::Value>&&, HashSet<Ref<JSON::Value>>&);
     Ref<JSON::Value> handleScriptResult(Ref<JSON::Value>&&);
     void elementIsEditable(const String& elementID, Function<void(CommandResult&&)>&&);
 
@@ -273,7 +257,9 @@ private:
         String subtype;
         std::optional<MouseButton> pressedButton;
         std::optional<MouseInteraction> mouseInteraction;
-        std::optional<String> pressedKey;
+        // Ordered so that the last entry is the most recently pressed key, which is what
+        // 'pressedCharKey' conveys.
+        ListHashSet<String> pressedKeys;
         HashSet<String> pressedVirtualKeys;
     };
     InputSourceState& inputSourceState(const String& id);
@@ -290,14 +276,7 @@ private:
 #if ENABLE(WEBDRIVER_BIDI)
     bool m_hasBiDiEnabled { false };
 
-    // https://w3c.github.io/webdriver-bidi/#events
-    HashMap<AtomString, unsigned> m_eventSubscriptionCounts;
-    HashMap<EventSubscriptionID, EventSubscription> m_eventSubscriptions;
     WeakPtr<WebSocketServer> m_bidiServer;
-
-    bool eventIsEnabled(const String&, const Vector<String>&);
-    void emitEvent(const String&, RefPtr<JSON::Object>&&);
-    String toInternalEventName(const String&);
 
     // Actual event handlers
     RefPtr<JSON::Object> processLogEntryAdded(RefPtr<JSON::Object>&&);

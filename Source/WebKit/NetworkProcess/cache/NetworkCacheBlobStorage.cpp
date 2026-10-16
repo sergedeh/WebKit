@@ -33,6 +33,7 @@
 #include <wtf/Locker.h>
 #include <wtf/RunLoop.h>
 #include <wtf/SHA1.h>
+#include <wtf/TZoneMallocInlines.h>
 
 #if !OS(WINDOWS)
 #include <sys/stat.h>
@@ -132,7 +133,7 @@ void BlobStorage::synchronize()
 String BlobStorage::blobPathForHash(const SHA1::Digest& hash) const
 {
     auto hashAsString = SHA1::hexDigest(hash);
-    return FileSystem::pathByAppendingComponent(blobDirectoryPathIsolatedCopy(), StringView::fromLatin1(byteCast<Latin1Character>(hashAsString.span())));
+    return FileSystem::pathByAppendingComponent(blobDirectoryPathIsolatedCopy(), hashAsString);
 }
 
 BlobStorage::Blob BlobStorage::add(const String& path, const Data& data, bool addToMemoryCache)
@@ -161,7 +162,7 @@ BlobStorage::Blob BlobStorage::add(const String& path, const Data& data, bool ad
             auto existingData = mapFile(blobPath);
             if (bytesEqual(existingData, data)) {
                 if (!FileSystem::hardLink(blobPath, path))
-                    WTFLogAlways("Failed to create hard link from %s to %s", blobPath.utf8().data(), path.utf8().data());
+                    SAFE_WTFLOGALWAYS("Failed to create hard link from %s to %s", blobPath.utf8(), path.utf8());
                 BlobStorage::Blob result { existingData, hash };
 #if ENABLE(NETWORK_CACHE_BLOB_STORAGE_MEMORY_CACHE)
                 if (addToMemoryCache && m_memoryCache)
@@ -178,7 +179,7 @@ BlobStorage::Blob BlobStorage::add(const String& path, const Data& data, bool ad
         return { };
 
     if (!FileSystem::hardLink(blobPath, path))
-        WTFLogAlways("Failed to create hard link from %s to %s", blobPath.utf8().data(), path.utf8().data());
+        SAFE_WTFLOGALWAYS("Failed to create hard link from %s to %s", blobPath.utf8(), path.utf8());
 
     m_approximateSize += mappedData.size();
 
@@ -197,7 +198,7 @@ BlobStorage::Blob BlobStorage::get(const String& path)
 #if ENABLE(NETWORK_CACHE_BLOB_STORAGE_MEMORY_CACHE)
     if (m_memoryCache) {
         if (auto blob = m_memoryCache->get(path))
-            return copyBlob(*blob);
+            return WTF::move(*blob);
     }
 #endif
 

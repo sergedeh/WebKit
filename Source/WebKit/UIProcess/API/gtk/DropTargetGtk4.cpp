@@ -33,7 +33,10 @@
 #include "WebKitWebViewBasePrivate.h"
 #include <WebCore/DragData.h>
 #include <WebCore/PasteboardCustomData.h>
+#include <WebCore/TextResourceDecoder.h>
+#include <array>
 #include <gtk/gtk.h>
+#include <pal/text/TextEncoding.h>
 #include <wtf/glib/GSpanExtras.h>
 #include <wtf/glib/GUniquePtr.h>
 
@@ -66,7 +69,7 @@ DropTarget::DropTarget(GtkWidget* webView)
         if (drop.m_drop != gdkDrop)
             return static_cast<GdkDragAction>(0);
 
-        drop.enter({ clampToInteger(x), clampToInteger(y) });
+        drop.enter({ clampTo<int>(x), clampTo<int>(y) });
         return dragOperationToSingleGdkDragAction(drop.m_operation);
     }), this);
 
@@ -75,7 +78,7 @@ DropTarget::DropTarget(GtkWidget* webView)
         if (drop.m_drop != gdkDrop)
             return static_cast<GdkDragAction>(0);
 
-        drop.update({ clampToInteger(x), clampToInteger(y) });
+        drop.update({ clampTo<int>(x), clampTo<int>(y) });
         return dragOperationToSingleGdkDragAction(drop.m_operation);
     }), this);
 
@@ -92,7 +95,7 @@ DropTarget::DropTarget(GtkWidget* webView)
         if (drop.m_drop != gdkDrop)
             return FALSE;
 
-        drop.drop({ clampToInteger(x), clampToInteger(y) });
+        drop.drop({ clampTo<int>(x), clampTo<int>(y) });
         return TRUE;
     }), this);
 
@@ -187,16 +190,10 @@ void DropTarget::accept(GdkDrop* drop, std::optional<WebCore::IntPoint> position
             }
 
             if (mimeType == "text/html"_s) {
-                gsize length;
-                const auto* markupData = g_bytes_get_data(data.get(), &length);
-                if (length) {
-                    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GTK port
-                    // If data starts with UTF-16 BOM assume it's UTF-16, otherwise assume UTF-8.
-                    if (length >= 2 && reinterpret_cast<const char16_t*>(markupData)[0] == 0xFEFF)
-                        m_selectionData->setMarkup(String({ reinterpret_cast<const char16_t*>(markupData) + 1, (length / 2) - 1 }));
-                    else
-                        m_selectionData->setMarkup(String::fromUTF8(std::span(static_cast<const char*>(markupData), length)));
-                    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+                auto markup = span(data);
+                if (!markup.empty()) {
+                    // A byte order mark selects UTF-16 or UTF-8, otherwise the data is UTF-8. Decode as plain text to skip charset sniffing.
+                    m_selectionData->setMarkup(TextResourceDecoder::create("text/plain"_s, PAL::UTF8Encoding())->decodeAndFlush(markup));
                 }
             } else if (mimeType == "_NETSCAPE_URL"_s) {
                 auto urlData = span(data);
@@ -221,7 +218,7 @@ void DropTarget::accept(GdkDrop* drop, std::optional<WebCore::IntPoint> position
                         URL url { line };
                         if (transferredFilesFromPortal && url.isValid()) {
                             GUniqueOutPtr<GError> error;
-                            GUniquePtr<gchar> filename(g_filename_from_uri(line.utf8().data(), 0, &error.outPtr()));
+                            GUniquePtr<gchar> filename(g_filename_from_uri(line.utf8().legacyCStringPointer(), 0, &error.outPtr()));
                             if (!error && filename)
                                 continue;
                         }
@@ -259,8 +256,8 @@ struct DropReadAsyncData {
 
 void DropTarget::loadData(const char* mimeType, CompletionHandler<void(GRefPtr<GBytes>&&)>&& completionHandler)
 {
-    const char* mimeTypes[] = { mimeType, nullptr };
-    gdk_drop_read_async(m_drop.get(), mimeTypes, G_PRIORITY_DEFAULT, m_cancellable.get(), [](GObject* gdkDrop, GAsyncResult* result, gpointer userData) {
+    auto mimeTypes = WTF::toArray<const char*>({ mimeType, nullptr });
+    gdk_drop_read_async(m_drop.get(), mimeTypes.data(), G_PRIORITY_DEFAULT, m_cancellable.get(), [](GObject* gdkDrop, GAsyncResult* result, gpointer userData) {
         std::unique_ptr<DropReadAsyncData<void(GRefPtr<GBytes>&&)>> data(static_cast<DropReadAsyncData<void(GRefPtr<GBytes>&&)>*>(userData));
         GRefPtr<GInputStream> inputStream = adoptGRef(gdk_drop_read_finish(GDK_DROP(gdkDrop), result, nullptr, nullptr));
         if (!inputStream) {

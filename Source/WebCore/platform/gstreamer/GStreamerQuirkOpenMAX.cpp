@@ -38,16 +38,8 @@ GStreamerQuirkOpenMAX::GStreamerQuirkOpenMAX()
 bool GStreamerQuirkOpenMAX::isPlatformSupported() const
 {
     auto registry = gst_registry_get();
-    auto feature = adoptGRef(gst_registry_lookup_feature(registry, "omx"));
+    GRefPtr feature = adoptGRef(gst_registry_lookup_feature(registry, "omx"));
     return feature;
-}
-
-bool GStreamerQuirkOpenMAX::processWebAudioSilentBuffer(GstBuffer* buffer) const
-{
-    GST_TRACE("Force disabling GAP buffer flag");
-    GST_BUFFER_FLAG_UNSET(buffer, GST_BUFFER_FLAG_GAP);
-    GST_BUFFER_FLAG_UNSET(buffer, GST_BUFFER_FLAG_DROPPABLE);
-    return true;
 }
 
 #undef GST_CAT_DEFAULT

@@ -28,7 +28,8 @@
 #include "GStreamerCommon.h"
 #include "PipeWireCaptureDevice.h"
 
-#include <wtf/ThreadSafeRefCounted.h>
+#include <wtf/Lock.h>
+#include <wtf/ThreadSafeWeakPtr.h>
 #include <wtf/WeakHashSet.h>
 
 namespace WebCore {
@@ -71,7 +72,11 @@ public:
 
     GstElement* makeElement(ASCIILiteral factoryName);
     virtual GstElement* createSource();
-    GstElement* source() { return m_src.get();  }
+    GRefPtr<GstElement> source()
+    {
+        Locker locker { m_lock };
+        return m_src;
+    }
     virtual ASCIILiteral name() = 0;
 
     GstElement* sink() const { return m_sink.get(); }
@@ -88,13 +93,12 @@ public:
     void stopDevice(bool disconnectSignals);
 
     struct SinkSignalsHolder {
-        unsigned long prerollSignalId;
         unsigned long newSampleSignalId;
     };
 
 protected:
     GRefPtr<GstElement> m_sink;
-    GRefPtr<GstElement> m_src;
+    GRefPtr<GstElement> m_src WTF_GUARDED_BY_LOCK(m_lock);
     GRefPtr<GstElement> m_valve;
     GRefPtr<GstElement> m_capsfilter;
     std::optional<GStreamerCaptureDevice> m_device { };
@@ -103,8 +107,10 @@ protected:
     GRefPtr<GstElement> m_pipeline;
 
 private:
+    Lock m_lock;
     CaptureDevice::DeviceType m_deviceType;
     WeakHashSet<GStreamerCapturerObserver> m_observers;
+    RefPtr<PadProbeHandle<GStreamerCapturer>> m_pipewireProbe;
 };
 
 } // namespace WebCore

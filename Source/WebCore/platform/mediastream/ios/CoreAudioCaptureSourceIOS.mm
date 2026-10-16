@@ -38,7 +38,7 @@
 using namespace WebCore;
 
 @interface WebCoreAudioCaptureSourceIOSListener : NSObject {
-    CoreAudioCaptureSourceFactoryIOS* _callback;
+    WeakPtr<CoreAudioCaptureSourceFactoryIOS> _callback;
 }
 
 - (void)invalidate;
@@ -78,7 +78,7 @@ using namespace WebCore;
 
     // mediaserverd crashed and was relaunched, rebuild everything. See
     // https://developer.apple.com/library/content/qa/qa1749/_index.html.
-    _callback->scheduleReconfiguration();
+    protect(_callback)->scheduleReconfiguration();
 }
 @end
 
@@ -97,7 +97,6 @@ CoreAudioCaptureSourceFactoryIOS::CoreAudioCaptureSourceFactoryIOS()
 CoreAudioCaptureSourceFactoryIOS::~CoreAudioCaptureSourceFactoryIOS()
 {
     [m_listener invalidate];
-    m_listener = nullptr;
 }
 
 CoreAudioCaptureSourceFactory& CoreAudioCaptureSourceFactory::singleton()

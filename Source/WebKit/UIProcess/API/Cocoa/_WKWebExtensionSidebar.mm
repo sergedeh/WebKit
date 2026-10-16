@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2024-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -46,24 +46,29 @@ WK_OBJECT_DEALLOC_IMPL_ON_MAIN_THREAD(_WKWebExtensionSidebar, WebExtensionSideba
 
 - (WKWebExtensionContext *)webExtensionContext
 {
-    return _webExtensionSidebar->extensionContext()
-        .transform([](auto const& context) { return context->wrapper(); })
-        .value_or(nil);
+    RefPtr context = _webExtensionSidebar->extensionContext();
+    return context ? context->wrapper() : nil;
 }
 
 - (NSString *)title
 {
-    return _webExtensionSidebar->title();
+    auto *title = _webExtensionSidebar->title().createNSString().get();
+    ASSERT(title);
+    return title;
 }
 
 - (CocoaImage *)iconForSize:(CGSize)size
 {
-    return WebKit::toCocoaImage(_webExtensionSidebar->icon(WebCore::FloatSize(size)));
+    return _webExtensionSidebar->icon(WebCore::FloatSize(size))
+        .transform([](Ref<WebCore::Icon> icon) { return WebKit::toCocoaImage(icon.ptr()); })
+        .value_or(nullptr);
 }
 
 - (SidebarViewControllerType *)viewController
 {
-    return _webExtensionSidebar->viewController().get();
+    auto *viewController = _webExtensionSidebar->viewController().get();
+    ASSERT(viewController);
+    return viewController;
 }
 
 - (BOOL)isEnabled
@@ -73,12 +78,14 @@ WK_OBJECT_DEALLOC_IMPL_ON_MAIN_THREAD(_WKWebExtensionSidebar, WebExtensionSideba
 
 - (WKWebView *)webView
 {
-    return _webExtensionSidebar->webView();
+    auto *webView = _webExtensionSidebar->webView();
+    ASSERT(webView);
+    return webView;
 }
 
-- (void)willOpenSidebar
+- (void)willOpenSidebarFromUserInteraction:(BOOL)fromUserInteraction
 {
-    _webExtensionSidebar->willOpenSidebar();
+    _webExtensionSidebar->willOpenSidebar(fromUserInteraction ? WebKit::WebExtensionSidebar::FromUserInteraction::Yes : WebKit::WebExtensionSidebar::FromUserInteraction::No);
 }
 
 - (void)willCloseSidebar
@@ -90,6 +97,20 @@ WK_OBJECT_DEALLOC_IMPL_ON_MAIN_THREAD(_WKWebExtensionSidebar, WebExtensionSideba
 {
     if (auto tab = _webExtensionSidebar->tab())
         return tab.value()->delegate();
+    return nil;
+}
+
+- (id<WKWebExtensionWindow>)associatedWindow
+{
+    if (auto window = _webExtensionSidebar->window())
+        return window.value()->delegate();
+
+    if (auto tab = _webExtensionSidebar->tab()) {
+        if (RefPtr window = tab.value()->window())
+            return window->delegate();
+    }
+
+    ASSERT_NOT_REACHED();
     return nil;
 }
 
@@ -144,7 +165,7 @@ WK_OBJECT_DEALLOC_IMPL_ON_MAIN_THREAD(_WKWebExtensionSidebar, WebExtensionSideba
     return nil;
 }
 
-- (void)willOpenSidebar
+- (void)willOpenSidebarFromUserInteraction:(BOOL)fromUserInteraction
 {
 }
 
@@ -153,6 +174,11 @@ WK_OBJECT_DEALLOC_IMPL_ON_MAIN_THREAD(_WKWebExtensionSidebar, WebExtensionSideba
 }
 
 - (id<WKWebExtensionTab>)associatedTab
+{
+    return nil;
+}
+
+- (id<WKWebExtensionWindow>)associatedWindow
 {
     return nil;
 }

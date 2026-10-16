@@ -25,36 +25,47 @@
 
 #pragma once
 
-#include <WebCore/WritableStreamSink.h>
+#include "WritableStreamSink.h"
+#include <wtf/Ref.h>
+#include <wtf/ThreadSafeWeakPtr.h>
+#include <wtf/WeakPtr.h>
 
 namespace WebCore {
 
 struct WebTransportStreamIdentifierType;
 using WebTransportStreamIdentifier = ObjectIdentifier<WebTransportStreamIdentifierType>;
 
+class AbortSignal;
 class WebTransport;
 class WritableStream;
 
-class WebTransportSendStreamSink : public WritableStreamSink {
+class WebTransportSendStreamSink : public WritableStreamSink, public CanMakeWeakPtr<WebTransportSendStreamSink> {
 public:
     static Ref<WebTransportSendStreamSink> create(WebTransport& transport, WebTransportStreamIdentifier identifier) { return adoptRef(*new WebTransportSendStreamSink(transport, identifier)); }
     ~WebTransportSendStreamSink();
 
     WebTransportStreamIdentifier identifier() const { return m_identifier; }
     void setStream(WritableStream& stream) { m_stream = stream; }
-    RefPtr<WritableStream> stream() const;
+    RefPtr<WritableStream> LEGACY_NODELETE stream() const;
     void sendError(JSDOMGlobalObject&, JSC::JSValue error);
 
 private:
     WEBCORE_EXPORT WebTransportSendStreamSink(WebTransport&, WebTransportStreamIdentifier);
 
+    void start(std::unique_ptr<WritableStreamDefaultController>&&) final;
     void write(ScriptExecutionContext&, JSC::JSValue, DOMPromiseDeferred<void>&&) final;
-    void close() final;
-    void abort(JSC::JSValue) final;
+    void close(JSDOMGlobalObject&, DOMPromiseDeferred<void>&&) final;
+    void abort(JSDOMGlobalObject&, JSC::JSValue, DOMPromiseDeferred<void>&&) final;
+
+    void sendFin(ScriptExecutionContext&);
+    void cancel(JSC::JSValue reason);
 
     const ThreadSafeWeakPtr<WebTransport> m_transport;
     const WebTransportStreamIdentifier m_identifier;
     WeakPtr<WritableStream> m_stream;
+    std::unique_ptr<DOMPromiseDeferred<void>> m_closeDeferred;
+    const RefPtr<AbortSignal> m_abortSignal;
+    std::optional<uint32_t> m_abortAlgorithmIdentifier;
     bool m_isClosed { false };
     bool m_isCancelled { false };
 };

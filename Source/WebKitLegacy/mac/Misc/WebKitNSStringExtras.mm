@@ -37,10 +37,9 @@
 #import <sys/param.h>
 #import <unicode/uchar.h>
 
-NSString *WebKitLocalCacheDefaultsKey = @"WebKitLocalCache";
+NSString * const WebKitLocalCacheDefaultsKey = @"WebKitLocalCache";
 NSString *WebKitResourceLoadStatisticsDirectoryDefaultsKey = @"WebKitResourceLoadStatisticsDirectory";
 
-using namespace WebCore;
 
 @implementation NSString (WebKitExtras)
 
@@ -68,8 +67,8 @@ static bool canUseFastRenderer(std::span<const UniChar> buffer)
     [self getCharacters:buffer.mutableSpan().data()];
 
     if (canUseFastRenderer(buffer)) {
-        FontCascade webCoreFont(FontPlatformData((__bridge CTFontRef)font, [font pointSize]));
-        TextRun run(StringView(spanReinterpretCast<const char16_t>(std::span { buffer })));
+        WebCore::FontCascade webCoreFont(WebCore::FontPlatformData((__bridge CTFontRef)font, [font pointSize]));
+        WebCore::TextRun run(StringView(spanReinterpretCast<const char16_t>(std::span { buffer })));
 
         // The following is a half-assed attempt to match AppKit's rounding rules for drawAtPoint.
         // If you change it, be sure to test all the text drawn this way in Safari, including
@@ -78,18 +77,24 @@ static bool canUseFastRenderer(std::span<const UniChar> buffer)
 
         NSGraphicsContext *nsContext = [NSGraphicsContext currentContext];
         RetainPtr cgContext = [nsContext CGContext];
-        GraphicsContextCG graphicsContext { cgContext.get() };
+        // FIXME: This should not be needed, but is added
+        // conservatively.
+        CGAffineTransform savedTextMatrix = CGContextGetTextMatrix(cgContext.get());
+
+        WebCore::GraphicsContextCG graphicsContext { cgContext.get() };
 
         // WebCore requires a flipped graphics context.
         bool flipped = [nsContext isFlipped];
         if (!flipped)
             CGContextScaleCTM(cgContext.get(), 1, -1);
 
-        graphicsContext.setFillColor(colorFromCocoaColor(textColor));
-        webCoreFont.drawText(graphicsContext, run, FloatPoint(point.x, flipped ? point.y : -point.y));
+        graphicsContext.setFillColor(WebCore::colorFromCocoaColor(textColor));
+        webCoreFont.drawText(graphicsContext, run, WebCore::FloatPoint(point.x, flipped ? point.y : -point.y));
 
         if (!flipped)
             CGContextScaleCTM(cgContext.get(), 1, -1);
+
+        CGContextSetTextMatrix(cgContext.get(), savedTextMatrix);
     } else {
         // The given point is on the baseline.
         if ([[NSView focusView] isFlipped])
@@ -108,8 +113,8 @@ static bool canUseFastRenderer(std::span<const UniChar> buffer)
     [self getCharacters:buffer.mutableSpan().data()];
 
     if (canUseFastRenderer(buffer)) {
-        FontCascade webCoreFont(FontPlatformData((__bridge CTFontRef)font, [font pointSize]));
-        TextRun run(StringView(spanReinterpretCast<const char16_t>(std::span { buffer })));
+        WebCore::FontCascade webCoreFont(WebCore::FontPlatformData((__bridge CTFontRef)font, [font pointSize]));
+        WebCore::TextRun run(StringView(spanReinterpretCast<const char16_t>(std::span { buffer })));
         return webCoreFont.width(run);
     }
 
@@ -120,15 +125,16 @@ static bool canUseFastRenderer(std::span<const UniChar> buffer)
 
 - (NSString *)_web_stringByAbbreviatingWithTildeInPath
 {
+    RetainPtr homeDirectory = NSHomeDirectory();
     // Handles home directories that have symlinks in their paths as well as what stringByAbbreviatingWithTildeInPath handles.
     // This works around Radar bug 2774250.
 
-    NSString *resolvedHomeDirectory = [NSHomeDirectory() stringByResolvingSymlinksInPath];
-    NSString *path;
+    NSString *resolvedHomeDirectory = [homeDirectory stringByResolvingSymlinksInPath];
+    RetainPtr<NSString> path;
 
     if ([self hasPrefix:resolvedHomeDirectory]) {
         NSString *relativePath = [self substringFromIndex:[resolvedHomeDirectory length]];
-        path = [NSHomeDirectory() stringByAppendingPathComponent:relativePath];
+        path = [homeDirectory stringByAppendingPathComponent:relativePath];
     } else {
         path = self;
     }
@@ -169,7 +175,7 @@ static bool canUseFastRenderer(std::span<const UniChar> buffer)
 
     if (!cacheDirectory || ![cacheDirectory isKindOfClass:[NSString class]]) {
 #if PLATFORM(IOS_FAMILY)
-        cacheDirectory = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Caches"];
+        cacheDirectory = [protect(NSHomeDirectory()) stringByAppendingPathComponent:@"Library/Caches"];
 #endif
 #if PLATFORM(MAC)
         char buffer[MAXPATHLEN];

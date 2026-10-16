@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2018-2023 Apple Inc. All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -30,9 +30,12 @@
 #import "GraphicsContextCG.h"
 #import "Logging.h"
 #import "VideoFrameCV.h"
+#import <Accelerate/Accelerate.h>
 #import <CoreMedia/CMFormatDescription.h>
 #import <CoreMedia/CMSampleBuffer.h>
 #import <pal/avfoundation/MediaTimeAVFoundation.h>
+#import <wtf/Scope.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 
 #if !PLATFORM(MACCATALYST)
 #import <wtf/spi/cocoa/IOSurfaceSPI.h>
@@ -44,35 +47,37 @@
 
 namespace WebCore {
 
-ImageTransferSessionVT::ImageTransferSessionVT(uint32_t pixelFormat, bool shouldUseIOSurface)
-    : m_shouldUseIOSurface(shouldUseIOSurface)
+static RetainPtr<VTPixelTransferSessionRef> createTransferSession(bool shouldUseHWAcceleratedTransfer)
 {
-    VTPixelTransferSessionRef transferSession;
-    VTPixelTransferSessionCreate(kCFAllocatorDefault, &transferSession);
-    ASSERT(transferSession);
-    m_transferSession = adoptCF(transferSession);
-
-    auto status = VTSessionSetProperty(transferSession, kVTPixelTransferPropertyKey_ScalingMode, kVTScalingMode_Trim);
+    VTPixelTransferSessionRef rawTransferSession = nullptr;
+    auto status = VTPixelTransferSessionCreate(kCFAllocatorDefault, &rawTransferSession);
     if (status != kCVReturnSuccess)
-        RELEASE_LOG(Media, "ImageTransferSessionVT::ImageTransferSessionVT: VTSessionSetProperty(kVTPixelTransferPropertyKey_ScalingMode) failed with error %d", static_cast<int>(status));
-
-    // FIXME: This is a safer cpp false positive (rdar://160851489).
-    SUPPRESS_UNRETAINED_ARG status = VTSessionSetProperty(transferSession, kVTPixelTransferPropertyKey_EnableHighSpeedTransfer, @YES);
-    if (status != kCVReturnSuccess)
-        RELEASE_LOG(Media, "ImageTransferSessionVT::ImageTransferSessionVT: VTSessionSetProperty(kVTPixelTransferPropertyKey_EnableHighSpeedTransfer) failed with error %d", static_cast<int>(status));
-
-    // FIXME: This is a safer cpp false positive (rdar://160851489).
-    SUPPRESS_UNRETAINED_ARG status = VTSessionSetProperty(transferSession, kVTPixelTransferPropertyKey_RealTime, @YES);
-    if (status != kCVReturnSuccess)
-        RELEASE_LOG(Media, "ImageTransferSessionVT::ImageTransferSessionVT: VTSessionSetProperty(kVTPixelTransferPropertyKey_RealTime) failed with error %d", static_cast<int>(status));
-
+        return nullptr;
+    RetainPtr transferSession = adoptCF(rawTransferSession);
+    auto setProperty = [&](CFStringRef key, CFTypeRef value) {
+        auto status = VTSessionSetProperty(transferSession.get(), key, value);
+        RELEASE_LOG_ERROR_IF(status != kCVReturnSuccess, Media, "VTSessionSetProperty(%{public}@) error: %d", key, static_cast<int>(status));
+    };
+    setProperty(kVTPixelTransferPropertyKey_ScalingMode, kVTScalingMode_Trim);
+    setProperty(kVTPixelTransferPropertyKey_EnableHighSpeedTransfer, @YES);
+    setProperty(kVTPixelTransferPropertyKey_RealTime, @YES);
 #if PLATFORM(IOS_FAMILY) && !PLATFORM(MACCATALYST)
-    status = VTSessionSetProperty(transferSession, kVTPixelTransferPropertyKey_EnableHardwareAcceleratedTransfer, @YES);
-    if (status != kCVReturnSuccess)
-        RELEASE_LOG(Media, "ImageTransferSessionVT::ImageTransferSessionVT: VTSessionSetProperty(kVTPixelTransferPropertyKey_EnableHardwareAcceleratedTransfer) failed with error %d", static_cast<int>(status));
+    if (shouldUseHWAcceleratedTransfer)
+        setProperty(kVTPixelTransferPropertyKey_EnableHardwareAcceleratedTransfer, @YES);
+#else
+    UNUSED_PARAM(shouldUseHWAcceleratedTransfer);
 #endif
+    return transferSession;
+}
 
-    m_pixelFormat = pixelFormat;
+// FIXME: maybe we should use createTransferSession(shouldUseIOSurface). Clarify what
+// kVTPixelTransferPropertyKey_EnableHardwareAcceleratedTransfer does, why is it not enabled
+// on all platforms.
+ImageTransferSessionVT::ImageTransferSessionVT(uint32_t pixelFormat, bool shouldUseIOSurface)
+    : m_transferSession(createTransferSession(true))
+    , m_shouldUseIOSurface(shouldUseIOSurface)
+    , m_pixelFormat(pixelFormat)
+{
 }
 
 void ImageTransferSessionVT::setCroppingRectangle(std::optional<FloatRect> rectangle, FloatSize size)
@@ -199,7 +204,8 @@ RetainPtr<CMSampleBufferRef> ImageTransferSessionVT::convertCMSampleBuffer(CMSam
         return nullptr;
     }
 
-    CMSampleBufferRef resizedSampleBuffer;
+    // This is an out-parameter which is immediately adopted below.
+    SUPPRESS_UNRETAINED_LOCAL CMSampleBufferRef resizedSampleBuffer;
     status = PAL::CMSampleBufferCreateReadyWithImageBuffer(kCFAllocatorDefault, convertedPixelBuffer.get(), formatDescription, timeingInfoSpan.data(), &resizedSampleBuffer);
     CFRelease(formatDescription);
     if (status != noErr) {
@@ -210,30 +216,59 @@ RetainPtr<CMSampleBufferRef> ImageTransferSessionVT::convertCMSampleBuffer(CMSam
     return adoptCF(resizedSampleBuffer);
 }
 
-RetainPtr<CVPixelBufferRef> ImageTransferSessionVT::createPixelBuffer(CGImageRef image, const IntSize& size)
+RetainPtr<CVPixelBufferRef> ImageTransferSessionVT::createPixelBuffer(CGImageRef image, const IntSize& size, ShouldPreserveAlpha shouldPreserveAlpha)
 {
     if (!image || !setSize(size))
         return nullptr;
 
-    CVPixelBufferRef rgbBuffer;
+    // This is an out-parameter which is immediately adopted below.
+    SUPPRESS_UNRETAINED_LOCAL CVPixelBufferRef rawRGBBuffer;
     auto imageSize = IntSize(CGImageGetWidth(image), CGImageGetHeight(image));
-    auto status = CVPixelBufferCreate(kCFAllocatorDefault, imageSize.width(), imageSize.height(), kCVPixelFormatType_32ARGB, nullptr, &rgbBuffer);
+    auto status = CVPixelBufferCreate(kCFAllocatorDefault, imageSize.width(), imageSize.height(), kCVPixelFormatType_32ARGB, nullptr, &rawRGBBuffer);
     if (status != kCVReturnSuccess) {
         RELEASE_LOG(Media, "ImageTransferSessionVT::createPixelBuffer: CVPixelBufferCreate failed with error code: %d", static_cast<int>(status));
         return nullptr;
     }
+    RetainPtr rgbBuffer = adoptCF(rawRGBBuffer);
 
-    CVPixelBufferLockBaseAddress(rgbBuffer, 0);
-    void* data = CVPixelBufferGetBaseAddress(rgbBuffer);
-    auto retainedRGBBuffer = adoptCF(rgbBuffer);
-    auto context = adoptCF(CGBitmapContextCreate(data, imageSize.width(), imageSize.height(), 8, CVPixelBufferGetBytesPerRow(rgbBuffer), sRGBColorSpaceSingleton(), (CGBitmapInfo) kCGImageAlphaNoneSkipFirst));
-    if (!context) {
-        RELEASE_LOG(Media, "ImageTransferSessionVT::createPixelBuffer: CGBitmapContextCreate returned nullptr");
-        return nullptr;
+    {
+        status = CVPixelBufferLockBaseAddress(rgbBuffer, 0);
+        if (status != kCVReturnSuccess) {
+            RELEASE_LOG(Media, "ImageTransferSessionVT::createPixelBuffer: CVPixelBufferLockBaseAddress failed with error code: %d", static_cast<int>(status));
+            return nullptr;
+        }
+        auto scope = makeScopeExit([rgbBuffer] {
+            CVPixelBufferUnlockBaseAddress(rgbBuffer, 0);
+        });
+
+        CGBitmapInfo info = shouldPreserveAlpha == ShouldPreserveAlpha::Yes ? kCGImageAlphaPremultipliedFirst : kCGImageAlphaNoneSkipFirst;
+        RetainPtr context = adoptCF(CGBitmapContextCreate(CVPixelBufferGetBaseAddress(rgbBuffer), imageSize.width(), imageSize.height(), 8, CVPixelBufferGetBytesPerRow(rgbBuffer), sRGBColorSpaceSingleton(), info));
+        if (!context) {
+            RELEASE_LOG(Media, "ImageTransferSessionVT::createPixelBuffer: CGBitmapContextCreate failed");
+            return nullptr;
+        }
+
+        if (shouldPreserveAlpha == ShouldPreserveAlpha::Yes)
+            CGContextSetBlendMode(context, kCGBlendModeCopy);
+
+        CGContextDrawImage(context, CGRectMake(0, 0, imageSize.width(), imageSize.height()), image);
+
+        if (shouldPreserveAlpha == ShouldPreserveAlpha::Yes) {
+            // CoreGraphics only draws to premultiplied alpha contexts, so we unpremultiply to preserve alpha.
+            // FIXME: Find a better way to preserve alpha as this round trip is causing rounding errors.
+            vImage_Buffer buffer {
+                CVPixelBufferGetBaseAddress(rgbBuffer),
+                static_cast<vImagePixelCount>(imageSize.height()),
+                static_cast<vImagePixelCount>(imageSize.width()),
+                CVPixelBufferGetBytesPerRow(rgbBuffer)
+            };
+            auto error = vImageUnpremultiplyData_ARGB8888(&buffer, &buffer, kvImageNoFlags);
+            if (error != kvImageNoError) {
+                RELEASE_LOG(Media, "ImageTransferSessionVT::createPixelBuffer: vImageUnpremultiplyData_ARGB8888 failed with error code: %zd", error);
+                return nullptr;
+            }
+        }
     }
-
-    CGContextDrawImage(context.get(), CGRectMake(0, 0, imageSize.width(), imageSize.height()), image);
-    CVPixelBufferUnlockBaseAddress(rgbBuffer, 0);
 
     return convertPixelBuffer(rgbBuffer, size);
 }
@@ -258,7 +293,8 @@ RetainPtr<CMSampleBufferRef> ImageTransferSessionVT::createCMSampleBuffer(CVPixe
         return nullptr;
     }
 
-    CMSampleBufferRef sampleBuffer;
+    // This is an out-parameter which is immediately adopted below.
+    SUPPRESS_UNRETAINED_LOCAL CMSampleBufferRef sampleBuffer;
     auto cmTime = PAL::toCMTime(sampleTime);
     CMSampleTimingInfo timingInfo = { PAL::kCMTimeInvalid, cmTime, cmTime };
     status = PAL::CMSampleBufferCreateReadyWithImageBuffer(kCFAllocatorDefault, (CVImageBufferRef)inputBuffer.get(), formatDescription, &timingInfo, &sampleBuffer);
@@ -271,9 +307,9 @@ RetainPtr<CMSampleBufferRef> ImageTransferSessionVT::createCMSampleBuffer(CVPixe
     return adoptCF(sampleBuffer);
 }
 
-RetainPtr<CMSampleBufferRef> ImageTransferSessionVT::createCMSampleBuffer(CGImageRef image, const MediaTime& sampleTime, const IntSize& size)
+RetainPtr<CMSampleBufferRef> ImageTransferSessionVT::createCMSampleBuffer(CGImageRef image, const MediaTime& sampleTime, const IntSize& size, ShouldPreserveAlpha shouldPreserveAlpha)
 {
-    auto pixelBuffer = createPixelBuffer(image, size);
+    auto pixelBuffer = createPixelBuffer(image, size, shouldPreserveAlpha);
     if (!pixelBuffer)
         return nullptr;
 
@@ -299,16 +335,17 @@ RefPtr<VideoFrame> ImageTransferSessionVT::convertVideoFrame(VideoFrame& videoFr
     if (size == expandedIntSize(videoFrame.presentationSize()))
         return &videoFrame;
 
-    auto resizedBuffer = convertPixelBuffer(videoFrame.protectedPixelBuffer().get(), size);
+    auto resizedBuffer = convertPixelBuffer(protect(videoFrame.pixelBuffer()).get(), size);
     if (!resizedBuffer)
         return nullptr;
 
-    return VideoFrameCV::create(videoFrame.presentationTime(), videoFrame.isMirrored(), videoFrame.rotation(), WTF::move(resizedBuffer));
+    Ref resizedFrame = VideoFrameCV::create(videoFrame.presentationTime(), videoFrame.isMirrored(), videoFrame.rotation(), WTF::move(resizedBuffer));
+    return resizedFrame->updateShouldIgnoreAlpha(videoFrame.shouldIgnoreAlpha(), VideoFrame::ShouldClone::No);
 }
 
-RefPtr<VideoFrame> ImageTransferSessionVT::createVideoFrame(CGImageRef image, const WTF::MediaTime& time, const IntSize& size)
+RefPtr<VideoFrame> ImageTransferSessionVT::createVideoFrame(CGImageRef image, const WTF::MediaTime& time, const IntSize& size, ShouldPreserveAlpha shouldPreserveAlpha)
 {
-    return createVideoFrame(image, time, size, VideoFrame::Rotation::None);
+    return createVideoFrame(image, time, size, VideoFrame::Rotation::None, false, shouldPreserveAlpha);
 }
 RefPtr<VideoFrame> ImageTransferSessionVT::createVideoFrame(CMSampleBufferRef image, const WTF::MediaTime& time, const IntSize& size)
 {
@@ -331,9 +368,9 @@ RefPtr<VideoFrame> ImageTransferSessionVT::createVideoFrame(IOSurfaceRef surface
 }
 #endif
 
-RefPtr<VideoFrame> ImageTransferSessionVT::createVideoFrame(CGImageRef image, const MediaTime& sampleTime, const IntSize& size, VideoFrame::Rotation rotation, bool mirrored)
+RefPtr<VideoFrame> ImageTransferSessionVT::createVideoFrame(CGImageRef image, const MediaTime& sampleTime, const IntSize& size, VideoFrame::Rotation rotation, bool mirrored, ShouldPreserveAlpha shouldPreserveAlpha)
 {
-    auto sampleBuffer = createCMSampleBuffer(image, sampleTime, size);
+    auto sampleBuffer = createCMSampleBuffer(image, sampleTime, size, shouldPreserveAlpha);
     if (!sampleBuffer)
         return nullptr;
 
@@ -347,6 +384,38 @@ RefPtr<VideoFrame> ImageTransferSessionVT::createVideoFrame(CMSampleBufferRef bu
         return nullptr;
 
     return VideoFrameCV::create(sampleBuffer.get(), mirrored, rotation);
+}
+
+RetainPtr<CVPixelBufferRef> ImageTransferSessionVT::convertPixelBuffer(CVPixelBufferRef source, uint32_t targetPixelFormat, DestinationColorSpace colorSpace)
+{
+    if (!source)
+        return nullptr;
+    if (CVPixelBufferGetPixelFormatType(source) == targetPixelFormat)
+        return source;
+    NSDictionary *targetOptions = nullptr;
+    const bool shouldUseIOSurface = CVPixelBufferGetIOSurface(source);
+    if (shouldUseIOSurface)
+        targetOptions = @{ bridge_cast(kCVPixelBufferIOSurfacePropertiesKey) : @{ } };
+    RetainPtr transferSession = createTransferSession(shouldUseIOSurface);
+
+    if (colorSpace == DestinationColorSpace::BT709) {
+        VTSessionSetProperty(transferSession.get(), kVTPixelTransferPropertyKey_DestinationColorPrimaries, kCMFormatDescriptionColorPrimaries_ITU_R_709_2);
+        VTSessionSetProperty(transferSession.get(), kVTPixelTransferPropertyKey_DestinationTransferFunction, kCMFormatDescriptionTransferFunction_ITU_R_709_2);
+        VTSessionSetProperty(transferSession.get(), kVTPixelTransferPropertyKey_DestinationYCbCrMatrix, kCMFormatDescriptionYCbCrMatrix_ITU_R_709_2);
+    } else if (colorSpace == DestinationColorSpace::SRGB) {
+        VTSessionSetProperty(transferSession.get(), kVTPixelTransferPropertyKey_DestinationColorPrimaries, kCMFormatDescriptionColorPrimaries_ITU_R_709_2);
+        VTSessionSetProperty(transferSession.get(), kVTPixelTransferPropertyKey_DestinationTransferFunction, PAL::kCMFormatDescriptionTransferFunction_sRGB);
+    }
+
+    CVPixelBufferRef rawTarget = nullptr;
+    auto status = CVPixelBufferCreate(kCFAllocatorDefault, CVPixelBufferGetWidth(source), CVPixelBufferGetHeight(source), targetPixelFormat, bridge_cast(targetOptions), &rawTarget);
+    if (status != kCVReturnSuccess)
+        return nullptr;
+    RetainPtr target = adoptCF(rawTarget);
+    status = VTPixelTransferSessionTransferImage(transferSession.get(), source, target.get());
+    if (status != kCVReturnSuccess)
+        return nullptr;
+    return target;
 }
 
 } // namespace WebCore

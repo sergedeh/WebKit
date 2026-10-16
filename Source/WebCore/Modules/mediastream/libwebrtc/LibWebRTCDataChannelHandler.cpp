@@ -48,15 +48,13 @@ inline std::span<const T> span(const webrtc::DataBuffer& buffer)
 webrtc::DataChannelInit LibWebRTCDataChannelHandler::fromRTCDataChannelInit(const RTCDataChannelInit& options)
 {
     webrtc::DataChannelInit init;
-    if (options.ordered)
-        init.ordered = *options.ordered;
+    init.ordered = options.ordered;
     if (options.maxPacketLifeTime)
         init.maxRetransmitTime = *options.maxPacketLifeTime;
     if (options.maxRetransmits)
         init.maxRetransmits = *options.maxRetransmits;
-    init.protocol = options.protocol.utf8().data();
-    if (options.negotiated)
-        init.negotiated = *options.negotiated;
+    init.protocol = options.protocol.utf8().toStdString();
+    init.negotiated = options.negotiated;
     if (options.id)
         init.id = *options.id;
     init.priority = webrtc::PriorityValue(fromRTCPriorityType(options.priority));
@@ -124,9 +122,10 @@ void LibWebRTCDataChannelHandler::setClient(RTCDataChannelHandlerClient& client,
     m_bufferedMessages.clear();
 }
 
-bool LibWebRTCDataChannelHandler::sendStringData(const CString& utf8Text)
+bool LibWebRTCDataChannelHandler::sendStringData(const UTF8CString& utf8Text)
 {
-    return m_channel->Send({ webrtc::CopyOnWriteBuffer(utf8Text.data(), utf8Text.length()), false });
+    auto bytes = asByteSpan(utf8Text.span());
+    return m_channel->Send({ webrtc::CopyOnWriteBuffer(bytes.data(), bytes.size()), false });
 }
 
 bool LibWebRTCDataChannelHandler::sendRawData(std::span<const uint8_t> data)

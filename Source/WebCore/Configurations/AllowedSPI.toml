@@ -10,6 +10,38 @@ selectors = [
     { name = "initWithUUID:andRemotePid:andContextId:", class = "?" },
 ]
 
+[[temporary-usage]]
+request = "rdar://181067589"
+cleanup = "rdar://181067932"
+symbols = [
+    "kCMTextMarkupAttribute_PreventLineWrapping",
+]
+
+[[temporary-usage]]
+request = "rdar://185191711"
+cleanup = "rdar://185191934"
+symbols = [
+    "CGImageBlockCreate",
+    "CGImageBlockRelease",
+    "CGImageBlockSetCreate",
+    "CGImageCreateWithImageProvider",
+    "CGImageProviderCreate",
+    "CGImageProviderGetSize",
+    "kCGImageBlockMarkAsReadOnlyRequest",
+    "kCGImageBlockSingletonRequest",
+    "kCGImagePropertyIOSurface",
+    "kCGImageProviderBitmapInfo",
+]
+
+[[temporary-usage]]
+request = "rdar://186571377"
+cleanup = "rdar://186571467"
+symbols = [
+    "kIOSurfaceAlphaChannelMode",
+    "kIOSurfaceAlphaChannelMode_PremultipliedAlpha",
+    "kIOSurfaceAlphaChannelMode_StraightAlpha",
+]
+
 [[not-web-essential]]
 request = "rdar://157890384"
 classes = ["MTMaterialLayer"]
@@ -67,11 +99,26 @@ selectors = [
     { name = "_parentTypes", class = "UTType" },
 ]
 
-[[temporary-usage]]
+[[staging]]
 request = "rdar://161241270"
 cleanup = "rdar://161241477"
 symbols = [
     "CTFontGetUIFontType",
+]
+requires-sdk = ["iOS <= 26.4"]
+
+[[staging]]
+cleanup = "rdar://188823158"
+selectors = [
+    { name = "issuingRegionCode", class = "PKPaymentMethod" },
+]
+requires = ["HAVE_PASSKIT_ISSUING_REGION_CODE"]
+
+[[temporary-usage]]
+request = "rdar://168834967"
+cleanup = "rdar://168834815"
+symbols = [
+    "CGContextGetColorSpace",
 ]
 
 [[temporary-usage]]
@@ -81,13 +128,81 @@ symbols = [
     "FPFontCreateMemorySafeFontsFromData",
 ]
 
-[[staging]]
+[[temporary-usage]]
+cleanup = "rdar://171200085"
 symbols = [
     "MACaptionAppearanceCopyPreviewText",
+]
+
+[[temporary-usage]]
+request = "rdar://175714562"
+cleanup = "rdar://175714562"
+symbols = [
+    "CGImageApplyHDRGainMap",
+    "CGImageSourceCopyAuxiliaryDataInfoAtIndexWithOptions",
+    "CGImageCreateFromIOSurface",
+    "CGImageCreatePixelBufferAttributesForHDRTarget",
+    "CGImageGetHDRGainMapHeadroom",
+    "kCGImageAuxiliaryDataInfoPixelBuffer",
+    "kCGImageAuxiliaryDataRepresentation",
+    "kCGImageAuxiliaryDataRepresentationPixelBuffer",
+    "kCGFlexRangeAlternateColorSpace",
+    "kCGTargetColorSpace",
+    "kCGTargetHeadroom",
+    "kCGTargetPixelFormat",
 ]
 
 [[not-web-essential]]
 request = "rdar://168411469"
 symbols = [
     "DDResultGetRange",
+]
+
+[[temporary-usage]]
+requires = [ "HAVE_CGCONTEXT_STROKE_ARC" ]
+request = "rdar://169211312"
+cleanup = "rdar://169211412"
+symbols = [
+    "CGContextStrokeArc",
+]
+
+ [[temporary-usage]]
+ request = "rdar://170272259"
+ cleanup = "rdar://170272662"
+ symbols = [
+     "CGIOSurfaceContextFlushQueue",
+ ]
+
+[[temporary-usage]]
+request = "rdar://168696619"
+cleanup = "rdar://169487203"
+classes = ["WCRBrowserEngineClient"]
+selectors = [
+    { name = "evaluateURL:mainDocumentURL:withCompletion:onCompletionQueue:", class = "WCRBrowserEngineClient" },
+]
+requires = ["HAVE_WEBCONTENTRESTRICTIONS_TRANSITIVE_TRUST"]
+
+[[temporary-usage]]
+request = "rdar://168696619"
+cleanup = "rdar://169487203"
+classes = ["WCRBrowserEngineClient"]
+selectors = [
+    { name = "askToBrowseURL:referrerURL:withCompletion:", class = "WCRBrowserEngineClient" },
+]
+requires = ["HAVE_WEBCONTENTRESTRICTIONS_ASK_TO", "WTF_PLATFORM_MAC"]
+
+[[temporary-usage]]
+requires = [ "HAVE_CGPATTERN_CREATE_WITH_IMAGE_TRANSFORM_STEP" ]
+request = "rdar://170092229"
+cleanup = "rdar://170092414"
+symbols = [
+    "CGPatternCreateWithImageTransformStep",
+]
+
+[[temporary-usage]]
+requires = [ "HAVE_CORE_TEXT_GLYPHHASCOMPLEXCOLOR_FUNCTION" ]
+request = "rdar://168960112"
+cleanup = "rdar://170480216"
+symbols = [
+    "CTFontHasComplexColorFormatForGlyph",
 ]

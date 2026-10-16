@@ -59,7 +59,7 @@ public:
     explicit CallLinkStatus(JSValue);
     
     CallLinkStatus(CallVariant variant)
-        : m_variants(1, variant)
+        : m_variants(FillWith { }, 1, variant)
     {
     }
     
@@ -103,11 +103,13 @@ public:
     bool isBasedOnStub() const { return m_isBasedOnStub; }
     bool canOptimize() const { return !m_variants.isEmpty(); }
 
-    bool isClosureCall() const; // Returns true if any callee is a closure call.
-    
+    bool LEGACY_NODELETE isClosureCall() const; // Returns true if any callee is a closure call.
+
+    void makeClosureCall();
+
     unsigned maxArgumentCountIncludingThisForVarargs() const { return m_maxArgumentCountIncludingThisForVarargs; }
     
-    bool finalize(VM&);
+    bool isStillLive(VM&);
     
     void merge(const CallLinkStatus&);
     
@@ -116,8 +118,7 @@ public:
     void dump(PrintStream&) const;
     
 private:
-    void makeClosureCall();
-    
+
 #if ENABLE(JIT)
     static CallLinkStatus computeFromCallLinkInfo(
         const ConcurrentJSLocker&, CallLinkInfo&);

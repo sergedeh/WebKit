@@ -1,11 +1,12 @@
 diagnostic(off, derivative_uniformity);
 diagnostic(off, chromium.unreachable_code);
+enable f16;
 struct FSOut {
-  @location(0) sk_FragColor: vec4<f32>,
+  @location(0) sk_FragColor: vec4<f16>,
 };
 struct _GlobalUniforms {
-  colorGreen: vec4<f32>,
-  colorRed: vec4<f32>,
+  colorGreen: vec4<f16>,
+  colorRed: vec4<f16>,
 };
 @group(0) @binding(0) var<uniform> _globalUniforms : _GlobalUniforms;
 fn switch_with_continue_in_loop_bi(x: i32) -> bool {
@@ -17,14 +18,10 @@ fn switch_with_continue_in_loop_bi(x: i32) -> bool {
         if x == 1 {
           {
             var i: i32 = 0;
-            loop {
+            for (; i < 10; i = i + i32(1)) {
               {
                 val = val + i32(1);
                 continue;
-              }
-              continuing {
-                i = i + i32(1);
-                break if i >= 10;
               }
             }
           }
@@ -40,7 +37,7 @@ fn loop_with_break_in_switch_bi(x: i32) -> bool {
     var val: i32 = 0;
     {
       var i: i32 = 0;
-      loop {
+      for (; i < 10; i = i + i32(1)) {
         {
           switch x {
             case 1 {
@@ -53,16 +50,12 @@ fn loop_with_break_in_switch_bi(x: i32) -> bool {
           }
           val = val + i32(1);
         }
-        continuing {
-          i = i + i32(1);
-          break if i >= 10;
-        }
       }
     }
     return val == 20;
   }
 }
-fn _skslMain(coords: vec2<f32>) -> vec4<f32> {
+fn _skslMain(coords: vec2<f32>) -> vec4<f16> {
   {
     let x: i32 = i32(_globalUniforms.colorGreen.y);
     var _0_val: i32 = 0;
@@ -72,14 +65,10 @@ fn _skslMain(coords: vec2<f32>) -> vec4<f32> {
         if x == 1 {
           {
             var _1_i: i32 = 0;
-            loop {
+            for (; _1_i < 10; _1_i = _1_i + i32(1)) {
               {
                 _0_val = _0_val + i32(1);
                 break;
-              }
-              continuing {
-                _1_i = _1_i + i32(1);
-                break if _1_i >= 10;
               }
             }
           }
@@ -87,7 +76,7 @@ fn _skslMain(coords: vec2<f32>) -> vec4<f32> {
         _0_val = _0_val + i32(1);
       }
     }
-    var _skTemp2: vec4<f32>;
+    var _skTemp2: vec4<f16>;
     var _skTemp3: bool;
     var _skTemp4: bool;
     if _0_val == 2 {

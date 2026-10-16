@@ -49,7 +49,7 @@ class FrameLoader::SubframeLoader {
 public:
     explicit SubframeLoader(LocalFrame&);
 
-    void clear();
+    void LEGACY_NODELETE clear();
 
     void createFrameIfNecessary(HTMLFrameOwnerElement&, const AtomString& frameName);
     bool requestFrame(HTMLFrameOwnerElement&, const String& url, const AtomString& frameName, LockHistory = LockHistory::Yes, LockBackForwardList = LockBackForwardList::Yes);
@@ -71,8 +71,7 @@ private:
 
     URL completeURL(const String&) const;
 
-    bool shouldConvertInvalidURLsToBlank() const;
-    Ref<LocalFrame> protectedFrame() const;
+    bool LEGACY_NODELETE shouldConvertInvalidURLsToBlank() const;
 
     bool canCreateSubFrame() const;
 

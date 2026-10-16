@@ -28,10 +28,10 @@
 
 #include "AnimationFrameRate.h"
 #include "Document.h"
-#include "ReducedResolutionSeconds.h"
 #include "Timer.h"
 #include <wtf/CheckedPtr.h>
 #include <wtf/OptionSet.h>
+#include <wtf/ReducedResolutionSeconds.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
 #include <wtf/Vector.h>
@@ -51,19 +51,19 @@ public:
     {
         return adoptRef(*new ScriptedAnimationController(document));
     }
-    ~ScriptedAnimationController();
+    WEBCORE_EXPORT ~ScriptedAnimationController();
     void clearDocumentPointer() { m_document = nullptr; }
 
-    WEBCORE_EXPORT Seconds interval() const;
-    WEBCORE_EXPORT OptionSet<ThrottlingReason> throttlingReasons() const;
+    WEBCORE_EXPORT Seconds LEGACY_NODELETE interval() const;
+    WEBCORE_EXPORT OptionSet<ThrottlingReason> LEGACY_NODELETE throttlingReasons() const;
 
-    void suspend();
+    void LEGACY_NODELETE suspend();
     void resume();
 
     void addThrottlingReason(ThrottlingReason reason) { m_throttlingReasons.add(reason); }
     void removeThrottlingReason(ThrottlingReason reason) { m_throttlingReasons.remove(reason); }
 
-    using CallbackId = int;
+    using CallbackId = unsigned;
     CallbackId registerCallback(Ref<RequestAnimationFrameCallback>&&);
     void cancelCallback(CallbackId);
     void serviceRequestAnimationFrameCallbacks(ReducedResolutionSeconds);
@@ -71,12 +71,11 @@ public:
 private:
     ScriptedAnimationController(Document&);
 
-    Page* page() const;
-    Seconds preferredScriptedAnimationInterval() const;
+    Page* LEGACY_NODELETE page() const;
+    Seconds LEGACY_NODELETE preferredScriptedAnimationInterval() const;
     bool isThrottledRelativeToPage() const;
     bool shouldRescheduleRequestAnimationFrame(ReducedResolutionSeconds) const;
     void scheduleAnimation();
-    RefPtr<Document> protectedDocument();
 
     struct CallbackData {
         Ref<RequestAnimationFrameCallback> callback;

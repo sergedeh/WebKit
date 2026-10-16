@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2004, 2006, 2007 Apple Inc. All rights reserved.
+ * Copyright (C) 2004-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,6 +27,7 @@
 #include "RenderHTMLCanvas.h"
 
 #include "CanvasRenderingContext.h"
+#include "DisplayListRecorderImpl.h"
 #include "Document.h"
 #include "GraphicsContext.h"
 #include "HTMLCanvasElement.h"
@@ -34,15 +35,19 @@
 #include "ImageQualityController.h"
 #include "LocalFrame.h"
 #include "LocalFrameView.h"
+#include "NaturalDimensions.h"
 #include "Page.h"
 #include "PaintInfo.h"
 #include "RenderBoxInlines.h"
 #include "RenderBoxModelObjectInlines.h"
+#include "RenderChildIterator.h"
+#include "RenderElementStyleInlines.h"
 #include "RenderLayer.h"
 #include "RenderLayerBacking.h"
 #include "RenderObjectInlines.h"
-#include "RenderStyle+GettersInlines.h"
 #include "RenderView.h"
+#include "StyleComputedStyle+GettersInlines.h"
+#include <wtf/StackStats.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -51,7 +56,7 @@ using namespace HTMLNames;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderHTMLCanvas);
 
-RenderHTMLCanvas::RenderHTMLCanvas(HTMLCanvasElement& element, RenderStyle&& style)
+RenderHTMLCanvas::RenderHTMLCanvas(HTMLCanvasElement& element, Style::ComputedStyle&& style)
     : RenderReplaced(Type::HTMLCanvas, element, WTF::move(style), element.size())
 {
     ASSERT(isRenderHTMLCanvas());
@@ -59,9 +64,15 @@ RenderHTMLCanvas::RenderHTMLCanvas(HTMLCanvasElement& element, RenderStyle&& sty
 
 RenderHTMLCanvas::~RenderHTMLCanvas() = default;
 
-HTMLCanvasElement& RenderHTMLCanvas::canvasElement() const
+HTMLCanvasElement& LEGACY_NODELETE RenderHTMLCanvas::canvasElement() const
 {
     return downcast<HTMLCanvasElement>(nodeForNonAnonymous());
+}
+
+void RenderHTMLCanvas::setInnerRenderer(RenderBlock* innerRenderer)
+{
+    ASSERT(!m_innerRenderer || !innerRenderer);
+    m_innerRenderer = innerRenderer;
 }
 
 bool RenderHTMLCanvas::requiresLayer() const
@@ -70,6 +81,27 @@ bool RenderHTMLCanvas::requiresLayer() const
         return true;
 
     return canvasCompositingStrategy(*this) != CanvasPaintedToEnclosingLayer;
+}
+
+bool RenderHTMLCanvas::canHaveChildren() const
+{
+    return hasDrawableContent() || firstChild();
+}
+
+bool RenderHTMLCanvas::hasDrawableContent() const
+{
+    return protect(canvasElement())->hasDrawableContent();
+}
+
+void RenderHTMLCanvas::layout()
+{
+    StackStats::LayoutCheckPoint layoutCheckPoint;
+    RenderReplaced::layout();
+
+    if (CheckedPtr innerRenderer = this->innerRenderer())
+        innerRenderer->layoutIfNeeded();
+
+    m_canvasDrawableRecorderMap.clear();
 }
 
 void RenderHTMLCanvas::paintReplaced(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
@@ -81,7 +113,7 @@ void RenderHTMLCanvas::paintReplaced(PaintInfo& paintInfo, const LayoutPoint& pa
     LayoutRect contentBoxRect = this->contentBoxRect();
 
     if (context.detectingContentfulPaint()) {
-        if (!context.contentfulPaintDetected() && canvasElement().renderingContext())
+        if (!context.contentfulPaintDetected() && protect(canvasElement())->renderingContext())
             context.setContentfulPaintDetected();
         return;
     }
@@ -90,20 +122,66 @@ void RenderHTMLCanvas::paintReplaced(PaintInfo& paintInfo, const LayoutPoint& pa
     LayoutRect replacedContentRect = this->replacedContentRect();
     replacedContentRect.moveBy(paintOffset);
 
-    // Not allowed to overflow the content box.
-    bool clip = !contentBoxRect.contains(replacedContentRect);
-    GraphicsContextStateSaver stateSaver(paintInfo.context(), clip);
+    LayoutRect paintRect = computePaintRectForObjectViewBox(replacedContentRect);
+
+    // Not allowed to overflow the content box. Snap before testing containment so that
+    // pixel-snapping can't push paintRect outside contentBoxRect without a clip being applied
+    // (or vice versa).
+    IntRect snappedContentBoxRect = snappedIntRect(contentBoxRect);
+    bool clip = !snappedContentBoxRect.contains(snappedIntRect(paintRect));
+    GraphicsContextStateSaver stateSaver(context, clip);
     if (clip)
-        paintInfo.context().clip(snappedIntRect(contentBoxRect));
+        context.clip(snappedContentBoxRect);
 
     if (paintInfo.phase == PaintPhase::Foreground)
-        page().addRelevantRepaintedObject(*this, intersection(replacedContentRect, contentBoxRect));
+        protect(page())->addRelevantRepaintedObject(*this, intersection(replacedContentRect, contentBoxRect));
 
     InterpolationQualityMaintainer interpolationMaintainer(context, ImageQualityController::interpolationQualityFromStyle(style()));
 
-    canvasElement().setIsSnapshotting(paintInfo.paintBehavior.contains(PaintBehavior::Snapshotting));
-    canvasElement().paint(context, replacedContentRect);
-    canvasElement().setIsSnapshotting(false);
+    Ref canvasEl = canvasElement();
+    canvasEl->setIsSnapshotting(paintInfo.paintBehavior.contains(PaintBehavior::Snapshotting));
+    canvasEl->paint(context, paintRect);
+    canvasEl->setIsSnapshotting(false);
+}
+
+DisplayList::RecorderImpl* RenderHTMLCanvas::canvasDrawableRecorder(RenderElement& element, GraphicsContext& context, const IntRect& elementRelativeBounds) const
+{
+    if (!element.isCanvasDrawable())
+        return nullptr;
+
+    // FIXME: Clearing the recorder should happen only when a repaint or a layout happens.
+    auto initialState = context.state().clone(GraphicsContextState::Purpose::Initial);
+    auto initialCTM = context.getCTM(GraphicsContext::DefinitelyIncludeDeviceScale);
+    Ref snapshotRecorder = DisplayList::RecorderImpl::create(initialState, elementRelativeBounds, initialCTM, context.colorSpace());
+    snapshotRecorder->translate(-elementRelativeBounds.x(), -elementRelativeBounds.y());
+
+    m_canvasDrawableRecorderMap.set(element, WTF::move(snapshotRecorder));
+    return m_canvasDrawableRecorderMap.get(element);
+}
+
+std::optional<CanvasElementSnapshot> RenderHTMLCanvas::canvasDrawableSnapshot(RenderElement& element) const
+{
+    if (!element.isCanvasDrawable())
+        return std::nullopt;
+
+    if (RefPtr snapshotRecorder = m_canvasDrawableRecorderMap.get(element))
+        return { { snapshotRecorder->copyDisplayList(), snapshotRecorder->initialClip().size() } };
+
+    return std::nullopt;
+}
+
+bool RenderHTMLCanvas::nodeAtPoint(const HitTestRequest& request, HitTestResult& result, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction hitTestAction)
+{
+    if (CheckedPtr innerRenderer = this->innerRenderer()) {
+        ASSERT(canHaveChildren());
+
+        for (CheckedRef child : childrenOfType<RenderElement>(*innerRenderer)) {
+            if (child->nodeAtPoint(request, result, locationInContainer, accumulatedOffset, hitTestAction))
+                return true;
+        }
+    }
+
+    return RenderReplaced::nodeAtPoint(request, result, locationInContainer, accumulatedOffset, hitTestAction);
 }
 
 void RenderHTMLCanvas::canvasSizeChanged()
@@ -121,12 +199,17 @@ void RenderHTMLCanvas::canvasSizeChanged()
     setNeedsLayoutIfNeededAfterIntrinsicSizeChange();
 }
 
-void RenderHTMLCanvas::styleDidChange(Style::Difference difference, const RenderStyle* oldStyle)
+void RenderHTMLCanvas::styleDidChange(Style::Difference difference, const Style::ComputedStyle* oldStyle)
 {
     RenderReplaced::styleDidChange(difference, oldStyle);
 
     if (!oldStyle || style().dynamicRangeLimit() != oldStyle->dynamicRangeLimit())
-        canvasElement().dynamicRangeLimitDidChange(style().dynamicRangeLimit().toPlatformDynamicRangeLimit());
+        protect(canvasElement())->dynamicRangeLimitDidChange(style().dynamicRangeLimit().toPlatformDynamicRangeLimit());
+}
+
+NaturalDimensions RenderHTMLCanvas::zoomedNaturalDimensions() const
+{
+    return NaturalDimensions::fixed(FloatSize { intrinsicSize() });
 }
 
 } // namespace WebCore

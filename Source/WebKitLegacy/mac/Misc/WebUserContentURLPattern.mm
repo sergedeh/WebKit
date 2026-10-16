@@ -25,21 +25,23 @@
 #import "WebUserContentURLPattern.h"
 
 #import <WebCore/UserContentURLPattern.h>
+#import <wtf/RetainPtr.h>
 #import <wtf/URL.h>
 
-using namespace WebCore;
 
 @interface WebUserContentURLPatternPrivate : NSObject
 {
 @public
-    UserContentURLPattern pattern;
+    WebCore::UserContentURLPattern pattern;
 }
 @end
 
 @implementation WebUserContentURLPatternPrivate
 @end
 
-@implementation WebUserContentURLPattern
+@implementation WebUserContentURLPattern {
+    RetainPtr<WebUserContentURLPatternPrivate> _private;
+}
 
 - (id)initWithPatternString:(NSString *)patternString
 {
@@ -47,18 +49,10 @@ using namespace WebCore;
     if (!self)
         return nil;
 
-    _private = [[WebUserContentURLPatternPrivate alloc] init];
-    _private->pattern = UserContentURLPattern(String(patternString));
+    _private = adoptNS([[WebUserContentURLPatternPrivate alloc] init]);
+    _private->pattern = WebCore::UserContentURLPattern(String(patternString));
 
     return self;
-}
-
-- (void)dealloc
-{
-    [_private release];
-    _private = nil;
-
-    [super dealloc];
 }
 
 - (BOOL)isValid

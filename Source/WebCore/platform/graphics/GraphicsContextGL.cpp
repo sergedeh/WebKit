@@ -30,14 +30,12 @@
 
 #if ENABLE(WEBGL)
 
-#include "BitmapImage.h"
 #include "FormatConverter.h"
 #include "GCGLSpan.h"
 #include "GraphicsContext.h"
 #include "HostWindow.h"
-#include "Image.h"
 #include "ImageBuffer.h"
-#include "ImageObserver.h"
+#include "NativeImage.h"
 #include "NotImplemented.h"
 #include "PixelBuffer.h"
 #include "VideoFrame.h"
@@ -46,7 +44,7 @@
 
 namespace WebCore {
 
-static GraphicsContextGL::DataFormat getDataFormat(GCGLenum destinationFormat, GCGLenum destinationType)
+static GraphicsContextGL::DataFormat LEGACY_NODELETE getDataFormat(GCGLenum destinationFormat, GCGLenum destinationType)
 {
     switch (destinationType) {
     case GraphicsContextGL::BYTE:
@@ -377,11 +375,6 @@ GraphicsContextGL::GraphicsContextGL(GraphicsContextGLAttributes attrs)
 
 GraphicsContextGL::~GraphicsContextGL() = default;
 
-std::tuple<GCGLenum, GCGLenum> GraphicsContextGL::externalImageTextureBindingPoint()
-{
-    return std::make_tuple(GraphicsContextGL::TEXTURE_2D, GraphicsContextGL::TEXTURE_BINDING_2D);
-}
-
 unsigned GraphicsContextGL::computeBytesPerGroup(GCGLenum format, GCGLenum type)
 {
     unsigned componentsPerGroup = 0;
@@ -487,9 +480,9 @@ std::optional<GraphicsContextGL::PixelRectangleSizes> GraphicsContextGL::compute
     return PixelRectangleSizes { initialSkipBytes.value(), imageBytes.value(), alignedRowBytes.value(), lastRowBytes.value() };
 }
 
-bool GraphicsContextGL::packImageData(Image* image, std::span<const uint8_t> pixels, GCGLenum format, GCGLenum type, bool flipY, AlphaOp alphaOp, DataFormat sourceFormat, unsigned sourceImageWidth, unsigned sourceImageHeight, const IntRect& sourceImageSubRectangle, int depth, unsigned sourceUnpackAlignment, int unpackImageHeight, Vector<uint8_t>& data)
+bool GraphicsContextGL::packImageData(std::span<const uint8_t> pixels, GCGLenum format, GCGLenum type, bool flipY, AlphaOp alphaOp, DataFormat sourceFormat, unsigned sourceImageWidth, unsigned sourceImageHeight, const IntRect& sourceImageSubRectangle, int depth, unsigned sourceUnpackAlignment, int unpackImageHeight, Vector<uint8_t>& data)
 {
-    if (!image || !pixels.data())
+    if (!pixels.data())
         return false;
 
     // Output data is tightly packed (alignment == 1).
@@ -502,8 +495,6 @@ bool GraphicsContextGL::packImageData(Image* image, std::span<const uint8_t> pix
 
     if (!packPixels(pixels, sourceFormat, sourceImageWidth, sourceImageHeight, sourceImageSubRectangle, depth, sourceUnpackAlignment, unpackImageHeight, format, type, alphaOp, data.mutableSpan(), flipY))
         return false;
-    if (auto observer = image->imageObserver())
-        observer->didDraw(*image);
     return true;
 }
 
@@ -604,7 +595,7 @@ void GraphicsContextGL::framebufferResolveRenderbuffer(GCGLenum, GCGLenum, GCGLe
 }
 #endif
 
-void GraphicsContextGL::setDrawingBufferColorSpace(const DestinationColorSpace&)
+void GraphicsContextGL::setDrawingBufferColorSpace(const ColorSpace&)
 {
 }
 
@@ -623,19 +614,8 @@ void GraphicsContextGL::paintToCanvas(NativeImage& image, const IntSize& canvasS
     // rendering results.
 
     GraphicsContextStateSaver stateSaver(context);
-    context.scale(FloatSize(1, -1));
-    context.translate(0, -imageSize.height());
     context.setImageInterpolationQuality(InterpolationQuality::DoNotInterpolate);
     context.drawNativeImage(image, canvasRect, FloatRect { { }, imageSize }, { CompositeOperator::Copy });
-}
-
-void GraphicsContextGL::paintToCanvas(const GraphicsContextGLAttributes& sourceContextAttributes, Ref<PixelBuffer>&& pixelBuffer, const IntSize& canvasSize, GraphicsContext& context)
-{
-    if (canvasSize.isEmpty())
-        return;
-
-    auto image = createNativeImageFromPixelBuffer(sourceContextAttributes, WTF::move(pixelBuffer));
-    paintToCanvas(*image, canvasSize, context);
 }
 
 void GraphicsContextGL::forceContextLost()
@@ -645,15 +625,21 @@ void GraphicsContextGL::forceContextLost()
         m_client->forceContextLost();
 }
 
+void GraphicsContextGL::didChangeMemoryCost()
+{
+    if (m_client)
+        m_client->didChangeMemoryCost();
+}
+
 #if ENABLE(VIDEO)
-RefPtr<Image> GraphicsContextGL::videoFrameToImage(VideoFrame& frame)
+RefPtr<NativeImage> GraphicsContextGL::videoFrameToNativeImage(VideoFrame& frame)
 {
     IntSize size { static_cast<int>(frame.presentationSize().width()), static_cast<int>(frame.presentationSize().height()) };
-    auto imageBuffer = ImageBuffer::create(size, RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1, DestinationColorSpace::SRGB(), PixelFormat::BGRA8);
+    auto imageBuffer = ImageBuffer::create(size, RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1, ColorSpace::SRGB(), PixelFormat::BGRA8);
     if (!imageBuffer)
         return { };
-    imageBuffer->context().drawVideoFrame(frame, { { }, size }, ImageOrientation::Orientation::None, true);
-    return BitmapImage::create(ImageBuffer::sinkIntoNativeImage(WTF::move(imageBuffer)));
+    imageBuffer->context().drawVideoFrame(frame, { { }, size }, ShouldDiscardAlpha::Yes);
+    return ImageBuffer::sinkIntoNativeImage(WTF::move(imageBuffer));
 }
 #endif
 

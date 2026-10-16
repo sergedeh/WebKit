@@ -45,7 +45,7 @@ struct Sepia {
 
     Parameter value;
 
-    static Sepia passthroughForInterpolation();
+    static Sepia LEGACY_NODELETE passthroughForInterpolation();
 
     constexpr bool requiresRepaintForCurrentColorChange() const { return false; }
     constexpr bool affectsOpacity() const { return false; }
@@ -58,12 +58,12 @@ struct Sepia {
 
     bool operator==(const Sepia&) const = default;
 };
-using SepiaFunction = FunctionNotation<CSSValueSepia, Sepia>;
+using SepiaFunction = FunctionNotation<CSSValueID::Sepia, Sepia>;
 DEFINE_TYPE_WRAPPER_GET(Sepia, value);
 
 // MARK: - Conversion
 
-template<> struct ToCSS<Sepia> { auto operator()(const Sepia&, const RenderStyle&) -> CSS::Sepia; };
+template<> struct ToCSS<Sepia> { auto operator()(const Sepia&, const Style::ComputedStyle&) -> CSS::Sepia; };
 template<> struct ToStyle<CSS::Sepia> { auto operator()(const CSS::Sepia&, const BuilderState&) -> Sepia; };
 
 // MARK: - Evaluation

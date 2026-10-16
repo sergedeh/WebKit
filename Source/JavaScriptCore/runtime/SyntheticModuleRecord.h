@@ -32,7 +32,6 @@
 namespace JSC {
 
 class JSGlobalObject;
-class JSInternalPromise;
 
 // https://tc39.es/proposal-json-modules/#sec-synthetic-module-records
 class SyntheticModuleRecord final : public AbstractModuleRecord {
@@ -54,18 +53,20 @@ public:
     }
 
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
-    static SyntheticModuleRecord* create(JSGlobalObject*, VM&, Structure*, const Identifier& moduleKey);
+    static SyntheticModuleRecord* create(JSGlobalObject*, VM&, Structure*, const Identifier& moduleKey, SourceProviderSourceType);
+
+    static SyntheticModuleRecord* tryCreateDefaultExportSyntheticModule(JSGlobalObject*, const Identifier& moduleKey, JSValue, SourceProviderSourceType);
 
     static SyntheticModuleRecord* parseJSONModule(JSGlobalObject*, const Identifier& moduleKey, SourceCode&&);
+    static SyntheticModuleRecord* createTextModule(JSGlobalObject*, const Identifier& moduleKey, SourceCode&&);
 
-    Synchronousness link(JSGlobalObject*, JSValue scriptFetcher);
-    JS_EXPORT_PRIVATE JSValue evaluate(JSGlobalObject*);
+    Synchronousness link(JSGlobalObject*, RefPtr<ScriptFetcher> = nullptr);
+    JS_EXPORT_PRIVATE JSValue LEGACY_NODELETE evaluate(JSGlobalObject*);
 
 private:
-    SyntheticModuleRecord(VM&, Structure*, const Identifier& moduleKey);
+    SyntheticModuleRecord(VM&, Structure*, const Identifier& moduleKey, SourceProviderSourceType);
 
-    static SyntheticModuleRecord* tryCreateDefaultExportSyntheticModule(JSGlobalObject*, const Identifier& moduleKey, JSValue);
-    static SyntheticModuleRecord* tryCreateWithExportNamesAndValues(JSGlobalObject*, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, const MarkedArgumentBuffer& exportValues);
+    static SyntheticModuleRecord* tryCreateWithExportNamesAndValues(JSGlobalObject*, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, SourceProviderSourceType);
 
     void finishCreation(JSGlobalObject*, VM&);
 };

@@ -96,7 +96,7 @@ float Font::platformWidthForGlyph(Glyph glyph) const
     return SkScalarToFloat(width);
 }
 
-void Font::platformInit()
+void FontBase::platformInit()
 {
     if (!m_platformData.size())
         return;
@@ -161,15 +161,23 @@ RefPtr<Font> Font::platformCreateScaledFont(const FontDescription&, float scaleF
         m_platformData.widthVariant(),
         m_platformData.textRenderingMode(),
         Vector<hb_feature_t> { m_platformData.features() },
+        m_platformData.metricsOverrides(),
         m_platformData.customPlatformData()),
         origin(), IsInterstitial::No);
 }
 
 RefPtr<Font> Font::platformCreateHalfWidthFont() const
 {
-    // FIXME: https://bugs.webkit.org/show_bug.cgi?id=281333 : implement half width font for this platform.
-    notImplemented();
-    return nullptr;
+    return Font::create(FontPlatformData(m_platformData.skFont().refTypeface(), m_platformData.size(),
+        m_platformData.syntheticBold(),
+        m_platformData.syntheticOblique(),
+        m_platformData.orientation(),
+        FontWidthVariant::HalfWidth,
+        m_platformData.textRenderingMode(),
+        Vector<hb_feature_t> { m_platformData.features() },
+        m_platformData.metricsOverrides(),
+        m_platformData.customPlatformData()),
+        origin(), IsInterstitial::No);
 }
 
 void Font::determinePitch()
@@ -215,7 +223,7 @@ static inline SkFont::Edging edgingForFontSmoothingMode(const SkFont& font, Font
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-sk_sp<SkTextBlob> Font::buildTextBlob(std::span<const GlyphBufferGlyph> glyphs, std::span<const GlyphBufferAdvance> advances, FontSmoothingMode smoothingMode) const
+sk_sp<SkTextBlob> FontBase::buildTextBlob(std::span<const GlyphBufferGlyph> glyphs, std::span<const GlyphBufferAdvance> advances, FontSmoothingMode smoothingMode) const
 {
     if (!m_platformData.size() || !glyphs.size())
         return nullptr;
@@ -254,7 +262,7 @@ sk_sp<SkTextBlob> Font::buildTextBlob(std::span<const GlyphBufferGlyph> glyphs, 
     return builder.make();
 }
 
-bool Font::enableAntialiasing(FontSmoothingMode smoothingMode) const
+bool FontBase::enableAntialiasing(FontSmoothingMode smoothingMode) const
 {
     return allowsAntialiasing() && edgingForFontSmoothingMode(m_platformData.skFont(), smoothingMode) != SkFont::Edging::kAlias;
 }

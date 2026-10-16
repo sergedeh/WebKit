@@ -30,6 +30,8 @@
 #include "InjectedBundle.h"
 #include "InjectedBundlePage.h"
 #include "JSAccessibilityController.h"
+#include "StringFunctions.h"
+#include "WebCoreTestSupport.h"
 #include <WebKit/WKBundle.h>
 #include <WebKit/WKBundleFramePrivate.h>
 #include <WebKit/WKBundlePage.h>
@@ -37,6 +39,10 @@
 
 #if USE(ATSPI)
 #include "AccessibilityNotificationHandler.h"
+#endif
+
+#if PLATFORM(MAC)
+#include "mac/AccessibilityUIElementClientMac.h"
 #endif
 
 namespace WTR {
@@ -58,6 +64,15 @@ void AccessibilityController::setRetainedElement(AccessibilityUIElement* uiEleme
     m_retainedElement = uiElement;
 }
 
+void AccessibilityController::printToStderr(JSStringRef jsMessage) const
+{
+    auto message = toWTFString(jsMessage);
+    if (!message.isEmpty())
+        SAFE_FPRINTF(stderr, "%s\n", message.utf8());
+    else
+        SAFE_FPRINTF(stderr, ">>> AccessibilityController::printToStderr <<<\n");
+}
+
 void AccessibilityController::setIsolatedTreeMode(bool flag)
 {
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
@@ -76,6 +91,16 @@ void AccessibilityController::setForceDeferredSpellChecking(bool shouldForce)
 void AccessibilityController::setForceInitialFrameCaching(bool shouldForce)
 {
     WKAccessibilitySetForceInitialFrameCaching(shouldForce);
+}
+
+void AccessibilityController::setClientAccessibilityMode(bool flag)
+{
+    m_enableClientAccessibilityMode = flag;
+
+    if (flag) {
+        setIsolatedTreeMode(true);
+        platformInitializeClientAccessibility();
+    }
 }
 
 void AccessibilityController::makeWindowObject(JSContextRef context)
@@ -102,9 +127,15 @@ bool AccessibilityController::enhancedAccessibilityEnabled()
 
 Ref<AccessibilityUIElement> AccessibilityController::rootElement(JSContextRef context)
 {
+#if PLATFORM(MAC)
+    if (m_enableClientAccessibilityMode)
+        return AccessibilityUIElementClientMac::createForUIProcess();
+#endif
+
+    WKRetainPtr<WKBundleFrameRef> frame = WKBundleFrameForJavaScriptContext(context);
     PlatformUIElement root;
     executeOnAXThreadAndWait([&] () {
-        root = static_cast<PlatformUIElement>(_WKAccessibilityRootObjectForTesting(WKBundleFrameForJavaScriptContext(context)));
+        root = static_cast<PlatformUIElement>(_WKAccessibilityRootObjectForTesting(frame.get()));
     });
     return AccessibilityUIElement::create(root);
 }
@@ -112,7 +143,7 @@ Ref<AccessibilityUIElement> AccessibilityController::rootElement(JSContextRef co
 void AccessibilityController::executeOnAXThreadAndWait(Function<void()>&& function)
 {
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
-    if (m_accessibilityIsolatedTreeMode) {
+    if (WebCoreTestSupport::isAccessibilityIsolatedTreeModeEnabled()) {
         std::atomic<bool> complete = false;
         AXThread::dispatch([&function, &complete] {
             function();
@@ -133,7 +164,7 @@ void AccessibilityController::executeOnAXThreadAndWait(Function<void()>&& functi
 void AccessibilityController::executeOnAXThread(Function<void()>&& function)
 {
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
-    if (m_accessibilityIsolatedTreeMode) {
+    if (WebCoreTestSupport::isAccessibilityIsolatedTreeModeEnabled()) {
         AXThread::dispatch([function = WTF::move(function)] {
             function();
         });
@@ -180,6 +211,11 @@ void AccessibilityController::announce(JSStringRef message)
 void AccessibilityController::platformInitialize()
 {
 }
+
+void AccessibilityController::platformInitializeClientAccessibility()
+{
+    // Client accessibility mode is only supported on macOS
+}
 #endif
 
 #if PLATFORM(COCOA)
@@ -204,6 +240,13 @@ void AXThread::dispatch(Function<void()>&& function)
     }
 
     axThread.wakeUpRunLoop();
+}
+
+void AXThread::clearQueuedFunctions()
+{
+    auto& axThread = AXThread::singleton();
+    Locker locker { axThread.m_functionsMutex };
+    axThread.m_functions.clear();
 }
 
 void AXThread::dispatchBarrier(Function<void()>&& function)
@@ -248,7 +291,7 @@ void AXThread::dispatchFunctionsFromAXThread()
 
     {
         Locker locker { m_functionsMutex };
-        functions = WTF::move(m_functions);
+        functions = std::exchange(m_functions, { });
     }
 
     for (auto& function : functions)

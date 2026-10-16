@@ -28,7 +28,6 @@
 #include "NodeDocument.h"
 #include "RenderSVGPath.h"
 #include "SVGDocumentExtensions.h"
-#include "SVGParserUtilities.h"
 #include "SVGPropertyOwnerRegistry.h"
 #include "Settings.h"
 #include <wtf/TZoneMallocInlines.h>
@@ -39,7 +38,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGPolyElement);
 
 SVGPolyElement::SVGPolyElement(const QualifiedName& tagName, Document& document)
-    : SVGGeometryElement(tagName, document, makeUniqueRef<PropertyRegistry>(*this))
+    : SVGGeometryElement(tagName, document, PropertyRegistry::singleton())
 {
     static bool didRegistration = false;
     if (!didRegistration) [[unlikely]] {
@@ -51,8 +50,8 @@ SVGPolyElement::SVGPolyElement(const QualifiedName& tagName, Document& document)
 void SVGPolyElement::attributeChanged(const QualifiedName& name, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason attributeModificationReason)
 {
     if (name == SVGNames::pointsAttr) {
-        if (!m_points->baseVal()->parse(newValue))
-            protectedDocument()->checkedSVGExtensions()->reportError(makeString("Problem parsing points=\""_s, newValue, "\""_s));
+        if (!protect(protect(m_points)->baseVal())->parse(newValue))
+            protect(protect(document())->svgExtensions())->reportError(makeString("Problem parsing points=\""_s, newValue, "\""_s));
     }
 
     SVGGeometryElement::attributeChanged(name, oldValue, newValue, attributeModificationReason);
@@ -64,10 +63,10 @@ void SVGPolyElement::svgAttributeChanged(const QualifiedName& attrName)
         ASSERT(attrName == SVGNames::pointsAttr);
         InstanceInvalidationGuard guard(*this);
 
-        if (CheckedPtr path = dynamicDowncast<RenderSVGPath>(renderer()))
+        if (auto* path = dynamicDowncast<RenderSVGPath>(renderer()))
             path->setNeedsShapeUpdate();
 
-        if (CheckedPtr path = dynamicDowncast<LegacyRenderSVGPath>(renderer()))
+        if (auto* path = dynamicDowncast<LegacyRenderSVGPath>(renderer()))
             path->setNeedsShapeUpdate();
 
         updateSVGRendererForElementChange();

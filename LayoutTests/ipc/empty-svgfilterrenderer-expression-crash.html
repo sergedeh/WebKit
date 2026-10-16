@@ -7,7 +7,7 @@
     window.setTimeout(async () => {
         if (!window.IPC) return window.testRunner?.notifyDone();
 
-        const { CoreIPC } = await import("./coreipc.js");
+        const { CoreIPC, sRGBColorSpace } = await import("./coreipc.js");
 
         const streamConnection = CoreIPC.newStreamConnection();
 
@@ -27,22 +27,8 @@
             renderingMode: 1,
             renderingPurpose: 0,
             resolutionScale: 1,
-            colorSpace: {
-                serializableColorSpace: {
-                    alias: {
-                        m_cgColorSpace: {
-                            alias: {
-                                variantType: "WebKit::ICCData",
-                                variant: {
-                                    data: [],
-                                    derivative: 0
-                                },
-                            },
-                        },
-                    },
-                },
-            },
-            bufferFormat: { pixelFormat: 2, useLosslessCompression: 1 },
+            colorSpace: sRGBColorSpace(),
+            bufferFormat: { pixelFormat: 3, useLosslessCompression: 1 },
             identifier: 393236,
             contextIdentifier: 393237,
         });
@@ -77,19 +63,8 @@
                                             xChannelSelector: 0,
                                             yChannelSelector: 4,
                                             scale: 1,
-                                            operatingColorSpace: {
-                                                serializableColorSpace: {
-                                                    alias: {
-                                                        m_cgColorSpace: {
-                                                            alias: {
-                                                                variantType:
-                                                                    "WebCore::ColorSpace",
-                                                                variant: 17,
-                                                            },
-                                                        },
-                                                    },
-                                                },
-                                            },
+                                            operatingColorSpace: sRGBColorSpace(),
+                                            in2IsTainted: false,
                                         },
                                     },
                                 },
@@ -121,7 +96,7 @@
                                 }
                             },
                             filterRenderingModes: 0,
-                            isShowingDebugOverlay : false,
+                            renderingOptions : 0,
                             renderingResourceIdentifierIfExists: {},
                             },
                         },

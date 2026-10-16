@@ -10,11 +10,10 @@ Do NOT modify or remove this file.
 ------------------------------------------------------------------------
 Properties requiring vendor prefixes:
 None
-Property values requiring vendor prefixes:
-None
 ------------------------------------------------------------------------
 List of files:
 /LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/META.yml
+/LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/WEB_FEATURES.yml
 /LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/at-media-001-expected.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/at-media-001.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/at-media-002-expected.html
@@ -138,6 +137,8 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/at-supports-font-format-001.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/at-supports-font-tech-001-expected.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/at-supports-font-tech-001.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/at-supports-matches.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/at-supports-named-feature-001.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/at-supports-namespace-001-expected.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/at-supports-namespace-001.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/at-supports-namespace-002-expected.html
@@ -150,11 +151,19 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/at-supports-selector-003.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/at-supports-selector-004-expected.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/at-supports-selector-004.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/at-supports-selector-details-content-before-expected.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/at-supports-selector-details-content-before.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/at-supports-selector-details-content-expected.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/at-supports-selector-details-content.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/at-supports-selector-detecting-invalid-in-logical-combinations-expected.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/at-supports-selector-detecting-invalid-in-logical-combinations-ref.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/at-supports-selector-detecting-invalid-in-logical-combinations.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/at-supports-selector-file-selector-button-expected.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/at-supports-selector-file-selector-button.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/at-supports-selector-picker-expected.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/at-supports-selector-picker-icon-expected.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/at-supports-selector-picker-icon.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/at-supports-selector-picker.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/at-supports-selector-placeholder-expected.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/at-supports-selector-placeholder.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/at-supports-selector-webkit-slider-thumb.tentative-expected.html
@@ -249,3 +258,4 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/css-supports-046-expected.xht
 /LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/css-supports-046.xht
 /LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/idlharness.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-conditional/match-container.tentative.html

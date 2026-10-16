@@ -38,6 +38,7 @@
 #include "WorkletGlobalScopeProxy.h"
 #include "WorkletPendingTasks.h"
 #include <JavaScriptCore/IdentifiersFactory.h>
+#include <wtf/Borrow.h>
 #include <wtf/CrossThreadCopier.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
@@ -68,13 +69,13 @@ void Worklet::addModule(const String& moduleURLString, WorkletOptions&& options,
         return;
     }
 
-    URL moduleURL = document->completeURL(moduleURLString);
+    URL moduleURL = document->encodingParseURL(moduleURLString);
     if (!moduleURL.isValid()) {
         promise.reject(Exception { ExceptionCode::SyntaxError, "Module URL is invalid"_s });
         return;
     }
 
-    if (!document->checkedContentSecurityPolicy()->allowScriptFromSource(moduleURL)) {
+    if (!protect(document->contentSecurityPolicy())->allowScriptFromSource(moduleURL, document->currentParserSourcePosition())) {
         promise.reject(Exception { ExceptionCode::SecurityError, "Not allowed by CSP"_s });
         return;
     }
@@ -82,10 +83,10 @@ void Worklet::addModule(const String& moduleURLString, WorkletOptions&& options,
     if (m_proxies.isEmpty())
         m_proxies.appendVector(createGlobalScopes());
 
-    auto pendingTasks = WorkletPendingTasks::create(*this, WTF::move(promise), m_proxies.size());
-    m_pendingTasksSet.add(pendingTasks.copyRef());
+    Ref pendingTasks = WorkletPendingTasks::create(*this, WTF::move(promise), m_proxies.size());
+    m_pendingTasksSet.add(pendingTasks);
 
-    for (auto& proxy : m_proxies) {
+    for (Ref proxy : borrow(m_proxies).get()) {
         proxy->postTaskForModeToWorkletGlobalScope([pendingTasks = pendingTasks.copyRef(), moduleURL = moduleURL.isolatedCopy(), credentials = options.credentials, pendingActivity = makePendingActivity(*this)](ScriptExecutionContext& context) mutable {
             downcast<WorkletGlobalScope>(context).fetchAndInvokeScript(moduleURL, credentials, [pendingTasks = WTF::move(pendingTasks), pendingActivity = WTF::move(pendingActivity)](std::optional<Exception>&& exception) mutable {
                 callOnMainThread([pendingTasks = WTF::move(pendingTasks), exception = crossThreadCopy(WTF::move(exception)), pendingActivity = WTF::move(pendingActivity)]() mutable {
@@ -102,9 +103,9 @@ void Worklet::addModule(const String& moduleURLString, WorkletOptions&& options,
 void Worklet::finishPendingTasks(WorkletPendingTasks& tasks)
 {
     ASSERT(isMainThread());
-    ASSERT(m_pendingTasksSet.contains(&tasks));
+    ASSERT(m_pendingTasksSet.contains(tasks));
 
-    m_pendingTasksSet.remove(&tasks);
+    m_pendingTasksSet.remove(tasks);
 }
 
 } // namespace WebCore

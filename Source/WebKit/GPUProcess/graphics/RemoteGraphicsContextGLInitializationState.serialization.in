@@ -23,10 +23,23 @@
 #if ENABLE(GPU_PROCESS) && ENABLE(WEBGL)
 
 struct WebKit::RemoteGraphicsContextGLInitializationState {
+    WebCore::GraphicsContextGLAttributes attributes;
     uint64_t knownActiveExtensions;
     uint64_t requestableExtensions;
-    GCGLenum externalImageTarget;
-    GCGLenum externalImageBindingQuery;
+    std::optional<uint64_t> estimatedMemoryCost;
+    GCGLint maxCombinedTextureImageUnits;
+    GCGLint maxVertexAttribs;
+    GCGLint maxTextureSize;
+    GCGLint maxCubeMapTextureSize;
+    GCGLint maxRenderbufferSize;
+    std::array<GCGLint, 2> maxViewportDims;
+    std::array<GCGLint, 2> maxDrawingBufferSize;
+    GCGLint maxSamples;
+    GCGLint maxTransformFeedbackSeparateAttribs;
+    GCGLint maxUniformBufferBindings;
+    GCGLint uniformBufferOffsetAlignment;
+    GCGLint max3DTextureSize;
+    GCGLint maxArrayTextureLayers;
 };
 
 enum class WebCore::TextDrawingMode : uint8_t {

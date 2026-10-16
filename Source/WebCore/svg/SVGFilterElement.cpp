@@ -31,9 +31,9 @@
 #include "NodeName.h"
 #include "RenderSVGResourceFilter.h"
 #include "SVGElementInlines.h"
+#include "SVGElementTypeHelpers.h"
 #include "SVGFilterPrimitiveStandardAttributes.h"
 #include "SVGNames.h"
-#include "SVGParserUtilities.h"
 #include "SVGParsingError.h"
 #include "Settings.h"
 #include <wtf/NeverDestroyed.h>
@@ -44,7 +44,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGFilterElement);
 
 inline SVGFilterElement::SVGFilterElement(const QualifiedName& tagName, Document& document)
-    : SVGElement(tagName, document, makeUniqueRef<PropertyRegistry>(*this))
+    : SVGElement(tagName, document, PropertyRegistry::singleton())
     , SVGURIReference(this)
 {
     // Spec: If the x/y attribute is not specified, the effect is as if a value of "-10%" were specified.
@@ -73,29 +73,23 @@ void SVGFilterElement::attributeChanged(const QualifiedName& name, const AtomStr
     auto parseError = SVGParsingError::None;
 
     switch (name.nodeName()) {
-    case AttributeNames::filterUnitsAttr: {
-        SVGUnitTypes::SVGUnitType propertyValue = SVGPropertyTraits<SVGUnitTypes::SVGUnitType>::fromString(*this, newValue);
-        if (propertyValue > 0)
-            Ref { m_filterUnits }->setBaseValInternal<SVGUnitTypes::SVGUnitType>(propertyValue);
+    case AttributeNames::filterUnitsAttr:
+        protect(m_filterUnits)->parseBaseVal<SVGUnitTypes::SVGUnitType>(*this, newValue);
         break;
-    }
-    case AttributeNames::primitiveUnitsAttr: {
-        SVGUnitTypes::SVGUnitType propertyValue = SVGPropertyTraits<SVGUnitTypes::SVGUnitType>::fromString(*this, newValue);
-        if (propertyValue > 0)
-            Ref { m_primitiveUnits }->setBaseValInternal<SVGUnitTypes::SVGUnitType>(propertyValue);
+    case AttributeNames::primitiveUnitsAttr:
+        protect(m_primitiveUnits)->parseBaseVal<SVGUnitTypes::SVGUnitType>(*this, newValue);
         break;
-    }
     case AttributeNames::xAttr:
-        Ref { m_x }->setBaseValInternal(SVGLengthValue::construct(SVGLengthMode::Width, newValue, parseError, SVGLengthNegativeValuesMode::Allow, "-10%"_s));
+        protect(m_x)->setBaseValInternal(SVGLengthValue::construct(SVGLengthMode::Width, newValue, parseError, SVGLengthNegativeValuesMode::Allow, "-10%"_s));
         break;
     case AttributeNames::yAttr:
-        Ref { m_y }->setBaseValInternal(SVGLengthValue::construct(SVGLengthMode::Height, newValue, parseError, SVGLengthNegativeValuesMode::Allow, "-10%"_s));
+        protect(m_y)->setBaseValInternal(SVGLengthValue::construct(SVGLengthMode::Height, newValue, parseError, SVGLengthNegativeValuesMode::Allow, "-10%"_s));
         break;
     case AttributeNames::widthAttr:
-        Ref { m_width }->setBaseValInternal(SVGLengthValue::construct(SVGLengthMode::Width, newValue, parseError, SVGLengthNegativeValuesMode::Allow, "120%"_s));
+        protect(m_width)->setBaseValInternal(SVGLengthValue::construct(SVGLengthMode::Width, newValue, parseError, SVGLengthNegativeValuesMode::Allow, "120%"_s));
         break;
     case AttributeNames::heightAttr:
-        Ref { m_height }->setBaseValInternal(SVGLengthValue::construct(SVGLengthMode::Height, newValue, parseError, SVGLengthNegativeValuesMode::Allow, "120%"_s));
+        protect(m_height)->setBaseValInternal(SVGLengthValue::construct(SVGLengthMode::Height, newValue, parseError, SVGLengthNegativeValuesMode::Allow, "120%"_s));
         break;
     default:
         break;
@@ -110,7 +104,7 @@ void SVGFilterElement::svgAttributeChanged(const QualifiedName& attrName)
 {
     if (PropertyRegistry::isAnimatedLengthAttribute(attrName)) {
         InstanceInvalidationGuard guard(*this);
-        setPresentationalHintStyleIsDirty();
+        updateSVGRendererForElementChange();
         return;
     }
 
@@ -138,7 +132,7 @@ void SVGFilterElement::childrenChanged(const ChildChange& change)
     updateSVGRendererForElementChange();
 }
 
-RenderPtr<RenderElement> SVGFilterElement::createElementRenderer(RenderStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> SVGFilterElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
 {
     if (document().settings().layerBasedSVGEngineEnabled())
         return createRenderer<RenderSVGResourceFilter>(*this, WTF::move(style));

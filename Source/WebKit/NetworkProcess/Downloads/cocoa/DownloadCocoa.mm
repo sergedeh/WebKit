@@ -28,6 +28,7 @@
 
 #import "DownloadProxyMessages.h"
 #import "Logging.h"
+#import "MessageSenderInlines.h"
 #import "NetworkSessionCocoa.h"
 #import "WKDownloadProgress.h"
 #import <pal/spi/cf/CFNetworkSPI.h>
@@ -36,6 +37,7 @@
 #import <wtf/FileSystem.h>
 #import <wtf/cocoa/SpanCocoa.h>
 #import <wtf/cocoa/VectorCocoa.h>
+#import <wtf/text/CString.h>
 
 #define DOWNLOAD_RELEASE_LOG(fmt, ...) RELEASE_LOG(Network, "[downloadID=%" PRIu64 "] Download::" fmt, m_downloadID.toUInt64(), ##__VA_ARGS__)
 #define DOWNLOAD_RELEASE_LOG_ERROR(fmt, ...) RELEASE_LOG_ERROR(Network, "[downloadID=%" PRIu64 "] Download::" fmt, m_downloadID.toUInt64(), ##__VA_ARGS__)
@@ -48,7 +50,7 @@ void Download::resume(std::span<const uint8_t> resumeData, const String& path, S
     if (RefPtr extension = m_sandboxExtension)
         extension->consume();
 
-    CheckedPtr networkSession = m_downloadManager->protectedClient()->networkSession(m_sessionID);
+    CheckedPtr networkSession = protect(m_downloadManager->client())->networkSession(m_sessionID);
     if (!networkSession) {
         DOWNLOAD_RELEASE_LOG("resume: Could not find network session with given session ID");
         return;
@@ -81,7 +83,7 @@ void Download::resume(std::span<const uint8_t> resumeData, const String& path, S
 #if HAVE(MODERN_DOWNLOADPROGRESS)
     if (RetainPtr<NSData> placeholderURLBookmark = [dictionary objectForKey:@"ResumePlaceholderURLBookmarkData"]) {
         RetainPtr nsActivityAccessToken = toNSData(activityAccessToken);
-        RetainPtr pathString  = adoptNS([[NSString alloc] initWithUTF8String:WTF::FileSystemImpl::fileSystemRepresentation(path).data()]);
+        RetainPtr pathString = WTF::FileSystemImpl::fileSystemRepresentation(path).createNSString();
         RetainPtr destinationURL = adoptNS([[NSURL alloc] initFileURLWithPath:pathString.get() isDirectory:NO]);
 
         BOOL bookmarkDataIsStale = NO;
@@ -156,7 +158,6 @@ void Download::publishProgress(const URL& url, std::span<const uint8_t> bookmark
     BOOL bookmarkIsStale = NO;
     NSError* error = nil;
     m_bookmarkURL = [NSURL URLByResolvingBookmarkData:m_bookmarkData.get() options:NSURLBookmarkResolutionWithoutUI relativeToURL:nil bookmarkDataIsStale:&bookmarkIsStale error:&error];
-    ASSERT(m_bookmarkURL);
     if (!m_bookmarkURL)
         DOWNLOAD_RELEASE_LOG("publishProgress: Unable to create bookmark URL, error = %@", error);
 

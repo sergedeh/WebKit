@@ -32,11 +32,14 @@
 #include "AudioNodeOutput.h"
 #include "AudioSourceProvider.h"
 #include "AudioUtilities.h"
+#include "EventTargetInlines.h"
 #include "Logging.h"
 #include "MediaStreamAudioSourceOptions.h"
 #include "WebAudioSourceProvider.h"
+#include <algorithm>
 #include <wtf/Locker.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/StringView.h>
 
 namespace WebCore {
 
@@ -50,12 +53,13 @@ ExceptionOr<Ref<MediaStreamAudioSourceNode>> MediaStreamAudioSourceNode::create(
     if (audioTracks.isEmpty())
         return Exception { ExceptionCode::InvalidStateError, "Media stream has no audio tracks"_s };
 
-    RefPtr<WebAudioSourceProvider> provider;
-    for (auto& track : audioTracks) {
-        provider = track->createAudioSourceProvider();
-        if (provider)
-            break;
-    }
+    // https://webaudio.github.io/web-audio-api/#mediastreamaudiosourcenode: the input track is the
+    // first track in the media stream after sorting the audio tracks by their id using a code unit ordering.
+    Ref inputTrack = *std::min_element(audioTracks.begin(), audioTracks.end(), [](auto& a, auto& b) {
+        return codePointCompareLessThan(a->id(), b->id());
+    });
+
+    RefPtr provider = inputTrack->createAudioSourceProvider();
     if (!provider)
         return Exception { ExceptionCode::InvalidStateError, "Could not find an audio track with an audio source provider"_s };
 
@@ -111,17 +115,17 @@ void MediaStreamAudioSourceNode::setFormat(size_t numberOfChannels, float source
         m_multiChannelResampler = nullptr;
     else {
         double scaleFactor = sourceSampleRate / sampleRate;
-        m_multiChannelResampler = makeUnique<MultiChannelResampler>(scaleFactor, numberOfChannels, AudioUtilities::renderQuantumSize, std::bind(&MediaStreamAudioSourceNode::provideInput, this, std::placeholders::_1, std::placeholders::_2));
+        m_multiChannelResampler = makeUnique<MultiChannelResampler>(scaleFactor, numberOfChannels, AudioUtilities::renderQuantumSize, [this, checkedThis = CheckedRef { *this }](AudioBus& bus, size_t framesToProcess) {
+            provideInput(bus, framesToProcess);
+        });
     }
-
-    m_sourceNumberOfChannels = numberOfChannels;
 
     {
         // The context must be locked when changing the number of output channels.
         Locker contextLocker { context().graphLock() };
 
         // Do any necesssary re-configuration to the output's number of channels.
-        checkedOutput(0)->setNumberOfChannels(numberOfChannels);
+        protect(output(0))->setNumberOfChannels(numberOfChannels);
     }
 }
 
@@ -132,7 +136,7 @@ void MediaStreamAudioSourceNode::provideInput(AudioBus& bus, size_t framesToProc
 
 void MediaStreamAudioSourceNode::process(size_t numberOfFrames)
 {
-    Ref outputBus = checkedOutput(0)->bus();
+    Ref outputBus = output(0)->bus();
 
     // Use tryLock() to avoid contention in the real-time audio thread.
     // If we fail to acquire the lock then the MediaStream must be in the middle of

@@ -62,7 +62,7 @@ public:
     bool supportsLookUpInImages() final { return false; }
 #endif
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
     bool supportsCopySubject() final { return false; }
 #endif
 
@@ -88,6 +88,10 @@ private:
     WebView* m_webView;
 #endif
 };
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebContextMenuClient)
+    static bool isType(const WebCore::ContextMenuClient&) { return true; }
+SPECIALIZE_TYPE_TRAITS_END()
 
 #endif // ENABLE(CONTEXT_MENUS)
 

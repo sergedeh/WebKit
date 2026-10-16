@@ -30,10 +30,10 @@
 
 #if ENABLE(ENCRYPTED_MEDIA)
 
-#include <WebCore/CDMInstance.h>
-#include <WebCore/CDMInstanceSession.h>
-#include <WebCore/CDMKeyID.h>
-#include <WebCore/SharedBuffer.h>
+#include "CDMInstance.h"
+#include "CDMInstanceSession.h"
+#include "CDMKeyID.h"
+#include "SharedBuffer.h"
 #include <wtf/BoxPtr.h>
 #include <wtf/CheckedPtr.h>
 #include <wtf/Condition.h>
@@ -41,6 +41,7 @@
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/ThreadSafeWeakPtr.h>
 #include <wtf/WeakPtr.h>
 
 #if ENABLE(THUNDER)
@@ -75,9 +76,9 @@ public:
 
     bool takeValueIfDifferent(KeyHandleValueVariant&&);
 
-    const KeyIDType& id() const { return m_id; }
-    const KeyHandleValueVariant& value() const { return m_value; }
-    KeyHandleValueVariant& value() { return m_value; }
+    const KeyIDType& id() const LIFETIME_BOUND { return m_id; }
+    const KeyHandleValueVariant& value() const LIFETIME_BOUND { return m_value; }
+    KeyHandleValueVariant& value() LIFETIME_BOUND { return m_value; }
     KeyStatus status() const { return m_status; }
     bool isStatusCurrentlyValid()
     {
@@ -113,7 +114,7 @@ private:
 };
 
 using KeyStoreIDType = unsigned;
-KeyStoreIDType keyStoreBaseNextID();
+KeyStoreIDType LEGACY_NODELETE keyStoreBaseNextID();
 
 template<typename T>
 class KeyStoreBase {
@@ -174,6 +175,7 @@ public:
     }
 
     unsigned numKeys() const { return m_keys.size(); }
+    bool isEmpty() const { return m_keys.isEmpty(); }
     auto values() const { return m_keys.values(); }
     KeyStoreIDType id() const { return m_id; }
 
@@ -241,7 +243,7 @@ class CDMProxyDecryptionClient;
 // from background threads (i.e. decryptors).
 class CDMProxy : public ThreadSafeRefCounted<CDMProxy> {
 public:
-    static constexpr Seconds MaxKeyWaitTimeSeconds = 7_s;
+    static constexpr Seconds MaxKeyWaitTimeSeconds = 10_s;
 
     virtual ~CDMProxy() = default;
 
@@ -312,9 +314,9 @@ class CDMInstanceProxy : public CDMInstance, public CanMakeWeakPtr<CDMInstancePr
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(CDMInstanceProxy);
 public:
     explicit CDMInstanceProxy(const String& keySystem)
+        : m_cdmProxy(CDMProxyFactory::createCDMProxyForKeySystem(keySystem))
     {
         ASSERT(isMainThread());
-        m_cdmProxy = CDMProxyFactory::createCDMProxyForKeySystem(keySystem);
         if (m_cdmProxy)
             m_cdmProxy->setInstance(this);
     }
@@ -338,7 +340,7 @@ public:
     void stoppedWaitingForKey();
 
 private:
-    RefPtr<CDMProxy> m_cdmProxy;
+    const RefPtr<CDMProxy> m_cdmProxy;
     ThreadSafeWeakPtr<MediaPlayer> m_player;
 
     std::atomic<int> m_numDecryptorsWaitingForKey { 0 };

@@ -1,5 +1,5 @@
 /*
- * Copyright 2021 Google Inc.
+ * Copyright 2021 Google LLC
  *
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
@@ -45,8 +45,8 @@ class SharpenAdapter final : public DiscardableAdapterBase<SharpenAdapter,
         }
     private:
         void onSync() override {
-            SkScalar intensity = 1 + (fAmount * 0.01);
-            SkScalar discount = (1 - intensity) / 8.0;
+            SkScalar intensity = 1 + (fAmount * 0.01f);
+            SkScalar discount = (1 - intensity) / 8.0f;
             SkScalar kernel[9] = {
                 discount, discount, discount,
                 discount, intensity, discount,

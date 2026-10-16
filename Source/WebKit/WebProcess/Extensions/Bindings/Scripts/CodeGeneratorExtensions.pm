@@ -69,7 +69,7 @@ sub _classRefGetter
     my $implementationClassName = _implementationClassName($idlType);
     $implementationClassName =~ s/^WebExtensionAPI//;
 
-    return $$self{codeGenerator}->WK_lcfirst($implementationClassName) . $suffix;
+    return $$self{codeGenerator}->WK_lcfirst($implementationClassName) . $suffix . "Singleton";
 }
 
 sub _parseLicenseBlock
@@ -153,6 +153,14 @@ sub conditionalString
     return CodeGenerator::GenerateConditionalStringFromAttributeValue(0, $conditional);
 }
 
+sub platformString
+{
+    my ($node) = @_;
+    my $platform = $node->extendedAttributes->{"Platform"};
+    return "" unless $platform;
+    return "PLATFORM($platform)";
+}
+
 sub _generateHeaderFile
 {
     my ($self, $interface) = @_;
@@ -214,13 +222,16 @@ EOF
             $hasMainWorldOnlyProperties = 1 if $function->extendedAttributes->{"MainWorldOnly"};
 
             my $conditionalString = conditionalString($function);
+            my $platformString = platformString($function);
 
+            push(@contents, "#if ${platformString}\n") if $platformString;
             push(@contents, "#if ${conditionalString}\n") if $conditionalString;
             push(@contents, "    static JSValueRef @{[$function->name]}(JSContextRef, JSObjectRef, JSObjectRef, size_t, const JSValueRef[], JSValueRef*);\n");
             push(@contents, "    static bool setProperty(JSContextRef, JSObjectRef, JSStringRef, JSValueRef, JSValueRef*);\n") if $function->extendedAttributes->{"SetProperty"};
             push(@contents, "    static JSValueRef getProperty(JSContextRef, JSObjectRef, JSStringRef, JSValueRef*);\n") if $function->extendedAttributes->{"GetProperty"};
             push(@contents, "    static bool deleteProperty(JSContextRef, JSObjectRef, JSStringRef, JSValueRef*);\n") if $function->extendedAttributes->{"DeleteProperty"};
             push(@contents, "#endif // ${conditionalString}\n") if $conditionalString;
+            push(@contents, "#endif // ${platformString}\n") if $platformString;
         }
     }
 
@@ -241,11 +252,14 @@ EOF
             $hasMainWorldOnlyProperties = 1 if $attribute->extendedAttributes->{"MainWorldOnly"};
 
             my $conditionalString = conditionalString($attribute);
+            my $platformString = platformString($attribute);
 
+            push(@contents, "#if ${platformString}\n") if $platformString;
             push(@contents, "#if ${conditionalString}\n") if $conditionalString;
             push(@contents, "    static JSValueRef @{[$self->_getterName($attribute)]}(JSContextRef, JSObjectRef, JSStringRef, JSValueRef*);\n");
             push(@contents, "    static bool @{[$self->_setterName($attribute)]}(JSContextRef, JSObjectRef, JSStringRef, JSValueRef, JSValueRef*);\n") unless $attribute->isReadOnly;
             push(@contents, "#endif // ${conditionalString}\n") if $conditionalString;
+            push(@contents, "#endif // ${platformString}\n") if $platformString;
         }
     }
 
@@ -287,17 +301,20 @@ sub _generateImplementationFile
     my $idlType = $interface->type;
     my $className = _className($idlType);
     my $implementationClassName = _implementationClassName($idlType);
-    my $filename = $className . ".mm";
+    my $filename = $interface->extendedAttributes->{"UseCPPAPI"} ? $className . ".cpp" : $className . ".mm";
 
     push(@contentsPrefix, $self->_licenseBlock());
     push(@contentsPrefix, "\n\n");
 
-    push(@contentsPrefix, <<EOF);
+    if (!$interface->extendedAttributes->{"UseCPPAPI"})
+    {
+        push(@contentsPrefix, <<EOF);
 #if !__has_feature(objc_arc)
 #error This file requires ARC. Add the "-fobjc-arc" compiler flag for this file.
 #endif
 
 EOF
+    }
 
     push(@contentsPrefix, "#include \"config.h\"\n\n");
 
@@ -331,7 +348,7 @@ ${implementationClassName}* to${implementationClassName}(JSContextRef context, J
 
 JSClassRef ${className}::${classRefGetter}()
 {
-    static JSClassRef jsClass;
+    SUPPRESS_UNCOUNTED_LOCAL static JSClassRef jsClass;
     if (!jsClass) {
         JSClassDefinition definition = kJSClassDefinitionEmpty;
         definition.className = "@{[_publicClassName($idlType)]}";
@@ -383,7 +400,7 @@ EOF
     push (@contents, <<EOF);
 JSClassRef ${className}::${globalClassRefGetter}()
 {
-    static JSClassRef jsClass;
+    SUPPRESS_UNCOUNTED_LOCAL static JSClassRef jsClass;
     if (!jsClass) {
         JSClassDefinition definition = kJSClassDefinitionEmpty;
         definition.className = "@{[_publicClassName($idlType)]}";
@@ -484,7 +501,7 @@ EOF
     if (${functionEarlyReturnCondition}) [[unlikely]]
         return ${defaultEarlyReturnValue};
 
-    RELEASE_LOG_DEBUG(Extensions, "Called function ${call} (%{public}lu %{public}s) in %{public}s world", argumentCount, argumentCount == 1 ? "argument" : "arguments", toDebugString(impl->contentWorldType()).utf8().data());
+    RELEASE_LOG_DEBUG(Extensions, "Called function ${call} (%" PUBLIC_LOG "lu %" PUBLIC_LOG_STRING ") in %" PUBLIC_LOG_STRING " world", argumentCount, argumentCount == 1 ? "argument" : "arguments", toDebugString(impl->contentWorldType()).utf8());
 EOF
 
             my @parameters = ();
@@ -545,10 +562,10 @@ EOF
                 die "Property functions can't take optional arguments" if $isPropertyFunction;
 
                 foreach my $parameter (@specifiedParameters) {
-                    push(@contents, "    " . $self->_platformTypeVariableDeclaration($parameter, $parameter->name) . "\n");
+                    push(@contents, "    " . $self->_platformTypeVariableDeclaration($interface, $parameter, $parameter->name) . "\n");
                     push(@parameters, $parameter->name . ".releaseNonNull()") if $parameter->extendedAttributes->{"CallbackHandler"} && $parameter->extendedAttributes->{"Optional"};
-                    push(@parameters, $parameter->name . ".createNSString().get()") if $parameter->type->name eq "DOMString" && !$parameter->extendedAttributes->{"URL"};
-                    push(@parameters, $parameter->name) unless ($parameter->extendedAttributes->{"CallbackHandler"} && $parameter->extendedAttributes->{"Optional"}) || ($parameter->type->name eq "DOMString" && !$parameter->extendedAttributes->{"URL"});
+                    push(@parameters, $parameter->name . ".createNSString().get()") if $parameter->type->name eq "DOMString" && !$parameter->extendedAttributes->{"URL"} && !$interface->extendedAttributes->{"UseCPPAPI"};
+                    push(@parameters, $parameter->name) unless ($parameter->extendedAttributes->{"CallbackHandler"} && $parameter->extendedAttributes->{"Optional"}) || ($parameter->type->name eq "DOMString" && !$parameter->extendedAttributes->{"URL"} && !$interface->extendedAttributes->{"UseCPPAPI"});
                 }
 
                 push(@contents, "\n");
@@ -564,7 +581,7 @@ EOF
 
                 foreach my $i (0..$#specifiedParameters) {
                     my $parameter = $specifiedParameters[$i];
-                    push(@contents, "        " . $self->_platformTypeVariableDeclaration($parameter, $parameter->name, "arguments[${i}]", undef, 1) . "\n");
+                    push(@contents, "        " . $self->_platformTypeVariableDeclaration($interface, $parameter, $parameter->name, "arguments[${i}]", undef, 1) . "\n");
                 }
 
                 if ($hasSimpleOptionalArgumentHandling && $argumentCount > 1) {
@@ -578,13 +595,13 @@ EOF
 
                     foreach my $i (0..$#specifiedParameters - 1) {
                         my $parameter = $specifiedParameters[$i];
-                        push(@contents, "        " . $self->_platformTypeVariableDeclaration($parameter, $parameter->name, "arguments[${i}]", undef, 1) . "\n");
+                        push(@contents, "        " . $self->_platformTypeVariableDeclaration($interface, $parameter, $parameter->name, "arguments[${i}]", undef, 1) . "\n");
                     }
 
                     if ($hasOptionalAsLastArgument && $requiredArgumentCount ne ($argumentCount - 1)) {
                         push(@contents, "    } else if (argumentCount == 1) {\n");
                         $self->_installArgumentTypeExceptions(\@contents, $lastParameter, $idlType, "arguments[0]", $lastParameter->name, $defaultEarlyReturnValue, \%contentsIncludes, $function, 1, 2);
-                        push(@contents, "        " . $self->_platformTypeVariableDeclaration($lastParameter, $lastParameter->name, "arguments[0]", undef, 1) . "\n");
+                        push(@contents, "        " . $self->_platformTypeVariableDeclaration($interface, $lastParameter, $lastParameter->name, "arguments[0]", undef, 1) . "\n");
                     }
                 } elsif ($argumentCount > 1) {
                     push(@contents, "    } else {\n");
@@ -601,7 +618,7 @@ EOF
                         my $optionalCondition = $requiredArgumentCount ? "allowedOptionalArgumentCount && " : "";
                         push(@contents, "\n");
                         push(@contents, "        if ($optionalCondition(currentArgument = arguments[argumentCount - 1]) && (" . $self->_javaScriptTypeCondition($parameter, "currentArgument") . ")) {\n");
-                        push(@contents, "            " . $self->_platformTypeVariableDeclaration($parameter, $parameter->name, "currentArgument", undef, 1) . "\n");
+                        push(@contents, "            " . $self->_platformTypeVariableDeclaration($interface, $parameter, $parameter->name, "currentArgument", undef, 1) . "\n");
                         push(@contents, "            --allowedOptionalArgumentCount;\n") if $requiredArgumentCount;
                         push(@contents, "            if (argumentCount)\n");
                         push(@contents, "                --argumentCount;\n");
@@ -624,13 +641,13 @@ EOF
 
                         if ($parameter->extendedAttributes->{"Optional"}) {
                             push(@contents, "            if (" . $self->_javaScriptTypeCondition($parameter, "currentArgument") . ") {\n");
-                            push(@contents, "                " . $self->_platformTypeVariableDeclaration($parameter, $parameter->name, "currentArgument", undef, 1) . "\n");
+                            push(@contents, "                " . $self->_platformTypeVariableDeclaration($interface, $parameter, $parameter->name, "currentArgument", undef, 1) . "\n");
                             push(@contents, "                ++processedOptionalArgumentCount;\n") if $requiredArgumentCount;
                             push(@contents, "                $nextArgumentIndex;\n");
                             push(@contents, "            }\n");
                         } else {
                             $self->_installArgumentTypeExceptions(\@contents, $parameter, $idlType, "currentArgument", $parameter->name, $defaultEarlyReturnValue, \%contentsIncludes, $function, 1, 3);
-                            push(@contents, "            " . $self->_platformTypeVariableDeclaration($parameter, $parameter->name, "currentArgument", undef, 1) . "\n");
+                            push(@contents, "            " . $self->_platformTypeVariableDeclaration($interface, $parameter, $parameter->name, "currentArgument", undef, 1) . "\n");
                             push(@contents, "            $nextArgumentIndex;\n");
                         }
 
@@ -655,12 +672,12 @@ EOF
 
                         die "GetProperty and DeleteProperty functions only take one argument" if $isGetPropertyFunction || $isDeletePropertyFunction;
 
-                        push(@contents, "    " . $self->_platformTypeVariableDeclaration($parameter, $parameter->name, $argument) . "\n");
+                        push(@contents, "    " . $self->_platformTypeVariableDeclaration($interface, $parameter, $parameter->name, $argument) . "\n");
                     }
 
                     push(@parameters, $parameter->name . ".releaseNonNull()") if $parameter->extendedAttributes->{"CallbackHandler"} && $parameter->extendedAttributes->{"Optional"};
-                    push(@parameters, $parameter->name . ".createNSString().get()") if $parameter->type->name eq "DOMString" && !$parameter->extendedAttributes->{"URL"};
-                    push(@parameters, $parameter->name) unless ($parameter->extendedAttributes->{"CallbackHandler"} && $parameter->extendedAttributes->{"Optional"}) || ($parameter->type->name eq "DOMString" && !$parameter->extendedAttributes->{"URL"});
+                    push(@parameters, $parameter->name . ".createNSString().get()") if $parameter->type->name eq "DOMString" && !$parameter->extendedAttributes->{"URL"} && !$interface->extendedAttributes->{"UseCPPAPI"};
+                    push(@parameters, $parameter->name) unless ($parameter->extendedAttributes->{"CallbackHandler"} && $parameter->extendedAttributes->{"Optional"}) || ($parameter->type->name eq "DOMString" && !$parameter->extendedAttributes->{"URL"} && !$interface->extendedAttributes->{"UseCPPAPI"});
                 }
             }
 
@@ -672,7 +689,7 @@ EOF
             my @methodSignatureNames = map(&$mapFunction, @specifiedParameters);
 
             foreach my $parameter (@specifiedParameters) {
-                $self->_installAutomaticExceptions(\@contents, $parameter, $idlType, $parameter->name, $parameter->name, $defaultEarlyReturnValue, \%contentsIncludes, $function, 1);
+                $self->_installAutomaticExceptions(\@contents, $interface, $parameter, $idlType, $parameter->name, $parameter->name, $defaultEarlyReturnValue, \%contentsIncludes, $function, 1);
             }
 
             if (!$hasSimpleOptionalArgumentHandling) {
@@ -730,7 +747,7 @@ EOF
             if ($callbackHandlerArgument && !$returnsPromiseIfNoCallback) {
                 push(@contents, <<EOF);
     if (!${callbackHandlerArgument})
-        ${callbackHandlerArgument} = toJSErrorCallbackHandler(context, impl->protectedRuntime());
+        ${callbackHandlerArgument} = toJSErrorCallbackHandler(context, protect(impl->runtime()));
 
 EOF
             }
@@ -740,7 +757,7 @@ EOF
                 push(@contents, "    if (!page) [[unlikely]] {\n");
                 push(@contents, "        RELEASE_LOG_ERROR(Extensions, \"Page could not be found for JSContextRef\");\n");
                 push(@contents, "        if (promiseResult)\n") if $returnsPromise;
-                push(@contents, "            promiseResult = toJSRejectedPromise(context, @\"${call}\", nil, @\"an unknown error occurred\");\n") if $returnsPromise;
+                push(@contents, "            promiseResult = toJSRejectedPromise(context, \"${call}\"_s, nullString(), \"an unknown error occurred\"_s);\n") if $returnsPromise;
                 push(@contents, "        return ${defaultReturnValue};\n");
                 push(@contents, "    }\n\n");
             }
@@ -750,7 +767,7 @@ EOF
                 push(@contents, "    if (!frame) [[unlikely]] {\n");
                 push(@contents, "        RELEASE_LOG_ERROR(Extensions, \"Frame could not be found for JSContextRef\");\n");
                 push(@contents, "        if (promiseResult)\n") if $returnsPromise;
-                push(@contents, "            promiseResult = toJSRejectedPromise(context, @\"${call}\", nil, @\"an unknown error occurred\");\n") if $returnsPromise;
+                push(@contents, "            promiseResult = toJSRejectedPromise(context, \"${call}\"_s, nullString(), \"an unknown error occurred\"_s);\n") if $returnsPromise;
                 push(@contents, "        return ${defaultReturnValue};\n");
                 push(@contents, "    }\n\n");
             }
@@ -779,6 +796,19 @@ EOF
     }
 
     return ${defaultReturnValue};
+}
+EOF
+            } elsif ($needsExceptionString && !$isVoidReturn) {
+                push(@contents, <<EOF);
+    String exceptionString;
+    JSValueRef result = ${returnExpression};
+
+    if (!exceptionString.isEmpty()) [[unlikely]] {
+        *exception = toJSError(context, "${call}"_s, nullString(), String(exceptionString));
+        return ${defaultEarlyReturnValue};
+    }
+
+    return result;
 }
 EOF
             } elsif ($needsExceptionString && $isVoidReturn) {
@@ -815,7 +845,7 @@ ${functionSignature}
 EOF
 
                 my $keyArgumentName = $specifiedParameters[0]->name;
-                push(@contents, "    auto ${keyArgumentName} = toJSString(argumentCount > 0 ? " . $self->_platformTypeConstructor($specifiedParameters[0], "arguments[0]") . "_s : emptyString());\n");
+                push(@contents, "    auto ${keyArgumentName} = toJSString(argumentCount > 0 ? " . $self->_platformTypeConstructor($interface, $specifiedParameters[0], "arguments[0]") . "_s : emptyString());\n");
 
                 if ($isGetPropertyFunction) {
                     push(@contents, "\n");
@@ -898,6 +928,11 @@ EOF
 
 EOF
 
+            my $platformString = platformString($attribute);
+            push(@contents, <<EOF) if $platformString;
+#if ${platformString}
+EOF
+
             my $conditionalString = conditionalString($attribute);
             push(@contents, <<EOF) if $conditionalString;
 #if ${conditionalString}
@@ -915,7 +950,7 @@ EOF
     if (${getterEarlyReturnCondition}) [[unlikely]]
         return JSValueMakeUndefined(context);
 
-    RELEASE_LOG_DEBUG(Extensions, "Called getter ${call} in %{public}s world", toDebugString(impl->contentWorldType()).utf8().data());
+    RELEASE_LOG_DEBUG(Extensions, "Called getter ${call} in %" PUBLIC_LOG_STRING " world", toDebugString(impl->contentWorldType()).utf8());
 EOF
 
             if ($needsPage || $needsPageIdentifier) {
@@ -958,16 +993,16 @@ EOF
     if (${setterEarlyReturnCondition}) [[unlikely]]
         return false;
 
-    RELEASE_LOG_DEBUG(Extensions, "Called setter ${call} in %{public}s world", toDebugString(impl->contentWorldType()).utf8().data());
+    RELEASE_LOG_DEBUG(Extensions, "Called setter ${call} in %" PUBLIC_LOG_STRING " world", toDebugString(impl->contentWorldType()).utf8());
 EOF
 
                 my $platformValue;
                 if ($self->_hasAutomaticExceptions($attribute)) {
                     $platformValue = "platformValue";
-                    push(@contents, "    " . $self->_platformTypeVariableDeclaration($attribute, "platformValue", "value") . "\n");
-                    $self->_installAutomaticExceptions(\@contents, $attribute, $idlType, "platformValue", $attribute->name, "false", \%contentsIncludes, $attribute);
+                    push(@contents, "    " . $self->_platformTypeVariableDeclaration($interface, $attribute, "platformValue", "value") . "\n");
+                    $self->_installAutomaticExceptions(\@contents, $interface, $attribute, $idlType, "platformValue", $attribute->name, "false", \%contentsIncludes, $attribute);
                 } else {
-                    $platformValue = $self->_platformTypeConstructor($attribute, "value");
+                    $platformValue = $self->_platformTypeConstructor($interface, $attribute, "value");
                 }
 
                 if ($needsPage || $needsPageIdentifier) {
@@ -998,6 +1033,9 @@ EOF
 
             push(@contents, <<EOF) if $conditionalString;
 #endif // ${conditionalString}
+EOF
+            push(@contents, <<EOF) if $platformString;
+#endif // ${platformString}
 EOF
         }
     }
@@ -1040,7 +1078,7 @@ sub _hasAutomaticExceptions
     my ($self, $signature) = @_;
 
     return $signature->extendedAttributes->{"CannotBeEmpty"} || $signature->extendedAttributes->{"Serialization"} eq "JSON" || $signature->extendedAttributes->{"NSArray"}
-        || $signature->extendedAttributes->{"NSDictionary"} || $signature->extendedAttributes->{"NSObject"} || $signature->extendedAttributes->{"URL"}
+        || $signature->extendedAttributes->{"NSDictionary"} || $signature->extendedAttributes->{"NSObject"} || $signature->extendedAttributes->{"URL"} || $signature->extendedAttributes->{"JSONValue"}
         || $signature->type->name eq "function" || $$self{codeGenerator}->IsPrimitiveType($signature->type) || $$self{codeGenerator}->IsStringType($signature->type);
 }
 
@@ -1154,7 +1192,7 @@ ${indentString}}
 EOF
     }
 
-    if ($signature->type->name eq "any" && ($signature->extendedAttributes->{"NSDictionary"} || $signature->extendedAttributes->{"Serialization"})) {
+    if ($signature->type->name eq "any" && ($signature->extendedAttributes->{"NSDictionary"} || $signature->extendedAttributes->{"JSONValue"} || $signature->extendedAttributes->{"Serialization"})) {
         $hasExceptions = 1;
 
         push(@$contents, <<EOF);
@@ -1166,7 +1204,7 @@ ${indentString}}
 EOF
     }
 
-    if ($signature->type->name eq "any" && !($signature->extendedAttributes->{"NSDictionary"} || $signature->extendedAttributes->{"Serialization"}) && !$signature->extendedAttributes->{"NSObject"} && !$signature->extendedAttributes->{"ValuesAllowed"}) {
+    if ($signature->type->name eq "any" && !($signature->extendedAttributes->{"NSDictionary"} || $signature->extendedAttributes->{"JSONValue"} || $signature->extendedAttributes->{"Serialization"}) && !$signature->extendedAttributes->{"NSObject"} && !$signature->extendedAttributes->{"ValuesAllowed"}) {
         $hasExceptions = 1;
 
         push(@$contents, <<EOF);
@@ -1207,7 +1245,7 @@ EOF
 
 sub _installAutomaticExceptions
 {
-    my ($self, $contents, $signature, $classIDLType, $variable, $variableLabel, $result, $contentsIncludes, $functionOrAttribute, $isFunction) = @_;
+    my ($self, $contents, $interface, $signature, $classIDLType, $variable, $variableLabel, $result, $contentsIncludes, $functionOrAttribute, $isFunction) = @_;
 
     my $call = _callString($classIDLType, $functionOrAttribute, $isFunction);
 
@@ -1228,7 +1266,7 @@ sub _installAutomaticExceptions
 EOF
     }
 
-    if ($$self{codeGenerator}->IsStringType($signature->type) && !$signature->extendedAttributes->{"Optional"}) {
+    if ($$self{codeGenerator}->IsStringType($signature->type) && !$signature->extendedAttributes->{"Optional"} && ($signature->extendedAttributes->{"URL"} && !$interface->extendedAttributes->{"UseCPPAPI"})) {
         $hasExceptions = 1;
 
         push(@$contents, <<EOF);
@@ -1252,7 +1290,7 @@ EOF
 EOF
     }
 
-    if ($signature->type->name eq "any" && ($signature->extendedAttributes->{"NSDictionary"} || $signature->extendedAttributes->{"NSObject"}) && !$signature->extendedAttributes->{"Optional"}) {
+    if ($signature->type->name eq "any" && ($signature->extendedAttributes->{"NSDictionary"} || $signature->extendedAttributes->{"JSONValue"} || $signature->extendedAttributes->{"NSObject"}) && !$signature->extendedAttributes->{"Optional"}) {
         $hasExceptions = 1;
 
         push(@$contents, <<EOF);
@@ -1264,7 +1302,7 @@ EOF
 EOF
     }
 
-    if ($signature->type->name eq "any" && !($signature->extendedAttributes->{"NSDictionary"} || $signature->extendedAttributes->{"NSObject"} || $signature->extendedAttributes->{"Serialization"}) && !$signature->extendedAttributes->{"Optional"} && !$signature->extendedAttributes->{"ValuesAllowed"}) {
+    if (!$interface->extendedAttributes->{"UseCPPAPI"} && $signature->type->name eq "any" && !($signature->extendedAttributes->{"NSDictionary"} || $signature->extendedAttributes->{"JSONValue"} || $signature->extendedAttributes->{"NSObject"} || $signature->extendedAttributes->{"Serialization"}) && !$signature->extendedAttributes->{"Optional"} && !$signature->extendedAttributes->{"ValuesAllowed"}) {
         $hasExceptions = 1;
 
         push(@$contents, <<EOF);
@@ -1276,7 +1314,19 @@ EOF
 EOF
     }
 
-    if ($signature->type->name eq "array" && !$signature->extendedAttributes->{"Optional"}) {
+    if ($interface->extendedAttributes->{"UseCPPAPI"} && $signature->type->name eq "any" && !($signature->extendedAttributes->{"NSDictionary"} || $signature->extendedAttributes->{"JSONValue"} || $signature->extendedAttributes->{"NSObject"} || $signature->extendedAttributes->{"Serialization"}) && !$signature->extendedAttributes->{"Optional"} && !$signature->extendedAttributes->{"ValuesAllowed"}) {
+        $hasExceptions = 1;
+
+        push(@$contents, <<EOF);
+
+    if ($variable && !JSValueIsObject(context, $variable)) [[unlikely]] {
+        *exception = toJSError(context, "${call}"_s, "${variableLabel}"_s, "an object is expected"_s);
+        return ${result};
+    }
+EOF
+    }
+
+    if (!$signature->extendedAttributes->{"Vector"} && $signature->type->name eq "array" && !$signature->extendedAttributes->{"Optional"}) {
         $hasExceptions = 1;
 
         push(@$contents, <<EOF);
@@ -1309,7 +1359,7 @@ EOF
 EOF
     }
 
-    if ($signature->extendedAttributes->{"URL"}) {
+    if ($signature->extendedAttributes->{"URL"} && !$interface->extendedAttributes->{"UseCPPAPI"}) {
         $hasExceptions = 1;
 
         # FIXME: rdar://problem/58428135 Consider allowing local file access if the extension claimed it in
@@ -1318,6 +1368,21 @@ EOF
         push(@$contents, <<EOF);
 
     if (${variable}.isFileURL) [[unlikely]] {
+        *exception = toJSError(context, "${call}"_s, "${variableLabel}"_s, "it cannot be a local file URL"_s);
+        return ${result};
+    }
+EOF
+    }
+ 
+    if ($signature->extendedAttributes->{"URL"} && $interface->extendedAttributes->{"UseCPPAPI"}){
+        $hasExceptions = 1;
+
+        # FIXME: rdar://problem/58428135 Consider allowing local file access if the extension claimed it in
+        # its manifest and the user opted in explicity in some way.
+
+        push(@$contents, <<EOF);
+
+    if (${variable}.protocolIsFile()) [[unlikely]] {
         *exception = toJSError(context, "${call}"_s, "${variableLabel}"_s, "it cannot be a local file URL"_s);
         return ${result};
     }
@@ -1413,7 +1478,7 @@ sub _javaScriptTypeCondition
 
     return "isDictionary(context, ${argument}) || JSValueIsString(context, ${argument})${nullOrUndefined}" if $idlTypeName eq "any" && $signature->extendedAttributes->{"NSObject"} && $signature->extendedAttributes->{"DOMString"};
     return "(!JSValueIsNull(context, ${argument}) && !JSValueIsUndefined(context, ${argument}) && !JSObjectIsFunction(context, JSValueToObject(context, ${argument}, nullptr)))${nullOrUndefined}" if $idlTypeName eq "any" && $signature->extendedAttributes->{"Serialization"};
-    return "isDictionary(context, ${argument})${nullOrUndefined}" if $idlTypeName eq "any" && $signature->extendedAttributes->{"NSDictionary"};
+    return "isDictionary(context, ${argument})${nullOrUndefined}" if $idlTypeName eq "any" && ($signature->extendedAttributes->{"NSDictionary"} || $signature->extendedAttributes->{"JSONValue"});
     return "JSValueIsObject(context, ${argument})${nullOrUndefined}" if $idlTypeName eq "any" && $signature->extendedAttributes->{"NSObject"};
     return "JSValueIsObject(context, ${argument})${nullOrUndefined}" if $idlTypeName eq "any" && !$signature->extendedAttributes->{"ValuesAllowed"};
     return "(JSValueIsObject(context, ${argument}) && JSObjectIsFunction(context, JSValueToObject(context, ${argument}, nullptr)))${nullOrUndefined}" if $idlTypeName eq "function";
@@ -1426,24 +1491,31 @@ sub _javaScriptTypeCondition
 
 sub _platformType
 {
-    my ($self, $idlType, $signature) = @_;
+    my ($self, $idlType, $interface, $signature) = @_;
 
     return undef unless defined $idlType;
 
     my $idlTypeName = $idlType;
     $idlTypeName = $idlType->name if ref($idlType) eq "IDLType";
 
+    my $arrayType = $signature->extendedAttributes->{"Vector"};
+
     return "RefPtr<WebExtensionCallbackHandler>" if $idlTypeName eq "function" && $signature->extendedAttributes->{"CallbackHandler"};
-    return "NSArray" if $idlTypeName eq "array";
+    return "NSArray" if !$interface->extendedAttributes->{"UseCPPAPI"} && $idlTypeName eq "array";
+    return "Vector<$arrayType>" if $interface->extendedAttributes->{"UseCPPAPI"} && $idlTypeName eq "array" && $arrayType ne "JSValueRef";
+    return "Vector<Protected<$arrayType>>" if $interface->extendedAttributes->{"UseCPPAPI"} && $idlTypeName eq "array" && $arrayType eq "JSValueRef";
     return "String" if $idlTypeName eq "any" && $signature->extendedAttributes->{"Serialization"};
+    return "RefPtr<JSON::Value>" if $idlTypeName eq "any" && $signature && $signature->extendedAttributes->{"JSONValue"};
     return "NSDictionary" if $idlTypeName eq "any" && $signature && $signature->extendedAttributes->{"NSDictionary"};
     return "NSObject" if $idlTypeName eq "any" && $signature && $signature->extendedAttributes->{"NSObject"};
-    return "JSValue" if $idlTypeName eq "DOMWindow" || $idlTypeName eq "function" || $idlTypeName eq "any";
+    return "JSValue" if !$interface->extendedAttributes->{"UseCPPAPI"} && ($idlTypeName eq "DOMWindow" || $idlTypeName eq "function" || $idlTypeName eq "any");
+    return "JSValueRef" if $interface->extendedAttributes->{"UseCPPAPI"} && ($idlTypeName eq "DOMWindow" || $idlTypeName eq "function" || $idlTypeName eq "any");
     return "bool" if $idlTypeName eq "boolean";
 
     return unless ref($idlType) eq "IDLType";
 
-    return "NSURL" if $$self{codeGenerator}->IsStringType($idlType) && $signature && $signature->extendedAttributes->{"URL"};
+    return "NSURL" if !$interface->extendedAttributes->{"UseCPPAPI"} && $$self{codeGenerator}->IsStringType($idlType) && $signature && $signature->extendedAttributes->{"URL"};
+    return "URL" if $interface->extendedAttributes->{"UseCPPAPI"} && $$self{codeGenerator}->IsStringType($idlType) && $signature && $signature->extendedAttributes->{"URL"};
     return "String" if $$self{codeGenerator}->IsStringType($idlType);
     return "double" if $$self{codeGenerator}->IsPrimitiveType($idlType);
 
@@ -1452,7 +1524,7 @@ sub _platformType
 
 sub _platformTypeConstructor
 {
-    my ($self, $signature, $argumentName) = @_;
+    my ($self, $interface, $signature, $argumentName) = @_;
 
     my $idlType = $signature->type;
 
@@ -1460,28 +1532,36 @@ sub _platformTypeConstructor
     $idlTypeName = $idlType->name if ref($idlType) eq "IDLType";
 
     my $nullStringPolicy = _nullStringPolicy($signature);
-    my $arrayType = $signature->extendedAttributes->{"NSArray"};
+    my $arrayType = $interface->extendedAttributes->{"UseCPPAPI"} ? $signature->extendedAttributes->{"Vector"} : $signature->extendedAttributes->{"NSArray"};
 
     if ($idlTypeName eq "any") {
         return "serializeJSObject(context, $argumentName, exception)" if $signature->extendedAttributes->{"Serialization"} && $signature->extendedAttributes->{"Serialization"} eq "JSON";
         return "toNSDictionary(context, $argumentName, NullValuePolicy::Allowed, ValuePolicy::StopAtTopLevel)" if $signature->extendedAttributes->{"NSDictionary"} && $signature->extendedAttributes->{"NSDictionary"} eq "StopAtTopLevel";
         return "toNSDictionary(context, $argumentName, NullValuePolicy::Allowed)" if $signature->extendedAttributes->{"NSDictionary"} && $signature->extendedAttributes->{"NSDictionary"} eq "NullAllowed";
         return "toNSDictionary(context, $argumentName, NullValuePolicy::NotAllowed)" if $signature->extendedAttributes->{"NSDictionary"};
+        return "toJSONValue(context, $argumentName, NullValuePolicy::Allowed, ValuePolicy::StopAtTopLevel)" if $signature->extendedAttributes->{"JSONValue"} && $signature->extendedAttributes->{"JSONValue"} eq "StopAtTopLevel";
+        return "toJSONValue(context, $argumentName, NullValuePolicy::Allowed)" if $signature->extendedAttributes->{"JSONValue"} && $signature->extendedAttributes->{"JSONValue"} eq "NullAllowed";
+        return "toJSONValue(context, $argumentName, NullValuePolicy::NotAllowed)" if $signature->extendedAttributes->{"JSONValue"};
         return "toNSObject(context, $argumentName, Nil, NullValuePolicy::Allowed, ValuePolicy::StopAtTopLevel)" if $signature->extendedAttributes->{"NSObject"} && $signature->extendedAttributes->{"NSObject"} eq "StopAtTopLevel";
         return "toNSObject(context, $argumentName, Nil, NullValuePolicy::Allowed)" if $signature->extendedAttributes->{"NSObject"} && $signature->extendedAttributes->{"NSObject"} eq "NullAllowed";
         return "toNSObject(context, $argumentName)" if $signature->extendedAttributes->{"NSObject"};
+        return "$argumentName" if $interface->extendedAttributes->{"UseCPPAPI"};
         return "toJSValue(context, $argumentName)";
     }
 
-    return "toJSCallbackHandler(context, $argumentName, impl->protectedRuntime())" if $idlTypeName eq "function" && $signature->extendedAttributes->{"CallbackHandler"};
-    return "toNSArray(context, $argumentName, $arrayType.class)" if $idlTypeName eq "array" && $arrayType;
-    return "toNSArray(context, $argumentName)" if $idlTypeName eq "array";
+    return "toJSCallbackHandler(context, $argumentName, protect(impl->runtime()))" if $idlTypeName eq "function" && $signature->extendedAttributes->{"CallbackHandler"};
+    return "toNSArray(context, $argumentName, $arrayType.class)" if !$interface->extendedAttributes->{"UseCPPAPI"} && $idlTypeName eq "array" && $arrayType;
+    return "toNSArray(context, $argumentName)" if !$interface->extendedAttributes->{"UseCPPAPI"} && $idlTypeName eq "array";
+    return "toVector<$arrayType>(context, $argumentName)" if $interface->extendedAttributes->{"UseCPPAPI"} && $idlTypeName eq "array" && $arrayType ne "JSValueRef";
+    return "toVector<Protected<$arrayType>>(context, $argumentName)" if $interface->extendedAttributes->{"UseCPPAPI"} && $idlTypeName eq "array" && $arrayType eq "JSValueRef";
     return "JSValueToBoolean(context, $argumentName)" if $idlTypeName eq "boolean";
+    return "$argumentName" if $interface->extendedAttributes->{"UseCPPAPI"} && $idlTypeName eq "function";
     return "toJSValue(context, $argumentName)" if $idlTypeName eq "function";
 
     return unless ref($idlType) eq "IDLType";
 
-    return "[NSURL URLWithString:toString(context, $argumentName, $nullStringPolicy).createNSString().get()]" if $$self{codeGenerator}->IsStringType($idlType) && $signature->extendedAttributes->{"URL"};
+    return "[NSURL URLWithString:toString(context, $argumentName, $nullStringPolicy).createNSString().get()]" if !$interface->extendedAttributes->{"UseCPPAPI"} && $$self{codeGenerator}->IsStringType($idlType) && $signature->extendedAttributes->{"URL"};
+    return "URL { toString(context, $argumentName, $nullStringPolicy) }" if $interface->extendedAttributes->{"UseCPPAPI"} && $$self{codeGenerator}->IsStringType($idlType) && $signature->extendedAttributes->{"URL"};
     return "toString(context, $argumentName, $nullStringPolicy)" if $$self{codeGenerator}->IsStringType($idlType);
     return "JSValueToNumber(context, $argumentName, nullptr)" if $$self{codeGenerator}->IsPrimitiveType($idlType);
     return "to" . _implementationClassName($idlType) . "(context, $argumentName)";
@@ -1489,12 +1569,12 @@ sub _platformTypeConstructor
 
 sub _platformTypeVariableDeclaration
 {
-    my ($self, $signature, $variableName, $argumentName, $condition, $hideType) = @_;
+    my ($self, $interface, $signature, $variableName, $argumentName, $condition, $hideType) = @_;
 
     my $idlType = $signature->type;
     my $idlTypeName = $idlType->name;
-    my $platformType = $self->_platformType($idlType, $signature);
-    my $constructor = $self->_platformTypeConstructor($signature, $argumentName) if $argumentName;
+    my $platformType = $self->_platformType($idlType, $interface, $signature);
+    my $constructor = $self->_platformTypeConstructor($interface, $signature, $argumentName) if $argumentName;
 
     my %objCTypes = (
         "JSValue"       => 1,
@@ -1512,6 +1592,7 @@ sub _platformTypeVariableDeclaration
     $nullValue = "nil" if $isObjCType;
     $nullValue = "nullString()" if $platformType eq "String";
     $nullValue = "JSValueMakeUndefined(context)" if $platformType eq "JSValueRef";
+    $nullValue = "{  }" if $signature->extendedAttributes->{"URL"} && $interface->extendedAttributes->{"UseCPPAPI"};
 
     my $defaultValue = $signature->extendedAttributes->{"DefaultValue"};
     if (defined $defaultValue && $platformType eq "double") {
@@ -1520,7 +1601,7 @@ sub _platformTypeVariableDeclaration
         die "DefaultValue extended attribute is currently only supported for numeric types";
     }
 
-    if ($platformType eq "JSValueRef" or $platformType eq "JSObjectRef" or $platformType eq "RefPtr<WebExtensionCallbackHandler>" or $platformType eq "double" or $platformType eq "bool" or $platformType eq "String") {
+    if ($platformType eq "JSValueRef" or $platformType eq "JSObjectRef" or $platformType eq "RefPtr<WebExtensionCallbackHandler>" or $platformType eq "RefPtr<JSON::Value>" or $platformType eq "double" or $platformType eq "bool" or $platformType eq "String" or $signature->extendedAttributes->{"Vector"} or ($interface->extendedAttributes->{"UseCPPAPI"} && $signature->extendedAttributes->{"URL"})) {
         $platformType .= " ";
     } else {
         $platformType .= $isObjCType ? " *" : "* ";
@@ -1645,8 +1726,12 @@ sub _staticValuesGetterImplementation
         push(@attributes, "kJSPropertyAttributeDontEnum") if $_->extendedAttributes->{"DontEnum"};
         my $jsproperties = scalar @attributes == 0 ? "kJSPropertyAttributeNone" : join(" | ", @attributes);
         my $conditionalString = conditionalString($_);
+        my $platformString = platformString($_);
+        my $platformConditional = $platformString ? "\n#if ${platformString}\n" : "";
+        my $platformConditionalEnd = $platformString ? "#endif // ${platformString}" : "";
 
-        return "#if ${conditionalString}\n        { \"$attributeName\", $getterName, $setterName, $jsproperties },\n        #endif" if $conditionalString;
+        return "${platformConditional}#if ${conditionalString}\n        { \"$attributeName\", $getterName, $setterName, $jsproperties },\n        #endif${platformConditionalEnd}" if $conditionalString;
+        return "${platformConditional}        { \"$attributeName\", $getterName, $setterName, $jsproperties },\n        ${platformConditionalEnd}" if $platformString;
         return "{ \"$attributeName\", $getterName, $setterName, $jsproperties },";
     };
 
@@ -1732,16 +1817,19 @@ EOF
         return unless $_->extendedAttributes->{"Dynamic"} or $_->extendedAttributes->{"MainWorldOnly"};
 
         my $name = $_->name;
-        return "    JSPropertyNameAccumulatorAddName(propertyNames, toJSString(\"${name}\"_s).get());\n" unless $hasDynamicProperties;
+        return "    SUPPRESS_UNCOUNTED_ARG JSPropertyNameAccumulatorAddName(propertyNames, toJSString(\"${name}\"_s).get());\n" unless $hasDynamicProperties;
 
         my $condition = &$generateCondition($_);
         my $conditionalString = conditionalString($_);
+        my $platformString = platformString($_);
 
         my $content = "";
+        $content .= "#if ${platformString}\n" if $platformString;
         $content .= "#if ${conditionalString}\n" if $conditionalString;
         $content .= "    if (${condition})\n";
-        $content .= "        JSPropertyNameAccumulatorAddName(propertyNames, toJSString(\"${name}\"_s).get());\n";
+        $content .= "        SUPPRESS_UNCOUNTED_ARG JSPropertyNameAccumulatorAddName(propertyNames, toJSString(\"${name}\"_s).get());\n";
         $content .= "#endif // ${conditionalString}\n" if $conditionalString;
+        $content .= "#endif // ${platformString}\n" if $platformString;
         $content .= "\n";
         return $content;
     };
@@ -1769,12 +1857,15 @@ EOF
         my $name = $_->name;
         my $condition = &$generateCondition($_);
         my $conditionalString = conditionalString($_);
+        my $platformString = platformString($_);
 
         my $content = "";
+        $content .= "#if ${platformString}\n" if $platformString;
         $content .= "#if ${conditionalString}\n" if $conditionalString;
         $content .= "    if (JSStringIsEqualToUTF8CString(propertyName, \"${name}\"))\n";
         $content .= "        return ${condition};\n";
         $content .= "#endif // ${conditionalString}\n" if $conditionalString;
+        $content .= "#endif // ${platformString}\n" if $platformString;
         $content .= "\n";
         return $content;
     };
@@ -1815,11 +1906,14 @@ EOF
             $condition = &$generateCondition($attribute, "JSStringIsEqualToUTF8CString(propertyName, \"${name}\")") if $hasDynamicProperties;
 
             my $conditionalString = conditionalString($attribute);
+            my $platformString = platformString($attribute);
 
+            push(@contents, "#if ${platformString}\n") if $platformString;
             push(@contents, "#if ${conditionalString}\n") if $conditionalString;
             push(@contents, "    if (${condition})\n");
             push(@contents, "        return ${getterName}(context, thisObject, propertyName, exception);\n");
             push(@contents, "#endif // ${conditionalString}\n") if $conditionalString;
+            push(@contents, "#endif // ${platformString}\n") if $platformString;
             push(@contents, "\n");
         }
     }

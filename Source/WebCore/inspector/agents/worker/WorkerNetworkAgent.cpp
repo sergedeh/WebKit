@@ -65,13 +65,13 @@ Vector<Ref<WebSocket>> WorkerNetworkAgent::activeWebSockets()
 
 void WorkerNetworkAgent::setResourceCachingDisabledInternal(bool disabled)
 {
-    if (auto* workerDebuggerProxy = Ref { m_globalScope.get() }->workerOrWorkletThread()->workerDebuggerProxy())
+    if (CheckedPtr workerDebuggerProxy = Ref { m_globalScope.get() }->workerOrWorkletThread()->workerDebuggerProxy())
         workerDebuggerProxy->setResourceCachingDisabledByWebInspector(disabled);
 }
 
 #if ENABLE(INSPECTOR_NETWORK_THROTTLING)
 
-bool WorkerNetworkAgent::setEmulatedConditionsInternal(std::optional<int>&& /* bytesPerSecondLimit */)
+bool WorkerNetworkAgent::setEmulatedConditionsInternal(std::optional<uint64_t> /* bandwidthBytesPerSecond */, Seconds /* latency */)
 {
     return false;
 }

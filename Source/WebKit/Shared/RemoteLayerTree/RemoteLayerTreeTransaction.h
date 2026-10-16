@@ -89,7 +89,7 @@ public:
             bool preservesFlip { false };
         };
         struct VideoElementData {
-            PlaybackSessionContextIdentifier playerIdentifier;
+            WebCore::HTMLMediaElementIdentifier playerIdentifier;
             WebCore::FloatSize initialSize;
             WebCore::FloatSize naturalSize;
         };
@@ -134,7 +134,7 @@ public:
     RemoteLayerTreeTransaction& operator=(RemoteLayerTreeTransaction&&);
 
     std::optional<WebCore::PlatformLayerIdentifier> rootLayerID() const { return m_rootLayerID.asOptional(); }
-    void setRootLayerID(WebCore::PlatformLayerIdentifier);
+    void LEGACY_NODELETE setRootLayerID(WebCore::PlatformLayerIdentifier);
     void layerPropertiesChanged(PlatformCALayerRemote&);
     void setCreatedLayers(Vector<LayerCreationProperties>);
     void setDestroyedLayerIDs(Vector<WebCore::PlatformLayerIdentifier>);
@@ -145,16 +145,16 @@ public:
     void dump() const;
 #endif
     
-    bool hasAnyLayerChanges() const;
+    bool LEGACY_NODELETE hasAnyLayerChanges() const;
 
-    const Vector<LayerCreationProperties>& createdLayers() const { return m_createdLayers; }
-    const Vector<WebCore::PlatformLayerIdentifier>& destroyedLayers() const { return m_destroyedLayerIDs; }
-    const Vector<WebCore::PlatformLayerIdentifier>& layerIDsWithNewlyUnreachableBackingStore() const { return m_layerIDsWithNewlyUnreachableBackingStore; }
+    const Vector<LayerCreationProperties>& createdLayers() const LIFETIME_BOUND { return m_createdLayers; }
+    const Vector<WebCore::PlatformLayerIdentifier>& destroyedLayers() const LIFETIME_BOUND { return m_destroyedLayerIDs; }
+    const Vector<WebCore::PlatformLayerIdentifier>& layerIDsWithNewlyUnreachableBackingStore() const LIFETIME_BOUND { return m_layerIDsWithNewlyUnreachableBackingStore; }
 
-    HashSet<Ref<PlatformCALayerRemote>>& changedLayers();
+    HashSet<Ref<PlatformCALayerRemote>>& LEGACY_NODELETE changedLayers() LIFETIME_BOUND;
 
-    const LayerPropertiesMap& changedLayerProperties() const;
-    LayerPropertiesMap& changedLayerProperties();
+    const LayerPropertiesMap& LEGACY_NODELETE changedLayerProperties() const LIFETIME_BOUND;
+    LayerPropertiesMap& LEGACY_NODELETE changedLayerProperties() LIFETIME_BOUND;
 
     void setRemoteContextHostedIdentifier(Markable<WebCore::LayerHostingContextIdentifier> identifier) { m_remoteContextHostedIdentifier = identifier; }
     Markable<WebCore::LayerHostingContextIdentifier> remoteContextHostedIdentifier() const { return m_remoteContextHostedIdentifier; }
@@ -172,7 +172,7 @@ public:
     void setScrollPosition(WebCore::IntPoint p) { m_scrollPosition = p; }
 
 #if ENABLE(THREADED_ANIMATIONS)
-    const WebCore::AcceleratedTimelinesUpdate& timelinesUpdate() const { return m_timelinesUpdate; }
+    const WebCore::AcceleratedTimelinesUpdate& timelinesUpdate() const LIFETIME_BOUND { return m_timelinesUpdate; }
     void setTimelinesUpdate(WebCore::AcceleratedTimelinesUpdate&& timelinesUpdate) { m_timelinesUpdate = WTF::move(timelinesUpdate); }
 #endif
 

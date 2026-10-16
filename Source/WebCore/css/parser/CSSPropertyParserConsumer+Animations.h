@@ -25,13 +25,14 @@
 
 #pragma once
 
+#include "CSSPrimitiveNumeric+Forward.h"
 #include <wtf/Forward.h>
 
 namespace WebCore {
 
 class CSSParserTokenRange;
 class CSSValue;
-enum CSSValueID : uint16_t;
+enum class CSSValueID : uint16_t;
 struct CSSParserContext;
 
 namespace CSS {
@@ -42,11 +43,11 @@ namespace CSSPropertyParserHelpers {
 
 // MARK: <keyframe-selector> consuming
 // https://drafts.csswg.org/css-animations-1/#typedef-keyframe-selector
-Vector<std::pair<CSSValueID, double>> consumeKeyframeKeyList(CSSParserTokenRange&, CSS::PropertyParserState&);
+Vector<std::pair<CSSValueID, CSS::Percentage<>>> consumeKeyframeKeyList(CSSParserTokenRange&, CSS::PropertyParserState&);
 
 // MARK: <keyframe-selector> parsing
 // https://drafts.csswg.org/css-animations-1/#typedef-keyframe-selector
-Vector<std::pair<CSSValueID, double>> parseKeyframeKeyList(const String&, const CSSParserContext&);
+Vector<std::pair<CSSValueID, CSS::Percentage<>>> parseKeyframeKeyList(StringView, const CSSParserContext&);
 
 // MARK: <keyframes-name> consuming
 // https://drafts.csswg.org/css-animations/#typedef-keyframes-name

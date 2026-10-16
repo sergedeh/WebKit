@@ -33,9 +33,11 @@
 #include "EventInit.h"
 #include "JSValueInWrappedObject.h"
 #include "LocalDOMWindowProperty.h"
+#include "NavigateEventIdentifier.h"
 #include "NavigationDestination.h"
 #include "NavigationInterceptHandler.h"
 #include "NavigationNavigationType.h"
+#include "NavigationPrecommitHandler.h"
 
 namespace WebCore {
 
@@ -61,16 +63,16 @@ class NavigateEvent final : public Event {
 public:
     struct Init : EventInit {
         NavigationNavigationType navigationType { NavigationNavigationType::Push };
-        RefPtr<NavigationDestination> destination;
-        RefPtr<AbortSignal> signal;
-        RefPtr<DOMFormData> formData;
-        String downloadRequest;
-        JSC::JSValue info;
-        RefPtr<Element> sourceElement;
+        Ref<NavigationDestination> destination;
         bool canIntercept { false };
         bool userInitiated { false };
         bool hashChange { false };
+        Ref<AbortSignal> signal;
+        RefPtr<DOMFormData> formData;
+        String downloadRequest;
+        JSC::JSValue info;
         bool hasUAVisualTransition { false };
+        RefPtr<Element> sourceElement;
     };
 
     enum class NavigationFocusReset : bool {
@@ -84,15 +86,18 @@ public:
     };
 
     struct NavigationInterceptOptions {
+        RefPtr<NavigationPrecommitHandler> precommitHandler;
         RefPtr<NavigationInterceptHandler> handler;
         std::optional<NavigationFocusReset> focusReset;
         std::optional<NavigationScrollBehavior> scroll;
     };
 
-    static Ref<NavigateEvent> create(const AtomString& type, Init&&);
-    static Ref<NavigateEvent> create(const AtomString& type, Init&&, AbortController*);
+    static Ref<NavigateEvent> create(JSC::JSGlobalObject&, const AtomString& type, Init&&);
+    static Ref<NavigateEvent> create(RefPtr<DOMWrapperWorld>&&, const AtomString& type, Init&&, AbortController*);
 
+    NavigateEventIdentifier identifier() const { return m_identifier; }
     NavigationNavigationType navigationType() const { return m_navigationType; }
+    void setNavigationType(NavigationNavigationType navigationType) { m_navigationType = navigationType; }
     bool canIntercept() const { return m_canIntercept; }
     bool userInitiated() const { return m_userInitiated; }
     bool hashChange() const { return m_hashChange; }
@@ -101,33 +106,39 @@ public:
     AbortSignal& signal() { return m_signal; }
     DOMFormData* formData() { return m_formData.get(); }
     String downloadRequest() { return m_downloadRequest; }
-    JSC::JSValue info() { return m_info.getValue(); }
-    JSValueInWrappedObject& infoWrapper() { return m_info; }
+    JSC::JSValue info();
+    void setInfo(JSC::JSGlobalObject&, JSC::JSValue);
+    JSValueInWrappedObject& infoWrapper() LIFETIME_BOUND { return m_info; }
     Element* sourceElement() { return m_sourceElement.get(); }
 
+    ExceptionOr<void> sharedChecks(Document&);
     ExceptionOr<void> intercept(Document&, NavigationInterceptOptions&&);
     ExceptionOr<void> scroll(Document&);
 
     bool wasIntercepted() const { return m_interceptionState.has_value(); }
+    std::optional<InterceptionState> interceptionState() const { return m_interceptionState; }
     void setInterceptionState(InterceptionState interceptionState) { m_interceptionState = interceptionState; }
 
     void finish(Document&, InterceptionHandlersDidFulfill, FocusDidChange);
 
-    Vector<Ref<NavigationInterceptHandler>>& handlers() { return m_handlers; }
+    Vector<Ref<NavigationInterceptHandler>>& handlers() LIFETIME_BOUND { return m_handlers; }
+    Vector<Ref<NavigationPrecommitHandler>>& precommitHandlers() LIFETIME_BOUND { return m_precommitHandlers; }
 
 private:
-    NavigateEvent(const AtomString& type, Init&&, EventIsTrusted, AbortController*);
+    NavigateEvent(JSC::JSGlobalObject&, const AtomString& type, Init&&, EventIsTrusted, AbortController*);
+    NavigateEvent(RefPtr<DOMWrapperWorld>&&, const AtomString& type, Init&&, EventIsTrusted, AbortController*);
 
-    ExceptionOr<void> sharedChecks(Document&);
     void potentiallyProcessScrollBehavior(Document&);
     void processScrollBehavior(Document&);
 
+    const NavigateEventIdentifier m_identifier { NavigateEventIdentifier::generate() };
     NavigationNavigationType m_navigationType;
     const Ref<NavigationDestination> m_destination;
     const Ref<AbortSignal> m_signal;
     const RefPtr<DOMFormData> m_formData;
     String m_downloadRequest;
     Vector<Ref<NavigationInterceptHandler>> m_handlers;
+    Vector<Ref<NavigationPrecommitHandler>> m_precommitHandlers;
     JSValueInWrappedObject m_info;
     const RefPtr<Element> m_sourceElement;
     bool m_canIntercept { false };
@@ -140,6 +151,6 @@ private:
     const RefPtr<AbortController> m_abortController;
 };
 
-WebCoreOpaqueRoot root(NavigateEvent*);
+WebCoreOpaqueRoot LEGACY_NODELETE root(NavigateEvent*);
 
 } // namespace WebCore

@@ -27,9 +27,9 @@
 
 #if USE(CG)
 
-#include "PathImpl.h"
-#include "PlatformPath.h"
-#include "WindRule.h"
+#include <WebCore/PathImpl.h>
+#include <WebCore/PlatformPath.h>
+#include <WebCore/WindRule.h>
 #include <wtf/Function.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -43,13 +43,14 @@ class PathStream;
 
 class PathCG final : public PathImpl {
     WTF_MAKE_TZONE_ALLOCATED(PathCG);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(PathCG);
 public:
-    static Ref<PathCG> create(std::span<const PathSegment> = { });
+    WEBCORE_EXPORT static Ref<PathCG> create(std::span<const PathSegment> = { });
     static Ref<PathCG> create(RetainPtr<CGMutablePathRef>&&);
 
     static PlatformPathPtr emptyPlatformPath();
 
-    PlatformPathPtr platformPath() const;
+    PlatformPathPtr LEGACY_NODELETE platformPath() const;
 
     void addPath(const PathCG&, const AffineTransform&);
 
@@ -69,7 +70,7 @@ public:
     void add(PathContinuousRoundedRect) final;
     void add(PathCloseSubpath) final;
 
-    bool applyElements(const PathElementApplier&) const final;
+    bool applyElements(NOESCAPE const PathElementApplier&) const final;
 
     bool transform(const AffineTransform&) final;
 
@@ -81,7 +82,8 @@ public:
 private:
     PathCG(RetainPtr<CGMutablePathRef>&&);
 
-    PlatformPathPtr ensureMutablePlatformPath();
+    // Must return a reference: holding a RetainPtr copy across a mutation triggers a copy-on-write, so later edits through that copy are lost.
+    const RetainPtr<CGMutablePathRef>& ensureMutablePlatformPath();
 
     FloatPoint currentPoint() const final;
 

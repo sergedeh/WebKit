@@ -33,9 +33,10 @@ enum class StyleColorOptions : uint8_t {
     ForVisitedLink                  = 1 << 0,
     UseSystemAppearance             = 1 << 1,
     UseDarkAppearance               = 1 << 2,
-    UseElevatedUserInterfaceLevel   = 1 << 3
+    UseElevatedUserInterfaceLevel   = 1 << 3,
+    UseAXCustomColorMode            = 1 << 4
 };
 
-WTF::TextStream& operator<<(WTF::TextStream&, StyleColorOptions);
+WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, StyleColorOptions);
 
 } // namespace WebCore

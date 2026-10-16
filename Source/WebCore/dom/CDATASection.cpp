@@ -32,7 +32,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(CDATASection);
 
 inline CDATASection::CDATASection(Document& document, String&& data)
-    : Text(document, WTF::move(data), CDATA_SECTION_NODE, { })
+    : Text(document, WTF::move(data), NodeType::CDATASection, { })
 {
 }
 
@@ -58,7 +58,7 @@ SerializedNode CDATASection::serializeNode(CloningOperation) const
 
 Ref<Text> CDATASection::virtualCreate(String&& data)
 {
-    return create(protectedDocument(), WTF::move(data));
+    return create(protect(document()), WTF::move(data));
 }
 
 } // namespace WebCore

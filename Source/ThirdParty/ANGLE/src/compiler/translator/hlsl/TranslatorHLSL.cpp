@@ -7,20 +7,19 @@
 #include "compiler/translator/hlsl/TranslatorHLSL.h"
 
 #include "compiler/translator/hlsl/OutputHLSL.h"
+#include "compiler/translator/tree_ops/AddDefaultReturnStatements.h"
+#include "compiler/translator/tree_ops/MonomorphizeUnsupportedFunctions.h"
 #include "compiler/translator/tree_ops/RemoveDynamicIndexing.h"
+#include "compiler/translator/tree_ops/RewriteStructSamplers.h"
 #include "compiler/translator/tree_ops/RewriteTexelFetchOffset.h"
 #include "compiler/translator/tree_ops/SimplifyLoopConditions.h"
 #include "compiler/translator/tree_ops/SplitSequenceOperator.h"
-#include "compiler/translator/tree_ops/hlsl/AddDefaultReturnStatements.h"
-#include "compiler/translator/tree_ops/hlsl/AggregateAssignArraysInSSBOs.h"
-#include "compiler/translator/tree_ops/hlsl/AggregateAssignStructsInSSBOs.h"
+#include "compiler/translator/tree_ops/UseGeneratedNamesForAnonymousStructs.h"
 #include "compiler/translator/tree_ops/hlsl/ArrayReturnValueToOutParameter.h"
 #include "compiler/translator/tree_ops/hlsl/BreakVariableAliasingInInnerLoops.h"
 #include "compiler/translator/tree_ops/hlsl/ExpandIntegerPowExpressions.h"
 #include "compiler/translator/tree_ops/hlsl/RecordUniformBlocksWithLargeArrayMember.h"
-#include "compiler/translator/tree_ops/hlsl/RewriteAtomicFunctionExpressions.h"
 #include "compiler/translator/tree_ops/hlsl/RewriteElseBlocks.h"
-#include "compiler/translator/tree_ops/hlsl/RewriteExpressionsWithShaderStorageBlock.h"
 #include "compiler/translator/tree_ops/hlsl/RewriteUnaryMinusOperatorInt.h"
 #include "compiler/translator/tree_ops/hlsl/SeparateArrayConstructorStatements.h"
 #include "compiler/translator/tree_ops/hlsl/SeparateArrayInitialization.h"
@@ -31,6 +30,87 @@
 
 namespace sh
 {
+namespace
+{
+bool CollectStructSamplerPaths(const ShaderVariable &variable,
+                               const std::string &path,
+                               std::vector<std::string> *pathsOut)
+{
+    if (gl::IsSamplerType(variable.type))
+    {
+        if (pathsOut)
+        {
+            pathsOut->push_back(path);
+        }
+        return true;
+    }
+
+    bool containsSampler = false;
+    for (const ShaderVariable &field : variable.fields)
+    {
+        const std::string fieldPath = pathsOut ? path + "." + field.name : std::string();
+        if (CollectStructSamplerPaths(field, fieldPath, pathsOut))
+        {
+            containsSampler = true;
+        }
+    }
+    return containsSampler;
+}
+
+bool BuildExtractedSamplerNameMap(TIntermBlock *root,
+                                  const std::vector<std::string> &paths,
+                                  ExtractedSamplerNameMap *namesOut)
+{
+    // RewriteStructSamplers declares extracted samplers in the same DFS order as the reflected
+    // sampler fields.
+    std::map<std::string, const TVariable *> variables;
+    for (TIntermNode *node : *root->getSequence())
+    {
+        TIntermDeclaration *declaration = node->getAsDeclarationNode();
+        if (!declaration)
+        {
+            continue;
+        }
+
+        for (TIntermNode *declarator : *declaration->getSequence())
+        {
+            TIntermSymbol *symbol = declarator->getAsSymbolNode();
+            if (symbol && symbol->variable().symbolType() == SymbolType::AngleInternal &&
+                symbol->getQualifier() == EvqUniform && symbol->getType().isSampler() &&
+                symbol->getName().beginsWith(kExtractedSamplerNamePrefix))
+            {
+                const ImmutableString &name = symbol->getName();
+                if (!variables.emplace(std::string(name.data(), name.length()), &symbol->variable())
+                         .second)
+                {
+                    return false;
+                }
+            }
+        }
+    }
+
+    if (variables.size() != paths.size())
+    {
+        return false;
+    }
+
+    for (size_t index = 0; index < variables.size(); ++index)
+    {
+        const std::string name =
+            std::string(kExtractedSamplerNamePrefix) + '_' + std::to_string(index);
+        auto variable          = variables.find(name);
+        if (variable == variables.end())
+        {
+            return false;
+        }
+        if (!namesOut->emplace(variable->second, paths[index]).second)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+}  // anonymous namespace
 
 TranslatorHLSL::TranslatorHLSL(sh::GLenum type, ShShaderSpec spec, ShShaderOutput output)
     : TCompiler(type, spec, output)
@@ -49,7 +129,7 @@ bool TranslatorHLSL::translate(TIntermBlock *root,
     // the return value of the function is not propagated to its return expressions.  Additionally,
     // an expression such as
     //
-    //     cond ? gl_NumWorkGroups.x : gl_NumWorkGroups.y
+    //     cond ? gl_<SomeConstant>.x : gl_<SomeConstant>.y
     //
     // does not have a precision as the built-in does not specify a precision.
     //
@@ -61,7 +141,17 @@ bool TranslatorHLSL::translate(TIntermBlock *root,
     int maxDualSourceDrawBuffers =
         resources.EXT_blend_func_extended ? resources.MaxDualSourceDrawBuffers : 0;
 
-    if (!sh::AddDefaultReturnStatements(this, root))
+    if (!compileOptions.useIR)
+    {
+        if (!sh::AddDefaultReturnStatements(this, root))
+        {
+            return false;
+        }
+    }
+
+    // The HLSL generator prefers every struct to have a name, and is not bound by GLSL's
+    // requirement that anonymous structs match their (lack of) name between shader stages.
+    if (!UseGeneratedNamesForAnonymousStructs(this, root))
     {
         return false;
     }
@@ -100,24 +190,6 @@ bool TranslatorHLSL::translate(TIntermBlock *root,
         return false;
     }
 
-    if (getShaderVersion() >= 310)
-    {
-        // Do element-by-element assignments of arrays in SSBOs. This allows the D3D backend to use
-        // RWByteAddressBuffer.Load() and .Store(), which only operate on values up to 16 bytes in
-        // size. Note that this must be done before SeparateExpressionsReturningArrays.
-        if (!sh::AggregateAssignArraysInSSBOs(this, root, &getSymbolTable()))
-        {
-            return false;
-        }
-        // Do field-by-field assignment of structs in SSBOs. This allows the D3D backend to use
-        // RWByteAddressBuffer.Load() and .Store(), which only operate on values up to 16 bytes in
-        // size.
-        if (!sh::AggregateAssignStructsInSSBOs(this, root, &getSymbolTable()))
-        {
-            return false;
-        }
-    }
-
     if (!SeparateExpressionsReturningArrays(this, root, &getSymbolTable()))
     {
         return false;
@@ -136,21 +208,11 @@ bool TranslatorHLSL::translate(TIntermBlock *root,
         return false;
     }
 
-    if (!shouldRunLoopAndIndexingValidation(compileOptions))
+    if (!shouldRunLoopAndIndexingValidation())
     {
         // HLSL doesn't support dynamic indexing of vectors and matrices.
         if (!RemoveDynamicIndexingOfNonSSBOVectorOrMatrix(this, root, &getSymbolTable(),
                                                           perfDiagnostics))
-        {
-            return false;
-        }
-    }
-
-    // Work around D3D9 bug that would manifest in vertex shaders with selection blocks which
-    // use a vertex attribute as a condition, and some related computation in the else block.
-    if (getOutputType() == SH_HLSL_3_0_OUTPUT && getShaderType() == GL_VERTEX_SHADER)
-    {
-        if (!sh::RewriteElseBlocks(this, root, &getSymbolTable()))
         {
             return false;
         }
@@ -198,16 +260,35 @@ bool TranslatorHLSL::translate(TIntermBlock *root,
         }
     }
 
-    if (getShaderVersion() >= 310)
+    ExtractedSamplerNameMap extractedSamplerNames;
+    std::vector<std::string> extractedSamplerPaths;
+    bool hasStructSamplers = false;
+    for (const ShaderVariable &uniform : getUniforms())
     {
-        // Due to ssbo also can be used as the argument of atomic memory functions, we should put
-        // RewriteExpressionsWithShaderStorageBlock before RewriteAtomicFunctionExpressions.
-        if (!sh::RewriteExpressionsWithShaderStorageBlock(this, root, &getSymbolTable()))
+        std::vector<std::string> *pathsOut = uniform.active ? &extractedSamplerPaths : nullptr;
+        if (uniform.isStruct() && CollectStructSamplerPaths(uniform, uniform.name, pathsOut))
         {
-            return false;
+            hasStructSamplers = true;
         }
-        if (!sh::RewriteAtomicFunctionExpressions(this, root, &getSymbolTable(),
-                                                  getShaderVersion()))
+    }
+
+    if (hasStructSamplers)
+    {
+        if (!compileOptions.useIR)
+        {
+            UnsupportedFunctionArgsBitSet args{UnsupportedFunctionArgs::StructContainingSamplers};
+            if (!MonomorphizeUnsupportedFunctions(this, root, &getSymbolTable(), args))
+            {
+                return false;
+            }
+
+            if (!RewriteStructSamplers(this, root, &getSymbolTable()))
+            {
+                return false;
+            }
+        }
+
+        if (!BuildExtractedSamplerNameMap(root, extractedSamplerPaths, &extractedSamplerNames))
         {
             return false;
         }
@@ -230,13 +311,12 @@ bool TranslatorHLSL::translate(TIntermBlock *root,
     sh::OutputHLSL outputHLSL(
         getShaderType(), getShaderSpec(), getShaderVersion(), getExtensionBehavior(),
         getSourcePath(), getOutputType(), numRenderTargets, maxDualSourceDrawBuffers, getUniforms(),
-        compileOptions, getComputeShaderLocalSize(), &getSymbolTable(), perfDiagnostics,
-        mUniformBlockOptimizedMap, mShaderStorageBlocks, getClipDistanceArraySize(),
-        getCullDistanceArraySize(), isEarlyFragmentTestsSpecified());
+        extractedSamplerNames, compileOptions, &getSymbolTable(), perfDiagnostics,
+        mUniformBlockOptimizedMap, getClipDistanceArraySize(), getCullDistanceArraySize(),
+        isEarlyFragmentTestsSpecified());
 
     outputHLSL.output(root, getInfoSink().obj);
 
-    mShaderStorageBlockRegisterMap      = outputHLSL.getShaderStorageBlockRegisterMap();
     mUniformBlockRegisterMap            = outputHLSL.getUniformBlockRegisterMap();
     mUniformBlockUseStructuredBufferMap = outputHLSL.getUniformBlockUseStructuredBufferMap();
     mUniformRegisterMap                 = outputHLSL.getUniformRegisterMap();
@@ -251,18 +331,6 @@ bool TranslatorHLSL::shouldFlattenPragmaStdglInvariantAll()
 {
     // Not necessary when translating to HLSL.
     return false;
-}
-
-bool TranslatorHLSL::hasShaderStorageBlock(const std::string &uniformBlockName) const
-{
-    return (mShaderStorageBlockRegisterMap.count(uniformBlockName) > 0);
-}
-
-unsigned int TranslatorHLSL::getShaderStorageBlockRegister(
-    const std::string &shaderStorageBlockName) const
-{
-    ASSERT(hasShaderStorageBlock(shaderStorageBlockName));
-    return mShaderStorageBlockRegisterMap.find(shaderStorageBlockName)->second;
 }
 
 bool TranslatorHLSL::hasUniformBlock(const std::string &uniformBlockName) const

@@ -30,6 +30,8 @@
 #include <WebCore/BlobData.h>
 #include <WebCore/FormData.h>
 #include <WebCore/HistoryItem.h>
+#include <WebCore/SerializedScriptValue.h>
+#include <wtf/Borrow.h>
 #include <wtf/FileSystem.h>
 
 namespace WebKit {
@@ -42,9 +44,10 @@ static HTTPBody toHTTPBody(const FormData& formData)
     for (const auto& formDataElement : formData.elements()) {
         HTTPBody::Element element;
 
-        switchOn(formDataElement.data,
+        bool skipElement = switchOn(formDataElement.data,
             [&] (const Vector<uint8_t>& bytes) {
                 element.data = bytes;
+                return false;
             }, [&] (const FormDataElement::EncodedFileData& fileData) {
                 HTTPBody::Element::FileData data;
                 data.filePath = fileData.filename;
@@ -53,11 +56,18 @@ static HTTPBody toHTTPBody(const FormData& formData)
                     data.fileLength = fileData.fileLength;
                 data.expectedFileModificationTime = fileData.expectedFileModificationTime;
                 element.data = WTF::move(data);
+                return false;
             }, [&] (const FormDataElement::EncodedBlobData& blobData) {
                 element.data = blobData.url.string();
+                return false;
+            }, [&] (const FormDataElement::PendingStreamData&) {
+                // Streaming bodies cannot be preserved in session state.
+                return true;
             }
         );
 
+        if (skipElement)
+            continue;
         httpBody.elements.append(WTF::move(element));
     }
 
@@ -81,6 +91,8 @@ Ref<FrameState> toFrameState(const HistoryItem& historyItem)
     frameState->documentSequenceNumber = historyItem.documentSequenceNumber();
     frameState->itemSequenceNumber = historyItem.itemSequenceNumber();
 
+    frameState->navigationAPIKey = historyItem.navigationAPIKey();
+
     frameState->scrollPosition = historyItem.scrollPosition();
     frameState->shouldRestoreScrollPosition = historyItem.shouldRestoreScrollPosition();
     frameState->pageScaleFactor = historyItem.pageScaleFactor();
@@ -94,11 +106,11 @@ Ref<FrameState> toFrameState(const HistoryItem& historyItem)
 
     frameState->itemID = historyItem.itemID();
     frameState->frameItemID = historyItem.frameItemID();
-    frameState->hasCachedPage = historyItem.isInBackForwardCache();
     frameState->shouldOpenExternalURLsPolicy = historyItem.shouldOpenExternalURLsPolicy();
     frameState->sessionStateObject = historyItem.stateObject();
     frameState->wasCreatedByJSWithoutUserInteraction = historyItem.wasCreatedByJSWithoutUserInteraction();
     frameState->wasRestoredFromSession = historyItem.wasRestoredFromSession();
+    frameState->isInitialAboutBlank = historyItem.isInitialAboutBlank();
     frameState->policyContainer = historyItem.policyContainer();
 
     static constexpr auto maxTitleLength = 1000u; // Closest power of 10 above the W3C recommendation for Title length.
@@ -124,9 +136,9 @@ static Ref<FormData> toFormData(const HTTPBody& httpBody)
 {
     auto formData = FormData::create();
 
-    for (const auto& element : httpBody.elements) {
+    for (const auto& element : borrow(httpBody.elements)) {
         switchOn(element.data, [&] (const Vector<uint8_t>& data) {
-            formData->appendData(data.span());
+            formData->appendData(borrow(data)->span());
         }, [&] (const HTTPBody::Element::FileData& data) {
             formData->appendFileRange(data.filePath, data.fileStart, data.fileLength.value_or(BlobDataItem::toEndOfFile), data.expectedFileModificationTime);
         }, [&] (const String& blobURLString) {
@@ -154,6 +166,9 @@ static void applyFrameState(HistoryItemClient& client, HistoryItem& historyItem,
     historyItem.setDocumentSequenceNumber(frameState.documentSequenceNumber);
     historyItem.setItemSequenceNumber(frameState.itemSequenceNumber);
 
+    if (frameState.navigationAPIKey)
+        historyItem.setNavigationAPIKey(*frameState.navigationAPIKey);
+
     historyItem.setScrollPosition(frameState.scrollPosition);
     historyItem.setShouldRestoreScrollPosition(frameState.shouldRestoreScrollPosition);
     historyItem.setPageScaleFactor(frameState.pageScaleFactor);
@@ -169,6 +184,7 @@ static void applyFrameState(HistoryItemClient& client, HistoryItem& historyItem,
     historyItem.setStateObject(frameState.sessionStateObject.get());
     historyItem.setWasCreatedByJSWithoutUserInteraction(frameState.wasCreatedByJSWithoutUserInteraction);
     historyItem.setWasRestoredFromSession(frameState.wasRestoredFromSession);
+    historyItem.setIsInitialAboutBlank(frameState.isInitialAboutBlank);
     if (auto policyContainer = frameState.policyContainer)
         historyItem.setPolicyContainer(*policyContainer);
 
@@ -181,7 +197,7 @@ static void applyFrameState(HistoryItemClient& client, HistoryItem& historyItem,
     historyItem.setObscuredInsets(frameState.obscuredInsets);
 #endif
 
-    for (auto& childFrameState : frameState.children) {
+    for (auto& childFrameState : borrow(frameState.children)) {
         Ref childHistoryItem = HistoryItem::create(client, childFrameState->urlString, { }, { }, childFrameState->itemID, childFrameState->frameItemID);
         applyFrameState(client, childHistoryItem, childFrameState);
 

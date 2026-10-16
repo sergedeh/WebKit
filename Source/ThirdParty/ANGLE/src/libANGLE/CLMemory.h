@@ -9,13 +9,16 @@
 #ifndef LIBANGLE_CLMEMORY_H_
 #define LIBANGLE_CLMEMORY_H_
 
+#include <angle_cl.h>
+
+#include "libANGLE/CLBitField.h"
 #include "libANGLE/CLObject.h"
+#include "libANGLE/cl_types.h"
+#include "libANGLE/cl_utils.h"
 #include "libANGLE/renderer/CLMemoryImpl.h"
 
-#include "common/SynchronizedValue.h"
-
 #include <atomic>
-#include <stack>
+#include <cstddef>
 
 namespace cl
 {
@@ -44,14 +47,26 @@ class Memory : public _cl_mem, public Object
     size_t getOffset() const;
     size_t getSize() const;
 
+    bool isUseHostPtr() const;
+
     template <typename T = rx::CLMemoryImpl>
     T &getImpl() const;
 
     static Memory *Cast(cl_mem memobj);
 
-  protected:
-    using CallbackData = std::pair<MemoryCB, void *>;
+    // Memory region interface
+    bool isRegionMappedForWrite(const cl::MemoryRegion &region) const;
+    bool isPtrMapped(const void *) const;
+    angle::Result addMappedRegion(const MapFlags flags,
+                                  const void *mappedPtr,
+                                  cl::MemoryRegion region);
+    // Pop a mapped region from the tracker given a mappedPtr. This info will be passed down to the
+    // backend for unmap. addMappedRegion and popMappedRegion must be paired one-for-one.
+    cl::MappedRegionInfo<const void *> popMappedRegion(const void *mappedPtr);
 
+    bool hasParent() const { return IsValid(mParent.get()); }
+
+  protected:
     Memory(const Buffer &buffer,
            Context &context,
            PropArray &&properties,
@@ -72,8 +87,11 @@ class Memory : public _cl_mem, public Object
     rx::CLMemoryImpl::Ptr mImpl;
     size_t mSize;
 
-    angle::SynchronizedValue<std::stack<CallbackData>> mDestructorCallbacks;
+    DestructorCallbacks<MemoryCB> mDestructorCallbacks;
     std::atomic<cl_uint> mMapCount;
+
+    // Can have multiple active mapped read regions but just one write region.
+    angle::SynchronizedValue<cl::MemoryAccessTracker<const void *>> mMappedRegionTracker;
 
     friend class Buffer;
     friend class Context;

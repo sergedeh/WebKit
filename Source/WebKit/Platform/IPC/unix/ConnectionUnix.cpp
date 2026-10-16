@@ -38,10 +38,12 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <wtf/Assertions.h>
+#include <wtf/Borrow.h>
 #include <wtf/MallocSpan.h>
 #include <wtf/SafeStrerror.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/Threading.h>
 #include <wtf/UniStdExtras.h>
 
 #if OS(DARWIN)
@@ -127,7 +129,8 @@ bool Connection::processMessage()
     if (m_readBuffer.size() < sizeof(MessageInfo))
         return false;
 
-    auto messageData = m_readBuffer.mutableSpan();
+    Borrow readBuffer = m_readBuffer;
+    auto messageData = readBuffer->mutableSpan();
     MessageInfo messageInfo;
     memcpySpan(asMutableByteSpan(messageInfo), consumeSpan(messageData, sizeof(messageInfo)));
 
@@ -300,7 +303,7 @@ void Connection::readyReadHandler()
             }
 
             if (m_isConnected) {
-                WTFLogAlways("Error receiving IPC message on socket %d in process %d: %s", socketDescriptor(), getpid(), safeStrerror(errno).data());
+                SAFE_WTFLOGALWAYS("Error receiving IPC message on socket %d in process %d: %s", socketDescriptor(), getpid(), safeStrerror(errno));
                 connectionDidClose();
             }
             return;
@@ -472,7 +475,7 @@ bool Connection::sendOutputMessage(UnixMessage&& outputMessage)
         }
 
         if (m_isConnected)
-            WTFLogAlways("Error sending IPC message: %s", safeStrerror(errno).data());
+            SAFE_WTFLOGALWAYS("Error sending IPC message: %s", safeStrerror(errno));
         return false;
     }
 
@@ -523,7 +526,7 @@ bool Connection::sendOutgoingHardwareBuffers()
         }
 
         if (m_isConnected) {
-            LOG_ERROR("Error sending AHardwareBuffer on socket %d in process %d: %s", socketDescriptor(), getpid(), safeStrerror(-result).data());
+            LOG_ERROR("Error sending AHardwareBuffer on socket %d in process %d: %s", socketDescriptor(), getpid(), safeStrerror(-result));
             connectionDidClose();
         }
         return false;
@@ -552,7 +555,7 @@ bool Connection::receiveIncomingHardwareBuffers()
             connectionDidClose();
 
         if (m_isConnected) {
-            LOG_ERROR("Error receiving AHardwareBuffer on socket %d in process %d: %s", socketDescriptor(), getpid(), safeStrerror(-result).data());
+            LOG_ERROR("Error receiving AHardwareBuffer on socket %d in process %d: %s", socketDescriptor(), getpid(), safeStrerror(-result));
             connectionDidClose();
         }
         return false;

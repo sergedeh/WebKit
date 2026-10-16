@@ -35,6 +35,9 @@
 #include "FetchResponse.h"
 #include "FetchResponseBodyLoader.h"
 #include "JSBackgroundFetchRecord.h"
+#include "JSDOMConvertBoolean.h"
+#include "JSDOMConvertInterface.h"
+#include "JSDOMConvertSequences.h"
 #include "Node.h"
 #include "RetrieveRecordsOptions.h"
 #include "SWClientConnection.h"
@@ -68,9 +71,7 @@ BackgroundFetchRegistration::BackgroundFetchRegistration(ScriptExecutionContext&
 {
 }
 
-BackgroundFetchRegistration::~BackgroundFetchRegistration()
-{
-}
+BackgroundFetchRegistration::~BackgroundFetchRegistration() = default;
 
 void BackgroundFetchRegistration::abort(ScriptExecutionContext& context, DOMPromiseDeferred<IDLBoolean>&& promise)
 {
@@ -176,10 +177,11 @@ void BackgroundFetchRegistration::match(ScriptExecutionContext& context, Request
     }
 
     bool shouldRetrieveResponses = false;
-    RetrieveRecordsOptions retrieveOptions { requestOrException.releaseReturnValue(), context.crossOriginEmbedderPolicy(), *context.securityOrigin(), options.ignoreSearch, options.ignoreMethod, options.ignoreVary, shouldRetrieveResponses };
+    RetrieveRecordsOptions retrieveOptions { requestOrException.releaseReturnValue(), context.crossOriginEmbedderPolicy(), context.documentIsolationPolicy(), *context.securityOrigin(), options.ignoreSearch, options.ignoreMethod, options.ignoreVary, shouldRetrieveResponses };
 
     SWClientConnection::fromScriptExecutionContext(context)->matchBackgroundFetch(registrationIdentifier(), id(), WTF::move(retrieveOptions), [weakContext = WeakPtr { context }, promise = WTF::move(promise)](Vector<BackgroundFetchRecordInformation>&& results) mutable {
-        if (!weakContext)
+        RefPtr context = weakContext;
+        if (!context)
             return;
 
         if (!results.size()) {
@@ -187,7 +189,7 @@ void BackgroundFetchRegistration::match(ScriptExecutionContext& context, Request
             return;
         }
 
-        promise.resolve(createRecord(*weakContext, WTF::move(results[0])));
+        promise.resolve(createRecord(*context, WTF::move(results[0])));
     });
 }
 
@@ -205,14 +207,14 @@ void BackgroundFetchRegistration::matchAll(ScriptExecutionContext& context, std:
     }
 
     bool shouldRetrieveResponses = false;
-    RetrieveRecordsOptions retrieveOptions { requestOrException.releaseReturnValue(), context.crossOriginEmbedderPolicy(), *context.securityOrigin(), options.ignoreSearch, options.ignoreMethod, options.ignoreVary, shouldRetrieveResponses };
+    RetrieveRecordsOptions retrieveOptions { requestOrException.releaseReturnValue(), context.crossOriginEmbedderPolicy(), context.documentIsolationPolicy(), *context.securityOrigin(), options.ignoreSearch, options.ignoreMethod, options.ignoreVary, shouldRetrieveResponses };
 
     SWClientConnection::fromScriptExecutionContext(context)->matchBackgroundFetch(registrationIdentifier(), id(), WTF::move(retrieveOptions), [weakContext = WeakPtr { context }, promise = WTF::move(promise)](auto&& results) mutable {
         if (!weakContext)
             return;
 
         auto records = WTF::map(results, [&weakContext](auto& result) {
-            return createRecord(*weakContext, WTF::move(result));
+            return createRecord(*protect(weakContext), WTF::move(result));
         });
 
         promise.resolve(WTF::move(records));
@@ -235,8 +237,9 @@ void BackgroundFetchRegistration::updateInformation(const BackgroundFetchInforma
     m_information.result = information.result;
     m_information.failureReason = information.failureReason;
     m_information.recordsAvailable = information.recordsAvailable;
-    
-    dispatchEvent(Event::create(eventNames().progressEvent, Event::CanBubble::No, Event::IsCancelable::No));
+
+    // FIXME: We should update m_information as part of the task that fires the event.
+    queueTaskToDispatchEvent(*this, TaskSource::Networking, Event::create(eventNames().progressEvent, Event::CanBubble::No, Event::IsCancelable::No));
 }
 
 ScriptExecutionContext* BackgroundFetchRegistration::scriptExecutionContext() const

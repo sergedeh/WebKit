@@ -47,15 +47,15 @@ public:
         return adoptRef(*new GPUAdapter(WTF::move(backing)));
     }
 
-    String name() const;
-    Ref<GPUSupportedFeatures> features() const;
-    Ref<GPUSupportedLimits> limits() const;
-    bool isFallbackAdapter() const;
+    String LEGACY_NODELETE name() const;
+    Ref<GPUSupportedFeatures> LEGACY_NODELETE features() const;
+    Ref<GPUSupportedLimits> LEGACY_NODELETE limits() const;
+    bool LEGACY_NODELETE isFallbackAdapter() const;
 
     using RequestDevicePromise = DOMPromiseDeferred<IDLInterface<GPUDevice>>;
     void requestDevice(ScriptExecutionContext&, const std::optional<GPUDeviceDescriptor>&, RequestDevicePromise&&);
 
-    Ref<GPUAdapterInfo> info();
+    Ref<GPUAdapterInfo> LEGACY_NODELETE info();
 
     WebGPU::Adapter& backing() { return m_backing; }
     const WebGPU::Adapter& backing() const { return m_backing; }
@@ -64,9 +64,9 @@ private:
     GPUAdapter(Ref<WebGPU::Adapter>&& backing);
 
     const Ref<WebGPU::Adapter> m_backing;
-    Ref<GPUSupportedFeatures> m_features;
-    Ref<GPUSupportedLimits> m_limits;
-    Ref<GPUAdapterInfo> m_info;
+    const Ref<GPUSupportedFeatures> m_features;
+    const Ref<GPUSupportedLimits> m_limits;
+    const Ref<GPUAdapterInfo> m_info;
 };
 
 }

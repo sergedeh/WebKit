@@ -47,13 +47,14 @@ struct TransformFunction : TransformFunctionWrapper<TransformFunctionBase> {
 // MARK: - Conversion
 
 template<> struct CSSValueConversion<TransformFunction> { auto operator()(BuilderState&, const CSSValue&) -> TransformFunction; };
-template<> struct CSSValueCreation<TransformFunction> { auto operator()(CSSValuePool&, const RenderStyle&, const TransformFunction&) -> Ref<CSSValue>; };
-template<> struct CSSValueCreation<TransformationMatrix> { auto operator()(CSSValuePool&, const RenderStyle&, const TransformationMatrix&) -> Ref<CSSValue>; };
+template<> struct CSSValueCreation<TransformFunction> { auto operator()(CSSValuePool&, const Style::ComputedStyle&, const TransformFunction&) -> Ref<CSSValue>; };
+template<> struct CSSValueCreation<TransformationMatrix> { auto operator()(CSSValuePool&, const Style::ComputedStyle&, const TransformationMatrix&) -> Ref<CSSValue>; };
+template<> struct DeprecatedCSSOMValueCreation<TransformFunction> { Ref<DeprecatedCSSOMValue> operator()(CSSValuePool&, const Style::ComputedStyle&, CSSStyleDeclaration&, const TransformFunction&); };
 
 // MARK: - Serialization
 
-template<> struct Serialize<TransformFunction> { void operator()(StringBuilder&, const CSS::SerializationContext&, const RenderStyle&, const TransformFunction&); };
-template<> struct Serialize<TransformationMatrix> { void operator()(StringBuilder&, const CSS::SerializationContext&, const RenderStyle&, const TransformationMatrix&); };
+template<> struct Serialize<TransformFunction> { void operator()(StringBuilder&, const CSS::SerializationContext&, const Style::ComputedStyle&, const TransformFunction&); };
+template<> struct Serialize<TransformationMatrix> { void operator()(StringBuilder&, const CSS::SerializationContext&, const Style::ComputedStyle&, const TransformationMatrix&); };
 
 // MARK: - Blending
 
@@ -63,7 +64,7 @@ template<> struct Blending<TransformFunction> {
 
 // MARK: - Platform
 
-template<> struct ToPlatform<TransformFunction> { auto operator()(const TransformFunction&, const FloatSize&) -> Ref<TransformOperation>; };
+template<> struct ToPlatform<TransformFunction> { auto operator()(const TransformFunction&, const FloatSize&, ZoomFactor) -> Ref<TransformOperation>; };
 
 // MARK: - Logging
 

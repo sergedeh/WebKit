@@ -5,19 +5,19 @@
 //
 // CLPlatformVk.cpp: Implements the class methods for CLPlatformVk.
 
-#include "libANGLE/renderer/vulkan/CLPlatformVk.h"
+#include "anglebase/no_destructor.h"
+#include "common/angle_version_info.h"
 #include "common/vulkan/vulkan_icd.h"
-#include "libANGLE/angletypes.h"
+
 #include "libANGLE/renderer/vulkan/CLContextVk.h"
 #include "libANGLE/renderer/vulkan/CLDeviceVk.h"
+#include "libANGLE/renderer/vulkan/CLPlatformVk.h"
 #include "libANGLE/renderer/vulkan/vk_renderer.h"
+#include "libANGLE/renderer/vulkan/vk_utils.h"
 
 #include "libANGLE/CLPlatform.h"
 #include "libANGLE/cl_utils.h"
 
-#include "anglebase/no_destructor.h"
-#include "common/angle_version_info.h"
-#include "libANGLE/renderer/vulkan/vk_utils.h"
 #include "vulkan/vulkan_core.h"
 
 namespace rx
@@ -31,11 +31,6 @@ constexpr vk::UseDebugLayers kUseDebugLayers = vk::UseDebugLayers::YesIfAvailabl
 constexpr vk::UseDebugLayers kUseDebugLayers = vk::UseDebugLayers::No;
 #endif
 
-#if defined(ANGLE_OPENCL_COMPUTE_ONLY_PIPE)
-constexpr bool kUseComputeOnlyQueue = true;
-#else
-constexpr bool kUseComputeOnlyQueue = false;
-#endif
 }  // namespace
 
 angle::Result CLPlatformVk::initBackendRenderer()
@@ -81,18 +76,33 @@ CLPlatformImpl::Info CLPlatformVk::createInfo() const
     // check all devices to see which device-extensions can be promoted to platform-extensions
     bool platformSupportsBaseInt64Atomics     = true;
     bool platformSupportsExtendedInt64Atomics = true;
+    bool platformSupportsDepthImages          = true;
     CLExtensions::ExternalMemoryHandleBitset supportedHandles;
     supportedHandles.set();  // set support for all types initially
     for (const cl::DevicePtr &platformDevice : mPlatform.getDevices())
     {
         platformSupportsBaseInt64Atomics &= platformDevice->getInfo().khrInt64BaseAtomics;
         platformSupportsExtendedInt64Atomics &= platformDevice->getInfo().khrInt64ExtendedAtomics;
+        platformSupportsDepthImages &= platformDevice->getInfo().khrDepthImages;
         supportedHandles &= platformDevice->getInfo().externalMemoryHandleSupport;
     }
 
     if (info.populateSupportedExternalMemoryHandleTypes(supportedHandles))
     {
         extList.push_back(cl_name_version{CL_MAKE_VERSION(1, 0, 0), "cl_khr_external_memory"});
+
+        // cl_arm_import_memory is layered on top of cl_arm_import_memory
+        bool reportBaseArmImportMemString = false;
+        if (supportedHandles.test(cl::ExternalMemoryHandle::DmaBuf))
+        {
+            extList.push_back(
+                cl_name_version{CL_MAKE_VERSION(1, 0, 0), "cl_arm_import_memory_dma_buf"});
+            reportBaseArmImportMemString = true;
+        }
+        if (reportBaseArmImportMemString)
+        {
+            extList.push_back(cl_name_version{CL_MAKE_VERSION(1, 11, 0), "cl_arm_import_memory"});
+        }
     }
     if (platformSupportsBaseInt64Atomics)
     {
@@ -102,6 +112,11 @@ CLPlatformImpl::Info CLPlatformVk::createInfo() const
     {
         extList.push_back(
             cl_name_version{CL_MAKE_VERSION(1, 0, 0), "cl_khr_int64_extended_atomics"});
+    }
+    if (platformSupportsDepthImages)
+    {
+        extList.push_back(
+            cl_name_version{.version = CL_MAKE_VERSION(1, 0, 0), .name = "cl_khr_depth_images"});
     }
 
     info.initializeVersionedExtensions(std::move(extList));
@@ -114,7 +129,7 @@ CLDeviceImpl::CreateDatas CLPlatformVk::createDevices() const
     CLDeviceImpl::CreateDatas createDatas;
 
     // Convert Vk device type to CL equivalent
-    cl_device_type type = CL_DEVICE_TYPE_DEFAULT;
+    cl_device_type type = 0;
     switch (mRenderer->getPhysicalDeviceProperties().deviceType)
     {
         case VK_PHYSICAL_DEVICE_TYPE_CPU:
@@ -157,38 +172,30 @@ angle::Result CLPlatformVk::createContextFromType(cl::Context &context,
                                                   bool userSync,
                                                   CLContextImpl::Ptr *contextOut)
 {
-    const VkPhysicalDeviceType &vkPhysicalDeviceType =
-        getRenderer()->getPhysicalDeviceProperties().deviceType;
+    cl::DevicePtrs devices;
+    const bool requestForAll     = deviceType.intersects(CL_DEVICE_TYPE_ALL);
+    const bool requestForDefault = deviceType.intersects(CL_DEVICE_TYPE_DEFAULT);
 
-    if (deviceType.intersects(CL_DEVICE_TYPE_CPU) &&
-        vkPhysicalDeviceType != VK_PHYSICAL_DEVICE_TYPE_CPU)
+    if (requestForAll)
     {
-        ANGLE_CL_RETURN_ERROR(CL_DEVICE_NOT_FOUND);
+        devices = mPlatform.getDevices();
     }
-    else if (deviceType.intersects(CL_DEVICE_TYPE_GPU | CL_DEVICE_TYPE_DEFAULT))
+    else if (requestForDefault)
     {
-        switch (vkPhysicalDeviceType)
+        if (!mPlatform.getDevices().empty())
         {
-            case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:
-            case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:
-            case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU:
-                break;
-            default:
-                ANGLE_CL_RETURN_ERROR(CL_DEVICE_NOT_FOUND);
+            devices.push_back(mPlatform.getDevices().front());
         }
     }
     else
     {
-        ANGLE_CL_RETURN_ERROR(CL_DEVICE_NOT_FOUND);
-    }
-
-    cl::DevicePtrs devices;
-    for (const auto &platformDevice : mPlatform.getDevices())
-    {
-        const auto &platformDeviceInfo = platformDevice->getInfo();
-        if (platformDeviceInfo.type.intersects(deviceType))
+        for (const auto &platformDevice : mPlatform.getDevices())
         {
-            devices.push_back(platformDevice);
+            const auto &platformDeviceInfo = platformDevice->getInfo();
+            if (platformDeviceInfo.type.intersects(deviceType))
+            {
+                devices.push_back(platformDevice);
+            }
         }
     }
 
@@ -251,14 +258,8 @@ void CLPlatformVk::handleError(VkResult result,
 
 angle::NativeWindowSystem CLPlatformVk::getWindowSystem()
 {
-    if (kUseComputeOnlyQueue)
-    {
-        return angle::NativeWindowSystem::NullCompute;
-    }
-    else
-    {
-        return angle::NativeWindowSystem::Other;
-    }
+    // This is an indicator that renderer will be used for OpenCL
+    return angle::NativeWindowSystem::NullCompute;
 }
 
 const char *CLPlatformVk::getWSIExtension()

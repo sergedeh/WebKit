@@ -86,13 +86,14 @@ void DownloadProxy::cancel(CompletionHandler<void(API::Data*)>&& completionHandl
 {
     m_downloadIsCancelled = true;
     if (m_dataStore) {
-        protectedDataStore()->protectedNetworkProcess()->sendWithAsyncReply(Messages::NetworkProcess::CancelDownload(m_downloadID), [weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)] (std::span<const uint8_t> resumeData) mutable {
-            RefPtr protectedThis = weakThis.get();
+        protect(protect(m_dataStore)->networkProcess())->sendWithAsyncReply(Messages::NetworkProcess::CancelDownload(m_downloadID), [weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)] (std::span<const uint8_t> resumeData) mutable {
+            RefPtr protectedThis = weakThis;
             if (!protectedThis)
                 return completionHandler(nullptr);
-            protectedThis->m_legacyResumeData = createData(resumeData);
-            completionHandler(protectedThis->m_legacyResumeData.get());
-            if (RefPtr downloadProxyMap = protectedThis->m_downloadProxyMap.get())
+            RefPtr legacyResumeData = createData(resumeData);
+            protectedThis->m_legacyResumeData = legacyResumeData;
+            completionHandler(legacyResumeData);
+            if (RefPtr downloadProxyMap = protectedThis->m_downloadProxyMap)
                 downloadProxyMap->downloadFinished(*protectedThis);
         });
     } else
@@ -107,7 +108,7 @@ void DownloadProxy::invalidate()
 
 void DownloadProxy::processDidClose()
 {
-    protectedClient()->processDidCrash(*this);
+    protect(client())->processDidCrash(*this);
 }
 
 WebPageProxy* DownloadProxy::originatingPage() const
@@ -125,7 +126,7 @@ void DownloadProxy::didStart(const ResourceRequest& request, const String& sugge
 
     if (m_didStartCallback)
         m_didStartCallback(this);
-    protectedClient()->legacyDidStart(*this);
+    protect(client())->legacyDidStart(*this);
 }
 
 void DownloadProxy::didReceiveAuthenticationChallenge(AuthenticationChallenge&& authenticationChallenge, AuthenticationChallengeIdentifier challengeID)
@@ -135,12 +136,12 @@ void DownloadProxy::didReceiveAuthenticationChallenge(AuthenticationChallenge&& 
         return;
 
     auto authenticationChallengeProxy = AuthenticationChallengeProxy::create(WTF::move(authenticationChallenge), challengeID, dataStore->networkProcess().connection(), nullptr);
-    protectedClient()->didReceiveAuthenticationChallenge(*this, authenticationChallengeProxy.get());
+    protect(client())->didReceiveAuthenticationChallenge(*this, authenticationChallengeProxy.get());
 }
 
 void DownloadProxy::willSendRequest(ResourceRequest&& proposedRequest, const ResourceResponse& redirectResponse, CompletionHandler<void(ResourceRequest&&)>&& completionHandler)
 {
-    protectedClient()->willSendRequest(*this, WTF::move(proposedRequest), redirectResponse, [this, protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler)] (ResourceRequest&& newRequest) mutable {
+    protect(client())->willSendRequest(*this, WTF::move(proposedRequest), redirectResponse, [this, protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler)] (ResourceRequest&& newRequest) mutable {
         m_redirectChain.append(newRequest.url());
         completionHandler(WTF::move(newRequest));
     });
@@ -148,22 +149,41 @@ void DownloadProxy::willSendRequest(ResourceRequest&& proposedRequest, const Res
 
 void DownloadProxy::didReceiveData(uint64_t bytesWritten, uint64_t totalBytesWritten, uint64_t totalBytesExpectedToWrite)
 {
-    protectedClient()->didReceiveData(*this, bytesWritten, totalBytesWritten, totalBytesExpectedToWrite);
+    protect(client())->didReceiveData(*this, bytesWritten, totalBytesWritten, totalBytesExpectedToWrite);
 }
+
+// https://html.spec.whatwg.org/#getting-the-suggested-filename
+enum class FilenameSource : uint8_t {
+    ContentDisposition, // Content-Disposition header with filename
+    DownloadAttribute, // <a download="name.ext">
+    URLDerived, // Derived from the response URL
+    UserAgent, // UA fallback
+};
 
 void DownloadProxy::decideDestinationWithSuggestedFilename(const WebCore::ResourceResponse& response, String&& suggestedFilename, DecideDestinationCallback&& completionHandler)
 {
     RELEASE_LOG_INFO_IF(!response.expectedContentLength(), Network, "DownloadProxy::decideDestinationWithSuggestedFilename expectedContentLength is null");
 
-    // As per https://html.spec.whatwg.org/#as-a-download (step 2), the filename from the Content-Disposition header
-    // should override the suggested filename from the download attribute.
-    if (response.isAttachmentWithFilename() || (suggestedFilename.isEmpty() && m_suggestedFilename.isEmpty()))
+    // As per https://html.spec.whatwg.org/#getting-the-suggested-filename, the filename from the
+    // Content-Disposition header should override the suggested filename from the download attribute.
+    auto filenameSource = FilenameSource::URLDerived;
+    if (response.isAttachmentWithFilename()) {
         suggestedFilename = response.suggestedFilename();
-    else if (!m_suggestedFilename.isEmpty())
+        filenameSource = FilenameSource::ContentDisposition;
+    } else if (!m_suggestedFilename.isEmpty()) {
         suggestedFilename = m_suggestedFilename;
-    suggestedFilename = MIMETypeRegistry::appendFileExtensionIfNecessary(suggestedFilename, response.mimeType());
+        filenameSource = FilenameSource::DownloadAttribute;
+    } else if (suggestedFilename.isEmpty())
+        suggestedFilename = response.suggestedFilename();
 
-    protectedClient()->decideDestinationWithSuggestedFilename(*this, response, ResourceResponseBase::sanitizeSuggestedFilename(suggestedFilename), [this, protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler)] (AllowOverwrite allowOverwrite, String destination) mutable {
+    // Correct the file extension to match the Content-Type for URL-derived filenames (rdar://147183354),
+    // or append an extension if the filename doesn't have one.
+    if (filenameSource == FilenameSource::URLDerived)
+        suggestedFilename = MIMETypeRegistry::correctExtensionForMIMEType(suggestedFilename, response.mimeType());
+    else
+        suggestedFilename = MIMETypeRegistry::appendFileExtensionIfNecessary(suggestedFilename, response.mimeType());
+
+    protect(client())->decideDestinationWithSuggestedFilename(*this, response, ResourceResponseBase::sanitizeSuggestedFilename(suggestedFilename), [this, protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler)] (AllowOverwrite allowOverwrite, String destination) mutable {
         SandboxExtension::Handle sandboxExtensionHandle;
         if (!destination.isNull()) {
             if (auto handle = SandboxExtension::createHandle(destination, SandboxExtension::Type::ReadWrite))
@@ -172,7 +192,7 @@ void DownloadProxy::decideDestinationWithSuggestedFilename(const WebCore::Resour
 
         setDestinationFilename(destination);
 
-        protectedClient()->decidePlaceholderPolicy(*this, [completionHandler = WTF::move(completionHandler), destination = WTF::move(destination), sandboxExtensionHandle = WTF::move(sandboxExtensionHandle), allowOverwrite] (WebKit::UseDownloadPlaceholder usePlaceholder, const URL& url) mutable {
+        protect(client())->decidePlaceholderPolicy(*this, [completionHandler = WTF::move(completionHandler), destination = WTF::move(destination), sandboxExtensionHandle = WTF::move(sandboxExtensionHandle), allowOverwrite] (WebKit::UseDownloadPlaceholder usePlaceholder, const URL& url) mutable {
 
             SandboxExtension::Handle placeHolderSandboxExtensionHandle;
             Vector<uint8_t> bookmarkData;
@@ -191,7 +211,7 @@ void DownloadProxy::decideDestinationWithSuggestedFilename(const WebCore::Resour
 
 void DownloadProxy::didCreateDestination(const String& path)
 {
-    protectedClient()->didCreateDestination(*this, path);
+    protect(client())->didCreateDestination(*this, path);
 }
 
 #if PLATFORM(MAC)
@@ -204,7 +224,7 @@ void DownloadProxy::updateQuarantinePropertiesIfPossible()
     if (!file)
         return;
 
-    auto error = qtn_file_init_with_path(file.get(), path.data());
+    auto error = qtn_file_init_with_path(file.get(), path.legacyCStringPointer());
     if (error)
         return;
 
@@ -215,7 +235,7 @@ void DownloadProxy::updateQuarantinePropertiesIfPossible()
     if (error)
         return;
 
-    qtn_file_apply_to_path(file.get(), path.data());
+    qtn_file_apply_to_path(file.get(), path.legacyCStringPointer());
 }
 #endif
 
@@ -224,12 +244,12 @@ void DownloadProxy::didFinish()
 #if PLATFORM(MAC)
     updateQuarantinePropertiesIfPossible();
 #endif
-    protectedClient()->didFinish(*this);
+    protect(client())->didFinish(*this);
     if (m_downloadIsCancelled)
         return;
 
     // This can cause the DownloadProxy object to be deleted.
-    if (RefPtr downloadProxyMap = m_downloadProxyMap.get())
+    if (RefPtr downloadProxyMap = m_downloadProxyMap)
         downloadProxyMap->downloadFinished(*this);
 }
 
@@ -238,23 +258,19 @@ void DownloadProxy::didFail(const ResourceError& error, std::span<const uint8_t>
     if (m_downloadIsCancelled)
         return;
 
-    m_legacyResumeData = createData(resumeData);
+    RefPtr legacyResumeData = createData(resumeData);
+    m_legacyResumeData = legacyResumeData;
 
-    protectedClient()->didFail(*this, error, m_legacyResumeData.get());
+    protect(client())->didFail(*this, error, legacyResumeData);
 
     // This can cause the DownloadProxy object to be deleted.
-    if (RefPtr downloadProxyMap = m_downloadProxyMap.get())
+    if (RefPtr downloadProxyMap = m_downloadProxyMap)
         downloadProxyMap->downloadFinished(*this);
 }
 
 void DownloadProxy::setClient(Ref<API::DownloadClient>&& client)
 {
     m_client = WTF::move(client);
-}
-
-Ref<API::DownloadClient> DownloadProxy::protectedClient() const
-{
-    return m_client;
 }
 
 } // namespace WebKit

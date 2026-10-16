@@ -254,7 +254,7 @@ func (b *TaskBuilder) usesCCache() {
 // shellsOutToBazel returns true if this task normally uses GN but some step
 // shells out to Bazel to build stuff, e.g. rust code.
 func (b *TaskBuilder) shellsOutToBazel() bool {
-	return b.ExtraConfig("Fontations", "RustPNG")
+	return b.ExtraConfig("Fontations", "RustALL", "RustPNG", "ICU4X")
 }
 
 func (b *TaskBuilder) usesCMake() {
@@ -274,7 +274,7 @@ func (b *TaskBuilder) usesCMake() {
 // usesGit adds attributes to tasks which use git.
 func (b *TaskBuilder) usesGit() {
 	b.cache(CACHES_GIT...)
-	b.cipd(specs.CIPD_PKGS_GIT...)
+	b.cipd(setPkgPaths("cipd_bin_packages", specs.CIPD_PKGS_GIT...)...)
 	b.addToPATH("cipd_bin_packages", "cipd_bin_packages/bin")
 }
 
@@ -331,10 +331,14 @@ func (b *TaskBuilder) usesDocker() {
 	b.usesPython()
 }
 
-// usesGSUtil adds the gsutil dependency from CIPD and puts it on PATH.
-func (b *TaskBuilder) usesGSUtil() {
-	b.asset("gsutil")
-	b.addToPATH("gsutil/gsutil")
+// usesGCloud adds the gcloud dependency from CIPD and puts it on PATH.
+func (b *TaskBuilder) usesGCloud() {
+	b.cipd(&specs.CipdPackage{
+		Name:    "infra/3pp/tools/gcloud/${platform}",
+		Version: "version:3@577.0.0.chromium.4",
+		Path:    "cipd_bin_packages/gcloud",
+	})
+	b.addToPATH("cipd_bin_packages/gcloud/bin")
 }
 
 // needsFontsForParagraphTests downloads the skparagraph CIPD package to
@@ -391,7 +395,8 @@ func (b *TaskBuilder) getRecipeProps() string {
 
 // usesPython adds attributes to tasks which use python.
 func (b *TaskBuilder) usesPython() {
-	b.cipd(cipd.PkgsPython...)
+	b.cipd(getCIPDPackage("infra/3pp/tools/cpython3/${platform}", "cipd_bin_packages/cpython3"))
+	b.cipd(getCIPDPackage("infra/tools/luci/vpython3/${platform}", "cipd_bin_packages"))
 	b.addToPATH(
 		"cipd_bin_packages/cpython3",
 		"cipd_bin_packages/cpython3/bin",
@@ -402,6 +407,22 @@ func (b *TaskBuilder) usesPython() {
 	})
 	b.envPrefixes("VPYTHON_VIRTUALENV_ROOT", "cache/vpython3")
 	b.env("VPYTHON_LOG_TRACE", "1")
+}
+
+func (b *TaskBuilder) usesXCode() {
+	b.cipd(&specs.CipdPackage{
+		Name: "infra/tools/mac_toolchain/${platform}",
+		Path: "mac_toolchain",
+		// When this is updated, also update
+		// https://skia.googlesource.com/skcms.git/+/f1e2b45d18facbae2dece3aca673fe1603077846/infra/bots/gen_tasks.go#56
+		// and
+		// https://skia.googlesource.com/skia.git/+/main/infra/bots/recipe_modules/xcode/api.py#38
+		Version: "git_revision:0cb1e51344de158f72524c384f324465aebbcef2",
+	})
+	b.Spec.Caches = append(b.Spec.Caches, &specs.Cache{
+		Name: "xcode",
+		Path: "cache/Xcode.app",
+	})
 }
 
 func (b *TaskBuilder) usesLUCIAuth() {
@@ -453,7 +474,7 @@ func (b *TaskBuilder) goPlatform() (string, string) {
 	arch := "amd64"
 	if b.Role("Upload") {
 		arch = "amd64"
-	} else if b.MatchArch("Arm64") || b.MatchBazelHost("on_rpi") || b.MatchOs("Android", "ChromeOS", "iOS") {
+	} else if b.MatchArch("Arm64") || b.MatchBazelHost("on_rpi", "arm64") || b.MatchOs("Android", "ChromeOS", "iOS") {
 		// Tests on Android/ChromeOS/iOS are hosted on RPI.
 		// WARNING: This assumption is not necessarily true with Android devices
 		// hosted in other environments.

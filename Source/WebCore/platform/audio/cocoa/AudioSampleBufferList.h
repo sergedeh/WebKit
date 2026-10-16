@@ -56,15 +56,16 @@ public:
     OSStatus mixFrom(const AudioSampleBufferList&, size_t count = SIZE_MAX);
 
     OSStatus mixFrom(const AudioBufferList&, size_t count = SIZE_MAX);
+    OSStatus mixTo(AudioBufferList&, size_t count = SIZE_MAX);
     OSStatus copyTo(AudioBufferList&, size_t count = SIZE_MAX);
 
-    const AudioStreamBasicDescription& streamDescription() const { return m_internalFormat.streamDescription(); }
-    const WebAudioBufferList& bufferList() const { return m_bufferList; }
-    WebAudioBufferList& bufferList() { return m_bufferList; }
+    const AudioStreamBasicDescription& streamDescription() const LIFETIME_BOUND { return m_internalFormat.streamDescription(); }
+    const WebAudioBufferList& bufferList() const LIFETIME_BOUND { return m_bufferList; }
+    WebAudioBufferList& bufferList() LIFETIME_BOUND { return m_bufferList; }
 
     uint32_t sampleCapacity() const { return m_sampleCapacity; }
     uint32_t sampleCount() const { return m_sampleCount; }
-    void setSampleCount(size_t);
+    void LEGACY_NODELETE setSampleCount(size_t);
 
     uint64_t timestamp() const { return m_timestamp; }
     double hostTime() const { return m_hostTime; }
@@ -85,13 +86,12 @@ protected:
     size_t m_sampleCount { 0 };
     size_t m_sampleCapacity { 0 };
     size_t m_maxBufferSizePerChannel { 0 };
-    size_t m_bufferListBaseSize { 0 };
     const UniqueRef<WebAudioBufferList> m_bufferList;
 };
 
 inline size_t AudioSampleBufferList::audioBufferListSizeForStream(const CAAudioStreamDescription& description)
 {
-    return offsetof(AudioBufferList, mBuffers) + (sizeof(AudioBuffer) * std::max<uint32_t>(1, description.numberOfChannelStreams()));
+    return offsetof(AudioBufferList, mBuffers) + (sizeof(::AudioBuffer) * std::max<uint32_t>(1, description.numberOfChannelStreams()));
 }
 
 } // namespace WebCore

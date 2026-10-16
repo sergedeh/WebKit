@@ -50,21 +50,23 @@
 #include "WorkerScriptFetcher.h"
 #include <JavaScriptCore/AbstractModuleRecord.h>
 #include <JavaScriptCore/BuiltinNames.h>
+#include <JavaScriptCore/CommonIdentifiers.h>
 #include <JavaScriptCore/Completion.h>
 #include <JavaScriptCore/DeferTermination.h>
 #include <JavaScriptCore/DeferredWorkTimer.h>
+#include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/ExceptionHelpers.h>
 #include <JavaScriptCore/GCActivityCallback.h>
+#include <JavaScriptCore/JSCJSValuePropertyInlines.h>
 #include <JavaScriptCore/JSGlobalProxyInlines.h>
-#include <JavaScriptCore/JSInternalPromise.h>
 #include <JavaScriptCore/JSLock.h>
 #include <JavaScriptCore/JSModuleRecord.h>
 #include <JavaScriptCore/JSNativeStdFunction.h>
-#include <JavaScriptCore/JSScriptFetchParameters.h>
-#include <JavaScriptCore/JSScriptFetcher.h>
 #include <JavaScriptCore/ScriptCallStack.h>
 #include <JavaScriptCore/StrongInlines.h>
+#include <JavaScriptCore/StructureInlines.h>
+#include <JavaScriptCore/Symbol.h>
 #include <JavaScriptCore/SyntheticModuleRecord.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/WebAssemblyModuleRecord.h>
@@ -169,8 +171,8 @@ void WorkerOrWorkletScriptController::addTimerSetNotification(JSC::JSRunLoopTime
         timer->addTimerSetNotification(callback);
     };
 
-    processTimer(m_vm->heap.protectedFullActivityCallback().get());
-    processTimer(m_vm->heap.protectedEdenActivityCallback().get());
+    processTimer(protect(m_vm->heap.fullActivityCallback()).get());
+    processTimer(protect(m_vm->heap.edenActivityCallback()).get());
     processTimer(m_vm->deferredWorkTimer.ptr());
 }
 
@@ -182,8 +184,8 @@ void WorkerOrWorkletScriptController::removeTimerSetNotification(JSC::JSRunLoopT
         timer->removeTimerSetNotification(callback);
     };
 
-    processTimer(m_vm->heap.protectedFullActivityCallback().get());
-    processTimer(m_vm->heap.protectedEdenActivityCallback().get());
+    processTimer(protect(m_vm->heap.fullActivityCallback()).get());
+    processTimer(protect(m_vm->heap.edenActivityCallback()).get());
     processTimer(m_vm->deferredWorkTimer.ptr());
 }
 
@@ -237,10 +239,10 @@ void WorkerOrWorkletScriptController::evaluate(const ScriptSourceCode& sourceCod
     }
 }
 
-void WorkerOrWorkletScriptController::evaluate(const ScriptSourceCode& sourceCode, NakedPtr<JSC::Exception>& returnedException, String* returnedExceptionMessage)
+auto WorkerOrWorkletScriptController::evaluate(const ScriptSourceCode& sourceCode, NakedPtr<JSC::Exception>& returnedException, String* returnedExceptionMessage) -> ParseResult
 {
     if (isExecutionForbidden())
-        return;
+        return ParseResult::Failed;
 
     initScriptIfNeeded();
 
@@ -260,11 +262,20 @@ void WorkerOrWorkletScriptController::evaluate(const ScriptSourceCode& sourceCod
 
     if ((returnedException && vm.isTerminationException(returnedException)) || isTerminatingExecution()) {
         forbidExecution();
-        return;
+        return ParseResult::Failed;
     }
 
     if (returnedException) {
-        if (globalScope->canIncludeErrorDetails(sourceCode.cachedScript(), sourceCode.url().string())) {
+        bool isParseErrorForThisSource = false;
+        if (auto* errorInstance = dynamicDowncast<JSC::ErrorInstance>(returnedException->value())) {
+            if (errorInstance->isParseError()) {
+                JSValue errorSourceURL = errorInstance->getDirect(vm, vm.propertyNames->sourceURL);
+                if (errorSourceURL && errorSourceURL.isString() && asString(errorSourceURL)->tryGetValue() == jsSourceCode.provider()->sourceURL())
+                    isParseErrorForThisSource = true;
+            }
+        }
+
+        if (globalScope->canIncludeErrorDetails(protect(sourceCode.cachedScript()), sourceCode.url().string())) {
             // FIXME: It's not great that this can run arbitrary code to string-ify the value of the exception.
             // Do we need to do anything to handle that properly, if it, say, raises another exception?
             if (returnedExceptionMessage)
@@ -276,13 +287,17 @@ void WorkerOrWorkletScriptController::evaluate(const ScriptSourceCode& sourceCod
                 *returnedExceptionMessage = genericErrorMessage;
             returnedException = JSC::Exception::create(vm, createError(&globalObject, genericErrorMessage));
         }
+
+        return isParseErrorForThisSource ? ParseResult::Failed : ParseResult::Succeeded;
     }
+
+    return ParseResult::Succeeded;
 }
 
 static Identifier jsValueToModuleKey(JSGlobalObject* lexicalGlobalObject, JSValue value)
 {
     if (value.isSymbol())
-        return Identifier::fromUid(jsCast<Symbol*>(value)->privateName());
+        return Identifier::fromUid(uncheckedDowncast<Symbol>(value)->privateName());
     ASSERT(value.isString());
     return asString(value)->toIdentifier(lexicalGlobalObject);
 }
@@ -306,7 +321,7 @@ JSC::JSValue WorkerOrWorkletScriptController::evaluateModule(const URL& sourceUR
     } else if (moduleRecord.inherits<JSC::SyntheticModuleRecord>())
         InspectorInstrumentation::willEvaluateScript(*globalScope, sourceURL.string(), 1, 1);
     else {
-        auto* jsModuleRecord = jsCast<JSModuleRecord*>(&moduleRecord);
+        auto* jsModuleRecord = downcast<JSModuleRecord>(&moduleRecord);
         const auto& jsSourceCode = jsModuleRecord->sourceCode();
         InspectorInstrumentation::willEvaluateScript(*globalScope, sourceURL.string(), jsSourceCode.firstLine().oneBasedInt(), jsSourceCode.startColumn().oneBasedInt());
     }
@@ -330,7 +345,12 @@ bool WorkerOrWorkletScriptController::loadModuleSynchronously(WorkerScriptFetche
 
     Ref protector { scriptFetcher };
     {
-        auto* promise = JSExecState::loadModule(globalObject, sourceCode.jsSourceCode(), JSC::JSScriptFetcher::create(vm, { &scriptFetcher }));
+        JSC::JSPromise* promise;
+        if (sourceCode.url().isValid()) {
+            Identifier key = Identifier::fromString(vm, sourceCode.url().string());
+            promise = JSExecState::loadModule(globalObject, key, sourceCode.jsSourceCode(), protector.ptr());
+        } else
+            promise = JSExecState::loadModule(globalObject, sourceCode.jsSourceCode(), protector.ptr());
         scope.assertNoExceptionExceptTermination();
         RETURN_IF_EXCEPTION(scope, false);
 
@@ -414,10 +434,11 @@ bool WorkerOrWorkletScriptController::loadModuleSynchronously(WorkerScriptFetche
     }
 
     RefPtr globalScope = m_globalScope.get();
-    globalScope->eventLoop().performMicrotaskCheckpoint();
+    globalScope->eventLoop().performMicrotaskCheckpoint(*m_vm);
 
     // Drive RunLoop until we get either of "Worker is terminated", "Loading is done", or "Loading is failed".
-    WorkerRunLoop& runLoop = globalScope->workerOrWorkletThread()->runLoop();
+    RefPtr workerOrWorkletThread = globalScope->workerOrWorkletThread();
+    auto& runLoop = workerOrWorkletThread->runLoop();
 
     // We do not want to receive messages that are not related to asynchronous resource loading.
     // Otherwise, a worker discards some messages from the main thread here in a racy way.
@@ -433,7 +454,7 @@ bool WorkerOrWorkletScriptController::loadModuleSynchronously(WorkerScriptFetche
     while ((!protector->isLoaded() && !protector->wasCanceled()) && success) {
         success = runLoop.runInMode(globalScope.get(), taskMode, allowEventLoopTasks);
         if (success)
-            globalScope->eventLoop().performMicrotaskCheckpoint();
+            globalScope->eventLoop().performMicrotaskCheckpoint(*m_vm);
     }
 
     return success;
@@ -451,14 +472,14 @@ void WorkerOrWorkletScriptController::linkAndEvaluateModule(WorkerScriptFetcher&
     JSLockHolder lock { vm };
 
     NakedPtr<JSC::Exception> returnedException;
-    JSExecState::linkAndEvaluateModule(globalObject, Identifier::fromUid(vm, scriptFetcher.protectedModuleKey().get()), jsUndefined(), returnedException);
+    JSC::JSPromise* promise = JSExecState::linkAndEvaluateModule(globalObject, Identifier::fromUid(vm, protect(scriptFetcher.moduleKey()).get()), nullptr, returnedException);
     if ((returnedException && vm.isTerminationException(returnedException)) || isTerminatingExecution()) {
         forbidExecution();
         return;
     }
 
     if (returnedException) {
-        if (protectedGlobalScope()->canIncludeErrorDetails(sourceCode.cachedScript(), sourceCode.url().string())) {
+        if (protect(globalScope())->canIncludeErrorDetails(protect(sourceCode.cachedScript()), sourceCode.url().string())) {
             // FIXME: It's not great that this can run arbitrary code to string-ify the value of the exception.
             // Do we need to do anything to handle that properly, if it, say, raises another exception?
             if (returnedExceptionMessage)
@@ -472,11 +493,23 @@ void WorkerOrWorkletScriptController::linkAndEvaluateModule(WorkerScriptFetcher&
         JSLockHolder lock(vm);
         reportException(m_globalScopeWrapper.get(), returnedException);
     }
-}
 
-RefPtr<WorkerOrWorkletGlobalScope> WorkerOrWorkletScriptController::protectedGlobalScope() const
-{
-    return m_globalScope.get();
+    if (promise) {
+        constexpr bool fromModule = true;
+
+        JSC::JSValue onRejected = JSC::JSNativeStdFunction::create(vm, &globalObject, 1, { }, [](JSGlobalObject* globalObject, CallFrame* callFrame) -> EncodedJSValue {
+            reportException(globalObject, callFrame->argument(0), nullptr, fromModule);
+            return encodedJSUndefined();
+        });
+
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        promise->then(&globalObject, jsUndefined(), onRejected);
+
+        if (scope.exception()) {
+            reportException(&globalObject, scope.exception(), nullptr, fromModule);
+            scope.clearException();
+        }
+    }
 }
 
 void WorkerOrWorkletScriptController::loadAndEvaluateModule(const URL& moduleURL, FetchOptions::Credentials credentials, CompletionHandler<void(std::optional<Exception>&&)>&& completionHandler)
@@ -496,7 +529,7 @@ void WorkerOrWorkletScriptController::loadAndEvaluateModule(const URL& moduleURL
     RefPtr globalScope = m_globalScope.get();
     auto scriptFetcher = WorkerScriptFetcher::create(WTF::move(parameters), credentials, globalScope->destination(), globalScope->referrerPolicy());
 
-    auto* promise = JSExecState::loadModule(globalObject, moduleURL, JSC::JSScriptFetchParameters::create(vm, scriptFetcher->parameters()), JSC::JSScriptFetcher::create(vm, { scriptFetcher.ptr() }));
+    auto* promise = JSExecState::loadModule(globalObject, moduleURL, &scriptFetcher->parameters(), scriptFetcher.ptr());
     if (promise) [[likely]] {
         auto task = createSharedTask<void(std::optional<Exception>&&)>([completionHandler = WTF::move(completionHandler)](std::optional<Exception>&& exception) mutable {
             completionHandler(WTF::move(exception));
@@ -512,14 +545,14 @@ void WorkerOrWorkletScriptController::loadAndEvaluateModule(const URL& moduleURL
             RETURN_IF_EXCEPTION(scope, { });
             scriptFetcher->notifyLoadCompleted(*moduleKey.impl());
 
-            RefPtr context = downcast<WorkerOrWorkletGlobalScope>(jsCast<JSDOMGlobalObject*>(globalObject)->scriptExecutionContext());
+            RefPtr context = downcast<WorkerOrWorkletGlobalScope>(downcast<JSDOMGlobalObject>(globalObject)->scriptExecutionContext());
             if (!context || !context->script()) {
                 task->run(std::nullopt);
                 return JSValue::encode(jsUndefined());
             }
 
             NakedPtr<JSC::Exception> returnedException;
-            JSExecState::linkAndEvaluateModule(*globalObject, moduleKey, jsUndefined(), returnedException);
+            JSPromise* promise = JSExecState::linkAndEvaluateModule(*globalObject, moduleKey, nullptr, returnedException);
             if ((returnedException && vm.isTerminationException(returnedException)) || context->script()->isTerminatingExecution()) {
                 if (context->script())
                     context->script()->forbidExecution();
@@ -527,18 +560,35 @@ void WorkerOrWorkletScriptController::loadAndEvaluateModule(const URL& moduleURL
                 return JSValue::encode(jsUndefined());
             }
 
-            if (returnedException) {
+            auto report = [context, moduleKey](JSGlobalObject* globalObject, JSValue error) {
                 String message;
                 if (context->canIncludeErrorDetails(nullptr, moduleKey.string())) {
                     // FIXME: It's not great that this can run arbitrary code to string-ify the value of the exception.
                     // Do we need to do anything to handle that properly, if it, say, raises another exception?
-                    message = returnedException->value().toWTFString(globalObject);
+                    message = error.toWTFString(globalObject);
                 } else
                     message = "Script error."_s;
-                context->reportException(message, { }, { }, { }, { }, { });
+                context->reportException(message, { }, { }, { }, { }, { }, nullptr, true);
+            };
+
+            if (returnedException) {
+                report(globalObject, returnedException->value());
+                task->run(std::nullopt);
+            } else {
+                JSC::JSValue onRejected = JSC::JSNativeStdFunction::create(vm, globalObject, 1, { }, [report](JSGlobalObject* globalObject, CallFrame* callFrame) -> JSC::EncodedJSValue {
+                    report(globalObject, callFrame->argument(0));
+                    return encodedJSUndefined();
+                }, promise);
+
+                promise->then(globalObject, jsUndefined(), onRejected);
+                if (JSC::Exception* exception = scope.exception()) {
+                    report(globalObject, exception->value());
+                    task->run(std::nullopt);
+                    TRY_CLEAR_EXCEPTION(scope, { });
+                } else
+                    task->run(std::nullopt);
             }
 
-            task->run(std::nullopt);
             return JSValue::encode(jsUndefined());
         });
 
@@ -564,7 +614,7 @@ void WorkerOrWorkletScriptController::loadAndEvaluateModule(const URL& moduleURL
                     return JSValue::encode(jsUndefined());
                 }
                 if (object->inherits<ErrorInstance>()) {
-                    auto* error = jsCast<ErrorInstance*>(object);
+                    auto* error = uncheckedDowncast<ErrorInstance>(object);
                     switch (error->errorType()) {
                     case ErrorType::TypeError: {
                         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -592,7 +642,7 @@ void WorkerOrWorkletScriptController::loadAndEvaluateModule(const URL& moduleURL
 
         promise->then(&globalObject, &fulfillHandler, &rejectHandler);
     }
-    globalScope->eventLoop().performMicrotaskCheckpoint();
+    globalScope->eventLoop().performMicrotaskCheckpoint(*m_vm);
 }
 
 template<typename JSGlobalScopePrototype, typename JSGlobalScope, typename GlobalScope>
@@ -611,22 +661,30 @@ void WorkerOrWorkletScriptController::initScriptWithSubclass()
     auto* proxyStructure = JSGlobalProxy::createStructure(*m_vm, nullptr, jsNull());
     auto* proxy = JSGlobalProxy::create(*m_vm, proxyStructure);
 
-    m_globalScopeWrapper.set(*m_vm, JSGlobalScope::create(*m_vm, structure, static_cast<GlobalScope&>(*m_globalScope), proxy));
-    contextPrototypeStructure->setGlobalObject(*m_vm, m_globalScopeWrapper.get());
-    ASSERT(structure->globalObject() == m_globalScopeWrapper);
-    ASSERT(m_globalScopeWrapper->structure()->globalObject() == m_globalScopeWrapper);
-    contextPrototype->structure()->setGlobalObject(*m_vm, m_globalScopeWrapper.get());
+    RefPtr globalScope = m_globalScope.get();
+    SUPPRESS_MEMORY_UNSAFE_CAST auto& scope = static_cast<GlobalScope&>(*globalScope);
+    m_globalScopeWrapper.set(*m_vm, JSGlobalScope::create(*m_vm, structure, scope, proxy));
+    contextPrototypeStructure->setRealm(*m_vm, m_globalScopeWrapper.get());
+    ASSERT(structure->realm() == m_globalScopeWrapper);
+    ASSERT(m_globalScopeWrapper->realmMayBeNull() == m_globalScopeWrapper);
+    contextPrototype->structure()->setRealm(*m_vm, m_globalScopeWrapper.get());
     auto* globalScopePrototype = JSGlobalScope::prototype(*m_vm, *m_globalScopeWrapper.get());
     globalScopePrototype->didBecomePrototype(*m_vm);
     contextPrototype->structure()->setPrototypeWithoutTransition(*m_vm, globalScopePrototype);
 
     proxy->setTarget(*m_vm, m_globalScopeWrapper.get());
 
-    ASSERT(m_globalScopeWrapper->globalObject() == m_globalScopeWrapper);
-    ASSERT(asObject(m_globalScopeWrapper->getPrototypeDirect())->globalObject() == m_globalScopeWrapper);
+    ASSERT(m_globalScopeWrapper->realmMayBeNull() == m_globalScopeWrapper);
+    ASSERT(asObject(m_globalScopeWrapper->getPrototypeDirect())->realmMayBeNull() == m_globalScopeWrapper);
 
-    m_consoleClient = makeUnique<WorkerConsoleClient>(*protectedGlobalScope());
+    lazyInitialize(m_consoleClient, makeUnique<WorkerConsoleClient>(*globalScope));
     m_globalScopeWrapper->setConsoleClient(*m_consoleClient);
+    // Worklet global scopes previously routed microtasks to the VM's default queue
+    // We preserve this behavior because AudioWorkletGlobalScope relies on DrainMicrotaskDelayScope to batch
+    // microtask draining between render quanta, which only controls the VM's default
+    // queue, not the event loop's queue.
+    if (!is<WorkletGlobalScope>(m_globalScope))
+        globalScope->addMicrotaskGlobalObject(m_globalScopeWrapper.get());
 }
 
 void WorkerOrWorkletScriptController::initScript()

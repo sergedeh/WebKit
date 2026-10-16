@@ -2,7 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file. See the AUTHORS file for names of contributors.
 
-cmake_minimum_required(VERSION 3.1)
+cmake_minimum_required(VERSION 3.16)
 project(Crc32c VERSION 1.1.0 LANGUAGES C CXX)
 
 # C standard can be overridden when this is used as a sub-project.
@@ -362,6 +362,12 @@ if(CRC32C_BUILD_TESTS)
   # Warnings as errors in Visual Studio for this project's targets.
   if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     set_property(TARGET crc32c_capi_tests APPEND PROPERTY COMPILE_OPTIONS "/WX")
+
+    # The Windows SDK version currently on CI produces warnings when some
+    # headers are #included using C99 compatibility mode or above. This
+    # workaround can be removed once the Windows SDK on our CI is upgraded.
+    set_property(TARGET crc32c_capi_tests
+        APPEND PROPERTY COMPILE_OPTIONS "/wd5105")
   endif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
 
   add_test(NAME crc32c_capi_tests COMMAND crc32c_capi_tests)

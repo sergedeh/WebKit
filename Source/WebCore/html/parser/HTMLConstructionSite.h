@@ -75,10 +75,6 @@ struct HTMLConstructionSiteTask {
         return downcast<ContainerNode>(child.get());
     }
 
-    Ref<ContainerNode> protectedNonNullParent() const { return *parent; }
-    Ref<Node> protectedNonNullChild() const { return *child; }
-    Ref<Node> protectedNonNullNextChild() const { return *nextChild; }
-
     Operation operation;
     RefPtr<ContainerNode> parent;
     RefPtr<Node> nextChild;
@@ -93,12 +89,6 @@ template<> struct VectorTraits<WebCore::HTMLConstructionSiteTask> : SimpleClassV
 } // namespace WTF
 
 namespace WebCore {
-
-enum WhitespaceMode {
-    AllWhitespace,
-    NotAllWhitespace,
-    WhitespaceUnknown
-};
 
 class AtomHTMLToken;
 class CustomElementRegistry;
@@ -133,7 +123,7 @@ public:
     void insertFormattingElement(AtomHTMLToken&&);
     void insertHTMLHeadElement(AtomHTMLToken&&);
     void insertHTMLBodyElement(AtomHTMLToken&&);
-    void insertHTMLFormElement(AtomHTMLToken&&);
+    void insertHTMLFormElement(AtomHTMLToken&&, bool isParsingTemplateContents);
     void insertScriptElement(AtomHTMLToken&&);
     void insertTextNode(const String&);
     void insertForeignElement(AtomHTMLToken&&, const AtomString& namespaceURI);
@@ -151,10 +141,10 @@ public:
 
     HTMLStackItem createElementFromSavedToken(const HTMLStackItem&);
 
-    bool shouldFosterParent() const;
+    bool LEGACY_NODELETE shouldFosterParent() const;
     void fosterParent(Ref<Node>&&);
 
-    std::optional<unsigned> indexOfFirstUnopenFormattingElement() const;
+    std::optional<unsigned> LEGACY_NODELETE indexOfFirstUnopenFormattingElement() const;
     void reconstructTheActiveFormattingElements();
 
     void generateImpliedEndTags();
@@ -163,26 +153,27 @@ public:
 
     bool inQuirksMode() { return m_inQuirksMode; }
 
+    bool hasReachedMaxDOMTreeDepth() const { return m_hasReachedMaxDOMTreeDepth; }
+
     bool isEmpty() const { return !m_openElements.stackDepth(); }
     Element& currentElement() const { return m_openElements.top(); }
     ContainerNode& currentNode() const { return m_openElements.topNode(); }
-    Ref<ContainerNode> protectedCurrentNode() const { return m_openElements.topNode(); }
     ElementName currentElementName() const { return m_openElements.topElementName(); }
-    HTMLStackItem& currentStackItem() const { return m_openElements.topStackItem(); }
-    HTMLStackItem* oneBelowTop() const { return m_openElements.oneBelowTop(); }
+    HTMLStackItem& currentStackItem() const LIFETIME_BOUND { return m_openElements.topStackItem(); }
+    HTMLStackItem* oneBelowTop() const LIFETIME_BOUND { return m_openElements.oneBelowTop(); }
     TreeScope& treeScopeForCurrentNode();
+    ContainerNode& containerForCurrentNode();
     Document& ownerDocumentForCurrentNode();
-    Ref<Document> protectedOwnerDocumentForCurrentNode() { return ownerDocumentForCurrentNode(); }
-    HTMLElementStack& openElements() const { return m_openElements; }
-    HTMLFormattingElementList& activeFormattingElements() const { return m_activeFormattingElements; }
+    HTMLElementStack& openElements() const LIFETIME_BOUND { return m_openElements; }
+    HTMLFormattingElementList& activeFormattingElements() const LIFETIME_BOUND { return m_activeFormattingElements; }
     bool currentIsRootNode() { return &m_openElements.topNode() == &m_openElements.rootNode(); }
 
     Element& head() const { return m_head.element(); }
-    HTMLStackItem& headStackItem() { return m_head; }
+    HTMLStackItem& headStackItem() LIFETIME_BOUND { return m_head; }
 
     void setForm(HTMLFormElement*);
     HTMLFormElement* form() const { return m_form.get(); }
-    RefPtr<HTMLFormElement> takeForm();
+    RefPtr<HTMLFormElement> LEGACY_NODELETE takeForm();
 
     OptionSet<ParserContentPolicy> parserContentPolicy() { return m_parserContentPolicy; }
 
@@ -201,7 +192,7 @@ public:
         SetForScope<bool> m_redirectAttachToFosterParentChange;
     };
 
-    static bool isFormattingTag(TagName);
+    static bool LEGACY_NODELETE isFormattingTag(TagName);
 
 private:
     Document& document() const { return m_document; }
@@ -215,7 +206,7 @@ private:
 
     void attachLater(Ref<ContainerNode>&& parent, Ref<Node>&& child, bool selfClosing = false);
 
-    void findFosterSite(HTMLConstructionSiteTask&);
+    void recordFosterSite(HTMLConstructionSiteTask&);
 
     std::tuple<RefPtr<HTMLElement>, RefPtr<JSCustomElementInterface>, RefPtr<CustomElementRegistry>> createHTMLElementOrFindCustomElementInterface(AtomHTMLToken&);
     Ref<HTMLElement> createHTMLElement(AtomHTMLToken&);
@@ -223,9 +214,6 @@ private:
 
     void mergeAttributesFromTokenIntoElement(AtomHTMLToken&&, Element&);
     void dispatchDocumentElementAvailableIfNeeded();
-
-    Ref<Document> protectedDocument() const;
-    Ref<ContainerNode> protectedAttachmentRoot() const;
 
     // m_head has to be destroyed after destroying CheckedRef of m_document and m_attachmentRoot
     HTMLStackItem m_head;
@@ -244,7 +232,7 @@ private:
     TaskQueue m_taskQueue;
 
     OptionSet<ParserContentPolicy> m_parserContentPolicy;
-    RefPtr<CustomElementRegistry> m_registry;
+    const RefPtr<CustomElementRegistry> m_registry;
     bool m_isParsingFragment;
 
     // http://www.whatwg.org/specs/web-apps/current-work/multipage/tokenization.html#parsing-main-intable
@@ -256,6 +244,11 @@ private:
     unsigned m_maximumDOMTreeDepth;
 
     bool m_inQuirksMode;
+
+    bool m_hasReachedMaxDOMTreeDepth { false };
+
+    std::unique_ptr<StringBuilder> m_textNodeBuffer;
+    RefPtr<Text> m_currentTextNode;
 };
 
 } // namespace WebCore

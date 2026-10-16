@@ -33,13 +33,15 @@
 #include "ReferencedSVGResources.h"
 #include "RenderLayerInlines.h"
 #include "RenderSVGResourceClipperInlines.h"
+#include "RenderSVGShape.h"
 #include "RenderSVGText.h"
-#include "RenderStyle.h"
 #include "RenderView.h"
 #include "SVGClipPathElement.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGUseElement.h"
 #include "SVGVisitedRendererTracking.h"
+#include "StyleComputedStyle.h"
+#include "StyleTransformResolver.h"
 #include <wtf/SetForScope.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -47,7 +49,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderSVGResourceClipper);
 
-RenderSVGResourceClipper::RenderSVGResourceClipper(SVGClipPathElement& element, RenderStyle&& style)
+RenderSVGResourceClipper::RenderSVGResourceClipper(SVGClipPathElement& element, Style::ComputedStyle&& style)
     : RenderSVGResourceContainer(Type::SVGResourceClipper, element, WTF::move(style))
 {
     ASSERT(isRenderSVGResourceClipper());
@@ -61,7 +63,7 @@ enum class ClippingMode {
     MaskClipping
 };
 
-static ClippingMode& currentClippingMode()
+static ClippingMode& LEGACY_NODELETE currentClippingMode()
 {
     static ClippingMode s_clippingMode { ClippingMode::NoClipping };
     return s_clippingMode;
@@ -82,7 +84,40 @@ RefPtr<SVGGraphicsElement> RenderSVGResourceClipper::shouldApplyPathClipping() c
 {
     if (currentClippingMode() == ClippingMode::MaskClipping)
         return nullptr;
-    return protectedClipPathElement()->shouldApplyPathClipping();
+    // This walks the SVGClipPathElement's children to decide whether path-based clipping is viable.
+    // The result only changes on structural or style changes in the clip-path subtree, but without
+    // caching it would run per shape per frame in animations (in scenes like MotionMark and Suits
+    // about half the shapes are clip-pathed, thousands per frame).
+    if (!m_cachedShouldApplyPathClippingResult)
+        m_cachedShouldApplyPathClippingResult = WeakPtr { protect(clipPathElement())->shouldApplyPathClipping() };
+    return m_cachedShouldApplyPathClippingResult->get();
+}
+
+void RenderSVGResourceClipper::repaintAllClients() const
+{
+    m_cachedShouldApplyPathClippingResult = std::nullopt;
+    RenderSVGResourceContainer::repaintAllClients();
+}
+
+AffineTransform RenderSVGResourceClipper::clipContentTransform(const FloatRect& objectBoundingBox) const
+{
+    AffineTransform transform;
+    if (layer()->isTransformed())
+        transform = layer()->transform()->toAffineTransform();
+    if (clipPathUnits() == SVGUnitTypes::SVG_UNIT_TYPE_OBJECTBOUNDINGBOX) {
+        transform.translate(objectBoundingBox.location());
+        transform.scale(objectBoundingBox.size());
+    }
+    return transform;
+}
+
+const Path& RenderSVGResourceClipper::cachedPathClip(RenderSVGModelObject& clipRenderer) const
+{
+    if (!m_cachedPathClip || m_cachedPathClipRenderer.get() != &clipRenderer) {
+        m_cachedPathClip = clipRenderer.computeClipPathGeometry();
+        m_cachedPathClipRenderer = clipRenderer;
+    }
+    return *m_cachedPathClip;
 }
 
 void RenderSVGResourceClipper::applyPathClipping(GraphicsContext& context, const RenderLayerModelObject& targetRenderer, const FloatRect& objectBoundingBox, SVGGraphicsElement& graphicsElement)
@@ -93,24 +128,38 @@ void RenderSVGResourceClipper::applyPathClipping(GraphicsContext& context, const
     ASSERT(currentClippingMode() == ClippingMode::NoClipping || currentClippingMode() == ClippingMode::MaskClipping);
     SetForScope<ClippingMode> switchClippingMode(currentClippingMode(), ClippingMode::PathClipping);
 
-    auto* clipRendererPtr = graphicsElement.renderer();
-    ASSERT(clipRendererPtr);
-    ASSERT(clipRendererPtr->hasLayer());
-    auto& clipRenderer = downcast<RenderSVGModelObject>(*clipRendererPtr);
+    ASSERT(graphicsElement.renderer());
+    CheckedRef clipRenderer = downcast<RenderSVGModelObject>(*graphicsElement.renderer());
 
     AffineTransform clipPathTransform;
+    auto clipContentBox = objectBoundingBox;
     if (clipPathUnits() == SVGUnitTypes::SVG_UNIT_TYPE_OBJECTBOUNDINGBOX) {
-        clipPathTransform.translate(objectBoundingBox.location());
-        clipPathTransform.scale(objectBoundingBox.size());
+        // objectBoundingBox.location() is already in the target's absolute user space, so it positions
+        // the clip on its own. The caller does not translate the context for objectBoundingBox units
+        // (only for userSpaceOnUse), so there is nothing to undo here.
+        // <foreignObject> paints its content at layout location() while its objectBoundingBox top-left
+        // sits at its x/y, so re-anchor the clip to the content origin by current minus nominal. Shapes,
+        // images and text paint at the nominal origin, where objectBoundingBox.location() already
+        // matches, so they must not get this term.
+        // FIXME: Make <foreignObject> and text agree on content vs bounding-box origin so this
+        // <foreignObject>-only adjustment can be removed.
+        if (targetRenderer.isRenderSVGForeignObject())
+            clipContentBox.move(targetRenderer.currentSVGLayoutLocation() - targetRenderer.nominalSVGLayoutLocation());
     } else if (!targetRenderer.isSVGLayerAwareRenderer()) {
         clipPathTransform.translate(objectBoundingBox.x(), objectBoundingBox.y());
         clipPathTransform.scale(targetRenderer.style().usedZoom());
     }
-    if (layer()->isTransformed())
-        clipPathTransform.multiply(layer()->transform()->toAffineTransform());
+    clipPathTransform.multiply(clipContentTransform(clipContentBox));
 
-    const auto& clipPath = clipRenderer.computeClipPath(clipPathTransform);
-    auto windRule = clipRenderer.style().clipRule();
+    clipRenderer->computeClipContentTransform(clipPathTransform);
+    const auto& clipPath = cachedPathClip(clipRenderer);
+    auto windRule = clipRenderer->style().clipRule();
+
+    if (auto* shape = dynamicDowncast<RenderSVGShape>(targetRenderer); shape && shape->shapeType() == RenderSVGShape::ShapeType::Rectangle) {
+        // When clipping a rect with a path, if we know the path is entirely inside the rect, we can skip a clip when filling the rect.
+        auto clipBounds = clipPathTransform.mapRect(clipPath.fastBoundingRect());
+        shape->setFillRequiresClip(!objectBoundingBox.contains(clipBounds));
+    }
 
     // The SVG specification wants us to clip everything, if clip-path doesn't have a child.
     if (clipPath.isEmpty())
@@ -127,7 +176,6 @@ void RenderSVGResourceClipper::applyMaskClipping(PaintInfo& paintInfo, const Ren
 {
     ASSERT(hasLayer());
     ASSERT(layer()->isSelfPaintingLayer());
-    ASSERT(targetRenderer.hasLayer());
 
     static NeverDestroyed<SVGVisitedRendererTracking::VisitedSet> s_visitedSet;
 
@@ -149,8 +197,9 @@ void RenderSVGResourceClipper::applyMaskClipping(PaintInfo& paintInfo, const Ren
     AffineTransform contentTransform;
 
     if (clipPathUnits() == SVGUnitTypes::SVG_UNIT_TYPE_OBJECTBOUNDINGBOX) {
-        contentTransform.translate(objectBoundingBox.x(), objectBoundingBox.y());
-        contentTransform.scale(objectBoundingBox.width(), objectBoundingBox.height());
+        contentTransform = clipContentTransform(objectBoundingBox);
+        if (layer()->isTransformed())
+            contentTransform.multiply(layer()->transform()->toAffineTransform().inverse().value_or(AffineTransform()));
     } else if (!targetRenderer.isSVGLayerAwareRenderer()) {
         contentTransform.translate(objectBoundingBox.x(), objectBoundingBox.y());
         contentTransform.scale(targetRenderer.style().usedZoom());
@@ -178,14 +227,14 @@ void RenderSVGResourceClipper::applyMaskClipping(PaintInfo& paintInfo, const Ren
         context.setCompositeOperation(CompositeOperator::SourceOver);
     }
 
-    checkedLayer()->paintSVGResourceLayer(context, contentTransform);
+    protect(layer())->paintResourceLayerForSVG(context, contentTransform);
 
     if (pushTransparencyLayer)
         context.endTransparencyLayer();
     frameView->setPaintBehavior(oldBehavior);
 }
 
-bool RenderSVGResourceClipper::hitTestClipContent(const FloatRect& objectBoundingBox, const LayoutPoint& nodeAtPoint)
+bool RenderSVGResourceClipper::hitTestClipContent(const FloatRect& objectBoundingBox, const FloatPoint& nodeAtPoint)
 {
     static NeverDestroyed<SVGVisitedRendererTracking::VisitedSet> s_visitedSet;
 
@@ -195,20 +244,69 @@ bool RenderSVGResourceClipper::hitTestClipContent(const FloatRect& objectBoundin
 
     SVGVisitedRendererTracking::Scope recursionScope(recursionTracking, *this);
 
-    auto point = nodeAtPoint;
-    if (!pointInSVGClippingArea(point))
-        return false;
-
-    if (clipPathUnits() == SVGUnitTypes::SVG_UNIT_TYPE_OBJECTBOUNDINGBOX) {
-        AffineTransform applyTransform;
-        applyTransform.translate(objectBoundingBox.location());
-        applyTransform.scale(objectBoundingBox.size());
-        point = LayoutPoint(applyTransform.inverse().value_or(AffineTransform()).mapPoint(point));
+    // If this <clipPath> has its own clip-path, the original target must also fall inside the
+    // nested clip region. objectBoundingBox units inside the nested clipPath resolve against
+    // the original referencing element's bounding box (passed in here), not this clipper's OBB.
+    if (CheckedPtr nestedClipper = svgClipperResourceFromStyle()) {
+        if (!nestedClipper->hitTestClipContent(objectBoundingBox, nodeAtPoint))
+            return false;
     }
 
-    HitTestResult result(toLayoutPoint(point - flooredLayoutPoint(this->objectBoundingBox().minXMinYCorner())));
+    auto contentTransform = clipContentTransform(objectBoundingBox);
+
+    if (RefPtr graphicsElement = shouldApplyPathClipping()) {
+        CheckedRef clipRenderer = downcast<RenderSVGModelObject>(*graphicsElement->renderer());
+        auto clipPathTransform = contentTransform;
+        clipRenderer->computeClipContentTransform(clipPathTransform);
+        auto inverseClipPathTransform = clipPathTransform.inverse();
+        return inverseClipPathTransform && cachedPathClip(clipRenderer).contains(inverseClipPathTransform->mapPoint(nodeAtPoint), clipRenderer->style().clipRule());
+    }
+
+    auto inverseContentTransform = contentTransform.inverse();
+    if (!inverseContentTransform)
+        return false;
+    auto point = inverseContentTransform->mapPoint(nodeAtPoint);
+
+    // Iterate children directly and call nodeAtPoint() on each, rather than using
+    // layer()->hitTest(). The layer hit test infrastructure does not work for children
+    // inside <clipPath> because they are inside a RenderSVGHiddenContainer, where
+    // fragment collection and ancestor offset computation produce incorrect results.
+    // For transformed children (with or without layers), inverse-map the point through
+    // the child's SVG transform before testing.
     constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::SVGClipContent, HitTestRequest::Type::DisallowUserAgentShadowContent };
-    return layer()->hitTest(hitType, result);
+    for (CheckedPtr child = lastChild(); child; child = child->previousSibling()) {
+        CheckedPtr svgChild = dynamicDowncast<RenderSVGModelObject>(*child);
+        if (!svgChild)
+            continue;
+
+        auto testPoint = point;
+        if (svgChild->isTransformed()) {
+            // Compute the child's SVG transform and inverse-map the point.
+            // For non-layer children, localTransform() is already populated.
+            // For layer children, localTransform() is not maintained, so compute it.
+            AffineTransform childTransform;
+            if (svgChild->hasLayer()) {
+                TransformationMatrix tm;
+                CheckedRef childStyle = svgChild->style();
+                auto referenceBoxRect = svgChild->transformReferenceBoxRect(childStyle);
+                svgChild->applyTransform(tm, childStyle, referenceBoxRect, Style::TransformResolver::allTransformOperations);
+                childTransform = tm.toAffineTransform();
+            } else
+                childTransform = svgChild->localTransform();
+
+            auto inverseTransform = childTransform.inverse();
+            if (!inverseTransform)
+                continue;
+            testPoint = inverseTransform->mapPoint(point);
+        }
+
+        HitTestLocation testHitTestLocation(testPoint, FloatRect { testPoint, FloatSize { 1, 1 } }, HitTestLocation::RectBased::No);
+        HitTestResult result(testHitTestLocation);
+        auto accumulatedOffset = toLayoutPoint(toLayoutSize(svgChild->nominalSVGLayoutLocation()) - toLayoutSize(svgChild->currentSVGLayoutLocation()));
+        if (child->nodeAtPoint(hitType, result, testHitTestLocation, accumulatedOffset, HitTestAction::Foreground))
+            return true;
+    }
+    return false;
 }
 
 FloatRect RenderSVGResourceClipper::resourceBoundingBox(const RenderObject& object, RepaintRectCalculation repaintRectCalculation)
@@ -222,15 +320,8 @@ FloatRect RenderSVGResourceClipper::resourceBoundingBox(const RenderObject& obje
 
     SVGVisitedRendererTracking::Scope recursionScope(recursionTracking, *this);
 
-    auto clipContentRepaintRect = protectedClipPathElement()->calculateClipContentRepaintRect(repaintRectCalculation);
-    if (clipPathUnits() == SVGUnitTypes::SVG_UNIT_TYPE_OBJECTBOUNDINGBOX) {
-        AffineTransform contentTransform;
-        contentTransform.translate(targetBoundingBox.location());
-        contentTransform.scale(targetBoundingBox.size());
-        return contentTransform.mapRect(clipContentRepaintRect);
-    }
-
-    return clipContentRepaintRect;
+    auto clipContentRepaintRect = protect(clipPathElement())->calculateClipContentRepaintRect(repaintRectCalculation);
+    return clipContentTransform(targetBoundingBox).mapRect(clipContentRepaintRect);
 }
 
 void RenderSVGResourceClipper::updateFromStyle()
@@ -238,24 +329,30 @@ void RenderSVGResourceClipper::updateFromStyle()
     updateHasSVGTransformFlags();
 }
 
-void RenderSVGResourceClipper::applyTransform(TransformationMatrix& transform, const RenderStyle& style, const FloatRect& boundingBox, OptionSet<Style::TransformResolverOption> options) const
+void RenderSVGResourceClipper::applyTransform(TransformationMatrix& transform, const Style::ComputedStyle& style, const FloatRect& boundingBox, OptionSet<Style::TransformResolverOption> options) const
 {
     ASSERT(document().settings().layerBasedSVGEngineEnabled());
-    applySVGTransform(transform, protectedClipPathElement(), style, boundingBox, std::nullopt, std::nullopt, options);
+    applySVGTransform(transform, protect(clipPathElement()), style, boundingBox, std::nullopt, std::nullopt, options);
 }
 
 bool RenderSVGResourceClipper::needsHasSVGTransformFlags() const
 {
-    return protectedClipPathElement()->hasTransformRelatedAttributes();
+    return protect(clipPathElement())->hasTransformRelatedAttributes();
 }
 
-void RenderSVGResourceClipper::styleDidChange(Style::Difference diff, const RenderStyle* oldStyle)
+void RenderSVGResourceClipper::styleDidChange(Style::Difference diff, const Style::ComputedStyle* oldStyle)
 {
     RenderSVGHiddenContainer::styleDidChange(diff, oldStyle);
 
     // Ensure that descendants with layers are rooted within our layer.
     if (hasLayer())
-        layer()->setIsOpportunisticStackingContext(true);
+        protect(layer())->setIsOpportunisticStackingContext(true);
+}
+
+void RenderSVGResourceClipper::clearCacheBeforeLayout()
+{
+    m_cachedPathClip = std::nullopt;
+    m_cachedPathClipRenderer = nullptr;
 }
 
 }

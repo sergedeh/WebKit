@@ -31,6 +31,7 @@ namespace rx
 {
 class DisplayMtl;
 class FramebufferMtl;
+class QueryMtl;
 class VertexArrayMtl;
 class ProgramMtl;
 class ProgramExecutableMtl;
@@ -54,6 +55,12 @@ class ContextMtl : public ContextImpl, public mtl::Context
     // Flush and finish.
     angle::Result flush(const gl::Context *context) override;
     angle::Result finish(const gl::Context *context) override;
+
+    // GL_ANGLE_trim_memory
+    void trimMemory(const gl::Context *context, gl::MemoryTrimLevel trimLevel) override;
+
+    void registerBufferPool(mtl::BufferPool *pool);
+    void unregisterBufferPool(mtl::BufferPool *pool);
 
     // Drawing methods.
     angle::Result drawArrays(const gl::Context *context,
@@ -261,9 +268,6 @@ class ContextMtl : public ContextImpl, public mtl::Context
     // Semaphore creation.
     SemaphoreImpl *createSemaphore() override;
 
-    // Overlay creation.
-    OverlayImpl *createOverlay(const gl::OverlayState &state) override;
-
     angle::Result dispatchCompute(const gl::Context *context,
                                   GLuint numGroupsX,
                                   GLuint numGroupsY,
@@ -301,20 +305,22 @@ class ContextMtl : public ContextImpl, public mtl::Context
                                        bool renderPassChanged);
     void onBackbufferResized(const gl::Context *context, WindowSurfaceMtl *backbuffer);
 
-    // Invoke by QueryMtl
-    angle::Result onOcclusionQueryBegin(const gl::Context *context, QueryMtl *query);
-    void onOcclusionQueryEnd(const gl::Context *context, QueryMtl *query);
-    void onOcclusionQueryDestroy(const gl::Context *context, QueryMtl *query);
+    angle::Result onOcclusionQueryBegin(QueryMtl &query);
+    void onOcclusionQueryEnd();
+    void onOcclusionQueryDestroy(QueryMtl &query);
 
     // Useful for temporarily pause then restart occlusion query during clear/blit with draw.
-    bool hasActiveOcclusionQuery() const { return mOcclusionQuery; }
+    bool isOcclusionQueryEnabledInRenderPass() const
+    {
+        return mOcclusionQueryIsEnabledInRenderPass;
+    }
     // Disable the occlusion query in the current render pass.
     // The render pass must already started.
-    void disableActiveOcclusionQueryInRenderPass();
+    void disableOcclusionQueryInRenderPass();
     // Re-enable the occlusion query in the current render pass.
     // The render pass must already started.
     // NOTE: the old query's result will be retained and combined with the new result.
-    angle::Result restartActiveOcclusionQueryInRenderPass();
+    angle::Result enableOcclusionQueryInRenderPass();
 
     // Invoke by TransformFeedbackMtl
     void onTransformFeedbackActive(const gl::Context *context, TransformFeedbackMtl *xfb);
@@ -346,9 +352,6 @@ class ContextMtl : public ContextImpl, public mtl::Context
                                        gl::SamplerFormat format,
                                        gl::Texture **textureOut);
 
-    // Recommended to call these methods to end encoding instead of invoking the encoder's
-    // endEncoding() directly.
-    void endRenderEncoding(mtl::RenderCommandEncoder *encoder);
     // Ends any active command encoder
     void endEncoding(bool forceSaveRenderPassContent);
 
@@ -408,6 +411,8 @@ class ContextMtl : public ContextImpl, public mtl::Context
 
     mtl::BufferManager &getBufferManager() { return mBufferManager; }
 
+    ProvokingVertexHelper &getProvokingVertexHelper() { return mProvokingVertexHelper; }
+
     mtl::PipelineCache &getPipelineCache() { return mPipelineCache; }
 
     const angle::ImageLoadContext &getImageLoadContext() const { return mImageLoadContext; }
@@ -420,20 +425,20 @@ class ContextMtl : public ContextImpl, public mtl::Context
     void endBlitAndComputeEncoding();
     angle::Result resyncDrawFramebufferIfNeeded(const gl::Context *context);
     angle::Result setupDraw(const gl::Context *context,
-                            gl::PrimitiveMode mode,
                             GLint firstVertex,
                             GLsizei vertexOrIndexCount,
                             GLsizei instanceCount,
+                            GLuint baseInstance,
                             gl::DrawElementsType indexTypeOrNone,
                             const void *indices,
                             bool xfbPass,
                             bool *isNoOp);
 
     angle::Result setupDrawImpl(const gl::Context *context,
-                                gl::PrimitiveMode mode,
                                 GLint firstVertex,
                                 GLsizei vertexOrIndexCount,
                                 GLsizei instanceCount,
+                                GLuint baseInstance,
                                 gl::DrawElementsType indexTypeOrNone,
                                 const void *indices,
                                 bool xfbPass,
@@ -488,12 +493,15 @@ class ContextMtl : public ContextImpl, public mtl::Context
                                                 GLsizei instances,
                                                 GLuint baseInstance);
 
+    // isNoOpOut, when given, is set to false only if a draw call was issued into the current
+    // render command encoder.
     angle::Result drawArraysImpl(const gl::Context *context,
                                  gl::PrimitiveMode mode,
                                  GLint first,
                                  GLsizei count,
                                  GLsizei instanceCount,
-                                 GLuint baseInstance);
+                                 GLuint baseInstance,
+                                 bool *isNoOpOut = nullptr);
 
     angle::Result drawElementsImpl(const gl::Context *context,
                                    gl::PrimitiveMode mode,
@@ -502,7 +510,8 @@ class ContextMtl : public ContextImpl, public mtl::Context
                                    const void *indices,
                                    GLsizei instanceCount,
                                    GLint baseVertex,
-                                   GLuint baseInstance);
+                                   GLuint baseInstance,
+                                   bool *isNoOpOut = nullptr);
     void flushCommandBufferIfNeeded();
     void updateExtendedState(const gl::State &glState,
                              const gl::state::ExtendedDirtyBits extendedDirtyBits);
@@ -534,11 +543,8 @@ class ContextMtl : public ContextImpl, public mtl::Context
     angle::Result handleDirtyDepthBias(const gl::Context *context);
     angle::Result handleDirtyRenderPass(const gl::Context *context);
     angle::Result checkIfPipelineChanged(const gl::Context *context,
-                                         gl::PrimitiveMode primitiveMode,
                                          bool xfbPass,
                                          bool *pipelineDescChanged);
-
-    angle::Result startOcclusionQueryInRenderPass(QueryMtl *query, bool clearOldValue);
 
     angle::Result checkCommandBufferError();
 
@@ -574,12 +580,12 @@ class ContextMtl : public ContextImpl, public mtl::Context
     // src/compiler/translator/DriverUniformMetal.cpp
     struct DriverUniforms
     {
-        uint32_t acbBufferOffsets[2];
         float depthRange[2];
         uint32_t renderArea;
         uint32_t flipXY;
-        uint32_t unused;
         uint32_t misc;
+        uint32_t unused;
+        uint32_t acbBufferOffsets[2];
 
         int32_t xfbBufferOffsets[4];
         int32_t xfbVerticesPerInstance;
@@ -609,7 +615,6 @@ class ContextMtl : public ContextImpl, public mtl::Context
     FramebufferMtl *mDrawFramebuffer  = nullptr;
     VertexArrayMtl *mVertexArray      = nullptr;
     ProgramExecutableMtl *mExecutable = nullptr;
-    QueryMtl *mOcclusionQuery         = nullptr;
 
     using DirtyBits = angle::BitSet<DIRTY_BIT_MAX>;
 
@@ -639,6 +644,8 @@ class ContextMtl : public ContextImpl, public mtl::Context
 
     mtl::BufferManager mBufferManager;
 
+    angle::HashSet<mtl::BufferPool *> mBufferPools;
+
     // Lineloop and TriFan index buffer
     mtl::BufferPool mLineLoopIndexBuffer;
     mtl::BufferPool mLineLoopLastSegmentIndexBuffer;
@@ -660,6 +667,9 @@ class ContextMtl : public ContextImpl, public mtl::Context
     id<MTLTexture> mRasterizationRateMapTexture;
 
     mtl::ContextDevice mContextDevice;
+
+    mtl::BufferRef mOcclusionQueryResultBuffer;
+    bool mOcclusionQueryIsEnabledInRenderPass{false};
 };
 
 }  // namespace rx

@@ -27,14 +27,20 @@
 #include "ScriptTrackingPrivacyFilter.h"
 
 #include <WebCore/RegistrableDomain.h>
+#include <WebCore/ScriptTrackingPrivacyCategory.h>
 #include <WebCore/SecurityOrigin.h>
+#include <wtf/Borrow.h>
+
+#if PLATFORM(COCOA)
+#include "WebPrivacyHelpers.h"
+#endif
 
 namespace WebKit {
 
 static void initializeFilterRules(Vector<ScriptTrackingPrivacyHost>&& source, HostToAllowedCategoriesMap& target, WebCore::ScriptTrackingPrivacyFlags& categoriesWithAllowedHosts)
 {
     target.reserveInitialCapacity(source.size());
-    for (auto&& [host, allowedCategories] : WTF::move(source)) {
+    for (auto&& [host, allowedCategories] : borrow(source)) {
         if (host.isEmpty()) {
             ASSERT_NOT_REACHED();
             continue;

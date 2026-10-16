@@ -26,14 +26,15 @@
 #include "config.h"
 #include "DOMMatrixReadOnly.h"
 
+#include "AffineTransform.h"
 #include "CSSParserContext.h"
 #include "CSSParserMode.h"
 #include "CSSPropertyParserConsumer+Transform.h"
 #include "CSSToLengthConversionData.h"
 #include "DOMMatrix.h"
 #include "DOMPoint.h"
+#include "Document.h"
 #include "MutableStyleProperties.h"
-#include "ScriptExecutionContext.h"
 #include "ScriptWrappableInlines.h"
 #include "StyleProperties.h"
 #include "StyleTransform.h"
@@ -56,10 +57,11 @@ ExceptionOr<Ref<DOMMatrixReadOnly>> DOMMatrixReadOnly::create(ScriptExecutionCon
 
     return WTF::switchOn(init.value(),
         [&scriptExecutionContext](const String& init) -> ExceptionOr<Ref<DOMMatrixReadOnly>> {
-            if (!scriptExecutionContext.isDocument())
+            RefPtr document = dynamicDowncast<Document>(scriptExecutionContext);
+            if (!document)
                 return Exception { ExceptionCode::TypeError };
 
-            auto parseResult = parseStringIntoAbstractMatrix(init);
+            auto parseResult = parseStringIntoAbstractMatrix(*document, init);
             if (parseResult.hasException())
                 return parseResult.releaseException();
             
@@ -104,7 +106,7 @@ Ref<DOMMatrix> DOMMatrixReadOnly::cloneAsDOMMatrix() const
 }
 
 // https://tc39.github.io/ecma262/#sec-samevaluezero
-static bool sameValueZero(double a, double b)
+static bool LEGACY_NODELETE sameValueZero(double a, double b)
 {
     if (std::isnan(a) && std::isnan(b))
         return true;
@@ -141,6 +143,15 @@ ExceptionOr<void> DOMMatrixReadOnly::validateAndFixup(DOMMatrix2DInit& init)
         init.m42 = init.f.value_or(0);
 
     return { };
+}
+
+ExceptionOr<AffineTransform> DOMMatrixReadOnly::toAffineTransform(DOMMatrix2DInit& init)
+{
+    auto validation = validateAndFixup(init);
+    if (validation.hasException())
+        return validation.releaseException();
+
+    return AffineTransform { init.m11.value(), init.m12.value(), init.m21.value(), init.m22.value(), init.m41.value(), init.m42.value() };
 }
 
 ExceptionOr<void> DOMMatrixReadOnly::validateAndFixup(DOMMatrixInit& init)
@@ -225,12 +236,12 @@ bool DOMMatrixReadOnly::isIdentity() const
     return m_matrix.isIdentity();
 }
 
-ExceptionOr<DOMMatrixReadOnly::AbstractMatrix> DOMMatrixReadOnly::parseStringIntoAbstractMatrix(const String& string)
+ExceptionOr<DOMMatrixReadOnly::AbstractMatrix> DOMMatrixReadOnly::parseStringIntoAbstractMatrix(Document& document, const String& string)
 {
     if (string.isEmpty())
         return AbstractMatrix { };
 
-    auto transform = CSSPropertyParserHelpers::parseTransformRaw(string, CSSParserContext(HTMLStandardMode));
+    auto transform = CSSPropertyParserHelpers::parseTransformRaw(string, CSSParserContext(HTMLStandardMode), document);
     if (!transform)
         return Exception { ExceptionCode::SyntaxError };
 
@@ -244,7 +255,7 @@ ExceptionOr<DOMMatrixReadOnly::AbstractMatrix> DOMMatrixReadOnly::parseStringInt
 
     AbstractMatrix matrix;
     for (auto& function : *transform) {
-        function->apply(matrix.matrix, { 0, 0 });
+        protect(function.function())->apply(matrix.matrix, { 0, 0 }, Style::ZoomFactor::none());
         if (function->is3DOperation())
             matrix.is2D = false;
     }
@@ -253,9 +264,9 @@ ExceptionOr<DOMMatrixReadOnly::AbstractMatrix> DOMMatrixReadOnly::parseStringInt
 }
 
 // https://drafts.fxtf.org/geometry/#dom-dommatrix-setmatrixvalue
-ExceptionOr<void> DOMMatrixReadOnly::setMatrixValue(const String& string)
+ExceptionOr<void> DOMMatrixReadOnly::setMatrixValue(Document& document, const String& string)
 {
-    auto parseResult = parseStringIntoAbstractMatrix(string);
+    auto parseResult = parseStringIntoAbstractMatrix(document, string);
     if (parseResult.hasException())
         return parseResult.releaseException();
 

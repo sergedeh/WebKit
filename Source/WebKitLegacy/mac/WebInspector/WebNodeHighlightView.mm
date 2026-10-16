@@ -41,14 +41,13 @@
 #import <WebCore/WebCoreThread.h>
 #endif
 
-using namespace WebCore;
 
 @implementation WebNodeHighlightView
 
 #if PLATFORM(IOS_FAMILY)
 - (void)_removeAllLayers
 {
-    for (CAShapeLayer *layer in _layers)
+    for (CAShapeLayer *layer in _layers.get())
         [layer removeFromSuperlayer];
     [_layers removeAllObjects];
 }
@@ -60,10 +59,10 @@ using namespace WebCore;
     if (!self)
         return nil;
 
-    _webNodeHighlight = [webNodeHighlight retain];
+    _webNodeHighlight = webNodeHighlight;
 
 #if PLATFORM(IOS_FAMILY)
-    _layers = [[NSMutableArray alloc] init];
+    _layers = adoptNS([[NSMutableArray alloc] init]);
 #endif
 
     return self;
@@ -74,14 +73,12 @@ using namespace WebCore;
     [self detachFromWebNodeHighlight];
 #if PLATFORM(IOS_FAMILY)
     [self _removeAllLayers];
-    [_layers release];
 #endif
     [super dealloc];
 }
 
 - (void)detachFromWebNodeHighlight
 {
-    [_webNodeHighlight release];
     _webNodeHighlight = nil;
 }
 
@@ -98,13 +95,21 @@ using namespace WebCore;
 
         ASSERT([[NSGraphicsContext currentContext] isFlipped]);
 
-        GraphicsContextCG context([[NSGraphicsContext currentContext] CGContext]);
-        if (CheckedPtr controller = [_webNodeHighlight inspectorController].get())
+        RetainPtr cgContext = [[NSGraphicsContext currentContext] CGContext];
+        WebCore::GraphicsContextCG context(cgContext);
+        if (CheckedPtr controller = [protect(_webNodeHighlight) inspectorController].get())
             controller->drawHighlight(context);
         [NSGraphicsContext restoreGraphicsState];
     }
 }
 #else
+
+using WebCore::FloatPoint;
+using WebCore::FloatQuad;
+using WebCore::InspectorOverlay;
+using WebCore::cachedCGColor;
+using WebCore::findIntersection;
+
 - (void)_attach:(CALayer *)parent numLayers:(NSUInteger)numLayers
 {
     ASSERT(numLayers);
@@ -125,9 +130,10 @@ using namespace WebCore;
 static bool findIntersectionOnLineBetweenPoints(const FloatPoint& p1, const FloatPoint& p2, const FloatPoint& d1, const FloatPoint& d2, FloatPoint& intersection) 
 {
     // Do the lines intersect?
-    FloatPoint temporaryIntersectionPoint;
-    if (!findIntersection(p1, p2, d1, d2, temporaryIntersectionPoint))
+    auto intersectionPoint = findIntersection(p1, p2, d1, d2);
+    if (!intersectionPoint)
         return false;
+    FloatPoint temporaryIntersectionPoint = *intersectionPoint;
 
     // Is the intersection between the two points on the line?
     if (p1.x() >= p2.x()) {
@@ -309,16 +315,17 @@ static void layerPath(CAShapeLayer *layer, const FloatQuad& outerQuad)
 
 - (void)layoutSublayers:(CALayer *)parentLayer
 {
-    if (!_webNodeHighlight)
+    RetainPtr webNodeHighlight = _webNodeHighlight;
+    if (!webNodeHighlight)
         return;
 
     WebThreadLock();
 
-    if (![_webNodeHighlight inspectorController])
+    if (![webNodeHighlight inspectorController])
         return;
 
     InspectorOverlay::Highlight h;
-    [_webNodeHighlight inspectorController]->getHighlight(h, InspectorOverlay::CoordinateSystem::View);
+    protect([webNodeHighlight inspectorController].get())->getHighlight(h, InspectorOverlay::CoordinateSystem::View);
 
     if (h.type == InspectorOverlay::Highlight::Type::Node)
         [self _layoutForNodeHighlight:&h parent:parentLayer];

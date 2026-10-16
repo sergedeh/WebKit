@@ -40,30 +40,42 @@ class ResourceRequest;
 
 class WebDocumentLoaderMac : public WebCore::DocumentLoader {
 public:
+    static Ref<WebDocumentLoaderMac> create(WebCore::ResourceRequest&& request, WebCore::SubstituteData&& data, WebCore::ResourceRequest&& originalRequest)
+    {
+        return adoptRef(*new WebDocumentLoaderMac(WTF::move(request), WTF::move(data), WTF::move(originalRequest)));
+    }
+
     static Ref<WebDocumentLoaderMac> create(WebCore::ResourceRequest&& request, WebCore::SubstituteData&& data)
     {
-        return adoptRef(*new WebDocumentLoaderMac(WTF::move(request), WTF::move(data)));
+        return create(WTF::move(request), WTF::move(data), { });
     }
 
     void setDataSource(WebDataSource *, WebView*);
-    void detachDataSource();
-    WebDataSource *dataSource() const;
+    void LEGACY_NODELETE detachDataSource();
+    WebDataSource *LEGACY_NODELETE dataSource() const;
 
     void increaseLoadCount(WebCore::ResourceLoaderIdentifier);
     void decreaseLoadCount(WebCore::ResourceLoaderIdentifier);
 
 private:
+    WebDocumentLoaderMac(WebCore::ResourceRequest&&, WebCore::SubstituteData&&, WebCore::ResourceRequest&&);
     WebDocumentLoaderMac(WebCore::ResourceRequest&&, WebCore::SubstituteData&&);
 
     virtual void attachToFrame();
     virtual void detachFromFrame(WebCore::LoadWillContinueInAnotherProcess);
 
+    bool isWebDocumentLoaderMac() const final { return true; }
+
     void retainDataSource();
     void releaseDataSource();
 
-    WebDataSource *m_dataSource;
+    __weak WebDataSource *m_dataSource;
     bool m_isDataSourceRetained;
     RetainPtr<id> m_resourceLoadDelegate;
     RetainPtr<id> m_downloadDelegate;
     HashSet<WebCore::ResourceLoaderIdentifier> m_loadingResources;
 };
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebDocumentLoaderMac)
+static bool isType(const WebCore::DocumentLoader& loader) { return loader.isWebDocumentLoaderMac(); }
+SPECIALIZE_TYPE_TRAITS_END()

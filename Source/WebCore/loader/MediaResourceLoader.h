@@ -51,25 +51,29 @@ class WeakPtrImplWithEventTargetData;
 
 enum class LoadedFromOpaqueSource : bool;
 
-class MediaResourceLoader final : public PlatformMediaResourceLoader, public ContextDestructionObserver {
+class MediaResourceLoader final
+    : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<MediaResourceLoader, WTF::DestructionThread::Main>
+    , public PlatformMediaResourceLoader
+    , public ContextDestructionObserver {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(MediaResourceLoader, WEBCORE_EXPORT);
 public:
     static Ref<MediaResourceLoader> create(Document& document, Element& element, const String& crossOriginMode, FetchOptions::Destination destination) { return adoptRef(*new MediaResourceLoader(document, element, crossOriginMode, destination)); }
     WEBCORE_EXPORT virtual ~MediaResourceLoader();
 
     // ContextDestructionObserver.
-    void ref() const final { PlatformMediaResourceLoader::ref(); }
-    void deref() const final { PlatformMediaResourceLoader::deref(); }
+    void ref() const final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::ref(); }
+    void deref() const final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::deref(); }
+    ThreadSafeWeakPtrControlBlock& controlBlock() const final { return ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::controlBlock(); }
+    uint32_t weakRefCount() const final { return ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::weakRefCount(); }
 
     RefPtr<PlatformMediaResource> requestResource(ResourceRequest&&, LoadOptions) final;
-    void sendH2Ping(const URL&, CompletionHandler<void(Expected<Seconds, ResourceError>&&)>&&) final;
+    void sendH2Ping(const URL&, CompletionHandler<void(std::expected<Seconds, ResourceError>&&)>&&) final;
     void removeResource(MediaResource&);
 
-    Document* document();
-    RefPtr<Document> protectedDocument();
-    const String& crossOriginMode() const;
+    Document* LEGACY_NODELETE document();
+    const String& LEGACY_NODELETE crossOriginMode() const;
 
-    WEBCORE_EXPORT static void recordResponsesForTesting();
+    WEBCORE_EXPORT static void LEGACY_NODELETE recordResponsesForTesting();
     WEBCORE_EXPORT Vector<ResourceResponse> responsesForTesting() const;
     void addResponseForTesting(const ResourceResponse&);
 
@@ -119,14 +123,21 @@ public:
     void dataReceived(CachedResource&, const SharedBuffer&) override;
     void notifyFinished(CachedResource&, const NetworkLoadMetrics&, LoadWillContinueInAnotherProcess) override;
 
+    void setShouldSuppressHLSSubtitles() { m_shouldSuppressHLSSubtitles = true; }
+
 private:
-    CachedResourceHandle<CachedRawResource> protectedResource() const;
+
+    void sendPartialPlaylistLine(String&);
 
     MediaResource(MediaResourceLoader&, CachedResourceHandle<CachedRawResource>&&);
     void ensureShutdown();
     const Ref<MediaResourceLoader> m_loader;
     Atomic<bool> m_didPassAccessControlCheck { false };
     CachedResourceHandle<CachedRawResource> m_resource;
+
+    bool m_shouldSuppressHLSSubtitles { false };
+    size_t m_partialPlaylistByteCount { 0 };
+    String m_partialPlaylistLine;
 };
 
 } // namespace WebCore

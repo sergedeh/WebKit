@@ -43,8 +43,8 @@ public:
     CSSCalcSymbolTable() = default;
     CSSCalcSymbolTable(std::initializer_list<std::tuple<CSSValueID, CSSUnitType, double>>);
 
-    std::optional<Value> get(CSSValueID) const;
-    bool contains(CSSValueID) const;
+    std::optional<Value> LEGACY_NODELETE get(CSSValueID) const;
+    bool LEGACY_NODELETE contains(CSSValueID) const;
 
 private:
     HashMap<CSSValueID, std::pair<CSSUnitType, double>> m_table;

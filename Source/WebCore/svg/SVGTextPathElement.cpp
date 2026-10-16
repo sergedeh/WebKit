@@ -24,7 +24,6 @@
 #include "SVGTextPathElement.h"
 
 #include "ContainerNodeInlines.h"
-#include "LegacyRenderSVGResource.h"
 #include "NodeName.h"
 #include "RenderSVGTextPath.h"
 #include "SVGDocumentExtensions.h"
@@ -33,7 +32,6 @@
 #include "SVGNames.h"
 #include "SVGParsingError.h"
 #include "SVGPathElement.h"
-#include "Settings.h"
 #include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -42,7 +40,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGTextPathElement);
 
 inline SVGTextPathElement::SVGTextPathElement(const QualifiedName& tagName, Document& document)
-    : SVGTextContentElement(tagName, document, makeUniqueRef<PropertyRegistry>(*this))
+    : SVGTextContentElement(tagName, document, PropertyRegistry::singleton())
     , SVGURIReference(this)
 {
     ASSERT(hasTagName(SVGNames::textPathTag));
@@ -53,6 +51,8 @@ inline SVGTextPathElement::SVGTextPathElement(const QualifiedName& tagName, Docu
         PropertyRegistry::registerProperty<SVGNames::startOffsetAttr, &SVGTextPathElement::m_startOffset>();
         PropertyRegistry::registerProperty<SVGNames::methodAttr, SVGTextPathMethodType, &SVGTextPathElement::m_method>();
         PropertyRegistry::registerProperty<SVGNames::spacingAttr, SVGTextPathSpacingType, &SVGTextPathElement::m_spacing>();
+        PropertyRegistry::registerProperty<SVGNames::pathAttr, &SVGTextPathElement::m_pathAttribute>();
+        PropertyRegistry::registerProperty<SVGNames::sideAttr, SVGTextPathSideType, &SVGTextPathElement::m_side>();
     }
 }
 
@@ -79,18 +79,25 @@ void SVGTextPathElement::attributeChanged(const QualifiedName& name, const AtomS
     case AttributeNames::startOffsetAttr:
         Ref { m_startOffset }->setBaseValInternal(SVGLengthValue::construct(SVGLengthMode::Other, newValue, parseError));
         break;
-    case AttributeNames::methodAttr: {
-        SVGTextPathMethodType propertyValue = SVGPropertyTraits<SVGTextPathMethodType>::fromString(*this, newValue);
-        if (propertyValue > 0)
-            Ref { m_method }->setBaseValInternal<SVGTextPathMethodType>(propertyValue);
+    case AttributeNames::methodAttr:
+        protect(m_method)->parseBaseVal<SVGTextPathMethodType>(*this, newValue);
+        break;
+    case AttributeNames::spacingAttr:
+        protect(m_spacing)->parseBaseVal<SVGTextPathSpacingType>(*this, newValue);
+        break;
+    case AttributeNames::pathAttr: {
+        // Not an error when it fails to parse: SVG 2 keeps the valid portion, and parse()
+        // leaves behind whatever it built before the first error.
+        Ref pathAttribute = protect(m_pathAttribute)->baseVal();
+        if (newValue.isEmpty())
+            pathAttribute->clearByteStreamData();
+        else
+            pathAttribute->parse(newValue);
         break;
     }
-    case AttributeNames::spacingAttr: {
-        SVGTextPathSpacingType propertyValue = SVGPropertyTraits<SVGTextPathSpacingType>::fromString(*this, newValue);
-        if (propertyValue > 0)
-            Ref { m_spacing }->setBaseValInternal<SVGTextPathSpacingType>(propertyValue);
+    case AttributeNames::sideAttr:
+        protect(m_side)->parseBaseVal<SVGTextPathSideType>(*this, newValue);
         break;
-    }
     default:
         break;
     }
@@ -114,14 +121,23 @@ void SVGTextPathElement::svgAttributeChanged(const QualifiedName& attrName)
 
     if (SVGURIReference::isKnownAttribute(attrName)) {
         buildPendingResource();
-        updateSVGRendererForElementChange();
         return;
     }
 
     SVGTextContentElement::svgAttributeChanged(attrName);
 }
 
-RenderPtr<RenderElement> SVGTextPathElement::createElementRenderer(RenderStyle&& style, const RenderTreePosition&)
+const SVGPathByteStream& SVGTextPathElement::byteStreamForPathAttribute() const
+{
+    return Ref { m_pathAttribute }->currentPathByteStream();
+}
+
+Path SVGTextPathElement::pathForPathAttribute() const
+{
+    return Ref { m_pathAttribute }->currentPath();
+}
+
+RenderPtr<RenderElement> SVGTextPathElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
 {
     return createRenderer<RenderSVGTextPath>(*this, WTF::move(style));
 }
@@ -137,7 +153,7 @@ bool SVGTextPathElement::childShouldCreateRenderer(const Node& child) const
     return false;
 }
 
-bool SVGTextPathElement::rendererIsNeeded(const RenderStyle& style)
+bool SVGTextPathElement::rendererIsNeeded(const Style::ComputedStyle& style)
 {
     if (parentNode()
         && (parentNode()->hasTagName(SVGNames::aTag)
@@ -153,47 +169,37 @@ void SVGTextPathElement::buildPendingResource()
     if (!isConnected())
         return;
 
-    auto target = SVGURIReference::targetElementFromIRIString(href(), treeScopeForSVGReferences());
+    auto target = SVGURIReference::targetElementFromIRIString(href(), protect(treeScopeForSVGReferences()));
     if (!target.element) {
         // Do not register as pending if we are already pending this resource.
         Ref treeScope = treeScopeForSVGReferences();
-        if (treeScope->isPendingSVGResource(*this, target.identifier))
-            return;
-
-        if (!target.identifier.isEmpty()) {
+        if (!target.identifier.isEmpty() && !treeScope->isPendingSVGResource(*this, target.identifier)) {
             treeScope->addPendingSVGResource(target.identifier, *this);
             ASSERT(hasPendingResources());
         }
     } else if (RefPtr pathElement = dynamicDowncast<SVGPathElement>(*target.element))
         pathElement->addReferencingElement(*this);
 
-    if (document().settings().layerBasedSVGEngineEnabled())
-        return;
-
-    CheckedPtr renderer = this->renderer();
-    if (!renderer)
-        return;
-
-    LegacyRenderSVGResource::markForLayoutAndParentResourceInvalidation(*renderer);
+    updateSVGRendererForElementChange();
 }
 
-Node::InsertedIntoAncestorResult SVGTextPathElement::insertedIntoAncestor(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
+Node::NeedsPostConnectionSteps SVGTextPathElement::insertionSteps(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
 {
-    SVGTextContentElement::insertedIntoAncestor(insertionType, parentOfInsertedTree);
+    SVGTextContentElement::insertionSteps(insertionType, parentOfInsertedTree);
     if (!insertionType.connectedToDocument)
-        return InsertedIntoAncestorResult::Done;
-    return InsertedIntoAncestorResult::NeedsPostInsertionCallback;
+        return NeedsPostConnectionSteps::No;
+    return NeedsPostConnectionSteps::Yes;
 }
 
-void SVGTextPathElement::didFinishInsertingNode()
+void SVGTextPathElement::postConnectionSteps()
 {
     SVGTextContentElement::buildPendingResource();
     buildPendingResource();
 }
 
-void SVGTextPathElement::removedFromAncestor(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
+void SVGTextPathElement::removingSteps(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
 {
-    SVGTextContentElement::removedFromAncestor(removalType, oldParentOfRemovedTree);
+    SVGTextContentElement::removingSteps(removalType, oldParentOfRemovedTree);
     if (removalType.disconnectedFromDocument)
         clearResourceReferences();
 }

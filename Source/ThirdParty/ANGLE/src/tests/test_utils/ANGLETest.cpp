@@ -7,11 +7,8 @@
 //   Implementation of common ANGLE testing fixture.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #include "ANGLETest.h"
+#include "common/unsafe_buffers.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -29,9 +26,7 @@
 #    include <VersionHelpers.h>
 #endif  // defined(ANGLE_PLATFORM_WINDOWS)
 
-#if defined(ANGLE_HAS_RAPIDJSON)
-#    include "test_utils/runner/TestSuite.h"
-#endif  // defined(ANGLE_HAS_RAPIDJSON)
+#include "test_utils/runner/TestSuite.h"
 
 namespace angle
 {
@@ -40,7 +35,10 @@ const GLColorRGB GLColorRGB::black(0u, 0u, 0u);
 const GLColorRGB GLColorRGB::blue(0u, 0u, 255u);
 const GLColorRGB GLColorRGB::green(0u, 255u, 0u);
 const GLColorRGB GLColorRGB::red(255u, 0u, 0u);
-const GLColorRGB GLColorRGB::yellow(255u, 255u, 0);
+const GLColorRGB GLColorRGB::yellow(255u, 255u, 0u);
+const GLColorRGB GLColorRGB::magenta(255u, 0u, 255u);
+const GLColorRGB GLColorRGB::cyan(0u, 255u, 255u);
+const GLColorRGB GLColorRGB::white(255u, 255u, 255u);
 
 const GLColor GLColor::black            = GLColor(0u, 0u, 0u, 255u);
 const GLColor GLColor::blue             = GLColor(0u, 0u, 255u, 255u);
@@ -173,6 +171,8 @@ const char *GetColorName(GLColorRGB color)
 // Always re-use displays when using --bot-mode in the test runner.
 bool gReuseDisplays = false;
 
+bool gAlwaysShowWindow = false;
+
 bool ShouldAlwaysForceNewDisplay(const PlatformParameters &params)
 {
     // When running WebGPU tests always force a new display.
@@ -221,8 +221,6 @@ GPUTestConfig::API GetTestConfigAPIFromRenderer(angle::GLESDriverType driverType
     {
         case EGL_PLATFORM_ANGLE_TYPE_D3D11_ANGLE:
             return GPUTestConfig::kAPID3D11;
-        case EGL_PLATFORM_ANGLE_TYPE_D3D9_ANGLE:
-            return GPUTestConfig::kAPID3D9;
         case EGL_PLATFORM_ANGLE_TYPE_OPENGL_ANGLE:
             return GPUTestConfig::kAPIGLDesktop;
         case EGL_PLATFORM_ANGLE_TYPE_OPENGLES_ANGLE:
@@ -266,13 +264,13 @@ GLColor::GLColor(const Vector4 &floatColor)
 
 GLColor::GLColor(GLuint colorValue) : R(0), G(0), B(0), A(0)
 {
-    memcpy(&R, &colorValue, sizeof(GLuint));
+    ANGLE_UNSAFE_TODO(memcpy(&R, &colorValue, sizeof(GLuint)));
 }
 
 GLuint GLColor::asUint() const
 {
     GLuint uint = 0;
-    memcpy(&uint, &R, sizeof(GLuint));
+    ANGLE_UNSAFE_TODO(memcpy(&uint, &R, sizeof(GLuint)));
     return uint;
 }
 
@@ -424,6 +422,18 @@ EGLenum GetEglPlatform()
     return eglPlatform;
 }
 
+EGLenum GetPbufferOnlyDefaultPlatformType()
+{
+    // Some tests only need a pbuffer.  On Wayland, EGL configs don't advertise pbuffers, so default
+    // to X11 if enabled so the tests can run.  The value returned by this function should be passed
+    // as the EGL_PLATFORM_ANGLE_NATIVE_PLATFORM_TYPE_ANGLE attribute.
+#if defined(ANGLE_USE_X11)
+    return EGL_PLATFORM_X11_EXT;
+#else
+    // Using 0 means the default is chosen.
+    return 0;
+#endif
+}
 }  // namespace angle
 
 using namespace angle;
@@ -444,6 +454,8 @@ constexpr char kBatchId[]                        = "--batch-id=";
 constexpr char kDelayTestStart[]                 = "--delay-test-start=";
 constexpr char kRenderDoc[]                      = "--renderdoc";
 constexpr char kNoRenderDoc[]                    = "--no-renderdoc";
+constexpr char kDisableDebugLayers[]             = "--disable-debug-layers";
+constexpr char kAlwaysShowWindow[]               = "--always-show-window";
 
 void SetupEnvironmentVarsForCaptureReplay()
 {
@@ -509,7 +521,7 @@ void *ANGLETestBase::operator new(size_t size)
     void *ptr = malloc(size ? size : size + 1);
     // Initialize integer primitives to large positive values to avoid tests relying
     // on the assumption that primitives (e.g. GLuint) would be zero-initialized.
-    memset(ptr, 0x7f, size);
+    ANGLE_UNSAFE_TODO(memset(ptr, 0x7f, size));
     return ptr;
 }
 
@@ -542,10 +554,18 @@ ANGLETestBase::ANGLETestBase(const PlatformParameters &params)
     if (withMethods.getRenderer() == EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE)
     {
 #if defined(ANGLE_ENABLE_VULKAN_VALIDATION_LAYERS)
-        withMethods.eglParameters.debugLayersEnabled = true;
+        withMethods.eglParameters.debugLayersEnabled = EGL_TRUE;
 #else
-        withMethods.eglParameters.debugLayersEnabled = false;
+        withMethods.eglParameters.debugLayersEnabled = EGL_FALSE;
 #endif
+    }
+    else
+    {
+        if (withMethods.eglParameters.debugLayersEnabled == EGL_DONT_CARE)
+        {
+            withMethods.eglParameters.debugLayersEnabled =
+                gDisableDebugLayers ? EGL_FALSE : EGL_TRUE;
+        }
     }
 
     if (gEnableRenderDocCapture)
@@ -614,8 +634,7 @@ void ANGLETestBase::initOSWindow()
         return;
     }
 
-    // On Linux we must keep the test windows visible. On Windows it doesn't seem to need it.
-    setWindowVisible(getOSWindow(), !IsWindows());
+    setWindowVisible(getOSWindow(), shouldShowWindow());
 
     switch (mCurrentParams->driver)
     {
@@ -703,9 +722,6 @@ void ANGLETestBase::ANGLETestSetUp()
     fullTestNameStr << testInfo->test_suite_name() << "." << testInfo->name();
     std::string fullTestName = fullTestNameStr.str();
 
-    // TODO(b/279980674): TestSuite depends on rapidjson which we don't have in aosp builds,
-    // for now disable both TestSuite and expectations.
-#if defined(ANGLE_HAS_RAPIDJSON)
     TestSuite *testSuite = TestSuite::GetInstance();
     int32_t testExpectation =
         testSuite->getTestExpectationWithConfigAndUpdateTimeout(testConfig, fullTestName);
@@ -714,7 +730,6 @@ void ANGLETestBase::ANGLETestSetUp()
     {
         GTEST_SKIP() << "Test skipped on this config";
     }
-#endif
 
     if (IsWindows())
     {
@@ -857,10 +872,27 @@ void ANGLETestBase::ANGLETestSetUp()
     if (mFixture->eglWindow->getClientMajorVersion() != mCurrentParams->majorVersion ||
         mFixture->eglWindow->getClientMinorVersion() != mCurrentParams->minorVersion)
     {
-        WARN() << "Requested Context version does not match the version created. Requested: "
-               << mCurrentParams->majorVersion << "." << mCurrentParams->minorVersion
-               << ", Actual: " << mFixture->eglWindow->getClientMajorVersion() << "."
-               << mFixture->eglWindow->getClientMinorVersion();
+        std::stringstream versionComparison;
+        versionComparison << "(Requested: " << mCurrentParams->majorVersion << "."
+                          << mCurrentParams->minorVersion
+                          << ", Actual: " << mFixture->eglWindow->getClientMajorVersion() << "."
+                          << mFixture->eglWindow->getClientMinorVersion() << ")";
+
+        if (mCurrentParams->isDisableRequested(Feature::EnableCreateContextBackwardsCompatible))
+        {
+            INFO() << "Extension EGL_ANGLE_create_context_backwards_compatible is disabled. "
+                   << versionComparison.str();
+        }
+        else if (!IsEGLClientExtensionEnabled("EGL_ANGLE_create_context_backwards_compatible"))
+        {
+            INFO() << "Extension EGL_ANGLE_create_context_backwards_compatible is not supported. "
+                   << versionComparison.str();
+        }
+        else
+        {
+            WARN() << "Requested context version does not match the version created. "
+                   << versionComparison.str();
+        }
     }
 
     if (needSwap)
@@ -890,7 +922,7 @@ void ANGLETestBase::checkUnsupportedExtensions()
         return;
     }
 
-    if (mFixture->configParams.webGLCompatibility &&
+    if ((mFixture->configParams.webGLCompatibility || mFixture->configParams.hardenedContext) &&
         !IsEGLDisplayExtensionEnabled(mFixture->eglWindow->getDisplay(),
                                       "EGL_ANGLE_create_context_webgl_compatibility"))
     {
@@ -1517,7 +1549,7 @@ void ANGLETestBase::checkD3D11SDKLayersMessages()
         return;
     }
 
-    if (!strstr(extensionString, "EGL_EXT_device_query"))
+    if (!ANGLE_UNSAFE_TODO(strstr(extensionString, "EGL_EXT_device_query")))
     {
         return;
     }
@@ -1531,9 +1563,8 @@ void ANGLETestBase::checkD3D11SDKLayersMessages()
                                             EGL_D3D11_DEVICE_ANGLE, &device));
     ID3D11Device *d3d11Device = reinterpret_cast<ID3D11Device *>(device);
 
-    ID3D11InfoQueue *infoQueue = nullptr;
-    HRESULT hr =
-        d3d11Device->QueryInterface(__uuidof(infoQueue), reinterpret_cast<void **>(&infoQueue));
+    angle::ComPtr<ID3D11InfoQueue> infoQueue;
+    HRESULT hr = d3d11Device->QueryInterface(IID_PPV_ARGS(&infoQueue));
     if (SUCCEEDED(hr))
     {
         UINT64 numStoredD3DDebugMessages =
@@ -1564,8 +1595,6 @@ void ANGLETestBase::checkD3D11SDKLayersMessages()
                    << " D3D11 SDK Layers message(s) detected! Test Failed.\n";
         }
     }
-
-    SafeRelease(infoQueue);
 #endif  // defined(ANGLE_ENABLE_D3D11)
 }
 
@@ -1616,6 +1645,11 @@ void ANGLETestBase::setConfigStencilBits(int bits)
     mFixture->configParams.stencilBits = bits;
 }
 
+void ANGLETestBase::setConfigColorSpace(EGLenum colorSpace)
+{
+    mFixture->configParams.colorSpace = colorSpace;
+}
+
 void ANGLETestBase::setConfigComponentType(EGLenum componentType)
 {
     mFixture->configParams.componentType = componentType;
@@ -1646,6 +1680,11 @@ void ANGLETestBase::setWebGLCompatibilityEnabled(bool webglCompatibility)
     mFixture->configParams.webGLCompatibility = webglCompatibility;
 }
 
+void ANGLETestBase::setHardenedContextEnabled(bool hardenedContext)
+{
+    mFixture->configParams.hardenedContext = hardenedContext;
+}
+
 void ANGLETestBase::setExtensionsEnabled(bool extensionsEnabled)
 {
     mFixture->configParams.extensionsEnabled = extensionsEnabled;
@@ -1669,6 +1708,11 @@ void ANGLETestBase::setClientArraysEnabled(bool enabled)
 void ANGLETestBase::setRobustResourceInit(bool enabled)
 {
     mFixture->configParams.robustResourceInit = enabled;
+}
+
+void ANGLETestBase::setPbuffer(bool enabled)
+{
+    mFixture->configParams.pbuffer = enabled;
 }
 
 void ANGLETestBase::setMutableRenderBuffer(bool enabled)
@@ -1701,9 +1745,23 @@ int ANGLETestBase::getClientMajorVersion() const
     return getGLWindow()->getClientMajorVersion();
 }
 
+bool ANGLETestBase::shouldShowWindow() const
+{
+    // On Linux we must keep the test windows visible. On Windows or Metal it doesn't seem to need
+    // it.
+    return gAlwaysShowWindow || !(IsWindows() || IsMac() || IsIOS());
+}
+
 int ANGLETestBase::getClientMinorVersion() const
 {
     return getGLWindow()->getClientMinorVersion();
+}
+
+bool ANGLETestBase::isAtLeastClientVersion(int major, int minor) const
+{
+    return getGLWindow()->getClientMajorVersion() > major ||
+           (getGLWindow()->getClientMajorVersion() == major &&
+            getGLWindow()->getClientMinorVersion() >= minor);
 }
 
 EGLWindow *ANGLETestBase::getEGLWindow() const
@@ -1864,35 +1922,46 @@ void ANGLEProcessTestArgs(int *argc, char *argv[])
 
     for (int argIndex = 1; argIndex < *argc; argIndex++)
     {
-        if (strncmp(argv[argIndex], kUseConfig, strlen(kUseConfig)) == 0)
+        if (ANGLE_UNSAFE_TODO(strncmp(argv[argIndex], kUseConfig, strlen(kUseConfig))) == 0)
         {
-            SetSelectedConfig(argv[argIndex] + strlen(kUseConfig));
+            SetSelectedConfig(ANGLE_UNSAFE_TODO(argv[argIndex] + strlen(kUseConfig)));
         }
-        else if (strncmp(argv[argIndex], kReuseDisplays, strlen(kReuseDisplays)) == 0)
+        else if (ANGLE_UNSAFE_TODO(
+                     strncmp(argv[argIndex], kReuseDisplays, strlen(kReuseDisplays))) == 0)
         {
             gReuseDisplays = true;
         }
-        else if (strncmp(argv[argIndex], kBatchId, strlen(kBatchId)) == 0)
+        else if (ANGLE_UNSAFE_TODO(strncmp(argv[argIndex], kBatchId, strlen(kBatchId))) == 0)
         {
             // Enable display reuse when running under --bot-mode.
             gReuseDisplays = true;
         }
-        else if (strncmp(argv[argIndex], kEnableANGLEPerTestCaptureLabel,
-                         strlen(kEnableANGLEPerTestCaptureLabel)) == 0)
+        else if (ANGLE_UNSAFE_TODO(strncmp(argv[argIndex], kEnableANGLEPerTestCaptureLabel,
+                                           strlen(kEnableANGLEPerTestCaptureLabel))) == 0)
         {
             gEnableANGLEPerTestCaptureLabel = true;
         }
-        else if (strncmp(argv[argIndex], kDelayTestStart, strlen(kDelayTestStart)) == 0)
+        else if (ANGLE_UNSAFE_TODO(
+                     strncmp(argv[argIndex], kDelayTestStart, strlen(kDelayTestStart))) == 0)
         {
-            SetTestStartDelay(argv[argIndex] + strlen(kDelayTestStart));
+            SetTestStartDelay(ANGLE_UNSAFE_TODO(argv[argIndex] + strlen(kDelayTestStart)));
         }
-        else if (strncmp(argv[argIndex], kRenderDoc, strlen(kRenderDoc)) == 0)
+        else if (ANGLE_UNSAFE_TODO(strncmp(argv[argIndex], kRenderDoc, strlen(kRenderDoc))) == 0)
         {
             gEnableRenderDocCapture = true;
         }
-        else if (strncmp(argv[argIndex], kNoRenderDoc, strlen(kNoRenderDoc)) == 0)
+        else if (ANGLE_UNSAFE_TODO(strncmp(argv[argIndex], kNoRenderDoc, strlen(kNoRenderDoc))) ==
+                 0)
         {
             gEnableRenderDocCapture = false;
+        }
+        else if (strncmp(argv[argIndex], kDisableDebugLayers, strlen(kDisableDebugLayers)) == 0)
+        {
+            gDisableDebugLayers = true;
+        }
+        else if (strncmp(argv[argIndex], kAlwaysShowWindow, strlen(kAlwaysShowWindow)) == 0)
+        {
+            gAlwaysShowWindow = true;
         }
     }
 }

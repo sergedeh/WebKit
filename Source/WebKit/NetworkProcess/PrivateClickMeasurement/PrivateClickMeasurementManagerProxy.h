@@ -49,6 +49,7 @@ public:
     void clearForRegistrableDomain(WebCore::RegistrableDomain&&, CompletionHandler<void()>&&) final;
     void migratePrivateClickMeasurementFromLegacyStorage(WebCore::PrivateClickMeasurement&&, PrivateClickMeasurementAttributionType) final;
     void setDebugModeIsEnabled(bool) final;
+    void setPrivateRelayEnforcementIsEnabled(bool) final;
 
     void toStringForTesting(CompletionHandler<void(String)>&&) const final;
     void setOverrideTimerForTesting(bool) final;
@@ -62,6 +63,7 @@ public:
     void setPrivateClickMeasurementAppBundleIDForTesting(ApplicationBundleIdentifier&&) final;
     void destroyStoreForTesting(CompletionHandler<void()>&&) final;
     void allowTLSCertificateChainForLocalPCMTesting(const WebCore::CertificateInfo&) final;
+    void fetchRegistrableDomains(CompletionHandler<void(Vector<WebCore::RegistrableDomain>&&)>&&) final;
 
 private:
     ManagerProxy(const String& machServiceName, NetworkSession&);

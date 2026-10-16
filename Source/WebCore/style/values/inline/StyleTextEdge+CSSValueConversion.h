@@ -24,8 +24,9 @@
 
 #pragma once
 
+#include "CSSKeywordValue.h"
 #include "StyleBuilderChecking.h"
-#include "StylePrimitiveKeyword+CSSValueConversion.h"
+#include "StyleKeyword+CSSValueConversion.h"
 #include "StyleTextEdge.h"
 
 namespace WebCore {
@@ -36,29 +37,27 @@ template<TextEdgeDerived T> struct CSSValueConversion<T> {
     {
         using Keyword = typename T::Keyword;
 
-        if (is<CSSPrimitiveValue>(value)) {
-            switch (value.valueID()) {
+        if (auto* keywordValue = dynamicDowncast<CSSKeywordValue>(value)) {
+            switch (keywordValue->valueID()) {
             case Keyword::value:
                 return Keyword { };
-            case CSSValueText:
+            case CSSValueID::Text:
                 return { TextEdgeOver::Text, TextEdgeUnder::Text };
-            case CSSValueIdeographic:
+            case CSSValueID::Ideographic:
                 return { TextEdgeOver::Ideographic, TextEdgeUnder::Ideographic };
-            case CSSValueIdeographicInk:
+            case CSSValueID::IdeographicInk:
                 return { TextEdgeOver::IdeographicInk, TextEdgeUnder::IdeographicInk };
-            case CSSValueCap:
+            case CSSValueID::Cap:
                 return { TextEdgeOver::Cap, TextEdgeUnder::Text };
-            case CSSValueEx:
+            case CSSValueID::Ex:
                 return { TextEdgeOver::Ex, TextEdgeUnder::Text };
             default:
-                break;
+                state.setCurrentPropertyInvalidAtComputedValueTime();
+                return Keyword { };
             }
-
-            state.setCurrentPropertyInvalidAtComputedValueTime();
-            return Keyword { };
         }
 
-        auto pair = requiredPairDowncast<CSSPrimitiveValue>(state, value);
+        auto pair = requiredPairDowncast<CSSKeywordValue>(state, value);
         if (!pair)
             return Keyword { };
 

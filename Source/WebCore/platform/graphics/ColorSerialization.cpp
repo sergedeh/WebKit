@@ -49,6 +49,34 @@ static String numericComponent(float value)
     );
 }
 
+static String percentageComponent(float value)
+{
+    if (std::isnan(value))
+        return "none"_s;
+    if (std::isfinite(value))
+        return makeString(FormattedCSSNumber::create(value), '%');
+    return makeString(
+        "calc("_s,
+        FormattedCSSNumber::create(value),
+        ")"_s
+    );
+}
+
+template<auto index, typename ColorType> static String normalizedNumericComponent(const ColorType& color)
+{
+    if constexpr (ColorType::Model::componentInfo[index].type == ColorComponentType::Angle)
+        return numericComponent(normalizeHue(get<index>(color.unresolved())));
+    else if constexpr (ColorType::Model::componentInfo[index].type == ColorComponentType::Percentage)
+        return percentageComponent(get<index>(color.unresolved()));
+    else
+        return numericComponent(get<index>(color.unresolved()));
+}
+
+static String normalizedAlphaNumericComponent(const auto& color)
+{
+    return numericComponent(color.unresolved().alpha);
+}
+
 static String serializationForCSS(const A98RGB<float>&, bool useColorFunctionSerialization);
 static String serializationForHTML(const A98RGB<float>&, bool useColorFunctionSerialization);
 static String serializationForRenderTreeAsText(const A98RGB<float>&, bool useColorFunctionSerialization);
@@ -162,45 +190,45 @@ String serializationForRenderTreeAsText(const Color& color)
     });
 }
 
-ASCIILiteral serialization(ColorSpace colorSpace)
+ASCIILiteral serialization(ColorSpaceName colorSpace)
 {
     switch (colorSpace) {
-    case ColorSpace::A98RGB:
-    case ColorSpace::ExtendedA98RGB:
+    case ColorSpaceName::A98RGB:
+    case ColorSpaceName::ExtendedA98RGB:
         return "a98-rgb"_s;
-    case ColorSpace::DisplayP3:
-    case ColorSpace::ExtendedDisplayP3:
+    case ColorSpaceName::DisplayP3:
+    case ColorSpaceName::ExtendedDisplayP3:
         return "display-p3"_s;
-    case ColorSpace::HSL:
+    case ColorSpaceName::HSL:
         return "hsl"_s;
-    case ColorSpace::HWB:
+    case ColorSpaceName::HWB:
         return "hwb"_s;
-    case ColorSpace::LCH:
+    case ColorSpaceName::LCH:
         return "lch"_s;
-    case ColorSpace::Lab:
+    case ColorSpaceName::Lab:
         return "lab"_s;
-    case ColorSpace::LinearDisplayP3:
-    case ColorSpace::ExtendedLinearDisplayP3:
+    case ColorSpaceName::LinearDisplayP3:
+    case ColorSpaceName::ExtendedLinearDisplayP3:
         return "display-p3-linear"_s;
-    case ColorSpace::LinearSRGB:
-    case ColorSpace::ExtendedLinearSRGB:
+    case ColorSpaceName::LinearSRGB:
+    case ColorSpaceName::ExtendedLinearSRGB:
         return "srgb-linear"_s;
-    case ColorSpace::OKLCH:
+    case ColorSpaceName::OKLCH:
         return "oklch"_s;
-    case ColorSpace::OKLab:
+    case ColorSpaceName::OKLab:
         return "oklab"_s;
-    case ColorSpace::ProPhotoRGB:
-    case ColorSpace::ExtendedProPhotoRGB:
+    case ColorSpaceName::ProPhotoRGB:
+    case ColorSpaceName::ExtendedProPhotoRGB:
         return "prophoto-rgb"_s;
-    case ColorSpace::Rec2020:
-    case ColorSpace::ExtendedRec2020:
+    case ColorSpaceName::Rec2020:
+    case ColorSpaceName::ExtendedRec2020:
         return "rec2020"_s;
-    case ColorSpace::SRGB:
-    case ColorSpace::ExtendedSRGB:
+    case ColorSpaceName::SRGB:
+    case ColorSpaceName::ExtendedSRGB:
         return "srgb"_s;
-    case ColorSpace::XYZ_D50:
+    case ColorSpaceName::XYZ_D50:
         return "xyz-d50"_s;
-    case ColorSpace::XYZ_D65:
+    case ColorSpaceName::XYZ_D65:
         return "xyz-d65"_s;
     }
 
@@ -208,14 +236,11 @@ ASCIILiteral serialization(ColorSpace colorSpace)
     return ""_s;
 }
 
-template<typename ColorType> static String serializationUsingColorFunction(const ColorType& color)
+static String serializationUsingColorFunction(IsColorTypeWithComponentType<float> auto const& color)
 {
-    static_assert(std::is_same_v<typename ColorType::ComponentType, float>);
-
-    auto [c1, c2, c3, alpha] = color.unresolved();
-    if (WTF::areEssentiallyEqual(alpha, 1.0f))
-        return makeString("color("_s, serialization(ColorSpaceFor<ColorType>), ' ', numericComponent(c1), ' ', numericComponent(c2), ' ', numericComponent(c3), ')');
-    return makeString("color("_s, serialization(ColorSpaceFor<ColorType>), ' ', numericComponent(c1), ' ', numericComponent(c2), ' ', numericComponent(c3), " / "_s, numericComponent(alpha), ')');
+    if (WTF::areEssentiallyEqual(color.unresolved().alpha, 1.0f))
+        return makeString("color("_s, serialization(colorSpaceFor(color)), ' ', normalizedNumericComponent<0>(color), ' ', normalizedNumericComponent<1>(color), ' ', normalizedNumericComponent<2>(color), ')');
+    return makeString("color("_s, serialization(colorSpaceFor(color)), ' ', normalizedNumericComponent<0>(color), ' ', normalizedNumericComponent<1>(color), ' ', normalizedNumericComponent<2>(color), " / "_s, normalizedAlphaNumericComponent(color), ')');
 }
 
 static String serializationUsingColorFunction(const SRGBA<uint8_t>& color)
@@ -223,30 +248,11 @@ static String serializationUsingColorFunction(const SRGBA<uint8_t>& color)
     return serializationUsingColorFunction(convertColor<SRGBA<float>>(color));
 }
 
-template<typename ColorType> static String serializationOfLabLikeColorsForCSS(const ColorType& color)
+static String serializationUsingNamedFunction(IsColorTypeWithComponentType<float> auto const& color)
 {
-    static_assert(std::is_same_v<typename ColorType::ComponentType, float>);
-
-    // https://www.w3.org/TR/css-color-4/#serializing-lab-lch
-    auto [c1, c2, c3, alpha] = color.unresolved();
-    if (WTF::areEssentiallyEqual(alpha, 1.0f))
-        return makeString(serialization(ColorSpaceFor<ColorType>), '(', numericComponent(c1), ' ', numericComponent(c2), ' ', numericComponent(c3), ')');
-    return makeString(serialization(ColorSpaceFor<ColorType>), '(', numericComponent(c1), ' ', numericComponent(c2), ' ', numericComponent(c3), " / "_s, numericComponent(alpha), ')');
-}
-
-template<typename ColorType> static String serializationOfLCHLikeColorsForCSS(const ColorType& color)
-{
-    static_assert(std::is_same_v<typename ColorType::ComponentType, float>);
-
-    // https://www.w3.org/TR/css-color-4/#serializing-lab-lch
-
-    // NOTE: It is unclear whether normalizing the hue component for serialization is required. The question has been
-    // raised with the editors as https://github.com/w3c/csswg-drafts/issues/7782.
-
-    auto [c1, c2, c3, alpha] = color.unresolved();
-    if (WTF::areEssentiallyEqual(alpha, 1.0f))
-        return makeString(serialization(ColorSpaceFor<ColorType>), '(', numericComponent(c1), ' ', numericComponent(c2), ' ', numericComponent(normalizeHue(c3)), ')');
-    return makeString(serialization(ColorSpaceFor<ColorType>), '(', numericComponent(c1), ' ', numericComponent(c2), ' ', numericComponent(normalizeHue(c3)), " / "_s, numericComponent(alpha), ')');
+    if (WTF::areEssentiallyEqual(color.unresolved().alpha, 1.0f))
+        return makeString(serialization(colorSpaceFor(color)), '(', normalizedNumericComponent<0>(color), ' ', normalizedNumericComponent<1>(color), ' ', normalizedNumericComponent<2>(color), ')');
+    return makeString(serialization(colorSpaceFor(color)), '(', normalizedNumericComponent<0>(color), ' ', normalizedNumericComponent<1>(color), ' ', normalizedNumericComponent<2>(color), " / "_s, normalizedAlphaNumericComponent(color), ')');
 }
 
 // MARK: A98RGB<float> overloads
@@ -406,9 +412,8 @@ String serializationForRenderTreeAsText(const ExtendedSRGBA<float>& color, bool)
 
 String serializationForCSS(const HSLA<float>& color, bool useColorFunctionSerialization)
 {
-    // FIXME: The spec is not completely clear on whether missing components should be
-    // carried forward here, but it seems like people are leaning toward thinking they
-    // should be. See https://github.com/w3c/csswg-drafts/issues/10254.
+    if (color.unresolved().anyComponentIsNone())
+        return serializationUsingNamedFunction(color);
 
     if (useColorFunctionSerialization)
         return serializationForCSS(convertColorCarryingForwardMissing<ExtendedSRGBA<float>>(color), true);
@@ -430,9 +435,8 @@ String serializationForRenderTreeAsText(const HSLA<float>& color, bool useColorF
 
 String serializationForCSS(const HWBA<float>& color, bool useColorFunctionSerialization)
 {
-    // FIXME: The spec is not completely clear on whether missing components should be
-    // carried forward here, but it seems like people are leaning toward thinking they
-    // should be. See https://github.com/w3c/csswg-drafts/issues/10254.
+    if (color.unresolved().anyComponentIsNone())
+        return serializationUsingNamedFunction(color);
 
     if (useColorFunctionSerialization)
         return serializationForCSS(convertColorCarryingForwardMissing<ExtendedSRGBA<float>>(color), true);
@@ -454,7 +458,7 @@ String serializationForRenderTreeAsText(const HWBA<float>& color, bool useColorF
 
 String serializationForCSS(const LCHA<float>& color, bool)
 {
-    return serializationOfLCHLikeColorsForCSS(color);
+    return serializationUsingNamedFunction(color);
 }
 
 String serializationForHTML(const LCHA<float>& color, bool useColorFunctionSerialization)
@@ -471,7 +475,7 @@ String serializationForRenderTreeAsText(const LCHA<float>& color, bool useColorF
 
 String serializationForCSS(const Lab<float>& color, bool)
 {
-    return serializationOfLabLikeColorsForCSS(color);
+    return serializationUsingNamedFunction(color);
 }
 
 String serializationForHTML(const Lab<float>& color, bool useColorFunctionSerialization)
@@ -522,7 +526,7 @@ String serializationForRenderTreeAsText(const LinearSRGBA<float>& color, bool)
 
 String serializationForCSS(const OKLCHA<float>& color, bool)
 {
-    return serializationOfLCHLikeColorsForCSS(color);
+    return serializationUsingNamedFunction(color);
 }
 
 String serializationForHTML(const OKLCHA<float>& color, bool useColorFunctionSerialization)
@@ -539,7 +543,7 @@ String serializationForRenderTreeAsText(const OKLCHA<float>& color, bool useColo
 
 String serializationForCSS(const OKLab<float>& color, bool)
 {
-    return serializationOfLabLikeColorsForCSS(color);
+    return serializationUsingNamedFunction(color);
 }
 
 String serializationForHTML(const OKLab<float>& color, bool useColorFunctionSerialization)
@@ -590,7 +594,7 @@ String serializationForRenderTreeAsText(const Rec2020<float>& color, bool)
 
 String serializationForCSS(const SRGBA<float>& color, bool useColorFunctionSerialization)
 {
-    if (useColorFunctionSerialization)
+    if (useColorFunctionSerialization || color.unresolved().anyComponentIsNone())
         return serializationUsingColorFunction(color);
 
     return serializationForCSS(convertColor<SRGBA<uint8_t>>(color), false);
@@ -611,13 +615,13 @@ String serializationForRenderTreeAsText(const SRGBA<float>& color, bool useColor
 
 // MARK: SRGBA<uint8_t> overloads
 
-static char decimalDigit(unsigned number)
+static char LEGACY_NODELETE decimalDigit(unsigned number)
 {
     ASSERT(number < 10);
     return '0' + number;
 }
 
-static std::array<char, 4> fractionDigitsForFractionalAlphaValue(uint8_t alpha)
+static std::array<char, 4> LEGACY_NODELETE fractionDigitsForFractionalAlphaValue(uint8_t alpha)
 {
     ASSERT(alpha > 0);
     ASSERT(alpha < 0xFF);

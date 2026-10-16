@@ -32,6 +32,7 @@
 
 #if BENABLE(LIBPAS)
 #include "bmalloc_heap_config.h"
+#include "tagged_bmalloc_heap_utils.h"
 #include "pas_page_sharing_pool.h"
 #include "pas_platform.h"
 #include "pas_probabilistic_guard_malloc_allocator.h"
@@ -55,7 +56,7 @@ static const bmalloc_type primitiveGigacageType = BMALLOC_TYPE_INITIALIZER(1, 1,
 } // anonymous namespace
 
 pas_primitive_heap_ref gigacageHeaps[static_cast<size_t>(Gigacage::NumberOfKinds)] = {
-    BMALLOC_AUXILIARY_HEAP_REF_INITIALIZER(&primitiveGigacageType, pas_bmalloc_heap_ref_kind_non_compact),
+    BMALLOC_AUXILIARY_HEAP_REF_INITIALIZER(&primitiveGigacageType),
 };
 #endif
 
@@ -66,7 +67,47 @@ void* mallocOutOfLine(size_t size, CompactAllocationMode mode, HeapKind kind)
 
 void freeOutOfLine(void* object, HeapKind kind)
 {
+#if BUSE(LIBPAS)
+    BUNUSED(kind);
+    if (bmalloc_try_deallocate_casual(object))
+        return;
+    // We stuff this in the out-of-line path because we expect it to never be
+    // hit in non-hardened WebContent processes, where we're most performance-
+    // sensitive. In processes where MTE is enabled, we can absorb the cost.
+    if (tagged_bmalloc_try_deallocate_inline_only(object))
+        return;
+    tagged_bmalloc_deallocate_casual(object);
+#else
     free(object, kind);
+#endif
+}
+
+void* tryReallocOutOfLine(void* object, size_t newSize)
+{
+#if BUSE(LIBPAS)
+    // Even with MTE enabled, a non-compact object may ultimately be served by
+    // either the bmalloc_heap or the tagged_bmalloc_heap: only objects that
+    // are *actually* tagged will route to the latter.
+    // As of time of writing the only non-compact objects which won't be tagged
+    // are those above PAS_MAX_MTE_TAGGABLE_OBJECT_SIZE; these are served
+    // from the bmalloc_heap like usual, and delegated to libmalloc instead.
+    if (tagged_bmalloc_owns_object(object))
+        return tagged_bmalloc_try_reallocate(object, newSize, pas_reallocate_free_if_successful);
+    return bmalloc_try_reallocate_inline(object, newSize, pas_reallocate_free_if_successful);
+#else
+    return tryRealloc(object, newSize, CompactAllocationMode::NonCompact);
+#endif
+}
+
+void* reallocOutOfLine(void* object, size_t newSize)
+{
+#if BUSE(LIBPAS)
+    if (tagged_bmalloc_owns_object(object))
+        return tagged_bmalloc_reallocate(object, newSize, pas_reallocate_free_if_successful);
+    return bmalloc_reallocate_inline(object, newSize, pas_reallocate_free_if_successful);
+#else
+    return realloc(object, newSize, CompactAllocationMode::NonCompact);
+#endif
 }
 
 void* tryLargeZeroedMemalignVirtual(size_t requiredAlignment, size_t requestedSize, CompactAllocationMode mode, HeapKind kind)
@@ -178,27 +219,7 @@ void enableMiniMode(bool forceMiniMode)
     pas_physical_page_sharing_pool_balancing_enabled = true;
     pas_physical_page_sharing_pool_balancing_enabled_for_utility = true;
 
-    // Switch to bitfit allocation for anything that isn't isoheaped.
-    bmalloc_intrinsic_runtime_config.base.max_segregated_object_size = 0;
-    bmalloc_primitive_runtime_config.base.max_segregated_object_size = 0;
-    bmalloc_intrinsic_runtime_config.base.max_bitfit_object_size = UINT_MAX;
-    bmalloc_primitive_runtime_config.base.max_bitfit_object_size = UINT_MAX;
-
-    // If large-object delegation is enabled, we don't want to override that
-    // just because we've entered mini-mode.
-    // One way we could get around that would be to leave the bitfit object
-    // size limits the way they are. However, in cases where the bitfit
-    // size-limit had previously been constrained for performance, e.g. by
-    // setting them to 0, we do want enableMiniMode to be able to re-expand
-    // them.
-    // So we take the object-delegation path to be a special case and make
-    // sure to re-apply after performing the above expansion.
-    PAS_IGNORE_WARNINGS_BEGIN("unreachable-code");
-#if defined(PAS_MTE_USE_LARGE_OBJECT_DELEGATION)
-    if (PAS_MTE_USE_LARGE_OBJECT_DELEGATION)
-        pas_mte_force_nontaggable_user_allocations_into_large_heap();
-#endif // defined(PAS_MTE_USE_LARGE_OBJECT_DELEGATION)
-    PAS_IGNORE_WARNINGS_END;
+    pas_bmalloc_force_allocations_into_bitfit_heaps_where_available();
 #else
     BUNUSED_PARAM(forceMiniMode);
 #endif // BENABLE(LIBPAS)

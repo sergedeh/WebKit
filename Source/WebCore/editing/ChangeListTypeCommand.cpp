@@ -26,14 +26,17 @@
 #include "config.h"
 #include "ChangeListTypeCommand.h"
 
+#include "DOMTokenList.h"
 #include "Editing.h"
 #include "ElementAncestorIteratorInlines.h"
 #include "FrameDestructionObserverInlines.h"
 #include "FrameSelection.h"
 #include "HTMLElement.h"
+#include "HTMLInterchange.h"
 #include "HTMLOListElement.h"
 #include "HTMLUListElement.h"
 #include "LocalFrameInlines.h"
+#include "StylePropertiesInlines.h"
 #include <wtf/RefPtr.h>
 
 namespace WebCore {
@@ -47,7 +50,7 @@ static std::optional<std::pair<ChangeListTypeCommand::Type, Ref<HTMLElement>>> l
     RefPtr commonAncestor = commonInclusiveAncestor<ComposedTree>(*startNode, *endNode);
 
     RefPtr<HTMLElement> listToReplace;
-    if (RefPtr htmlElement = dynamicDowncast<HTMLElement>(commonAncestor); is<HTMLUListElement>(htmlElement) || is<HTMLOListElement>(htmlElement))
+    if (RefPtr htmlElement = dynamicDowncast<HTMLElement>(commonAncestor); isAnyOf<HTMLUListElement, HTMLOListElement>(htmlElement))
         listToReplace = htmlElement;
     else
         listToReplace = enclosingList(commonAncestor);
@@ -70,6 +73,30 @@ std::optional<ChangeListTypeCommand::Type> ChangeListTypeCommand::listConversion
     return std::nullopt;
 }
 
+static void removeSourceListAttributes(const HTMLElement& listToReplace, HTMLElement& list, ChangeListTypeCommand::Type type)
+{
+    bool convertToUnorderedList = type == ChangeListTypeCommand::Type::ConvertToUnorderedList;
+    list.removeAttribute(HTMLNames::typeAttr);
+    if (convertToUnorderedList) {
+        list.removeAttribute(HTMLNames::startAttr);
+        list.removeAttribute(HTMLNames::reversedAttr);
+    }
+    list.removeInlineStyleProperty(CSSPropertyID::ListStyleType);
+
+    Ref classList = list.classList();
+    bool sourceHasClassNameForSmartList = classList->contains(AppleDecimalListClass) || classList->contains(AppleDiscListClass) || classList->contains(AppleDashListClass);
+
+    if (sourceHasClassNameForSmartList) {
+        FixedVector<AtomString> classNamesToRemove { AppleDashListClass, (convertToUnorderedList ? AppleDecimalListClass : AppleDiscListClass) };
+        classList->remove(classNamesToRemove);
+        classList->add(convertToUnorderedList ? AppleDiscListClass : AppleDecimalListClass);
+    }
+
+    RefPtr existingInlineStyle = listToReplace.inlineStyle();
+    if (existingInlineStyle && !existingInlineStyle->getPropertyValue(CSSPropertyID::ListStyleType).isEmpty())
+        list.setInlineStyleProperty(CSSPropertyID::ListStyleType, (convertToUnorderedList ? CSSValueID::Disc : CSSValueID::Decimal));
+}
+
 Ref<HTMLElement> ChangeListTypeCommand::createNewList(const HTMLElement& listToReplace)
 {
     RefPtr<HTMLElement> list;
@@ -78,6 +105,9 @@ Ref<HTMLElement> ChangeListTypeCommand::createNewList(const HTMLElement& listToR
     else
         list = HTMLUListElement::create(document());
     list->cloneDataFromElement(listToReplace);
+
+    removeSourceListAttributes(listToReplace, *list, m_type);
+
     return list.releaseNonNull();
 }
 
@@ -90,7 +120,7 @@ void ChangeListTypeCommand::doApply()
     Ref listToReplace = WTF::move(typeAndElement->second);
     Ref newList = createNewList(listToReplace);
     insertNodeBefore(newList.copyRef(), listToReplace);
-    moveRemainingSiblingsToNewParent(listToReplace->protectedFirstChild().get(), nullptr, newList);
+    moveRemainingSiblingsToNewParent(protect(listToReplace->firstChild()).get(), nullptr, newList);
     removeNode(listToReplace);
     setEndingSelection({ Position { newList.ptr(), Position::PositionIsAfterChildren }});
 }

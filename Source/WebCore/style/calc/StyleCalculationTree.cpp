@@ -39,7 +39,7 @@ WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Acos);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Asin);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Atan);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Atan2);
-WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Blend);
+WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(CalcMix);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Clamp);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Cos);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Exp);
@@ -53,6 +53,7 @@ WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Negate);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Pow);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Product);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Progress);
+WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(ProgressNoClamp);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Random);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Rem);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(RoundDown);
@@ -64,6 +65,148 @@ WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Sin);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Sqrt);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Sum);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Tan);
+
+// MARK: - Child
+
+Child::Child(Child&&) = default;
+Child& Child::operator=(Child&&) = default;
+Child::~Child() = default;
+bool Child::operator==(const Child&) const = default;
+
+static_assert(sizeof(Child) <= 16, "Child should stay small");
+
+// MARK: - ChildOrNone
+
+ChildOrNone::ChildOrNone(Child&& child)
+    : value(WTF::move(child))
+{
+}
+
+ChildOrNone::ChildOrNone(CSS::Keyword::None none)
+    : value(none)
+{
+}
+
+// MARK: - Children
+
+Children::Children(Children&&) = default;
+Children& Children::operator=(Children&&) = default;
+Children::~Children() = default;
+
+Children::Children(Vector<Child>&& other)
+    : value(WTF::move(other))
+{
+}
+
+Children& Children::operator=(Vector<Child>&& other)
+{
+    value = WTF::move(other);
+    return *this;
+}
+
+Children::iterator Children::begin()
+{
+    return value.begin();
+}
+
+Children::iterator Children::end()
+{
+    return value.end();
+}
+
+Children::reverse_iterator Children::rbegin()
+{
+    return value.rbegin();
+}
+
+Children::reverse_iterator Children::rend()
+{
+    return value.rend();
+}
+
+Children::const_iterator Children::begin() const
+{
+    return value.begin();
+}
+
+Children::const_iterator Children::end() const
+{
+    return value.end();
+}
+
+Children::const_reverse_iterator Children::rbegin() const
+{
+    return value.rbegin();
+}
+
+Children::const_reverse_iterator Children::rend() const
+{
+    return value.rend();
+}
+
+bool Children::isEmpty() const
+{
+    return value.isEmpty();
+}
+
+size_t Children::size() const
+{
+    return value.size();
+}
+
+Child& Children::operator[](size_t i)
+{
+    return value[i];
+}
+
+const Child& Children::operator[](size_t i) const
+{
+    return value[i];
+}
+
+Child number(double value)
+{
+    return makeChild(Number { .value = value });
+}
+
+Child percentage(double value)
+{
+    return makeChild(Percentage { .value = value });
+}
+
+Child dimension(double value)
+{
+    return makeChild(Dimension { .value = value });
+}
+
+Child add(Child&& a, Child&& b)
+{
+    Vector<Child> sumChildren;
+    sumChildren.append(WTF::move(a));
+    sumChildren.append(WTF::move(b));
+    return makeChild(Sum { .children = WTF::move(sumChildren) });
+}
+
+Child multiply(Child&& a, Child&& b)
+{
+    Vector<Child> productChildren;
+    productChildren.append(WTF::move(a));
+    productChildren.append(WTF::move(b));
+    return makeChild(Product { .children = WTF::move(productChildren) });
+}
+
+Child subtract(Child&& a, Child&& b)
+{
+    return add(WTF::move(a), makeChild(Negate { .a = WTF::move(b) }));
+}
+
+Child blend(Child&& from, Child&& to, double progress)
+{
+    return add(
+        multiply(WTF::move(from), number(1 - progress)),
+        multiply(WTF::move(to), number(progress))
+    );
+}
 
 static size_t computeDepth(const Child& root)
 {
@@ -92,6 +235,31 @@ size_t computeDepth(const Tree& tree)
     return computeDepth(tree.root);
 }
 
+size_t computeNodeCount(const Child& root)
+{
+    size_t total = 1;
+    forAllChildren(root, WTF::makeVisitor(
+        [&](const std::optional<Child>& child) {
+            if (child)
+                total += computeNodeCount(*child);
+        },
+        [&](const Child& child) {
+            total += computeNodeCount(child);
+        },
+        [&](const ChildOrNone& childOrNone) {
+            if (childOrNone.holdsAlternative<Child>())
+                total += computeNodeCount(get<Child>(childOrNone));
+        },
+        [&](const auto&) { }
+    ));
+    return total;
+}
+
+size_t computeNodeCount(const Tree& tree)
+{
+    return computeNodeCount(tree.root);
+}
+
 template<typename Op>
 static auto dumpVariadic(TextStream&, const IndirectNode<Op>&, ASCIILiteral prefix, ASCIILiteral between) -> TextStream&;
 
@@ -103,6 +271,7 @@ static auto operator<<(TextStream&, const Child&) -> TextStream&;
 static auto operator<<(TextStream&, const Number&) -> TextStream&;
 static auto operator<<(TextStream&, const Percentage&) -> TextStream&;
 static auto operator<<(TextStream&, const Dimension&) -> TextStream&;
+static auto operator<<(TextStream&, const Size&) -> TextStream&;
 static auto operator<<(TextStream&, const IndirectNode<Sum>&) -> TextStream&;
 static auto operator<<(TextStream&, const IndirectNode<Product>&) -> TextStream&;
 static auto operator<<(TextStream&, const IndirectNode<Negate>&) -> TextStream&;
@@ -165,6 +334,11 @@ TextStream& operator<<(TextStream& ts, const Number& root)
 TextStream& operator<<(TextStream& ts, const Percentage& root)
 {
     return ts << TextStream::FormatNumberRespectingIntegers(root.value) << '%';
+}
+
+TextStream& operator<<(TextStream& ts, const Size&)
+{
+    return ts << "size"_s;
 }
 
 TextStream& operator<<(TextStream& ts, const Dimension& root)

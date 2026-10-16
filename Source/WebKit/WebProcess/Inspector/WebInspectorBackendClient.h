@@ -29,11 +29,13 @@
 #include <WebCore/PageOverlay.h>
 #include <wtf/HashSet.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/WeakHashMap.h>
 
 namespace WebCore {
 class GraphicsContext;
 class GraphicsLayer;
 class IntRect;
+class LocalFrame;
 class PageOverlay;
 }
 
@@ -60,6 +62,8 @@ private:
 
     void highlight() override;
     void hideHighlight() override;
+    void highlightFrame(WebCore::LocalFrame&) override;
+    void hideHighlightForFrame(WebCore::LocalFrame&) override;
 
 #if PLATFORM(IOS_FAMILY)
     void showInspectorIndication() override;
@@ -72,12 +76,18 @@ private:
     void timelineRecordingChanged(bool) override;
 
     bool overridesShowPaintRects() const override { return true; }
+    void setShowPaintRects(bool) override;
     void showPaintRect(const WebCore::FloatRect&) override;
-    unsigned paintRectCount() const override { return m_paintRectLayers.size(); }
+    void showPaintRect(WebCore::LocalFrame&, const WebCore::FloatRect&) override;
+    void willDestroyFrameOverlays(WebCore::FrameIdentifier) override;
+
+    void frameDebuggerDidPause(WebCore::FrameIdentifier) override;
+    void frameDebuggerDidContinue(WebCore::FrameIdentifier) override;
+    unsigned paintRectCount() const override;
 
     void setDeveloperPreferenceOverride(WebCore::InspectorBackendClient::DeveloperPreference, std::optional<bool>) final;
 #if ENABLE(INSPECTOR_NETWORK_THROTTLING)
-    bool setEmulatedConditions(std::optional<int64_t>&& bytesPerSecondLimit) final;
+    bool setEmulatedConditions(std::optional<uint64_t> bandwidthBytesPerSecond, Seconds latency) final;
 #endif
 
     // PageOverlayClient
@@ -86,14 +96,29 @@ private:
     void drawRect(WebCore::PageOverlay&, WebCore::GraphicsContext&, const WebCore::IntRect&) override;
     bool mouseEvent(WebCore::PageOverlay&, const WebCore::PlatformMouseEvent&) override;
 
-    void animationEndedForLayer(const WebCore::GraphicsLayer*);
+    // The frame identifying the owning bucket comes from the layer client that fired (each bucket
+    // has its own), so there is no scan over frames.
+    void animationEndedForLayer(WebCore::LocalFrame*, const WebCore::GraphicsLayer*);
 
     WeakPtr<WebPage> m_page;
-    WeakPtr<WebCore::PageOverlay> m_highlightOverlay;
 
-    RefPtr<WebCore::PageOverlay> m_paintRectOverlay;
-    std::unique_ptr<RepaintIndicatorLayerClient> m_paintIndicatorLayerClient;
-    HashSet<Ref<WebCore::GraphicsLayer>> m_paintRectLayers;
+    WeakPtr<WebCore::PageOverlay> m_pageHighlightOverlay;
+
+    // Frame-scoped highlight overlays, keyed by local root. Separate lifetimes from m_paintRectOverlays.
+    WeakHashMap<WebCore::LocalFrame, RefPtr<WebCore::PageOverlay>> m_frameHighlightOverlays;
+
+    RefPtr<WebCore::PageOverlay> ensureHighlightOverlayForFrame(WebCore::LocalFrame&);
+
+    // Paint-rect overlays are per local root frame: under Site Isolation one process can host several
+    // local roots, each with its own compositing tree, so each needs its own Document overlay.
+    struct PaintRectOverlayForFrame {
+        RefPtr<WebCore::PageOverlay> overlay;
+        std::unique_ptr<RepaintIndicatorLayerClient> layerClient;
+        HashSet<Ref<WebCore::GraphicsLayer>> layers;
+    };
+    PaintRectOverlayForFrame& ensurePaintRectOverlayForFrame(WebCore::LocalFrame&);
+
+    WeakHashMap<WebCore::LocalFrame, PaintRectOverlayForFrame> m_paintRectOverlays;
 };
 
 } // namespace WebKit

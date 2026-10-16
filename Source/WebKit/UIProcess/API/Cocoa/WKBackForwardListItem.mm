@@ -36,24 +36,19 @@
 
 WK_OBJECT_DISABLE_DISABLE_KVC_IVAR_ACCESS;
 
-- (Ref<WebKit::WebBackForwardListItem>)_protectedItem
-{
-    return *_item;
-}
-
 - (void)dealloc
 {
     if (WebCoreObjCScheduleDeallocateOnMainRunLoop(WKBackForwardListItem.class, self))
         return;
 
-    self._protectedItem->~WebBackForwardListItem();
+    protect(*_item)->~WebBackForwardListItem();
 
     [super dealloc];
 }
 
 - (NSURL *)URL
 {
-    return [NSURL _web_URLWithWTFString:self._protectedItem->url()];
+    return [NSURL _web_URLWithWTFString:_item->url()];
 }
 
 - (NSString *)title
@@ -67,7 +62,7 @@ WK_OBJECT_DISABLE_DISABLE_KVC_IVAR_ACCESS;
 
 - (NSURL *)initialURL
 {
-    return [NSURL _web_URLWithWTFString:self._protectedItem->originalURL()];
+    return [NSURL _web_URLWithWTFString:_item->originalURL()];
 }
 
 - (WebKit::WebBackForwardListItem&)_item
@@ -77,22 +72,25 @@ WK_OBJECT_DISABLE_DISABLE_KVC_IVAR_ACCESS;
 
 - (CGImageRef)_copySnapshotForTesting CF_RETURNS_RETAINED
 {
-    if (RefPtr snapshot = _item->snapshot()) {
-        // FIXME(rdar://162218496): SaferCPP should notice that our API is a copy.
-        SUPPRESS_RETAINPTR_CTOR_ADOPT return snapshot->asImageForTesting().leakRef();
-    }
+    if (RefPtr snapshot = _item->snapshot())
+        return snapshot->asImageForTesting().leakRef();
     return nullptr;
+}
+
+- (NSString *)_loggingStringForTesting
+{
+    return protect(*_item)->loggingString().createNSString().autorelease();
 }
 
 - (CGPoint)_scrollPosition
 {
-    Ref item = *_item;
-    return CGPointMake(item->mainFrameState()->scrollPosition.x(), item->mainFrameState()->scrollPosition.y());
+    Ref frameState = protect(*_item)->mainFrameState();
+    return CGPointMake(frameState->scrollPosition.x(), frameState->scrollPosition.y());
 }
 
 - (BOOL)_wasCreatedByJSWithoutUserInteraction
 {
-    return self._protectedItem->wasCreatedByJSWithoutUserInteraction();
+    return _item->wasCreatedByJSWithoutUserInteraction();
 }
 
 #pragma mark WKObject protocol implementation
@@ -100,6 +98,20 @@ WK_OBJECT_DISABLE_DISABLE_KVC_IVAR_ACCESS;
 - (API::Object&)_apiObject
 {
     return *_item;
+}
+
+@end
+
+@implementation WKBackForwardListItem (NonCpp)
+
+- (uint64_t)_identifier
+{
+    return _item->identifier().object().toUInt64();
+}
+
+- (uint64_t)_identifierProcess
+{
+    return _item->identifier().processIdentifier().toUInt64();
 }
 
 @end

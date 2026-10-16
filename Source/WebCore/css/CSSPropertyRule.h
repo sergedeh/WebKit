@@ -36,9 +36,9 @@ public:
     static Ref<CSSPropertyRule> create(StyleRuleProperty&, CSSStyleSheet* parent);
     virtual ~CSSPropertyRule();
 
-    String name() const;
-    String syntax() const;
-    bool inherits() const;
+    String LEGACY_NODELETE name() const;
+    String LEGACY_NODELETE syntax() const;
+    bool LEGACY_NODELETE inherits() const;
     String initialValue() const;
 
     String cssText() const final;

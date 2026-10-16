@@ -32,12 +32,6 @@
 #import <wtf/RetainPtr.h>
 #import <wtf/cocoa/VectorCocoa.h>
 
-ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-static Ref<API::ProcessPoolConfiguration> protectedProcessPoolConfiguration(_WKProcessPoolConfiguration *configuration)
-{
-    return *configuration->_processPoolConfiguration;
-}
-ALLOW_DEPRECATED_DECLARATIONS_END
 
 ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
 @implementation _WKProcessPoolConfiguration
@@ -73,7 +67,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
     if (injectedBundleURL && !injectedBundleURL.isFileURL)
         [NSException raise:NSInvalidArgumentException format:@"Injected Bundle URL must be a file URL"];
 
-    _processPoolConfiguration->setInjectedBundlePath(injectedBundleURL.path);
+    protect(*_processPoolConfiguration)->setInjectedBundlePath(injectedBundleURL.path);
 }
 
 - (NSSet<Class> *)customClassesForParameterCoder
@@ -151,7 +145,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
         return @[ ];
 
     return createNSArray(paths, [] (auto& path) {
-        return [NSURL fileURLWithFileSystemRepresentation:path.utf8().data() isDirectory:NO relativeToURL:nil];
+        return [NSURL fileURLWithFileSystemRepresentation:path.utf8().legacyCStringPointer() isDirectory:NO relativeToURL:nil];
     }).autorelease();
 }
 
@@ -159,14 +153,15 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 {
     Vector<String> paths;
     paths.reserveInitialCapacity(additionalReadAccessAllowedURLs.count);
-    for (NSURL *url in additionalReadAccessAllowedURLs) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSURL *url in additionalReadAccessAllowedURLs) {
         if (!url.isFileURL)
             [NSException raise:NSInvalidArgumentException format:@"%@ is not a file URL", url];
 
         paths.append(String::fromUTF8(url.fileSystemRepresentation));
     }
 
-    protectedProcessPoolConfiguration(self)->setAdditionalReadAccessAllowedPaths(WTF::move(paths));
+    protect(*_processPoolConfiguration)->setAdditionalReadAccessAllowedPaths(WTF::move(paths));
 }
 
 #if PLATFORM(IOS_FAMILY) && !PLATFORM(IOS_FAMILY_SIMULATOR)
@@ -187,7 +182,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 
 - (void)setCachePartitionedURLSchemes:(NSArray *)cachePartitionedURLSchemes
 {
-    protectedProcessPoolConfiguration(self)->setCachePartitionedURLSchemes(makeVector<String>(cachePartitionedURLSchemes));
+    protect(*_processPoolConfiguration)->setCachePartitionedURLSchemes(makeVector<String>(cachePartitionedURLSchemes));
 }
 
 - (NSArray *)alwaysRevalidatedURLSchemes
@@ -197,7 +192,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 
 - (void)setAlwaysRevalidatedURLSchemes:(NSArray *)alwaysRevalidatedURLSchemes
 {
-    protectedProcessPoolConfiguration(self)->setAlwaysRevalidatedURLSchemes(makeVector<String>(alwaysRevalidatedURLSchemes));
+    protect(*_processPoolConfiguration)->setAlwaysRevalidatedURLSchemes(makeVector<String>(alwaysRevalidatedURLSchemes));
 }
 
 - (NSString *)sourceApplicationBundleIdentifier
@@ -354,7 +349,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 
 - (id)copyWithZone:(NSZone *)zone
 {
-    return [wrapper(protectedProcessPoolConfiguration(self)->copy()) retain];
+    return [wrapper(protect(*_processPoolConfiguration)->copy()) retain];
 }
 
 - (NSString *)customWebContentServiceBundleIdentifier
@@ -383,17 +378,27 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 
 - (void)setTimeZoneOverride:(NSString *)timeZone
 {
-    _processPoolConfiguration->setTimeZoneOverride(timeZone);
+    protect(*_processPoolConfiguration)->setTimeZoneOverride(timeZone);
 }
 
 - (void)setMemoryFootprintPollIntervalForTesting:(NSTimeInterval)pollInterval
 {
-    protectedProcessPoolConfiguration(self)->setMemoryFootprintPollIntervalForTesting(Seconds { pollInterval });
+    _processPoolConfiguration->setMemoryFootprintPollIntervalForTesting(Seconds { pollInterval });
 }
 
 - (NSTimeInterval)memoryFootprintPollIntervalForTesting
 {
     return _processPoolConfiguration->memoryFootprintPollIntervalForTesting().seconds();
+}
+
+- (void)setMemoryLimitForTesting:(size_t)limit
+{
+    _processPoolConfiguration->setMemoryLimitForTesting(limit);
+}
+
+- (size_t)memoryLimitForTesting
+{
+    return _processPoolConfiguration->memoryLimitForTesting();
 }
 
 - (NSArray<NSNumber *> *)memoryFootprintNotificationThresholds
@@ -409,9 +414,10 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 {
     Vector<uint64_t> sizes;
     sizes.reserveCapacity(thresholds.count);
-    for (NSNumber *threshold in thresholds)
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSNumber *threshold in thresholds)
         sizes.append(static_cast<uint64_t>(threshold.unsignedLongLongValue));
-    protectedProcessPoolConfiguration(self)->setMemoryFootprintNotificationThresholds(WTF::move(sizes));
+    protect(*_processPoolConfiguration)->setMemoryFootprintNotificationThresholds(WTF::move(sizes));
 }
 
 - (BOOL)suspendsWebProcessesAggressivelyOnMemoryPressure

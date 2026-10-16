@@ -27,6 +27,7 @@
 
 #import "DOMNodeInternal.h"
 #import "ExceptionHandlers.h"
+#import <WebCore/ElementInlines.h>
 #import <WebCore/HTMLMetaElement.h>
 #import <WebCore/HTMLNames.h>
 #import <WebCore/JSExecState.h>
@@ -35,7 +36,7 @@
 #import <wtf/GetPtr.h>
 #import <wtf/URL.h>
 
-#define IMPL static_cast<WebCore::HTMLMetaElement*>(reinterpret_cast<WebCore::Node*>(_internal))
+#define IMPL protect(downcast<WebCore::HTMLMetaElement>(reinterpret_cast<WebCore::Node*>(_internal)))
 
 @implementation DOMHTMLMetaElement
 

@@ -28,23 +28,14 @@
 
 #include "DateComponents.h"
 #include "DateTimeFieldElement.h"
-
-#include <wtf/WeakPtr.h>
-
-namespace WebCore {
-class DateTimeEditElementEditControlOwner;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::DateTimeEditElementEditControlOwner> : std::true_type { };
-}
+#include <wtf/AbstractRefCountedAndCanMakeWeakPtr.h>
+#include <wtf/CheckedRef.h>
 
 namespace WebCore {
 
 class Locale;
 
-class DateTimeEditElementEditControlOwner : public CanMakeWeakPtr<DateTimeEditElementEditControlOwner> {
+class DateTimeEditElementEditControlOwner : public AbstractRefCountedAndCanMakeWeakPtr<DateTimeEditElementEditControlOwner> {
 public:
     virtual ~DateTimeEditElementEditControlOwner();
     virtual void didBlurFromControl() = 0;
@@ -65,21 +56,22 @@ public:
     struct LayoutParameters {
         String dateTimeFormat;
         String fallbackDateTimeFormat;
-        Locale& locale;
+        const CheckedRef<Locale> locale;
         bool shouldHaveMillisecondField { false };
 
-        LayoutParameters(Locale& locale)
-            : locale(locale)
-        {
-        }
+        explicit LayoutParameters(Locale&);
+        ~LayoutParameters();
     };
 
     static Ref<DateTimeEditElement> create(Document&, DateTimeEditElementEditControlOwner&);
 
     virtual ~DateTimeEditElement();
+
+    void ref() const final { HTMLDivElement::ref(); }
+    void deref() const final { HTMLDivElement::deref(); }
+
     void addField(Ref<DateTimeFieldElement>);
-    Element& fieldsWrapperElement() const;
-    Ref<Element> protectedFieldsWrapperElement() const;
+    Element& LEGACY_NODELETE fieldsWrapperElement() const;
     void focusByOwner();
     void resetFields();
     void setEmptyValue(const LayoutParameters&);
@@ -122,11 +114,11 @@ private:
     bool didFieldOwnerTransferFocusToPicker() final;
     void didSuppressBlurDueToPickerFocusTransfer() final;
     AtomString localeIdentifier() const final;
-    const GregorianDateTime& placeholderDate() const final;
+    PlainGregorianDateTime placeholderDate() const final;
 
     Vector<Ref<DateTimeFieldElement>, maximumNumberOfFields> m_fields;
     WeakPtr<DateTimeEditElementEditControlOwner> m_editControlOwner;
-    GregorianDateTime m_placeholderDate;
+    PlainGregorianDateTime m_placeholderDate;
 };
 
 } // namespace WebCore

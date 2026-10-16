@@ -32,6 +32,7 @@
 #include <pal/avfoundation/MediaTimeAVFoundation.h>
 #include <pal/spi/cocoa/AVFoundationSPI.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/darwin/DispatchExtras.h>
 #include <wtf/darwin/DispatchOSObject.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -83,8 +84,8 @@ SPECIALIZE_TYPE_TRAITS_END()
         return;
 
     callOnMainRunLoop([videoFrameEntries = WTF::move(videoFrameEntries), parent = _parent] () mutable {
-        if (parent)
-            parent->addVideoFrameEntries(WTF::move(videoFrameEntries));
+        if (RefPtr protectedParent = parent.get())
+            protectedParent->addVideoFrameEntries(WTF::move(videoFrameEntries));
     });
 }
 
@@ -94,8 +95,8 @@ SPECIALIZE_TYPE_TRAITS_END()
     [videoOutput requestNotificationOfMediaDataChangeAsSoonAsPossible];
 
     callOnMainRunLoop([parent = _parent] {
-        if (parent)
-            parent->purgeVideoFrameEntries();
+        if (RefPtr protectedParent = parent.get())
+            protectedParent->purgeVideoFrameEntries();
     });
 }
 
@@ -108,8 +109,8 @@ SPECIALIZE_TYPE_TRAITS_END()
     auto rate = rateValue.get().floatValue;
 
     ensureOnMainRunLoop([parent = _parent, rate] {
-        if (parent)
-            parent->rateChanged(rate);
+        if (RefPtr protectedParent = parent.get())
+            protectedParent->rateChanged(rate);
     });
 }
 @end
@@ -118,9 +119,9 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(QueuedVideoOutput);
 
-static dispatch_queue_t globalOutputDelegateQueue()
+static dispatch_queue_t globalOutputDelegateQueueSingleton()
 {
-    static NeverDestroyed<OSObjectPtr<dispatch_queue_t>> globalQueue = adoptOSObject(dispatch_queue_create("WebQueuedVideoOutputDelegate queue", DISPATCH_QUEUE_SERIAL));
+    static NeverDestroyed<OSObjectPtr<dispatch_queue_t>> globalQueue = adoptOSObject(dispatch_queue_create("WebQueuedVideoOutputDelegate queue", serialQueueWithAutoreleasePoolAttrSingleton()));
     return globalQueue.get().get();
 }
 
@@ -146,22 +147,22 @@ QueuedVideoOutput::QueuedVideoOutput(AVPlayerItem* item, AVPlayer* player)
         return;
     }
 
-    [m_videoOutput setDelegate:m_delegate.get() queue:globalOutputDelegateQueue()];
+    [m_videoOutput setDelegate:m_delegate.get() queue:globalOutputDelegateQueueSingleton()];
     [m_videoOutput requestNotificationOfMediaDataChangeAsSoonAsPossible];
 
     [m_playerItem addOutput:m_videoOutput.get()];
 
     [m_player addObserver:m_delegate.get() forKeyPath:@"rate" options:(NSKeyValueObservingOptionNew | NSKeyValueObservingOptionInitial) context:nil];
 
-    m_videoTimebaseObserver = [m_player addPeriodicTimeObserverForInterval:PAL::CMTimeMake(1, 60) queue:globalOutputDelegateQueue() usingBlock:[weakThis = WeakPtr { *this }, protectedDelegate = m_delegate, protectedOutput = m_videoOutput](CMTime currentTime) mutable {
+    m_videoTimebaseObserver = [m_player addPeriodicTimeObserverForInterval:PAL::CMTimeMake(1, 60) queue:globalOutputDelegateQueueSingleton() usingBlock:[weakThis = WeakPtr { *this }, protectedDelegate = m_delegate, protectedOutput = m_videoOutput](CMTime currentTime) mutable {
 
         // Periodically check for new available pixel buffers.
         [protectedDelegate outputMediaDataWillChange:protectedOutput.get()];
 
         // And purge the back buffer of past frames.
         callOnMainRunLoop([weakThis = weakThis, time = PAL::toMediaTime(currentTime)] {
-            if (weakThis)
-                weakThis->purgeImagesBeforeTime(time);
+            if (RefPtr protectedThis = weakThis.get())
+                protectedThis->purgeImagesBeforeTime(time);
         });
     }];
 }
@@ -258,10 +259,10 @@ void QueuedVideoOutput::configureNextImageTimeObserver()
 
     auto nextImageTime = iter->first;
 
-    m_nextImageTimebaseObserver = [m_player addBoundaryTimeObserverForTimes:@[[NSValue valueWithCMTime:PAL::toCMTime(nextImageTime)]] queue:globalOutputDelegateQueue() usingBlock:[weakThis = WeakPtr { *this }, protectedDelegate = m_delegate, protectedOutput = m_videoOutput] () mutable {
+    m_nextImageTimebaseObserver = [m_player addBoundaryTimeObserverForTimes:@[[NSValue valueWithCMTime:PAL::toCMTime(nextImageTime)]] queue:globalOutputDelegateQueueSingleton() usingBlock:[weakThis = WeakPtr { *this }, protectedDelegate = m_delegate, protectedOutput = m_videoOutput] () mutable {
         callOnMainRunLoop([weakThis = WTF::move(weakThis)] {
-            if (weakThis)
-                weakThis->nextImageTimeReached();
+            if (RefPtr protectedThis = weakThis.get())
+                protectedThis->nextImageTimeReached();
         });
     }];
 }

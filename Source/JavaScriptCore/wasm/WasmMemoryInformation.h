@@ -32,7 +32,9 @@
 #include <JavaScriptCore/GPRInfo.h>
 #include <JavaScriptCore/PageCount.h>
 #include <JavaScriptCore/RegisterSet.h>
+#include <JavaScriptCore/WasmAddressType.h>
 #include <JavaScriptCore/WasmMemory.h>
+#include <JavaScriptCore/WasmOps.h>
 
 #include <wtf/Forward.h>
 #include <wtf/Ref.h>
@@ -58,7 +60,9 @@ public:
     PageCount maximum() const { return m_maximum; }
     bool isShared() const { return m_isShared; }
     bool isImport() const { return m_isImport; }
-    bool isMemory64() const { return m_isMemory64; }
+    AddressType addressType() const { return m_addressType; }
+    bool isMemory64() const { return m_addressType.is64Bit(); }
+    bool doesAccessOverflow(uint64_t offset, uint64_t size) const;
 
     explicit operator bool() const { return !!m_initial; }
 
@@ -67,7 +71,7 @@ private:
     PageCount m_maximum { };
     bool m_isShared { false };
     bool m_isImport { false };
-    bool m_isMemory64 { false };
+    AddressType m_addressType;
 };
 
 } } // namespace JSC::Wasm

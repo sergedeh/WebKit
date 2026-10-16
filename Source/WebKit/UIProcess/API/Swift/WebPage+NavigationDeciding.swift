@@ -21,21 +21,24 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
 // THE POSSIBILITY OF SUCH DAMAGE.
 
-#if ENABLE_SWIFTUI && compiler(>=6.0)
+#if ENABLE_SWIFTUI
 
-import Foundation
+public import Foundation
 
 // MARK: Supporting types
 
+@available(anyAppleOSAndDownlevels 26.0, *)
+@_spi_available(watchOSAndOpenSourceTBA, *)
+@_spi_available(tvOSAndOpenSourceTBA, *)
 extension WebPage {
     /// An object that contains information about an action that causes navigation to occur.
     ///
     /// A `NavigationAction` value is intended to be used to make policy decisions about whether to
     /// allow navigation within a web page via a `NavigationDeciding`.
     @MainActor
-    @available(iOS 26.0, macOS 26.0, visionOS 26.0, *)
-    @available(watchOS, unavailable)
-    @available(tvOS, unavailable)
+    @available(anyAppleOSAndDownlevels 26.0, *)
+    @_spi_available(watchOSAndOpenSourceTBA, *)
+    @_spi_available(tvOSAndOpenSourceTBA, *)
     public struct NavigationAction {
         init(_ wrapped: WKNavigationAction) {
             self.wrapped = wrapped
@@ -56,7 +59,7 @@ extension WebPage {
         /// Indicates whether the web content provided an attribute that indicates a download.
         public var shouldPerformDownload: Bool { wrapped.shouldPerformDownload }
 
-        #if canImport(UIKit)
+        #if WTF_PLATFORM_IOS_FAMILY
         /// The number of the mouse button that caused the navigation request.
         public var buttonNumber: UIEvent.ButtonMask { wrapped.buttonNumber }
         #else
@@ -78,9 +81,9 @@ extension WebPage {
     /// A `NavigationResponse` value is intended to be used to make policy decisions about whether to
     /// allow navigation within a web page via a `NavigationDeciding`.
     @MainActor
-    @available(iOS 26.0, macOS 26.0, visionOS 26.0, *)
-    @available(watchOS, unavailable)
-    @available(tvOS, unavailable)
+    @available(anyAppleOSAndDownlevels 26.0, *)
+    @_spi_available(watchOSAndOpenSourceTBA, *)
+    @_spi_available(tvOSAndOpenSourceTBA, *)
     public struct NavigationResponse {
         init(_ wrapped: WKNavigationResponse) {
             self.wrapped = wrapped
@@ -103,13 +106,16 @@ extension WebPage {
 
 // MARK: NavigationDeciding protocol
 
+@available(anyAppleOSAndDownlevels 26.0, *)
+@_spi_available(watchOSAndOpenSourceTBA, *)
+@_spi_available(tvOSAndOpenSourceTBA, *)
 extension WebPage {
     /// Allows providing custom behavior to handle navigation changes and to coordinate these changes for the web page's main page.
     ///
     /// For example, you might use these methods to restrict navigation from specific links within your content.
-    @available(iOS 26.0, macOS 26.0, visionOS 26.0, *)
-    @available(watchOS, unavailable)
-    @available(tvOS, unavailable)
+    @available(anyAppleOSAndDownlevels 26.0, *)
+    @_spi_available(watchOSAndOpenSourceTBA, *)
+    @_spi_available(tvOSAndOpenSourceTBA, *)
     public protocol NavigationDeciding {
         /// Determines permission to navigate to new content based on the specified preferences and action information.
         ///
@@ -140,14 +146,28 @@ extension WebPage {
         mutating func decideAuthenticationChallengeDisposition(
             for challenge: URLAuthenticationChallenge
         ) async -> (URLSession.AuthChallengeDisposition, URLCredential?)
+
+        /// Allow the application to process form autofill information before a form submission actually takes place.
+        ///
+        /// This is an informative callback only. The form values cannot be changed, nor can the navigation be changed
+        /// to not submit a form.
+        ///
+        /// The form submission will not actually proceed until after this callback asynchronously resolves.
+        ///
+        /// - Parameter formInfo: The form values that will be submitted for this navigation
+        @available(anyAppleOSAndDownlevels 27.0, *)
+        @_spi_available(watchOSAndOpenSourceTBA, *)
+        @_spi_available(tvOSAndOpenSourceTBA, *)
+        @MainActor
+        mutating func willSubmit(formInfo: WebPage.FormInfo) async
     }
 }
 
 // MARK: Default implementation
 
-@available(iOS 26.0, macOS 26.0, visionOS 26.0, *)
-@available(watchOS, unavailable)
-@available(tvOS, unavailable)
+@available(anyAppleOSAndDownlevels 26.0, *)
+@_spi_available(watchOSAndOpenSourceTBA, *)
+@_spi_available(tvOSAndOpenSourceTBA, *)
 extension WebPage.NavigationDeciding {
     /// By default, this method immediately returns with a policy of `.allow`.
     @MainActor
@@ -170,6 +190,14 @@ extension WebPage.NavigationDeciding {
         for challenge: URLAuthenticationChallenge
     ) async -> (URLSession.AuthChallengeDisposition, URLCredential?) {
         (.performDefaultHandling, nil)
+    }
+
+    /// By default, this method does nothing.
+    @available(anyAppleOSAndDownlevels 27.0, *)
+    @_spi_available(watchOSAndOpenSourceTBA, *)
+    @_spi_available(tvOSAndOpenSourceTBA, *)
+    @MainActor
+    public func willSubmit(formInfo: WebPage.FormInfo) async {
     }
 }
 

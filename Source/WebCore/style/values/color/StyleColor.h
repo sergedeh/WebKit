@@ -37,6 +37,7 @@
 #include <WebCore/CSSColorType.h>
 #include <WebCore/CSSValueKeywords.h>
 #include <WebCore/StyleColorOptions.h>
+#include <WebCore/StyleCurrentAccentColor.h>
 #include <WebCore/StyleCurrentColor.h>
 #include <WebCore/StyleResolvedColor.h>
 #include <wtf/Markable.h>
@@ -47,13 +48,13 @@ namespace WebCore {
 
 class Color;
 class Document;
-class RenderStyle;
 
 namespace Style {
 
 enum class ForVisitedLink : bool;
 
 class ComputedStyle;
+class ResolvedColors;
 
 // The following style color kinds are forward declared and stored in
 // UniqueRefs to avoid unnecessarily growing the size of Color for the
@@ -61,6 +62,7 @@ class ComputedStyle;
 struct ColorLayers;
 struct ColorMix;
 struct ContrastColor;
+struct RelativeAlphaColor;
 template<typename Descriptor> struct RelativeColor;
 
 struct Color {
@@ -72,10 +74,12 @@ private:
     using ColorKind = Variant<
         EmptyToken,
         ResolvedColor,
+        CurrentAccentColor,
         CurrentColor,
         UniqueRef<ColorLayers>,
         UniqueRef<ColorMix>,
         UniqueRef<ContrastColor>,
+        UniqueRef<RelativeAlphaColor>,
         UniqueRef<RelativeColor<RGBFunctionModernRelative>>,
         UniqueRef<RelativeColor<HSLFunctionModern>>,
         UniqueRef<RelativeColor<HWBFunction>>,
@@ -111,10 +115,12 @@ public:
     Color(CSS::Keyword::White);
 
     WEBCORE_EXPORT Color(ResolvedColor&&);
+    Color(CurrentAccentColor&&);
     WEBCORE_EXPORT Color(CurrentColor&&);
     Color(ColorLayers&&);
     Color(ColorMix&&);
     Color(ContrastColor&&);
+    Color(RelativeAlphaColor&&);
     Color(RelativeColor<RGBFunctionModernRelative>&&);
     Color(RelativeColor<HSLFunctionModern>&&);
     Color(RelativeColor<HWBFunction>&&);
@@ -145,23 +151,24 @@ public:
     static const Color& currentColor();
 
     bool containsCurrentColor() const;
-    bool isCurrentColor() const;
-    bool isColorMix() const;
-    bool isContrastColor() const;
-    bool isRelativeColor() const;
+    bool LEGACY_NODELETE isCurrentColor() const;
+    bool LEGACY_NODELETE isColorMix() const;
+    bool LEGACY_NODELETE isContrastColor() const;
+    bool LEGACY_NODELETE isRelativeAlphaColor() const;
+    bool LEGACY_NODELETE isRelativeColor() const;
 
-    bool isResolvedColor() const;
+    bool LEGACY_NODELETE isResolvedColor() const;
     const WebCore::Color& resolvedColor() const;
 
-    WEBCORE_EXPORT WebCore::Color resolveColor(const WebCore::Color& currentColor) const;
+    WEBCORE_EXPORT WebCore::Color resolveColor(const ResolvedColors&) const;
 
     bool isKnownTransparent() const;
 
     // This helper allows us to treat all the alternatives in ColorKind
     // as const references, pretending the UniqueRefs don't exist.
-    template<typename... F> decltype(auto) switchOn(F&&...) const;
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&...) const;
 
-    String debugDescription() const;
+    WTF::String debugDescription() const;
 
 private:
     template<typename T>
@@ -171,14 +178,14 @@ private:
     ColorKind value;
 };
 
-WebCore::Color resolveColor(const Color&, const WebCore::Color& currentColor);
+WebCore::Color resolveColor(const Color&, const ResolvedColors&);
 bool containsCurrentColor(const Color&);
 
 void serializationForCSSTokenization(StringBuilder&, const CSS::SerializationContext&, const Color&);
-String serializationForCSSTokenization(const CSS::SerializationContext&, const Color&);
+WTF::String serializationForCSSTokenization(const CSS::SerializationContext&, const Color&);
 
 template<> struct Serialize<Color> {
-    void operator()(StringBuilder&, const CSS::SerializationContext&, const RenderStyle&, const Color&);
+    void operator()(StringBuilder&, const CSS::SerializationContext&, const Style::ComputedStyle&, const Color&);
 };
 
 WTF::TextStream& operator<<(WTF::TextStream&, const Color&);
@@ -186,11 +193,9 @@ WTF::TextStream& operator<<(WTF::TextStream&, const Color&);
 // MARK: - Conversion
 
 Color toStyleColor(const CSS::Color&, ColorResolutionState&);
-Color toStyleColor(const CSS::Color&, Ref<const Document>, const ComputedStyle&, const CSSToLengthConversionData&, ForVisitedLink);
-Color toStyleColor(const CSS::Color&, const BuilderState&, ForVisitedLink);
 
 template<> struct ToCSS<Color> {
-    auto operator()(const Color&, const RenderStyle&) -> CSS::Color;
+    auto operator()(const Color&, const Style::ComputedStyle&) -> CSS::Color;
 };
 template<> struct ToStyle<CSS::Color> {
     auto operator()(const CSS::Color&, const BuilderState&, ForVisitedLink) -> Color;
@@ -201,22 +206,27 @@ template<> struct CSSValueConversion<Color> {
     auto operator()(BuilderState&, const CSSValue&, ForVisitedLink) -> Color;
     auto operator()(BuilderState&, const CSSValue&) -> Color;
 };
+
 template<> struct CSSValueCreation<Color> {
-    auto operator()(CSSValuePool&, const RenderStyle&, const Color&) -> Ref<CSSValue>;
+    auto operator()(CSSValuePool&, const Style::ComputedStyle&, const Color&) -> Ref<CSSValue>;
+};
+
+template<> struct DeprecatedCSSOMValueCreation<Color> {
+    Ref<DeprecatedCSSOMValue> operator()(CSSValuePool&, const Style::ComputedStyle&, CSSStyleDeclaration&, const Color&);
 };
 
 // MARK: - Blending
 
 template<> struct Blending<Color> {
-    auto equals(const Color&, const Color&, const RenderStyle&, const RenderStyle&) -> bool;
-    auto canBlend(const Color&, const Color&) -> bool;
+    auto equals(const Color&, const Color&, const Style::ComputedStyle&, const Style::ComputedStyle&) -> bool;
+    bool LEGACY_NODELETE canBlend(const Color&, const Color&);
     constexpr auto requiresInterpolationForAccumulativeIteration(const Color&, const Color&) -> bool { return true; }
-    auto blend(const Color&, const Color&, const RenderStyle&, const RenderStyle&, const BlendingContext&) -> Color;
+    auto blend(const Color&, const Color&, const Style::ComputedStyle&, const Style::ComputedStyle&, const BlendingContext&) -> Color;
 };
 
 // MARK: - Color Implementation
 
-template<typename... F> decltype(auto) Color::switchOn(F&&... f) const
+template<typename... F> decltype(auto) Color::switchOn(NOESCAPE F&&... f) const
 {
     auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
     using ResultType = decltype(visitor(std::declval<ResolvedColor>()));
@@ -227,6 +237,9 @@ template<typename... F> decltype(auto) Color::switchOn(F&&... f) const
         },
         [&](const ResolvedColor& resolvedColor) -> ResultType {
             return visitor(resolvedColor);
+        },
+        [&](const CurrentAccentColor& currentColor) -> ResultType {
+            return visitor(currentColor);
         },
         [&](const CurrentColor& currentColor) -> ResultType {
             return visitor(currentColor);

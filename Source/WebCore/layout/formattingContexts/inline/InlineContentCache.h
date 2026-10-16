@@ -39,19 +39,22 @@ class InlineContentCache {
     WTF_MAKE_TZONE_ALLOCATED(InlineContentCache);
 public:
     struct InlineItems {
-        InlineItemList& content() { return m_inlineItemList; }
-        const InlineItemList& content() const { return m_inlineItemList; }
+        InlineItemList& content() LIFETIME_BOUND { return m_inlineItemList; }
+        const InlineItemList& content() const LIFETIME_BOUND { return m_inlineItemList; }
 
         struct ContentAttributes {
             bool requiresVisualReordering { false };
             // Note that <span>this is text</span> returns true as inline boxes are not considered 'content' here.
             bool hasTextAndLineBreakOnlyContent { false };
             bool hasTextAutospace { false };
+            bool hasWhiteSpaceTrim { false };
             size_t inlineBoxCount { 0 };
         };
         enum class IsPopulatedFromCache : bool { No, Yes };
         void set(InlineItemList&&, ContentAttributes, IsPopulatedFromCache);
         void replace(size_t insertionPosition, InlineItemList&&, ContentAttributes, IsPopulatedFromCache);
+        // Drops the items that rebuilding from this position replaces. Partial rebuild starts at the item at the position, so that one stays.
+        void removeItemsReplacedByRebuild(InlineItemPosition rebuildStartPosition);
         void shrinkToFit() { m_inlineItemList.shrinkToFit(); }
 
         bool isEmpty() const { return content().isEmpty(); }
@@ -62,6 +65,7 @@ public:
         bool hasTextAutospace() const { return m_contentAttributes.hasTextAutospace; }
         bool hasInlineBoxes() const { return !!inlineBoxCount(); }
         size_t inlineBoxCount() const { return m_contentAttributes.inlineBoxCount; }
+        bool hasWhiteSpaceTrim() const { return m_contentAttributes.hasWhiteSpaceTrim; }
         bool isPopulatedFromCache() const { return m_isPopulatedFromCache; }
 
     private:
@@ -69,12 +73,12 @@ public:
         InlineItemList m_inlineItemList;
         bool m_isPopulatedFromCache { false };
     };
-    const InlineItems& inlineItems() const { return m_inlineItems; }
-    InlineItems& inlineItems() { return m_inlineItems; }
+    const InlineItems& inlineItems() const LIFETIME_BOUND { return m_inlineItems; }
+    InlineItems& inlineItems() LIFETIME_BOUND { return m_inlineItems; }
 
     void setMaximumIntrinsicWidthLineContent(LineLayoutResult&& lineContent) { m_maximumIntrinsicWidthLineContent = WTF::move(lineContent); }
     void clearMaximumIntrinsicWidthLineContent() { m_maximumIntrinsicWidthLineContent = { }; }
-    std::optional<LineLayoutResult>& maximumIntrinsicWidthLineContent() { return m_maximumIntrinsicWidthLineContent; }
+    std::optional<LineLayoutResult>& maximumIntrinsicWidthLineContent() LIFETIME_BOUND { return m_maximumIntrinsicWidthLineContent; }
 
     void setMinimumContentSize(InlineLayoutUnit minimumContentSize) { m_minimumContentSize = minimumContentSize; }
     void setMaximumContentSize(InlineLayoutUnit maximumContentSize) { m_maximumContentSize = maximumContentSize; }
@@ -82,12 +86,12 @@ public:
     std::optional<InlineLayoutUnit> maximumContentSize() const { return m_maximumContentSize; }
     void resetMinimumMaximumContentSizes();
 
-    const InlineBoxBoundaryTextSpacings& inlineBoxBoundaryTextSpacings() const { return m_textSpacingContext.inlineBoxBoundaryTextSpacings; }
+    const InlineBoxBoundaryTextSpacings& inlineBoxBoundaryTextSpacings() const LIFETIME_BOUND { return m_textSpacingContext.inlineBoxBoundaryTextSpacings; }
     void setInlineBoxBoundaryTextSpacings(InlineBoxBoundaryTextSpacings&& spacings) { m_textSpacingContext.inlineBoxBoundaryTextSpacings = WTF::move(spacings); }
-    const TrimmableTextSpacings& trimmableTextSpacings() const { return m_textSpacingContext.trimmableTextSpacings; }
+    const TrimmableTextSpacings& trimmableTextSpacings() const LIFETIME_BOUND { return m_textSpacingContext.trimmableTextSpacings; }
     void setTrimmableTextSpacings(TrimmableTextSpacings&& spacings) { m_textSpacingContext.trimmableTextSpacings = WTF::move(spacings); }
 
-    const TextSpacingContext& textSpacingContext() const { return m_textSpacingContext; }
+    const TextSpacingContext& textSpacingContext() const LIFETIME_BOUND { return m_textSpacingContext; }
 
 private:
     InlineItems m_inlineItems;
@@ -110,6 +114,15 @@ inline void InlineContentCache::InlineItems::set(InlineItemList&& inlineItemList
     m_inlineItemList = WTF::move(inlineItemList);
     m_contentAttributes = contentAttributes;
     m_isPopulatedFromCache = isPopulatedFromCache == IsPopulatedFromCache::Yes;
+}
+
+inline void InlineContentCache::InlineItems::removeItemsReplacedByRebuild(InlineItemPosition rebuildStartPosition)
+{
+    if (!rebuildStartPosition) {
+        m_inlineItemList.clear();
+        return;
+    }
+    m_inlineItemList.shrink(std::min(m_inlineItemList.size(), rebuildStartPosition.index + 1));
 }
 
 inline void InlineContentCache::InlineItems::replace(size_t insertionPosition, InlineItemList&& inlineItemList, ContentAttributes contentAttributes, IsPopulatedFromCache isPopulatedFromCache)

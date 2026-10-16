@@ -10,6 +10,8 @@
 #ifndef LIBANGLE_RENDERER_D3D_VERTEXDATAMANAGER_H_
 #define LIBANGLE_RENDERER_D3D_VERTEXDATAMANAGER_H_
 
+#include <optional>
+
 #include "common/angleutils.h"
 #include "libANGLE/Constants.h"
 #include "libANGLE/VertexAttribute.h"
@@ -114,7 +116,7 @@ class VertexDataManager : angle::NonCopyable
                                       GLint start,
                                       size_t count,
                                       GLsizei instances,
-                                      GLuint baseInstance);
+                                      uint64_t baseInstance);
 
     // Promote static usage of dynamic buffers.
     static void PromoteDynamicAttribs(const gl::Context *context,
@@ -135,7 +137,7 @@ class VertexDataManager : angle::NonCopyable
         ~CurrentValueState();
 
         std::unique_ptr<StreamingVertexBufferInterface> buffer;
-        gl::VertexAttribCurrentValueData data;
+        std::optional<gl::VertexAttribCurrentValueData> data;
         size_t offset;
     };
 
@@ -144,14 +146,14 @@ class VertexDataManager : angle::NonCopyable
                                         GLint start,
                                         size_t count,
                                         GLsizei instances,
-                                        GLuint baseInstance);
+                                        uint64_t baseInstance);
 
     angle::Result storeDynamicAttrib(const gl::Context *context,
                                      TranslatedAttribute *translated,
                                      GLint start,
                                      size_t count,
                                      GLsizei instances,
-                                     GLuint baseInstance);
+                                     uint64_t baseInstance);
 
     BufferFactoryD3D *const mFactory;
 

@@ -25,18 +25,24 @@
 
 #pragma once
 
-#include <WebCore/RenderElement.h>
+#include "RenderElement.h"
 #include <wtf/CheckedPtr.h>
 
 namespace WebCore {
 
+class RenderBlock;
+
+enum class InOverflowRelayout : bool { No, Yes };
+
 class LayoutScope {
 public:
     LayoutScope(RenderElement& renderer);
+    LayoutScope(RenderBlock&, InOverflowRelayout);
     ~LayoutScope();
 
 private:
     const CheckedRef<RenderElement> m_renderer;
+    InOverflowRelayout m_inOverflowRelayout { InOverflowRelayout::No };
 };
 
 }

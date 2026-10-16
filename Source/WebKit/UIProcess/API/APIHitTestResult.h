@@ -19,6 +19,7 @@
 
 #pragma once
 
+#include "APIJSHandle.h"
 #include "APIObject.h"
 #include "WebHitTestResultData.h"
 #include "WebPageProxy.h"
@@ -42,12 +43,13 @@ class WebFrame;
 
 class HitTestResult : public API::ObjectImpl<API::Object::Type::HitTestResult> {
 public:
-    static Ref<HitTestResult> create(const WebKit::WebHitTestResultData&, WebKit::WebPageProxy*);
+    static Ref<HitTestResult> create(const WebKit::WebHitTestResultData&, WebKit::WebPageProxy*, RefPtr<JSHandle>&& = nullptr);
 
     WTF::String absoluteImageURL() const { return m_data.absoluteImageURL; }
     WTF::String absolutePDFURL() const { return m_data.absolutePDFURL; }
     WTF::String absoluteLinkURL() const { return m_data.absoluteLinkURL; }
     WTF::String absoluteMediaURL() const { return m_data.absoluteMediaURL; }
+    WTF::String absoluteModelURL() const { return m_data.absoluteModelURL; }
 
     WTF::String linkLabel() const { return m_data.linkLabel; }
     WTF::String linkTitle() const { return m_data.linkTitle; }
@@ -76,24 +78,28 @@ public:
 
     WebKit::WebPageProxy* page() { return m_page.get(); }
 
-    const std::optional<WebKit::FrameInfoData>& frameInfo() const { return m_data.frameInfo; }
+    const std::optional<WebKit::FrameInfoData>& frameInfo() const LIFETIME_BOUND { return m_data.frameInfo; }
     const std::optional<WebCore::FrameIdentifier> targetFrame() const { return m_data.targetFrame; }
 
     bool allowsFollowingLink() const { return m_data.allowsFollowingLink; }
 
     bool allowsFollowingImageURL() const { return m_data.allowsFollowingImageURL; }
 
-    const std::optional<WebCore::ResourceResponse>& linkLocalResourceResponse() const { return m_data.linkLocalResourceResponse; }
+    const std::optional<WebCore::ResourceResponse>& linkLocalResourceResponse() const LIFETIME_BOUND { return m_data.linkLocalResourceResponse; }
+
+    const RefPtr<JSHandle>& domNodeHandle() const LIFETIME_BOUND { return m_domNodeHandle; }
 
 private:
-    explicit HitTestResult(const WebKit::WebHitTestResultData& hitTestResultData, WebKit::WebPageProxy* page)
+    explicit HitTestResult(const WebKit::WebHitTestResultData& hitTestResultData, WebKit::WebPageProxy* page, RefPtr<JSHandle>&& domNodeHandle)
         : m_data(hitTestResultData)
         , m_page(page)
+        , m_domNodeHandle(WTF::move(domNodeHandle))
     {
     }
 
     WebKit::WebHitTestResultData m_data;
     WeakPtr<WebKit::WebPageProxy> m_page;
+    const RefPtr<JSHandle> m_domNodeHandle;
 };
 
 } // namespace API

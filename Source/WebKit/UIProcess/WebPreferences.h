@@ -30,14 +30,14 @@
 #include "WebPreferencesDefinitions.h"
 #include "WebPreferencesStore.h"
 #include <wtf/RefPtr.h>
-#include <wtf/RetainReleaseSwift.h>
+#include <wtf/SwiftBridging.h>
 #include <wtf/WeakHashSet.h>
 #include <wtf/WeakPtr.h>
 
 #define DECLARE_PREFERENCE_GETTER_AND_SETTERS(KeyUpper, KeyLower, TypeName, Type, DefaultValue, HumanReadableName, HumanReadableDescription) \
     void set##KeyUpper(const Type& value); \
     void delete##KeyUpper(); \
-    Type KeyLower() const;
+    Type LEGACY_NODELETE KeyLower() const;
 
 #define DECLARE_INSPECTOR_OVERRIDE_SETTERS(KeyUpper, KeyLower, Type) \
     void set##KeyUpper##InspectorOverride(std::optional<Type> inspectorOverride);
@@ -65,11 +65,13 @@ public:
     void addPage(WebPageProxy&);
     void removePage(WebPageProxy&);
 
-    const WebPreferencesStore& store() const { return m_store; }
+    const WebPreferencesStore& store() const LIFETIME_BOUND { return m_store; }
 
     // Implemented in generated file WebPreferencesGetterSetters.cpp.
     FOR_EACH_WEBKIT_PREFERENCE(DECLARE_PREFERENCE_GETTER_AND_SETTERS)
     FOR_EACH_WEBKIT_PREFERENCE_WITH_INSPECTOR_OVERRIDE(DECLARE_INSPECTOR_OVERRIDE_SETTERS)
+
+    bool shouldUseUIProcessForBackForwardItemLoading() const;
 
     static const Vector<RefPtr<API::Object>>& features();
     static const Vector<RefPtr<API::Object>>& experimentalFeatures();
@@ -93,10 +95,11 @@ public:
     void setStringValueForKey(const String&, const String& value, bool ephemeral);
     void forceUpdate() { update(); }
 
-    void startBatchingUpdates();
+    void LEGACY_NODELETE startBatchingUpdates();
     void endBatchingUpdates();
 
-    static void forceSiteIsolationAlwaysOnForTesting();
+    static void LEGACY_NODELETE forceSiteIsolationAlwaysOnForTesting();
+    static bool LEGACY_NODELETE forcedSiteIsolationAlwaysOnForTesting();
 
 private:
     void platformInitializeStore();
@@ -152,19 +155,21 @@ private:
     bool m_needUpdateAfterBatch { false };
 
     FOR_EACH_WEBKIT_PREFERENCE_WITH_INSPECTOR_OVERRIDE(DECLARE_INSPECTOR_OVERRIDE_STORE)
-} SWIFT_SHARED_REFERENCE(refPrefs, derefPrefs);
+} DERIVED_CLASS_SWIFT_SHARED_REFERENCE(refPrefs, derefPrefs);
 
 } // namespace WebKit
 
+#if !ENABLE(SWIFT_BASE_CLASS_ANNOTATIONS)
 inline void refPrefs(WebKit::WebPreferences* WTF_NONNULL obj)
 {
-    WTF::ref(obj);
+    obj->ref();
 }
 
 inline void derefPrefs(WebKit::WebPreferences* WTF_NONNULL obj)
 {
-    WTF::deref(obj);
+    obj->deref();
 }
+#endif
 
 SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::WebPreferences)
 static bool isType(const API::Object& object) { return object.type() == API::Object::Type::Preferences; }

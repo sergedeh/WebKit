@@ -264,8 +264,14 @@ WI.SourceCodeTextEditor = class SourceCodeTextEditor extends WI.TextEditor
                 queryRegex.lastIndex = 0;
 
                 // Search the line and mark the ranges.
-                var lineMatch = null;
+                let lineMatch;
                 while (queryRegex.lastIndex + query.length <= line.length && (lineMatch = queryRegex.exec(line))) {
+                    // An empty match doesn't advance `lastIndex`, so skip it to avoid looping forever.
+                    if (!lineMatch[0].length) {
+                        ++queryRegex.lastIndex;
+                        continue;
+                    }
+
                     var resultTextRange = new WI.TextRange(matchLineNumber, lineMatch.index, matchLineNumber, queryRegex.lastIndex);
                     searchResults.push(resultTextRange);
                 }
@@ -558,10 +564,8 @@ WI.SourceCodeTextEditor = class SourceCodeTextEditor extends WI.TextEditor
         if (this._contentPopulated)
             return;
 
-        if (this._sourceCode instanceof WI.Resource)
+        if (this._sourceCode instanceof WI.Resource || this._sourceCode instanceof WI.Script)
             this.mimeType = this._sourceCode.syntheticMIMEType;
-        else if (this._sourceCode instanceof WI.Script)
-            this.mimeType = "text/javascript";
         else if (this._sourceCode instanceof WI.CSSStyleSheet)
             this.mimeType = "text/css";
 
@@ -757,7 +761,8 @@ WI.SourceCodeTextEditor = class SourceCodeTextEditor extends WI.TextEditor
 
             // Don't show an inline widget when there is only one breakpoint location on the line
             // and it's at the start of the line.
-            if (locations.length === 1 && position.lineNumber === lineNumber && !this.line(lineNumber).slice(0, position.columnNumber).trim().length)
+            let lineContent = this.line(lineNumber);
+            if (locations.length === 1 && position.lineNumber === lineNumber && lineContent && !lineContent.slice(0, position.columnNumber).trim().length)
                 continue;
 
             console.assert(!Array.from(this._inlineBreakpointDataForLine.values()).some(({widget}) => widget.sourceCodeLocation.isEqual(location)), location, this._inlineBreakpointDataForLine);
@@ -1294,10 +1299,15 @@ WI.SourceCodeTextEditor = class SourceCodeTextEditor extends WI.TextEditor
         if (this._sourceCode instanceof WI.Resource) {
             if (this._sourceCode.localResourceOverride)
                 return false;
+            // FIXME: Support breakpoints and stepping in WebAssembly.
+            if (this._sourceCode.mimeTypeComponents.type === "application/wasm")
+                return false;
             return this._sourceCode.type === WI.Resource.Type.Document || this._sourceCode.type === WI.Resource.Type.Script;
         }
-        if (this._sourceCode instanceof WI.Script)
-            return !(this._sourceCode instanceof WI.LocalScript);
+        if (this._sourceCode instanceof WI.Script) {
+            // FIXME: Support breakpoints and stepping in WebAssembly.
+            return !(this._sourceCode instanceof WI.LocalScript) && this._sourceCode.sourceType !== WI.Script.SourceType.WebAssembly;
+        }
         return false;
     }
 
@@ -2107,7 +2117,8 @@ WI.SourceCodeTextEditor = class SourceCodeTextEditor extends WI.TextEditor
     {
         this.tokenTrackingController.removeHighlightedRange();
 
-        this.target.RuntimeAgent.releaseObjectGroup("popover");
+        let target = WI.debuggerManager.activeCallFrame?.target || this.target;
+        target?.RuntimeAgent.releaseObjectGroup("popover");
     }
 
     _dismissPopover()
@@ -2154,8 +2165,8 @@ WI.SourceCodeTextEditor = class SourceCodeTextEditor extends WI.TextEditor
     _tokenTrackingControllerHighlightedMarkedExpression(candidate, markers)
     {
         // Look for the outermost editable marker.
-        var editableMarker;
-        for (var marker of markers) {
+        let editableMarker;
+        for (let marker of markers) {
             if (!marker.range || !Object.values(WI.TextMarker.Type).includes(marker.type))
                 continue;
 
@@ -2177,7 +2188,7 @@ WI.SourceCodeTextEditor = class SourceCodeTextEditor extends WI.TextEditor
 
         this._editingController = this.editingControllerForMarker(editableMarker);
 
-        if (marker.type === WI.TextMarker.Type.Color) {
+        if (editableMarker.type === WI.TextMarker.Type.Color) {
             var color = this._editingController.value;
             if (!color || !color.valid) {
                 editableMarker.clear();

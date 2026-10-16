@@ -179,8 +179,8 @@ public:
 
 #include "TestProtocolObjects.h"
 #include <JavaScriptCore/InspectorBackendDispatcher.h>
+#include <expected>
 #include <tuple>
-#include <wtf/Expected.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/WTFString.h>
 
@@ -709,8 +709,7 @@ void ObjCInspectorNetwork1BackendDispatcher::loadResource(long protocol_requestI
     }
 
     id errorCallback = ^(NSString *error) {
-        backendDispatcher()->reportProtocolError(protocol_requestId, BackendDispatcher::ServerError, error);
-        backendDispatcher()->sendPendingErrors();
+        backendDispatcher()->sendErrorResponse(protocol_requestId, BackendDispatcher::ServerError, error);
     };
 
     id successCallback = ^{

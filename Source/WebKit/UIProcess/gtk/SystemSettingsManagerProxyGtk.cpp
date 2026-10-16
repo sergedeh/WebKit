@@ -28,6 +28,7 @@
 
 #include <WebCore/PlatformScreen.h>
 #include <WebCore/SystemSettings.h>
+#include <WebCore/Theme.h>
 #include <gtk/gtk.h>
 #include <wtf/glib/GUniquePtr.h>
 
@@ -52,13 +53,26 @@ String SystemSettingsManagerProxy::themeName() const
 
 bool SystemSettingsManagerProxy::darkMode() const
 {
+#if GTK_CHECK_VERSION(4, 20, 0)
+    GtkInterfaceColorScheme gtkInterfaceColorScheme;
+    g_object_get(m_settings, "gtk-interface-color-scheme", &gtkInterfaceColorScheme, nullptr);
+    switch (gtkInterfaceColorScheme) {
+    case GTK_INTERFACE_COLOR_SCHEME_UNSUPPORTED:
+        return false;
+    case GTK_INTERFACE_COLOR_SCHEME_DEFAULT:
+        return false;
+    case GTK_INTERFACE_COLOR_SCHEME_DARK:
+        return true;
+    case GTK_INTERFACE_COLOR_SCHEME_LIGHT:
+        return false;
+    }
+    return false;
+#else
     gboolean preferDarkTheme;
     g_object_get(m_settings, "gtk-application-prefer-dark-theme", &preferDarkTheme, nullptr);
     if (preferDarkTheme)
         return true;
 
-    // FIXME: These are just heuristics, we should get the dark mode from libhandy/libadwaita, falling back to the settings portal.
-    // Or maybe just use the settings portal, because we don't want to depend on libhandy, and maybe don't want to depend on libadwaita?
     if (const char* themeNameEnv = g_getenv("GTK_THEME")) {
         String themeNameEnvString = String::fromUTF8(themeNameEnv);
         return themeNameEnvString.endsWith("-dark"_s) || themeNameEnvString.endsWith("-Dark"_s) || themeNameEnvString.endsWith(":dark"_s);
@@ -73,6 +87,7 @@ bool SystemSettingsManagerProxy::darkMode() const
     }
 
     return false;
+#endif
 }
 
 String SystemSettingsManagerProxy::fontName() const
@@ -145,7 +160,7 @@ bool SystemSettingsManagerProxy::cursorBlink() const
 {
     gboolean cursorBlinkSetting;
     g_object_get(m_settings, "gtk-cursor-blink", &cursorBlinkSetting, nullptr);
-    return cursorBlinkSetting ? true : false;
+    return !!cursorBlinkSetting;
 }
 
 int SystemSettingsManagerProxy::cursorBlinkTime() const
@@ -159,21 +174,50 @@ bool SystemSettingsManagerProxy::primaryButtonWarpsSlider() const
 {
     gboolean buttonSetting;
     g_object_get(m_settings, "gtk-primary-button-warps-slider", &buttonSetting, nullptr);
-    return buttonSetting ? true : false;
+    return !!buttonSetting;
 }
 
 bool SystemSettingsManagerProxy::overlayScrolling() const
 {
     gboolean overlayScrollingSetting;
     g_object_get(m_settings, "gtk-overlay-scrolling", &overlayScrollingSetting, nullptr);
-    return overlayScrollingSetting ? true : false;
+    return !!overlayScrollingSetting;
 }
 
-bool SystemSettingsManagerProxy::enableAnimations() const
+bool SystemSettingsManagerProxy::reducedMotion() const
 {
-    gboolean enableAnimationsSetting;
-    g_object_get(m_settings, "gtk-enable-animations", &enableAnimationsSetting, nullptr);
-    return enableAnimationsSetting ? true : false;
+#if GTK_CHECK_VERSION(4, 22, 0)
+    GtkReducedMotion prefersReducedMotion;
+    g_object_get(m_settings, "gtk-interface-reduced-motion", &prefersReducedMotion, nullptr);
+    return prefersReducedMotion == GTK_REDUCED_MOTION_REDUCE;
+#else
+    gboolean enableAnimations;
+    g_object_get(m_settings, "gtk-enable-animations", &enableAnimations, nullptr);
+    return !enableAnimations;
+#endif
+}
+
+WebCore::InterfaceContrastPreference SystemSettingsManagerProxy::interfaceContrast() const
+{
+#if GTK_CHECK_VERSION(4, 20, 0)
+    GtkInterfaceContrast gtkInterfaceContrast;
+    g_object_get(m_settings, "gtk-interface-contrast", &gtkInterfaceContrast, nullptr);
+    switch (gtkInterfaceContrast) {
+    case GTK_INTERFACE_CONTRAST_UNSUPPORTED:
+    case GTK_INTERFACE_CONTRAST_NO_PREFERENCE:
+        return WebCore::InterfaceContrastPreference::NoPreference;
+    case GTK_INTERFACE_CONTRAST_MORE:
+        return WebCore::InterfaceContrastPreference::MoreContrast;
+    case GTK_INTERFACE_CONTRAST_LESS:
+        return WebCore::InterfaceContrastPreference::LessContrast;
+    }
+    return WebCore::InterfaceContrastPreference::NoPreference;
+#else
+    auto name = themeName();
+    if (name == "HighContrast"_s || name == "HighContrastInverse"_s)
+        return WebCore::InterfaceContrastPreference::MoreContrast;
+    return WebCore::InterfaceContrastPreference::NoPreference;
+#endif
 }
 
 void SystemSettingsManagerProxy::updateFontProperties(const String& fontName, WebCore::SystemSettingsState& changedState)
@@ -185,7 +229,7 @@ void SystemSettingsManagerProxy::updateFontProperties(const String& fontName, We
     if (fontName.isEmpty())
         return;
 
-    PangoFontDescription* pangoDescription = pango_font_description_from_string(fontName.utf8().data());
+    PangoFontDescription* pangoDescription = pango_font_description_from_string(fontName.utf8().legacyCStringPointer());
     if (!pangoDescription)
         return;
 
@@ -220,8 +264,17 @@ SystemSettingsManagerProxy::SystemSettingsManagerProxy()
     g_signal_connect_swapped(m_settings, "notify::gtk-cursor-blink-time", G_CALLBACK(settingsChangedCallback), this);
     g_signal_connect_swapped(m_settings, "notify::gtk-primary-button-warps-slider", G_CALLBACK(settingsChangedCallback), this);
     g_signal_connect_swapped(m_settings, "notify::gtk-overlay-scrolling", G_CALLBACK(settingsChangedCallback), this);
-    g_signal_connect_swapped(m_settings, "notify::gtk-enable-animations", G_CALLBACK(settingsChangedCallback), this);
+#if GTK_CHECK_VERSION(4, 20, 0)
+    g_signal_connect_swapped(m_settings, "notify::gtk-interface-contrast", G_CALLBACK(settingsChangedCallback), this);
+    g_signal_connect_swapped(m_settings, "notify::gtk-interface-color-scheme", G_CALLBACK(settingsChangedCallback), this);
+#else
     g_signal_connect_swapped(m_settings, "notify::gtk-application-prefer-dark-theme", G_CALLBACK(settingsChangedCallback), this);
+#endif
+#if GTK_CHECK_VERSION(4, 22, 0)
+    g_signal_connect_swapped(m_settings, "notify::gtk-interface-reduced-motion", G_CALLBACK(settingsChangedCallback), this);
+#else
+    g_signal_connect_swapped(m_settings, "notify::gtk-enable-animations", G_CALLBACK(settingsChangedCallback), this);
+#endif
 
     settingsDidChange();
 }

@@ -32,7 +32,7 @@ namespace WebCore {
 
 String convertEnumerationToString(PlatformMediaError enumerationValue)
 {
-    static std::array<const NeverDestroyed<String>, 17> values {
+    static std::array<const NeverDestroyed<String>, 18> values {
         MAKE_STATIC_STRING_IMPL("AppendError"),
         MAKE_STATIC_STRING_IMPL("ClientDisconnected"),
         MAKE_STATIC_STRING_IMPL("BufferRemoved"),
@@ -48,8 +48,9 @@ String convertEnumerationToString(PlatformMediaError enumerationValue)
         MAKE_STATIC_STRING_IMPL("NotReady"),
         MAKE_STATIC_STRING_IMPL("AudioDecodingError"),
         MAKE_STATIC_STRING_IMPL("VideoDecodingError"),
-        MAKE_STATIC_STRING_IMPL("RequiresFlushToResume"),
+        MAKE_STATIC_STRING_IMPL("InvalidState"),
         MAKE_STATIC_STRING_IMPL("CDMInstanceKeyNeeded"),
+        MAKE_STATIC_STRING_IMPL("Shutdown"),
     };
     static_assert(!static_cast<size_t>(PlatformMediaError::AppendError), "PlatformMediaError::AppendError is not 0 as expected");
     static_assert(static_cast<size_t>(PlatformMediaError::ClientDisconnected) == 1, "PlatformMediaError::ClientDisconnected is not 1 as expected");
@@ -66,8 +67,9 @@ String convertEnumerationToString(PlatformMediaError enumerationValue)
     static_assert(static_cast<size_t>(PlatformMediaError::NotReady) == 12, "PlatformMediaError::NotReady is not 12 as expected");
     static_assert(static_cast<size_t>(PlatformMediaError::AudioDecodingError) == 13, "PlatformMediaError::AudioDecodingError is not 13 as expected");
     static_assert(static_cast<size_t>(PlatformMediaError::VideoDecodingError) == 14, "PlatformMediaError::VideoDecodingError is not 14 as expected");
-    static_assert(static_cast<size_t>(PlatformMediaError::RequiresFlushToResume) == 15, "PlatformMediaError::RequiresFlushToResume is not 15 as expected");
+    static_assert(static_cast<size_t>(PlatformMediaError::InvalidState) == 15, "PlatformMediaError::InvalidState is not 15 as expected");
     static_assert(static_cast<size_t>(PlatformMediaError::CDMInstanceKeyNeeded) == 16, "PlatformMediaError::CDMInstanceKeyNeeded is not 16 as expected");
+    static_assert(static_cast<size_t>(PlatformMediaError::Shutdown) == 17, "PlatformMediaError::Shutdown is not 17 as expected");
     ASSERT(static_cast<size_t>(enumerationValue) < std::size(values));
     return values[static_cast<size_t>(enumerationValue)];
 }

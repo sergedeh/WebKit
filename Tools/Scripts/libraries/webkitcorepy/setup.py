@@ -30,7 +30,7 @@ def readme():
 
 setup(
     name='webkitcorepy',
-    version='1.0.2',
+    version='1.0.6',
     description='Library containing various Python support classes and functions.',
     long_description=readme(),
     long_description_content_type='text/markdown',
@@ -51,9 +51,11 @@ setup(
     packages=[
         'webkitcorepy',
         'webkitcorepy.mocks',
+        'webkitcorepy.skill_testing',
         'webkitcorepy.testing',
         'webkitcorepy.tests',
         'webkitcorepy.tests.mocks',
+        'webkitcorepy.tests.skill_testing',
     ],
     install_requires=[
         'requests',

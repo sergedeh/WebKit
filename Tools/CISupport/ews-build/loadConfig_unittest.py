@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #
-# Copyright (C) 2018-2022 Apple Inc. All rights reserved.
+# Copyright (C) 2018-2026 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -23,7 +23,6 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
-import json
 import os
 import unittest
 
@@ -34,12 +33,7 @@ from . import loadConfig
 
 
 class ConfigDotJSONTest(unittest.TestCase):
-    DUPLICATED_TRIGGERS = ['try', 'pull_request']
-
-    def get_config(self):
-        cwd = os.path.dirname(os.path.abspath(__file__))
-        with open(os.path.join(cwd, 'config.json'), 'r') as config:
-            return json.load(config)
+    DUPLICATED_TRIGGERS = ['pull_request']
 
     def get_builder_from_config(self, config, builder_name):
         for builder in config['builders']:
@@ -50,22 +44,59 @@ class ConfigDotJSONTest(unittest.TestCase):
         cwd = os.path.dirname(os.path.abspath(__file__))
         loadConfig.loadBuilderConfig({}, is_test_mode_enabled=True, master_prefix_path=cwd)
 
+    def test_force_retry_schedulers(self):
+        cwd = os.path.dirname(os.path.abspath(__file__))
+        c = {}
+        loadConfig.loadBuilderConfig(c, is_test_mode_enabled=True, master_prefix_path=cwd)
+
+        config = loadConfig.render_config()
+        builders_with_triggers = [b for b in config['builders'] if b.get('triggers')]
+        self.assertTrue(builders_with_triggers,
+                        'config.json has no builders with triggers; the force-retry registration is no longer exercised')
+
+        scheduler_by_name = {s.name: s for s in c['schedulers']}
+
+        for builder in builders_with_triggers:
+            scheduler_name = f'force-retry-{builder["name"]}'
+            self.assertIn(scheduler_name, scheduler_by_name,
+                          f'expected force-retry scheduler {scheduler_name!r} for builder with triggers')
+            scheduler = scheduler_by_name[scheduler_name]
+            self.assertEqual(scheduler.builderNames, [builder['name']])
+
+            triggers_param = next((p for p in scheduler._config_kwargs.get('properties', []) if p.name == 'triggers'), None)
+            self.assertIsNotNone(triggers_param, f'{scheduler_name} missing triggers parameter')
+            self.assertEqual(sorted(triggers_param.choices), sorted(builder['triggers']),
+                             f'{scheduler_name} choices drifted from config.json triggers')
+            self.assertEqual(sorted(triggers_param.default), sorted(builder['triggers']),
+                             f'{scheduler_name} default should be the full fan-out')
+            self.assertTrue(triggers_param.multiple)
+            self.assertTrue(triggers_param.required)
+            self.assertTrue(triggers_param.strict)
+
+        for builder in config['builders']:
+            if builder.get('triggers'):
+                continue
+            scheduler_name = f'force-retry-{builder["name"]}'
+            self.assertNotIn(scheduler_name, scheduler_by_name,
+                             f'unexpected force-retry scheduler for builder without triggers: {builder["name"]}')
+
     def test_tab_character(self):
         cwd = os.path.dirname(os.path.abspath(__file__))
-        with open(os.path.join(cwd, 'config.json'), 'r') as config:
+        with open(os.path.join(cwd, 'config-template.yaml'), 'r') as config:
             self.assertTrue('\t' not in config.read(), 'Tab character found in config.json, please use spaces instead of tabs.')
 
     def test_builder_keys(self):
-        config = self.get_config()
+        config = loadConfig.render_config()
         valid_builder_keys = ['additionalArguments', 'architectures', 'builddir', 'configuration', 'description',
-                              'defaultProperties', 'env', 'factory', 'icon', 'locks', 'name', 'platform', 'properties',
-                              'remotes', 'runTests', 'shortname', 'tags', 'triggers', 'triggered_by', 'workernames', 'workerbuilddir']
+                              'defaultProperties', 'deployment_target', 'env', 'factory', 'icon', 'locks', 'name',
+                              'platform', 'properties', 'rebuild_without_change_on_builder', 'remotes', 'runTests',
+                              'shortname', 'tags', 'triggers', 'triggered_by', 'workernames', 'workerbuilddir']
         for builder in config.get('builders', []):
             for key in builder:
                 self.assertTrue(key in valid_builder_keys, 'Unexpected key "{}" for builder {}'.format(key, builder.get('name')))
 
     def test_multiple_scheduers_for_builder(self):
-        config = self.get_config()
+        config = loadConfig.render_config()
         builder_to_schduler_map = {}
         triggered_by_schedulers = []
         for builder in config['builders']:
@@ -84,20 +115,20 @@ class ConfigDotJSONTest(unittest.TestCase):
                 builder_to_schduler_map[buildername] = scheduler.get('name')
 
     def test_schduler_contains_valid_builder_name(self):
-        config = self.get_config()
+        config = loadConfig.render_config()
         builder_name_list = [builder['name'] for builder in config['builders']]
         for scheduler in config.get('schedulers'):
             for buildername in scheduler.get('builderNames'):
                 self.assertTrue(buildername in builder_name_list, 'builder "{}" in scheduler "{}" is invalid.'.format(buildername, scheduler['name']))
 
     def test_single_builder_for_triggerable_scheduler(self):
-        config = self.get_config()
+        config = loadConfig.render_config()
         for scheduler in config['schedulers']:
             if scheduler.get('type') == 'Triggerable':
                 self.assertTrue(len(scheduler.get('builderNames')) == 1, 'scheduler "{}" triggers multiple builders.'.format(scheduler['name']))
 
     def test_incorrect_triggered_by(self):
-        config = self.get_config()
+        config = loadConfig.render_config()
         schedulers_to_buildername_map = {}
         for scheduler in config['schedulers']:
             schedulers_to_buildername_map[scheduler['name']] = scheduler['builderNames']
@@ -119,6 +150,19 @@ class ConfigDotJSONTest(unittest.TestCase):
                     self.assertTrue(builder['name'] in triggering_builder_triggers_buildernames,
                                     'Incorrect triggered_by "{}" in builder "{}", this builder is not in corresponding builder triggers "{}".'
                                     .format(triggered_by, builder['name'], triggering_builder_triggers_buildernames))
+
+    def test_rebuild_without_change_only_on_builder_queues(self):
+        config = loadConfig.render_config()
+        for builder in config['builders']:
+            if builder.get('rebuild_without_change_on_builder'):
+                self.assertTrue(builder.get('triggers'), f'rebuild_without_change_on_builder should only be set on builders with triggers, but found on: {builder["name"]}')
+
+    def test_deployment_target_on_intended_queues(self):
+        config = loadConfig.render_config()
+        for builder in config['builders']:
+            if builder.get('deployment_target'):
+                self.assertTrue(builder.get('factory') == 'macOSBuildFactory',
+                                f'custom deployment target only implemented for macOS builders, but found on "{builder["name"]}" with factory "{builder["factory"]}"')
 
 
 class TagsForBuilderTest(unittest.TestCase):
@@ -171,6 +215,21 @@ class TestcheckValidWorker(unittest.TestCase):
     def test_valid_worker(self):
         loadConfig.checkValidWorker({'name': 'ews101', 'platform': 'mac-sierra'})
 
+    def test_worker_with_machine_and_missing_fleet(self):
+        with self.assertRaises(Exception) as context:
+            loadConfig.checkValidWorker({'name': 'bot10000', 'platform': 'mac-tahoe', 'device': 'Mac16,11'})
+        self.assertEqual(context.exception.args, ('Worker bot10000 has os/device/xcode, so its fleet must be one of aws, air-cloud.',))
+
+    def test_worker_with_machine_and_invalid_fleet(self):
+        for fleet in ['AWS', 'aircloud', '']:
+            with self.assertRaises(Exception) as context:
+                loadConfig.checkValidWorker({'name': 'bot10000', 'platform': 'mac-tahoe', 'os': 'macOS Tahoe 26.5-25F71', 'fleet': fleet})
+            self.assertEqual(context.exception.args, ('Worker bot10000 has os/device/xcode, so its fleet must be one of aws, air-cloud.',))
+
+    def test_valid_worker_with_machine_and_fleet(self):
+        for fleet in ['aws', 'air-cloud']:
+            loadConfig.checkValidWorker({'name': 'bot10000', 'platform': 'mac-tahoe', 'os': 'macOS Tahoe 26.5-25F71', 'device': 'Mac16,11', 'xcode': 'Xcode 26.5-17F42', 'fleet': fleet})
+
 
 class TestcheckValidBuilder(unittest.TestCase):
     def test_invalid_builder(self):
@@ -221,6 +280,15 @@ class TestcheckValidBuilder(unittest.TestCase):
 
     def test_valid_builder(self):
         loadConfig.checkValidBuilder({}, {'name': 'macOS-High-Sierra-WK2-EWS', 'shortname': 'mac-wk2', 'configuration': 'release', 'factory': 'WK2Factory', 'platform': 'mac-sierra'})
+
+    def test_rebuild_without_change_on_builder_only_on_builders(self):
+        with self.assertRaises(Exception) as context:
+            loadConfig.checkValidBuilder({}, {'name': 'macOS-Tests-EWS', 'shortname': 'mac-tests', 'configuration': 'release', 'factory': 'TestFactory', 'platform': 'mac-sierra', 'rebuild_without_change_on_builder': True})
+        self.assertEqual(context.exception.args, ('rebuild_without_change_on_builder can only be set on builders with triggers. Builder: macOS-Tests-EWS',))
+
+    def test_rebuild_without_change_on_builder_valid(self):
+        config = {'schedulers': [{'name': 'some-trigger', 'type': 'Triggerable'}]}
+        loadConfig.checkValidBuilder(config, {'name': 'macOS-Build-EWS', 'shortname': 'mac', 'configuration': 'release', 'factory': 'BuildFactory', 'platform': 'mac-sierra', 'rebuild_without_change_on_builder': True, 'triggers': ['some-trigger']})
 
 
 class TestcheckWorkersAndBuildersForConsistency(unittest.TestCase):
@@ -274,25 +342,12 @@ class TestPrioritizeBuilders(unittest.TestCase):
 
     def test_starvation(self):
         builders = [
-            self.MockBuilder('Commit-Queue', oldestRequestTime=datetime.now(timezone.utc) - timedelta(seconds=30)),
             self.MockBuilder('Merge-Queue', oldestRequestTime=datetime.now(timezone.utc) - timedelta(seconds=10)),
             self.MockBuilder('Unsafe-Merge-Queue', oldestRequestTime=datetime.now(timezone.utc) - timedelta(seconds=60)),
         ]
         sorted_builders = loadConfig.prioritizeBuilders(None, builders)
         self.assertEqual(
-            ['Unsafe-Merge-Queue', 'Commit-Queue', 'Merge-Queue'],
-            [builder.name for builder in sorted_builders],
-        )
-
-    def test_starvation_prioritize_commit_queue(self):
-        builders = [
-            self.MockBuilder('Commit-Queue', oldestRequestTime=datetime.now(timezone.utc) - timedelta(seconds=10)),
-            self.MockBuilder('Merge-Queue', oldestRequestTime=datetime.now(timezone.utc) - timedelta(seconds=60)),
-            self.MockBuilder('Unsafe-Merge-Queue', oldestRequestTime=datetime.now(timezone.utc) - timedelta(seconds=20)),
-        ]
-        sorted_builders = loadConfig.prioritizeBuilders(None, builders)
-        self.assertEqual(
-            ['Unsafe-Merge-Queue', 'Commit-Queue', 'Merge-Queue'],
+            ['Unsafe-Merge-Queue', 'Merge-Queue'],
             [builder.name for builder in sorted_builders],
         )
 

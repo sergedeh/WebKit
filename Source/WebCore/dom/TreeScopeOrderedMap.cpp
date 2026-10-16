@@ -103,7 +103,7 @@ void TreeScopeOrderedMap::remove(const AtomString& key, Element& element)
 }
 
 template <typename KeyMatchingFunction>
-inline RefPtr<Element> TreeScopeOrderedMap::get(const AtomString& key, const TreeScope& scope, const KeyMatchingFunction& keyMatches) const
+inline RefPtr<Element> TreeScopeOrderedMap::get(const AtomString& key, const TreeScope& scope, NOESCAPE const KeyMatchingFunction& keyMatches) const
 {
     ASSERT_WITH_SECURITY_IMPLICATION(!key.isNull());
     m_map.checkConsistency();
@@ -152,7 +152,7 @@ inline RefPtr<Element> TreeScopeOrderedMap::get(const AtomString& key, const Tre
 }
 
 template <typename KeyMatchingFunction>
-inline Vector<WeakRef<Element, WeakPtrImplWithEventTargetData>>* TreeScopeOrderedMap::getAll(const AtomString& key, const TreeScope& scope, const KeyMatchingFunction& keyMatches) const
+inline Vector<WeakRef<Element, WeakPtrImplWithEventTargetData>>* TreeScopeOrderedMap::getAll(const AtomString& key, const TreeScope& scope, NOESCAPE const KeyMatchingFunction& keyMatches) const
 {
     ASSERT_WITH_SECURITY_IMPLICATION(!key.isNull());
     m_map.checkConsistency();
@@ -168,8 +168,9 @@ inline Vector<WeakRef<Element, WeakPtrImplWithEventTargetData>>* TreeScopeOrdere
         entry.orderedList.reserveCapacity(entry.count);
         auto elementDescendants = descendantsOfType<Element>(scope.rootNode());
         for (auto it = entry.element ? elementDescendants.beginAt(*entry.element) : elementDescendants.begin(); it; ++it) {
-            if (keyMatches(key, *it))
-                entry.orderedList.append(*it);
+            Ref element = *it;
+            if (keyMatches(key, element))
+                entry.orderedList.append(element.get());
         }
         RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(entry.orderedList.size() == entry.count);
     }
@@ -195,7 +196,7 @@ RefPtr<HTMLMapElement> TreeScopeOrderedMap::getElementByMapName(const AtomString
 {
     return downcast<HTMLMapElement>(get(key, scope, [] (const AtomString& key, const Element& element) {
         auto* mapElement = dynamicDowncast<HTMLMapElement>(element);
-        return mapElement && mapElement->getName() == key;
+        return mapElement && (mapElement->getName() == key || mapElement->getIdAttribute() == key);
     }));
 }
 

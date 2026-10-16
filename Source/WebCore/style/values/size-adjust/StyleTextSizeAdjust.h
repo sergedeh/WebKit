@@ -21,8 +21,6 @@
 
 #pragma once
 
-#if ENABLE(TEXT_AUTOSIZING)
-
 #include <WebCore/StylePrimitiveNumericTypes.h>
 
 namespace WebCore {
@@ -54,7 +52,9 @@ struct TextSizeAdjust {
     constexpr bool isNone() const { return m_value == None; }
     constexpr bool isPercentage() const { return m_value >= 0; }
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    constexpr std::optional<float> tryPercentage() const { return isPercentage() ? std::optional { percentage() } : std::nullopt; }
+
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
@@ -83,5 +83,3 @@ template<> struct CSSValueConversion<TextSizeAdjust> { auto operator()(BuilderSt
 } // namespace WebCore
 
 DEFINE_VARIANT_LIKE_CONFORMANCE(WebCore::Style::TextSizeAdjust)
-
-#endif // ENABLE(TEXT_AUTOSIZING)

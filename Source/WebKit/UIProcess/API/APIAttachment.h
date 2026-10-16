@@ -49,6 +49,7 @@ class FragmentedSharedBuffer;
 
 namespace WebKit {
 class WebPageProxy;
+class WebProcessProxy;
 }
 
 namespace API {
@@ -60,7 +61,7 @@ public:
 
     enum class InsertionState : uint8_t { NotInserted, Inserted };
 
-    const WTF::String& identifier() const { return m_identifier; }
+    const WTF::String& identifier() const LIFETIME_BOUND { return m_identifier; }
     void updateAttributes(CompletionHandler<void()>&&);
 
     void invalidate();
@@ -69,18 +70,18 @@ public:
 #if PLATFORM(COCOA)
     void cloneFileWrapperTo(Attachment&);
     bool shouldUseFileWrapperIconForDirectory() const;
-    void doWithFileWrapper(NOESCAPE Function<void(NSFileWrapper *)>&&) const;
+    void doWithFileWrapper(NOESCAPE const Function<void(NSFileWrapper *)>&) const;
     void setFileWrapper(NSFileWrapper *);
     void setFileWrapperAndUpdateContentType(NSFileWrapper *, NSString *contentType);
     WTF::String utiType() const;
 #endif
     WTF::String mimeType() const;
 
-    const WTF::String& filePath() const { return m_filePath; }
+    const WTF::String& filePath() const LIFETIME_BOUND { return m_filePath; }
     void setFilePath(const WTF::String& filePath) { m_filePath = filePath; }
     WTF::String fileName() const;
 
-    const WTF::String& contentType() const { return m_contentType; }
+    const WTF::String& contentType() const LIFETIME_BOUND { return m_contentType; }
     void setContentType(const WTF::String& contentType) { m_contentType = contentType; }
 
     InsertionState insertionState() const { return m_insertionState; }
@@ -100,6 +101,11 @@ public:
     RefPtr<WebCore::SharedBuffer> createSerializedRepresentation() const;
     void updateFromSerializedRepresentation(Ref<WebCore::SharedBuffer>&&, const WTF::String& contentType);
 
+    // The web process whose document contains the attachment's element. With site isolation, this can be
+    // a process other than the main frame's.
+    RefPtr<WebKit::WebProcessProxy> owningProcess() const;
+    void setOwningProcess(WebKit::WebProcessProxy&);
+
 private:
     explicit Attachment(const WTF::String& identifier, WebKit::WebPageProxy&);
 
@@ -111,6 +117,7 @@ private:
     WTF::String m_filePath;
     WTF::String m_contentType;
     WeakPtr<WebKit::WebPageProxy> m_webPage;
+    WeakPtr<WebKit::WebProcessProxy> m_owningProcess;
     InsertionState m_insertionState { InsertionState::NotInserted };
     WebCore::AttachmentAssociatedElementType m_associatedElementType { WebCore::AttachmentAssociatedElementType::None };
 #if PLATFORM(COCOA)

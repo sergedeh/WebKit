@@ -1,5 +1,5 @@
 /*
- * Copyright 2020 Google Inc.
+ * Copyright 2020 Google LLC
  *
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
@@ -44,27 +44,32 @@ SkScalar SubRunControl::MinSDFTRange(bool useSDFTForSmallText, SkScalar min) {
 SubRunControl::SubRunControl(
         bool ableToUseSDFT, bool useSDFTForSmallText, bool useSDFTForPerspectiveText,
         SkScalar min, SkScalar max,
-        bool forcePathAA)
+        bool forcePathAA,
+        bool useBilerp)
         : fMinDistanceFieldFontSize{MinSDFTRange(useSDFTForSmallText, min)}
         , fMaxDistanceFieldFontSize{max}
         , fAbleToUseSDFT{ableToUseSDFT}
         , fAbleToUsePerspectiveSDFT{useSDFTForPerspectiveText}
-        , fForcePathAA{forcePathAA} {
+        , fForcePathAA{forcePathAA}
+        , fUseBilerp{useBilerp} {
     SkASSERT_RELEASE(0 < min && min <= max);
 }
 #endif // !defined(SK_DISABLE_SDF_TEXT)
 
 bool SubRunControl::isDirect(SkScalar approximateDeviceTextSize, const SkPaint& paint,
-                           const SkMatrix& matrix) const {
+                             const SkMatrix& matrix) const {
 #if !defined(SK_DISABLE_SDF_TEXT)
     const bool isSDFT = this->isSDFT(approximateDeviceTextSize, paint, matrix);
 #else
     const bool isSDFT = false;
 #endif
+    const SkScalar maxAtlasDimension = fUseBilerp
+            ? SkGlyphDigest::kSkSideTooBigForAtlas - 2
+            : SkGlyphDigest::kSkSideTooBigForAtlas;
     return !isSDFT &&
            !matrix.hasPerspective() &&
             0 < approximateDeviceTextSize &&
-            approximateDeviceTextSize < SkGlyphDigest::kSkSideTooBigForAtlas;
+            approximateDeviceTextSize < maxAtlasDimension;
 }
 
 #if !defined(SK_DISABLE_SDF_TEXT)
@@ -122,12 +127,13 @@ SubRunControl::getSDFFont(const SkFont& font, const SkMatrix& viewMatrix,
 #endif
 
     dfFont.setSize(dfMaskSize);
-    dfFont.setEdging(SkFont::Edging::kAntiAlias);
     dfFont.setForceAutoHinting(false);
     dfFont.setHinting(SkFontHinting::kNormal);
 
-    // The sub-pixel position will always happen when transforming to the screen.
+    // The sub-pixel position will always happen when transforming to the screen, so we effectively
+    // disable the LCD path in StrikeSpec creation by overwriting the edging here.
     dfFont.setSubpixel(false);
+    dfFont.setEdging(SkFont::Edging::kAntiAlias);
 
     SkScalar minMatrixScale = dfMaskScaleFloor / textSize,
              maxMatrixScale = dfMaskScaleCeil  / textSize;

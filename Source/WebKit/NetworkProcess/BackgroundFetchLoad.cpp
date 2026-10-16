@@ -64,16 +64,17 @@ BackgroundFetchLoad::BackgroundFetchLoad(NetworkProcess& networkProcess, PAL::Se
     if (request.cspResponseHeaders)
         m_networkLoadChecker->setCSPResponseHeaders(ContentSecurityPolicyResponseHeaders { *request.cspResponseHeaders });
 
-    m_networkLoadChecker->check(ResourceRequest { m_request }, nullptr, [this, weakThis = WeakPtr { *this }, networkProcess = Ref { networkProcess }] (auto&& result) {
-        if (!weakThis)
+    m_networkLoadChecker->check(ResourceRequest { m_request }, nullptr, [weakThis = WeakPtr { *this }, networkProcess = Ref { networkProcess }] (auto&& result) {
+        RefPtr protectedThis = weakThis;
+        if (!protectedThis)
             return;
-        WTF::switchOn(result, [this] (ResourceError& error) {
-            this->didFinish(error);
+        WTF::switchOn(result, [&] (ResourceError& error) {
+            protectedThis->didFinish(error);
         }, [] (NetworkLoadChecker::RedirectionTriplet& triplet) {
             // We should never send a synthetic redirect for BackgroundFetchLoads.
             ASSERT_NOT_REACHED();
         }, [&] (ResourceRequest& request) {
-            this->loadRequest(networkProcess, WTF::move(request));
+            protectedThis->loadRequest(networkProcess, WTF::move(request));
         });
     });
 }
@@ -95,14 +96,9 @@ void BackgroundFetchLoad::abort()
     m_task = nullptr;
 }
 
-RefPtr<WebCore::BackgroundFetchRecordLoaderClient> BackgroundFetchLoad::protectedClient() const
-{
-    return m_client.get();
-}
-
 void BackgroundFetchLoad::didFinish(const ResourceError& error, const ResourceResponse& response)
 {
-    protectedClient()->didFinish(error);
+    protect(m_client)->didFinish(error);
 }
 
 void BackgroundFetchLoad::loadRequest(NetworkProcess& networkProcess, ResourceRequest&& request)
@@ -128,14 +124,17 @@ void BackgroundFetchLoad::loadRequest(NetworkProcess& networkProcess, ResourceRe
 void BackgroundFetchLoad::willPerformHTTPRedirection(ResourceResponse&& redirectResponse, ResourceRequest&& request, RedirectCompletionHandler&& completionHandler)
 {
     m_networkLoadChecker->checkRedirection(ResourceRequest { }, WTF::move(request), WTF::move(redirectResponse), nullptr, [weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)] (auto&& result) mutable {
+        RefPtr protectedThis = weakThis.get();
+        if (!protectedThis)
+            return completionHandler({ });
         if (!result.has_value()) {
-            weakThis->didFinish(result.error());
+            protectedThis->didFinish(result.error());
             completionHandler({ });
             return;
         }
         auto request = WTF::move(result->redirectRequest);
         if (!request.url().protocolIsInHTTPFamily()) {
-            weakThis->didFinish(ResourceError { String { }, 0, request.url(), "Redirection to URL with a scheme that is not HTTP(S)"_s, ResourceError::Type::AccessControl });
+            protectedThis->didFinish(ResourceError { String { }, 0, request.url(), "Redirection to URL with a scheme that is not HTTP(S)"_s, ResourceError::Type::AccessControl });
             completionHandler({ });
             return;
         }
@@ -148,7 +147,7 @@ void BackgroundFetchLoad::didReceiveChallenge(AuthenticationChallenge&& challeng
 {
     BGLOAD_RELEASE_LOG("didReceiveChallenge");
     if (challenge.protectionSpace().authenticationScheme() == ProtectionSpace::AuthenticationScheme::ServerTrustEvaluationRequested) {
-        Ref { m_networkLoadChecker }->protectedNetworkProcess()->protectedAuthenticationManager()->didReceiveAuthenticationChallenge(m_sessionID, { }, nullptr, challenge, negotiatedLegacyTLS, WTF::move(completionHandler));
+        protect(protect(m_networkLoadChecker->networkProcess())->authenticationManager())->didReceiveAuthenticationChallenge(m_sessionID, { }, nullptr, challenge, negotiatedLegacyTLS, WTF::move(completionHandler));
         return;
     }
     WeakPtr weakThis { *this };
@@ -164,7 +163,7 @@ void BackgroundFetchLoad::didReceiveResponse(ResourceResponse&& response, Negoti
 
     auto error = m_networkLoadChecker->validateResponse(m_request, response);
     if (!error.isNull()) {
-        BGLOAD_RELEASE_LOG("didReceiveResponse: NetworkLoadChecker::validateResponse returned an error (error.domain=%" PUBLIC_LOG_STRING ", error.code=%d)", error.domain().utf8().data(), error.errorCode());
+        BGLOAD_RELEASE_LOG("didReceiveResponse: NetworkLoadChecker::validateResponse returned an error (error.domain=%" PUBLIC_LOG_STRING ", error.code=%d)", error.domain().utf8(), error.errorCode());
 
         WeakPtr weakThis { *this };
         completionHandler(PolicyAction::Ignore);
@@ -180,13 +179,13 @@ void BackgroundFetchLoad::didReceiveResponse(ResourceResponse&& response, Negoti
     if (!weakThis)
         return;
 
-    protectedClient()->didReceiveResponse(WTF::move(response));
+    protect(m_client)->didReceiveResponse(WTF::move(response));
 }
 
 void BackgroundFetchLoad::didReceiveData(const SharedBuffer& data)
 {
     BGLOAD_RELEASE_LOG("didReceiveData");
-    protectedClient()->didReceiveResponseBodyChunk(data);
+    protect(m_client)->didReceiveResponseBodyChunk(data);
 }
 
 void BackgroundFetchLoad::didCompleteWithError(const ResourceError& error, const NetworkLoadMetrics&)
@@ -201,7 +200,7 @@ void BackgroundFetchLoad::didCompleteWithError(const ResourceError& error, const
 
 void BackgroundFetchLoad::didSendData(uint64_t totalBytesSent, uint64_t totalBytesExpectedToSend)
 {
-    protectedClient()->didSendData(totalBytesSent);
+    protect(m_client)->didSendData(totalBytesSent);
 }
 
 void BackgroundFetchLoad::wasBlocked()

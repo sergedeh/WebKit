@@ -40,7 +40,9 @@
 #include "Page.h"
 #include "Settings.h"
 #include "VisibilityState.h"
+#include <JavaScriptCore/HeapCellInlines.h>
 #include <wtf/TZoneMallocInlines.h>
+#include "DocumentPage.h"
 
 namespace WebCore {
 
@@ -75,14 +77,14 @@ Document* ScreenOrientation::document() const
 
 ScreenOrientationManager* ScreenOrientation::manager() const
 {
-    RefPtr document = this->document();
+    auto* document = this->document();
     if (!document)
         return nullptr;
-    RefPtr page = document->page();
+    auto* page = document->page();
     return page ? page->screenOrientationManager() : nullptr;
 }
 
-static bool isSupportedLockType(ScreenOrientationLockType lockType)
+static bool LEGACY_NODELETE isSupportedLockType(ScreenOrientationLockType lockType)
 {
     switch (lockType) {
     case ScreenOrientationLockType::Any:
@@ -142,7 +144,7 @@ void ScreenOrientation::lock(LockType lockType, Ref<DeferredPromise>&& promise)
     manager->setLockPromise(*this, WTF::move(promise));
     manager->lock(lockType, [pendingActivity = makePendingActivity(*this)](std::optional<Exception>&& exception) mutable {
         queueTaskKeepingObjectAlive(pendingActivity->object(), TaskSource::DOMManipulation, [exception = WTF::move(exception)](auto& orientation) mutable {
-            auto* manager = orientation.manager();
+            RefPtr manager = orientation.manager();
             if (!manager)
                 return;
 

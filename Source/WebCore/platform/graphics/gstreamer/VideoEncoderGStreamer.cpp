@@ -80,16 +80,17 @@ private:
     VideoEncoder::Config m_config;
     VideoEncoder::DescriptionCallback m_descriptionCallback;
     VideoEncoder::OutputCallback m_outputCallback;
-    RefPtr<WebKitVideoEncoderBitRateAllocation> m_bitrateAllocation;
+    const RefPtr<WebKitVideoEncoderBitRateAllocation> m_bitrateAllocation;
     int64_t m_timestamp { 0 };
     std::optional<uint64_t> m_duration;
     bool m_isClosed { false };
     bool m_isInitialized { false };
-    RefPtr<GStreamerElementHarness> m_harness;
+    const RefPtr<GStreamerElementHarness> m_harness;
     GUniquePtr<GstVideoConverter> m_colorConvert;
     GRefPtr<GstCaps> m_colorConvertInputCaps;
     GRefPtr<GstCaps> m_colorConvertOutputCaps;
     bool m_hasMultipleTemporalLayers { false };
+    String m_orientation;
 };
 
 void GStreamerVideoEncoder::create(const String& codecName, const VideoEncoder::Config& config, CreateCallback&& callback, DescriptionCallback&& descriptionCallback, OutputCallback&& outputCallback)
@@ -106,8 +107,11 @@ void GStreamerVideoEncoder::create(const String& codecName, const VideoEncoder::
     });
 }
 
-Expected<Ref<GStreamerVideoEncoder>, String> GStreamerVideoEncoder::create(const String& codecName, const VideoEncoder::Config& config, DescriptionCallback&& descriptionCallback, OutputCallback&& outputCallback)
+std::expected<Ref<GStreamerVideoEncoder>, String> GStreamerVideoEncoder::create(const String& codecName, const VideoEncoder::Config& config, DescriptionCallback&& descriptionCallback, OutputCallback&& outputCallback)
 {
+    if (!ensureGStreamerInitialized()) [[unlikely]]
+        return makeUnexpected("GStreamer initialization failed"_s);
+
     static std::once_flag debugRegisteredFlag;
     std::call_once(debugRegisteredFlag, [] {
         GST_DEBUG_CATEGORY_INIT(webkit_video_encoder_debug, "webkitvideoencoder", 0, "WebKit WebCodecs Video Encoder");
@@ -151,6 +155,14 @@ Ref<VideoEncoder::EncodePromise> GStreamerVideoEncoder::encode(RawFrame&& frame,
     });
 }
 
+bool GStreamerVideoEncoder::encodeSync(RawFrame&& frame, bool shouldGenerateKeyFrame)
+{
+    auto result = m_internalEncoder->encode(WTF::move(frame), shouldGenerateKeyFrame);
+    if (result)
+        m_internalEncoder->harness()->processOutputSamples();
+    return result;
+}
+
 Ref<GenericPromise> GStreamerVideoEncoder::flush()
 {
     return invokeAsync(gstEncoderWorkQueue(), [encoder = m_internalEncoder] {
@@ -189,7 +201,6 @@ void GStreamerVideoEncoder::close()
 
 static std::optional<unsigned> retrieveTemporalIndex(const GRefPtr<GstSample>& sample)
 {
-#if GST_CHECK_VERSION(1, 20, 0)
     auto caps = gst_sample_get_caps(sample.get());
     auto structure = gst_caps_get_structure(caps, 0);
     auto buffer = gst_sample_get_buffer(sample.get());
@@ -209,7 +220,6 @@ static std::optional<unsigned> retrieveTemporalIndex(const GRefPtr<GstSample>& s
     auto name = gstStructureGetName(structure);
     GST_TRACE("Retrieval of temporal index from encoded format %s is not yet supported.", name.utf8());
 #endif
-#endif
     return { };
 }
 
@@ -220,7 +230,7 @@ GStreamerInternalVideoEncoder::GStreamerInternalVideoEncoder(const VideoEncoder:
 {
     GRefPtr<GstElement> element = gst_element_factory_make("webkitvideoencoder", nullptr);
 
-    auto pad = adoptGRef(gst_element_get_static_pad(element.get(), "src"));
+    GRefPtr pad = adoptGRef(gst_element_get_static_pad(element.get(), "src"));
     g_signal_connect_data(pad.get(), "notify::caps", G_CALLBACK(+[](GObject* pad, GParamSpec*, gpointer userData) {
         auto weakEncoder = static_cast<ThreadSafeWeakPtr<GStreamerInternalVideoEncoder>*>(userData);
         auto encoder = weakEncoder->get();
@@ -256,7 +266,7 @@ GStreamerInternalVideoEncoder::GStreamerInternalVideoEncoder(const VideoEncoder:
         delete static_cast<ThreadSafeWeakPtr<GStreamerInternalVideoEncoder>*>(data);
     }, static_cast<GConnectFlags>(0));
 
-    m_harness = GStreamerElementHarness::create(WTF::move(element), [weakThis = ThreadSafeWeakPtr { *this }, this](auto&, GRefPtr<GstSample>&& outputSample) {
+    lazyInitialize(m_harness, GStreamerElementHarness::create(WTF::move(element), [weakThis = ThreadSafeWeakPtr { *this }, this](auto&, GRefPtr<GstSample>&& outputSample) {
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis)
             return;
@@ -279,7 +289,7 @@ GStreamerInternalVideoEncoder::GStreamerInternalVideoEncoder(const VideoEncoder:
 
         VideoEncoder::EncodedFrame encodedFrame { encodedImage.createVector(), isKeyFrame, m_timestamp, m_duration, temporalIndex };
         m_outputCallback({ WTF::move(encodedFrame) });
-    });
+    }));
 }
 
 GStreamerInternalVideoEncoder::~GStreamerInternalVideoEncoder()
@@ -287,7 +297,7 @@ GStreamerInternalVideoEncoder::~GStreamerInternalVideoEncoder()
     if (!m_harness)
         return;
 
-    auto pad = adoptGRef(gst_element_get_static_pad(m_harness->element(), "src"));
+    GRefPtr pad = adoptGRef(gst_element_get_static_pad(m_harness->element(), "src"));
     g_signal_handlers_disconnect_by_data(pad.get(), this);
 }
 
@@ -295,7 +305,7 @@ String GStreamerInternalVideoEncoder::initialize(const String& codecName)
 {
     GST_DEBUG_OBJECT(m_harness->element(), "Initializing encoder for codec %s", codecName.ascii().data());
     IntSize size { static_cast<int>(m_config.width), static_cast<int>(m_config.height) };
-    if (!videoEncoderSetCodec(WEBKIT_VIDEO_ENCODER(m_harness->element()), { codecName, m_config.useAnnexB }, size))
+    if (!videoEncoderSetCodec(WEBKIT_VIDEO_ENCODER(m_harness->element()), { codecName, m_config.useAnnexB }, size, { }, true))
         return "Unable to set encoder format"_s;
 
     applyRates();
@@ -321,6 +331,16 @@ bool GStreamerInternalVideoEncoder::encode(VideoEncoder::RawFrame&& rawFrame, bo
 
     auto& gstVideoFrame = downcast<VideoFrameGStreamer>(rawFrame.frame.get());
     GRefPtr sample = gstVideoFrame.sample();
+
+    auto orientation = makeString(gstVideoFrame.isMirrored() ? "flip-"_s : ""_s, "rotate-"_s, gstVideoFrame.rotation());
+    if (orientation != m_orientation) {
+        auto orientationCString = orientation.utf8();
+        GST_DEBUG_OBJECT(m_harness->element(), "New orientation: %s", orientationCString);
+        GRefPtr tags = adoptGRef(gst_tag_list_new(GST_TAG_IMAGE_ORIENTATION, orientationCString.legacyCStringPointer(), nullptr));
+        GRefPtr event = adoptGRef(gst_event_new_tag(tags.leakRef()));
+        m_harness->storeStickyEvent(event);
+        m_orientation = WTF::move(orientation);
+    }
 
     if (m_config.frameRate) {
         int framerateNumerator, framerateDenominator;

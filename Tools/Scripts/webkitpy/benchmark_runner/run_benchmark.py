@@ -11,6 +11,7 @@ from webkitpy.benchmark_runner.browser_driver.browser_driver_factory import Brow
 from webkitpy.benchmark_runner.benchmark_runner import BenchmarkRunner
 from webkitpy.benchmark_runner.webdriver_benchmark_runner import WebDriverBenchmarkRunner
 from webkitpy.benchmark_runner.webserver_benchmark_runner import WebServerBenchmarkRunner
+from webkitpy.port.linux_container_sdk_utils import maybe_enter_webkit_container_sdk
 
 
 _log = logging.getLogger(__name__)
@@ -47,7 +48,7 @@ def config_argument_parser():
     parser.add_argument('--count', type=int, help='Number of times to run the benchmark (e.g. 5).')
     parser.add_argument('--timeout', type=int, help='Number of seconds to wait for the benchmark to finish (e.g. 600).')
     parser.add_argument('--driver', default=WebServerBenchmarkRunner.name, choices=list(benchmark_runner_subclasses.keys()), help='Use the specified benchmark driver. Defaults to %s.' % WebServerBenchmarkRunner.name)
-    parser.add_argument('--browser', default=default_browser(), choices=BrowserDriverFactory.available_browsers(), help='Browser to run the nechmark in. Defaults to %s.' % default_browser())
+    parser.add_argument('--browser', default=default_browser(), choices=BrowserDriverFactory.available_browsers(), help='Browser to run the benchmark in, or "manual" to open URLs yourself (tip: set --http-server-port with manual). Defaults to %s.' % default_browser())
     parser.add_argument('--platform', default=default_platform(), choices=BrowserDriverFactory.available_platforms(), help='Platform that this script is running on. Defaults to %s.' % default_platform())
     parser.add_argument('--local-copy', help='Path to a local copy of the benchmark (e.g. PerformanceTests/SunSpider/).')
     parser.add_argument('--device-id', default=None, help='Undocumented option for mobile device testing.')
@@ -56,7 +57,7 @@ def config_argument_parser():
     parser.add_argument('--list-subtests', action='store_true', help='List valid subtests from the test plan.')
     parser.add_argument('--diagnose-directory', dest='diagnose_dir', default=diagnose_directory, help='Directory for storing diagnose information on test failure. Defaults to {}.'.format(diagnose_directory))
     parser.add_argument('--no-adjust-unit', dest='scale_unit', action='store_false', help="Don't convert to scientific notation.")
-    parser.add_argument('--show-iteration-values', dest='show_iteration_values', action='store_true', help="Show the measured value for each iteration in addition to averages.")
+    parser.add_argument('--show-iteration-raw-values', '--show-iteration-values', dest='show_iteration_raw_values', action='store_true', help="Show every raw measurement taken within an iteration, instead of one aggregated value per iteration.")
     parser.add_argument('--generate-pgo-profiles', dest="generate_pgo_profiles", action='store_true', help="Collect LLVM profiles for PGO, and copy them to the diagnostics directory.")
     parser.add_argument('--profile', dest='trace_type', default=None, choices=["full", "full-no-clpc", "ktrace-full", "ktrace-profile"], help="Collect profiling traces, and copy them to the diagnostic directory. 'ktrace' tracing types are deprecated, but currently supported for backwards compatibility.")
     parser.add_argument('--profiling-interval', default=None, help="Specify the profiling sampling rate.")
@@ -67,6 +68,7 @@ def config_argument_parser():
 
     parser.add_argument('browser_args', nargs='*', help='Additional arguments to pass to the browser process. These are positional arguments and must follow all other arguments. If the pass through arguments begin with a dash, use `--` before the argument list begins.')
 
+    parser.add_argument('--http-server-port', type=int, help='Specify the http server tcp port to use for the webserver benchmark runner. By default, a random port will be used.', default=0)
     parser.add_argument('--http-server-type', default="builtin", choices=["twisted", "builtin"], help="Specify the http server to use for the webserver benchmark runner. Default is `builtin`.")
 
     return parser
@@ -95,12 +97,14 @@ def run_benchmark_plan(args, plan):
     benchmark_runner_class = benchmark_runner_subclasses[args.driver]
     runner = benchmark_runner_class(plan,
                                     args.local_copy, args.count, args.timeout, args.build_dir, args.output_file,
-                                    args.platform, args.browser, args.browser_path, args.subtests, args.scale_unit,
-                                    args.show_iteration_values, args.device_id, args.diagnose_dir,
-                                    args.generate_pgo_profiles,
-                                    args.diagnose_dir if args.trace_type else None,
-                                    args.trace_type, args.profiling_interval,
-                                    args.browser_args, args.http_server_type)
+                                    args.platform, args.browser, args.browser_path, subtests=args.subtests, scale_unit=args.scale_unit,
+                                    show_iteration_raw_values=args.show_iteration_raw_values, device_id=args.device_id, diagnose_dir=args.diagnose_dir,
+                                    generate_pgo_profiles=args.generate_pgo_profiles,
+                                    profile_output_dir=args.diagnose_dir if args.trace_type else None,
+                                    trace_type=args.trace_type, profiling_interval=args.profiling_interval,
+                                    browser_args=args.browser_args, http_server_type=args.http_server_type,
+                                    http_server_port=max(0, int(args.http_server_port)))
+
     runner.execute()
 
 
@@ -121,11 +125,14 @@ def list_subtests(plan):
 
 
 def start(args):
+    if args.browser in ['minibrowser-gtk', 'minibrowser-wpe']:
+        # for other browsers (firefox, chrome, etc) do not auto-enter into the container SDK, as those are not available there.
+        maybe_enter_webkit_container_sdk()
     if args.json_file:
         results_json = json.load(open(args.json_file, 'r'))
         if 'debugOutput' in results_json:
             del results_json['debugOutput']
-        BenchmarkRunner.show_results(results_json, args.scale_unit, args.show_iteration_values)
+        BenchmarkRunner.show_results(results_json, args.scale_unit, args.show_iteration_raw_values)
         return
     if args.allplans:
         failed = []

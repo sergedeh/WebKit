@@ -25,6 +25,7 @@
 #include "config.h"
 #include "StyleContain.h"
 
+#include "CSSKeywordValue.h"
 #include "StyleBuilderChecking.h"
 
 namespace WebCore {
@@ -32,23 +33,23 @@ namespace Style {
 
 auto CSSValueConversion<Contain>::operator()(BuilderState& state, const CSSValue& value) -> Contain
 {
-    if (RefPtr primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value)) {
-        switch (primitiveValue->valueID()) {
-        case CSSValueNone:
+    if (RefPtr keywordValue = dynamicDowncast<CSSKeywordValue>(value)) {
+        switch (keywordValue->valueID()) {
+        case CSSValueID::None:
             return CSS::Keyword::None { };
-        case CSSValueStrict:
+        case CSSValueID::Strict:
             return CSS::Keyword::Strict { };
-        case CSSValueContent:
+        case CSSValueID::Content:
             return CSS::Keyword::Content { };
-        case CSSValueSize:
+        case CSSValueID::Size:
             return { ContainValue::Size };
-        case CSSValueInlineSize:
+        case CSSValueID::InlineSize:
             return { ContainValue::InlineSize };
-        case CSSValueLayout:
+        case CSSValueID::Layout:
             return { ContainValue::Layout };
-        case CSSValueStyle:
+        case CSSValueID::Style:
             return { ContainValue::Style };
-        case CSSValuePaint:
+        case CSSValueID::Paint:
             return { ContainValue::Paint };
         default:
             state.setCurrentPropertyInvalidAtComputedValueTime();
@@ -56,34 +57,34 @@ auto CSSValueConversion<Contain>::operator()(BuilderState& state, const CSSValue
         }
     }
 
-    auto list = requiredListDowncast<CSSValueList, CSSPrimitiveValue>(state, value);
+    auto list = requiredListDowncast<CSSValueList, CSSKeywordValue>(state, value);
     if (!list)
         return CSS::Keyword::None { };
 
     ContainValueEnumSet result;
-    for (Ref item : *list) {
-        switch (item->valueID()) {
-        case CSSValueSize:
+    for (auto& item : *list) {
+        switch (item.valueID()) {
+        case CSSValueID::Size:
             if (result.contains(ContainValue::InlineSize)) {
                 state.setCurrentPropertyInvalidAtComputedValueTime();
                 return CSS::Keyword::None { };
             }
             result.value.add(ContainValue::Size);
             break;
-        case CSSValueInlineSize:
+        case CSSValueID::InlineSize:
             if (result.contains(ContainValue::Size)) {
                 state.setCurrentPropertyInvalidAtComputedValueTime();
                 return CSS::Keyword::None { };
             }
             result.value.add(ContainValue::InlineSize);
             break;
-        case CSSValueLayout:
+        case CSSValueID::Layout:
             result.value.add(ContainValue::Layout);
             break;
-        case CSSValueStyle:
+        case CSSValueID::Style:
             result.value.add(ContainValue::Style);
             break;
-        case CSSValuePaint:
+        case CSSValueID::Paint:
             result.value.add(ContainValue::Paint);
             break;
         default:

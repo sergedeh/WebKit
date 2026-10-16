@@ -28,6 +28,7 @@
 
 #include "Font.h"
 #include "FontSelector.h"
+#include "GlyphPage.h"
 #include <wtf/Assertions.h>
 #include <wtf/text/CharacterProperties.h>
 #include <wtf/text/WTFString.h>
@@ -36,7 +37,7 @@ namespace WebCore {
 
 const Font* FontRanges::Range::font(ExternalResourceDownloadPolicy policy) const
 {
-    return m_fontAccessor->font(policy);
+    return protect(m_fontAccessor)->font(policy);
 }
 
 FontRanges::FontRanges(FontRanges&& other, IsGenericFontFamily isGenericFontFamily)
@@ -68,7 +69,7 @@ private:
         return m_font->isInterstitial();
     }
 
-    RefPtr<Font> m_font;
+    const RefPtr<Font> m_font;
 };
 
 FontRanges::FontRanges(RefPtr<Font>&& font)
@@ -81,7 +82,7 @@ FontRanges::~FontRanges() = default;
 
 GlyphData FontRanges::glyphDataForCharacter(char32_t character, ExternalResourceDownloadPolicy policy) const
 {
-    const Font* resultFont = nullptr;
+    RefPtr<const Font> resultFont;
     if (isGenericFontFamily() && isPrivateUseAreaCharacter(character))
         return GlyphData();
 
@@ -91,7 +92,7 @@ GlyphData FontRanges::glyphDataForCharacter(char32_t character, ExternalResource
                 if (font->isInterstitial()) {
                     policy = ExternalResourceDownloadPolicy::Forbid;
                     if (!resultFont)
-                        resultFont = font.get();
+                        resultFont = WTF::move(font);
                 } else {
                     auto glyphData = font->glyphDataForCharacter(character);
                     if (glyphData.isValid()) {
@@ -132,7 +133,7 @@ const Font& FontRanges::fontForFirstRange() const
 bool FontRanges::isLoading() const
 {
     for (auto& range : m_ranges) {
-        if (range.fontAccessor().isLoading())
+        if (protect(range.fontAccessor())->isLoading())
             return true;
     }
     return false;

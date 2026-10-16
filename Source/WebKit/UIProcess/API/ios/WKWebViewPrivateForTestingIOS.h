@@ -48,6 +48,7 @@
 @property (nonatomic, readonly) CGRect _dragCaretRect;
 @property (nonatomic, readonly, getter=_isAnimatingDragCancel) BOOL _animatingDragCancel;
 @property (nonatomic, readonly) CGRect _tapHighlightViewRect;
+@property (nonatomic, readonly) CGRect _focusedElementInteractionRect;
 @property (nonatomic, readonly) UIGestureRecognizer *_imageAnalysisGestureRecognizer;
 @property (nonatomic, readonly) UITapGestureRecognizer *_singleTapGestureRecognizer;
 @property (nonatomic, readonly, getter=_isKeyboardScrollingAnimationRunning) BOOL _keyboardScrollingAnimationRunning;
@@ -78,6 +79,7 @@
 
 - (void)_simulateElementAction:(_WKElementActionType)actionType atLocation:(CGPoint)location;
 - (void)_simulateLongPressActionAtLocation:(CGPoint)location;
+- (void)_simulateDoubleClickAtLocation:(CGPoint)location;
 - (void)_simulateTextEntered:(NSString *)text;
 
 - (void)_doAfterReceivingEditDragSnapshotForTesting:(dispatch_block_t)action;
@@ -101,6 +103,19 @@
 - (NSString *)_scrollbarState:(unsigned long long)scrollingNodeID processID:(unsigned long long)processID isVertical:(bool)isVertical;
 
 - (UIView *)_colorExtensionViewForTesting:(UIRectEdge)edge;
+
+// Returns the current selection's bounding rect converted to main-frame (root view) coordinates,
+// exercising the site-isolation conversion used to anchor Look Up / Translate / Share popovers.
+- (void)_selectionBoundingRectInMainFrameCoordinatesForTesting:(void (^)(CGRect))completionHandler;
+
+// Returns the rect that -[WKContentView _zoomToRevealFocusedElement] reveals: the selection's bounding
+// rect intersected with the focused element's interaction rect, both in main-frame coordinates.
+@property (nonatomic, readonly) CGRect _rectToRevealWhenZoomingToFocusedElementForTesting;
+
+@property (nonatomic, readonly) BOOL _hasPendingVisibleContentRectUpdateTimerForTesting;
+@property (nonatomic, readonly) CGRect _fixedClippingViewBoundsForTesting;
+
+- (void)_screenIsBeingCapturedForFrame:(_WKFrameHandle *)frameHandle completionHandler:(void (^)(BOOL))completionHandler;
 
 @end
 

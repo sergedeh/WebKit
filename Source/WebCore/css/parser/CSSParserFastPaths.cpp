@@ -47,6 +47,7 @@
 #include "CSSValueList.h"
 #include "CSSValuePool.h"
 #include "ColorConversion.h"
+#include "FloatConversion.h"
 #include "HashTools.h"
 #include "StylePropertyShorthand.h"
 #include <wtf/text/ParsingUtilities.h>
@@ -57,48 +58,48 @@ namespace WebCore {
 std::optional<CSS::Range> CSSParserFastPaths::lengthValueRangeForPropertiesSupportingSimpleLengths(CSSPropertyID propertyId)
 {
     switch (propertyId) {
-    case CSSPropertyFontSize:
-    case CSSPropertyHeight:
-    case CSSPropertyWidth:
-    case CSSPropertyMinHeight:
-    case CSSPropertyMinWidth:
-    case CSSPropertyPaddingBottom:
-    case CSSPropertyPaddingLeft:
-    case CSSPropertyPaddingRight:
-    case CSSPropertyPaddingTop:
-    case CSSPropertyInlineSize:
-    case CSSPropertyBlockSize:
-    case CSSPropertyMinInlineSize:
-    case CSSPropertyMinBlockSize:
-    case CSSPropertyPaddingBlockEnd:
-    case CSSPropertyPaddingBlockStart:
-    case CSSPropertyPaddingInlineEnd:
-    case CSSPropertyPaddingInlineStart:
-    case CSSPropertyR:
-    case CSSPropertyRx:
-    case CSSPropertyRy:
-    case CSSPropertyShapeMargin:
+    case CSSPropertyID::FontSize:
+    case CSSPropertyID::Height:
+    case CSSPropertyID::Width:
+    case CSSPropertyID::MinHeight:
+    case CSSPropertyID::MinWidth:
+    case CSSPropertyID::PaddingBottom:
+    case CSSPropertyID::PaddingLeft:
+    case CSSPropertyID::PaddingRight:
+    case CSSPropertyID::PaddingTop:
+    case CSSPropertyID::InlineSize:
+    case CSSPropertyID::BlockSize:
+    case CSSPropertyID::MinInlineSize:
+    case CSSPropertyID::MinBlockSize:
+    case CSSPropertyID::PaddingBlockEnd:
+    case CSSPropertyID::PaddingBlockStart:
+    case CSSPropertyID::PaddingInlineEnd:
+    case CSSPropertyID::PaddingInlineStart:
+    case CSSPropertyID::R:
+    case CSSPropertyID::Rx:
+    case CSSPropertyID::Ry:
+    case CSSPropertyID::ShapeMargin:
         return CSS::Nonnegative;
-    case CSSPropertyBottom:
-    case CSSPropertyCx:
-    case CSSPropertyCy:
-    case CSSPropertyLeft:
-    case CSSPropertyInsetBlockEnd:
-    case CSSPropertyInsetBlockStart:
-    case CSSPropertyInsetInlineEnd:
-    case CSSPropertyInsetInlineStart:
-    case CSSPropertyMarginBottom:
-    case CSSPropertyMarginLeft:
-    case CSSPropertyMarginRight:
-    case CSSPropertyMarginTop:
-    case CSSPropertyRight:
-    case CSSPropertyTop:
-    case CSSPropertyMarginBlockEnd:
-    case CSSPropertyMarginBlockStart:
-    case CSSPropertyMarginInlineEnd:
-    case CSSPropertyMarginInlineStart:
-    case CSSPropertyX:
-    case CSSPropertyY:
+    case CSSPropertyID::Bottom:
+    case CSSPropertyID::Cx:
+    case CSSPropertyID::Cy:
+    case CSSPropertyID::Left:
+    case CSSPropertyID::InsetBlockEnd:
+    case CSSPropertyID::InsetBlockStart:
+    case CSSPropertyID::InsetInlineEnd:
+    case CSSPropertyID::InsetInlineStart:
+    case CSSPropertyID::MarginBottom:
+    case CSSPropertyID::MarginLeft:
+    case CSSPropertyID::MarginRight:
+    case CSSPropertyID::MarginTop:
+    case CSSPropertyID::Right:
+    case CSSPropertyID::Top:
+    case CSSPropertyID::MarginBlockEnd:
+    case CSSPropertyID::MarginBlockStart:
+    case CSSPropertyID::MarginInlineEnd:
+    case CSSPropertyID::MarginInlineStart:
+    case CSSPropertyID::X:
+    case CSSPropertyID::Y:
         return CSS::All;
     default:
         return { };
@@ -123,10 +124,10 @@ static inline bool parseSimpleLength(std::span<const CharacterType> characters, 
 {
     if (characters.size() > 2 && isASCIIAlphaCaselessEqual(characters[characters.size() - 2], 'p') && isASCIIAlphaCaselessEqual(characters[characters.size() - 1], 'x')) {
         dropLast(characters, 2);
-        unit = CSSUnitType::CSS_PX;
+        unit = CSSUnitType::Px;
     } else if (!characters.empty() && characters.back() == '%') {
         dropLast(characters);
-        unit = CSSUnitType::CSS_PERCENTAGE;
+        unit = CSSUnitType::Percentage;
     }
 
     auto parsedNumber = parseCSSNumber(characters);
@@ -189,7 +190,7 @@ static RefPtr<CSSValue> parseSimpleLengthValue(StringView string, CSSParserMode 
     ASSERT(!string.isEmpty());
 
     double number;
-    auto unit = CSSUnitType::CSS_NUMBER;
+    auto unit = CSSUnitType::Number;
 
     if (string.is8Bit()) {
         if (!parseSimpleLength(string.span8(), unit, number))
@@ -199,10 +200,10 @@ static RefPtr<CSSValue> parseSimpleLengthValue(StringView string, CSSParserMode 
             return nullptr;
     }
 
-    if (unit == CSSUnitType::CSS_NUMBER) {
+    if (unit == CSSUnitType::Number) {
         if (number && cssParserMode != SVGAttributeMode)
             return nullptr;
-        unit = CSSUnitType::CSS_PX;
+        unit = CSSUnitType::Px;
     }
 
     if (number < valueRange.min || number > valueRange.max)
@@ -217,7 +218,7 @@ static RefPtr<CSSValue> parseSimpleLengthValue(StringView string, CSSParserMode 
 // Returns the number of characters which form a valid double
 // and are terminated by the given terminator character
 template <typename CharacterType>
-static size_t checkForValidDouble(std::span<const CharacterType> string, char terminator)
+static size_t LEGACY_NODELETE checkForValidDouble(std::span<const CharacterType> string, char terminator)
 {
     size_t length = string.size();
     if (length < 1)
@@ -249,7 +250,7 @@ static size_t checkForValidDouble(std::span<const CharacterType> string, char te
 // Returns the number of characters consumed for parsing a valid double
 // terminated by the given terminator character
 template <typename CharacterType>
-static size_t parseDouble(std::span<const CharacterType> string, char terminator, double& value)
+static size_t LEGACY_NODELETE parseDouble(std::span<const CharacterType> string, char terminator, double& value)
 {
     size_t length = checkForValidDouble(string, terminator);
     if (!length)
@@ -312,7 +313,7 @@ static std::optional<uint8_t> parseColorIntOrPercentage(std::span<const Characte
     if (current.empty())
         return std::nullopt;
 
-    if (expectedUnitType == CSSUnitType::CSS_NUMBER && (current.front() == '.' || current.front() == '%'))
+    if (expectedUnitType == CSSUnitType::Number && (current.front() == '.' || current.front() == '%'))
         return std::nullopt;
 
     if (current.front() == '.') {
@@ -328,17 +329,17 @@ static std::optional<uint8_t> parseColorIntOrPercentage(std::span<const Characte
         localValue += percentage;
     }
 
-    if (expectedUnitType == CSSUnitType::CSS_PERCENTAGE && current.front() != '%')
+    if (expectedUnitType == CSSUnitType::Percentage && current.front() != '%')
         return std::nullopt;
 
     if (skipExactly(current, '%')) {
-        expectedUnitType = CSSUnitType::CSS_PERCENTAGE;
+        expectedUnitType = CSSUnitType::Percentage;
         localValue = localValue / 100.0 * 255.0;
         // Clamp values at 255 for percentages over 100%
         if (localValue > 255)
             localValue = 255;
     } else
-        expectedUnitType = CSSUnitType::CSS_NUMBER;
+        expectedUnitType = CSSUnitType::Number;
 
     skipWhile<isASCIIWhitespace>(current);
 
@@ -353,7 +354,7 @@ static std::optional<uint8_t> parseColorIntOrPercentage(std::span<const Characte
 }
 
 template <typename CharacterType>
-static inline bool isTenthAlpha(std::span<const CharacterType> string)
+static inline bool LEGACY_NODELETE isTenthAlpha(std::span<const CharacterType> string)
 {
     // "0.X"
     if (string.size() == 3 && string[0] == '0' && string[1] == '.' && isASCIIDigit(string[2]))
@@ -413,7 +414,7 @@ static inline std::optional<uint8_t> parseRGBAlphaValue(std::span<const Characte
 }
 
 template <typename CharacterType>
-static inline bool mightBeRGBA(std::span<const CharacterType> characters)
+static inline bool LEGACY_NODELETE mightBeRGBA(std::span<const CharacterType> characters)
 {
     if (characters.size() < 5)
         return false;
@@ -425,7 +426,7 @@ static inline bool mightBeRGBA(std::span<const CharacterType> characters)
 }
 
 template <typename CharacterType>
-static inline bool mightBeRGB(std::span<const CharacterType> characters)
+static inline bool LEGACY_NODELETE mightBeRGB(std::span<const CharacterType> characters)
 {
     if (characters.size() < 4)
         return false;
@@ -436,7 +437,7 @@ static inline bool mightBeRGB(std::span<const CharacterType> characters)
 }
 
 template <typename CharacterType>
-static inline bool mightBeHSLA(std::span<const CharacterType> characters)
+static inline bool LEGACY_NODELETE mightBeHSLA(std::span<const CharacterType> characters)
 {
     if (characters.size() < 5)
         return false;
@@ -448,7 +449,7 @@ static inline bool mightBeHSLA(std::span<const CharacterType> characters)
 }
 
 template <typename CharacterType>
-static inline bool mightBeHSL(std::span<const CharacterType> characters)
+static inline bool LEGACY_NODELETE mightBeHSL(std::span<const CharacterType> characters)
 {
     if (characters.size() < 4)
         return false;
@@ -458,7 +459,7 @@ static inline bool mightBeHSL(std::span<const CharacterType> characters)
         && isASCIIAlphaCaselessEqual(characters[2], 'l');
 }
 
-static std::optional<SRGBA<uint8_t>> finishParsingHexColor(uint32_t value, unsigned length)
+static std::optional<SRGBA<uint8_t>> LEGACY_NODELETE finishParsingHexColor(uint32_t value, unsigned length)
 {
     switch (length) {
     case 3: {
@@ -485,7 +486,7 @@ static std::optional<SRGBA<uint8_t>> finishParsingHexColor(uint32_t value, unsig
 }
 
 template<typename CharacterType>
-static std::optional<SRGBA<uint8_t>> parseHexColorInternal(std::span<const CharacterType> characters)
+static std::optional<SRGBA<uint8_t>> LEGACY_NODELETE parseHexColorInternal(std::span<const CharacterType> characters)
 {
     if (characters.size() != 3 && characters.size() != 4 && characters.size() != 6 && characters.size() != 8)
         return std::nullopt;
@@ -500,18 +501,40 @@ static std::optional<SRGBA<uint8_t>> parseHexColorInternal(std::span<const Chara
     return finishParsingHexColor(value, characters.size());
 }
 
-template<typename CharacterType> static std::optional<SRGBA<uint8_t>> parseLegacyHSL(std::span<const CharacterType> characters)
+template<typename CharacterType> static std::optional<SRGBA<uint8_t>> parseHSL(std::span<const CharacterType> characters)
 {
-    // Commas only exist in the legacy syntax.
-    size_t delimiter = find(characters, ',');
-    if (delimiter == notFound)
-        return std::nullopt;
-
     auto skipWhitespace = [](std::span<const CharacterType>& characters) ALWAYS_INLINE_LAMBDA {
         skipWhile<isCSSSpace>(characters);
     };
 
-    auto parsePercentageWithOptionalLeadingWhitespace = [&](std::span<const CharacterType>& characters) -> std::optional<double> {
+    // Find the end of the hue token (terminated by comma or whitespace).
+    // A comma means legacy syntax (comma-separated), whitespace means modern (space-separated).
+    size_t hueEnd = 0;
+    bool isLegacy = false;
+    while (hueEnd < characters.size()) {
+        if (characters[hueEnd] == ',') {
+            isLegacy = true;
+            break;
+        }
+        if (isCSSSpace(characters[hueEnd]))
+            break;
+        ++hueEnd;
+    }
+    if (!hueEnd || hueEnd == characters.size())
+        return std::nullopt;
+
+    double hue;
+    auto angleUnit = CSS::AngleUnit::Deg;
+    if (!parseSimpleAngle(characters.first(hueEnd), RequireUnits::No, angleUnit, hue))
+        return std::nullopt;
+
+    skip(characters, hueEnd);
+
+    // In legacy syntax, components are separated by commas.
+    if (isLegacy && !skipExactly(characters, ','))
+        return std::nullopt;
+
+    auto parsePercentage = [&]() -> std::optional<double> {
         skipWhitespace(characters);
 
         double value = 0;
@@ -526,73 +549,51 @@ template<typename CharacterType> static std::optional<SRGBA<uint8_t>> parseLegac
         return value;
     };
 
-    auto skipComma = [](std::span<const CharacterType>& characters) {
-        return skipExactly(characters, ',');
-    };
-
-    double hue;
-    auto angleChars = characters.first(delimiter);
-    auto angleUnit = CSS::AngleUnit::Deg;
-    if (!parseSimpleAngle(angleChars, RequireUnits::No, angleUnit, hue))
-        return std::nullopt;
-
-    skip(characters, delimiter);
-    if (!skipComma(characters))
-        return std::nullopt;
-
-    auto saturation = parsePercentageWithOptionalLeadingWhitespace(characters);
+    auto saturation = parsePercentage();
     if (!saturation)
         return std::nullopt;
 
-    if (!skipComma(characters))
+    if (isLegacy && !skipExactly(characters, ','))
         return std::nullopt;
 
-    auto lightness = parsePercentageWithOptionalLeadingWhitespace(characters);
+    auto lightness = parsePercentage();
     if (!lightness)
         return std::nullopt;
 
-    auto parseAlpha = [&](std::span<const CharacterType>& characters) -> std::optional<double> {
+    skipWhitespace(characters);
+
+    // Alpha is optional. Legacy uses comma separator, modern uses slash.
+    double alpha = 1.0;
+    char alphaSeparator = isLegacy ? ',' : '/';
+    if (!characters.empty() && characters.front() == alphaSeparator) {
+        skip(characters, 1);
         skipWhitespace(characters);
 
         size_t numCharactersParsed;
-        double alpha = 1;
         if ((numCharactersParsed = parseDouble(characters, ')', alpha))) {
             skip(characters, numCharactersParsed);
-            return alpha;
-        }
-
-        if ((numCharactersParsed = parseDouble(characters, '%', alpha))) {
-            skip(characters, numCharactersParsed + 1); // Skip the '%'
-            return alpha / 100.0;
-        }
-
-        return std::nullopt;
-    };
-
-    double alpha = 1.0;
-    // Alpha is optional for both hsl() and hsla().
-    if (skipComma(characters)) {
-        auto alphaValue = parseAlpha(characters);
-        if (!alphaValue)
+        } else if ((numCharactersParsed = parseDouble(characters, '%', alpha))) {
+            skip(characters, numCharactersParsed);
+            if (!skipExactly(characters, '%'))
+                return std::nullopt;
+            alpha /= 100.0;
+        } else
             return std::nullopt;
 
-        alpha = *alphaValue;
+        skipWhitespace(characters);
     }
-
-    skipWhitespace(characters);
 
     if (characters.empty() || characters.front() != ')')
         return std::nullopt;
 
-    auto parsedColor = StyleColorParseType<HSLFunctionLegacy> {
+    auto parsedColor = StyleColorParseType<HSLFunctionModern> {
         Style::Angle<>      { narrowPrecisionToFloat(CSS::convertAngle<CSS::AngleUnit::Deg>(hue, angleUnit)) },
         Style::Percentage<> { narrowPrecisionToFloat(*saturation) },
         Style::Percentage<> { narrowPrecisionToFloat(*lightness) },
         Style::Number<>     { narrowPrecisionToFloat(alpha) }
     };
-    auto typedColor = convertToTypedColor<HSLFunctionLegacy>(parsedColor, 1.0);
-    auto resultColor = convertToColor<HSLFunctionLegacy, CSSColorFunctionForm::Absolute>(typedColor, 0);
-    return resultColor.tryGetAsSRGBABytes();
+    auto typedColor = convertToTypedColor<HSLFunctionModern>(parsedColor, 1.0);
+    return convertToColor<HSLFunctionModern, CSSColorFunctionForm::Absolute>(typedColor, 0).tryGetAsSRGBABytes();
 }
 
 template<typename CharacterType>
@@ -609,7 +610,7 @@ static std::optional<SRGBA<uint8_t>> parseNumericColor(std::span<const Character
     }
 
     if (mightBeRGB(characters) || mightBeRGBA(characters)) {
-        auto expectedUnitType = CSSUnitType::CSS_UNKNOWN;
+        auto expectedUnitType = CSSUnitType::Unknown;
         auto current = mightBeRGBA(characters) ? characters.subspan(5) : characters.subspan(4);
 
         // Red and green will both terminate with ','.
@@ -651,10 +652,10 @@ static std::optional<SRGBA<uint8_t>> parseNumericColor(std::span<const Character
 
     // hsl() and hsla() are synonyms.
     if (mightBeHSLA(characters))
-        return parseLegacyHSL(characters.subspan(5));
+        return parseHSL(characters.subspan(5));
 
     if (mightBeHSL(characters))
-        return parseLegacyHSL(characters.subspan(4));
+        return parseHSL(characters.subspan(4));
 
     return std::nullopt;
 }
@@ -673,7 +674,7 @@ static RefPtr<CSSValue> parseColor(StringView string, const CSSParserContext& co
     if (CSS::isColorKeyword(valueID)) {
         if (!CSSPropertyParserHelpers::isColorKeywordAllowed(valueID, context))
             return nullptr;
-        return CSSPrimitiveValue::create(valueID);
+        return CSSKeywordValue::create(valueID);
     }
     if (auto color = parseNumericColor(string, context))
         return CSSValuePool::singleton().createColorValue(*color);
@@ -738,7 +739,8 @@ static bool isUniversalKeyword(StringView string)
         || equalLettersIgnoringASCIICase(string, "inherit"_s)
         || equalLettersIgnoringASCIICase(string, "unset"_s)
         || equalLettersIgnoringASCIICase(string, "revert"_s)
-        || equalLettersIgnoringASCIICase(string, "revert-layer"_s);
+        || equalLettersIgnoringASCIICase(string, "revert-layer"_s)
+        || equalLettersIgnoringASCIICase(string, "revert-rule"_s);
 }
 
 static RefPtr<CSSValue> parseKeywordValue(CSSPropertyID property, StringView string, CSS::PropertyParserState& state)
@@ -756,14 +758,14 @@ static RefPtr<CSSValue> parseKeywordValue(CSSPropertyID property, StringView str
     }
 
     auto valueID = cssValueKeywordID(string);
-    if (!valueID)
+    if (valueID == CSSValueID::Invalid)
         return nullptr;
 
     if (isCSSWideKeyword(valueID))
-        return CSSPrimitiveValue::create(valueID);
+        return CSSKeywordValue::create(valueID);
 
     if (CSSPropertyParsing::isKeywordValidForStyleProperty(property, valueID, state))
-        return CSSPrimitiveValue::create(valueID);
+        return CSSKeywordValue::create(valueID);
     return nullptr;
 }
 
@@ -775,13 +777,13 @@ static bool parseTransformTranslateArguments(StringParsingBuffer<CharType>& buff
         if (delimiter == notFound)
             return false;
         unsigned argumentLength = static_cast<unsigned>(delimiter);
-        CSSUnitType unit = CSSUnitType::CSS_NUMBER;
+        CSSUnitType unit = CSSUnitType::Number;
         double number;
         if (!parseSimpleLength(buffer.span().first(argumentLength), unit, number))
             return false;
-        if (!number && unit == CSSUnitType::CSS_NUMBER)
-            unit = CSSUnitType::CSS_PX;
-        if (unit == CSSUnitType::CSS_NUMBER || (unit == CSSUnitType::CSS_PERCENTAGE && (transformType == CSSValueTranslateZ || (transformType == CSSValueTranslate3d && expectedCount == 1))))
+        if (!number && unit == CSSUnitType::Number)
+            unit = CSSUnitType::Px;
+        if (unit == CSSUnitType::Number || (unit == CSSUnitType::Percentage && (transformType == CSSValueID::TranslateZ || (transformType == CSSValueID::Translate3d && expectedCount == 1))))
             return false;
         arguments.append(CSSPrimitiveValue::create(number, unit));
         buffer.advanceBy(argumentLength + 1);
@@ -819,7 +821,7 @@ static bool parseTransformNumberArguments(StringParsingBuffer<CharType>& buffer,
         auto number = parseCSSNumber(buffer.span().first(argumentLength));
         if (!number)
             return false;
-        arguments.append(CSSPrimitiveValue::create(*number, CSSUnitType::CSS_NUMBER));
+        arguments.append(CSSPrimitiveValue::create(*number, CSSUnitType::Number));
         buffer.advanceBy(argumentLength + 1);
         --expectedCount;
     }
@@ -855,17 +857,17 @@ static RefPtr<CSSFunctionValue> parseSimpleTransformValue(StringParsingBuffer<Ch
         unsigned argumentStart = 11;
         CharType c9 = toASCIILower(buffer[9]);
         if (c9 == 'x' && buffer[10] == '(') {
-            transformType = CSSValueTranslateX;
+            transformType = CSSValueID::TranslateX;
         } else if (c9 == 'y' && buffer[10] == '(') {
-            transformType = CSSValueTranslateY;
+            transformType = CSSValueID::TranslateY;
         } else if (c9 == 'z' && buffer[10] == '(') {
-            transformType = CSSValueTranslateZ;
+            transformType = CSSValueID::TranslateZ;
         } else if (c9 == '(') {
-            transformType = CSSValueTranslate;
+            transformType = CSSValueID::Translate;
             expectedArgumentCount = 2;
             argumentStart = 10;
         } else if (c9 == '3' && toASCIILower(buffer[10]) == 'd' && buffer[11] == '(') {
-            transformType = CSSValueTranslate3d;
+            transformType = CSSValueID::Translate3d;
             expectedArgumentCount = 3;
             argumentStart = 12;
         } else
@@ -893,7 +895,7 @@ static RefPtr<CSSFunctionValue> parseSimpleTransformValue(StringParsingBuffer<Ch
         CSSValueListBuilder arguments;
         if (!parseTransformNumberArguments(buffer, 16, arguments))
             return nullptr;
-        return CSSFunctionValue::create(CSSValueMatrix3d, WTF::move(arguments));
+        return CSSFunctionValue::create(CSSValueID::Matrix3d, WTF::move(arguments));
     }
 
     bool isScale3d = toASCIILower(buffer[0]) == 's'
@@ -910,7 +912,7 @@ static RefPtr<CSSFunctionValue> parseSimpleTransformValue(StringParsingBuffer<Ch
         CSSValueListBuilder arguments;
         if (!parseTransformNumberArguments(buffer, 3, arguments))
             return nullptr;
-        return CSSFunctionValue::create(CSSValueScale3d, WTF::move(arguments));
+        return CSSFunctionValue::create(CSSValueID::Scale3d, WTF::move(arguments));
     }
 
     bool isRotate = toASCIILower(buffer[0]) == 'r'
@@ -925,9 +927,9 @@ static RefPtr<CSSFunctionValue> parseSimpleTransformValue(StringParsingBuffer<Ch
         unsigned argumentStart = 7;
         CharType c6 = toASCIILower(buffer[6]);
         if (c6 == '(') {
-            transformType = CSSValueRotate;
+            transformType = CSSValueID::Rotate;
         } else if (c6 == 'z' && buffer[7] == '(') {
-            transformType = CSSValueRotateZ;
+            transformType = CSSValueID::RotateZ;
             argumentStart = 8;
         } else
             return nullptr;
@@ -976,38 +978,38 @@ static RefPtr<CSSValue> parseDisplay(StringView string)
     auto valueID = cssValueKeywordID(string);
 
     switch (valueID) {
-    case CSSValueNone:
+    case CSSValueID::None:
     // <display-outside>
-    case CSSValueBlock:
-    case CSSValueInline:
-    // <display-inside> (except for CSSValueFlow since it becomes "block")
-    case CSSValueFlex:
-    case CSSValueFlowRoot:
-    case CSSValueGrid:
-    case CSSValueTable:
+    case CSSValueID::Block:
+    case CSSValueID::Inline:
+    // <display-inside> (except for CSSValueID::Flow since it becomes "block")
+    case CSSValueID::Flex:
+    case CSSValueID::FlowRoot:
+    case CSSValueID::Grid:
+    case CSSValueID::Table:
     // <display-internal>
-    case CSSValueTableCaption:
-    case CSSValueTableCell:
-    case CSSValueTableColumnGroup:
-    case CSSValueTableColumn:
-    case CSSValueTableHeaderGroup:
-    case CSSValueTableFooterGroup:
-    case CSSValueTableRow:
-    case CSSValueTableRowGroup:
+    case CSSValueID::TableCaption:
+    case CSSValueID::TableCell:
+    case CSSValueID::TableColumnGroup:
+    case CSSValueID::TableColumn:
+    case CSSValueID::TableHeaderGroup:
+    case CSSValueID::TableFooterGroup:
+    case CSSValueID::TableRow:
+    case CSSValueID::TableRowGroup:
     // <display-legacy>
-    case CSSValueInlineBlock:
-    case CSSValueInlineFlex:
-    case CSSValueInlineGrid:
-    case CSSValueInlineTable:
+    case CSSValueID::InlineBlock:
+    case CSSValueID::InlineFlex:
+    case CSSValueID::InlineGrid:
+    case CSSValueID::InlineTable:
     // Prefixed values
-    case CSSValueWebkitInlineBox:
-    case CSSValueWebkitBox:
+    case CSSValueID::WebkitInlineBox:
+    case CSSValueID::WebkitBox:
     // No layout support for the full <display-listitem> syntax, so treat it as <display-legacy>
-    case CSSValueListItem:
-        return CSSPrimitiveValue::create(valueID);
+    case CSSValueID::ListItem:
+        return CSSKeywordValue::create(valueID);
     default:
         if (isCSSWideKeyword(valueID))
-            return CSSPrimitiveValue::create(valueID);
+            return CSSKeywordValue::create(valueID);
         return nullptr;
     }
 }
@@ -1024,14 +1026,14 @@ static RefPtr<CSSValue> parseOpacity(StringView string)
             return nullptr;
     }
 
-    return CSSPrimitiveValue::create(number, CSSUnitType::CSS_NUMBER);
+    return CSSPrimitiveValue::create(number, CSSUnitType::Number);
 }
 
 static RefPtr<CSSValue> parseColorWithAuto(StringView string, const CSSParserContext& context)
 {
     ASSERT(!string.isEmpty());
-    if (cssValueKeywordID(string) == CSSValueAuto)
-        return CSSPrimitiveValue::create(CSSValueAuto);
+    if (cssValueKeywordID(string) == CSSValueID::Auto)
+        return CSSKeywordValue::create(CSSValueID::Auto);
     return parseColor(string, context);
 }
 
@@ -1044,14 +1046,14 @@ RefPtr<CSSValue> CSSParserFastPaths::maybeParseValue(CSSPropertyID property, Str
         return nullptr;
 
     switch (property) {
-    case CSSPropertyDisplay:
+    case CSSPropertyID::Display:
         return parseDisplay(string);
-    case CSSPropertyOpacity:
+    case CSSPropertyID::Opacity:
         return parseOpacity(string);
-    case CSSPropertyTransform:
+    case CSSPropertyID::Transform:
         return parseSimpleTransform(string);
-    case CSSPropertyCaretColor:
-    case CSSPropertyAccentColor:
+    case CSSPropertyID::CaretColor:
+    case CSSPropertyID::AccentColor:
         if (isExposed(property, &state.context.propertySettings))
             return parseColorWithAuto(string, state.context);
         break;

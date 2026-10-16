@@ -10,8 +10,6 @@ Do NOT modify or remove this file.
 ------------------------------------------------------------------------
 Properties requiring vendor prefixes:
 None
-Property values requiring vendor prefixes:
-None
 ------------------------------------------------------------------------
 List of files:
 /LayoutTests/imported/w3c/web-platform-tests/css/css-animations/parsing/WEB_FEATURES.yml
@@ -36,6 +34,9 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/css/css-animations/parsing/animation-iteration-count-invalid.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-animations/parsing/animation-iteration-count-valid.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-animations/parsing/animation-name-computed.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-animations/parsing/animation-name-edge-cases-expected.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-animations/parsing/animation-name-edge-cases-ref.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-animations/parsing/animation-name-edge-cases.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-animations/parsing/animation-name-invalid.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-animations/parsing/animation-name-valid.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-animations/parsing/animation-play-state-computed.html
@@ -44,6 +45,7 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/css/css-animations/parsing/animation-range-end-computed.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-animations/parsing/animation-range-end-invalid.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-animations/parsing/animation-range-end-valid.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-animations/parsing/animation-range-shorthand-end-zero-offset.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-animations/parsing/animation-range-shorthand.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-animations/parsing/animation-range-start-computed.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-animations/parsing/animation-range-start-invalid.html

@@ -45,9 +45,18 @@ class CrashLogs(object):
     EXIT_PROCESS_PID_REGEX = re.compile(r'Exit process \d+:(?P<pid>\w+), code')
     DARWIN_PROCESS_REGEX = re.compile(r'^Process:\s+(?P<process_name>.*) \[(?P<pid>\d+)\]$')
 
+    # Reported crash-process name -> exact on-disk procName(s), honored only with a matching PID.
+    # The WebContent names mirror TestController::webProcessName() (device, and internal ".Development").
+    PROCESS_NAME_ALIASES = {
+        'ServiceWorkerProcess': ('com.apple.WebKit.WebContent', 'com.apple.WebKit.WebContent.Development'),
+    }
+
     def __init__(self, host, crash_log_directory, crash_logs_to_skip=[]):
         self._host = host
-        self._crash_log_directory = crash_log_directory
+        if isinstance(crash_log_directory, (list, tuple, set)):
+            self._crash_log_directories = list(crash_log_directory)
+        else:
+            self._crash_log_directories = [crash_log_directory]
         self._crash_logs_to_skip = crash_logs_to_skip
 
     def find_newest_log(self, process_name, pid=None, include_errors=False, newer_than=None):
@@ -89,19 +98,29 @@ class CrashLogs(object):
         return (None, None, contents)
 
     def _find_newest_log_darwin(self, process_name, pid, include_errors, newer_than):
+        alias_names = CrashLogs.PROCESS_NAME_ALIASES.get(process_name, ()) if pid is not None else ()
+
+        def name_matches(parsed_name):
+            return parsed_name == process_name or parsed_name in alias_names
+
         def is_crash_log(fs, dirpath, basename):
             if self._crash_logs_to_skip and fs.join(dirpath, basename) in self._crash_logs_to_skip:
                 return False
-            return (basename.startswith(process_name + '_') and (basename.endswith('.crash')) or
-                    (process_name in basename and basename.endswith('.ips')))
+            if basename.endswith('.crash'):
+                return basename.startswith(process_name + '_') or any(basename.startswith(name + '_') for name in alias_names)
+            if basename.endswith('.ips'):
+                return process_name in basename or any(name in basename for name in alias_names)
+            return False
 
-        logs = self._host.filesystem.files_under(self._crash_log_directory, file_filter=is_crash_log)
+        logs = []
+        for directory in self._crash_log_directories:
+            logs.extend(self._host.filesystem.files_under(directory, file_filter=is_crash_log))
         errors = ''
         for path in reversed(sorted(logs)):
             try:
                 if not newer_than or self._host.filesystem.mtime(path) > newer_than:
                     parsed_name, parsed_pid, log_contents = self._parse_darwin_crash_log(path)
-                    if parsed_name == process_name and (pid is None or parsed_pid == pid):
+                    if name_matches(parsed_name) and (pid is None or parsed_pid == pid):
                         return errors + log_contents
             except IOError as e:
                 if include_errors:
@@ -120,7 +139,9 @@ class CrashLogs(object):
                 return False
             return basename.startswith("CrashLog")
 
-        logs = self._host.filesystem.files_under(self._crash_log_directory, file_filter=is_crash_log)
+        logs = []
+        for directory in self._crash_log_directories:
+            logs.extend(self._host.filesystem.files_under(directory, file_filter=is_crash_log))
         errors = u''
         for path in reversed(sorted(logs)):
             try:
@@ -156,7 +177,9 @@ class CrashLogs(object):
                 return False
             return basename.endswith('.crash') or basename.endswith('.ips')
 
-        logs = self._host.filesystem.files_under(self._crash_log_directory, file_filter=is_crash_log)
+        logs = []
+        for directory in self._crash_log_directories:
+            logs.extend(self._host.filesystem.files_under(directory, file_filter=is_crash_log))
         errors = ''
         crash_logs = {}
         for path in reversed(sorted(logs)):

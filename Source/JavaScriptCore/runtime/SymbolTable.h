@@ -32,18 +32,21 @@
 #include <JavaScriptCore/ConstantMode.h>
 #include <JavaScriptCore/InferredValue.h>
 #include <JavaScriptCore/JSObject.h>
+#include <JavaScriptCore/LineColumn.h>
 #include <JavaScriptCore/ScopedArgumentsTable.h>
+#include <JavaScriptCore/SourceID.h>
 #include <JavaScriptCore/TypeLocation.h>
 #include <JavaScriptCore/VarOffset.h>
 #include <JavaScriptCore/VariableEnvironment.h>
 #include <JavaScriptCore/Watchpoint.h>
 #include <memory>
 #include <wtf/HashTraits.h>
-#include <wtf/text/SymbolImpl.h>
 
 namespace JSC {
 
+class CodeBlock;
 class SymbolTable;
+struct DebuggerLocation;
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(SymbolTableEntryFatEntry);
 
@@ -61,19 +64,19 @@ static ALWAYS_INLINE int missingSymbolMarker() { return std::numeric_limits<int>
 // idiom: either it is thin, in which case it contains an in-place encoded
 // word that consists of attributes, the index, and a bit saying that it is
 // thin; or it is fat, in which case it contains a pointer to a malloc'd
-// data structure and a bit saying that it is fat. The malloc'd data
-// structure will be malloced a second time upon copy, to preserve the
-// property that in-place edits to SymbolTableEntry do not manifest in any
-// copies. However, the malloc'd FatEntry data structure contains a ref-
-// counted pointer to a shared WatchpointSet. Thus, in-place edits of the
-// WatchpointSet will manifest in all copies. Here's a picture:
+// FatEntry and a bit saying that it is fat. The FatEntry holds the encoded
+// word plus an InlineWatchpointSet, so that a watchable variable costs one
+// extra word until somebody actually adds a Watchpoint to it. CodeBlock
+// metadata and DFG nodes point directly at that InlineWatchpointSet, which is
+// why it lives out-of-line: the FatEntry's address is stable across rehashing
+// of the owning SymbolTable::Map.
 //
-// SymbolTableEntry --> FatEntry --> WatchpointSet
+// SymbolTableEntry --> FatEntry { bits, InlineWatchpointSet }
 //
-// If you make a copy of a SymbolTableEntry, you will have:
-//
-// original: SymbolTableEntry --> FatEntry --> WatchpointSet
-// copy:     SymbolTableEntry --> FatEntry -----^
+// A SymbolTableEntry is move-only, so the FatEntry is never shared. Read the
+// VarOffset and attributes of an entry through SymbolTableEntry::Fast, which
+// is what SymbolTable::get() returns, and use SymbolTable::find() when you
+// need the watchpoint set of an entry.
 
 struct SymbolTableEntry {
     friend class CachedSymbolTableEntry;
@@ -83,7 +86,7 @@ private:
     {
         VarKind kind;
         intptr_t kindBits = bits & KindBitsMask;
-        if (kindBits <= UnwatchableScopeKindBits)
+        if (kindBits == ScopeKindBits)
             kind = VarKind::Scope;
         else if (kindBits == StackKindBits)
             kind = VarKind::Stack;
@@ -94,7 +97,7 @@ private:
     
     static ScopeOffset scopeOffsetFromBits(intptr_t bits)
     {
-        ASSERT((bits & KindBitsMask) <= UnwatchableScopeKindBits);
+        ASSERT((bits & KindBitsMask) == ScopeKindBits);
         return ScopeOffset(static_cast<int>(bits >> FlagBits));
     }
 
@@ -173,14 +176,14 @@ public:
         : m_bits(SlimFlag)
     {
         ASSERT(isValidVarOffset(offset));
-        pack(offset, true, false, false);
+        pack(offset, false, false);
     }
 
     SymbolTableEntry(VarOffset offset, unsigned attributes)
         : m_bits(SlimFlag)
     {
         ASSERT(isValidVarOffset(offset));
-        pack(offset, true, attributes & PropertyAttribute::ReadOnly, attributes & PropertyAttribute::DontEnum);
+        pack(offset, attributes & PropertyAttribute::ReadOnly, attributes & PropertyAttribute::DontEnum);
     }
     
     ~SymbolTableEntry()
@@ -188,21 +191,9 @@ public:
         freeFatEntry();
     }
     
-    SymbolTableEntry(const SymbolTableEntry& other)
-        : m_bits(SlimFlag)
-    {
-        *this = other;
-    }
-    
-    SymbolTableEntry& operator=(const SymbolTableEntry& other)
-    {
-        if (other.isFat()) [[unlikely]]
-            return copySlow(other);
-        freeFatEntry();
-        m_bits = other.m_bits;
-        return *this;
-    }
-    
+    SymbolTableEntry(const SymbolTableEntry&) = delete;
+    SymbolTableEntry& operator=(const SymbolTableEntry&) = delete;
+
     SymbolTableEntry(SymbolTableEntry&& other)
         : m_bits(SlimFlag)
     {
@@ -211,6 +202,7 @@ public:
 
     SymbolTableEntry& operator=(SymbolTableEntry&& other)
     {
+        RELEASE_ASSERT(!isFat());
         swap(other);
         return *this;
     }
@@ -232,7 +224,7 @@ public:
     
     bool isWatchable() const
     {
-        return (m_bits & KindBitsMask) == ScopeKindBits && Options::useJIT();
+        return (bits() & KindBitsMask) == ScopeKindBits && Options::useJIT();
     }
     
     // Asserts if the offset is anything but a scope offset. This structures the assertions
@@ -284,15 +276,11 @@ public:
         return bits() & DontEnumFlag;
     }
     
-    void disableWatching(VM& vm)
+    void prepareToWatch()
     {
-        if (WatchpointSet* set = watchpointSet())
-            set->invalidate(vm, "Disabling watching in symbol table");
-        if (varOffset().isScope())
-            pack(varOffset(), false, isReadOnly(), isDontEnum());
+        if (!isFat() && isWatchable())
+            inflate();
     }
-    
-    void prepareToWatch();
     
     // This watchpoint set is initialized clear, and goes through the following state transitions:
     // 
@@ -315,13 +303,13 @@ public:
     // point any write to any of the instances of that variable would fire the watchpoint.
     //
     // Note that watchpointSet() returns nullptr if JIT is disabled.
-    WatchpointSet* watchpointSet()
+    InlineWatchpointSet* watchpointSet()
     {
         if (!isFat())
             return nullptr;
-        return fatEntry()->m_watchpoints.get();
+        return &fatEntry()->m_watchpoints;
     }
-    
+
 private:
     static const intptr_t SlimFlag = 0x1;
     static const intptr_t ReadOnlyFlag = 0x2;
@@ -329,7 +317,6 @@ private:
     static const intptr_t NotNullFlag = 0x8;
     static const intptr_t KindBitsMask = 0x30;
     static const intptr_t ScopeKindBits = 0x00;
-    static const intptr_t UnwatchableScopeKindBits = 0x10;
     static const intptr_t StackKindBits = 0x20;
     static const intptr_t DirectArgumentKindBits = 0x30;
     static const intptr_t FlagBits = 6;
@@ -343,12 +330,10 @@ private:
         }
         
         intptr_t m_bits; // always has FatFlag set and exactly matches what the bits would have been if this wasn't fat.
-        
-        RefPtr<WatchpointSet> m_watchpoints;
+
+        InlineWatchpointSet m_watchpoints { ClearWatchpoint };
     };
-    
-    SymbolTableEntry& copySlow(const SymbolTableEntry&);
-    
+
     bool isFat() const
     {
         return !(m_bits & SlimFlag);
@@ -366,14 +351,7 @@ private:
         return std::bit_cast<FatEntry*>(m_bits);
     }
     
-    FatEntry* inflate()
-    {
-        if (isFat()) [[likely]]
-            return fatEntry();
-        return inflateSlow();
-    }
-    
-    FatEntry* inflateSlow();
+    JS_EXPORT_PRIVATE void LEGACY_NODELETE inflate();
     
     ALWAYS_INLINE intptr_t bits() const
     {
@@ -398,7 +376,7 @@ private:
 
     JS_EXPORT_PRIVATE void freeFatEntrySlow();
 
-    void pack(VarOffset offset, bool isWatchable, bool readOnly, bool dontEnum)
+    void pack(VarOffset offset, bool readOnly, bool dontEnum)
     {
         ASSERT(!isFat());
         intptr_t& bitsRef = bits();
@@ -410,10 +388,7 @@ private:
             bitsRef |= DontEnumFlag;
         switch (offset.kind()) {
         case VarKind::Scope:
-            if (isWatchable)
-                bitsRef |= ScopeKindBits;
-            else
-                bitsRef |= UnwatchableScopeKindBits;
+            bitsRef |= ScopeKindBits;
             break;
         case VarKind::Stack:
             bitsRef |= StackKindBits;
@@ -437,6 +412,9 @@ private:
 
 struct SymbolTableIndexHashTraits : HashTraits<SymbolTableEntry> {
     static constexpr DestructionMode needsDestruction = NeedsDestruction;
+
+    using PeekType = SymbolTableEntry::Fast;
+    static PeekType peek(const SymbolTableEntry& entry) { return entry; }
 };
 
 class SymbolTable final : public JSCell {
@@ -482,27 +460,13 @@ public:
         return m_map.find(key);
     }
     
-    SymbolTableEntry get(const ConcurrentJSLocker&, UniquedStringImpl* key)
-    {
-        return m_map.get(key);
-    }
-    
-    SymbolTableEntry get(UniquedStringImpl* key)
-    {
-        ConcurrentJSLocker locker(m_lock);
-        return get(locker, key);
-    }
-    
-    SymbolTableEntry inlineGet(const ConcurrentJSLocker&, UniquedStringImpl* key)
-    {
-        return m_map.inlineGet(key);
-    }
-    
-    SymbolTableEntry inlineGet(UniquedStringImpl* key)
-    {
-        ConcurrentJSLocker locker(m_lock);
-        return inlineGet(locker, key);
-    }
+    SymbolTableEntry::Fast get(const ConcurrentJSLocker&, UniquedStringImpl* key);
+
+    SymbolTableEntry::Fast get(UniquedStringImpl* key);
+
+    SymbolTableEntry::Fast inlineGet(const ConcurrentJSLocker&, UniquedStringImpl* key);
+
+    SymbolTableEntry::Fast inlineGet(UniquedStringImpl* key);
     
     Map::iterator begin(const ConcurrentJSLocker&)
     {
@@ -594,6 +558,14 @@ public:
         add(locker, key, std::forward<Entry>(entry));
     }
 
+    template<typename Entry>
+    void set(const ConcurrentJSLocker&, UniquedStringImpl* key, Entry&& entry)
+    {
+        RELEASE_ASSERT(!m_localToEntry);
+        didUseVarOffset(entry.varOffset());
+        m_map.set(key, std::forward<Entry>(entry));
+    }
+
     bool hasPrivateNames() const
     {
         if (auto* rareData = m_rareData.get())
@@ -624,21 +596,6 @@ public:
         return false;
     }
 
-    template<typename Entry>
-    void set(const ConcurrentJSLocker&, UniquedStringImpl* key, Entry&& entry)
-    {
-        RELEASE_ASSERT(!m_localToEntry);
-        didUseVarOffset(entry.varOffset());
-        m_map.set(key, std::forward<Entry>(entry));
-    }
-    
-    template<typename Entry>
-    void set(UniquedStringImpl* key, Entry&& entry)
-    {
-        ConcurrentJSLocker locker(m_lock);
-        set(locker, key, std::forward<Entry>(entry));
-    }
-    
     bool contains(const ConcurrentJSLocker&, UniquedStringImpl* key)
     {
         return m_map.contains(key);
@@ -664,22 +621,7 @@ public:
         return m_arguments->length();
     }
     
-    bool trySetArgumentsLength(VM& vm, uint32_t length)
-    {
-        if (!m_arguments) [[unlikely]] {
-            ScopedArgumentsTable* table = ScopedArgumentsTable::tryCreate(vm, length);
-            if (!table) [[unlikely]]
-                return false;
-            m_arguments.set(vm, this, table);
-        } else {
-            ScopedArgumentsTable* table = m_arguments->trySetLength(vm, length);
-            if (!table) [[unlikely]]
-                return false;
-            m_arguments.set(vm, this, table);
-        }
-
-        return true;
-    }
+    bool trySetArgumentsLength(VM& vm, uint32_t length);
 
     ScopeOffset argumentOffset(uint32_t i) const
     {
@@ -687,25 +629,9 @@ public:
         return m_arguments->get(i);
     }
     
-    bool trySetArgumentOffset(VM& vm, uint32_t i, ScopeOffset offset)
-    {
-        ASSERT_WITH_SECURITY_IMPLICATION(m_arguments);
-        auto* maybeCloned = m_arguments->trySet(vm, i, offset);
-        if (!maybeCloned)
-            return false;
-        m_arguments.set(vm, this, maybeCloned);
-        return true;
-    }
+    bool trySetArgumentOffset(VM& vm, uint32_t i, ScopeOffset offset);
     
-    void prepareToWatchScopedArgument(SymbolTableEntry& entry, uint32_t i)
-    {
-        entry.prepareToWatch();
-        if (!m_arguments)
-            return;
-
-        WatchpointSet* watchpoints = entry.watchpointSet();
-        m_arguments->trySetWatchpointSet(i, watchpoints);
-    }
+    void prepareToWatchScopedArgument(SymbolTableEntry& entry, uint32_t i);
 
     ScopedArgumentsTable* arguments() const
     {
@@ -740,29 +666,28 @@ public:
     void setScopeType(ScopeType type) { m_scopeType = type; }
     ScopeType scopeType() const { return static_cast<ScopeType>(m_scopeType); }
 
-    SymbolTable* cloneScopePart(VM&);
+    enum class PropagateCloneInvalidationToOriginal : bool { No, Yes };
+    SymbolTable* cloneScopePart(VM&, PropagateCloneInvalidationToOriginal);
 
     void prepareForTypeProfiling(const ConcurrentJSLocker&);
 
-    CodeBlock* rareDataCodeBlock();
-    void setRareDataCodeBlock(CodeBlock*);
-    
-    InferredValue<JSScope>& singleton() { return m_singleton; }
+    String LEGACY_NODELETE inferredName();
+    DebuggerLocation LEGACY_NODELETE debuggerLocation();
+    void collectDebuggerInfo(CodeBlock*);
 
-    void notifyCreation(VM& vm, JSScope* scope, const char* reason)
-    {
-        m_singleton.notifyWrite(vm, this, scope, reason);
-    }
+    InferredValue<JSScope>& singleton() LIFETIME_BOUND { return m_singleton; }
+
+    void notifyCreation(VM&, JSScope*, const char* reason);
 
     DECLARE_VISIT_CHILDREN;
 
     DECLARE_EXPORT_INFO;
 
 #if ASSERT_ENABLED
-    bool hasScopedWatchpointSet(WatchpointSet*);
+    bool hasScopedWatchpointSet(InlineWatchpointSet*);
 #endif
 
-    void finalizeUnconditionally(VM&, CollectionScope);
+    void reconcileWeakReferencesAtGCEnd(VM&, CollectionScope);
     void dump(PrintStream&) const;
 
     struct SymbolTableRareData {
@@ -770,7 +695,9 @@ public:
         UniqueIDMap m_uniqueIDMap;
         OffsetToVariableMap m_offsetToVariableMap;
         UniqueTypeSetMap m_uniqueTypeSetMap;
-        WriteBarrier<CodeBlock> m_codeBlock;
+        String m_inferredName;
+        SourceID m_debuggerSourceID { 0 };
+        LineColumn m_debuggerLineColumn;
         PrivateNameEnvironment m_privateNames;
     };
 
@@ -796,10 +723,12 @@ private:
     unsigned m_usesSloppyEval : 1;
     unsigned m_nestedLexicalScope : 1; // Non-function LexicalScope.
     unsigned m_scopeType : 3; // ScopeType
+    PropagateCloneInvalidationToOriginal m_propagateCloneInvalidationToOriginal : 1 { PropagateCloneInvalidationToOriginal::No };
 
     std::unique_ptr<SymbolTableRareData> m_rareData;
 
     WriteBarrier<ScopedArgumentsTable> m_arguments;
+    WriteBarrier<SymbolTable> m_clonedFrom;
     InferredValue<JSScope> m_singleton;
     
     std::unique_ptr<LocalToEntryVec> m_localToEntry;

@@ -59,7 +59,7 @@ class PDFPresentationController : public ThreadSafeRefCountedAndCanMakeThreadSaf
     WTF_MAKE_NONCOPYABLE(PDFPresentationController);
     WTF_MAKE_TZONE_ALLOCATED(PDFPresentationController);
 public:
-    static RefPtr<PDFPresentationController> createForMode(PDFDocumentLayout::DisplayMode, UnifiedPDFPlugin&);
+    static RefPtr<PDFPresentationController> createForMode(PDFPluginDisplayMode, UnifiedPDFPlugin&);
 
     PDFPresentationController(UnifiedPDFPlugin&);
     virtual ~PDFPresentationController();
@@ -69,8 +69,8 @@ public:
     // Subclasses must call the base class teardown().
     virtual void teardown();
 
-    virtual bool supportsDisplayMode(PDFDocumentLayout::DisplayMode) const = 0;
-    virtual void willChangeDisplayMode(PDFDocumentLayout::DisplayMode newMode) = 0;
+    virtual bool supportsDisplayMode(PDFPluginDisplayMode) const = 0;
+    virtual void willChangeDisplayMode(PDFPluginDisplayMode newMode) = 0;
 
     // Package up the data needed to paint a set of pages for the given clip, for use by UnifiedPDFPlugin::paintPDFContent and async rendering.
     virtual PDFPageCoverage pageCoverageForContentsRect(const WebCore::FloatRect&, std::optional<PDFLayoutRow>) const = 0;
@@ -86,6 +86,10 @@ public:
 
     virtual void updateIsInWindow(bool isInWindow) = 0;
     virtual void updateDebugBorders(bool showDebugBorders, bool showRepaintCounters) = 0;
+
+    // Discards all rendered content so every tile is re-rendered for the plugin's current
+    // accessibility display mode, then updates the layer state that depends on it.
+    void updateForAccessibilityDisplayModeChange();
 
     virtual void updateForCurrentScrollability(OptionSet<WebCore::TiledBackingScrollability>) = 0;
 
@@ -115,8 +119,10 @@ public:
     virtual bool handleWheelEvent(const WebWheelEvent&) { return false; }
 
     void releaseMemory();
+
     RetainPtr<PDFDocument> pluginPDFDocument() const;
     bool pluginShouldCachePagePreviews() const;
+    PDFAccessibilityDisplayMode accessibilityDisplayMode() const;
 
     virtual std::optional<WebCore::PlatformLayerIdentifier> contentsLayerIdentifier() const { return std::nullopt; }
 
@@ -125,8 +131,10 @@ public:
     virtual void setSelectionLayerEnabled(bool) { }
 
 protected:
-    RefPtr<WebCore::GraphicsLayer> createGraphicsLayer(const String&, WebCore::GraphicsLayerType);
-    RefPtr<WebCore::GraphicsLayer> makePageContainerLayer(PDFDocumentLayout::PageIndex);
+    virtual void updateLayersForAccessibilityDisplayModeChange() = 0;
+
+    Ref<WebCore::GraphicsLayer> createGraphicsLayer(const String&, WebCore::GraphicsLayerType);
+    Ref<WebCore::GraphicsLayer> makePageContainerLayer(PDFDocumentLayout::PageIndex);
     struct LayerCoverage {
         Ref<WebCore::GraphicsLayer> layer;
         WebCore::FloatRect bounds;
@@ -134,13 +142,13 @@ protected:
     };
     virtual Vector<LayerCoverage> layerCoveragesForRepaintPageCoverage(RepaintRequirements, const PDFPageCoverage&) = 0;
 
-    static RefPtr<WebCore::GraphicsLayer> pageBackgroundLayerForPageContainerLayer(WebCore::GraphicsLayer&);
+    static Ref<WebCore::GraphicsLayer> LEGACY_NODELETE pageBackgroundLayerForPageContainerLayer(WebCore::GraphicsLayer&);
 
     Ref<AsyncPDFRenderer> asyncRenderer();
-    RefPtr<AsyncPDFRenderer> asyncRendererIfExists() const;
+    RefPtr<AsyncPDFRenderer> LEGACY_NODELETE asyncRendererIfExists() const;
     void clearAsyncRenderer();
 
-    bool shouldUseInProcessBackingStore() const;
+    bool LEGACY_NODELETE shouldUseInProcessBackingStore() const;
 
     WebCore::Path shadowPathForLayer(const WebCore::GraphicsLayer&) const;
 

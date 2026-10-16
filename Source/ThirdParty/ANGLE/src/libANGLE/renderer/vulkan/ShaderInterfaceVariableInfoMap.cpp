@@ -7,11 +7,8 @@
 // mapping.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_libc_calls
-#endif
-
 #include "libANGLE/renderer/vulkan/ShaderInterfaceVariableInfoMap.h"
+#include "common/unsafe_buffers.h"
 
 namespace rx
 {
@@ -59,7 +56,7 @@ void ShaderInterfaceVariableInfoMap::clear()
 {
     mData.clear();
     mXFBData.clear();
-    memset(&mPod, 0, sizeof(mPod));
+    ANGLE_UNSAFE_TODO(memset(&mPod, 0, sizeof(mPod)));
     for (gl::ShaderType shaderType : gl::AllShaderTypes())
     {
         mIdToIndexMap[shaderType].clear();
@@ -76,8 +73,7 @@ void ShaderInterfaceVariableInfoMap::save(gl::BinaryOutputStream *stream)
         stream->writeInt(idToIndexMap.size());
         if (idToIndexMap.size() > 0)
         {
-            stream->writeBytes(reinterpret_cast<const uint8_t *>(idToIndexMap.data()),
-                               idToIndexMap.size() * sizeof(*idToIndexMap.data()));
+            stream->writeBytes(angle::as_byte_span(idToIndexMap));
         }
     }
 
@@ -114,8 +110,8 @@ void ShaderInterfaceVariableInfoMap::load(gl::BinaryInputStream *stream)
         size_t count = stream->readInt<size_t>();
         if (count > 0)
         {
-            idToIndexMap.resetWithRawData(count,
-                                          stream->getBytes(count * sizeof(*idToIndexMap.data())));
+            idToIndexMap.resetWithRawData(count, stream->remainingSpan().data());
+            stream->skip(count * sizeof(*idToIndexMap.data()));
         }
     }
 

@@ -49,7 +49,42 @@ private:
     void applyLayerPositionsInternal() final;
     void didCompleteRenderingUpdate() final;
 
+#if HAVE(DISPLAY_LINK)
+    // ScrollingTree
+    void hasNodeWithAnimatedScrollChanged(bool /* hasNodeWithAnimatedScroll */) final;
+#endif
+
     RefPtr<ScrollingTreeNode> scrollingNodeForPoint(FloatPoint) final;
+#if ENABLE(WHEEL_EVENT_REGIONS)
+    OptionSet<EventListenerRegionType> eventListenerRegionTypesForPoint(FloatPoint) const final;
+#endif
+#if ENABLE(COORDINATED_TOUCH_EVENTS)
+    TrackingType eventTrackingTypeForTouchEvent(const PlatformTouchEvent&) final;
+
+    struct TouchEventTracking {
+        TrackingType touchForceChangedTracking { TrackingType::NotTracking };
+        TrackingType touchStartTracking { TrackingType::NotTracking };
+        TrackingType touchMoveTracking { TrackingType::NotTracking };
+        TrackingType touchEndTracking { TrackingType::NotTracking };
+
+        bool isTrackingAnything() const
+        {
+            return touchForceChangedTracking != TrackingType::NotTracking
+                || touchStartTracking != TrackingType::NotTracking
+                || touchMoveTracking != TrackingType::NotTracking
+                || touchEndTracking != TrackingType::NotTracking;
+        }
+
+        void reset()
+        {
+            touchForceChangedTracking = TrackingType::NotTracking;
+            touchStartTracking = TrackingType::NotTracking;
+            touchMoveTracking = TrackingType::NotTracking;
+            touchEndTracking = TrackingType::NotTracking;
+        }
+    };
+    TouchEventTracking m_touchEventTracking;
+#endif
 };
 
 } // namespace WebCore

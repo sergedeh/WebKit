@@ -39,10 +39,10 @@ private:
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) final;
     void collectPresentationalHintsForAttribute(const QualifiedName&, const AtomString&, MutableStyleProperties&) final;
 
-    bool rendererIsNeeded(const RenderStyle&) final;
+    bool rendererIsNeeded(const Style::ComputedStyle&) final;
 
-    bool isURLAttribute(const Attribute&) const final;
-    const AtomString& imageSourceURL() const final;
+    bool LEGACY_NODELETE isURLAttribute(const Attribute&) const final;
+    String imageSourceURL() const final;
 
     bool isInteractiveContent() const final { return true; }
 
@@ -50,7 +50,7 @@ private:
 
     void updateWidget(CreatePlugins) final;
 
-    void addSubresourceAttributeURLs(ListHashSet<URL>&) const final;
+    void addSubresourceAttributeURLs(OrderedHashSet<URL>&) const final;
 
     void parametersForPlugin(Vector<AtomString>& paramNames, Vector<AtomString>& paramValues);
 };

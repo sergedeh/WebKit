@@ -34,26 +34,19 @@ namespace WebKit {
 
 class NetworkServiceInitializerDelegate : public XPCServiceInitializerDelegate {
 public:
-    NetworkServiceInitializerDelegate(XPCObjectPtr<xpc_connection_t> connection, xpc_object_t initializerMessage)
+    NetworkServiceInitializerDelegate(OSObjectPtr<xpc_connection_t> connection, xpc_object_t initializerMessage)
         : XPCServiceInitializerDelegate(WTF::move(connection), initializerMessage)
     {
     }
 };
 
-template<>
-void initializeAuxiliaryProcess<NetworkProcess>(AuxiliaryProcessInitializationParameters&& parameters)
-{
-    static NeverDestroyed<NetworkProcess> networkProcess(WTF::move(parameters));
-}
-
-} // namespace WebKit
-
-using namespace WebKit;
-
 extern "C" WK_EXPORT void NETWORK_SERVICE_INITIALIZER(xpc_connection_t connection, xpc_object_t initializerMessage);
 
 void NETWORK_SERVICE_INITIALIZER(xpc_connection_t connection, xpc_object_t initializerMessage)
 {
-    WTF::initializeMainThread();
-    XPCServiceInitializer<NetworkProcess, NetworkServiceInitializerDelegate>(connection, initializerMessage);
+    WebKit::disableJSC([&] {
+        XPCServiceInitializer<NetworkProcess, NetworkServiceInitializerDelegate>(connection, initializerMessage);
+    });
 }
+
+} // namespace WebKit

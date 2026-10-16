@@ -26,29 +26,28 @@
 #include "config.h"
 #include "AccessibilityMenuList.h"
 
+#include "AccessibilityNodeObjectInlines.h"
 #include "AXLoggerBase.h"
 #include "AXNotifications.h"
 #include "AccessibilityObjectInlines.h"
 #include "AXObjectCache.h"
 #include "AccessibilityMenuListPopup.h"
 #include "FrameDestructionObserverInlines.h"
-#include "RenderMenuList.h"
+#include "HTMLSelectElement.h"
 #include "RenderObjectDocument.h"
 #include <wtf/Scope.h>
 
 namespace WebCore {
 
-AccessibilityMenuList::AccessibilityMenuList(AXID axID, RenderMenuList& renderer, AXObjectCache& cache)
+AccessibilityMenuList::AccessibilityMenuList(AXID axID, RenderObject& renderer, AXObjectCache& cache)
     : AccessibilityRenderObject(axID, renderer, cache)
     , m_popup(downcast<AccessibilityMenuListPopup>(*cache.create(AccessibilityRole::MenuListPopup)))
 {
 }
 
-Ref<AccessibilityMenuList> AccessibilityMenuList::create(AXID axID, RenderMenuList& renderer, AXObjectCache& cache)
+Ref<AccessibilityMenuList> AccessibilityMenuList::create(AXID axID, RenderObject& renderer, AXObjectCache& cache)
 {
     Ref menuList = adoptRef(*new AccessibilityMenuList(axID, renderer, cache));
-    // We have to do this setup here and not in the constructor to avoid an
-    // adoptionIsRequired ASSERT in RefCounted.h.
     menuList->m_popup->setParent(menuList.ptr());
     menuList->addChild(menuList->m_popup.get());
     menuList->m_childrenInitialized = true;
@@ -61,17 +60,20 @@ bool AccessibilityMenuList::press()
         return false;
 
 #if !PLATFORM(IOS_FAMILY)
-    RefPtr element = this->element();
+    RefPtr selectElement = dynamicDowncast<HTMLSelectElement>(element());
     auto notification = AXNotification::PressDidFail;
-    if (CheckedPtr menuList = dynamicDowncast<RenderMenuList>(renderer()); menuList && element && !element->isDisabledFormControl()) {
-        if (menuList->popupIsVisible())
-            menuList->hidePopup();
-        else
-            menuList->showPopup();
+    if (selectElement && !selectElement->isDisabledFormControl()) {
+        // Note that hiding or showing the popup could trigger JS.
+        if (selectElement->isOpen()) {
+            selectElement->hidePopup();
+            selectElement->hidePickerPopoverElement();
+        } else
+            selectElement->showPopup();
+
         notification = AXNotification::PressDidSucceed;
     }
     if (CheckedPtr cache = axObjectCache())
-        cache->postNotification(element.get(), notification);
+        cache->postNotification(selectElement.get(), notification);
     return true;
 #endif
     return false;
@@ -108,8 +110,8 @@ bool AccessibilityMenuList::isCollapsed() const
         return true;
 
 #if !PLATFORM(IOS_FAMILY)
-    CheckedPtr menuList = dynamicDowncast<RenderMenuList>(renderer());
-    return !(menuList && menuList->popupIsVisible());
+    RefPtr selectElement = dynamicDowncast<HTMLSelectElement>(element());
+    return !(selectElement && selectElement->isOpen());
 #else
     return true;
 #endif
@@ -139,14 +141,14 @@ void AccessibilityMenuList::didUpdateActiveOption(int optionIndex)
         // before asking it to update its active option, or it will read invalid memory.
         // You can reproduce the issue in the GTK+ port by removing this check and running
         // accessibility/insert-selected-option-into-select-causes-crash.html (will crash).
-        int popupChildrenSize = static_cast<int>(childObjects[0]->unignoredChildren().size());
+        int popupChildrenSize = static_cast<int>(protect(childObjects[0])->unignoredChildren().size());
         RefPtr accessibilityMenuListPopup = dynamicDowncast<AccessibilityMenuListPopup>(childObjects[0].get());
         if (accessibilityMenuListPopup && optionIndex >= 0 && optionIndex < popupChildrenSize)
             accessibilityMenuListPopup->didUpdateActiveOption(optionIndex);
     }
 
     if (CheckedPtr cache = document->axObjectCache())
-        cache->deferMenuListValueChange(element());
+        cache->deferMenuListValueChange(protect(element()));
 }
 
 } // namespace WebCore

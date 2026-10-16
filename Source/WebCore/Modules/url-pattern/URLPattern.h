@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2026 Igalia S.L.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,12 +31,10 @@
 #include <wtf/Forward.h>
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
-#include <wtf/RefPtr.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
-class ScriptExecutionContext;
 struct URLPatternOptions;
 struct URLPatternResult;
 template<typename> class ExceptionOr;
@@ -51,28 +50,31 @@ class URLPattern final : public RefCounted<URLPattern> {
 public:
     using URLPatternInput = Variant<String, URLPatternInit>;
 
-    static ExceptionOr<Ref<URLPattern>> create(ScriptExecutionContext&, URLPatternInput&&, String&& baseURL, URLPatternOptions&&);
-    static ExceptionOr<Ref<URLPattern>> create(ScriptExecutionContext&, URLPatternInput&&, URLPatternOptions&&);
+    WEBCORE_EXPORT static ExceptionOr<Ref<URLPattern>> create(URLPatternInput&&, String&& baseURL, URLPatternOptions&&);
+    WEBCORE_EXPORT static ExceptionOr<Ref<URLPattern>> create(URLPatternInput&&, URLPatternOptions&&);
 
-    using Compatible = Variant<String, URLPatternInit, RefPtr<URLPattern>>;
-    static ExceptionOr<Ref<URLPattern>> create(ScriptExecutionContext&, Compatible&&, const String&);
+    WEBCORE_EXPORT static ExceptionOr<Ref<URLPattern>> createWithoutRegExpSupport(URLPatternInput&&, String&& baseURL, URLPatternOptions&&);
+    WEBCORE_EXPORT bool testWithoutRegExp(const URL&) const;
 
-    ~URLPattern();
+    using Compatible = Variant<String, URLPatternInit, Ref<URLPattern>>;
+    static ExceptionOr<Ref<URLPattern>> create(Compatible&&, const String&);
 
-    ExceptionOr<bool> test(ScriptExecutionContext&, URLPatternInput&&, String&& baseURL) const;
+    WEBCORE_EXPORT ~URLPattern();
 
-    ExceptionOr<std::optional<URLPatternResult>> exec(ScriptExecutionContext&, URLPatternInput&&, String&& baseURL) const;
+    WEBCORE_EXPORT ExceptionOr<bool> test(URLPatternInput&&, String&& baseURL) const;
 
-    const String& protocol() const { return m_protocolComponent.patternString(); }
-    const String& username() const { return m_usernameComponent.patternString(); }
-    const String& password() const { return m_passwordComponent.patternString(); }
-    const String& hostname() const { return m_hostnameComponent.patternString(); }
-    const String& port() const { return m_portComponent.patternString(); }
-    const String& pathname() const { return m_pathnameComponent.patternString(); }
-    const String& search() const { return m_searchComponent.patternString(); }
-    const String& hash() const { return m_hashComponent.patternString(); }
+    WEBCORE_EXPORT ExceptionOr<std::optional<URLPatternResult>> exec(URLPatternInput&&, String&& baseURL) const;
 
-    bool hasRegExpGroups() const;
+    const String& protocol() const LIFETIME_BOUND { return m_protocolComponent.patternString(); }
+    const String& username() const LIFETIME_BOUND { return m_usernameComponent.patternString(); }
+    const String& password() const LIFETIME_BOUND { return m_passwordComponent.patternString(); }
+    const String& hostname() const LIFETIME_BOUND { return m_hostnameComponent.patternString(); }
+    const String& port() const LIFETIME_BOUND { return m_portComponent.patternString(); }
+    const String& pathname() const LIFETIME_BOUND { return m_pathnameComponent.patternString(); }
+    const String& search() const LIFETIME_BOUND { return m_searchComponent.patternString(); }
+    const String& hash() const LIFETIME_BOUND { return m_hashComponent.patternString(); }
+
+    WEBCORE_EXPORT bool LEGACY_NODELETE hasRegExpGroups() const;
     bool shouldIgnoreCase() const { return m_shouldIgnoreCase; }
 
 private:
@@ -81,8 +83,9 @@ private:
     {
     }
 
-    ExceptionOr<void> compileAllComponents(ScriptExecutionContext&, URLPatternInit&&);
-    ExceptionOr<std::optional<URLPatternResult>> match(ScriptExecutionContext&, Variant<URL, URLPatternInput>&&, String&& baseURLString) const;
+    enum class CompileMode : bool { WithRegExp, WithoutRegExp };
+    ExceptionOr<void> compileAllComponents(URLPatternInit&&, CompileMode);
+    ExceptionOr<std::optional<URLPatternResult>> match(Variant<URL, URLPatternInput>&&, String&& baseURLString) const;
 
     const bool m_shouldIgnoreCase;
     URLPatternUtilities::URLPatternComponent m_protocolComponent;

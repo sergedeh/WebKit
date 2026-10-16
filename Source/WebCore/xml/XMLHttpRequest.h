@@ -80,14 +80,13 @@ public:
 
     enum EventTargetInterfaceType eventTargetInterface() const final { return EventTargetInterfaceType::XMLHttpRequest; }
     ScriptExecutionContext* scriptExecutionContext() const final;
-    using ActiveDOMObject::protectedScriptExecutionContext;
 
-    using SendTypes = Variant<RefPtr<Document>, RefPtr<Blob>, RefPtr<JSC::ArrayBufferView>, RefPtr<JSC::ArrayBuffer>, RefPtr<DOMFormData>, String, RefPtr<URLSearchParams>>;
+    using SendTypes = Variant<Ref<Document>, Ref<Blob>, Ref<JSC::ArrayBufferView>, Ref<JSC::ArrayBuffer>, Ref<DOMFormData>, String, Ref<URLSearchParams>>;
 
-    const URL& url() const { return m_url; }
+    const URL& url() const LIFETIME_BOUND { return m_url; }
     String statusText() const;
     int status() const;
-    State readyState() const { return static_cast<State>(m_readyState); }
+    State readyState() const { return m_readyState; }
     bool withCredentials() const { return m_includeCredentials; }
     ExceptionOr<void> setWithCredentials(bool);
     ExceptionOr<void> open(const String& method, const String& url);
@@ -105,7 +104,6 @@ public:
     enum class FinalMIMEType : bool { No, Yes };
     String responseMIMEType(FinalMIMEType = FinalMIMEType::No) const;
 
-    Document* optionalResponseXML() const { return m_responseDocument.get(); }
     ExceptionOr<Document*> responseXML();
 
     Ref<Blob> createResponseBlob();
@@ -127,21 +125,22 @@ public:
         Text = 5,
     };
     ExceptionOr<void> setResponseType(ResponseType);
-    ResponseType responseType() const { return static_cast<ResponseType>(m_responseType); }
+    ResponseType responseType() const { return m_responseType; }
 
     String responseURL() const;
 
     XMLHttpRequestUpload& upload();
-    XMLHttpRequestUpload* optionalUpload() const { return m_upload.get(); }
 
-    const ResourceResponse& resourceResponse() const { return m_response; }
+    const ResourceResponse& resourceResponse() const LIFETIME_BOUND { return m_response; }
 
-    size_t memoryCost() const;
+    size_t LEGACY_NODELETE memoryCost() const;
 
     using EventTarget::dispatchEvent;
     void dispatchEvent(Event&) override;
 
     void dispatchThrottledProgressEventIfNeeded();
+
+    template<typename Visitor> void visitAdditionalChildrenInGCThread(Visitor&);
 
 private:
     friend class XMLHttpRequestUpload;
@@ -177,13 +176,14 @@ private:
     void notifyIsDone(bool) final;
 
     std::optional<ExceptionOr<void>> prepareToSend();
-    ExceptionOr<void> send(const URLSearchParams&);
-    ExceptionOr<void> send(Document&);
-    ExceptionOr<void> send(const String& = { });
-    ExceptionOr<void> send(Blob&);
-    ExceptionOr<void> send(DOMFormData&);
-    ExceptionOr<void> send(JSC::ArrayBuffer&);
-    ExceptionOr<void> send(JSC::ArrayBufferView&);
+    ExceptionOr<void> send(Ref<URLSearchParams>&&);
+    ExceptionOr<void> send(Ref<Document>&&);
+    ExceptionOr<void> send(String&& = { });
+    ExceptionOr<void> send(Ref<Blob>&&);
+    ExceptionOr<void> send(Ref<DOMFormData>&&);
+    ExceptionOr<void> send(Ref<JSC::ArrayBuffer>&&);
+    ExceptionOr<void> send(Ref<JSC::ArrayBufferView>&&);
+    ExceptionOr<void> sendStringData(String&&, const String& defaultContentType);
     ExceptionOr<void> sendBytesData(std::span<const uint8_t>);
 
     void changeState(State);
@@ -209,20 +209,21 @@ private:
 
     Ref<TextResourceDecoder> createDecoder() const;
 
-    unsigned m_async : 1;
-    unsigned m_includeCredentials : 1;
-    unsigned m_sendFlag : 1;
-    unsigned m_createdDocument : 1;
-    unsigned m_error : 1;
-    unsigned m_uploadListenerFlag : 1;
-    unsigned m_uploadComplete : 1;
-    unsigned m_responseCacheIsValid : 1;
-    unsigned m_readyState : 3; // State
-    unsigned m_responseType : 3; // ResponseType
+    bool m_async : 1 { true };
+    bool m_includeCredentials : 1 { false };
+    bool m_sendFlag : 1 { false };
+    bool m_createdDocument : 1 { false };
+    bool m_error : 1 { false };
+    bool m_uploadListenerFlag : 1 { false };
+    bool m_uploadComplete : 1 { false };
+    bool m_responseCacheIsValid : 1 { false };
+    State m_readyState : 3 { UNSENT };
+    ResponseType m_responseType : 3 { ResponseType::EmptyString };
 
     unsigned m_timeoutMilliseconds { 0 };
 
-    const std::unique_ptr<XMLHttpRequestUpload> m_upload;
+    Lock m_gcLock;
+    const std::unique_ptr<XMLHttpRequestUpload> m_upload WTF_GUARDED_BY_LOCK(m_gcLock);
 
     URLKeepingBlobAlive m_url;
     String m_method;
@@ -233,17 +234,14 @@ private:
     struct LoadingActivity {
         Ref<XMLHttpRequest> protectedThis; // Keep object alive while loading even if there is no longer a JS wrapper.
         Ref<ThreadableLoader> loader;
-        Ref<ThreadableLoader> protectedLoader() const;
     };
     std::optional<LoadingActivity> m_loadingActivity;
-
-    String m_responseEncoding;
 
     ResourceResponse m_response;
 
     RefPtr<TextResourceDecoder> m_decoder;
 
-    RefPtr<Document> m_responseDocument;
+    RefPtr<Document> m_responseDocument WTF_GUARDED_BY_LOCK(m_gcLock);
 
     SharedBufferBuilder m_binaryResponseBuilder;
 

@@ -33,7 +33,6 @@ RenderTargetVk::RenderTargetVk(RenderTargetVk &&other)
       mImageViews(other.mImageViews),
       mResolveImage(other.mResolveImage),
       mResolveImageViews(other.mResolveImageViews),
-      mImageSiblingSerial(other.mImageSiblingSerial),
       mLevelIndexGL(other.mLevelIndexGL),
       mLayerIndex(other.mLayerIndex),
       mLayerCount(other.mLayerCount),
@@ -46,17 +45,22 @@ void RenderTargetVk::init(vk::ImageHelper *image,
                           vk::ImageViewHelper *imageViews,
                           vk::ImageHelper *resolveImage,
                           vk::ImageViewHelper *resolveImageViews,
-                          UniqueSerial imageSiblingSerial,
-                          gl::LevelIndex levelIndexGL,
-                          uint32_t layerIndex,
+                          gl::OwnerLevel levelIndexGL,
+                          gl::OwnerLayer layerIndex,
                           uint32_t layerCount,
                           RenderTargetTransience transience)
 {
+    // If this comes from SurfaceVk, the usage bit will be 0 (image init are deferred).
+    ASSERT(image->getUsage() == 0 ||
+           (image->getUsage() & (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                                 VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)) != 0);
+    // image and resolveImage can't both uses tile memory.
+    ASSERT(image == nullptr || resolveImage == nullptr || !image->useTileMemory() ||
+           !resolveImage->useTileMemory());
     mImage              = image;
     mImageViews         = imageViews;
     mResolveImage       = resolveImage;
     mResolveImageViews  = resolveImageViews;
-    mImageSiblingSerial = imageSiblingSerial;
     mLevelIndexGL       = levelIndexGL;
     mLayerIndex         = layerIndex;
     mLayerCount         = layerCount;
@@ -70,9 +74,8 @@ void RenderTargetVk::reset()
     mImageViews         = nullptr;
     mResolveImage       = nullptr;
     mResolveImageViews  = nullptr;
-    mImageSiblingSerial = {};
-    mLevelIndexGL       = gl::LevelIndex(0);
-    mLayerIndex         = 0;
+    mLevelIndexGL       = gl::OwnerLevel(0);
+    mLayerIndex         = gl::OwnerLayer(0);
     mLayerCount         = 0;
 }
 
@@ -80,7 +83,7 @@ vk::ImageOrBufferViewSubresourceSerial RenderTargetVk::getSubresourceSerialImpl(
     vk::ImageViewHelper *imageViews) const
 {
     ASSERT(imageViews);
-    ASSERT(mLayerIndex < std::numeric_limits<uint16_t>::max());
+    ASSERT(mLayerIndex.get() < std::numeric_limits<uint16_t>::max());
     ASSERT(mLevelIndexGL.get() < std::numeric_limits<uint16_t>::max());
 
     vk::LayerMode layerMode = vk::GetLayerMode(*mImage, mLayerCount);
@@ -107,7 +110,7 @@ void RenderTargetVk::onColorDraw(ContextVk *contextVk,
     ASSERT(framebufferLayerCount <= mLayerCount);
 
     contextVk->onColorDraw(mLevelIndexGL, mLayerIndex, framebufferLayerCount, mImage, mResolveImage,
-                           mImageSiblingSerial, packedAttachmentIndex);
+                           packedAttachmentIndex);
 
     // Multisampled render to texture framebuffers cannot be layered.
     ASSERT(mResolveImage == nullptr || framebufferLayerCount == 1);
@@ -126,7 +129,7 @@ void RenderTargetVk::onColorResolve(ContextVk *contextVk,
     // render target.  Ask the context to add this image as the resolve attachment to the read
     // framebuffer's render pass, at the given color index.
     contextVk->onColorResolve(mLevelIndexGL, mLayerIndex, framebufferLayerCount, mImage,
-                              view.getHandle(), mImageSiblingSerial, readColorIndexGL);
+                              view.getHandle(), readColorIndexGL);
 }
 
 void RenderTargetVk::onDepthStencilDraw(ContextVk *contextVk, uint32_t framebufferLayerCount)
@@ -136,7 +139,7 @@ void RenderTargetVk::onDepthStencilDraw(ContextVk *contextVk, uint32_t framebuff
     ASSERT(framebufferLayerCount <= mLayerCount);
 
     contextVk->onDepthStencilDraw(mLevelIndexGL, mLayerIndex, framebufferLayerCount, mImage,
-                                  mResolveImage, mImageSiblingSerial);
+                                  mResolveImage);
 }
 
 void RenderTargetVk::onDepthStencilResolve(ContextVk *contextVk,
@@ -149,7 +152,7 @@ void RenderTargetVk::onDepthStencilResolve(ContextVk *contextVk,
     ASSERT(mResolveImage == nullptr);
 
     contextVk->onDepthStencilResolve(mLevelIndexGL, mLayerIndex, framebufferLayerCount, aspects,
-                                     mImage, view.getHandle(), mImageSiblingSerial);
+                                     mImage, view.getHandle());
 }
 
 vk::ImageHelper &RenderTargetVk::getImageForRenderPass()
@@ -206,7 +209,7 @@ angle::Result RenderTargetVk::getImageViewWithColorspace(ContextVk *contextVk,
                                                          const vk::ImageView **imageViewOut) const
 {
     ASSERT(mImage);
-    mImageViews->updateSrgbWiteControlMode(*mImage, mode);
+    mImageViews->updateSrgbWriteControlMode(mImage->getActualFormat(), mode);
     return getImageViewImpl(contextVk, *mImage, mImageViews, imageViewOut);
 }
 
@@ -345,10 +348,10 @@ gl::Extents RenderTargetVk::getRotatedExtents() const
     return mImage->getRotatedLevelExtents2D(levelVk);
 }
 
-gl::LevelIndex RenderTargetVk::getLevelIndexForImage(const vk::ImageHelper &image) const
+gl::OwnerLevel RenderTargetVk::getLevelIndexForImage(const vk::ImageHelper &image) const
 {
     return (getOwnerOfData()->getImageSerial() == image.getImageSerial()) ? mLevelIndexGL
-                                                                          : gl::LevelIndex(0);
+                                                                          : gl::OwnerLevel(0);
 }
 
 void RenderTargetVk::updateSwapchainImage(vk::ImageHelper *image,
@@ -357,9 +360,8 @@ void RenderTargetVk::updateSwapchainImage(vk::ImageHelper *image,
                                           vk::ImageViewHelper *resolveImageViews)
 {
     ASSERT(image && image->valid() && imageViews);
-    ASSERT(!mImageSiblingSerial.valid());
-    ASSERT(mLevelIndexGL == gl::LevelIndex(0));
-    ASSERT(mLayerIndex == 0);
+    ASSERT(mLevelIndexGL == gl::OwnerLevel(0));
+    ASSERT(mLayerIndex == gl::OwnerLayer(0));
     mImage             = image;
     mImageViews        = imageViews;
     mResolveImage      = resolveImage;
@@ -387,17 +389,6 @@ angle::Result RenderTargetVk::flushStagedUpdates(ContextVk *contextVk,
     ASSERT(mImage->valid() && (!isResolveImageOwnerOfData() || mResolveImage->valid()));
     ASSERT(framebufferLayerCount != 0);
 
-    // It's impossible to defer clears to slices of a 3D images, as the clear applies to all the
-    // slices, while deferred clears only clear a single slice (where the framebuffer is attached).
-    // Additionally, the layer index for 3D textures is always zero according to Vulkan.
-    uint32_t layerIndex = mLayerIndex;
-    if (mImage->getType() == VK_IMAGE_TYPE_3D)
-    {
-        layerIndex         = 0;
-        deferredClears     = nullptr;
-        deferredClearIndex = 0;
-    }
-
     vk::ImageHelper *image = getOwnerOfData();
 
     // All updates should be staged on the image that owns the data as the source of truth.  With
@@ -408,16 +399,16 @@ angle::Result RenderTargetVk::flushStagedUpdates(ContextVk *contextVk,
     // is a clear, it will accumulate it in the |deferredClears| array.  Later, when the render pass
     // is started, the deferred clears are applied to the transient multisampled image.
     ASSERT(!isResolveImageOwnerOfData() ||
-           !mImage->hasStagedUpdatesForSubresource(mLevelIndexGL, layerIndex, mLayerCount));
+           !mImage->hasStagedUpdatesForSubresource(mLevelIndexGL, mLayerIndex, mLayerCount));
     ASSERT(isResolveImageOwnerOfData() || mResolveImage == nullptr ||
-           !mResolveImage->hasStagedUpdatesForSubresource(mLevelIndexGL, layerIndex, mLayerCount));
+           !mResolveImage->hasStagedUpdatesForSubresource(mLevelIndexGL, mLayerIndex, mLayerCount));
 
-    if (!image->hasStagedUpdatesForSubresource(mLevelIndexGL, layerIndex, framebufferLayerCount))
+    if (!image->hasStagedUpdatesForSubresource(mLevelIndexGL, mLayerIndex, framebufferLayerCount))
     {
         return angle::Result::Continue;
     }
 
-    return image->flushSingleSubresourceStagedUpdates(contextVk, mLevelIndexGL, layerIndex,
+    return image->flushSingleSubresourceStagedUpdates(contextVk, mLevelIndexGL, mLayerIndex,
                                                       framebufferLayerCount, deferredClears,
                                                       deferredClearIndex);
 }
@@ -450,21 +441,24 @@ void RenderTargetVk::invalidateEntireStencilContent(ContextVk *contextVk,
                                                preferToKeepContentsDefinedOut);
 }
 
-gl::ImageIndex RenderTargetVk::getImageIndexForClear(uint32_t layerCount) const
+gl::OwnerImageIndex RenderTargetVk::getImageIndexForClear(uint32_t layerCount) const
 {
     // Determine the GL type from the Vk Image properties.
-    if (mImage->getType() == VK_IMAGE_TYPE_3D || mImage->getLayerCount() > 1)
+    if (mImage->getLayerCount() > 1)
     {
-        // This is used for the sake of staging clears.  The depth slices of the 3D image are
-        // threated as layers for this purpose.
-        //
-        // We also don't need to distinguish 2D array and cube.
-        return gl::ImageIndex::Make2DArrayRange(mLevelIndexGL.get(), mLayerIndex, layerCount);
+        // We don't need to distinguish 2D array and cube.
+        return gl::OwnerImageIndex::Make2DArrayRange(mLevelIndexGL, mLayerIndex, layerCount);
+    }
+    if (mImage->getType() == VK_IMAGE_TYPE_3D)
+    {
+        // The depth slices of the 3D image are treated as layers for this purpose.
+        return gl::OwnerImageIndex::MakeFromType(gl::TextureType::_3D, mLevelIndexGL, mLayerIndex,
+                                                 layerCount);
     }
 
-    ASSERT(mLayerIndex == 0);
+    ASSERT(mLayerIndex == gl::OwnerLayer(0));
     ASSERT(mLayerCount == 1);
     ASSERT(layerCount == 1);
-    return gl::ImageIndex::Make2D(mLevelIndexGL.get());
+    return gl::OwnerImageIndex::Make2D(mLevelIndexGL);
 }
 }  // namespace rx

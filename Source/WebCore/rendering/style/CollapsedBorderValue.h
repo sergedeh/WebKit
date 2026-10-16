@@ -25,8 +25,8 @@
 
 #pragma once
 
-#include <WebCore/BorderValue.h>
-#include <WebCore/LayoutUnit.h>
+#include "BorderValue.h"
+#include "LayoutUnit.h"
 
 namespace WebCore {
 
@@ -39,8 +39,8 @@ public:
     {
     }
 
-    CollapsedBorderValue(const BorderValue& border, const Color& color, BorderPrecedence precedence, const Style::ZoomFactor)
-        : m_width(border.nonZero() ? Style::evaluate<LayoutUnit>(border.width, Style::ZoomNeeded { }) : 0_lu)
+    CollapsedBorderValue(const BorderValue& border, const Color& color, BorderPrecedence precedence, const Style::ZoomFactor zoom, float deviceScaleFactor)
+        : m_width(border.nonZero() ? Style::evaluate<LayoutUnit>(border.width, zoom, deviceScaleFactor) : 0_lu)
         , m_color(color)
         , m_style(static_cast<unsigned>(border.style))
         , m_precedence(static_cast<unsigned>(precedence))
@@ -51,7 +51,7 @@ public:
     LayoutUnit width() const { return isVisibleBorderStyle(style()) ? m_width : 0_lu; }
     BorderStyle style() const { return static_cast<BorderStyle>(m_style); }
     bool exists() const { return precedence() != BorderPrecedence::Off; }
-    const Color& color() const { return m_color; }
+    const Color& color() const LIFETIME_BOUND { return m_color; }
     bool isTransparent() const { return m_transparent; }
     BorderPrecedence precedence() const { return static_cast<BorderPrecedence>(m_precedence); }
 

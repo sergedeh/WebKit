@@ -35,12 +35,12 @@
 #include "GraphicsLayerFilterAnimationValue.h"
 #include "GraphicsLayerKeyframeValueList.h"
 #include "LayoutRect.h"
+#include "MediaPlayer.h"
 #include "MediaPlayerEnums.h"
 #include "RotateTransformOperation.h"
 #include <wtf/FileHandle.h>
 #include <wtf/HashMap.h>
 #include <wtf/NeverDestroyed.h>
-#include <wtf/ProcessID.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/MakeString.h>
@@ -124,13 +124,13 @@ String animatedPropertyIDAsString(AnimatedProperty property)
 }
 
 using RepaintMap = HashMap<const GraphicsLayer*, Vector<FloatRect>>;
-static RepaintMap& repaintRectMap()
+static RepaintMap& LEGACY_NODELETE repaintRectMap()
 {
     static NeverDestroyed<RepaintMap> map;
     return map;
 }
 
-#if !USE(CA)
+#if !USE(CA) && !USE(COORDINATED_GRAPHICS)
 bool GraphicsLayer::supportsLayerType(Type type)
 {
     switch (type) {
@@ -166,7 +166,7 @@ public:
     static EmptyGraphicsLayerClient& singleton();
 };
 
-EmptyGraphicsLayerClient& EmptyGraphicsLayerClient::singleton()
+EmptyGraphicsLayerClient& LEGACY_NODELETE EmptyGraphicsLayerClient::singleton()
 {
     static NeverDestroyed<EmptyGraphicsLayerClient> client;
     return client;
@@ -241,10 +241,10 @@ void GraphicsLayer::willBeDestroyed()
     client().verifyNotPainting();
 #endif
     if (m_replicaLayer)
-        m_replicaLayer->setReplicatedLayer(nullptr);
+        protect(m_replicaLayer)->setReplicatedLayer(nullptr);
 
     if (m_replicatedLayer)
-        m_replicatedLayer->setReplicatedByLayer(nullptr);
+        protect(m_replicatedLayer.get())->setReplicatedByLayer(nullptr);
 
     if (m_maskLayer) {
         m_maskLayer->setParent(nullptr);
@@ -357,7 +357,7 @@ bool GraphicsLayer::replaceChild(GraphicsLayer* oldChild, Ref<GraphicsLayer>&& n
 {
     ASSERT(!newChild->parent());
     
-    GraphicsLayer* rawNewChild = newChild.ptr();
+    Ref newChildLayer = newChild;
 
     bool found = false;
     for (unsigned i = 0; i < m_children.size(); i++) {
@@ -370,8 +370,8 @@ bool GraphicsLayer::replaceChild(GraphicsLayer* oldChild, Ref<GraphicsLayer>&& n
     if (found) {
         oldChild->setParent(nullptr);
 
-        rawNewChild->removeFromParent();
-        rawNewChild->setParent(this);
+        newChildLayer->removeFromParent();
+        newChildLayer->setParent(this);
         return true;
     }
     return false;
@@ -387,7 +387,7 @@ void GraphicsLayer::removeAllChildren()
     for (auto& child : m_children)
         child->setParent(nullptr);
 
-    m_children.clear();
+    m_children.shrink(0);
 }
 
 void GraphicsLayer::removeFromParentInternal()
@@ -456,7 +456,7 @@ void GraphicsLayer::setTransform(const TransformationMatrix& matrix)
     if (m_transform)
         *m_transform = matrix;
     else
-        m_transform = makeUnique<TransformationMatrix>(matrix);
+        lazyInitialize(m_transform, makeUnique<TransformationMatrix>(matrix));
 }
 
 const TransformationMatrix& GraphicsLayer::childrenTransform() const
@@ -469,7 +469,7 @@ void GraphicsLayer::setChildrenTransform(const TransformationMatrix& matrix)
     if (m_childrenTransform)
         *m_childrenTransform = matrix;
     else
-        m_childrenTransform = makeUnique<TransformationMatrix>(matrix);
+        lazyInitialize(m_childrenTransform, makeUnique<TransformationMatrix>(matrix));
 }
 
 bool GraphicsLayer::setFilters(const FilterOperations& filters)
@@ -488,7 +488,7 @@ void GraphicsLayer::setOpacity(float opacity)
 void GraphicsLayer::removeFromParent()
 {
     if (m_parent)
-        m_parent->willModifyChildren();
+        protect(m_parent.get())->willModifyChildren();
 
     // removeFromParentInternal is nonvirtual, for use in willBeDestroyed,
     // which is called from destructors.
@@ -532,7 +532,7 @@ void GraphicsLayer::setVideoGravity(MediaPlayerVideoGravity gravity)
 
 Path GraphicsLayer::shapeLayerPath() const
 {
-#if USE(CA)
+#if USE(CA) || USE(COORDINATED_GRAPHICS)
     return m_shapeLayerPath;
 #else
     return Path();
@@ -541,7 +541,7 @@ Path GraphicsLayer::shapeLayerPath() const
 
 void GraphicsLayer::setShapeLayerPath(const Path& path)
 {
-#if USE(CA)
+#if USE(CA) || USE(COORDINATED_GRAPHICS)
     m_shapeLayerPath = path;
 #else
     UNUSED_PARAM(path);
@@ -550,7 +550,7 @@ void GraphicsLayer::setShapeLayerPath(const Path& path)
 
 WindRule GraphicsLayer::shapeLayerWindRule() const
 {
-#if USE(CA)
+#if USE(CA) || USE(COORDINATED_GRAPHICS)
     return m_shapeLayerWindRule;
 #else
     return WindRule::NonZero;
@@ -559,7 +559,7 @@ WindRule GraphicsLayer::shapeLayerWindRule() const
 
 void GraphicsLayer::setShapeLayerWindRule(WindRule windRule)
 {
-#if USE(CA)
+#if USE(CA) || USE(COORDINATED_GRAPHICS)
     m_shapeLayerWindRule = windRule;
 #else
     UNUSED_PARAM(windRule);
@@ -576,10 +576,10 @@ void GraphicsLayer::noteDeviceOrPageScaleFactorChangedIncludingDescendants()
     deviceOrPageScaleFactorChanged();
 
     if (m_maskLayer)
-        m_maskLayer->deviceOrPageScaleFactorChanged();
+        protect(m_maskLayer)->deviceOrPageScaleFactorChanged();
 
     if (m_replicaLayer)
-        m_replicaLayer->noteDeviceOrPageScaleFactorChangedIncludingDescendants();
+        protect(m_replicaLayer)->noteDeviceOrPageScaleFactorChangedIncludingDescendants();
 
     for (auto& layer : children())
         layer->noteDeviceOrPageScaleFactorChangedIncludingDescendants();
@@ -587,7 +587,7 @@ void GraphicsLayer::noteDeviceOrPageScaleFactorChangedIncludingDescendants()
 
 void GraphicsLayer::setIsInWindow(bool inWindow)
 {
-    if (auto* tiledBacking = this->tiledBacking())
+    if (CheckedPtr tiledBacking = this->tiledBacking())
         tiledBacking->setIsInWindow(inWindow);
 }
 
@@ -597,7 +597,7 @@ void GraphicsLayer::setReplicatedByLayer(RefPtr<GraphicsLayer>&& layer)
         return;
 
     if (m_replicaLayer)
-        m_replicaLayer->setReplicatedLayer(nullptr);
+        protect(m_replicaLayer)->setReplicatedLayer(nullptr);
 
     if (layer)
         layer->setReplicatedLayer(this);
@@ -732,14 +732,6 @@ String GraphicsLayer::animationNameForTransition(AnimatedProperty property)
     return makeString("-|transition"_s, static_cast<int>(property), '-');
 }
 
-void GraphicsLayer::suspendAnimations(MonotonicTime)
-{
-}
-
-void GraphicsLayer::resumeAnimations()
-{
-}
-
 void GraphicsLayer::setContentsDisplayDelegate(RefPtr<GraphicsLayerContentsDisplayDelegate>&&, ContentsLayerPurpose)
 {
 }
@@ -748,6 +740,13 @@ RefPtr<GraphicsLayerAsyncContentsDisplayDelegate> GraphicsLayer::createAsyncCont
 {
     return nullptr;
 }
+
+#if ENABLE(VIDEO)
+void GraphicsLayer::setContentsToMediaPlayer(MediaPlayer* player, ContentsLayerPurpose purpose)
+{
+    SUPPRESS_FORWARD_DECL_ARG setContentsToPlatformLayer(player ? player->platformLayer() : nullptr, purpose);
+}
+#endif
 
 void GraphicsLayer::getDebugBorderInfo(Color& color, float& width) const
 {
@@ -781,20 +780,12 @@ void GraphicsLayer::getDebugBorderInfo(Color& color, float& width) const
         return;
     }
 
-    if (isShowingFrameProcessBorders()) {
-        auto hash = intHash(static_cast<uint32_t>(getCurrentProcessID()));
-        uint8_t r = (hash >>  0) & 0xFF, g = (hash >>  8) & 0xFF, b = (hash >> 16) & 0xFF;
-        color = SRGBA<uint8_t> { r, g, b }.colorWithAlphaByte(192);
-        width = 4;
-        return;
-    }
-
     color = Color::yellow.colorWithAlphaByte(192); // container: yellow
 }
 
 void GraphicsLayer::updateDebugIndicators()
 {
-    if (!isShowingDebugBorder() && !isShowingFrameProcessBorders())
+    if (!isShowingDebugBorder())
         return;
 
     Color borderColor;
@@ -808,7 +799,7 @@ void GraphicsLayer::setZPosition(float position)
     m_zPosition = position;
 }
 
-static inline const FilterOperations& filterOperationsAt(const GraphicsLayerKeyframeValueList& valueList, size_t index)
+static inline const FilterOperations& LEGACY_NODELETE filterOperationsAt(const GraphicsLayerKeyframeValueList& valueList, size_t index)
 {
     return downcast<GraphicsLayerFilterAnimationValue>(valueList.at(index)).value();
 }
@@ -857,8 +848,8 @@ void GraphicsLayer::setAcceleratedEffectsAndBaseValues(AcceleratedEffects&& effe
     if (!m_effectStack)
         m_effectStack = AcceleratedEffectStack::create();
 
-    m_effectStack->setEffects(WTF::move(effects));
-    m_effectStack->setBaseValues(WTF::move(baseValues));
+    protect(m_effectStack)->setEffects(WTF::move(effects));
+    protect(m_effectStack)->setBaseValues(WTF::move(baseValues));
 }
 #endif
 
@@ -903,7 +894,7 @@ void GraphicsLayer::traverse(GraphicsLayer& layer, NOESCAPE const Function<void(
 
 void GraphicsLayer::setTileCoverage(TileCoverage coverage)
 {
-    if (auto* backing = tiledBacking())
+    if (CheckedPtr backing = tiledBacking())
         backing->setTileCoverage(coverage);
 }
 
@@ -912,7 +903,8 @@ void GraphicsLayer::dumpLayer(TextStream& ts, OptionSet<LayerTreeAsTextOptions> 
     ts << indent << '(' << "GraphicsLayer"_s;
 
     if (options & LayerTreeAsTextOptions::Debug) {
-        ts << ' ' << static_cast<void*>(const_cast<GraphicsLayer*>(this));
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST ts << ' ' << static_cast<void*>(const_cast<GraphicsLayer*>(this));
         ts << " \"" << m_name << '"';
     }
 
@@ -1042,7 +1034,7 @@ void GraphicsLayer::dumpProperties(TextStream& ts, OptionSet<LayerTreeAsTextOpti
         ts << ")\n"_s;
 
         TextStream::IndentScope indentScope(ts);
-        m_maskLayer->dumpLayer(ts, options);
+        protect(m_maskLayer)->dumpLayer(ts, options);
     }
 
     if (m_replicaLayer) {
@@ -1052,7 +1044,7 @@ void GraphicsLayer::dumpProperties(TextStream& ts, OptionSet<LayerTreeAsTextOpti
         ts << ")\n"_s;
 
         TextStream::IndentScope indentScope(ts);
-        m_replicaLayer->dumpLayer(ts, options);
+        protect(m_replicaLayer)->dumpLayer(ts, options);
     }
 
     if (m_replicatedLayer) {
@@ -1062,21 +1054,23 @@ void GraphicsLayer::dumpProperties(TextStream& ts, OptionSet<LayerTreeAsTextOpti
         ts << ")\n"_s;
     }
 
-    if (options & LayerTreeAsTextOptions::IncludeRepaintRects && repaintRectMap().contains(this) && !repaintRectMap().get(this).isEmpty() && client().shouldDumpPropertyForLayer(this, "repaintRects"_s, options)) {
-        ts << indent << "(repaint rects\n"_s;
-        for (size_t i = 0; i < repaintRectMap().get(this).size(); ++i) {
-            if (repaintRectMap().get(this)[i].isEmpty())
-                continue;
+    if (options & LayerTreeAsTextOptions::IncludeRepaintRects) {
+        if (auto it = repaintRectMap().find(this); it != repaintRectMap().end() && !it->value.isEmpty() && client().shouldDumpPropertyForLayer(this, "repaintRects"_s, options)) {
+            ts << indent << "(repaint rects\n"_s;
+            for (auto& rect : it->value) {
+                if (rect.isEmpty())
+                    continue;
 
-            TextStream::IndentScope indentScope(ts);
-            ts << indent << "(rect "_s;
-            ts << repaintRectMap().get(this)[i].x() << ' ';
-            ts << repaintRectMap().get(this)[i].y() << ' ';
-            ts << repaintRectMap().get(this)[i].width() << ' ';
-            ts << repaintRectMap().get(this)[i].height();
-            ts << ")\n"_s;
+                TextStream::IndentScope indentScope(ts);
+                ts << indent << "(rect "_s;
+                ts << rect.x() << ' ';
+                ts << rect.y() << ' ';
+                ts << rect.width() << ' ';
+                ts << rect.height();
+                ts << ")\n"_s;
+            }
+            ts << indent << ")\n"_s;
         }
-        ts << indent << ")\n"_s;
     }
 
     if (options & LayerTreeAsTextOptions::IncludeEventRegion && !m_eventRegion.isEmpty()) {
@@ -1164,14 +1158,6 @@ String GraphicsLayer::layerTreeAsText(OptionSet<LayerTreeAsTextOptions> options,
     return ts.release();
 }
 
-#if PLATFORM(COCOA)
-RetainPtr<CALayer> GraphicsLayer::protectedPlatformLayer() const
-{
-    // FIXME: CALayer.h is included but static analysis is still warning.
-    SUPPRESS_FORWARD_DECL_ARG return platformLayer();
-}
-#endif
-
 } // namespace WebCore
 
 #if ENABLE(TREE_DEBUGGING)
@@ -1181,14 +1167,14 @@ void showGraphicsLayerTree(const WebCore::GraphicsLayer* layer)
         return;
 
     String output = layer->layerTreeAsText(WebCore::AllLayerTreeAsTextOptions);
-    WTFLogAlways("%s\n", output.utf8().data());
+    SAFE_WTFLOGALWAYS("%s\n", output.utf8());
 
     // The tree is too large to print to the os log so save the tree output
     // to a file in case we don't have easy access to stderr.
     auto [tempFilePath, fileHandle] = FileSystem::openTemporaryFile("GraphicsLayerTree"_s);
     if (fileHandle) {
         fileHandle.write(byteCast<uint8_t>(output.utf8().span()));
-        WTFLogAlways("Saved GraphicsLayer Tree to %s", tempFilePath.utf8().data());
+        SAFE_WTFLOGALWAYS("Saved GraphicsLayer Tree to %s", tempFilePath.utf8());
     } else
         WTFLogAlways("Failed to open temporary file for saving the GraphicsLayer Tree.");
 }

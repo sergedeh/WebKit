@@ -37,15 +37,15 @@ class HTMLMaybeFormAssociatedCustomElement final : public HTMLElement {
 public:
     static Ref<HTMLMaybeFormAssociatedCustomElement> create(const QualifiedName& tagName, Document&);
 
-    bool isMaybeFormAssociatedCustomElement() const final { return true; }
-    bool isFormListedElement() const final;
-    bool isValidatedFormListedElement() const final;
-    bool isFormAssociatedCustomElement() const;
+    bool LEGACY_NODELETE isMaybeFormAssociatedCustomElement() const final { return true; }
+    bool LEGACY_NODELETE isFormListedElement() const final;
+    bool LEGACY_NODELETE isValidatedFormListedElement() const final;
+    bool LEGACY_NODELETE isFormAssociatedCustomElement() const;
 
-    FormAssociatedElement* asFormAssociatedElement() final;
-    FormListedElement* asFormListedElement() final;
-    ValidatedFormListedElement* asValidatedFormListedElement() final;
-    FormAssociatedCustomElement* formAssociatedCustomElementForElementInternals() const;
+    FormAssociatedElement* LEGACY_NODELETE asFormAssociatedElement() final;
+    FormListedElement* LEGACY_NODELETE asFormListedElement() final;
+    ValidatedFormListedElement* LEGACY_NODELETE asValidatedFormListedElement() final;
+    FormAssociatedCustomElement* LEGACY_NODELETE formAssociatedCustomElementForElementInternals() const;
 
     bool matchesValidPseudoClass() const final;
     bool matchesInvalidPseudoClass() const final;
@@ -66,10 +66,10 @@ private:
     HTMLMaybeFormAssociatedCustomElement(const QualifiedName& tagName, Document&);
     virtual ~HTMLMaybeFormAssociatedCustomElement();
 
-    InsertedIntoAncestorResult insertedIntoAncestor(InsertionType, ContainerNode&) final;
-    void didFinishInsertingNode() final;
+    NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode&) final;
+    void postConnectionSteps() final;
     void didMoveToNewDocument(Document&, Document&) final;
-    void removedFromAncestor(RemovalType, ContainerNode&) final;
+    void removingSteps(RemovalType, ContainerNode&) final;
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) final;
     void finishParsingChildren() final;
 };

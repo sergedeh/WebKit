@@ -7,10 +7,6 @@
 //    Implements wrapper classes for Metal's MTLTexture and MTLBuffer.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #include "libANGLE/renderer/metal/mtl_resources.h"
 
 #include <TargetConditionals.h>
@@ -18,6 +14,7 @@
 #include <algorithm>
 
 #include "common/debug.h"
+#include "common/span.h"
 #include "libANGLE/renderer/metal/ContextMtl.h"
 #include "libANGLE/renderer/metal/DisplayMtl.h"
 #include "libANGLE/renderer/metal/mtl_command_buffer.h"
@@ -662,11 +659,11 @@ void Texture::replaceRegion(ContextMtl *context,
 
 void Texture::getBytes(ContextMtl *context,
                        size_t bytesPerRow,
-                       size_t bytesPer2DInage,
+                       size_t bytesPer2DImage,
                        const MTLRegion &region,
                        const MipmapNativeLevel &mipmapLevel,
                        uint32_t slice,
-                       uint8_t *dataOut)
+                       angle::Span<uint8_t> dataOut)
 {
     ASSERT(isCPUAccessible());
 
@@ -682,9 +679,17 @@ void Texture::getBytes(ContextMtl *context,
 
     cmdQueue.ensureResourceReadyForCPU(this);
 
-    [get() getBytes:dataOut
+    if (region.size.depth > 1)
+    {
+        RELEASE_ASSERT(dataOut.size() == bytesPer2DImage * region.size.depth);
+    }
+    else
+    {
+        RELEASE_ASSERT(dataOut.size() == bytesPerRow * region.size.height);
+    }
+    [get() getBytes:dataOut.data()
           bytesPerRow:bytesPerRow
-        bytesPerImage:bytesPer2DInage
+        bytesPerImage:bytesPer2DImage
            fromRegion:region
           mipmapLevel:mipmapLevel.get()
                 slice:slice];
@@ -1097,35 +1102,34 @@ MTLStorageMode Buffer::getStorageModeForUsage(ContextMtl *contextMtl, Usage usag
 #endif
 }
 
-angle::Result Buffer::MakeBuffer(ContextMtl *context,
-                                 size_t size,
-                                 const uint8_t *data,
-                                 BufferRef *bufferOut)
+angle::Result Buffer::MakeBuffer(ContextMtl *context, size_t size, BufferRef *bufferOut)
 {
     auto storageMode = getStorageModeForUsage(context, Usage::DynamicDraw);
-    return MakeBufferWithStorageMode(context, storageMode, size, data, bufferOut);
+    return MakeBufferWithStorageMode(context, storageMode, size, bufferOut);
 }
 
 angle::Result Buffer::MakeBufferWithStorageMode(ContextMtl *context,
                                                 MTLStorageMode storageMode,
                                                 size_t size,
-                                                const uint8_t *data,
                                                 BufferRef *bufferOut)
 {
-    bufferOut->reset(new Buffer(context, storageMode, size, data));
-    ANGLE_CHECK_GL_ALLOC(context, *bufferOut && (*bufferOut)->get());
+    // Allocate into a temporary BufferRef first and only populate *bufferOut after verifying that
+    // the underlying id<MTLBuffer> creation succeeded. Otherwise, *bufferOut (e.g.
+    // BufferPool::mBuffer) would be left with a non-null BufferRef wrapping a nil id<MTLBuffer>
+    // when ANGLE_CHECK_GL_ALLOC returns GL_OUT_OF_MEMORY, breaking callers that assume a non-null
+    // BufferRef holds a valid allocated buffer.
+    BufferRef newBuffer(new Buffer(context, storageMode, size));
+    ANGLE_CHECK_GL_ALLOC(context, newBuffer && newBuffer->get());
+    *bufferOut = std::move(newBuffer);
     return angle::Result::Continue;
 }
 
-Buffer::Buffer(ContextMtl *context, MTLStorageMode storageMode, size_t size, const uint8_t *data)
+Buffer::Buffer(ContextMtl *context, MTLStorageMode storageMode, size_t size)
 {
-    (void)reset(context, storageMode, size, data);
+    (void)reset(context, storageMode, size);
 }
 
-angle::Result Buffer::reset(ContextMtl *context,
-                            MTLStorageMode storageMode,
-                            size_t size,
-                            const uint8_t *data)
+angle::Result Buffer::reset(ContextMtl *context, MTLStorageMode storageMode, size_t size)
 {
     auto options = resourceOptionsForStorageMode(storageMode);
     set([&]() -> angle::ObjCPtr<id<MTLBuffer>> {
@@ -1133,10 +1137,6 @@ angle::Result Buffer::reset(ContextMtl *context,
         if (size > [metalDevice maxBufferLength])
         {
             return nullptr;
-        }
-        if (data)
-        {
-            return metalDevice.newBufferWithBytes(data, size, options);
         }
         return metalDevice.newBufferWithLength(size, options);
     }());
@@ -1151,19 +1151,10 @@ void Buffer::syncContent(ContextMtl *context, mtl::BlitCommandEncoder *blitEncod
     InvokeCPUMemSync(context, blitEncoder, this);
 }
 
-const uint8_t *Buffer::mapReadOnly(ContextMtl *context)
-{
-    return mapWithOpt(context, true, false);
-}
-
-uint8_t *Buffer::map(ContextMtl *context, size_t offset)
-{
-    ASSERT(offset < size());
-    uint8_t *result = mapWithOpt(context, false, false);
-    return result != nullptr ? result + offset : nullptr;
-}
-
-uint8_t *Buffer::mapWithOpt(ContextMtl *context, bool readonly, bool noSync)
+angle::Span<uint8_t> Buffer::mapWithOpt(ContextMtl *context,
+                                        bool readonly,
+                                        bool noSync,
+                                        size_t offset)
 {
     mMapReadOnly = readonly;
 
@@ -1182,7 +1173,9 @@ uint8_t *Buffer::mapWithOpt(ContextMtl *context, bool readonly, bool noSync)
         resetCPUReadMemSyncPending();
     }
 
-    return reinterpret_cast<uint8_t *>([get() contents]);
+    ANGLE_UNSAFE_BUFFERS(
+        angle::Span<uint8_t> data(reinterpret_cast<uint8_t *>([get() contents]), size()));
+    return data.subspan(offset);
 }
 
 void Buffer::unmap(ContextMtl *context)

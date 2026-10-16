@@ -64,7 +64,7 @@ private:
     WGPUDevice backing() const { return m_backing.get(); }
     bool isDeviceImpl() const final { return true; }
 
-    Ref<Queue> queue() final;
+    Ref<Queue> LEGACY_NODELETE queue() final;
 
     void destroy() final;
 
@@ -73,7 +73,7 @@ private:
     RefPtr<Texture> createTexture(const TextureDescriptor&) final;
     RefPtr<Sampler> createSampler(const SamplerDescriptor&) final;
     RefPtr<ExternalTexture> importExternalTexture(const ExternalTextureDescriptor&) final;
-    void updateExternalTexture(const WebCore::WebGPU::ExternalTexture&, const WebCore::MediaPlayerIdentifier&) final;
+    void LEGACY_NODELETE updateExternalTexture(const WebCore::WebGPU::ExternalTexture&, const WebCore::MediaPlayerIdentifier&) final;
 
     RefPtr<BindGroupLayout> createBindGroupLayout(const BindGroupLayoutDescriptor&) final;
     RefPtr<PipelineLayout> createPipelineLayout(const PipelineLayoutDescriptor&) final;
@@ -84,6 +84,8 @@ private:
     RefPtr<RenderPipeline> createRenderPipeline(const RenderPipelineDescriptor&) final;
     void createComputePipelineAsync(const ComputePipelineDescriptor&, CompletionHandler<void(RefPtr<ComputePipeline>&&, String&&)>&&) final;
     void createRenderPipelineAsync(const RenderPipelineDescriptor&, CompletionHandler<void(RefPtr<RenderPipeline>&&, String&&)>&&) final;
+    void createComputePipelineWithPipelineLayoutFromPipelineAsync(const ComputePipelineDescriptor&, const ComputePipeline&, CompletionHandler<void(RefPtr<ComputePipeline>&&)>&&) final;
+    void createRenderPipelineWithPipelineLayoutFromPipelineAsync(const RenderPipelineDescriptor&, const RenderPipeline&, CompletionHandler<void(RefPtr<RenderPipeline>&&)>&&) final;
 
     RefPtr<CommandEncoder> createCommandEncoder(const std::optional<CommandEncoderDescriptor>&) final;
     RefPtr<RenderBundleEncoder> createRenderBundleEncoder(const RenderBundleEncoderDescriptor&) final;
@@ -98,11 +100,11 @@ private:
     void setLabelInternal(const String&) final;
     void pauseAllErrorReporting(bool pause) final;
 
-    [[noreturn]] Ref<CommandEncoder> invalidCommandEncoder() final;
-    [[noreturn]] Ref<CommandBuffer> invalidCommandBuffer() final;
-    [[noreturn]] Ref<RenderPassEncoder> invalidRenderPassEncoder() final;
-    [[noreturn]] Ref<ComputePassEncoder> invalidComputePassEncoder() final;
-    [[noreturn]] Ref<BindGroupLayout> emptyBindGroupLayout() const final;
+    [[noreturn]] Ref<CommandEncoder> LEGACY_NODELETE invalidCommandEncoder() final;
+    [[noreturn]] Ref<CommandBuffer> LEGACY_NODELETE invalidCommandBuffer() final;
+    [[noreturn]] Ref<RenderPassEncoder> LEGACY_NODELETE invalidRenderPassEncoder() final;
+    [[noreturn]] Ref<ComputePassEncoder> LEGACY_NODELETE invalidComputePassEncoder() final;
+    [[noreturn]] Ref<BindGroupLayout> LEGACY_NODELETE emptyBindGroupLayout() const final;
 
     WebGPUPtr<WGPUDevice> m_backing;
     const Ref<ConvertToBackingContext> m_convertToBackingContext;

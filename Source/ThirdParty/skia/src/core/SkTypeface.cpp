@@ -13,38 +13,38 @@
 #include "include/core/SkFontTypes.h"
 #include "include/core/SkScalar.h"
 #include "include/core/SkStream.h"
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkMalloc.h"
-#include "include/private/base/SkOnce.h"
-#include "include/private/base/SkTemplates.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkMalloc.h"
+#include "include/private/SkOnce.h"
+#include "include/private/SkTemplates.h"
 #include "include/utils/SkCustomTypeface.h"
-#include "src/base/SkBitmaskEnum.h"
-#include "src/base/SkEndian.h"
-#include "src/base/SkNoDestructor.h"
-#include "src/base/SkUTF.h"
 #include "src/core/SkAdvancedTypefaceMetrics.h"
+#include "src/core/SkBitmaskEnum.h"
 #include "src/core/SkDescriptor.h"
+#include "src/core/SkEndian.h"
 #include "src/core/SkFontDescriptor.h"
 #include "src/core/SkFontPriv.h"
+#include "src/core/SkNoDestructor.h"
 #include "src/core/SkScalerContext.h"
 #include "src/core/SkTypefaceCache.h"
+#include "src/core/SkUTF.h"
 #include "src/sfnt/SkOTTable_OS_2.h"
 
-#ifdef SK_TYPEFACE_FACTORY_FREETYPE
+#if defined(SK_TYPEFACE_FACTORY_FREETYPE)
 #include "src/ports/SkTypeface_FreeType.h"
 #endif
 
-#ifdef SK_TYPEFACE_FACTORY_CORETEXT
+#if defined(SK_TYPEFACE_FACTORY_CORETEXT)
 #include "src/ports/SkTypeface_mac_ct.h"
 #endif
 
-#ifdef SK_TYPEFACE_FACTORY_DIRECTWRITE
+#if defined(SK_TYPEFACE_FACTORY_DIRECTWRITE)
 #include "src/ports/SkTypeface_win_dw.h"
 #endif
 
-// TODO(skbug.com/40045343): This needs to be set by Bazel rules.
-#ifdef SK_TYPEFACE_FACTORY_FONTATIONS
-#include "src/ports/SkTypeface_fontations_priv.h"
+#if defined(SK_TYPEFACE_FACTORY_FONTATIONS)
+#include "include/ports/SkTypeface_fontations.h"
+#include "src/ports/SkTypeface_fontations_factory.h"
 #endif
 
 #include <algorithm>
@@ -178,7 +178,7 @@ namespace {
             { SkTypeface_FreeType::FactoryId, SkTypeface_FreeType::MakeFromStream },
 #endif
 #ifdef SK_TYPEFACE_FACTORY_FONTATIONS
-            { SkTypeface_Fontations::FactoryId, SkTypeface_Fontations::MakeFromStream },
+            { SkTypefaces::Fontations::FactoryId, SkTypeface_Make_Fontations },
 #endif
         }};
         return decoders.get();
@@ -198,7 +198,7 @@ void SkTypeface::Register(
     decoders()->push_back(DecoderProc{id, make});
 }
 
-void SkTypeface::serialize(SkWStream* wstream, SerializeBehavior behavior) const {
+bool SkTypeface::serialize(SkWStream* wstream, SerializeBehavior behavior) const {
     bool isLocalData = false;
     SkFontDescriptor desc;
     this->onGetFontDescriptor(&desc, &isLocalData);
@@ -229,18 +229,19 @@ void SkTypeface::serialize(SkWStream* wstream, SerializeBehavior behavior) const
             }
         }
     }
-    desc.serialize(wstream);
+    return desc.serialize(wstream);
 }
 
 sk_sp<SkData> SkTypeface::serialize(SerializeBehavior behavior) const {
     SkDynamicMemoryWStream stream;
-    this->serialize(&stream, behavior);
-    return stream.detachAsData();
+    return this->serialize(&stream, behavior) ? stream.detachAsData() : nullptr;
 }
 
-sk_sp<SkTypeface> SkTypeface::MakeDeserialize(SkStream* stream, sk_sp<SkFontMgr> lastResortMgr) {
+sk_sp<SkTypeface> SkTypeface::MakeDeserialize(SkStream* stream,
+                                              sk_sp<SkFontMgr> lastResortMgr,
+                                              SkTypefaceStreamSanitizerProc sanitizer) {
     SkFontDescriptor desc;
-    if (!SkFontDescriptor::Deserialize(stream, &desc)) {
+    if (!SkFontDescriptor::Deserialize(stream, &desc, sanitizer)) {
         return nullptr;
     }
 
@@ -502,6 +503,11 @@ bool SkTypeface::isFixedPitch() const {
 bool SkTypeface::onGetFixedPitch() const {
     return fIsFixedPitch;
 }
+
+bool SkTypeface::isSyntheticBold() const { return this->onIsSyntheticBold(); }
+bool SkTypeface::isSyntheticOblique() const { return this->onIsSyntheticOblique(); }
+bool SkTypeface::onIsSyntheticBold() const { return false; }
+bool SkTypeface::onIsSyntheticOblique() const { return false; }
 
 void SkTypeface::getGlyphToUnicodeMap(SkSpan<SkUnichar> dst) const {
     sk_bzero(dst.data(), dst.size_bytes());

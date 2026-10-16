@@ -58,7 +58,7 @@ public:
     explicit WebLoaderStrategy(WebProcess&);
     ~WebLoaderStrategy() final;
 
-    void ref() const;
+    void LEGACY_NODELETE ref() const;
     void deref() const;
     
     void loadResource(WebCore::LocalFrame&, WebCore::CachedResource&, WebCore::ResourceRequest&&, const WebCore::ResourceLoaderOptions&, CompletionHandler<void(RefPtr<WebCore::SubresourceLoader>&&)>&&) final;
@@ -75,10 +75,6 @@ public:
     void suspendPendingRequests() final;
     void resumePendingRequests() final;
 
-    bool usePingLoad() const final { return false; }
-    void startPingLoad(WebCore::LocalFrame&, WebCore::ResourceRequest&, const WebCore::HTTPHeaderMap& originalRequestHeaders, const WebCore::FetchOptions&, WebCore::ContentSecurityPolicyImposition, PingLoadCompletionHandler&&) final;
-    void didFinishPingLoad(WebCore::ResourceLoaderIdentifier pingLoadIdentifier, WebCore::ResourceError&&, WebCore::ResourceResponse&&);
-
     void preconnectTo(WebCore::ResourceRequest&&, WebPage&, WebFrame&, WebCore::StoredCredentialsPolicy, ShouldPreconnectAsFirstParty, PreconnectCompletionHandler&& = nullptr);
     void preconnectTo(WebCore::FrameLoader&, WebCore::ResourceRequest&&, WebCore::StoredCredentialsPolicy, ShouldPreconnectAsFirstParty, PreconnectCompletionHandler&&) final;
     void didFinishPreconnection(WebCore::ResourceLoaderIdentifier preconnectionIdentifier, WebCore::ResourceError&&);
@@ -86,7 +82,7 @@ public:
     void setCaptureExtraNetworkLoadMetricsEnabled(bool) final;
 
     WebResourceLoader* webResourceLoaderForIdentifier(WebCore::ResourceLoaderIdentifier identifier) const { return m_webResourceLoaders.get(identifier); }
-    void schedulePluginStreamLoad(WebCore::LocalFrame&, WebCore::NetscapePlugInStreamLoaderClient&, WebCore::ResourceRequest&&, CompletionHandler<void(RefPtr<WebCore::NetscapePlugInStreamLoader>&&)>&&);
+    void schedulePluginStreamLoad(WebCore::LocalFrame&, WebCore::NetscapePlugInStreamLoaderClient&, WebCore::ResourceRequest&&, WebCore::FetchOptions::Destination, CompletionHandler<void(RefPtr<WebCore::NetscapePlugInStreamLoader>&&)>&&);
 
     void networkProcessCrashed();
 
@@ -115,6 +111,7 @@ private:
 
     WebCore::ResourceError cancelledError(const WebCore::ResourceRequest&) const final;
     WebCore::ResourceError blockedError(const WebCore::ResourceRequest&) const final;
+    bool isBlockedError(const WebCore::ResourceError&) const final;
     WebCore::ResourceError blockedByContentBlockerError(const WebCore::ResourceRequest&) const final;
     WebCore::ResourceError cannotShowURLError(const WebCore::ResourceRequest&) const final;
     WebCore::ResourceError interruptedForPolicyChangeError(const WebCore::ResourceRequest&) const final;
@@ -126,6 +123,7 @@ private:
     WebCore::ResourceError fileDoesNotExistError(const WebCore::ResourceResponse&) const final;
     WebCore::ResourceError httpsUpgradeRedirectLoopError(const WebCore::ResourceRequest&) const final;
     WebCore::ResourceError httpNavigationWithHTTPSOnlyError(const WebCore::ResourceRequest&) const final;
+    bool isHttpNavigationWithHTTPSOnlyError(const WebCore::ResourceError&) const final;
     WebCore::ResourceError pluginWillHandleLoadError(const WebCore::ResourceResponse&) const final;
 
     struct SyncLoadResult {
@@ -156,12 +154,11 @@ private:
     }
 
     WeakRef<WebProcess> m_webProcess;
-    HashSet<RefPtr<WebCore::ResourceLoader>> m_internallyFailedResourceLoaders;
+    HashSet<Ref<WebCore::ResourceLoader>> m_internallyFailedResourceLoaders;
     RunLoop::Timer m_internallyFailedLoadTimer;
 
     HashMap<WebCore::ResourceLoaderIdentifier, Ref<WebResourceLoader>> m_webResourceLoaders;
     HashMap<WebCore::ResourceLoaderIdentifier, WeakRef<WebURLSchemeTaskProxy>> m_urlSchemeTasks;
-    HashMap<WebCore::ResourceLoaderIdentifier, PingLoadCompletionHandler> m_pingLoadCompletionHandlers;
     HashMap<WebCore::ResourceLoaderIdentifier, PreconnectCompletionHandler> m_preconnectCompletionHandlers;
     Vector<Function<void(bool)>> m_onlineStateChangeListeners;
     std::optional<NetworkResourceLoadIdentifier> m_existingNetworkResourceLoadIdentifierToResume;

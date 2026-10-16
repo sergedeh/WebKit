@@ -31,7 +31,6 @@
 #include <WebCore/BasicCredential.h>
 #include <WebCore/DigitalCredentialsProtocols.h>
 #include <WebCore/DigitalCredentialsRequestData.h>
-#include <WebCore/JSDOMPromiseDeferred.h>
 #include <WebCore/JSDOMPromiseDeferredForward.h>
 #include <WebCore/UnvalidatedDigitalCredentialRequest.h>
 #include <wtf/RefPtr.h>
@@ -66,10 +65,7 @@ public:
 
     static void discoverFromExternalSource(const Document&, CredentialPromise&&, CredentialRequestOptions&&);
 
-    static bool userAgentAllowsProtocol(const String& protocol)
-    {
-        return protocol == "org-iso-mdoc"_s;
-    }
+    static bool userAgentAllowsProtocol(const Document&, const String& protocol);
 
 private:
     DigitalCredential(JSC::Strong<JSC::JSObject>&&, DigitalCredentialPresentationProtocol);

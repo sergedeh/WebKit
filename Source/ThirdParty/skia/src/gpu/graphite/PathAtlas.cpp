@@ -35,7 +35,7 @@ PathAtlas::PathAtlas(Recorder* recorder, uint32_t requestedWidth, uint32_t reque
 
 PathAtlas::~PathAtlas() = default;
 
-std::pair<const Renderer*, std::optional<PathAtlas::MaskAndOrigin>> PathAtlas::addShape(
+std::pair<const Renderer*, std::optional<CoverageMaskShape>> PathAtlas::addShape(
         const Rect& transformedShapeBounds,
         const Shape& shape,
         const Transform& localToDevice,
@@ -71,12 +71,11 @@ std::pair<const Renderer*, std::optional<PathAtlas::MaskAndOrigin>> PathAtlas::a
     if (!atlasProxy) {
         return std::make_pair(nullptr, std::nullopt);
     }
-
-    std::optional<PathAtlas::MaskAndOrigin> atlasMask =
-            std::make_pair(CoverageMaskShape(shape, std::move(atlasProxy), localToDevice.inverse(),
-                                             maskInfo),
-                           SkIPoint{(int) maskBounds.left(), (int) maskBounds.top()});
-    return std::make_pair(fRecorder->priv().rendererProvider()->coverageMask(), atlasMask);
+    return std::make_pair(fRecorder->priv().rendererProvider()->coverageMask(),
+                          CoverageMaskShape(shape,
+                                            std::move(atlasProxy),
+                                            SkM44::Translate(maskBounds.left(), maskBounds.top()),
+                                            maskInfo));
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////
@@ -86,16 +85,15 @@ PathAtlas::DrawAtlasMgr::DrawAtlasMgr(size_t width, size_t height,
                                       DrawAtlas::UseStorageTextures useStorageTextures,
                                       std::string_view label,
                                       const Caps* caps) {
-    static constexpr SkColorType colorType = kAlpha_8_SkColorType;
+    static constexpr auto kMaskFormat = MaskFormat::kA8;
 
-    fDrawAtlas = DrawAtlas::Make(colorType,
-                                 SkColorTypeBytesPerPixel(colorType),
+    fDrawAtlas = DrawAtlas::Make(kMaskFormat,
                                  width, height,
                                  plotWidth, plotHeight,
                                  /*generationCounter=*/this,
-                                 caps->allowMultipleAtlasTextures() ?
-                                         DrawAtlas::AllowMultitexturing::kYes :
-                                         DrawAtlas::AllowMultitexturing::kNo,
+                                 caps->allowMultipleAtlasTextures()
+                                         ? DrawAtlas::AllowMultitexturing::kYes
+                                         : DrawAtlas::AllowMultitexturing::kNo,
                                  useStorageTextures,
                                  /*evictor=*/this,
                                  label);
@@ -117,7 +115,7 @@ sk_sp<TextureProxy> PathAtlas::DrawAtlasMgr::findOrCreateEntry(Recorder* recorde
     // TODO: pull this out so we don't have to recalculate it for each atlas?
     skgpu::UniqueKey maskKey = GeneratePathMaskKey(shape, localToDevice, strokeRec,
                                                    maskOrigin, maskSize);
-    AtlasLocator* cachedLocator = fShapeCache.find(maskKey);
+    DrawAtlas::AtlasLocator* cachedLocator = fShapeCache.find(maskKey);
     if (cachedLocator) {
         SkIPoint topLeft = cachedLocator->topLeft();
         *outPos = skvx::half2(topLeft.x() + kEntryPadding, topLeft.y() + kEntryPadding);
@@ -126,7 +124,7 @@ sk_sp<TextureProxy> PathAtlas::DrawAtlasMgr::findOrCreateEntry(Recorder* recorde
         return fDrawAtlas->getProxies()[cachedLocator->pageIndex()];
     }
 
-    AtlasLocator locator;
+    DrawAtlas::AtlasLocator locator;
     sk_sp<TextureProxy> proxy = this->addToAtlas(recorder, shape, localToDevice, strokeRec,
                                                  maskSize, transformedMaskOffset, outPos, &locator);
     if (!proxy) {
@@ -151,7 +149,7 @@ sk_sp<TextureProxy> PathAtlas::DrawAtlasMgr::addToAtlas(Recorder* recorder,
                                                         skvx::half2 maskSize,
                                                         SkIVector transformedMaskOffset,
                                                         skvx::half2* outPos,
-                                                        AtlasLocator* locator) {
+                                                        DrawAtlas::AtlasLocator* locator) {
     // Render mask.
     SkIRect iShapeBounds = SkIRect::MakeXYWH(0, 0, maskSize.x(), maskSize.y());
     // Outset to take padding into account
@@ -192,7 +190,7 @@ bool PathAtlas::DrawAtlasMgr::recordUploads(DrawContext* dc, Recorder* recorder)
     return fDrawAtlas->recordUploads(dc, recorder);
 }
 
-void PathAtlas::DrawAtlasMgr::evict(PlotLocator plotLocator) {
+void PathAtlas::DrawAtlasMgr::evict(DrawAtlas::PlotLocator plotLocator) {
     // Remove all entries for this Plot from the ShapeCache
     uint32_t index = fDrawAtlas->getListIndex(plotLocator);
     ShapeKeyList::Iter iter;

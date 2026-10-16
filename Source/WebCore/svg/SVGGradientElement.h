@@ -30,6 +30,8 @@
 
 namespace WebCore {
 
+struct GradientAttributes;
+
 enum SVGSpreadMethodType {
     SVGSpreadMethodUnknown = 0,
     SVGSpreadMethodPad,
@@ -82,19 +84,20 @@ public:
     };
 
     GradientColorStops buildStops();
+    void collectCommonGradientAttributes(GradientAttributes&);
 
     using PropertyRegistry = SVGPropertyOwnerRegistry<SVGGradientElement, SVGElement, SVGURIReference>;
 
     SVGSpreadMethodType spreadMethod() const { return m_spreadMethod->currentValue<SVGSpreadMethodType>(); }
     SVGUnitTypes::SVGUnitType gradientUnits() const { return m_gradientUnits->currentValue<SVGUnitTypes::SVGUnitType>(); }
-    const SVGTransformList& gradientTransform() const { return m_gradientTransform->currentValue(); }
+    const SVGTransformList& gradientTransform() const LIFETIME_BOUND { return m_gradientTransform->currentValue(); }
 
     SVGAnimatedEnumeration& spreadMethodAnimated() { return m_spreadMethod; }
     SVGAnimatedEnumeration& gradientUnitsAnimated() { return m_gradientUnits; }
     SVGAnimatedTransformList& gradientTransformAnimated() { return m_gradientTransform; }
 
 protected:
-    SVGGradientElement(const QualifiedName&, Document&, UniqueRef<SVGPropertyRegistry>&&);
+    SVGGradientElement(const QualifiedName&, Document&, const SVGPropertyRegistry&);
 
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) override;
     void svgAttributeChanged(const QualifiedName&) override;
@@ -105,9 +108,9 @@ private:
     bool needsPendingResourceHandling() const override { return false; }
     void childrenChanged(const ChildChange&) override;
 
-    Ref<SVGAnimatedEnumeration> m_spreadMethod { SVGAnimatedEnumeration::create(this, SVGSpreadMethodPad) };
-    Ref<SVGAnimatedEnumeration> m_gradientUnits { SVGAnimatedEnumeration::create(this, SVGUnitTypes::SVG_UNIT_TYPE_OBJECTBOUNDINGBOX) };
-    Ref<SVGAnimatedTransformList> m_gradientTransform { SVGAnimatedTransformList::create(this) };
+    const Ref<SVGAnimatedEnumeration> m_spreadMethod { SVGAnimatedEnumeration::create(this, SVGSpreadMethodPad) };
+    const Ref<SVGAnimatedEnumeration> m_gradientUnits { SVGAnimatedEnumeration::create(this, SVGUnitTypes::SVG_UNIT_TYPE_OBJECTBOUNDINGBOX) };
+    const Ref<SVGAnimatedTransformList> m_gradientTransform { SVGAnimatedTransformList::create(this) };
 };
 
 } // namespace WebCore

@@ -26,10 +26,11 @@
 #include "config.h"
 #include "TestUtilities.h"
 
-#if ENABLE(WEBASSEMBLY)
+#if ENABLE(WEBASSEMBLY_DEBUGGER)
 
 #include <wtf/DataLog.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/text/StringConcatenateNumbers.h>
 
 using namespace JSC;
 using namespace JSC::Wasm;
@@ -148,8 +149,8 @@ void testAllBinaryOps()
 
 #undef TEST_BINARY_OP
 
-    TEST_ASSERT(opsTested == TOTAL_BINARY_OPS, makeString("Tested all "_s, String::number(TOTAL_BINARY_OPS), " binary ops"_s).utf8().data());
-    TEST_ASSERT(opsSucceeded == TOTAL_BINARY_OPS, makeString("All "_s, String::number(TOTAL_BINARY_OPS), " binary ops passed strict validation"_s).utf8().data());
+    TEST_ASSERT(opsTested == TOTAL_BINARY_OPS, makeString("Tested all "_s, TOTAL_BINARY_OPS, " binary ops"_s));
+    TEST_ASSERT(opsSucceeded == TOTAL_BINARY_OPS, makeString("All "_s, TOTAL_BINARY_OPS, " binary ops passed strict validation"_s));
 
     dataLogLn("  Successfully tested with strict mapping validation: ", opsSucceeded, " / ", opsTested, " binary ops");
     dataLogLn("All binary ops coverage testing completed");
@@ -157,4 +158,4 @@ void testAllBinaryOps()
 
 } // namespace WasmDebugInfoTest
 
-#endif // ENABLE(WEBASSEMBLY)
+#endif // ENABLE(WEBASSEMBLY_DEBUGGER)

@@ -31,23 +31,23 @@
 #include "include/core/SkSize.h"
 #include "include/core/SkStream.h"
 #include "include/core/SkTypeface.h"
-#include "include/encode/SkPngEncoder.h"
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkMalloc.h"
-#include "include/private/base/SkTo.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkMalloc.h"
+#include "include/private/SkTo.h"
 #include "include/utils/SkShadowUtils.h"
-#include "src/base/SkAutoMalloc.h"
-#include "src/base/SkTLazy.h"
+#include "src/core/SkAutoMalloc.h"
 #include "src/core/SkCanvasPriv.h"
 #include "src/core/SkFontPriv.h"
 #include "src/core/SkMaskFilterBase.h"
 #include "src/core/SkPaintDefaults.h"
 #include "src/core/SkPathEffectBase.h"
 #include "src/core/SkRectPriv.h"
+#include "src/core/SkTLazy.h"
 #include "src/core/SkTextBlobPriv.h"
 #include "src/core/SkWriteBuffer.h"
 #include "src/image/SkImage_Base.h"
 #include "src/utils/SkJSONWriter.h"
+#include "tools/ProcsUtils.h"
 #include "tools/UrlDataManager.h"
 #include "tools/debugger/DebugLayerManager.h"
 #include "tools/debugger/JsonWriteBuffer.h"
@@ -67,7 +67,6 @@ class GrDirectContext;
 #define DEBUGCANVAS_ATTRIBUTE_COMMAND "command"
 #define DEBUGCANVAS_ATTRIBUTE_VISIBLE "visible"
 #define DEBUGCANVAS_ATTRIBUTE_MATRIX "matrix"
-#define DEBUGCANVAS_ATTRIBUTE_DRAWDEPTHTRANS "drawDepthTranslation"
 #define DEBUGCANVAS_ATTRIBUTE_COORDS "coords"
 #define DEBUGCANVAS_ATTRIBUTE_EDGING "edging"
 #define DEBUGCANVAS_ATTRIBUTE_HINTING "hinting"
@@ -81,7 +80,6 @@ class GrDirectContext;
 #define DEBUGCANVAS_ATTRIBUTE_CLUSTERS "clusters"
 #define DEBUGCANVAS_ATTRIBUTE_TEXT "text"
 #define DEBUGCANVAS_ATTRIBUTE_COLOR "color"
-#define DEBUGCANVAS_ATTRIBUTE_ALPHA "alpha"
 #define DEBUGCANVAS_ATTRIBUTE_BLENDMODE "blendMode"
 #define DEBUGCANVAS_ATTRIBUTE_SAMPLING "sampling"
 #define DEBUGCANVAS_ATTRIBUTE_STYLE "style"
@@ -94,20 +92,14 @@ class GrDirectContext;
 #define DEBUGCANVAS_ATTRIBUTE_FAKEBOLDTEXT "fakeBoldText"
 #define DEBUGCANVAS_ATTRIBUTE_LINEARTEXT "linearText"
 #define DEBUGCANVAS_ATTRIBUTE_SUBPIXELTEXT "subpixelText"
-#define DEBUGCANVAS_ATTRIBUTE_DEVKERNTEXT "devKernText"
-#define DEBUGCANVAS_ATTRIBUTE_LCDRENDERTEXT "lcdRenderText"
 #define DEBUGCANVAS_ATTRIBUTE_EMBEDDEDBITMAPTEXT "embeddedBitmapText"
 #define DEBUGCANVAS_ATTRIBUTE_AUTOHINTING "forceAutoHinting"
 #define DEBUGCANVAS_ATTRIBUTE_REGION "region"
 #define DEBUGCANVAS_ATTRIBUTE_REGIONOP "op"
-#define DEBUGCANVAS_ATTRIBUTE_EDGESTYLE "edgeStyle"
-#define DEBUGCANVAS_ATTRIBUTE_DEVICEREGION "deviceRegion"
 #define DEBUGCANVAS_ATTRIBUTE_BLUR "blur"
 #define DEBUGCANVAS_ATTRIBUTE_SIGMA "sigma"
-#define DEBUGCANVAS_ATTRIBUTE_QUALITY "quality"
 #define DEBUGCANVAS_ATTRIBUTE_TEXTSIZE "textSize"
 #define DEBUGCANVAS_ATTRIBUTE_TEXTSCALEX "textScaleX"
-#define DEBUGCANVAS_ATTRIBUTE_TEXTSKEWX "textSkewX"
 #define DEBUGCANVAS_ATTRIBUTE_DASHING "dashing"
 #define DEBUGCANVAS_ATTRIBUTE_INTERVALS "intervals"
 #define DEBUGCANVAS_ATTRIBUTE_PHASE "phase"
@@ -119,18 +111,14 @@ class GrDirectContext;
 #define DEBUGCANVAS_ATTRIBUTE_SHADER "shader"
 #define DEBUGCANVAS_ATTRIBUTE_PATHEFFECT "pathEffect"
 #define DEBUGCANVAS_ATTRIBUTE_MASKFILTER "maskFilter"
-#define DEBUGCANVAS_ATTRIBUTE_XFERMODE "xfermode"
 #define DEBUGCANVAS_ATTRIBUTE_BACKDROP "backdrop"
 #define DEBUGCANVAS_ATTRIBUTE_COLORFILTER "colorfilter"
 #define DEBUGCANVAS_ATTRIBUTE_IMAGEFILTER "imagefilter"
 #define DEBUGCANVAS_ATTRIBUTE_IMAGE "image"
 #define DEBUGCANVAS_ATTRIBUTE_IMAGE_INDEX "imageIndex"
-#define DEBUGCANVAS_ATTRIBUTE_BITMAP "bitmap"
 #define DEBUGCANVAS_ATTRIBUTE_SRC "src"
 #define DEBUGCANVAS_ATTRIBUTE_DST "dst"
-#define DEBUGCANVAS_ATTRIBUTE_CENTER "center"
 #define DEBUGCANVAS_ATTRIBUTE_STRICT "strict"
-#define DEBUGCANVAS_ATTRIBUTE_DESCRIPTION "description"
 #define DEBUGCANVAS_ATTRIBUTE_X "x"
 #define DEBUGCANVAS_ATTRIBUTE_Y "y"
 #define DEBUGCANVAS_ATTRIBUTE_RUNS "runs"
@@ -169,7 +157,6 @@ class GrDirectContext;
 #define DEBUGCANVAS_VERB_CONIC "conic"
 #define DEBUGCANVAS_VERB_CLOSE "close"
 
-#define DEBUGCANVAS_STYLE_FILL "fill"
 #define DEBUGCANVAS_STYLE_STROKE "stroke"
 #define DEBUGCANVAS_STYLE_STROKEANDFILL "strokeAndFill"
 
@@ -184,9 +171,6 @@ class GrDirectContext;
 #define DEBUGCANVAS_BLURSTYLE_SOLID "solid"
 #define DEBUGCANVAS_BLURSTYLE_OUTER "outer"
 #define DEBUGCANVAS_BLURSTYLE_INNER "inner"
-
-#define DEBUGCANVAS_BLURQUALITY_LOW "low"
-#define DEBUGCANVAS_BLURQUALITY_HIGH "high"
 
 #define DEBUGCANVAS_FILLTYPE_WINDING "winding"
 #define DEBUGCANVAS_FILLTYPE_EVENODD "evenOdd"
@@ -206,7 +190,6 @@ class GrDirectContext;
 #define DEBUGCANVAS_COLORTYPE_BGRA8888 "BGRA8888"
 #define DEBUGCANVAS_COLORTYPE_565 "565"
 #define DEBUGCANVAS_COLORTYPE_GRAY8 "Gray8"
-#define DEBUGCANVAS_COLORTYPE_INDEX8 "Index8"
 #define DEBUGCANVAS_COLORTYPE_ALPHA8 "Alpha8"
 
 #define DEBUGCANVAS_ALPHATYPE_OPAQUE "opaque"
@@ -275,8 +258,7 @@ const char* DrawCommand::GetCommandString(OpType type) {
         case kSetMatrix_OpType: return "SetMatrix";
         case kSetM44_OpType: return "SetM44";
         default:
-            SkDebugf("OpType error 0x%08x\n", type);
-            SkASSERT(0);
+            SkDEBUGFAILF("OpType error 0x%08x\n", (unsigned int)type);
             break;
     }
     SkDEBUGFAIL("DrawType UNUSED\n");
@@ -617,23 +599,19 @@ static void store_bool(SkJSONWriter& writer, const char* key, bool value, bool d
     }
 }
 
-static SkString encode_data(const void*     bytes,
-                            size_t          count,
-                            const char*     contentType,
+static SkString encode_data(sk_sp<const SkData> data,
+                            const char* contentType,
                             UrlDataManager& urlDataManager) {
-    sk_sp<SkData> data(SkData::MakeWithCopy(bytes, count));
-    return urlDataManager.addData(data.get(), contentType);
+    return urlDataManager.addData(data, contentType);
 }
 
 void DrawCommand::flatten(const SkFlattenable* flattenable,
                           SkJSONWriter&        writer,
                           UrlDataManager&      urlDataManager) {
-    SkBinaryWriteBuffer buffer({});  // TODO(kjlubick, bungeman) feed SkSerialProcs through API
+    SkBinaryWriteBuffer buffer(writer.getSerialProcs());
     flattenable->flatten(buffer);
-    void* data = sk_malloc_throw(buffer.bytesWritten());
-    buffer.writeToMemory(data);
-    SkString url =
-            encode_data(data, buffer.bytesWritten(), "application/octet-stream", urlDataManager);
+    sk_sp<SkData> data = buffer.snapshotAsData();
+    SkString url = encode_data(data, "application/octet-stream", urlDataManager);
     writer.appendCString(DEBUGCANVAS_ATTRIBUTE_NAME, flattenable->getTypeName());
     writer.appendString(DEBUGCANVAS_ATTRIBUTE_DATA, url);
 
@@ -641,18 +619,6 @@ void DrawCommand::flatten(const SkFlattenable* flattenable,
     JsonWriteBuffer jsonBuffer(&writer, &urlDataManager);
     flattenable->flatten(jsonBuffer);
     writer.endObject();  // values
-
-    sk_free(data);
-}
-
-void DrawCommand::WritePNG(const SkBitmap& bitmap, SkWStream& out) {
-    SkPixmap pm;
-    SkAssertResult(bitmap.peekPixels(&pm));
-
-    SkPngEncoder::Options options;
-    options.fZLibLevel   = 1;
-    options.fFilterFlags = SkPngEncoder::FilterFlag::kNone;
-    SkPngEncoder::Encode(&out, pm, options);
 }
 
 // flattens an image to a Json stream, also called from shader flatten
@@ -686,21 +652,23 @@ bool DrawCommand::flatten(const SkImage&  image,
     SkBitmap bm;
     bm.installPixels(dstInfo, buffer.get(), rowBytes);
 
-    SkDynamicMemoryWStream out;
-    DrawCommand::WritePNG(bm, out);
-    sk_sp<SkData> encoded = out.detachAsData();
-    if (encoded == nullptr) {
-        SkDebugf("DrawCommand::flatten SkImage: could not encode image as PNG\n");
+    SkSerialProcs procs = writer.getSerialProcs();
+    sk_sp<const SkData> encoded;
+    if (procs.fImageProc) {
+        sk_sp<SkImage> rasterImage = bm.asImage();
+        encoded = procs.fImageProc(rasterImage.get(), procs.fImageCtx);
+    }
+    if (encoded == nullptr || encoded->isEmpty()) {
+        SkDebugf("DrawCommand::flatten SkImage: could not encode image\n");
         writer.endObject();
         return false;
     }
-    auto dataPtr = encoded->data();
-    if (!dataPtr) {
+    if (!encoded->data()) {
       SkDebugf("DrawCommand::flatten SkImage: encoding as PNG produced zero length data\n");
       writer.endObject();
       return false;
     }
-    SkString url = encode_data(encoded->data(), encoded->size(), "image/png", urlDataManager);
+    SkString url = encode_data(encoded, "image/png", urlDataManager);
     writer.appendString(DEBUGCANVAS_ATTRIBUTE_DATA, url);
     writer.endObject();
     return true;
@@ -894,15 +862,14 @@ static void apply_font_typeface(const SkFont&   font,
                                 UrlDataManager& urlDataManager) {
     SkTypeface* typeface = font.getTypeface();
     if (typeface != nullptr) {
-        writer.beginObject(DEBUGCANVAS_ATTRIBUTE_TYPEFACE);
         SkDynamicMemoryWStream buffer;
-        typeface->serialize(&buffer);
-        void* data = sk_malloc_throw(buffer.bytesWritten());
-        buffer.copyTo(data);
-        SkString url = encode_data(
-                data, buffer.bytesWritten(), "application/octet-stream", urlDataManager);
+        if (!typeface->serialize(&buffer)) {
+            return;
+        }
+        writer.beginObject(DEBUGCANVAS_ATTRIBUTE_TYPEFACE);
+        sk_sp<SkData> data = buffer.detachAsData();
+        SkString url = encode_data(data, "application/octet-stream", urlDataManager);
         writer.appendString(DEBUGCANVAS_ATTRIBUTE_DATA, url);
-        sk_free(data);
         writer.endObject();
     }
 }

@@ -78,11 +78,11 @@ void DOMPatchSupport::patchDocument(const String& markup)
 {
     RefPtr<Document> newDocument;
     if (m_document->isHTMLDocument())
-        newDocument = HTMLDocument::create(nullptr, m_document->settings(), URL(), { });
+        newDocument = HTMLDocument::create(nullptr, protect(m_document->settings()), URL(), { });
     else if (m_document->isXHTMLDocument())
-        newDocument = XMLDocument::createXHTML(nullptr, m_document->settings(), URL());
+        newDocument = XMLDocument::createXHTML(nullptr, protect(m_document->settings()), URL());
     else if (m_document->isSVGDocument())
-        newDocument = XMLDocument::create(nullptr, m_document->settings(), URL());
+        newDocument = XMLDocument::create(nullptr, protect(m_document->settings()), URL());
 
     ASSERT(newDocument);
     RefPtr<DocumentParser> parser;
@@ -169,7 +169,7 @@ ExceptionOr<void> DOMPatchSupport::innerPatchNode(Digest& oldDigest, Digest& new
     Ref newNode = *newDigest.node;
 
     if (newNode->nodeType() != oldNode->nodeType() || newNode->nodeName() != oldNode->nodeName())
-        return m_domEditor.replaceChild(*oldNode->protectedParentNode(), newNode.get(), oldNode);
+        return m_domEditor.replaceChild(*protect(oldNode->parentNode()), newNode.get(), oldNode);
 
     if (oldNode->nodeValue() != newNode->nodeValue()) {
         auto result = m_domEditor.setNodeValue(oldNode, newNode->nodeValue());
@@ -417,7 +417,7 @@ std::unique_ptr<DOMPatchSupport::Digest> DOMPatchSupport::createDigest(Node& nod
     addStringToSHA1(sha1, node.nodeName());
     addStringToSHA1(sha1, node.nodeValue());
 
-    if (node.nodeType() == Node::ELEMENT_NODE) {
+    if (node.nodeType() == NodeType::Element) {
         RefPtr child = node.firstChild();
         while (child) {
             std::unique_ptr<Digest> childInfo = createDigest(*child, unusedNodesMap);
@@ -461,7 +461,7 @@ ExceptionOr<void> DOMPatchSupport::removeChildAndMoveToNew(Digest& oldDigest)
 {
     Ref<Node> oldNode = *oldDigest.node;
     ASSERT(oldNode->parentNode());
-    auto result = m_domEditor.removeChild(*oldNode->protectedParentNode(), oldNode);
+    auto result = m_domEditor.removeChild(*protect(oldNode->parentNode()), oldNode);
     if (result.hasException())
         return result.releaseException();
 
@@ -474,7 +474,7 @@ ExceptionOr<void> DOMPatchSupport::removeChildAndMoveToNew(Digest& oldDigest)
     if (it != m_unusedNodesMap.end()) {
         auto& newDigest = *it->value;
         Ref newNode = *newDigest.node;
-        auto result = m_domEditor.replaceChild(*newNode->protectedParentNode(), oldNode.get(), newNode);
+        auto result = m_domEditor.replaceChild(*protect(newNode->parentNode()), oldNode.get(), newNode);
         if (result.hasException())
             return result.releaseException();
         newDigest.node = oldNode.ptr();
@@ -515,7 +515,7 @@ void DOMPatchSupport::dumpMap(const ResultMap& map, const String& name)
 {
     fprintf(stderr, "\n\n");
     for (size_t i = 0; i < map.size(); ++i)
-        fprintf(stderr, "%s[%lu]: %s (%p) - [%lu]\n", name.utf8().data(), i, map[i].first ? nodeName(map[i].first->m_node).utf8().data() : "", map[i].first, map[i].second);
+        SAFE_FPRINTF(stderr, "%s[%lu]: %s (%p) - [%lu]\n", name.utf8(), i, map[i].first ? nodeName(map[i].first->m_node).utf8() : ""_s, map[i].first, map[i].second);
 }
 
 #endif

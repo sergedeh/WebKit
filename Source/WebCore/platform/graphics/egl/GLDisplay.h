@@ -20,7 +20,9 @@
 #pragma once
 
 #include "FourCC.h"
+#include <atomic>
 #include <optional>
+#include <wtf/Function.h>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -46,7 +48,12 @@ public:
     EGLDisplay eglDisplay() const { return m_display; }
     bool checkVersion(int major, int minor) const;
 
+#if USE(LIBEPOXY)
+    bool isSoftwareRendered() const;
+#endif
+
     void terminate();
+    bool runIfNotTerminated(NOESCAPE const Function<void(EGLDisplay)>&);
 
     EGLImage createImage(EGLContext, EGLenum, EGLClientBuffer, const Vector<EGLAttrib>&) const;
     bool destroyImage(EGLImage) const;
@@ -65,7 +72,7 @@ public:
         bool ANDROID_image_native_buffer { false };
 #endif
     };
-    const Extensions& extensions() const { return m_extensions; }
+    const Extensions& extensions() const LIFETIME_BOUND { return m_extensions; }
 
 #if USE(GBM) || OS(ANDROID)
     struct BufferFormat {
@@ -84,7 +91,8 @@ public:
 private:
     explicit GLDisplay(EGLDisplay);
 
-    EGLDisplay m_display { nullptr };
+    std::atomic<EGLDisplay> m_display { nullptr };
+    Lock m_terminationLock;
     struct {
         int major { 0 };
         int minor { 0 };

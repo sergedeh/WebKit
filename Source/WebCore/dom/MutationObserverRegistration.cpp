@@ -76,7 +76,7 @@ void MutationObserverRegistration::observedSubtreeNodeWillDetach(Node& node)
         return;
 
     node.registerTransientMutationObserver(*this);
-    m_observer->setHasTransientRegistration(node.protectedDocument());
+    m_observer->setHasTransientRegistration(protect(node.document()));
 
     if (m_transientRegistrationNodes.isEmpty()) {
         ASSERT(!m_nodeKeptAlive);
@@ -93,7 +93,7 @@ HashSet<GCReachableRef<Node>> MutationObserverRegistration::takeTransientRegistr
     }
 
     for (auto& node : m_transientRegistrationNodes)
-        node->unregisterTransientMutationObserver(*this);
+        protect(node.get())->unregisterTransientMutationObserver(*this);
 
     auto returnValue = std::exchange(m_transientRegistrationNodes, { });
 
@@ -123,11 +123,12 @@ bool MutationObserverRegistration::shouldReceiveMutationFrom(Node& node, Mutatio
 
 bool MutationObserverRegistration::isReachableFromOpaqueRoots(JSC::AbstractSlotVisitor& visitor) const
 {
-    if (containsWebCoreOpaqueRoot(visitor, m_node.ptr()))
+    // Cannot ref on the GC thread.
+    SUPPRESS_UNCOUNTED_ARG if (containsWebCoreOpaqueRoot(visitor, m_node.ptr()))
         return true;
 
     for (auto& node : m_transientRegistrationNodes) {
-        if (containsWebCoreOpaqueRoot(visitor, node.get()))
+        SUPPRESS_UNCOUNTED_ARG if (containsWebCoreOpaqueRoot(visitor, node.get()))
             return true;
     }
 

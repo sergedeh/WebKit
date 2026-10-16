@@ -26,7 +26,15 @@
 #include "config.h"
 #include "LayerHostingContextManager.h"
 
+#import <QuartzCore/QuartzCore.h>
+#include <WebCore/FloatRect.h>
+#include <WebCore/IntRect.h>
 #include <wtf/MachSendRightAnnotated.h>
+
+#if USE(EXTENSIONKIT)
+#import <BrowserEngineKit/BELayerHierarchy.h>
+#import <BrowserEngineKit/BELayerHierarchyHostingTransactionCoordinator.h>
+#endif
 
 namespace WebKit {
 
@@ -36,20 +44,17 @@ LayerHostingContextManager::LayerHostingContextManager() = default;
 LayerHostingContextManager::LayerHostingContextManager(LayerHostingContextManager&&) = default;
 LayerHostingContextManager& LayerHostingContextManager::operator=(LayerHostingContextManager&&) = default;
 
-LayerHostingContextManager::~LayerHostingContextManager()
-{
-    for (auto& request : std::exchange(m_layerHostingContextRequests, { }))
-        request({ });
-}
+LayerHostingContextManager::~LayerHostingContextManager() = default;
 
-void LayerHostingContextManager::requestHostingContext(LayerHostingContextCallback&& completionHandler)
+auto LayerHostingContextManager::requestHostingContext() -> Ref<HostingContextPromise>
 {
-    if (m_inlineLayerHostingContext) {
-        completionHandler(m_inlineLayerHostingContext->hostingContext());
-        return;
-    }
+    if (m_inlineLayerHostingContext)
+        return HostingContextPromise::createAndResolve(m_inlineLayerHostingContext->hostingContext());
 
-    m_layerHostingContextRequests.append(WTF::move(completionHandler));
+    HostingContextPromise::AutoRejectProducer producer;
+    Ref promise = producer.promise();
+    m_layerHostingContextRequests.append(WTF::move(producer));
+    return promise;
 }
 
 void LayerHostingContextManager::setInitialVideoLayerSize(const WebCore::FloatSize& size)
@@ -77,7 +82,7 @@ std::optional<WebCore::HostingContext> LayerHostingContextManager::createHosting
         auto& size = m_videoLayerSize;
         [layer setFrame:CGRectMake(0, 0, size.width(), size.height())];
         for (auto& request : std::exchange(m_layerHostingContextRequests, { }))
-            request(m_inlineLayerHostingContext->hostingContext());
+            request.resolve(m_inlineLayerHostingContext->hostingContext());
         hadLayer = true;
     } else if (!layer && m_inlineLayerHostingContext) {
         m_inlineLayerHostingContext = nullptr;
@@ -90,6 +95,12 @@ std::optional<WebCore::HostingContext> LayerHostingContextManager::createHosting
     if (!hadLayer)
         return std::nullopt;
     return m_inlineLayerHostingContext ? m_inlineLayerHostingContext->hostingContext() : WebCore::HostingContext { };
+}
+
+void LayerHostingContextManager::setVideoLayerSize(const WebCore::FloatSize& size)
+{
+    m_videoLayerSize = size;
+    setVideoLayerSizeIfPossible();
 }
 
 void LayerHostingContextManager::setVideoLayerSizeFenced(const WebCore::FloatSize& size, WTF::MachSendRightAnnotated&& sendRightAnnotated, NOESCAPE CompletionHandler<void()>&& postCommitAction)
@@ -130,7 +141,7 @@ void LayerHostingContextManager::setVideoLayerSizeIfPossible()
     // We do not want animations here.
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
-    [m_inlineLayerHostingContext->protectedRootLayer() setFrame:CGRectMake(0, 0, m_videoLayerSize.width(), m_videoLayerSize.height())];
+    [protect(m_inlineLayerHostingContext->rootLayer()) setFrame:CGRectMake(0, 0, m_videoLayerSize.width(), m_videoLayerSize.height())];
     [CATransaction commit];
 }
 

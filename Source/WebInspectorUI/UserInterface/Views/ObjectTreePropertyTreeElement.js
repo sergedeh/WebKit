@@ -152,8 +152,9 @@ WI.ObjectTreePropertyTreeElement = class ObjectTreePropertyTreeElement extends W
         // Property name.
         var nameElement = document.createElement("span");
         nameElement.className = "property-name";
-        nameElement.textContent = this.property.name + ": ";
         nameElement.title = this.propertyPathString(this.thisPropertyPath());
+
+        let shouldAddColon = true;
 
         // Property attributes.
         if (this._mode === WI.ObjectTreeView.Mode.Properties) {
@@ -195,8 +196,10 @@ WI.ObjectTreePropertyTreeElement = class ObjectTreePropertyTreeElement extends W
                 valueOrGetterElement = WI.FormattedValue.createElementForRemoteObject(resolvedValue, this.hadError());
 
                 // Special case a function property string.
-                if (resolvedValue.type === "function")
-                    valueOrGetterElement.textContent = this._functionPropertyString();
+                if (resolvedValue.type === "function") {
+                    shouldAddColon = false;
+                    valueOrGetterElement.textContent = this._functionParameterString();
+                }
             }
         } else {
             valueOrGetterElement = document.createElement("span");
@@ -205,6 +208,8 @@ WI.ObjectTreePropertyTreeElement = class ObjectTreePropertyTreeElement extends W
             if (this.property.hasSetter())
                 valueOrGetterElement.appendChild(this.createSetterElement());
         }
+
+        nameElement.textContent = this.property.name + (shouldAddColon ? ": " : "");
 
         valueOrGetterElement.classList.add("value");
         if (this.hadError())
@@ -285,11 +290,6 @@ WI.ObjectTreePropertyTreeElement = class ObjectTreePropertyTreeElement extends W
         return false;
     }
 
-    _functionPropertyString()
-    {
-        return "function" + this._functionParameterString();
-    }
-
     _functionParameterString()
     {
         var resolvedValue = this.resolvedValue();
@@ -298,11 +298,11 @@ WI.ObjectTreePropertyTreeElement = class ObjectTreePropertyTreeElement extends W
         // For Native methods, the toString is poor. We try to provide good function parameter strings.
         if (isFunctionStringNativeCode(resolvedValue.description)) {
             // Native function on a prototype, likely "Foo.prototype.method".
-            if (this._prototypeName) {
-                if (WI.NativePrototypeFunctionParameters[this._prototypeName]) {
-                    var params = WI.NativePrototypeFunctionParameters[this._prototypeName][this._property.name];
-                    return params ? "(" + params + ")" : "()";
-                }
+            let prototypeName = this._prototypeName || this._sanitizedPrototypeString(this._propertyPath.object);
+            if (prototypeName) {
+                let params = WI.NativePrototypeFunctionParameters[prototypeName]?.[this._property.name];
+                if (params)
+                    return "(" + params + ")";
             }
 
             var parentDescription = this._propertyPath.object.description;
@@ -311,26 +311,21 @@ WI.ObjectTreePropertyTreeElement = class ObjectTreePropertyTreeElement extends W
             if (isFunctionStringNativeCode(parentDescription)) {
                 var match = parentDescription.match(/^function\s+([^)]+?)\(/);
                 if (match) {
-                    var name = match[1];
-                    if (WI.NativeConstructorFunctionParameters[name]) {
-                        var params = WI.NativeConstructorFunctionParameters[name][this._property.name];
-                        return params ? "(" + params + ")" : "()";
-                    }
+                    let params = WI.NativeConstructorFunctionParameters[match[1]]?.[this._property.name];
+                    if (params)
+                        return "(" + params + ")";
                 }
             }
 
             // Native DOM constructor or on native objects that are not functions.
-            if (parentDescription.endsWith("Constructor") || ["Math", "JSON", "Reflect", "Console"].includes(parentDescription)) {
-                var name = parentDescription;
-                if (WI.NativeConstructorFunctionParameters[name]) {
-                    var params = WI.NativeConstructorFunctionParameters[name][this._property.name];
-                    return params ? "(" + params + ")" : "()";
-                }
+            if (parentDescription.endsWith("Constructor") || ["Atomics", "Console", "CSS", "Intl", "JSON", "Math", "Reflect", "WebAssembly"].includes(parentDescription)) {
+                let params = WI.NativeConstructorFunctionParameters[parentDescription]?.[this._property.name];
+                if (params)
+                    return "(" + params + ")";
             }
         }
 
-        var match = resolvedValue.functionDescription.match(/^function.*?(\([^)]*?\))/);
-        return match ? match[1] : "()";
+        return resolvedValue.functionDescription.match(/^(?:function)?.*?(\([^)]*?\))\s*(?:\{|=>)?/)?.[1] || "()";
     }
 
     _sanitizedPrototypeString(value)

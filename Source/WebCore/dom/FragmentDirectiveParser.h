@@ -37,19 +37,15 @@ public:
     WEBCORE_EXPORT explicit FragmentDirectiveParser(StringView);
     WEBCORE_EXPORT ~FragmentDirectiveParser();
     
-    const Vector<ParsedTextDirective>& parsedTextDirectives() const { return m_parsedTextDirectives; };
+    const Vector<ParsedTextDirective>& parsedTextDirectives() const LIFETIME_BOUND { return m_parsedTextDirectives; };
     StringView fragmentDirective() const { return m_fragmentDirective; };
-    StringView remainingURLFragment() const { return m_remainingURLFragment; };
-    bool isValid() const { return  m_isValid; };
-    
+
 private:
     FragmentDirectiveParser() = delete;
     void parseFragmentDirective(StringView);
-    
+
     Vector<ParsedTextDirective> m_parsedTextDirectives;
-    StringView m_remainingURLFragment;
     StringView m_fragmentDirective;
-    bool m_isValid { false };
 };
 
 } // namespace WebCore

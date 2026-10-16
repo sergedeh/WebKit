@@ -25,14 +25,21 @@
 
 #include "config.h"
 
+#include "Helpers/Test.h"
+#include <JavaScriptCore/APICast.h>
 #include <JavaScriptCore/InitializeThreading.h>
 #include <JavaScriptCore/JSCJSValue.h>
+#include <JavaScriptCore/JSLock.h>
+#include <JavaScriptCore/JSObject.h>
+#include <JavaScriptCore/JSObjectRef.h>
+#include <JavaScriptCore/JSStringRef.h>
 #include <WebCore/IDBBindingUtilities.h>
 #include <WebCore/IDBValue.h>
 #include <WebCore/ParsedContentRange.h>
-#include <WebCore/ParsedRequestRange.h>
 #include <WebCore/ProcessIdentifier.h>
 #include <WebCore/ThreadSafeDataBuffer.h>
+#include <wtf/RuntimeApplicationChecks.h>
+#include <wtf/Threading.h>
 #include <wtf/text/WTFString.h>
 
 using namespace WebCore;
@@ -56,7 +63,7 @@ static void deserializeJSValue(std::array<uint8_t, T> bytes)
 
 TEST(WebCore, SerializedScriptValueReadRTCCertificate)
 {
-    constexpr auto bytes = std::to_array<uint8_t>({
+    constexpr auto bytes = WTF::toArray<uint8_t>({
         0x0d, 0x00, 0x00, 0x00, 0x2c, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0xe7, 0x1b, 0x86, 0xc8, 0xd0, 0xdb, 0x71, 0x6a, 0xac, 0x80, 0xf4,
@@ -76,7 +83,7 @@ TEST(WebCore, SerializedScriptValueReadRTCCertificate)
 
 TEST(WebCore, SerializedScriptValueArgListMarkedVectorAt)
 {
-    constexpr auto bytes = std::to_array<uint8_t>({
+    constexpr auto bytes = WTF::toArray<uint8_t>({
         0x0f, 0x00, 0x00, 0x00, 0x1e, 0x1f, 0x1e, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -11413,7 +11420,7 @@ TEST(WebCore, SerializedScriptValueArgListMarkedVectorAt)
 
 TEST(WebCore, SerializedScriptValueReadTerminalYarrUnicodeOpSorted)
 {
-    constexpr auto bytes = std::to_array<uint8_t>({
+    constexpr auto bytes = WTF::toArray<uint8_t>({
         0x0f, 0x00, 0x00, 0x00, 0x12, 0xd5, 0x00, 0x00, 0x80, 0xaa, 0x0e, 0xad,
         0x23, 0xfc, 0x17, 0x63, 0x41, 0x08, 0x1c, 0x47, 0xd5, 0x4b, 0xf8, 0x2e,
         0x5b, 0x08, 0x26, 0x26, 0xfd, 0x5d, 0xa9, 0x90, 0xef, 0x1b, 0x0e, 0x7a,
@@ -11442,7 +11449,7 @@ TEST(WebCore, SerializedScriptValueReadTerminalYarrUnicodeOpSorted)
 
 TEST(WebCore, SerializedScriptValueReadTerminalRegExpTag)
 {
-    constexpr auto bytes = std::to_array<uint8_t>({
+    constexpr auto bytes = WTF::toArray<uint8_t>({
         0x0f, 0x00, 0x00, 0x00, 0x12, 0x1b, 0x00, 0x00, 0x00, 0xf0, 0x79, 0x50,
         0x0c, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -11476,12 +11483,75 @@ TEST(WebCore, SerializedScriptValueReadTerminalRegExpTag)
 
 TEST(WebCore, SerializedScriptValueReadTerminalImageDataTag)
 {
-    constexpr auto bytes = std::to_array<uint8_t>({
+    constexpr auto bytes = WTF::toArray<uint8_t>({
         0x00, 0x00, 0x00, 0x00, 0x0e, 0xff, 0xfe, 0xf8, 0xa5, 0xff, 0xff, 0x00,
         0x00, 0x0c, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
     });
     deserializeJSValue(bytes);
+}
+
+// { p: Blob } with an empty URL and type. The Blob reader has to run for the object to survive;
+// it cannot create a Blob in this global object, so p is null.
+TEST(WebCore, SerializedScriptValueReadBlobInObject)
+{
+    constexpr auto bytes = WTF::toArray<uint8_t>({
+        0x10, 0x00, 0x00, 0x00, // Version 16.
+        0x02, // ObjectTag
+        0x01, 0x00, 0x00, 0x80, 'p',
+        0x0f, // BlobTag
+        0x00, 0x00, 0x00, 0x80, // URL
+        0x00, 0x00, 0x00, 0x80, // Type
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Size
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Memory cost
+        0xff, 0xff, 0xff, 0xff // TerminatorTag
+    });
+    WTF::initialize();
+    WTF::initializeMainThread();
+    JSC::initialize();
+    WebCore::Process::identifier();
+    Vector<uint8_t> vector { std::span<const uint8_t>(bytes) };
+    const WebCore::ThreadSafeDataBuffer value = WebCore::ThreadSafeDataBuffer::create(WTF::move(vector));
+    bool isObject = false;
+    bool propertyIsNull = false;
+    WebCore::callOnIDBSerializationThreadAndWait([&](auto& globalObject) {
+        auto jsValue = WebCore::deserializeIDBValueToJSValue(globalObject, value);
+        JSC::JSLockHolder locker(globalObject.vm());
+        isObject = jsValue.isObject();
+        if (!isObject)
+            return;
+        JSContextRef context = toRef(&globalObject);
+        JSObjectRef object = toRef(static_cast<JSC::JSObject*>(jsValue.asCell()));
+        JSStringRef name = JSStringCreateWithUTF8CString("p");
+        propertyIsNull = JSValueIsNull(context, JSObjectGetProperty(context, object, name, nullptr));
+        JSStringRelease(name);
+    });
+    EXPECT_TRUE(isObject);
+    EXPECT_TRUE(propertyIsNull);
+}
+
+// Deserializing is allowed in the WebContent process. The tests above cover the other allowed
+// case, a process that is not a WebKit auxiliary process at all.
+TEST(WebCore, SerializedScriptValueDeserializeInWebProcess)
+{
+    constexpr auto bytes = WTF::toArray<uint8_t>({ 0x00 });
+    auto previousProcessType = processType();
+    setAuxiliaryProcessTypeForTesting(WTF::AuxiliaryProcessType::WebContent);
+    deserializeJSValue(bytes);
+    setAuxiliaryProcessTypeForTesting(previousProcessType);
+}
+
+// Deserializing in any other auxiliary process is a security assertion failure.
+TEST(WebCoreDeathTest, MAYBE_ASSERT_ENABLED_DEATH_TEST(SerializedScriptValueDeserializeInNetworkProcess))
+{
+    // deserializeJSValue() hops to the IndexedDB serialization thread, so the child process has to
+    // be re-executed rather than forked out of this multi-threaded one.
+    ::testing::FLAGS_gtest_death_test_style = "threadsafe";
+    ASSERT_DEATH_IF_SUPPORTED({
+        constexpr auto bytes = WTF::toArray<uint8_t>({ 0x00 });
+        setAuxiliaryProcessTypeForTesting(WTF::AuxiliaryProcessType::Network);
+        deserializeJSValue(bytes); // This should assert.
+    }, "ASSERTION FAILED: !isInAuxiliaryProcess\\(\\) \\|\\| isInWebProcess\\(\\)");
 }
 
 } // namespace TestWebKitAPI

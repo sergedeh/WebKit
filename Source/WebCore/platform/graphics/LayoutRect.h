@@ -34,6 +34,7 @@
 #include <WebCore/FloatRect.h>
 #include <WebCore/IntRect.h>
 #include <WebCore/LayoutPoint.h>
+#include <WebCore/LayoutRange.h>
 #include <wtf/ArgumentCoder.h>
 #include <wtf/Forward.h>
 
@@ -49,7 +50,7 @@ public:
     LayoutRect(const LayoutPoint& location, const LayoutSize& size)
         : m_location(location), m_size(size) { }
     template<typename T1, typename T2, typename U1, typename U2>
-    LayoutRect(T1 x, T2 y, U1 width, U2 height)
+    constexpr LayoutRect(T1 x, T2 y, U1 width, U2 height)
         : m_location(LayoutPoint(x, y)), m_size(LayoutSize(width, height)) { }
     LayoutRect(const LayoutPoint& topLeft, const LayoutPoint& bottomRight)
         : m_location(topLeft), m_size(LayoutSize(bottomRight.x() - topLeft.x(), bottomRight.y() - topLeft.y())) { }
@@ -73,6 +74,8 @@ public:
     LayoutUnit maxY() const { return y() + height(); }
     LayoutUnit width() const { return m_size.width(); }
     LayoutUnit height() const { return m_size.height(); }
+    LayoutRange xRange() const { return { x(), width() }; }
+    LayoutRange yRange() const { return { y(), height() }; }
 
     template<typename T> void setX(T x) { m_location.setX(x); }
     template<typename T> void setY(T y) { m_location.setY(y); }
@@ -95,8 +98,8 @@ public:
         m_location.move(-box.left(), -box.top());
         m_size.expand(box.left() + box.right(), box.top() + box.bottom());
     }
-    void expandToInfiniteY();
-    void expandToInfiniteX();
+    void LEGACY_NODELETE expandToInfiniteY();
+    void LEGACY_NODELETE expandToInfiniteX();
     template<typename T, typename U> void expand(T dw, U dh) { m_size.expand(dw, dh); }
     void contract(const LayoutSize& size) { m_size -= size; }
     void contract(const LayoutBoxExtent& box)
@@ -173,8 +176,10 @@ public:
         return maxX > LayoutUnit::nearlyMin() && maxX < LayoutUnit::nearlyMax() && maxY > LayoutUnit::nearlyMin() && maxY < LayoutUnit::nearlyMax();
     }
     
-    bool intersects(const LayoutRect&) const;
-    WEBCORE_EXPORT bool contains(const LayoutRect&) const;
+    bool LEGACY_NODELETE intersects(const LayoutRect&) const;
+    WEBCORE_EXPORT bool LEGACY_NODELETE contains(const LayoutRect&) const;
+    bool containsX(const LayoutRect& other) const { return x() <= other.x() && other.maxX() <= maxX(); }
+    bool containsY(const LayoutRect& other) const { return y() <= other.y() && other.maxY() <= maxY(); }
 
     // This checks to see if the rect contains x,y in the traditional sense.
     // Equivalent to checking if the rect contains a 1x1 rect below and to the right of (px,py).
@@ -182,10 +187,12 @@ public:
         { return px >= x() && px < maxX() && py >= y() && py < maxY(); }
     bool contains(const LayoutPoint& point) const { return contains(point.x(), point.y()); }
 
-    void intersect(const LayoutRect&);
-    bool edgeInclusiveIntersect(const LayoutRect&);
+    WEBCORE_EXPORT void intersect(const LayoutRect&);
+    WEBCORE_EXPORT bool edgeInclusiveIntersect(const LayoutRect&);
     WEBCORE_EXPORT void unite(const LayoutRect&);
     void uniteEvenIfEmpty(const LayoutRect&);
+    void uniteXEvenIfEmpty(const LayoutRect&);
+    void uniteYEvenIfEmpty(const LayoutRect&);
     void uniteIfNonZero(const LayoutRect&);
     bool checkedUnite(const LayoutRect&);
 
@@ -204,16 +211,22 @@ public:
     template<typename T> void inflateY(T dy) { inflateY(LayoutUnit(dy)); }
     template<typename T> void inflate(T d) { inflateX(d); inflateY(d); }
 
-    WEBCORE_EXPORT void scale(float);
+    WEBCORE_EXPORT void LEGACY_NODELETE scale(float);
     void scale(float xScale, float yScale);
 
     LayoutRect transposedRect() const { return LayoutRect(m_location.transposedPoint(), m_size.transposedSize()); }
     bool isInfinite() const;
 
-    static LayoutRect infiniteRect()
+    static constexpr LayoutRect infiniteRect()
     {
         // Return a rect that is slightly smaller than the true max rect to allow pixelSnapping to round up to the nearest IntRect without overflowing.
         return LayoutRect(LayoutUnit::nearlyMin() / 2, LayoutUnit::nearlyMin() / 2, LayoutUnit::nearlyMax(), LayoutUnit::nearlyMax());
+    }
+
+    static constexpr LayoutRect renderableInfiniteRect()
+    {
+        // Return a infinite-like rect whose values are such that, when converted to float pixel values, they can reasonably represent device pixels.
+        return LayoutRect(LayoutUnit::nearlyMin() / 32, LayoutUnit::nearlyMin() / 32, LayoutUnit::nearlyMax() / 16, LayoutUnit::nearlyMax() / 16);
     }
 
     operator FloatRect() const { return FloatRect(m_location, m_size); }
@@ -271,7 +284,7 @@ inline IntRect snappedIntRect(LayoutPoint location, LayoutSize size)
     return IntRect(roundedIntPoint(location), snappedIntSize(size, location));
 }
 
-WEBCORE_EXPORT IntRect enclosingIntRect(const LayoutRect&);
+WEBCORE_EXPORT IntRect LEGACY_NODELETE enclosingIntRect(const LayoutRect&);
 WEBCORE_EXPORT LayoutRect enclosingLayoutRect(const FloatRect&);
 
 // Device pixel snapping functions.
@@ -301,4 +314,3 @@ FloatRect encloseRectToDevicePixels(const LayoutRect&, float pixelSnappingFactor
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, const LayoutRect&);
 
 } // namespace WebCore
-

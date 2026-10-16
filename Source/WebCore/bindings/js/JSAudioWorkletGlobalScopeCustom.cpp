@@ -29,20 +29,21 @@
 #include "AudioWorkletGlobalScope.h"
 #include "AudioWorkletProcessor.h"
 #include "WebCoreOpaqueRootInlines.h"
+#include <JavaScriptCore/StructureInlines.h>
 
 #if ENABLE(WEB_AUDIO)
 
 namespace WebCore {
 
 template<typename Visitor>
-void JSAudioWorkletGlobalScope::visitAdditionalChildren(Visitor& visitor)
+void JSAudioWorkletGlobalScope::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
-    // This function may get called on the GC thread so we cannot ref the object.
+    // This function may get called on a GC thread so we cannot ref the object.
     SUPPRESS_UNCOUNTED_ARG addWebCoreOpaqueRoot(visitor, static_cast<ScriptExecutionContext&>(wrapped()));
-    SUPPRESS_UNCOUNTED_ARG wrapped().visitProcessors(visitor);
+    SUPPRESS_UNCOUNTED_ARG wrapped().visitProcessorsInGCThread(visitor);
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSAudioWorkletGlobalScope);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSAudioWorkletGlobalScope);
 
 } // namespace WebCore
 

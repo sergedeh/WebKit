@@ -73,7 +73,7 @@ public:
         unsigned m_numberOfNodes;
     };
 
-    State saveCurrentState();
+    State LEGACY_NODELETE saveCurrentState();
     void restore(State&&);
 
 private:

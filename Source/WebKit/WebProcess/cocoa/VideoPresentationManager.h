@@ -80,7 +80,7 @@ public:
     }
     virtual ~VideoPresentationInterfaceContext();
 
-    LayerHostingContext* layerHostingContext() { return m_layerHostingContext.get(); }
+    LayerHostingContext* layerHostingContext() LIFETIME_BOUND { return m_layerHostingContext.get(); }
     void setLayerHostingContext(std::unique_ptr<LayerHostingContext>&&);
 
     enum class AnimationType { None, IntoFullscreen, FromFullscreen };
@@ -110,6 +110,7 @@ private:
     void audioSessionCategoryChanged(WebCore::AudioSessionCategory, WebCore::AudioSessionMode, WebCore::RouteSharingPolicy) final;
     void routingContextUIDChanged(const String&) final;
     void hasBeenInteractedWith() final;
+    void hasObjectViewBoxChanged(bool) final;
 
     // CheckedPtr interface
     uint32_t checkedPtrCount() const final { return CanMakeCheckedPtr::checkedPtrCount(); }
@@ -149,19 +150,21 @@ public:
 
     void invalidate();
 
-    bool hasVideoPlayingInPictureInPicture() const;
+    bool LEGACY_NODELETE hasVideoPlayingInPictureInPicture() const;
 
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
 
     void setupRemoteLayerHosting(WebCore::HTMLVideoElement&);
     void willRemoveLayerForID(WebCore::MediaPlayerClientIdentifier);
 
+    RefPtr<WebCore::HTMLVideoElement> videoElementForContext(WebCore::MediaPlayerClientIdentifier) const;
+
     void swapFullscreenModes(WebCore::HTMLVideoElement&, WebCore::HTMLVideoElement&);
 
     // Interface to WebChromeClient
     bool canEnterVideoFullscreen(WebCore::HTMLVideoElement&, WebCore::HTMLMediaElementEnums::VideoFullscreenMode) const;
     bool supportsVideoFullscreen(WebCore::HTMLMediaElementEnums::VideoFullscreenMode) const;
-    bool supportsVideoFullscreenStandby() const;
+    bool LEGACY_NODELETE supportsVideoFullscreenStandby() const;
     void enterVideoFullscreenForVideoElement(WebCore::HTMLVideoElement&, WebCore::HTMLMediaElementEnums::VideoFullscreenMode, bool standby);
     void setPlayerIdentifierForVideoElement(WebCore::HTMLVideoElement&);
     void exitVideoFullscreenForVideoElement(WebCore::HTMLVideoElement&, WTF::CompletionHandler<void(bool)>&& = [](bool) { });
@@ -197,6 +200,7 @@ protected:
     void setPlayerIdentifier(WebCore::MediaPlayerClientIdentifier, std::optional<WebCore::MediaPlayerIdentifier>);
     void audioSessionCategoryChanged(WebCore::MediaPlayerClientIdentifier, WebCore::AudioSessionCategory, WebCore::AudioSessionMode, WebCore::RouteSharingPolicy);
     void routingContextUIDChanged(WebCore::MediaPlayerClientIdentifier, const String&);
+    void hasObjectViewBoxChanged(WebCore::MediaPlayerClientIdentifier, bool);
 
     // Messages from VideoPresentationManagerProxy
     void requestFullscreenMode(WebCore::MediaPlayerClientIdentifier, WebCore::HTMLMediaElementEnums::VideoFullscreenMode, bool finishedWithMedia);
@@ -223,15 +227,15 @@ protected:
     void requestRouteSharingPolicyAndContextUID(WebCore::MediaPlayerClientIdentifier, CompletionHandler<void(WebCore::RouteSharingPolicy, String)>&&);
     void ensureUpdatedVideoDimensions(WebCore::MediaPlayerClientIdentifier, WebCore::FloatSize existingVideoDimensions);
 
-    void setCurrentVideoFullscreenMode(VideoPresentationInterfaceContext&, WebCore::HTMLMediaElementEnums::VideoFullscreenMode);
+    void LEGACY_NODELETE setCurrentVideoFullscreenMode(VideoPresentationInterfaceContext&, WebCore::HTMLMediaElementEnums::VideoFullscreenMode);
     void setRequiresTextTrackRepresentation(WebCore::MediaPlayerClientIdentifier, bool);
     void setTextTrackRepresentationBounds(WebCore::MediaPlayerClientIdentifier, const WebCore::IntRect&);
 
 #if !RELEASE_LOG_DISABLED
-    const Logger& logger() const;
-    uint64_t logIdentifier() const;
+    const Logger& LEGACY_NODELETE logger() const;
+    uint64_t LEGACY_NODELETE logIdentifier() const;
     ASCIILiteral logClassName() const;
-    WTFLogChannel& logChannel() const;
+    WTFLogChannel& LEGACY_NODELETE logChannel() const;
 #endif
 
     WeakPtr<WebPage> m_page;

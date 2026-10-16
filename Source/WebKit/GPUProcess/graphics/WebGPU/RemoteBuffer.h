@@ -83,9 +83,6 @@ private:
     RemoteBuffer& operator=(RemoteBuffer&&) = delete;
 
     WebCore::WebGPU::Buffer& backing() { return m_backing; }
-    Ref<WebCore::WebGPU::Buffer> protectedBacking();
-
-    Ref<IPC::StreamServerConnection> protectedStreamConnection() const;
 
     void didReceiveStreamMessage(IPC::StreamServerConnection&, IPC::Decoder&) final;
 
@@ -96,16 +93,18 @@ private:
     void unmap();
 
     void destroy();
+    void generateAValidationError();
     void destruct();
 
     void setLabel(String&&);
 
-    Ref<WebCore::WebGPU::Buffer> m_backing;
+    const Ref<WebCore::WebGPU::Buffer> m_backing;
     WeakRef<WebGPU::ObjectHeap> m_objectHeap;
-    Ref<IPC::StreamServerConnection> m_streamConnection;
+    const Ref<IPC::StreamServerConnection> m_streamConnection;
     WeakRef<RemoteGPU> m_gpu;
     WebGPUIdentifier m_identifier;
     bool m_isMapped { false };
+    bool m_pendingMap { false };
     WebCore::WebGPU::MapModeFlags m_mapModeFlags;
 };
 

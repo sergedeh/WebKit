@@ -30,10 +30,10 @@
 #include "WebExtensionError.h"
 #include "WebExtensionWindowIdentifier.h"
 #include "WebPageProxyIdentifier.h"
-#include <wtf/Forward.h>
 #include <wtf/Identified.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/WeakPtr.h>
 #if PLATFORM(COCOA)
 #include <wtf/WeakObjCPtr.h>
 #endif
@@ -99,7 +99,7 @@ public:
     WebExtensionWindowParameters parameters(PopulateTabs = PopulateTabs::No) const;
     WebExtensionWindowParameters minimalParameters() const;
 
-    WebExtensionContext* extensionContext() const;
+    WebExtensionContext* LEGACY_NODELETE extensionContext() const;
 
     bool operator==(const WebExtensionWindow&) const;
 
@@ -114,7 +114,7 @@ public:
     Type type() const;
 
     State state() const;
-    void setState(State, CompletionHandler<void(Expected<void, WebExtensionError>&&)>&&);
+    void setState(State, CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&&);
 
     bool isOpen() const;
     void didOpen() { ASSERT(!m_isOpen); m_isOpen = true; }
@@ -122,7 +122,7 @@ public:
 
     bool isFocused() const;
     bool isFrontmost() const;
-    void focus(CompletionHandler<void(Expected<void, WebExtensionError>&&)>&&);
+    void focus(CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&&);
 
     bool isPrivate() const;
 
@@ -132,14 +132,14 @@ public:
 
     // Handles the frame in the screen's native coordinate system.
     CGRect frame() const;
-    void setFrame(CGRect, CompletionHandler<void(Expected<void, WebExtensionError>&&)>&&);
+    void setFrame(CGRect, CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&&);
 #endif
 
 #if PLATFORM(MAC)
     CGRect screenFrame() const;
 #endif
 
-    void close(CompletionHandler<void(Expected<void, WebExtensionError>&&)>&&);
+    void close(CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&&);
 
 #ifdef __OBJC__
     WKWebExtensionWindow *delegate() const { return m_delegate.getAutoreleased(); }

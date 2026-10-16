@@ -44,12 +44,12 @@ namespace CSSPropertyParserHelpers {
 
 static RefPtr<CSSValue> consumeCounter(CSSParserTokenRange& range, CSS::PropertyParserState& state, int defaultValue)
 {
-    if (range.peek().id() == CSSValueNone)
+    if (range.peek().id() == CSSValueID::None)
         return consumeIdent(range);
 
     CSSValueListBuilder list;
     do {
-        auto counterName = consumeCustomIdent(range);
+        auto counterName = consumeCustomIdent(range, state);
         if (!counterName)
             return nullptr;
         if (auto counterValue = CSSPrimitiveValueResolver<CSS::Integer<>>::consumeAndResolve(range, state))

@@ -25,8 +25,8 @@
 
 #include "config.h"
 
-#include "Test.h"
-#include "WTFTestUtilities.h"
+#include "Helpers/Test.h"
+#include "Helpers/WTFTestUtilities.h"
 #include <pal/text/TextEncoding.h>
 #include <wtf/MainThread.h>
 #include <wtf/URLParser.h>
@@ -70,7 +70,9 @@ struct ExpectedParts {
 template<typename T, typename U>
 bool eq(T&& s1, U&& s2)
 {
-    EXPECT_STREQ(s1.utf8().data(), s2.utf8().data());
+    // Compared as UTF-8 bytes, matching the returned condition, so that a null String
+    // matches an empty one.
+    EXPECT_EQ(s1.utf8(), s2.utf8());
     return s1.utf8() == s2.utf8();
 }
 

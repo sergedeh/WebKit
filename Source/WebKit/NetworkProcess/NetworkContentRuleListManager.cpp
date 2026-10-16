@@ -28,9 +28,12 @@
 
 #if ENABLE(CONTENT_EXTENSIONS)
 
+#include "Logging.h"
 #include "NetworkProcess.h"
 #include "NetworkProcessProxyMessages.h"
 #include "WebCompiledContentRuleList.h"
+
+#include <wtf/Borrow.h>
 
 namespace WebKit {
 using namespace WebCore;
@@ -48,7 +51,7 @@ NetworkContentRuleListManager::~NetworkContentRuleListManager()
 
     WebCore::ContentExtensions::ContentExtensionsBackend backend;
     for (auto& callbacks : pendingCallbacks.values()) {
-        for (auto& callback : callbacks)
+        for (auto& callback : borrow(callbacks))
             callback(backend);
     }
 }
@@ -63,12 +66,6 @@ void NetworkContentRuleListManager::deref() const
     m_networkProcess->deref();
 }
 
-Ref<NetworkProcess> NetworkContentRuleListManager::protectedNetworkProcess() const
-{
-    ASSERT(RunLoop::isMain());
-    return m_networkProcess.get();
-}
-
 void NetworkContentRuleListManager::contentExtensionsBackend(UserContentControllerIdentifier identifier, BackendCallback&& callback)
 {
     auto iterator = m_contentExtensionBackends.find(identifier);
@@ -79,7 +76,7 @@ void NetworkContentRuleListManager::contentExtensionsBackend(UserContentControll
     m_pendingCallbacks.ensure(identifier, [] {
         return Vector<BackendCallback> { };
     }).iterator->value.append(WTF::move(callback));
-    protectedNetworkProcess()->protectedParentProcessConnection()->send(Messages::NetworkProcessProxy::ContentExtensionRules { identifier }, 0);
+    protect(m_networkProcess->parentProcessConnection())->send(Messages::NetworkProcessProxy::ContentExtensionRules { identifier }, 0);
 }
 
 void NetworkContentRuleListManager::addContentRuleLists(UserContentControllerIdentifier identifier, Vector<std::pair<WebCompiledContentRuleListData, URL>>&& contentRuleLists)
@@ -88,7 +85,7 @@ void NetworkContentRuleListManager::addContentRuleLists(UserContentControllerIde
         return makeUnique<WebCore::ContentExtensions::ContentExtensionsBackend>();
     }).iterator->value;
 
-    for (auto&& pair : contentRuleLists) {
+    for (auto&& pair : borrow(contentRuleLists)) {
         auto&& contentRuleList = WTF::move(pair.first);
         String identifier = contentRuleList.identifier;
         if (RefPtr compiledContentRuleList = WebCompiledContentRuleList::create(WTF::move(contentRuleList)))
@@ -96,7 +93,7 @@ void NetworkContentRuleListManager::addContentRuleLists(UserContentControllerIde
     }
 
     auto pendingCallbacks = m_pendingCallbacks.take(identifier);
-    for (auto& callback : pendingCallbacks)
+    for (auto& callback : borrow(pendingCallbacks))
         callback(backend);
 
 }
@@ -122,6 +119,24 @@ void NetworkContentRuleListManager::removeAllContentRuleLists(UserContentControl
 void NetworkContentRuleListManager::remove(UserContentControllerIdentifier identifier)
 {
     m_contentExtensionBackends.remove(identifier);
+}
+
+void NetworkContentRuleListManager::setTrackingPreventionContentRuleList(std::optional<WebCompiledContentRuleListData>&& ruleListData)
+{
+    m_trackingPreventionContentExtensionBackend = nullptr;
+    if (!ruleListData)
+        return;
+
+    auto identifier = ruleListData->identifier;
+    RefPtr compiledContentRuleList = WebCompiledContentRuleList::create(WTF::move(*ruleListData));
+    if (!compiledContentRuleList) {
+        RELEASE_LOG_ERROR(ResourceLoadStatistics, "NetworkContentRuleListManager::setTrackingPreventionContentRuleList: Failed to create rule list");
+        return;
+    }
+
+    auto backend = makeUnique<WebCore::ContentExtensions::ContentExtensionsBackend>();
+    backend->addContentExtension(identifier, compiledContentRuleList.releaseNonNull(), { }, ContentExtensions::ContentExtension::ShouldCompileCSS::No);
+    m_trackingPreventionContentExtensionBackend = WTF::move(backend);
 }
 
 } // namespace WebKit

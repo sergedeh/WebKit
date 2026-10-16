@@ -29,6 +29,7 @@
 
 #import "config.h"
 #import "WebExtensionAPIAction.h"
+#import "WebExtensionAPIKeys.h"
 
 #if ENABLE(WK_WEB_EXTENSIONS)
 
@@ -44,33 +45,19 @@
 #import "WebFrame.h"
 #import "WebProcess.h"
 #import <WebCore/LocalFrameInlines.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 
 #if PLATFORM(IOS_FAMILY)
 #import <UIKit/UIKit.h>
 #endif
 
-static NSString * const tabIdKey = @"tabId";
-static NSString * const windowIdKey = @"windowId";
-
-static NSString * const imageDataKey = @"imageData";
-static NSString * const pathKey = @"path";
-static NSString * const popupKey = @"popup";
-static NSString * const textKey = @"text";
-static NSString * const titleKey = @"title";
-
 #if ENABLE(WK_WEB_EXTENSIONS_ICON_VARIANTS)
-static NSString * const variantsKey = @"variants";
 // FIXME: <https://webkit.org/b/300927> Deprecate `color_schemes` key.
-static NSString * const deprecatedColorSchemesKey = @"color_schemes";
-static NSString * const colorSchemesKey = @"colorSchemes";
-static NSString * const lightKey = @"light";
-static NSString * const darkKey = @"dark";
-static NSString * const anyKey = @"any";
 #endif
 
 namespace WebKit {
 
-Expected<void, String> WebExtensionAPIAction::parseActionDetails(NSDictionary *details, std::optional<WebExtensionWindowIdentifier>& windowIdentifier, std::optional<WebExtensionTabIdentifier>& tabIdentifier)
+std::expected<void, String> WebExtensionAPIAction::parseActionDetails(NSDictionary *details, std::optional<WebExtensionWindowIdentifier>& windowIdentifier, std::optional<WebExtensionTabIdentifier>& tabIdentifier)
 {
     static NSDictionary<NSString *, id> *types = @{
         tabIdKey: NSNumber.class,
@@ -113,7 +100,7 @@ void WebExtensionAPIAction::getTitle(NSDictionary *details, Ref<WebExtensionCall
         return;
     }
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ActionGetTitle(windowIdentifier, tabIdentifier), [protectedThis = Ref { *this }, callback = WTF::move(callback)](Expected<String, WebExtensionError>&& result) {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ActionGetTitle(windowIdentifier, tabIdentifier), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<String, WebExtensionError>&& result) {
         if (!result) {
             callback->reportError(result.error().createNSString().get());
             return;
@@ -151,7 +138,7 @@ void WebExtensionAPIAction::setTitle(NSDictionary *details, Ref<WebExtensionCall
     if (NSString *string = objectForKey<NSString>(details, titleKey, false))
         title = string;
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ActionSetTitle(windowIdentifier, tabIdentifier, title), [protectedThis = Ref { *this }, callback = WTF::move(callback)](Expected<void, WebExtensionError>&& result) {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ActionSetTitle(windowIdentifier, tabIdentifier, title), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<void, WebExtensionError>&& result) {
         if (!result) {
             callback->reportError(result.error().createNSString().get());
             return;
@@ -172,7 +159,7 @@ void WebExtensionAPIAction::getBadgeText(NSDictionary *details, Ref<WebExtension
         return;
     }
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ActionGetBadgeText(windowIdentifier, tabIdentifier), [protectedThis = Ref { *this }, callback = WTF::move(callback)](Expected<String, WebExtensionError>&& result) {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ActionGetBadgeText(windowIdentifier, tabIdentifier), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<String, WebExtensionError>&& result) {
         if (!result) {
             callback->reportError(result.error().createNSString().get());
             return;
@@ -206,7 +193,7 @@ void WebExtensionAPIAction::setBadgeText(NSDictionary *details, Ref<WebExtension
     if (NSString *string = objectForKey<NSString>(details, textKey, false))
         text = string;
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ActionSetBadgeText(windowIdentifier, tabIdentifier, text), [protectedThis = Ref { *this }, callback = WTF::move(callback)](Expected<void, WebExtensionError>&& result) {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ActionSetBadgeText(windowIdentifier, tabIdentifier, text), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<void, WebExtensionError>&& result) {
         if (!result) {
             callback->reportError(result.error().createNSString().get());
             return;
@@ -256,7 +243,7 @@ void WebExtensionAPIAction::enable(double tabID, Ref<WebExtensionCallbackHandler
     if (tabIdentifer && !isValid(tabIdentifer, outExceptionString))
         return;
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ActionSetEnabled(tabIdentifer, true), [protectedThis = Ref { *this }, callback = WTF::move(callback)](Expected<void, WebExtensionError>&& result) {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ActionSetEnabled(tabIdentifer, true), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<void, WebExtensionError>&& result) {
         if (!result) {
             callback->reportError(result.error().createNSString().get());
             return;
@@ -274,7 +261,7 @@ void WebExtensionAPIAction::disable(double tabID, Ref<WebExtensionCallbackHandle
     if (tabIdentifer && !isValid(tabIdentifer, outExceptionString))
         return;
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ActionSetEnabled(tabIdentifer, false), [protectedThis = Ref { *this }, callback = WTF::move(callback)](Expected<void, WebExtensionError>&& result) {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ActionSetEnabled(tabIdentifer, false), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<void, WebExtensionError>&& result) {
         if (!result) {
             callback->reportError(result.error().createNSString().get());
             return;
@@ -295,7 +282,7 @@ void WebExtensionAPIAction::isEnabled(NSDictionary *details, Ref<WebExtensionCal
         return;
     }
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ActionGetEnabled(windowIdentifier, tabIdentifier), [protectedThis = Ref { *this }, callback = WTF::move(callback)](Expected<bool, WebExtensionError>&& result) {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ActionGetEnabled(windowIdentifier, tabIdentifier), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<bool, WebExtensionError>&& result) {
         if (!result) {
             callback->reportError(result.error().createNSString().get());
             return;
@@ -430,7 +417,7 @@ NSMutableDictionary *WebExtensionAPIAction::parseIconPathsDictionary(NSDictionar
 
         if (!isValidDimensionKey(key)) {
             if (outExceptionString)
-                *outExceptionString = toErrorString(nullString(), inputKey, @"'%@' is not a valid dimension", key).createNSString().autorelease();
+                *outExceptionString = toErrorString(nullString(), inputKey, makeString("'"_s, String(key), "' is not a valid dimension"_s)).createNSString().autorelease();
             return nil;
         }
 
@@ -456,15 +443,15 @@ NSMutableDictionary *WebExtensionAPIAction::parseIconImageDataDictionary(NSDicti
 
         if (!isValidDimensionKey(key)) {
             if (outExceptionString)
-                *outExceptionString = toErrorString(nullString(), inputKey, @"'%@' is not a valid dimension", key).createNSString().autorelease();
+                *outExceptionString = toErrorString(nullString(), inputKey, makeString("'"_s, String(key), "' is not a valid dimension"_s)).createNSString().autorelease();
             return nil;
         }
 
         id value = input[key];
-        if (!validateObject(value, adoptNS([[NSString alloc] initWithFormat:@"%@[%@]", inputKey, key]).get(), JSValue.class, outExceptionString))
+        if (!validateObject(dynamic_objc_cast<NSObject>(value), adoptNS([[NSString alloc] initWithFormat:@"%@[%@]", inputKey, key]).get(), JSValue.class, outExceptionString))
             return nil;
 
-        auto *dataURLString = dataURLFromImageData(value, nullptr, key, outExceptionString);
+        auto *dataURLString = dataURLFromImageData(checked_objc_cast<JSValue>(value), nullptr, key, outExceptionString);
         if (!dataURLString)
             return nil;
 
@@ -600,7 +587,7 @@ void WebExtensionAPIAction::setIcon(WebFrame& frame, NSDictionary *details, Ref<
     auto *iconsJSON = encodeJSONString(iconDictionary);
 #endif
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ActionSetIcon(windowIdentifier, tabIdentifier, iconsJSON), [protectedThis = Ref { *this }, callback = WTF::move(callback)](Expected<void, WebExtensionError>&& result) {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ActionSetIcon(windowIdentifier, tabIdentifier, iconsJSON), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<void, WebExtensionError>&& result) {
         if (!result) {
             callback->reportError(result.error().createNSString().get());
             return;
@@ -621,7 +608,7 @@ void WebExtensionAPIAction::getPopup(NSDictionary *details, Ref<WebExtensionCall
         return;
     }
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ActionGetPopup(windowIdentifier, tabIdentifier), [protectedThis = Ref { *this }, callback = WTF::move(callback)](Expected<String, WebExtensionError>&& result) {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ActionGetPopup(windowIdentifier, tabIdentifier), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<String, WebExtensionError>&& result) {
         if (!result) {
             callback->reportError(result.error().createNSString().get());
             return;
@@ -655,7 +642,7 @@ void WebExtensionAPIAction::setPopup(NSDictionary *details, Ref<WebExtensionCall
     if (NSString *string = objectForKey<NSString>(details, popupKey, false))
         popup = string;
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ActionSetPopup(windowIdentifier, tabIdentifier, popup), [protectedThis = Ref { *this }, callback = WTF::move(callback)](Expected<void, WebExtensionError>&& result) {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ActionSetPopup(windowIdentifier, tabIdentifier, popup), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<void, WebExtensionError>&& result) {
         if (!result) {
             callback->reportError(result.error().createNSString().get());
             return;
@@ -676,7 +663,7 @@ void WebExtensionAPIAction::openPopup(WebPageProxyIdentifier webPageProxyIdentif
         return;
     }
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ActionOpenPopup(webPageProxyIdentifier, windowIdentifier, tabIdentifier), [protectedThis = Ref { *this }, callback = WTF::move(callback)](Expected<void, WebExtensionError>&& result) {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ActionOpenPopup(webPageProxyIdentifier, windowIdentifier, tabIdentifier), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<void, WebExtensionError>&& result) {
         if (!result) {
             callback->reportError(result.error().createNSString().get());
             return;
@@ -691,7 +678,7 @@ WebExtensionAPIEvent& WebExtensionAPIAction::onClicked()
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/action/onClicked
 
     if (!m_onClicked)
-        m_onClicked = WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::ActionOnClicked);
+        lazyInitialize(m_onClicked, WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::ActionOnClicked));
 
     return *m_onClicked;
 }
@@ -704,8 +691,8 @@ void WebExtensionContextProxy::dispatchActionClickedEvent(const std::optional<We
 
     enumerateFramesAndNamespaceObjects([&](auto& frame, auto& namespaceObject) {
         RefPtr coreFrame = frame.coreLocalFrame();
-        WebCore::UserGestureIndicator gestureIndicator(WebCore::IsProcessingUserGesture::Yes, coreFrame ? coreFrame->document() : nullptr);
-        namespaceObject.action().onClicked().invokeListenersWithArgument(tab);
+        WebCore::UserGestureIndicator gestureIndicator(WebCore::IsProcessingUserGesture::Yes, protect(coreFrame ? coreFrame->document() : nullptr));
+        protect(protect(namespaceObject.action())->onClicked())->invokeListenersWithArgument(tab);
     });
 }
 

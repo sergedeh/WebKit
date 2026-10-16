@@ -32,6 +32,7 @@
 
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkColorSpace.h>
+#include <skia/core/SkExecutor.h>
 #include <skia/gpu/ganesh/GrBackendSurface.h>
 #include <skia/gpu/ganesh/SkSurfaceGanesh.h>
 #include <skia/gpu/ganesh/gl/GrGLBackendSurface.h>
@@ -46,9 +47,11 @@ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <EGL/eglext.h>
 #include <skia/gpu/ganesh/gl/egl/GrGLMakeEGLInterface.h>
 #endif
-WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 
+#include <wtf/MemoryPressureHandler.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/RAMSize.h>
 #include <wtf/ThreadSafeWeakPtr.h>
 #include <wtf/text/StringToIntegerConversion.h>
 
@@ -217,7 +220,7 @@ static unsigned initializeMSAASampleCount(GrDirectContext* grContext)
         // knows there are bugs. The only way to know whether our sample count will work is trying to create a
         // surface with that value and check whether it works.
         auto imageInfo = SkImageInfo::Make(512, 512, kRGBA_8888_SkColorType, kPremul_SkAlphaType, SkColorSpace::MakeSRGB());
-        SkSurfaceProps properties = { 0, FontRenderOptions::singleton().subpixelOrder() };
+        SkSurfaceProps properties = FontRenderOptions::singleton().createSurfaceProps();
         auto surface = SkSurfaces::RenderTarget(grContext, skgpu::Budgeted::kNo, imageInfo, sampleCount, kTopLeft_GrSurfaceOrigin, &properties);
 
         // If the creation of the surface failed, disable MSAA.
@@ -228,6 +231,32 @@ static unsigned initializeMSAASampleCount(GrDirectContext* grContext)
     return sampleCount;
 }
 
+static constexpr size_t s_lowEndDeviceMemoryThresholdBytes = 2 * GB;
+static constexpr size_t s_highEndDeviceMemoryThresholdBytes = 4 * GB;
+
+static constexpr size_t s_lowEndDeviceGlyphCacheTextureMaximumBytes = 2 * MB;
+static constexpr size_t s_lowEndMaxResourceCacheBytes = 48 * MB;
+static constexpr size_t s_maxResourceCacheBytes = 80 * MB;
+
+static std::optional<size_t> glyphCacheTextureMaximumBytes()
+{
+    size_t memorySize = WTF::ramSize();
+    if (memorySize < s_lowEndDeviceMemoryThresholdBytes)
+        return s_lowEndDeviceGlyphCacheTextureMaximumBytes;
+    return std::nullopt;
+}
+
+static size_t initializeMaxResourceCacheBytes(GrDirectContext* grContext)
+{
+    size_t memorySize = WTF::ramSize();
+    if (memorySize < s_lowEndDeviceMemoryThresholdBytes)
+        grContext->setResourceCacheLimit(s_lowEndMaxResourceCacheBytes);
+    else if (memorySize < s_highEndDeviceMemoryThresholdBytes)
+        grContext->setResourceCacheLimit(s_maxResourceCacheBytes);
+    // Use GrDirectContext default (256MB) for high end devices.
+    return grContext->getResourceCacheLimit();
+}
+
 class SkiaGLContext : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<SkiaGLContext> {
 public:
     static Ref<SkiaGLContext> create(PlatformDisplay& display)
@@ -235,7 +264,29 @@ public:
         return adoptRef(*new SkiaGLContext(display));
     }
 
-    ~SkiaGLContext() = default;
+    static Ref<SkiaGLContext> create(std::unique_ptr<GLContext>&& glContext)
+    {
+        return adoptRef(*new SkiaGLContext(WTF::move(glContext)));
+    }
+
+    ~SkiaGLContext()
+    {
+        auto glContext = WTF::move(m_skiaGLContext);
+        auto grContext = WTF::move(m_skiaGrContext);
+        if (!glContext)
+            return;
+
+        // The context of a thread is destroyed when the thread exits, which can happen while the main thread
+        // terminates the display. Once it is terminated, drop the Skia resources without calling into GL.
+        RefPtr display = glContext->display();
+        bool didRelease = display && display->runIfNotTerminated([&](EGLDisplay) {
+            glContext->makeContextCurrent();
+            grContext->releaseResourcesAndAbandonContext();
+            grContext = nullptr;
+        });
+        if (!didRelease)
+            grContext->abandonContext();
+    }
 
     GLContext* skiaGLContext() const
     {
@@ -254,20 +305,57 @@ public:
         return m_sampleCount;
     }
 
+    size_t maxResourceCacheBytes() const
+    {
+        return m_maxResourceCacheBytes;
+    }
+
+    void releaseUnusedResources(WTF::Critical critical)
+    {
+        Locker locker { m_lock };
+        if (!m_skiaGLContext)
+            return;
+
+        GLContext::ScopedGLContextCurrent scopedCurrent(*m_skiaGLContext);
+        switch (critical) {
+        case Critical::No:
+            m_skiaGrContext->purgeUnlockedResources(GrPurgeResourceOptions::kScratchResourcesOnly);
+            break;
+        case Critical::Yes:
+            m_skiaGrContext->freeGpuResources();
+            break;
+        }
+    }
+
 private:
     explicit SkiaGLContext(PlatformDisplay& display)
+        : SkiaGLContext(GLContext::createOffscreen(display))
     {
-        auto glContext = GLContext::createOffscreen(display);
+    }
+
+    explicit SkiaGLContext(std::unique_ptr<GLContext>&& glContext)
+    {
         if (!glContext || !glContext->makeContextCurrent())
             return;
 
-        // FIXME: add GrContextOptions, shader cache, etc.
+        // FIXME: Add shader cache.
         GrContextOptions options;
         options.fAllowMSAAOnNewIntel = shouldAllowMSAAOnNewIntel();
+        // Skia defaults this to true, which alters the texture2D() calls in all generated shaders,
+        // applying a so-called negative LOD bias, forcing texture2D() sampling into a LOD-computing
+        // lookup which is a slow-path in certain tiled GPUs (such as Vivante/etnaviv). Since we
+        // don't use any mipmapping, it's safe to disable that, and avoid performance hits.
+        options.fSharpenMipmappedTextures = false;
+        thread_local std::unique_ptr<SkExecutor> s_executor = SkExecutor::MakeFIFOThreadPool(2);
+        options.fExecutor = s_executor.get();
+        if (auto bytes = glyphCacheTextureMaximumBytes())
+            options.fGlyphCacheTextureMaximumBytes = *bytes;
+
         if (auto grContext = GrDirectContexts::MakeGL(skiaGLInterface(), options)) {
             m_skiaGLContext = WTF::move(glContext);
             m_skiaGrContext = WTF::move(grContext);
             m_sampleCount = initializeMSAASampleCount(m_skiaGrContext.get());
+            m_maxResourceCacheBytes = initializeMaxResourceCacheBytes(m_skiaGrContext.get());
         }
     }
 
@@ -275,6 +363,7 @@ private:
     sk_sp<GrDirectContext> m_skiaGrContext WTF_GUARDED_BY_LOCK(m_lock);
     mutable Lock m_lock;
     unsigned m_sampleCount { 0 };
+    size_t m_maxResourceCacheBytes { 0 };
 };
 #endif
 
@@ -293,6 +382,17 @@ GLContext* PlatformDisplay::skiaGLContext()
 #endif
 }
 
+void PlatformDisplay::setSkiaGLContextForCurrentThread(std::unique_ptr<GLContext>&& glContext)
+{
+    if (!glContext) {
+        clearSkiaGLContext();
+        return;
+    }
+    ASSERT(!s_skiaGLContext);
+    s_skiaGLContext = SkiaGLContext::create(WTF::move(glContext));
+    m_skiaGLContexts.add(*s_skiaGLContext);
+}
+
 GrDirectContext* PlatformDisplay::skiaGrContext() const
 {
     RELEASE_ASSERT(s_skiaGLContext);
@@ -302,6 +402,17 @@ GrDirectContext* PlatformDisplay::skiaGrContext() const
 unsigned PlatformDisplay::msaaSampleCount() const
 {
     return s_skiaGLContext ? s_skiaGLContext->sampleCount() : 0;
+}
+
+size_t PlatformDisplay::maxSkiaResourceCacheBytes() const
+{
+    return s_skiaGLContext ? s_skiaGLContext->maxResourceCacheBytes() : 0;
+}
+
+void PlatformDisplay::skiaReleaseUnusedResources(WTF::Critical critical)
+{
+    if (s_skiaGLContext)
+        s_skiaGLContext->releaseUnusedResources(critical);
 }
 
 void PlatformDisplay::clearSkiaGLContext()

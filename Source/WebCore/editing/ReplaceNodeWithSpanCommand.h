@@ -52,14 +52,12 @@ private:
     void doApply() override;
     void doUnapply() override;
 
-    RefPtr<HTMLElement> protectedSpanElement() const { return m_spanElement; }
-    
 #ifndef NDEBUG
     void getNodesInCommand(NodeSet&) override;
 #endif
 
     const Ref<HTMLElement> m_elementToReplace;
-    RefPtr<HTMLElement> m_spanElement;
+    const RefPtr<HTMLElement> m_spanElement;
 };
 
 } // namespace WebCore

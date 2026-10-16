@@ -55,7 +55,10 @@ bool defaultScrollAnimatorEnabled();
 bool defaultTreatsAnyTextCSSLinkAsStylesheet();
 bool defaultNeedsFrameNameFallbackToIdQuirk();
 bool defaultNeedsKeyboardEventDisambiguationQuirks();
+bool defaultHTMLEnhancedSelectParsingQuirkEnabled();
 #endif
+
+bool defaultSearchInputResultsAttributeEnabled();
 
 bool defaultMutationEventsEnabled();
 bool defaultAttachmentElementEnabled();

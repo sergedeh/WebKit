@@ -41,7 +41,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGFontFaceUriElement);
 using namespace SVGNames;
     
 inline SVGFontFaceUriElement::SVGFontFaceUriElement(const QualifiedName& tagName, Document& document)
-    : SVGElement(tagName, document, makeUniqueRef<PropertyRegistry>(*this))
+    : SVGElement(tagName, document, PropertyRegistry::singleton())
 {
     ASSERT(hasTagName(font_face_uriTag));
 }
@@ -53,13 +53,13 @@ Ref<SVGFontFaceUriElement> SVGFontFaceUriElement::create(const QualifiedName& ta
 
 SVGFontFaceUriElement::~SVGFontFaceUriElement()
 {
-    if (CachedResourceHandle cachedFont = m_cachedFont)
+    if (RefPtr cachedFont = m_cachedFont)
         cachedFont->removeClient(*this);
 }
 
 Ref<CSSFontFaceSrcResourceValue> SVGFontFaceUriElement::createSrcValue() const
 {
-    auto location = CSS::completeURL(getAttribute(SVGNames::hrefAttr, XLinkNames::hrefAttr), document()).value_or(CSS::URL::none());
+    auto location = CSS::completeURL(getAttribute(SVGNames::hrefAttr, XLinkNames::hrefAttr), protect(document())).value_or(CSS::URL::none());
     auto& format = attributeWithoutSynchronization(formatAttr);
     return CSSFontFaceSrcResourceValue::create(WTF::move(location), format.isEmpty() ? "svg"_s : format.string(), { FontTechnology::ColorSvg });
 }
@@ -83,10 +83,10 @@ void SVGFontFaceUriElement::childrenChanged(const ChildChange& change)
         grandParent->rebuildFontFace();
 }
 
-Node::InsertedIntoAncestorResult SVGFontFaceUriElement::insertedIntoAncestor(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
+Node::NeedsPostConnectionSteps SVGFontFaceUriElement::insertionSteps(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
 {
     loadFont();
-    return SVGElement::insertedIntoAncestor(insertionType, parentOfInsertedTree);
+    return SVGElement::insertionSteps(insertionType, parentOfInsertedTree);
 }
 
 static bool isSVGFontTarget(const SVGFontFaceUriElement& element)
@@ -97,7 +97,7 @@ static bool isSVGFontTarget(const SVGFontFaceUriElement& element)
 
 void SVGFontFaceUriElement::loadFont()
 {
-    if (CachedResourceHandle cachedFont = m_cachedFont)
+    if (RefPtr cachedFont = m_cachedFont)
         cachedFont->removeClient(*this);
 
     const AtomString& href = getAttribute(SVGNames::hrefAttr, XLinkNames::hrefAttr);
@@ -105,11 +105,15 @@ void SVGFontFaceUriElement::loadFont()
         ResourceLoaderOptions options = CachedResourceLoader::defaultCachedResourceOptions();
         options.contentSecurityPolicyImposition = isInUserAgentShadowTree() ? ContentSecurityPolicyImposition::SkipPolicyCheck : ContentSecurityPolicyImposition::DoPolicyCheck;
 
-        Ref cachedResourceLoader = document().cachedResourceLoader();
-        CachedResourceRequest request(ResourceRequest(document().completeURL(href)), options);
+        Ref document = this->document();
+        Ref cachedResourceLoader = document->cachedResourceLoader();
+        CachedResourceRequest request(ResourceRequest(document->encodingParseURL(href)), options);
         request.setInitiator(*this);
-        m_cachedFont = cachedResourceLoader->requestFont(WTF::move(request), isSVGFontTarget(*this)).value_or(nullptr);
-        if (CachedResourceHandle cachedFont = m_cachedFont) {
+        if (auto result = cachedResourceLoader->requestFont(WTF::move(request), isSVGFontTarget(*this)))
+            m_cachedFont = WTF::move(result.value());
+        else
+            m_cachedFont = nullptr;
+        if (RefPtr cachedFont = m_cachedFont) {
             cachedFont->addClient(*this);
             cachedFont->beginLoadIfNeeded(cachedResourceLoader);
         }

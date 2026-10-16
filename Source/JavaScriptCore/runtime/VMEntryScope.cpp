@@ -33,7 +33,6 @@
 #include "WasmCapabilities.h"
 #include "WasmMachineThreads.h"
 #include "Watchdog.h"
-#include <wtf/WTFConfig.h>
 
 namespace JSC {
 
@@ -52,7 +51,7 @@ void VMEntryScope::setUpSlow()
 #endif
     }
 
-    if (m_vm.hasAnyEntryScopeServiceRequest() || m_vm.hasTimeZoneChange()) [[unlikely]]
+    if (m_vm.hasAnyEntryScopeServiceRequest()) [[unlikely]]
         m_vm.executeEntryScopeServicesOnEntry();
 }
 

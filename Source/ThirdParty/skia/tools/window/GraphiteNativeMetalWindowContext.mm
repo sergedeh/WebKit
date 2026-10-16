@@ -1,5 +1,5 @@
 /*
- * Copyright 2021 Google Inc.
+ * Copyright 2021 Google LLC
  *
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
@@ -16,7 +16,7 @@
 #include "include/gpu/graphite/Surface.h"
 #include "include/gpu/graphite/mtl/MtlBackendContext.h"
 #include "include/gpu/graphite/mtl/MtlGraphiteTypes.h"
-#include "src/base/SkMathPriv.h"
+#include "src/core/SkMathPriv.h"
 #include "src/gpu/graphite/ContextOptionsPriv.h"
 #include "tools/graphite/GraphiteToolUtils.h"
 #include "tools/graphite/TestOptions.h"
@@ -60,15 +60,15 @@ void GraphiteMetalWindowContext::initializeContext() {
     backendContext.fQueue.retain((CFTypeRef)fQueue.get());
 
     SkASSERT(fDisplayParams->graphiteTestOptions());
-    skwindow::GraphiteTestOptions opts = *fDisplayParams->graphiteTestOptions();
+    skiatest::graphite::TestOptions opts = *fDisplayParams->graphiteTestOptions();
 
-    opts.fTestOptions.fContextOptions.fRequireOrderedRecordings = true;
+    opts.fContextOptions.fRequireOrderedRecordings = true;
     // Needed to make synchronous readPixels work:
-    opts.fPriv.fStoreContextRefInRecorder = true;
+    opts.fOptionsPriv.fStoreContextRefInRecorder = true;
     fDisplayParams =
             GraphiteDisplayParamsBuilder(fDisplayParams.get()).graphiteTestOptions(opts).detach();
     fGraphiteContext = skgpu::graphite::ContextFactory::MakeMetal(
-            backendContext, fDisplayParams->graphiteTestOptions()->fTestOptions.fContextOptions);
+            backendContext, fDisplayParams->graphiteTestOptions()->fContextOptions);
     fGraphiteRecorder = fGraphiteContext->makeRecorder(ToolUtils::CreateTestingRecorderOptions());
     // TODO
     //    if (!fGraphiteContext && fDisplayParams->msaaSampleCount() > 1) {
@@ -105,7 +105,6 @@ sk_sp<SkSurface> GraphiteMetalWindowContext::getBackbufferSurface() {
 
     surface = SkSurfaces::WrapBackendTexture(this->graphiteRecorder(),
                                              backendTex,
-                                             kBGRA_8888_SkColorType,
                                              fDisplayParams->colorSpace(),
                                              &fDisplayParams->surfaceProps());
     fDrawableHandle = CFRetain((CFTypeRef)currentDrawable);

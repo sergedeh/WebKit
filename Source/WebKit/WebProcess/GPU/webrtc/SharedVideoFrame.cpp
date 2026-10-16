@@ -60,14 +60,14 @@ SharedVideoFrameWriter::SharedVideoFrameWriter()
 {
 }
 
-bool SharedVideoFrameWriter::wait(const Function<void(IPC::Semaphore&)>& newSemaphoreCallback)
+bool SharedVideoFrameWriter::wait(NOESCAPE const Function<void(IPC::Semaphore&)>& newSemaphoreCallback)
 {
     if (!m_isSemaphoreInUse) {
         m_isSemaphoreInUse = true;
         newSemaphoreCallback(m_semaphore.get());
         return true;
     }
-    return !m_isDisabled && m_semaphore->waitFor(defaultTimeout);
+    return !WTF::atomicLoad(&m_isDisabled, std::memory_order_relaxed) && m_semaphore->waitFor(defaultTimeout);
 }
 
 bool SharedVideoFrameWriter::allocateStorage(size_t size, NOESCAPE const Function<void(SharedMemory::Handle&&)>& newMemoryCallback)
@@ -113,7 +113,7 @@ std::optional<SharedVideoFrame> SharedVideoFrameWriter::write(const VideoFrame& 
     auto buffer = writeBuffer(frame, newSemaphoreCallback, newMemoryCallback);
     if (!buffer)
         return { };
-    return SharedVideoFrame { frame.presentationTime(), frame.isMirrored(), frame.rotation(), WTF::move(*buffer) };
+    return SharedVideoFrame { frame.presentationTime(), frame.isMirrored(), frame.rotation(), frame.colorSpace(), frame.shouldIgnoreAlpha(), WTF::move(*buffer) };
 }
 
 std::optional<SharedVideoFrame::Buffer> SharedVideoFrameWriter::writeBuffer(const VideoFrame& frame, NOESCAPE const Function<void(IPC::Semaphore&)>& newSemaphoreCallback, NOESCAPE const Function<void(SharedMemory::Handle&&)>& newMemoryCallback)
@@ -126,7 +126,7 @@ std::optional<SharedVideoFrame::Buffer> SharedVideoFrameWriter::writeBuffer(cons
         return writeBuffer(*webrtcFrame->buffer(), newSemaphoreCallback, newMemoryCallback);
 #endif
 
-    return writeBuffer(frame.protectedPixelBuffer().get(), newSemaphoreCallback, newMemoryCallback);
+    return writeBuffer(protect(frame.pixelBuffer()).get(), newSemaphoreCallback, newMemoryCallback);
 }
 
 std::optional<SharedVideoFrame::Buffer> SharedVideoFrameWriter::writeBuffer(CVPixelBufferRef pixelBuffer, NOESCAPE const Function<void(IPC::Semaphore&)>& newSemaphoreCallback, NOESCAPE const Function<void(SharedMemory::Handle&&)>& newMemoryCallback, bool canUseIOSurface)
@@ -201,7 +201,7 @@ void SharedVideoFrameWriter::signalInCaseOfError()
 
 void SharedVideoFrameWriter::disable()
 {
-    m_isDisabled = true;
+    WTF::atomicStore(&m_isDisabled, true, std::memory_order_relaxed);
     m_semaphore->signal();
 }
 
@@ -247,7 +247,7 @@ RetainPtr<CVPixelBufferRef> SharedVideoFrameReader::readBufferFromSharedMemory()
         return { };
     }
 
-    auto result = info->createPixelBufferFromMemory(data.subspan(SharedVideoFrameInfoEncodingLength), protectedPixelBufferPool(*info).get());
+    auto result = info->createPixelBufferFromMemory(data.subspan(SharedVideoFrameInfoEncodingLength), protect(pixelBufferPool(*info)));
     if (result && m_resourceOwner && m_useIOSurfaceBufferPool == UseIOSurfaceBufferPool::Yes)
         setOwnershipIdentityForCVPixelBuffer(result.get(), m_resourceOwner);
     return result;
@@ -277,7 +277,7 @@ RetainPtr<CVPixelBufferRef> SharedVideoFrameReader::readBuffer(SharedVideoFrame:
             RELEASE_LOG_ERROR(WebRTC, "SharedVideoFrameReader::readBuffer no surface");
             return nullptr;
         }
-        return WebCore::createCVPixelBuffer(surface->protectedSurface().get()).value_or(nullptr);
+        return WebCore::createCVPixelBuffer(protect(surface->surface()).get()).value_or(nullptr);
     }, [this](std::nullptr_t representation) -> RetainPtr<CVPixelBufferRef> {
         return readBufferFromSharedMemory();
     }, [this](IntSize size) -> RetainPtr<CVPixelBufferRef> {
@@ -297,7 +297,7 @@ RefPtr<VideoFrame> SharedVideoFrameReader::read(SharedVideoFrame&& sharedVideoFr
     if (!pixelBuffer)
         return nullptr;
 
-    return VideoFrameCV::create(sharedVideoFrame.time, sharedVideoFrame.mirrored, sharedVideoFrame.rotation, WTF::move(pixelBuffer));
+    return VideoFrameCV::create(sharedVideoFrame.time, sharedVideoFrame.mirrored, sharedVideoFrame.rotation, WTF::move(pixelBuffer), WTF::move(sharedVideoFrame.colorSpace), sharedVideoFrame.shouldIgnoreAlpha ? VideoFrameCV::ShouldIgnoreAlpha::Yes : VideoFrameCV::ShouldIgnoreAlpha::No);
 }
 
 CVPixelBufferPoolRef SharedVideoFrameReader::pixelBufferPool(const SharedVideoFrameInfo& info)
@@ -313,11 +313,6 @@ CVPixelBufferPoolRef SharedVideoFrameReader::pixelBufferPool(const SharedVideoFr
     }
 
     return m_bufferPool.get();
-}
-
-RetainPtr<CVPixelBufferPoolRef> SharedVideoFrameReader::protectedPixelBufferPool(const SharedVideoFrameInfo& info)
-{
-    return pixelBufferPool(info);
 }
 
 bool SharedVideoFrameReader::setSharedMemory(SharedMemory::Handle&& handle)

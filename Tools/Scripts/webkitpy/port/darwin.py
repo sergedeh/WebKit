@@ -28,10 +28,16 @@ import time
 from webkitpy.common.memoized import memoized
 from webkitpy.common.system.crashlogs import CrashLogs
 from webkitpy.common.system.executive import ScriptError
+from webkitpy.common.version_name_map import PUBLIC_TABLE, VersionNameMap
 from webkitpy.port.apple import ApplePort
 from webkitpy.port.leakdetector import LeakDetector
 
 from webkitcorepy import decorators, Version
+
+from webkitexpectationspy.parser import ExpectationParser
+from webkitexpectationspy.suites.api_tests import APITestSuite
+
+from webkitpy.common.version_name_map import DARWIN_CURRENT_VERSION
 
 
 _log = logging.getLogger(__name__)
@@ -39,7 +45,7 @@ _log = logging.getLogger(__name__)
 
 class DarwinPort(ApplePort):
 
-    CURRENT_VERSION = Version(26)
+    CURRENT_VERSION = DARWIN_CURRENT_VERSION
     SDK = None
 
     API_TEST_BINARY_NAMES = ['TestWTF', 'TestWebKitAPI', 'TestIPC', 'TestWGSL']
@@ -54,35 +60,75 @@ class DarwinPort(ApplePort):
             self.set_option_default("batch_size", 1000)
 
     def _load_api_test_suite_allowlist(self):
-        """Load the allowlist of test suites that should not go to the system shard."""
+        """Load the allowlist of test suites that should not go to the system shard.
+
+        Accepts optional configuration gates at the start of a line, e.g.:
+            TestIPC.PortableTest            # applies to every port
+            [ ios ] TestIPC.IOSOnlyTest     # only allowlisted on iOS ports
+            [ mac debug ] TestFoo.Bar       # only on macOS debug builds
+        Entries without a gate behave the same as before. Expectations or modifiers
+        (Pass/Fail/Skip/etc.) are not meaningful here and will be warned on by the parser.
+        """
         allowlist_path = os.path.join(os.path.dirname(__file__), '..', 'api_tests', 'allowlist.txt')
         if not self._filesystem.exists(allowlist_path):
             return []
 
-        allowlist = set()
         try:
             content = self._filesystem.read_text_file(allowlist_path)
-            for line in content.splitlines():
-                line = line.strip()
-                if line and not line.startswith('#'):
-                    allowlist.add(line)
         except OSError:
-            pass
-        return sorted(list(allowlist))
+            return []
 
-    def _should_use_system_shard(self, shard_name):
-        """Check if a shard should be placed in the system shard based on the allowlist."""
-        allowlist = self._load_api_test_suite_allowlist()
-        return shard_name not in allowlist
+        config = self.api_test_current_configuration()
+        current_tokens = {v.lower() for v in config.values() if v}
+        current_version = config.get('version')
+        current_version = current_version.lower() if current_version else None
+        version_order = self.api_test_version_order()
+
+        parser = ExpectationParser(APITestSuite())
+        patterns = set()
+        for expectation, warnings in parser.parse(allowlist_path, content):
+            for warning in warnings:
+                _log.warning(str(warning))
+            if expectation is None:
+                continue
+            if not expectation.matches_configuration(current_tokens, current_version, version_order):
+                continue
+            patterns.add(expectation.test_pattern)
+
+        return sorted(patterns)
+
+    @memoized
+    def _allowlist_as_set(self):
+        """Return the allowlist as a set for efficient lookups."""
+        return set(self._load_api_test_suite_allowlist())
+
+    def is_test_allowlisted(self, test_name):
+        """Check if a test is allowlisted (exact match or suite match).
+
+        A test is allowlisted if:
+        1. Its full name (BINARY.SUITE.TESTCASE) is in the allowlist, OR
+        2. Its suite prefix (BINARY.SUITE) is in the allowlist
+        """
+        allowlist = self._allowlist_as_set()
+        # Check exact match (test name in allowlist)
+        if test_name in allowlist:
+            return True
+        # Check suite match (BINARY.SUITE prefix in allowlist)
+        suite_prefix = '.'.join(test_name.split('.')[:-1])
+        return suite_prefix in allowlist
+
+    def filter_api_tests_by_allowlist(self, tests):
+        """Split API tests into allowlisted (parallel) and non-allowlisted (system) groups."""
+        allowlisted = []
+        non_allowlisted = []
+        for t in tests:
+            if self.is_test_allowlisted(t):
+                allowlisted.append(t)
+            else:
+                non_allowlisted.append(t)
+        return allowlisted, non_allowlisted
 
     def sharding_groups(self, suite=None):
-        if suite == 'api-tests':
-            groups = {}
-
-            # Add system group - test-parallel-safety groups will be created dynamically in runner.py
-            groups['system'] = lambda shard: '__WEBKIT_TEST_PARALLEL_SAFETY_SHARD_' not in shard.name and self._should_use_system_shard(shard.name)
-
-            return groups
         return {
             'media': lambda shard: 'media' in shard.name or 'webaudio' in shard.name,
         }
@@ -91,6 +137,10 @@ class DarwinPort(ApplePort):
         if self.get_option('guard_malloc'):
             return 350 * 1000
         return super(DarwinPort, self).default_timeout_ms()
+
+    def _api_test_version_name(self, version, table=PUBLIC_TABLE):
+        name = VersionNameMap.map(self.host.platform).to_name(version, platform=self.port_name, table=table)
+        return name.lower().replace(' ', '') if name else None
 
     def _port_specific_expectations_files(self, device_type=None):
         return list(reversed([self._filesystem.join(self._webkit_baseline_path(p), 'TestExpectations') for p in self.baseline_search_path(device_type=device_type)]))
@@ -133,7 +183,26 @@ class DarwinPort(ApplePort):
             return diagnositc_reports_directory
         return self.host.filesystem.join(log_directory, 'CrashReporter')
 
+    def crash_log_directories(self):
+        directories = [self.path_to_crash_logs()]
+        crashboard_archive = '/Library/Logs/CrashboardArchive'
+        if self.host.filesystem.exists(crashboard_archive):
+            directories.append(crashboard_archive)
+        return directories
+
     def _merge_crash_logs(self, logs, new_logs, crashed_processes):
+        def already_collected(process_name, pid):
+            # A crash report's parsed procName may be an alias of the reported crash-process
+            # name (e.g. a ServiceWorkerProcess crash is recorded under a WebContent procName).
+            # Match those the way CrashLogs._find_newest_log_darwin does, so an aliased crash
+            # already collected in the first pass is not appended again as a "new" crash.
+            for _, reported_name, reported_pid in crashed_processes:
+                if reported_pid != pid:
+                    continue
+                if process_name == reported_name or process_name in CrashLogs.PROCESS_NAME_ALIASES.get(reported_name, ()):
+                    return True
+            return False
+
         for test, crash_log in new_logs.items():
             try:
                 if test.split('-')[0] == 'Sandbox':
@@ -144,13 +213,13 @@ class DarwinPort(ApplePort):
                     pid = int(test.split('-')[1])
             except (IndexError, ValueError):
                 continue
-            if not any(entry[1] == process_name and entry[2] == pid for entry in crashed_processes):
+            if not already_collected(process_name, pid):
                 # if this is a new crash, then append the logs
                 logs[test] = crash_log
         return logs
 
     def _look_for_all_crash_logs_in_log_dir(self, newer_than):
-        crash_log = CrashLogs(self.host, self.path_to_crash_logs(), crash_logs_to_skip=self._crash_logs_to_skip_for_host.get(self.host, []))
+        crash_log = CrashLogs(self.host, self.crash_log_directories(), crash_logs_to_skip=self._crash_logs_to_skip_for_host.get(self.host, []))
         return crash_log.find_all_logs(newer_than=newer_than)
 
     def _get_crash_log(self, name, pid, stdout, stderr, newer_than, time_fn=None, sleep_fn=None, wait_for_log=True, target_host=None):
@@ -160,7 +229,7 @@ class DarwinPort(ApplePort):
         time_fn = time_fn or time.time
         sleep_fn = sleep_fn or time.sleep
         crash_log = ''
-        crash_logs = CrashLogs(target_host or self.host, self.path_to_crash_logs(), crash_logs_to_skip=self._crash_logs_to_skip_for_host.get(target_host or self.host, []))
+        crash_logs = CrashLogs(target_host or self.host, self.crash_log_directories(), crash_logs_to_skip=self._crash_logs_to_skip_for_host.get(target_host or self.host, []))
         now = time_fn()
         deadline = now + 5 * int(self.get_option('child_processes', 1))
         while not crash_log and now <= deadline:

@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<style>select::picker(select), select::picker-icon { transition-duration: 0s !important; }</style>
 <html>
 <title>Test of sizing customizable select inside of flex</title>
 <link rel=author href="mailto:dbaron@chromium.org">
@@ -23,5 +24,6 @@
   <select>
     <option>First Option</option>
     <option>Second Option</option>
-  </select><div class="after">The content after the select.</div>
+  </select
+  ><div class="after">The content after the select.</div>
 </div>

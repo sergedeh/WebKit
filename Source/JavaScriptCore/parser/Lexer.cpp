@@ -30,21 +30,18 @@
 #include "KeywordLookup.h"
 #include "Lexer.lut.h"
 #include "ParseInt.h"
+#include "SourceCharacters.h"
 #include <limits.h>
 #include <string.h>
 #include <wtf/Assertions.h>
 #include <wtf/HexNumber.h>
+#include <wtf/MathExtras.h>
 #include <wtf/dtoa.h>
 #include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
-
-constinit const WTF::BitSet<256> whiteSpaceTable = makeLatin1CharacterBitSet(
-    [](Latin1Character ch) {
-        return ch == ' ' || ch == '\t' || ch == 0xB || ch == 0xC || ch == 0xA0;
-    });
 
 bool isLexerKeyword(const Identifier& identifier)
 {
@@ -501,25 +498,22 @@ static constexpr const Latin1Character singleCharacterEscapeValuesForASCII[128] 
 
 template <typename T>
 Lexer<T>::Lexer(VM& vm, JSParserBuiltinMode builtinMode, JSParserScriptMode scriptMode)
-    : m_positionBeforeLastNewline(0,0,0)
-    , m_isReparsingFunction(false)
-    , m_vm(vm)
+    : m_vm(vm)
     , m_parsingBuiltinFunction(builtinMode == JSParserBuiltinMode::Builtin || Options::exposePrivateIdentifiers())
+    , m_isReparsingFunction(false)
     , m_scriptMode(scriptMode)
 {
 }
 
-static inline JSTokenType tokenTypeForIntegerLikeToken(double doubleValue)
+static inline JSTokenType LEGACY_NODELETE tokenTypeForIntegerLikeToken(double doubleValue)
 {
-    if ((doubleValue || !std::signbit(doubleValue)) && static_cast<int64_t>(doubleValue) == doubleValue)
+    if ((doubleValue || !std::signbit(doubleValue)) && truncateDoubleToInt64(doubleValue) == doubleValue)
         return INTEGER;
     return DOUBLE;
 }
 
 template <typename T>
-Lexer<T>::~Lexer()
-{
-}
+Lexer<T>::~Lexer() = default;
 
 template <typename T>
 String Lexer<T>::invalidCharacterMessage() const
@@ -555,10 +549,7 @@ template <typename T>
 void Lexer<T>::setCode(const SourceCode& source, ParserArena* arena)
 {
     m_arena = &arena->identifierArena();
-    
-    m_lineNumber = source.firstLine().oneBasedInt();
-    m_lastToken = -1;
-    
+
     StringView sourceString = source.provider()->source();
 
     if (!sourceString.isNull())
@@ -573,7 +564,6 @@ void Lexer<T>::setCode(const SourceCode& source, ParserArena* arena)
     m_codeEnd = m_codeStart + source.endOffset();
     m_error = false;
     m_atLineStart = true;
-    m_lineStart = m_code;
     m_lexErrorMessage = String();
     m_sourceURLDirective = String();
     m_sourceMappingURLDirective = String();
@@ -593,18 +583,17 @@ template <typename T>
 template <int shiftAmount> ALWAYS_INLINE void Lexer<T>::internalShift()
 {
     m_code += shiftAmount;
-    ASSERT(currentOffset() >= currentLineStartOffset());
     m_current = *m_code;
 }
 
 template <typename T>
 ALWAYS_INLINE void Lexer<T>::shift()
 {
-    // At one point timing showed that setting m_current to 0 unconditionally was faster than an if-else sequence.
-    m_current = 0;
     ++m_code;
     if (m_code < m_codeEnd) [[likely]]
         m_current = *m_code;
+    else
+        m_current = 0;
 }
 
 template <typename T>
@@ -623,7 +612,7 @@ ALWAYS_INLINE T Lexer<T>::peek(int offset) const
 {
     ASSERT(offset > 0 && offset < 5);
     const T* code = m_code + offset;
-    return (code < m_codeEnd) ? *code : 0;
+    return (code < m_codeEnd) ? *code : T { };
 }
 
 struct ParsedUnicodeEscapeValue {
@@ -720,21 +709,16 @@ void Lexer<T>::shiftLineTerminator()
 {
     ASSERT(isLineTerminator(m_current));
 
-    m_positionBeforeLastNewline = currentPosition();
     T prev = m_current;
     shift();
 
-    if (prev == '\r' && m_current == '\n')
+    if (isCRLFPair(prev, m_current))
         shift();
-
-    ++m_lineNumber;
-    m_lineStart = m_code;
 }
 
-template <typename T>
-ALWAYS_INLINE bool Lexer<T>::lastTokenWasRestrKeyword() const
+static ALWAYS_INLINE bool isRestrKeyword(JSTokenType token)
 {
-    return m_lastToken == CONTINUE || m_lastToken == BREAK || m_lastToken == RETURN || m_lastToken == THROW;
+    return token == CONTINUE || token == BREAK || token == RETURN || token == THROW;
 }
 
 template <typename T>
@@ -774,7 +758,7 @@ static ALWAYS_INLINE bool cannotBeIdentStart(char16_t c)
 {
     if (isLatin1(c)) [[likely]]
         return cannotBeIdentStart(static_cast<Latin1Character>(c));
-    return Lexer<char16_t>::isWhiteSpace(c) || Lexer<char16_t>::isLineTerminator(c);
+    return isWhiteSpace(c) || isLineTerminator(c);
 }
 
 static NEVER_INLINE bool isNonLatin1IdentPart(char32_t c)
@@ -813,7 +797,7 @@ static ALWAYS_INLINE bool cannotBeIdentPartOrEscapeStart(char16_t c)
 {
     if (isLatin1(c)) [[likely]]
         return cannotBeIdentPartOrEscapeStart(static_cast<Latin1Character>(c));
-    return Lexer<char16_t>::isWhiteSpace(c) || Lexer<char16_t>::isLineTerminator(c);
+    return isWhiteSpace(c) || isLineTerminator(c);
 }
 
 
@@ -979,6 +963,36 @@ template <bool shouldCreateIdentifier> ALWAYS_INLINE JSTokenType Lexer<Latin1Cha
         shift();
 
     ASSERT(isIdentStart(m_current) || m_current == '\\');
+
+    // Attempt SIMD scan first
+    // caseFoldMask: OR-ing with 0x20 maps 'A'-'Z' to 'a'-'z', so one range check covers both cases.
+    constexpr auto caseFoldMask = SIMD::splat<Latin1Character>(0x20);
+    constexpr auto lowerA = SIMD::splat<Latin1Character>('a');
+    constexpr auto lowerZ = SIMD::splat<Latin1Character>('z');
+    constexpr auto zero = SIMD::splat<Latin1Character>('0');
+    constexpr auto nine = SIMD::splat<Latin1Character>('9');
+    constexpr auto dollar = SIMD::splat<Latin1Character>('$');
+    constexpr auto underscore = SIMD::splat<Latin1Character>('_');
+
+    auto vectorMatch = [&](auto input) ALWAYS_INLINE_LAMBDA {
+        auto folded = SIMD::bitOr(input, caseFoldMask);
+        auto isAlpha = SIMD::bitAnd(SIMD::greaterThanOrEqual(folded, lowerA), SIMD::lessThanOrEqual(folded, lowerZ));
+        auto isDigit = SIMD::bitAnd(SIMD::greaterThanOrEqual(input, zero), SIMD::lessThanOrEqual(input, nine));
+        auto isDollar = SIMD::equal(input, dollar);
+        auto isUnderscore = SIMD::equal(input, underscore);
+        auto isIdentContinue = SIMD::bitOr(isAlpha, isDigit, isDollar, isUnderscore);
+        return SIMD::findFirstNonZeroIndex(SIMD::bitNot(isIdentContinue));
+    };
+
+    auto scalarMatch = [](Latin1Character c) ALWAYS_INLINE_LAMBDA {
+        return !isIdentPart(c);
+    };
+
+    auto* found = SIMD::find(std::span { currentSourcePtr(), m_codeEnd }, vectorMatch, scalarMatch);
+    m_code = found;
+    m_current = (found < m_codeEnd) ? *found : Latin1Character { };
+
+    // Scalar fallback for non-ASCII Latin1 identifier parts
     while (isIdentPart(m_current))
         shift();
     
@@ -1015,15 +1029,12 @@ template <bool shouldCreateIdentifier> ALWAYS_INLINE JSTokenType Lexer<Latin1Cha
     if ((remaining < maxTokenLength) && !lexerFlags.contains(LexerFlags::IgnoreReservedWords)) [[unlikely]] {
         if (!isBuiltinName) {
             ASSERT(shouldCreateIdentifier);
-            if (remaining < maxTokenLength) {
-                const HashTableValue* entry = JSC::mainTable.entry(*ident);
-                ASSERT((remaining < maxTokenLength) || !entry);
-                if (!entry)
-                    return identType;
-                JSTokenType token = static_cast<JSTokenType>(entry->lexerValue());
-                return (token != RESERVED_IF_STRICT) || strictMode ? token : identType;
-            }
-            return identType;
+            const HashTableValue* entry = JSC::mainTable.entry(*ident);
+            ASSERT((remaining < maxTokenLength) || !entry);
+            if (!entry)
+                return identType;
+            JSTokenType token = static_cast<JSTokenType>(entry->lexerValue());
+            return (token != RESERVED_IF_STRICT) || strictMode ? token : identType;
         }
     }
 
@@ -1052,6 +1063,36 @@ template <bool shouldCreateIdentifier> ALWAYS_INLINE JSTokenType Lexer<char16_t>
 
     char16_t orAllChars = 0;
     ASSERT(isSingleCharacterIdentStart(m_current) || U16_IS_SURROGATE(m_current) || m_current == '\\');
+
+    // Attempt SIMD scan first
+    constexpr auto caseFoldMask = SIMD::splat<uint16_t>(0x20);
+    constexpr auto lowerA = SIMD::splat<uint16_t>('a');
+    constexpr auto lowerZ = SIMD::splat<uint16_t>('z');
+    constexpr auto zero = SIMD::splat<uint16_t>('0');
+    constexpr auto nine = SIMD::splat<uint16_t>('9');
+    constexpr auto dollar = SIMD::splat<uint16_t>('$');
+    constexpr auto underscore = SIMD::splat<uint16_t>('_');
+
+    auto vectorMatch = [&](auto input) ALWAYS_INLINE_LAMBDA {
+        auto folded = SIMD::bitOr(input, caseFoldMask);
+        auto isAlpha = SIMD::bitAnd(SIMD::greaterThanOrEqual(folded, lowerA), SIMD::lessThanOrEqual(folded, lowerZ));
+        auto isDigit = SIMD::bitAnd(SIMD::greaterThanOrEqual(input, zero), SIMD::lessThanOrEqual(input, nine));
+        auto isDollar = SIMD::equal(input, dollar);
+        auto isUnderscore = SIMD::equal(input, underscore);
+        auto isIdentContinue = SIMD::bitOr(isAlpha, isDigit, isDollar, isUnderscore);
+        return SIMD::findFirstNonZeroIndex(SIMD::bitNot(isIdentContinue));
+    };
+
+    auto scalarMatch = [](char16_t c) ALWAYS_INLINE_LAMBDA {
+        return !isASCIIAlphanumeric(c) && c != '_' && c != '$';
+    };
+
+    auto* found = SIMD::find(std::span { currentSourcePtr(), m_codeEnd }, vectorMatch, scalarMatch);
+    m_code = found;
+    m_current = (found < m_codeEnd) ? *found : 0;
+    // No need to update orAllChars: all SIMD-matched chars are ASCII, so they don't affect orAllChars & ~0xFF
+
+    // Scalar fallback for non-ASCII identifier parts
     while (isSingleCharacterIdentPart(m_current)) {
         orAllChars |= m_current;
         shift();
@@ -1077,15 +1118,12 @@ template <bool shouldCreateIdentifier> ALWAYS_INLINE JSTokenType Lexer<char16_t>
 
     if ((remaining < maxTokenLength) && !lexerFlags.contains(LexerFlags::IgnoreReservedWords)) [[unlikely]] {
         ASSERT(shouldCreateIdentifier);
-        if (remaining < maxTokenLength) {
-            const HashTableValue* entry = JSC::mainTable.entry(*ident);
-            ASSERT((remaining < maxTokenLength) || !entry);
-            if (!entry)
-                return IDENT;
-            JSTokenType token = static_cast<JSTokenType>(entry->lexerValue());
-            return (token != RESERVED_IF_STRICT) || strictMode ? token : IDENT;
-        }
-        return IDENT;
+        const HashTableValue* entry = JSC::mainTable.entry(*ident);
+        ASSERT((remaining < maxTokenLength) || !entry);
+        if (!entry)
+            return IDENT;
+        JSTokenType token = static_cast<JSTokenType>(entry->lexerValue());
+        return (token != RESERVED_IF_STRICT) || strictMode ? token : IDENT;
     }
 
     return IDENT;
@@ -1192,7 +1230,7 @@ static ALWAYS_INLINE bool characterRequiresParseStringSlowCase(Latin1Character c
     return character < 0xE;
 }
 
-static ALWAYS_INLINE bool characterRequiresParseStringSlowCase(char16_t character)
+static ALWAYS_INLINE bool LEGACY_NODELETE characterRequiresParseStringSlowCase(char16_t character)
 {
     return character < 0xE || !isLatin1(character);
 }
@@ -1201,8 +1239,6 @@ template <typename T>
 template <bool shouldBuildStrings> ALWAYS_INLINE typename Lexer<T>::StringParseResult Lexer<T>::parseString(JSTokenData* tokenData, bool strictMode)
 {
     int startingOffset = currentOffset();
-    int startingLineStartOffset = currentLineStartOffset();
-    int startingLineNumber = lineNumber();
     T stringQuoteCharacter = m_current;
     shift();
 
@@ -1243,8 +1279,7 @@ template <bool shouldBuildStrings> ALWAYS_INLINE typename Lexer<T>::StringParseR
 
     const T* found = SIMD::find(std::span { stringStart, m_codeEnd }, vectorMatch, scalarMatch);
     if (found == m_codeEnd) [[unlikely]] {
-        setOffset(startingOffset, startingLineStartOffset);
-        setLineNumber(startingLineNumber);
+        setOffset(startingOffset);
         return parseStringSlowCase<shouldBuildStrings>(tokenData, strictMode);
     }
 
@@ -1252,14 +1287,14 @@ template <bool shouldBuildStrings> ALWAYS_INLINE typename Lexer<T>::StringParseR
     m_current = *found;
     if (m_current == stringQuoteCharacter) [[likely]] {
         if constexpr (shouldBuildStrings)
-            tokenData->ident = makeIdentifier(std::span { stringStart, found });
+            tokenData->ident = makeLatin1Identifier(std::span { stringStart, found });
         else
             tokenData->ident = nullptr;
         return StringParsedSuccessfully;
     }
 
     while (m_current != stringQuoteCharacter) {
-        if (m_current == '\\') [[unlikely]] {
+        if (m_current == '\\') [[likely]] {
             if constexpr (shouldBuildStrings) {
                 if (stringStart != currentSourcePtr())
                     append8({ stringStart, currentSourcePtr() });
@@ -1287,18 +1322,32 @@ template <bool shouldBuildStrings> ALWAYS_INLINE typename Lexer<T>::StringParseR
                     record8(convertHex(prev, m_current));
                 shift();
             } else {
-                setOffset(startingOffset, startingLineStartOffset);
-                setLineNumber(startingLineNumber);
+                setOffset(startingOffset);
                 m_buffer8.shrink(0);
                 return parseStringSlowCase<shouldBuildStrings>(tokenData, strictMode);
             }
             stringStart = currentSourcePtr();
+
+            // Retry SIMD to skip the next plain segment to an interesting character
+            found = SIMD::find(std::span { stringStart, m_codeEnd }, vectorMatch, scalarMatch);
+            if (found == m_codeEnd) [[unlikely]] {
+                setOffset(startingOffset);
+                m_buffer8.shrink(0);
+                return parseStringSlowCase<shouldBuildStrings>(tokenData, strictMode);
+            }
+            m_code = found;
+            m_current = *found;
+
+            if (characterRequiresParseStringSlowCase(m_current)) [[unlikely]] {
+                setOffset(startingOffset);
+                m_buffer8.shrink(0);
+                return parseStringSlowCase<shouldBuildStrings>(tokenData, strictMode);
+            }
             continue;
         }
 
         if (characterRequiresParseStringSlowCase(m_current)) [[unlikely]] {
-            setOffset(startingOffset, startingLineStartOffset);
-            setLineNumber(startingLineNumber);
+            setOffset(startingOffset);
             m_buffer8.shrink(0);
             return parseStringSlowCase<shouldBuildStrings>(tokenData, strictMode);
         }
@@ -1450,13 +1499,18 @@ template <bool shouldBuildStrings> auto Lexer<T>::parseStringSlowCase(JSTokenDat
             stringStart = currentSourcePtr();
             continue;
         }
-        // Fast check for characters that require special handling.
-        // Catches 0, \n, and \r as efficiently as possible, and lets through all common ASCII characters.
-        if (m_current < 0xE) [[unlikely]] {
+        if (characterNeedsLiteralSpecialHandling(m_current)) [[unlikely]] {
             // New-line or end of input is not allowed
             if (atEnd() || m_current == '\r' || m_current == '\n') {
                 m_lexErrorMessage = "Unexpected EOF"_s;
                 return atEnd() ? StringUnterminated : StringCannotBeParsed;
+            }
+            // An unescaped LS or PS may appear in a string literal, but it does not stop being a
+            // LineTerminator (ECMA-262 #11.3): it stays part of the string's value *and* ends the
+            // line.
+            if (isLineTerminator(m_current)) {
+                shiftLineTerminator();
+                continue;
             }
             // Anything else is just a normal character
         }
@@ -1525,10 +1579,7 @@ typename Lexer<T>::StringParseResult Lexer<T>::parseTemplateLiteral(JSTokenData*
         if (m_current == '$' && peek(1) == '{')
             break;
 
-        // Fast check for characters that require special handling.
-        // Catches 0, \n, \r, 0x2028, and 0x2029 as efficiently
-        // as possible, and lets through all common ASCII characters.
-        if (((static_cast<unsigned>(m_current) - 0xE) & 0x2000)) [[unlikely]] {
+        if (characterNeedsLiteralSpecialHandling(m_current)) [[unlikely]] {
             // End of input is not allowed.
             // Unlike String, line terminator is allowed.
             if (atEnd()) {
@@ -1932,8 +1983,8 @@ ALWAYS_INLINE const Latin1Character* parseCommentDirectiveValueSIMD(const Latin1
     };
 
     auto scalarMatch = [&](auto character) ALWAYS_INLINE_LAMBDA {
-        return Lexer<Latin1Character>::isWhiteSpace(character)
-            || Lexer<Latin1Character>::isLineTerminator(character)
+        return isWhiteSpace<Latin1Character>(character)
+            || isLineTerminator<Latin1Character>(character)
             || character == '"'
             || character == '\'';
     };
@@ -1998,10 +2049,43 @@ bool Lexer<T>::nextTokenIsColon()
 }
 
 template <typename T>
-void Lexer<T>::fillTokenInfo(JSToken* tokenRecord, JSTokenType token, JSTextPosition endPosition)
+void Lexer<T>::fillTokenInfo(JSToken* tokenRecord, JSTextPosition endPosition)
 {
     tokenRecord->m_endPosition = endPosition;
-    m_lastToken = token;
+}
+
+template <typename T>
+NEVER_INLINE std::optional<JSTokenType> Lexer<T>::scanSingleLineComment(JSToken* tokenRecord, bool checkForDirectives)
+{
+    if (checkForDirectives) {
+        // Script comment directives like "//# sourceURL=test.js".
+        if ((m_current == '#' || m_current == '@') && isWhiteSpace(peek(1))) [[unlikely]] {
+            shift();
+            shift();
+            parseCommentDirective();
+        }
+    }
+
+    auto endPosition = currentPosition();
+
+    m_code = findLineTerminator(std::span { currentSourcePtr(), m_codeEnd });
+    if (m_code == m_codeEnd) {
+        m_current = 0;
+        fillTokenInfo(tokenRecord, endPosition);
+        return EOFTOK;
+    }
+
+    m_current = *m_code;
+    shiftLineTerminator();
+    m_atLineStart = true;
+    m_hasLineTerminatorBeforeToken = true;
+    // The caller restarts the token scan unless a restricted keyword needs the
+    // automatic semicolon that the line terminator implies.
+    if (!isRestrKeyword(tokenRecord->m_type))
+        return std::nullopt;
+
+    fillTokenInfo(tokenRecord, endPosition);
+    return SEMICOLON;
 }
 
 template <typename T>
@@ -2009,7 +2093,7 @@ JSTokenType Lexer<T>::lexWithoutClearingLineTerminator(JSToken* tokenRecord, Opt
 {
     JSTokenData* tokenData = &tokenRecord->m_data;
     ASSERT(!m_error);
-    m_lastTokenLocation = tokenRecord->location();
+
     ASSERT(m_buffer8.isEmpty());
     ASSERT(m_buffer16.isEmpty());
     JSTokenType token = ERRORTOK;
@@ -2017,16 +2101,9 @@ JSTokenType Lexer<T>::lexWithoutClearingLineTerminator(JSToken* tokenRecord, Opt
 start:
     skipWhitespace();
 
-    ASSERT(currentOffset() >= currentLineStartOffset());
     tokenRecord->m_startPosition = currentPosition();
 
     Latin1Character type = m_current;
-
-    if (atEnd()) {
-        token = EOFTOK;
-        goto returnToken;
-    }
-
     if constexpr (!std::is_same_v<T, Latin1Character>) {
         if (!isLatin1(m_current)) [[unlikely]] {
             char32_t codePoint;
@@ -2077,10 +2154,6 @@ start:
     case  61 /* 61 = = CharacterEqual */: {
         if (peek(1) == '>') {
             token = ARROWFUNCTION;
-            tokenData->line = lineNumber();
-            tokenData->offset = currentOffset();
-            tokenData->lineStartOffset = currentLineStartOffset();
-            ASSERT(tokenData->offset >= tokenData->lineStartOffset);
             shift();
             shift();
             break;
@@ -2106,7 +2179,9 @@ start:
         if (m_current == '!' && peek(1) == '-' && peek(2) == '-') {
             if (m_scriptMode == JSParserScriptMode::Classic) {
                 // <!-- marks the beginning of a line comment (for www usage)
-                goto inSingleLineComment;
+                if (auto result = scanSingleLineComment(tokenRecord, false))
+                    return *result;
+                goto start;
             }
         }
         if (m_current == '<') {
@@ -2167,7 +2242,9 @@ start:
             if ((m_atLineStart || m_hasLineTerminatorBeforeToken) && m_current == '>') {
                 if (m_scriptMode == JSParserScriptMode::Classic) {
                     shift();
-                    goto inSingleLineComment;
+                    if (auto result = scanSingleLineComment(tokenRecord, false))
+                        return *result;
+                    goto start;
                 }
             }
             token = (!m_hasLineTerminatorBeforeToken) ? MINUSMINUS : AUTOMINUSMINUS;
@@ -2207,7 +2284,9 @@ start:
         shift();
         if (m_current == '/') {
             shift();
-            goto inSingleLineCommentCheckForDirectives;
+            if (auto result = scanSingleLineComment(tokenRecord, true))
+                return *result;
+            goto start;
         }
         if (m_current == '*') {
             shift();
@@ -2216,7 +2295,7 @@ start:
             m_lexErrorMessage = "Multiline comment was not closed properly"_s;
             token = UNTERMINATED_MULTILINE_COMMENT_ERRORTOK;
             m_error = true;
-            fillTokenInfo(tokenRecord, token, currentPosition());
+            fillTokenInfo(tokenRecord, currentPosition());
             return token;
         }
         if (m_current == '=') {
@@ -2294,9 +2373,6 @@ start:
 
     case  40 /* 40 = ( CharacterOpenParen */: {
         token = OPENPAREN;
-        tokenData->line = lineNumber();
-        tokenData->offset = currentOffset();
-        tokenData->lineStartOffset = currentLineStartOffset();
         shift();
         break;
     }
@@ -2371,20 +2447,12 @@ start:
     }
 
     case 123 /* 123 = { CharacterOpenBrace */: {
-        tokenData->line = lineNumber();
-        tokenData->offset = currentOffset();
-        tokenData->lineStartOffset = currentLineStartOffset();
-        ASSERT(tokenData->offset >= tokenData->lineStartOffset);
         shift();
         token = OPENBRACE;
         break;
     }
 
     case 125 /* 125 = } CharacterCloseBrace */: {
-        tokenData->line = lineNumber();
-        tokenData->offset = currentOffset();
-        tokenData->lineStartOffset = currentLineStartOffset();
-        ASSERT(tokenData->offset >= tokenData->lineStartOffset);
         shift();
         token = CLOSEBRACE;
         break;
@@ -2415,8 +2483,6 @@ start:
         }
         size_t parsedLength;
         tokenData->doubleValue = parseDouble(m_buffer8, parsedLength);
-        if (token == INTEGER)
-            token = tokenTypeForIntegerLikeToken(tokenData->doubleValue);
 
         if (cannotBeIdentStart(m_current)) [[likely]] {
             m_buffer8.shrink(0);
@@ -2559,18 +2625,26 @@ start:
             goto returnError;
         }
 
-        record8('0');
         if (strictMode && isASCIIDigit(m_current)) [[unlikely]] {
             m_lexErrorMessage = "Decimal integer literals with a leading zero are forbidden in strict mode"_s;
             token = UNTERMINATED_OCTAL_NUMBER_ERRORTOK;
             goto returnError;
         }
+
         if (isASCIIOctalDigit(m_current)) {
+            record8('0');
             auto parseNumberResult = parseOctal();
             if (parseNumberResult && std::holds_alternative<double>(*parseNumberResult)) {
                 tokenData->doubleValue = std::get<double>(*parseNumberResult);
                 token = tokenTypeForIntegerLikeToken(tokenData->doubleValue);
             }
+        } else {
+            if (!isASCIIDigit(m_current) && m_current != '.' && cannotBeIdentStart(m_current)) {
+                tokenData->doubleValue = 0;
+                token = INTEGER;
+                break;
+            }
+            record8('0');
         }
         [[fallthrough]];
     }
@@ -2585,6 +2659,24 @@ start:
     case  56 /* 56 = 8 CharacterNumber */:
     case  57 /* 57 = 9 CharacterNumber */: {
         if (token != INTEGER && token != DOUBLE) [[likely]] {
+            if (m_buffer8.isEmpty()) [[likely]] {
+                auto start = m_code;
+                auto ptr = m_code + 1;
+                uint64_t result = *start - '0';
+                while (ptr < m_codeEnd && isASCIIDigit(*ptr)) {
+                    result = result * 10 + (*ptr - '0');
+                    ++ptr;
+                }
+
+                if (ptr < m_codeEnd && (*ptr != '.' && cannotBeIdentStart(*ptr)) && (ptr - start) <= numberOfDigitsForSafeInt52) {
+                    tokenData->doubleValue = result;
+                    token = INTEGER;
+                    m_code = ptr;
+                    m_current = *ptr;
+                    break;
+                }
+            }
+
             auto parseNumberResult = parseDecimal();
             if (parseNumberResult) {
                 if (std::holds_alternative<double>(*parseNumberResult)) {
@@ -2644,13 +2736,13 @@ start:
         if (result != StringParsedSuccessfully) [[unlikely]] {
             token = result == StringUnterminated ? UNTERMINATED_STRING_LITERAL_ERRORTOK : INVALID_STRING_LITERAL_ERRORTOK;
             m_error = true;
-            fillTokenInfo(tokenRecord, token, currentPosition());
+            fillTokenInfo(tokenRecord, currentPosition());
             return token;
         }
         shift();
         token = STRING;
         m_atLineStart = false;
-        fillTokenInfo(tokenRecord, token, currentPosition());
+        fillTokenInfo(tokenRecord, currentPosition());
         return token;
     }
 
@@ -2832,7 +2924,9 @@ start:
         if (next == '!' && !currentOffset()) {
             shift();
             shift();
-            goto inSingleLineComment;
+            if (auto result = scanSingleLineComment(tokenRecord, false))
+                return *result;
+            goto start;
         }
 
         bool isValidPrivateName;
@@ -2859,7 +2953,6 @@ start:
     }
 
     case 183 /* 183 = Po category      CharacterOtherIdentifierPart */:
-    case   0 /*   0 = Null             CharacterInvalid */:
     case   1 /*   1 = Start of Heading CharacterInvalid */:
     case   2 /*   2 = Start of Text    CharacterInvalid */:
     case   3 /*   3 = End of Text      CharacterInvalid */:
@@ -2950,69 +3043,21 @@ start:
     case 247 /* 247 = Sm category      CharacterInvalid */: {
         goto invalidCharacter;
     }
+
+    case   0 /*   0 = Null             CharacterInvalid */: {
+        if (atEnd()) {
+            token = EOFTOK;
+            goto returnToken;
+        }
+        goto invalidCharacter;
+    }
     }
 
     m_atLineStart = false;
     goto returnToken;
 
-inSingleLineCommentCheckForDirectives:
-    // Script comment directives like "//# sourceURL=test.js".
-    if ((m_current == '#' || m_current == '@') && isWhiteSpace(peek(1))) [[unlikely]] {
-        shift();
-        shift();
-        parseCommentDirective();
-    }
-    // Fall through to complete single line comment parsing.
-
-inSingleLineComment:
-    {
-        auto endPosition = currentPosition();
-
-        using UnsignedType = SameSizeUnsignedInteger<T>;
-        constexpr auto lineFeedMask = SIMD::splat<UnsignedType>('\n');
-        constexpr auto carriageReturnMask = SIMD::splat<UnsignedType>('\r');
-        constexpr auto u2028Mask = SIMD::splat<UnsignedType>(static_cast<UnsignedType>(0x2028));
-        constexpr auto u2029Mask = SIMD::splat<UnsignedType>(static_cast<UnsignedType>(0x2029));
-        auto vectorMatch = [&](auto input) ALWAYS_INLINE_LAMBDA {
-            auto lineFeed = SIMD::equal(input, lineFeedMask);
-            auto carriageReturn = SIMD::equal(input, carriageReturnMask);
-            if constexpr (std::is_same_v<T, Latin1Character>) {
-                auto mask = SIMD::bitOr(lineFeed, carriageReturn);
-                return SIMD::findFirstNonZeroIndex(mask);
-            } else {
-                auto u2028 = SIMD::equal(input, u2028Mask);
-                auto u2029 = SIMD::equal(input, u2029Mask);
-                auto mask = SIMD::bitOr(lineFeed, carriageReturn, u2028, u2029);
-                return SIMD::findFirstNonZeroIndex(mask);
-            }
-        };
-
-        auto scalarMatch = [&](auto character) ALWAYS_INLINE_LAMBDA {
-            return isLineTerminator(character);
-        };
-
-        m_code = SIMD::find(std::span { currentSourcePtr(), m_codeEnd }, vectorMatch, scalarMatch);
-        if (m_code == m_codeEnd) {
-            m_current = 0;
-            token = EOFTOK;
-            fillTokenInfo(tokenRecord, token, endPosition);
-            return token;
-        }
-
-        m_current = *m_code;
-        shiftLineTerminator();
-        m_atLineStart = true;
-        m_hasLineTerminatorBeforeToken = true;
-        if (!lastTokenWasRestrKeyword())
-            goto start;
-
-        token = SEMICOLON;
-        fillTokenInfo(tokenRecord, token, endPosition);
-        return token;
-    }
-
 returnToken:
-    fillTokenInfo(tokenRecord, token, currentPosition());
+    fillTokenInfo(tokenRecord, currentPosition());
     return token;
 
 invalidCharacter:
@@ -3022,7 +3067,7 @@ invalidCharacter:
 
 returnError:
     m_error = true;
-    fillTokenInfo(tokenRecord, token, currentPosition());
+    fillTokenInfo(tokenRecord, currentPosition());
     RELEASE_ASSERT(token & CanBeErrorTokenFlag);
     return token;
 }
@@ -3034,7 +3079,7 @@ template <>
 inline void orCharacter<Latin1Character>(char16_t&, char16_t) { }
 
 template <>
-inline void orCharacter<char16_t>(char16_t& orAccumulator, char16_t character)
+inline void LEGACY_NODELETE orCharacter<char16_t>(char16_t& orAccumulator, char16_t character)
 {
     orAccumulator |= character;
 }
@@ -3060,7 +3105,7 @@ JSTokenType Lexer<T>::scanRegExp(JSToken* tokenRecord, char16_t patternPrefix)
         if (isLineTerminator(m_current) || atEnd()) {
             m_buffer16.shrink(0);
             JSTokenType token = UNTERMINATED_REGEXP_LITERAL_ERRORTOK;
-            fillTokenInfo(tokenRecord, token, currentPosition());
+            fillTokenInfo(tokenRecord, currentPosition());
             m_error = true;
             m_lexErrorMessage = makeString("Unterminated regular expression literal '"_s, getToken(*tokenRecord), '\'');
             return token;
@@ -3109,7 +3154,7 @@ JSTokenType Lexer<T>::scanRegExp(JSToken* tokenRecord, char16_t patternPrefix)
     if (!isLatin1(m_current) && !isWhiteSpace(m_current) && !isLineTerminator(m_current)) [[unlikely]] {
         m_buffer8.shrink(0);
         JSTokenType token = INVALID_IDENTIFIER_UNICODE_ERRORTOK;
-        fillTokenInfo(tokenRecord, token, currentPosition());
+        fillTokenInfo(tokenRecord, currentPosition());
         m_error = true;
         String codePoint = String::fromCodePoint(currentCodePoint());
         if (!codePoint)
@@ -3125,7 +3170,7 @@ JSTokenType Lexer<T>::scanRegExp(JSToken* tokenRecord, char16_t patternPrefix)
     m_atLineStart = false;
 
     JSTokenType token = REGEXP;
-    fillTokenInfo(tokenRecord, token, currentPosition());
+    fillTokenInfo(tokenRecord, currentPosition());
     return token;
 }
 
@@ -3148,7 +3193,7 @@ JSTokenType Lexer<T>::scanTemplateString(JSToken* tokenRecord, RawStringsBuildMo
 
     // Since TemplateString always ends with ` or }, m_atLineStart always becomes false.
     m_atLineStart = false;
-    fillTokenInfo(tokenRecord, token, currentPosition());
+    fillTokenInfo(tokenRecord, currentPosition());
     return token;
 }
 

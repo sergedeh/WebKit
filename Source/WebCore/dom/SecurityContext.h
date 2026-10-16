@@ -29,6 +29,7 @@
 
 #include <WebCore/CrossOriginEmbedderPolicy.h>
 #include <WebCore/CrossOriginOpenerPolicy.h>
+#include <WebCore/DocumentIsolationPolicy.h>
 #include <WebCore/IPAddressSpace.h>
 #include <WebCore/ReferrerPolicy.h>
 #include <memory>
@@ -53,13 +54,12 @@ public:
     SandboxFlags creationSandboxFlags() const { return m_creationSandboxFlags; }
 
     SandboxFlags sandboxFlags() const { return m_sandboxFlags; }
-    WEBCORE_EXPORT ContentSecurityPolicy* contentSecurityPolicy();
-    CheckedPtr<ContentSecurityPolicy> checkedContentSecurityPolicy();
+    WEBCORE_EXPORT ContentSecurityPolicy* LEGACY_NODELETE contentSecurityPolicy();
 
     bool isSecureTransitionTo(const URL&) const;
 
     enum class SandboxFlagsSource : bool { CSP, Other };
-    void enforceSandboxFlags(SandboxFlags, SandboxFlagsSource = SandboxFlagsSource::Other);
+    virtual void enforceSandboxFlags(SandboxFlags, SandboxFlagsSource = SandboxFlagsSource::Other);
 
     bool isSandboxed(SandboxFlag flag) const { return m_sandboxFlags.contains(flag); }
 
@@ -80,20 +80,23 @@ public:
 
     inline void setEmptySecurityOriginPolicyAndContentSecurityPolicy();
 
-    const CrossOriginEmbedderPolicy& crossOriginEmbedderPolicy() const { return m_crossOriginEmbedderPolicy; }
+    const CrossOriginEmbedderPolicy& crossOriginEmbedderPolicy() const LIFETIME_BOUND { return m_crossOriginEmbedderPolicy; }
     void setCrossOriginEmbedderPolicy(const CrossOriginEmbedderPolicy& crossOriginEmbedderPolicy) { m_crossOriginEmbedderPolicy = crossOriginEmbedderPolicy; }
 
-    virtual const CrossOriginOpenerPolicy& crossOriginOpenerPolicy() const { return m_crossOriginOpenerPolicy; }
+    virtual CrossOriginOpenerPolicy crossOriginOpenerPolicy() const { return m_crossOriginOpenerPolicy; }
     void setCrossOriginOpenerPolicy(const CrossOriginOpenerPolicy& crossOriginOpenerPolicy) { m_crossOriginOpenerPolicy = crossOriginOpenerPolicy; }
 
-    const IntegrityPolicy* integrityPolicy() const;
+    DocumentIsolationPolicy documentIsolationPolicy() const { return m_documentIsolationPolicy; }
+    void setDocumentIsolationPolicy(DocumentIsolationPolicy documentIsolationPolicy) { m_documentIsolationPolicy = documentIsolationPolicy; }
+
+    const IntegrityPolicy* LEGACY_NODELETE integrityPolicy() const LIFETIME_BOUND;
     void setIntegrityPolicy(std::unique_ptr<IntegrityPolicy>&&);
 
-    const IntegrityPolicy* integrityPolicyReportOnly() const;
+    const IntegrityPolicy* LEGACY_NODELETE integrityPolicyReportOnly() const LIFETIME_BOUND;
     void setIntegrityPolicyReportOnly(std::unique_ptr<IntegrityPolicy>&&);
 
     virtual ReferrerPolicy referrerPolicy() const { return m_referrerPolicy; }
-    void setReferrerPolicy(ReferrerPolicy);
+    void LEGACY_NODELETE setReferrerPolicy(ReferrerPolicy);
 
     IPAddressSpace ipAddressSpace() const { return m_ipAddressSpace; }
     void setIPAddressSpace(IPAddressSpace ipAddressSpace) { m_ipAddressSpace = ipAddressSpace; }
@@ -102,7 +105,6 @@ public:
     virtual void inheritPolicyContainerFrom(const PolicyContainer&);
 
     WEBCORE_EXPORT SecurityOrigin* securityOrigin() const;
-    WEBCORE_EXPORT RefPtr<SecurityOrigin> protectedSecurityOrigin() const;
 
     static SandboxFlags parseSandboxPolicy(StringView policy, String& invalidTokensErrorMessage);
     static bool isSupportedSandboxPolicy(StringView);
@@ -141,6 +143,7 @@ private:
     std::unique_ptr<ContentSecurityPolicy> m_contentSecurityPolicy;
     CrossOriginEmbedderPolicy m_crossOriginEmbedderPolicy;
     CrossOriginOpenerPolicy m_crossOriginOpenerPolicy;
+    DocumentIsolationPolicy m_documentIsolationPolicy { DocumentIsolationPolicy::None };
     std::unique_ptr<IntegrityPolicy> m_integrityPolicy;
     std::unique_ptr<IntegrityPolicy> m_integrityPolicyReportOnly;
     SandboxFlags m_creationSandboxFlags;

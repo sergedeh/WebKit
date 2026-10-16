@@ -1,4 +1,4 @@
-load("//bazel:skia_rules.bzl", "skia_cc_library", "skia_filegroup", "split_srcs_and_hdrs")
+load("//bazel:skia_rules.bzl", "skia_cc_library_with_testutil", "skia_filegroup", "split_srcs_and_hdrs")
 
 package(
     default_applicable_licenses = ["//:license"],
@@ -91,7 +91,7 @@ skia_filegroup(
     srcs = ["AHardwareBufferVk.cpp"],
 )
 
-skia_cc_library(
+skia_cc_library_with_testutil(
     name = "ganesh_vulkan",
     srcs = [
         ":vk_hdrs",
@@ -104,84 +104,19 @@ skia_cc_library(
         "//include/gpu/ganesh/vk:public_hdrs",
         "//include/gpu/vk:shared_public_hdrs",
     ],
-    features = ["layering_check"],
-    local_defines = [
-        "SK_USE_VMA",  # TODO(kjlubick, egdaniel) Turn this off by default and remove.
-    ],
-    visibility = ["//:__pkg__"],
-    deps = [
-        "//:core",
-        "//src/base",
-        "//src/core:core_priv",
-        "//src/gpu",
-        "//src/gpu/ganesh",
-        "//src/gpu/vk",
-        "//src/gpu/vk/vulkanmemoryallocator:vulkanmemoryallocator_priv",
-        "@vulkan_headers",
-    ],
-)
-
-# TODO(kjlubick, michaelludwig): Rename this target to `ganesh_vulkan` once we've migrated all
-# clients to this target. This is the same as above without the local define and
-# vulkanmemoryallocator_priv define.
-skia_cc_library(
-    name = "ganesh_vulkan_novma",
-    srcs = [
-        ":vk_hdrs",
-        ":vk_srcs",
-        "//include/private/gpu/vk:private_hdrs",
-    ],
-    hdrs = [
-        "//include/gpu:shared_gpu_hdrs",
-        "//include/gpu/ganesh:ganesh_hdrs",
-        "//include/gpu/ganesh/vk:public_hdrs",
-        "//include/gpu/vk:shared_public_hdrs",
-    ],
-    features = ["layering_check"],
-    visibility = ["//:__pkg__"],
-    deps = [
-        "//:core",
-        "//src/base",
-        "//src/core:core_priv",
-        "//src/gpu",
-        "//src/gpu/ganesh",
-        "//src/gpu/vk",
-        "@vulkan_headers",
-    ],
-)
-
-# TODO(lovisolo, kjlubick): Do this with a macro.
-skia_cc_library(
-    name = "ganesh_vulkan_TEST_UTIL",
-    testonly = True,
-    srcs = [
-        ":vk_hdrs",
-        ":vk_srcs",
-        "//include/private/gpu/vk:private_hdrs",
-    ],
-    hdrs = [
-        "//include/gpu:shared_gpu_hdrs",
-        "//include/gpu/ganesh:ganesh_hdrs",
-        "//include/gpu/ganesh/vk:public_hdrs",
-        "//include/gpu/vk:shared_public_hdrs",
-    ],
     defines = [
-        "SK_GANESH",
         "SK_VULKAN",
     ],
     features = ["layering_check"],
-    local_defines = [
-        "GPU_TEST_UTILS",
-    ],
-    visibility = ["//tools:__subpackages__"],
+    priv_visibility = ["//tools:__subpackages__"],
+    visibility = ["//:__pkg__"],
     deps = [
         "//:core",
-        "//src/base",
         "//src/core:core_priv",
         "//src/gpu",
-        "//src/gpu/ganesh:ganesh_TEST_UTIL",
+        "//src/gpu/ganesh",
         "//src/gpu/vk",
-        "//src/gpu/vk/vulkanmemoryallocator:vulkanmemoryallocator_priv",
+        "//src/utils:shader_utils",
         "@vulkan_headers",
     ],
 )

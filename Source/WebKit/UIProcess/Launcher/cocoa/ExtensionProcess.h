@@ -52,7 +52,9 @@ public:
     ExtensionProcess(BERenderingProcess *);
 
     void invalidate() const;
-    XPCObjectPtr<xpc_connection_t> makeLibXPCConnection() const;
+    void invalidate(const String& reason) const;
+
+    OSObjectPtr<xpc_connection_t> makeLibXPCConnection() const;
     PlatformGrant grantCapability(const PlatformCapability&, BlockPtr<void()>&& invalidationHandler = ^{ }) const;
     RetainPtr<UIInteraction> createVisibilityPropagationInteraction() const;
 

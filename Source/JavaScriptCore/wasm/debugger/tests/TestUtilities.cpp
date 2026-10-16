@@ -28,7 +28,7 @@
 
 #include <wtf/DataLog.h>
 
-#if ENABLE(WEBASSEMBLY)
+#if ENABLE(WEBASSEMBLY_DEBUGGER)
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -360,12 +360,11 @@ static bool parseAndVerifyDebugInfoImpl(JSC::VM* vm, const SourceModule& sourceM
     JSC::Wasm::FunctionCodeIndex functionIndex = JSC::Wasm::FunctionCodeIndex { 0 };
     const auto& function = moduleInfo->functions[functionIndex];
     JSC::Wasm::FunctionSpaceIndex spaceIndex = moduleInfo->toSpaceIndex(functionIndex);
-    JSC::Wasm::TypeIndex typeIndex = moduleInfo->typeIndexFromFunctionIndexSpace(spaceIndex);
-    Ref typeDefinition = JSC::Wasm::TypeInformation::get(typeIndex);
+    Ref rtt = moduleInfo->rtt(spaceIndex);
 
     auto functionData = moduleInfo->debugInfo->source.subspan(function.start, function.data.size());
     JSC::Wasm::FunctionDebugInfo debugInfo;
-    JSC::Wasm::parseForDebugInfo(functionData, typeDefinition, moduleInfo.get(), functionIndex, debugInfo);
+    JSC::Wasm::parseForDebugInfo(functionData, rtt.get(), moduleInfo.get(), functionIndex, debugInfo);
 
     size_t expectedSize = expectedMappings.size();
 
@@ -516,4 +515,4 @@ int testWasmDebugInfo()
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
-#endif // ENABLE(WEBASSEMBLY)
+#endif // ENABLE(WEBASSEMBLY_DEBUGGER)

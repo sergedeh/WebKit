@@ -27,7 +27,9 @@
 #include "AXLocalFrame.h"
 
 #include "AccessibilityObjectInlines.h"
+#include "AccessibilityScrollView.h"
 #include "LocalFrameInlines.h"
+#include "LocalFrameView.h"
 
 namespace WebCore {
 
@@ -47,7 +49,18 @@ LayoutRect AXLocalFrame::elementRect() const
     return parent ? parent->elementRect() : LayoutRect();
 }
 
-#if ENABLE_ACCESSIBILITY_LOCAL_FRAME
+
+bool AXLocalFrame::computeIsIgnored() const
+{
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+    if (RefPtr hostingScrollView = dynamicDowncast<AccessibilityScrollView>(parentObject()))
+        return hostingScrollView->isIgnoredFromHostingFrame();
+#endif
+    return false;
+}
+
+
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
 
 void AXLocalFrame::setLocalFrameView(LocalFrameView* localFrameView)
 {
@@ -75,6 +88,6 @@ AccessibilityObject* AXLocalFrame::crossFrameChildObject() const
     return downcast<AccessibilityObject>(cache->rootObjectForFrame(*localFrame.get()));
 }
 
-#endif // ENABLE_ACCESSIBILITY_LOCAL_FRAME
+#endif // ENABLE(ACCESSIBILITY_LOCAL_FRAME)
 
 } // namespace WebCore

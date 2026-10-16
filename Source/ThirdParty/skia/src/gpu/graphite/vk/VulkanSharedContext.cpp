@@ -12,19 +12,15 @@
 #include "include/gpu/graphite/PersistentPipelineStorage.h"
 #include "include/gpu/vk/VulkanBackendContext.h"
 #include "include/gpu/vk/VulkanExtensions.h"
-#include "include/private/base/SkMutex.h"
+#include "include/private/SkLog.h"
+#include "include/private/SkMutex.h"
 #include "src/gpu/GpuTypesPriv.h"
-#include "src/gpu/graphite/Log.h"
 #include "src/gpu/graphite/ResourceTypes.h"
 #include "src/gpu/graphite/vk/VulkanBuffer.h"
 #include "src/gpu/graphite/vk/VulkanCaps.h"
 #include "src/gpu/graphite/vk/VulkanResourceProvider.h"
 #include "src/gpu/vk/VulkanInterface.h"
 #include "src/gpu/vk/VulkanUtilsPriv.h"
-
-#if defined(SK_USE_VMA)
-#include "src/gpu/vk/vulkanmemoryallocator/VulkanMemoryAllocatorPriv.h"
-#endif
 
 namespace skgpu::graphite {
 
@@ -34,13 +30,13 @@ sk_sp<SharedContext> VulkanSharedContext::Make(const VulkanBackendContext& conte
         context.fPhysicalDevice == VK_NULL_HANDLE ||
         context.fDevice == VK_NULL_HANDLE ||
         context.fQueue == VK_NULL_HANDLE) {
-        SKGPU_LOG_E("Failed to create VulkanSharedContext because either fInstance,"
+        SKIA_LOG_E("Failed to create VulkanSharedContext because either fInstance,"
                     "fPhysicalDevice, fDevice, or fQueue in the VulkanBackendContext is"
                     "VK_NULL_HANDLE.");
         return nullptr;
     }
     if (!context.fGetProc) {
-        SKGPU_LOG_E("Failed to create VulkanSharedContext because there is no valid VulkanGetProc"
+        SKIA_LOG_E("Failed to create VulkanSharedContext because there is no valid VulkanGetProc"
                     "on the VulkanBackendContext");
         return nullptr;
     }
@@ -53,9 +49,9 @@ sk_sp<SharedContext> VulkanSharedContext::Make(const VulkanBackendContext& conte
 
     uint32_t physDevVersion = 0;
     sk_sp<const skgpu::VulkanInterface> interface =
-            skgpu::MakeInterface(context, extensions, &physDevVersion, nullptr);
+            skgpu::MakeInterface(context, extensions, nullptr, &physDevVersion);
     if (!interface) {
-        SKGPU_LOG_E("Failed to create VulkanInterface.");
+        SKIA_LOG_E("Failed to create VulkanInterface.");
         return nullptr;
     }
 
@@ -80,18 +76,8 @@ sk_sp<SharedContext> VulkanSharedContext::Make(const VulkanBackendContext& conte
                                                           context.fProtectedContext));
 
     sk_sp<skgpu::VulkanMemoryAllocator> memoryAllocator = context.fMemoryAllocator;
-#if defined(SK_USE_VMA)
     if (!memoryAllocator) {
-        // We were not given a memory allocator at creation
-        skgpu::ThreadSafe threadSafe = options.fClientWillExternallySynchronizeAllThreads
-                                               ? skgpu::ThreadSafe::kNo
-                                               : skgpu::ThreadSafe::kYes;
-        memoryAllocator = skgpu::VulkanMemoryAllocators::Make(context,
-                                                              threadSafe);
-    }
-#endif
-    if (!memoryAllocator) {
-        SKGPU_LOG_E("No supplied vulkan memory allocator and unable to create one internally.");
+        SKIA_LOG_E("No supplied vulkan memory allocator and unable to create one internally.");
         return nullptr;
     }
 
@@ -195,7 +181,7 @@ VkPipelineCache VulkanSharedContext::createPipelineCache(
                                            nullptr,
                                            &pipelineCache));
     if (VK_SUCCESS != result) {
-        SKGPU_LOG_W("CreatePipelineCache failed");
+        SKIA_LOG_W("CreatePipelineCache failed");
         return VK_NULL_HANDLE;
     }
 

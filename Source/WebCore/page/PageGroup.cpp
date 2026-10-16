@@ -49,7 +49,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(PageGroup);
 
-static unsigned getUniqueIdentifier()
+static unsigned LEGACY_NODELETE getUniqueIdentifier()
 {
     static unsigned currentIdentifier = 0;
     return ++currentIdentifier;
@@ -83,7 +83,7 @@ PageGroup::~PageGroup() = default;
 
 using PageGroupMap = HashMap<String, UniqueRef<PageGroup>>;
 
-static PageGroupMap& pageGroups()
+static PageGroupMap& LEGACY_NODELETE pageGroups()
 {
     static NeverDestroyed<PageGroupMap> pageGroupsMap;
     return pageGroupsMap;
@@ -113,12 +113,13 @@ void PageGroup::removePage(Page& page)
 #if ENABLE(VIDEO)
 void PageGroup::captionPreferencesChanged()
 {
-    for (Ref page : m_pages)
-        page->captionPreferencesChanged();
+    m_pages.forEach([](auto& page) {
+        page.captionPreferencesChanged();
+    });
     BackForwardCache::singleton().markPagesForCaptionPreferencesChanged();
 }
 
-CaptionUserPreferences& PageGroup::ensureCaptionPreferences()
+SUPPRESS_NODELETE CaptionUserPreferences& PageGroup::ensureCaptionPreferences()
 {
     if (!m_captionPreferences) {
 #if HAVE(MEDIA_ACCESSIBILITY_FRAMEWORK)
@@ -129,11 +130,6 @@ CaptionUserPreferences& PageGroup::ensureCaptionPreferences()
     }
 
     return *m_captionPreferences;
-}
-
-Ref<CaptionUserPreferences> PageGroup::ensureProtectedCaptionPreferences()
-{
-    return ensureCaptionPreferences();
 }
 #endif
 

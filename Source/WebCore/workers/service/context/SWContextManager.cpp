@@ -64,7 +64,7 @@ void SWContextManager::registerServiceWorkerThreadForInstall(Ref<ServiceWorkerTh
 
     auto serviceWorkerIdentifier = serviceWorkerThreadProxy->identifier();
     auto jobDataIdentifier = serviceWorkerThreadProxy->thread().jobDataIdentifier();
-    auto* threadProxy = serviceWorkerThreadProxy.ptr();
+    Ref threadProxy = serviceWorkerThreadProxy;
 
     {
         Locker locker { m_workerMapLock };
@@ -88,10 +88,10 @@ void SWContextManager::registerServiceWorkerThreadForInstall(Ref<ServiceWorkerTh
 void SWContextManager::startedServiceWorker(std::optional<ServiceWorkerJobDataIdentifier> jobDataIdentifier, ServiceWorkerIdentifier serviceWorkerIdentifier, const String& exceptionMessage, bool doesHandleFetch)
 {
     if (!exceptionMessage.isEmpty()) {
-        protectedConnection()->serviceWorkerFailedToStart(jobDataIdentifier, serviceWorkerIdentifier, exceptionMessage);
+        protect(connection())->serviceWorkerFailedToStart(jobDataIdentifier, serviceWorkerIdentifier, exceptionMessage);
         return;
     }
-    protectedConnection()->serviceWorkerStarted(jobDataIdentifier, serviceWorkerIdentifier, doesHandleFetch);
+    protect(connection())->serviceWorkerStarted(jobDataIdentifier, serviceWorkerIdentifier, doesHandleFetch);
 }
 
 ServiceWorkerThreadProxy* SWContextManager::serviceWorkerThreadProxy(ServiceWorkerIdentifier identifier) const
@@ -266,7 +266,7 @@ bool SWContextManager::stopRunningDebuggerTasksOnServiceWorker(ServiceWorkerIden
 void SWContextManager::serviceWorkerFailedToTerminate(ServiceWorkerIdentifier serviceWorkerIdentifier)
 {
     UNUSED_PARAM(serviceWorkerIdentifier);
-    RELEASE_LOG_ERROR(ServiceWorker, "Failed to terminate service worker with identifier %s, killing the service worker process", serviceWorkerIdentifier.loggingString().utf8().data());
+    RELEASE_LOG_ERROR(ServiceWorker, "Failed to terminate service worker with identifier %s, killing the service worker process", serviceWorkerIdentifier.loggingString().utf8());
     ASSERT_NOT_REACHED();
     terminateProcess(EXIT_FAILURE);
 }
@@ -310,7 +310,7 @@ void SWContextManager::updateRegistrationState(ServiceWorkerRegistrationIdentifi
 {
     forEachServiceWorker([identifier, state, &serviceWorkerData] {
         return [identifier, state, serviceWorkerData = crossThreadCopy(serviceWorkerData)] (auto& context) mutable {
-            if (auto* container = context.serviceWorkerContainer())
+            if (RefPtr container = context.serviceWorkerContainer())
                 container->updateRegistrationState(identifier, state, WTF::move(serviceWorkerData));
         };
     });
@@ -320,7 +320,7 @@ void SWContextManager::updateWorkerState(ServiceWorkerIdentifier identifier, Ser
 {
     forEachServiceWorker([identifier, state] {
         return [identifier, state] (auto& context) {
-            if (auto* container = context.serviceWorkerContainer())
+            if (RefPtr container = context.serviceWorkerContainer())
                 container->updateWorkerState(identifier, state);
         };
     });
@@ -330,7 +330,7 @@ void SWContextManager::fireUpdateFoundEvent(ServiceWorkerRegistrationIdentifier 
 {
     forEachServiceWorker([identifier] {
         return [identifier] (auto& context) {
-            if (auto* container = context.serviceWorkerContainer())
+            if (RefPtr container = context.serviceWorkerContainer())
                 container->queueTaskToFireUpdateFoundEvent(identifier);
         };
     });
@@ -340,7 +340,7 @@ void SWContextManager::setRegistrationLastUpdateTime(ServiceWorkerRegistrationId
 {
     forEachServiceWorker([identifier, lastUpdateTime] {
         return [identifier, lastUpdateTime] (auto& context) {
-            if (auto* container = context.serviceWorkerContainer()) {
+            if (RefPtr container = context.serviceWorkerContainer()) {
                 if (auto* registration = container->registration(identifier))
                     registration->setLastUpdateTime(lastUpdateTime);
             }
@@ -352,7 +352,7 @@ void SWContextManager::setRegistrationUpdateViaCache(ServiceWorkerRegistrationId
 {
     forEachServiceWorker([identifier, updateViaCache] {
         return [identifier, updateViaCache] (auto& context) {
-            if (auto* container = context.serviceWorkerContainer()) {
+            if (RefPtr container = context.serviceWorkerContainer()) {
                 if (auto* registration = container->registration(identifier))
                     registration->setUpdateViaCache(updateViaCache);
             }

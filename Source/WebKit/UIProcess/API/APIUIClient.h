@@ -30,7 +30,6 @@
 #include "WKPage.h"
 #include "WebEvent.h"
 #include "WebHitTestResultData.h"
-#include <WebCore/CookieConsentDecisionResult.h>
 #include <WebCore/FloatRect.h>
 #include <WebCore/ModalContainerTypes.h>
 #include <WebCore/PermissionState.h>
@@ -62,6 +61,7 @@ class ResourceRequest;
 class SecurityOriginData;
 enum class AutoplayEvent : uint8_t;
 enum class AutoplayEventFlags : uint8_t;
+enum class IPAddressSpace : uint8_t;
 enum class MediaProducerMediaState : uint32_t;
 struct FontAttributes;
 struct WindowFeatures;
@@ -135,7 +135,9 @@ public:
     virtual void setIsResizable(WebKit::WebPageProxy&, bool) { }
 
     virtual void setWindowFrame(WebKit::WebPageProxy&, const WebCore::FloatRect&) { }
-    virtual void windowFrame(WebKit::WebPageProxy&, Function<void(WebCore::FloatRect)>&& completionHandler) { completionHandler({ }); }
+    // std::nullopt means the client does not supply a window frame, as opposed to deliberately
+    // reporting an empty one. WebPageProxy only substitutes the hosting window in the former case.
+    virtual void windowFrame(WebKit::WebPageProxy&, Function<void(std::optional<WebCore::FloatRect>)>&& completionHandler) { completionHandler(std::nullopt); }
 
     virtual bool canRunBeforeUnloadConfirmPanel() const { return false; }
     virtual void runBeforeUnloadConfirmPanel(WebKit::WebPageProxy&, WTF::String&&, WebKit::WebFrameProxy*, WebKit::FrameInfoData&&, Function<void(bool)>&& completionHandler) { completionHandler(true); }
@@ -158,8 +160,8 @@ public:
     virtual void decidePolicyForUserMediaPermissionRequest(WebKit::WebPageProxy&, WebKit::WebFrameProxy&, SecurityOrigin&, SecurityOrigin&, WebKit::UserMediaPermissionRequestProxy&);
     virtual void decidePolicyForScreenCaptureUnmuting(WebKit::WebPageProxy&, WebKit::WebFrameProxy&, WebKit::FrameInfoData&&, SecurityOrigin&, SecurityOrigin&, CompletionHandler<void(bool isAllowed)>&& completionHandler) { completionHandler(false); }
     virtual void decidePolicyForNotificationPermissionRequest(WebKit::WebPageProxy&, SecurityOrigin&, CompletionHandler<void(bool allowed)>&& completionHandler) { completionHandler(false); }
+    virtual void decidePolicyForLocalNetworkAccessPermissionRequest(WebKit::WebPageProxy&, SecurityOrigin& requestingOrigin, SecurityOrigin& topOrigin, WebCore::IPAddressSpace, CompletionHandler<void(bool granted)>&& completionHandler) { completionHandler(false); }
     virtual void requestStorageAccessConfirm(WebKit::WebPageProxy&, WebKit::WebFrameProxy*, const WebCore::RegistrableDomain& requestingDomain, const WebCore::RegistrableDomain& currentDomain, std::optional<WebCore::OrganizationStorageAccessPromptQuirk>&&, CompletionHandler<void(bool)>&& completionHandler) { completionHandler(true); }
-    virtual void requestCookieConsent(CompletionHandler<void(WebCore::CookieConsentDecisionResult)>&& completionHandler) { completionHandler(WebCore::CookieConsentDecisionResult::NotSupported); }
     virtual void addMessageToConsoleForTesting(WebKit::WebPageProxy&, WTF::String&&) { }
 
     // Printing.
@@ -216,7 +218,7 @@ public:
 #if ENABLE(WEB_AUTHN)
     virtual void runWebAuthenticationPanel(WebKit::WebPageProxy&, WebAuthenticationPanel&, WebKit::WebFrameProxy&, WebKit::FrameInfoData&&, CompletionHandler<void(WebKit::WebAuthenticationPanelResult)>&& completionHandler) { completionHandler(WebKit::WebAuthenticationPanelResult::Unavailable); }
 
-    virtual void requestWebAuthenticationConditonalMediationRegistration(const WTF::String&, CompletionHandler<void(std::optional<bool>)>&& completionHandler)
+    virtual void requestWebAuthenticationConditonalMediationRegistration(const WTF::String&, Vector<WTF::String>&& relatedOrigins, CompletionHandler<void(std::optional<bool>)>&& completionHandler)
     {
         completionHandler(std::nullopt);
     }
@@ -228,6 +230,10 @@ public:
     {
         return InspectorConfiguration::create();
     }
+#if ENABLE(APPLE_PAY)
+    virtual void didCompleteApplePayPayment(WebKit::WebPageProxy&) { }
+#endif
+
     virtual void didEnableInspectorBrowserDomain(WebKit::WebPageProxy&) { }
     virtual void didDisableInspectorBrowserDomain(WebKit::WebPageProxy&) { }
 

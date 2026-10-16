@@ -49,17 +49,33 @@
 - (void)_insertText:(id)string replacementRange:(NSRange)replacementRange;
 - (NSRect)_candidateRect;
 
+@property (nonatomic, readonly) NSRect _caretRectForTesting;
+@property (nonatomic, readonly) NSArray<NSValue *> *_selectionRectsForTesting;
+
 - (NSSet<NSView *> *)_pdfHUDs;
 
 - (void)_retrieveAccessibilityTreeData:(void (^)(NSData *, NSError *))completionHandler;
 
 - (void)_setSelectedColorForColorPicker:(NSColor *)color;
 
+// The looked-up text and highlight rect, in root view coordinates. Pass nil to clear.
+- (void)_setDidPerformDictionaryLookupHandlerForTesting:(void (^)(NSString *text, CGRect textBoundingRect))handler;
+// Looks up the text at a point in view coordinates, as the Look Up gesture does.
+- (void)_performDictionaryLookupAtLocationForTesting:(CGPoint)point;
+
 @property (nonatomic, readonly) BOOL _secureEventInputEnabledForTesting;
 @property (nonatomic, readonly) NSRect _windowRelativeBoundsForCustomSwipeViewsForTesting;
 
 - (void)_createFlagsChangedEventMonitorForTesting;
 - (BOOL)_hasFlagsChangedEventMonitorForTesting;
+
+@property (nonatomic, readonly) CGFloat _fullScreenTitlebarOverlayHeightForTesting;
+
+// The value NSRefreshControl reads through the NSRefreshControlHosting protocol to decide
+// whether a pull may commit to a refresh. False during momentum so a flick cannot refresh.
+@property (nonatomic, readonly) BOOL _refreshControlHostIsTrackingForTesting;
+
+- (BOOL)isPointInScrollbar:(NSPoint)locationInView;
 
 @end
 

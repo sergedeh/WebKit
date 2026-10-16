@@ -27,6 +27,7 @@
 
 #include <stdio.h>
 #include <wtf/PrintStream.h>
+#include <wtf/text/UTF8CStringView.h>
 
 namespace WTF {
 
@@ -40,12 +41,14 @@ public:
     FilePrintStream(FILE*, AdoptionMode = Adopt);
     WTF_EXPORT_PRIVATE ~FilePrintStream() final;
     
-    WTF_EXPORT_PRIVATE static std::unique_ptr<FilePrintStream> open(const char* filename, const char* mode);
+    WTF_EXPORT_PRIVATE static std::unique_ptr<FilePrintStream> open(UTF8CStringView filename, ASCIILiteral mode);
     
     FILE* file() { return m_file; }
     
     void vprintf(const char* format, va_list) final WTF_ATTRIBUTE_PRINTF(2, 0);
     void flush() final;
+
+    bool truncatesLongStrings() const final { return false; }
 
 private:
     FILE* m_file;

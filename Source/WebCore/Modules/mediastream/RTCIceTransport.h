@@ -62,27 +62,27 @@ public:
     RTCIceTransportState state() const { return m_transportState; }
     RTCIceGatheringState gatheringState() const { return m_gatheringState; }
 
-    const RTCIceTransportBackend& backend() const { return m_backend.get(); }
+    const RTCIceTransportBackend& backend() const LIFETIME_BOUND { return m_backend.get(); }
     RefPtr<RTCPeerConnection> connection() const { return m_connection; }
 
     struct CandidatePair {
         RefPtr<RTCIceCandidate> local;
         RefPtr<RTCIceCandidate> remote;
     };
-    std::optional<CandidatePair> getSelectedCandidatePair();
+    std::optional<CandidatePair> LEGACY_NODELETE getSelectedCandidatePair();
 
 private:
     RTCIceTransport(ScriptExecutionContext&, UniqueRef<RTCIceTransportBackend>&&, RTCPeerConnection&);
 
     // EventTarget
     enum EventTargetInterfaceType eventTargetInterface() const final { return EventTargetInterfaceType::RTCIceTransport; }
-    ScriptExecutionContext* scriptExecutionContext() const final;
+    ScriptExecutionContext* LEGACY_NODELETE scriptExecutionContext() const final;
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
 
     // ActiveDOMObject.
-    void stop() final;
-    bool virtualHasPendingActivity() const final;
+    void LEGACY_NODELETE stop() final;
+    bool LEGACY_NODELETE virtualHasPendingActivity() const final;
 
     // RTCIceTransportBackendClient
     void onStateChanged(RTCIceTransportState) final;

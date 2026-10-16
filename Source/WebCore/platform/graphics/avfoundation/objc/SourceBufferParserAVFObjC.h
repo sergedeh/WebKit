@@ -27,11 +27,14 @@
 
 #if ENABLE(MEDIA_SOURCE)
 
-#include <WebCore/Logging.h>
-#include <WebCore/MediaSourceConfiguration.h>
-#include <WebCore/SourceBufferParser.h>
+#include "ISOBMFFTrackInfoParser.h"
+#include "Logging.h"
+#include "MediaSourceConfiguration.h"
+#include "SourceBufferParser.h"
 #include <wtf/Box.h>
+#include <wtf/HashMap.h>
 #include <wtf/LoggerHelper.h>
+#include <wtf/MediaTime.h>
 #include <wtf/TypeCasts.h>
 #include <wtf/Vector.h>
 #include <wtf/WeakPtr.h>
@@ -46,19 +49,22 @@ typedef struct opaqueCMSampleBuffer *CMSampleBufferRef;
 
 namespace WebCore {
 
+class ContentType;
+class ISOBMFFPreParser;
+
 class SourceBufferParserAVFObjC final
     : public SourceBufferParser
     , private LoggerHelper {
 public:
     static MediaPlayerEnums::SupportsType isContentTypeSupported(const ContentType&);
 
-    SourceBufferParserAVFObjC(const MediaSourceConfiguration&);
+    SourceBufferParserAVFObjC(const ContentType&, const MediaSourceConfiguration&);
     virtual ~SourceBufferParserAVFObjC();
 
     AVStreamDataParser* streamDataParser() const { return m_parser.get(); }
 
     Type type() const { return Type::AVFObjC; }
-    Expected<void, PlatformMediaError> appendData(Ref<const SharedBuffer>&&, AppendFlags = AppendFlags::None) final;
+    std::expected<void, PlatformMediaError> appendData(Ref<const SharedBuffer>&&, AppendFlags = AppendFlags::None) final;
     void flushPendingMediaData() final;
     void resetParserState() final;
     void invalidate() final;
@@ -73,6 +79,8 @@ public:
     void didProvideContentKeyRequestInitializationDataForTrackID(NSData*, uint64_t trackID);
     void didProvideContentKeyRequestSpecifierForTrackID(NSData*, uint64_t trackID);
 
+    void setEmptyEditOffsetsFromInitSegment(Vector<ISOBMFFTrackInfoParser::TrackEditInfo>&&);
+
 private:
 #if !RELEASE_LOG_DISABLED
     const Logger* loggerPtr() const { return m_logger.get(); }
@@ -84,7 +92,9 @@ private:
 
     RetainPtr<AVStreamDataParser> m_parser;
     RetainPtr<WebAVStreamDataParserListener> m_delegate;
-    MediaSourceConfiguration m_configuration;
+    const MediaSourceConfiguration m_configuration;
+    const std::unique_ptr<ISOBMFFPreParser> m_preParser;
+    HashMap<uint64_t, MediaTime, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_emptyEditOffsetForTrackID;
     bool m_parserStateWasReset { false };
     std::optional<int> m_lastErrorCode;
 

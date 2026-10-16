@@ -74,7 +74,7 @@ public:
     void abort();
     // Only responses that meet all of the following requirements will be processed:
     // 1) it has the same origin as the request;
-    // 2) it has a status code of 302 or 200.
+    // 2) it has a status code of 200, 302, 307 (POST only), or 401 (with non-empty body).
     // Otherwise, it falls back to the web path.
     // Only the following HTTP headers will be processed:
     // { Set-Cookie, Location }.
@@ -93,10 +93,11 @@ protected:
     SOAuthorizationSession(RetainPtr<WKSOAuthorizationDelegate>, Ref<API::NavigationAction>&&, WebPageProxy&, InitiatingAction);
 
     void start();
+    virtual void beginAuthorizationIfReady();
     WebPageProxy* page() const { return m_page.get(); }
     State state() const { return m_state; }
     ASCIILiteral stateString() const;
-    ASCIILiteral initiatingActionString() const;
+    ASCIILiteral LEGACY_NODELETE initiatingActionString() const;
     void setState(State state) { m_state = state; }
     const API::NavigationAction* navigationAction() { return m_navigationAction.get(); }
     Ref<API::NavigationAction> releaseNavigationAction();
@@ -118,7 +119,7 @@ private:
 
     virtual bool shouldInterruptLoadForCSPFrameAncestorsOrXFrameOptions(const WebCore::ResourceResponse&) { return false; }
     State m_state  { State::Idle };
-    RetainPtr<SOAuthorization> m_soAuthorization;
+    const RetainPtr<SOAuthorization> m_soAuthorization;
     RefPtr<API::NavigationAction> m_navigationAction;
     WeakPtr<WebPageProxy> m_page;
     InitiatingAction m_action;

@@ -37,6 +37,7 @@ namespace WebKit {
 
 WebCore::ResourceError cancelledError(const WebCore::ResourceRequest&);
 WebCore::ResourceError blockedError(const WebCore::ResourceRequest&);
+bool isBlockedError(const WebCore::ResourceError&);
 WebCore::ResourceError blockedByContentBlockerError(const WebCore::ResourceRequest&);
 WebCore::ResourceError cannotShowURLError(const WebCore::ResourceRequest&);
 WebCore::ResourceError wasBlockedByRestrictionsError(const WebCore::ResourceRequest&);
@@ -45,11 +46,13 @@ WebCore::ResourceError ftpDisabledError(const WebCore::ResourceRequest&);
 WebCore::ResourceError failedCustomProtocolSyncLoad(const WebCore::ResourceRequest&);
 #if ENABLE(CONTENT_FILTERING)
 WebCore::ResourceError blockedByContentFilterError(const WebCore::ResourceRequest&);
+bool isBlockedByContentFilterError(const WebCore::ResourceError&);
 #endif
 WebCore::ResourceError cannotShowMIMETypeError(const WebCore::ResourceResponse&);
 WebCore::ResourceError fileDoesNotExistError(const WebCore::ResourceResponse&);
 WebCore::ResourceError httpsUpgradeRedirectLoopError(const WebCore::ResourceRequest&);
 WebCore::ResourceError httpNavigationWithHTTPSOnlyError(const WebCore::ResourceRequest&);
+bool isHttpNavigationWithHTTPSOnlyError(const WebCore::ResourceError&);
 WebCore::ResourceError pluginWillHandleLoadError(const WebCore::ResourceResponse&);
 
 #if USE(SOUP)
@@ -59,6 +62,7 @@ WebCore::ResourceError downloadDestinationError(const WebCore::ResourceResponse&
 #endif
 
 WebCore::ResourceError decodeError(const URL&);
+WebCore::ResourceError imageDataExceedsMaximumSizeError(const URL&);
 
 #if PLATFORM(GTK)
 WebCore::ResourceError invalidPageRangeToPrint(const URL&);

@@ -45,8 +45,8 @@
 #import <wtf/NeverDestroyed.h>
 #import <wtf/TZoneMallocInlines.h>
 
-#define GRANTER_RELEASE_LOG(envID, fmt, ...) RELEASE_LOG(ProcessCapabilities, "%{public}s[envID=%{public}s] " fmt, __FUNCTION__, envID.utf8().data(), ##__VA_ARGS__)
-#define GRANTER_RELEASE_LOG_ERROR(envID, fmt, ...) RELEASE_LOG_ERROR(ProcessCapabilities, "%{public}s[envID=%{public}s] " fmt, __FUNCTION__, envID.utf8().data(), ##__VA_ARGS__)
+#define GRANTER_RELEASE_LOG(envID, fmt, ...) RELEASE_LOG(ProcessCapabilities, "%{public}s[envID=%{public}s] " fmt, __FUNCTION__, envID.utf8(), ##__VA_ARGS__)
+#define GRANTER_RELEASE_LOG_ERROR(envID, fmt, ...) RELEASE_LOG_ERROR(ProcessCapabilities, "%{public}s[envID=%{public}s] " fmt, __FUNCTION__, envID.utf8(), ##__VA_ARGS__)
 
 namespace WebKit {
 
@@ -98,7 +98,7 @@ static Ref<ExtensionCapabilityGrantsPromise> grantCapabilityInternal(const Exten
     });
 
 #if USE(EXTENSIONKIT)
-    return invokeAsync(granterQueue(), [capability = capability.platformCapability(), capabilityGrants = crossThreadCopy(WTF::move(capabilityGrants))] mutable {
+    return invokeAsync(protect(granterQueue()), [capability = capability.platformCapability(), capabilityGrants = crossThreadCopy(WTF::move(capabilityGrants))] mutable {
         for (auto& capabilityGrant : capabilityGrants)
             capabilityGrant.grant.setPlatformGrant(grantCapability(capability, capabilityGrant.extensionProcess));
         return ExtensionCapabilityGrantsPromise::createAndResolve(WTF::move(capabilityGrants));
@@ -133,7 +133,7 @@ static Vector<Ref<AuxiliaryProcessProxy>> auxiliaryProcessesForPage(WebPageProxy
     // FIXME: If we've made it this far we assume at least one process is playing media, but we
     // don't have the metadata to know that the main frame process is *not* one of those processes.
     // We should fix that, perhaps by storing mediaState on a per-frame basis.
-    auxiliaryProcesses.append(page.legacyMainFrameProcess());
+    auxiliaryProcesses.append(protect(page.legacyMainFrameProcess()));
 
     protect(page.browsingContextGroup())->forEachRemotePage(page, [&](auto& remotePage) {
         if (WebCore::MediaProducer::needsMediaCapability(remotePage.mediaState()))
@@ -264,21 +264,43 @@ void ExtensionCapabilityGranter::setMediaCapabilityActive(MediaCapability& capab
 
     GRANTER_RELEASE_LOG(capability.environmentIdentifier(), "%{public}s", isActive ? "activating" : "deactivating");
 
-    invokeAsync(granterQueue(), [platformCapability = capability.platformCapability(), platformMediaEnvironment = RetainPtr { capability.platformMediaEnvironment() }, isActive] {
+    invokeAsync(protect(granterQueue()), [kind = capability.kind(), platformCapability = capability.platformCapability(), platformMediaEnvironment = RetainPtr { capability.platformMediaEnvironment() }, isActive] {
 #if USE(EXTENSIONKIT)
         NSError *error = nil;
-        if (isActive)
-            [platformMediaEnvironment activateWithError:&error];
-        else
-            [platformMediaEnvironment suspendWithError:&error];
-        if (error)
-            RELEASE_LOG_ERROR(ProcessCapabilities, "%{public}s failed with error: %{public}@", __FUNCTION__, error);
-        else
-            return ExtensionCapabilityActivationPromise::createAndResolve();
+        switch (kind) {
+        case MediaCapability::Kind::MediaPlayback:
+        case MediaCapability::Kind::CameraAndMicCapture:
+ALLOW_DEPRECATED_DECLARATIONS_BEGIN
+            if (isActive)
+                [platformMediaEnvironment activateWithError:&error];
+            else
+                [platformMediaEnvironment suspendWithError:&error];
+ALLOW_DEPRECATED_DECLARATIONS_END
+            break;
+
+        case MediaCapability::Kind::DisplayCapture:
+#if HAVE(SCREEN_CAPTURE_KIT)
+            if (isActive)
+                [platformCapability activateWithError:&error];
+            else
+                [platformCapability suspendWithError:&error];
+#else
+            UNUSED_PARAM(platformCapability);
+            ASSERT_NOT_REACHED();
+            return ExtensionCapabilityActivationPromise::createAndReject(ExtensionCapabilityGrantError::PlatformError);
 #endif
+            break;
+        }
+
+        if (!error)
+            return ExtensionCapabilityActivationPromise::createAndResolve();
+
+        RELEASE_LOG_ERROR(ProcessCapabilities, "%{public}s failed with error: %{public}@", __FUNCTION__, error);
+#endif // USE(EXTENSIONKIT)
+
         return ExtensionCapabilityActivationPromise::createAndReject(ExtensionCapabilityGrantError::PlatformError);
     })->whenSettled(RunLoop::mainSingleton(), [weakCapability = WeakPtr { capability }, isActive](auto&& result) {
-        auto capability = weakCapability.get();
+        RefPtr capability = weakCapability.get();
         if (!capability)
             return;
 
@@ -309,7 +331,7 @@ void ExtensionCapabilityGranter::setMediaCapabilityActive(MediaCapability& capab
 
 void ExtensionCapabilityGranter::invalidateGrants(Vector<ExtensionCapabilityGrant>&& grants)
 {
-    granterQueue().dispatch([grants = crossThreadCopy(WTF::move(grants))]() mutable {
+    protect(granterQueue())->dispatch([grants = crossThreadCopy(WTF::move(grants))]() mutable {
         for (auto& grant : grants)
             grant.setPlatformGrant({ });
     });

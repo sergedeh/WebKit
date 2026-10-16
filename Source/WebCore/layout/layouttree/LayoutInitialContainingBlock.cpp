@@ -27,7 +27,7 @@
 #include "LayoutInitialContainingBlock.h"
 
 #include "RenderObject.h"
-#include "RenderStyle.h"
+#include "StyleComputedStyle.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -35,9 +35,19 @@ namespace Layout {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(InitialContainingBlock);
 
-InitialContainingBlock::InitialContainingBlock(RenderStyle&& style, std::unique_ptr<RenderStyle>&& firstLineStyle)
+InitialContainingBlock::InitialContainingBlock(Style::ComputedStyle&& style, std::unique_ptr<Style::ComputedStyle>&& firstLineStyle)
     : ElementBox({ }, WTF::move(style), WTF::move(firstLineStyle), Box::InitialContainingBlockFlag)
 {
+}
+
+const InitialContainingBlock& initialContainingBlock(const Box& layoutBox)
+{
+    if (auto* initialContainingBlock = dynamicDowncast<InitialContainingBlock>(layoutBox))
+        return *initialContainingBlock;
+
+    auto* ancestor = &layoutBox.parent();
+    for (; !is<InitialContainingBlock>(*ancestor); ancestor = &ancestor->parent()) { }
+    return downcast<InitialContainingBlock>(*ancestor);
 }
 
 }

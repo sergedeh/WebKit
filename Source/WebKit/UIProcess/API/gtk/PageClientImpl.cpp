@@ -112,7 +112,7 @@ void PageClientImpl::setViewNeedsDisplay(const WebCore::Region& region)
 #endif
 }
 
-void PageClientImpl::requestScroll(const WebCore::FloatPoint&, const WebCore::IntPoint&, WebCore::ScrollIsAnimated)
+void PageClientImpl::requestScroll(const WebCore::FloatPoint&, const WebCore::IntPoint&, WebCore::ScrollIsAnimated, WebCore::InterruptScrollAnimation)
 {
     notImplemented();
 }
@@ -169,7 +169,7 @@ void PageClientImpl::didRelaunchProcess()
 
 void PageClientImpl::toolTipChanged(const String&, const String& newToolTip)
 {
-    webkitWebViewBaseSetTooltipText(WEBKIT_WEB_VIEW_BASE(m_viewWidget), newToolTip.utf8().data());
+    webkitWebViewBaseSetTooltipText(WEBKIT_WEB_VIEW_BASE(m_viewWidget), newToolTip);
 }
 
 void PageClientImpl::setCursor(const WebCore::Cursor& cursor)
@@ -291,11 +291,11 @@ Ref<WebContextMenuProxy> PageClientImpl::createContextMenuProxy(WebPageProxy& pa
 }
 #endif // ENABLE(CONTEXT_MENUS)
 
-RefPtr<WebColorPicker> PageClientImpl::createColorPicker(WebPageProxy& page, const WebCore::Color& color, const WebCore::IntRect& rect, ColorControlSupportsAlpha, Vector<WebCore::Color>&&)
+RefPtr<WebColorPicker> PageClientImpl::createColorPicker(WebPageProxy& page, const WebCore::Color& color, ColorControlSupportsAlpha supportsAlpha, Vector<WebCore::Color>&&, std::optional<WebCore::FrameIdentifier> frameID)
 {
     if (WEBKIT_IS_WEB_VIEW(m_viewWidget))
-        return WebKitColorChooser::create(page, color, rect);
-    return WebColorPickerGtk::create(page, color, rect);
+        return WebKitColorChooser::create(page, color, supportsAlpha, frameID);
+    return WebColorPickerGtk::create(page, color, supportsAlpha, frameID);
 }
 
 RefPtr<WebDateTimePicker> PageClientImpl::createDateTimePicker(WebPageProxy& page)
@@ -540,6 +540,12 @@ void PageClientImpl::didRestoreScrollPosition()
     webkitWebViewBaseDidRestoreScrollPosition(WEBKIT_WEB_VIEW_BASE(m_viewWidget));
 }
 
+void PageClientImpl::pageScaleFactorDidChange()
+{
+    if (WEBKIT_IS_WEB_VIEW(m_viewWidget))
+        webkitWebViewDidChangePageScale(WEBKIT_WEB_VIEW(m_viewWidget));
+}
+
 void PageClientImpl::didChangeBackgroundColor()
 {
 }
@@ -560,10 +566,10 @@ void PageClientImpl::derefView()
     g_object_unref(m_viewWidget);
 }
 
-void PageClientImpl::requestDOMPasteAccess(WebCore::DOMPasteAccessCategory, WebCore::DOMPasteRequiresInteraction requiresInteraction, const IntRect&, const String& originIdentifier, CompletionHandler<void(WebCore::DOMPasteAccessResponse)>&& completionHandler)
+void PageClientImpl::requestDOMPasteAccess(WebCore::DOMPasteAccessCategory, WebCore::DOMPasteRequiresInteraction requiresInteraction, WebCore::FrameIdentifier, const IntRect&, const String& originIdentifier, CompletionHandler<void(WebCore::DOMPasteAccessResponse)>&& completionHandler)
 {
     auto& clipboard = Clipboard::get("CLIPBOARD"_s);
-    clipboard.readBuffer(PasteboardCustomData::gtkType().characters(), [weakWebView = GWeakPtr<GtkWidget>(m_viewWidget), originIdentifier, requiresInteraction, completionHandler = WTF::move(completionHandler)](Ref<SharedBuffer>&& buffer) mutable {
+    clipboard.readBuffer(PasteboardCustomData::gtkType(), [weakWebView = GWeakPtr<GtkWidget>(m_viewWidget), originIdentifier, requiresInteraction, completionHandler = WTF::move(completionHandler)](Ref<SharedBuffer>&& buffer) mutable {
         if (requiresInteraction == WebCore::DOMPasteRequiresInteraction::No && PasteboardCustomData::fromSharedBuffer(buffer.get()).origin() == originIdentifier) {
             completionHandler(DOMPasteAccessResponse::GrantedForGesture);
             return;

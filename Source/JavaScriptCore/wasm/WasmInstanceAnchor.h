@@ -30,7 +30,6 @@
 #if ENABLE(WEBASSEMBLY)
 
 #include <JavaScriptCore/WasmBaselineData.h>
-#include <wtf/Expected.h>
 #include <wtf/text/WTFString.h>
 
 namespace JSC {
@@ -47,7 +46,7 @@ public:
     static Ref<InstanceAnchor> create(Module&, JSWebAssemblyInstance*);
 
     JSWebAssemblyInstance* instance() const WTF_REQUIRES_LOCK(m_lock) { return m_instance; }
-    Lock& lock() const { return m_lock; }
+    Lock& lock() const LIFETIME_BOUND { return m_lock; }
 
     void tearDown()
     {

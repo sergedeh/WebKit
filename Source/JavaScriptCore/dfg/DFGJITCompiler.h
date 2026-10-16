@@ -115,6 +115,8 @@ public:
     
     void setForNode(Node* node)
     {
+        if (Options::useIRDump() || Options::useSourceCodeDump()) [[unlikely]]
+            m_irDumpLabels.append({ labelIgnoringWatchpoints(), node });
         if (!m_disassembler) [[likely]]
             return;
         m_disassembler->setForNode(node, labelIgnoringWatchpoints());
@@ -137,7 +139,7 @@ public:
 
     void emitStoreCallSiteIndex(CallSiteIndex callSite)
     {
-        store32(TrustedImm32(callSite.bits()), tagFor(CallFrameSlot::argumentCountIncludingThis));
+        store32(TrustedImm32(callSite.bits()), highWordFor(CallFrameSlot::argumentCountIncludingThis));
     }
 
     // Add a call out from JIT code, without an exception check.
@@ -174,10 +176,6 @@ public:
         m_exitCompilationInfo.append(info);
         return m_exitCompilationInfo.last();
     }
-
-#if USE(JSVALUE32_64)
-    void* addressOfDoubleConstant(Node*);
-#endif
 
     void addGetById(const JITGetByIdGenerator& gen, SlowPathGenerator* slowPath)
     {
@@ -259,12 +257,8 @@ public:
     Jump branchWeakStructure(RelationalCondition cond, T left, RegisteredStructure weakStructure)
     {
         Structure* structure = weakStructure.get();
-#if USE(JSVALUE64)
         Jump result = branch32(cond, left, TrustedImm32(structure->id().bits()));
         return result;
-#else
-        return branchPtr(cond, left, TrustedImmPtr(structure));
-#endif
     }
 
     void noticeOSREntry(BasicBlock&, JITCompiler::Label blockHead, LinkBuffer&);
@@ -279,9 +273,9 @@ public:
 
     RefPtr<DFG::JITCode> jitCode() { return m_jitCode; }
     
-    Vector<Label>& blockHeads() { return m_blockHeads; }
+    Vector<Label>& blockHeads() LIFETIME_BOUND { return m_blockHeads; }
 
-    PCToCodeOriginMapBuilder& pcToCodeOriginMapBuilder() { return m_pcToCodeOriginMapBuilder; }
+    PCToCodeOriginMapBuilder& pcToCodeOriginMapBuilder() LIFETIME_BOUND { return m_pcToCodeOriginMapBuilder; }
 
     VM& vm() { return m_graph.m_vm; }
 
@@ -330,13 +324,11 @@ public:
         void* pointer() const { return m_pointer; }
         LinkerIR::Constant index() const { return m_index; }
 
-#if USE(JSVALUE64)
         Address unlinkedAddress()
         {
             ASSERT(isUnlinked());
             return Address(GPRInfo::jitDataRegister, JITData::offsetOfTrailingData() + sizeof(void*) * m_index);
         }
-#endif
 
     private:
         LinkableConstant(JITCompiler&, void*, NonCellTag);
@@ -347,29 +339,25 @@ public:
     };
 
     void loadConstant(LinkerIR::Constant, GPRReg);
-    void loadStructureStubInfo(StructureStubInfoIndex, GPRReg);
+    void loadPropertyInlineCache(PropertyInlineCacheIndex, GPRReg);
     void loadLinkableConstant(LinkableConstant, GPRReg);
     void storeLinkableConstant(LinkableConstant, Address);
 
     Jump branchLinkableConstant(RelationalCondition cond, GPRReg left, LinkableConstant constant)
     {
-#if USE(JSVALUE64)
         if (constant.isUnlinked())
             return CCallHelpers::branchPtr(cond, left, constant.unlinkedAddress());
-#endif
         return CCallHelpers::branchPtr(cond, left, CCallHelpers::TrustedImmPtr(constant.pointer()));
     }
 
     Jump branchLinkableConstant(RelationalCondition cond, Address left, LinkableConstant constant)
     {
-#if USE(JSVALUE64)
         if (constant.isUnlinked())
             return CCallHelpers::branchPtr(cond, left, constant.unlinkedAddress());
-#endif
         return CCallHelpers::branchPtr(cond, left, CCallHelpers::TrustedImmPtr(constant.pointer()));
     }
 
-    std::tuple<CompileTimeStructureStubInfo, StructureStubInfoIndex> addStructureStubInfo();
+    std::tuple<CompileTimePropertyInlineCache, PropertyInlineCacheIndex> addPropertyInlineCache();
     std::tuple<CompileTimeCallLinkInfo, LinkableConstant> addCallLinkInfo(CodeOrigin);
     LinkerIR::Constant addToConstantPool(LinkerIR::Type, void*);
 
@@ -385,6 +373,8 @@ protected:
     void exitSpeculativeWithOSR(const OSRExit&, SpeculationRecovery*);
     void linkOSRExits();
     void disassemble(LinkBuffer&);
+    void collectIRDumpDebugInfo(LinkBuffer&);
+    void collectSourceCodeDumpDebugInfo(LinkBuffer&);
 
     void makeCatchOSREntryBuffer();
 
@@ -427,11 +417,13 @@ protected:
     Vector<InlineCacheWrapper<JITPrivateBrandAccessGenerator>, 4> m_privateBrandAccesses;
     Vector<JSDirectCallRecord, 4> m_jsDirectCalls;
     SegmentedVector<OSRExitCompilationInfo, 4> m_exitCompilationInfo;
+    Label m_firstOSRExitEntrance;
+    Label m_lastOSRExitEntrance;
     Vector<Vector<Label>> m_exitSiteLabels;
     Vector<DFG::OSREntryData> m_osrEntry;
     Vector<DFG::OSRExit> m_osrExit;
     Vector<DFG::SpeculationRecovery> m_speculationRecovery;
-    SegmentedVector<DFG::UnlinkedStructureStubInfo> m_unlinkedStubInfos;
+    SegmentedVector<DFG::UnlinkedPropertyInlineCache> m_unlinkedPropertyInlineCaches;
     SegmentedVector<DFG::UnlinkedCallLinkInfo> m_unlinkedCallLinkInfos;
     
     struct ExceptionHandlingOSRExitInfo {
@@ -442,6 +434,12 @@ protected:
     Vector<ExceptionHandlingOSRExitInfo> m_exceptionHandlerOSRExitCallSites;
     
     PCToCodeOriginMapBuilder m_pcToCodeOriginMapBuilder;
+
+    struct IRDumpLabel {
+        MacroAssembler::Label label;
+        Node* node;
+    };
+    Vector<IRDumpLabel> m_irDumpLabels;
 };
 
 } } // namespace JSC::DFG

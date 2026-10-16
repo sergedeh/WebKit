@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 Samuel Weinig <sam@webkit.org>
+ * Copyright (C) 2026 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,28 +25,97 @@
 
 #pragma once
 
+#include <WebCore/CSSCounterStyle.h>
+#include <WebCore/CSSCounterStyleDescriptors.h>
+#include <WebCore/CSSKeyword.h>
+#include <WebCore/CSSValueKeywords.h>
+#include <WebCore/StyleCustomIdent.h>
+#include <WebCore/StyleString.h>
 #include <WebCore/StyleValueTypes.h>
+#include <wtf/Variant.h>
 
 namespace WebCore {
+
+namespace CSS {
+struct CounterStyle;
+}
+
 namespace Style {
 
-// <counter-style> = <custom-ident excluding=none>
+// symbols() = symbols( <symbols-type>? [ <string> | <image> ]+ )
+// https://drafts.csswg.org/css-counter-styles-3/#funcdef-symbols
+struct SymbolsParameters {
+    // The `<symbols-type>` keyword, or `std::nullopt` for the default (`symbolic`).
+    std::optional<CSS::SymbolsType> system;
+    SpaceSeparatedVector<String> symbols;
+
+    bool operator==(const SymbolsParameters&) const = default;
+};
+using SymbolsFunction = FunctionNotation<CSSValueID::Symbols, SymbolsParameters>;
+
+template<size_t I> const auto& get(const SymbolsParameters& value)
+{
+    if constexpr (!I)
+        return value.system;
+    else
+        return value.symbols;
+}
+
+DEFINE_TYPE_MAPPING(CSS::SymbolsParameters, SymbolsParameters)
+
+// <counter-style> = <custom-ident excluding=none> | <symbols()>
 // https://drafts.csswg.org/css-counter-styles-3/#typedef-counter-style
 struct CounterStyle {
-    CustomIdentifier identifier;
+    CounterStyle(CustomIdent&& identifier)
+        : m_value { WTF::move(identifier) }
+    {
+    }
+
+    CounterStyle(SymbolsFunction&& symbolsFunction)
+        : m_value { WTF::move(symbolsFunction) }
+    {
+    }
+
+    std::optional<CustomIdent> tryName() const
+    {
+        if (auto* identifier = std::get_if<CustomIdent>(&m_value))
+            return *identifier;
+        return std::nullopt;
+    }
+
+    std::optional<SymbolsFunction> trySymbolsFunction() const
+    {
+        if (auto* symbolsFunction = std::get_if<SymbolsFunction>(&m_value))
+            return *symbolsFunction;
+        return std::nullopt;
+    }
+
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
+    {
+        return WTF::switchOn(m_value, std::forward<F>(f)...);
+    }
 
     bool operator==(const CounterStyle&) const = default;
-    bool operator==(const CustomIdentifier& other) const { return identifier == other; }
-    bool operator==(const AtomString& other) const { return identifier.value == other; }
-    bool operator==(CSSValueID other) const { return identifier.value == nameString(other); }
+    bool operator==(const CustomIdent& other) const { auto* identifier = std::get_if<CustomIdent>(&m_value); return identifier && *identifier == other; }
+    bool operator==(const AtomString& other) const { auto* identifier = std::get_if<CustomIdent>(&m_value); return identifier && identifier->value == other; }
+    bool operator==(CSSValueID other) const { auto* identifier = std::get_if<CustomIdent>(&m_value); return identifier && identifier->value == nameString(other); }
+
+private:
+    Variant<CustomIdent, SymbolsFunction> m_value;
 };
-DEFINE_TYPE_WRAPPER_GET(CounterStyle, identifier);
+
+WEBCORE_EXPORT std::optional<CSS::SymbolsType> keywordFromSymbolsSystemForSerialization(CSSCounterStyleDescriptors::System);
+WEBCORE_EXPORT CSSCounterStyleDescriptors::System symbolsSystemFromKeyword(std::optional<CSS::SymbolsType>);
 
 // MARK: - Conversion
 
+template<> struct ToCSS<CounterStyle> { auto operator()(const CounterStyle&, const Style::ComputedStyle&) -> CSS::CounterStyle; };
+template<> struct ToStyle<CSS::CounterStyle> { auto operator()(const CSS::CounterStyle&, const BuilderState&) -> CounterStyle; };
 template<> struct CSSValueConversion<CounterStyle> { auto operator()(BuilderState&, const CSSValue&) -> CounterStyle; };
+template<> struct CSSValueCreation<SymbolsFunction> { Ref<CSSValue> operator()(CSSValuePool&, const Style::ComputedStyle&, const SymbolsFunction&); };
 
 } // namespace Style
 } // namespace WebCore
 
-DEFINE_TUPLE_LIKE_CONFORMANCE_FOR_TYPE_WRAPPER(WebCore::Style::CounterStyle)
+DEFINE_VARIANT_LIKE_CONFORMANCE(WebCore::Style::CounterStyle)
+DEFINE_SPACE_SEPARATED_TUPLE_LIKE_CONFORMANCE(WebCore::Style::SymbolsParameters, 2)

@@ -47,6 +47,14 @@ struct WKAppPrivacyReportTestingData {
     BOOL didPerformSoftUpdate;
 };
 
+@class STWebpageController;
+
+#if TARGET_OS_IPHONE
+typedef UIVisualEffectView _WKPlatformVisualEffectView;
+#else
+typedef NSVisualEffectView _WKPlatformVisualEffectView;
+#endif
+
 @class _WKNowPlayingMetadata;
 @protocol _WKMediaSessionCoordinator;
 
@@ -58,6 +66,10 @@ struct WKAppPrivacyReportTestingData {
 - (NSString *)_caLayerTreeAsTextForLayer:(CALayer *)layer;
 
 - (NSDictionary<NSString *, id> *)_propertiesOfLayerWithID:(unsigned long long)layerID;
+
+// The transient zoom override on the scrolled-contents layer, empty when there is none. macOS only.
+- (NSString *)_delegatedZoomOverrideAsTextForTesting;
+
 - (NSString*)_scrollbarStateForScrollingNodeID:(uint64_t)scrollingNodeID processID:(uint64_t)processID isVertical:(bool)isVertical;
 
 - (void)_addEventAttributionWithSourceID:(uint8_t)sourceID destinationURL:(NSURL *)destination sourceDescription:(NSString *)sourceDescription purchaser:(NSString *)purchaser reportEndpoint:(NSURL *)reportEndpoint optionalNonce:(nullable NSString *)nonce applicationBundleID:(NSString *)bundleID ephemeral:(BOOL)ephemeral WK_API_AVAILABLE(macos(13.0), ios(16.0));
@@ -65,8 +77,12 @@ struct WKAppPrivacyReportTestingData {
 - (void)_setPageScale:(CGFloat)scale withOrigin:(CGPoint)origin;
 - (CGFloat)_pageScale;
 
+- (CGFloat)_minMagnification;
+- (CGFloat)_maxMagnification;
+
 - (void)_setContinuousSpellCheckingEnabledForTesting:(BOOL)enabled;
 - (void)_setGrammarCheckingEnabledForTesting:(BOOL)enabled;
+- (void)_setUseDarkAppearanceForTesting:(BOOL)useDarkAppearance;
 - (NSDictionary *)_contentsOfUserInterfaceItem:(NSString *)userInterfaceItem;
 
 - (void)_requestActiveNowPlayingSessionInfo:(void(^)(BOOL, BOOL, NSString*, double, double, NSInteger, NSUInteger))callback;
@@ -79,6 +95,12 @@ struct WKAppPrivacyReportTestingData {
 - (void)_denyNextUserMediaRequest;
 @property (nonatomic, setter=_setMediaCaptureReportingDelayForTesting:) double _mediaCaptureReportingDelayForTesting WK_API_AVAILABLE(macos(12.0), ios(15.0));
 @property (nonatomic, readonly) BOOL _wirelessVideoPlaybackDisabled;
+
+// Highest end time of the seekable ranges the playback controls manager knows about, NaN when it
+// has none. An empty range here is what leaves the fullscreen scrubber disabled.
+@property (nonatomic, readonly) double _maximumSeekableTime;
+
+@property (nonatomic, readonly) CGRect _lastVideoPresentationSetupRectForTesting;
 
 - (void)_setIndexOfGetDisplayMediaDeviceSelectedForTesting:(nullable NSNumber *)index;
 - (void)_setSystemCanPromptForGetDisplayMediaForTesting:(BOOL)canPrompt;
@@ -101,12 +123,19 @@ struct WKAppPrivacyReportTestingData {
 - (void)_didDismissContactPicker;
 - (void)_dismissContactPickerWithContacts:(NSArray *)contacts;
 
-- (void)_getRenderTreeAsStringWithCompletionHandler:(NS_SWIFT_UI_ACTOR void (^)(NSString * NS_NULLABLE_RESULT, NSError * _Nullable error))completionHandler WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA), visionos(WK_XROS_TBA));
+- (STWebpageController *)_screenTimeWebpageController;
+- (_WKPlatformVisualEffectView *)_screenTimeBlurredSnapshot;
+
+- (void)_getRenderTreeAsStringWithCompletionHandler:(NS_SWIFT_UI_ACTOR void (^)(NSString * NS_NULLABLE_RESULT, NSError * _Nullable error))completionHandler WK_API_AVAILABLE(macos(26.4), ios(26.4), visionos(26.4));
 
 @property (nonatomic, setter=_setScrollingUpdatesDisabledForTesting:) BOOL _scrollingUpdatesDisabledForTesting;
 @property (nonatomic, readonly) NSString *_scrollingTreeAsText;
+@property (nonatomic, readonly) NSString *_scrollingTreeIncludingNodeIDsAsText;
+@property (nonatomic, readonly) double _rubberbandHyperbolicCoefficientForTesting;
 
 @property (nonatomic, readonly) pid_t _networkProcessIdentifier;
+
+@property (nonatomic, readonly) uint64_t _webPageProxyIdentifierForTesting;
 
 @property (nonatomic, readonly) unsigned long _countOfUpdatesWithLayerChanges;
 
@@ -116,11 +145,18 @@ struct WKAppPrivacyReportTestingData {
 @property (nonatomic, readonly) BOOL _hasServiceWorkerBackgroundActivityForTesting;
 @property (nonatomic, readonly) BOOL _hasServiceWorkerForegroundActivityForTesting;
 - (void)_setThrottleStateForTesting:(int)type;
+@property (nonatomic, readonly, copy) NSString *_processAssertionTypeForTesting;
+- (void)_setJetsamBoostEnabledForTesting:(BOOL)enabled;
 
 - (void)_doAfterProcessingAllPendingMouseEvents:(dispatch_block_t)action;
+- (void)_doAfterProcessingAllPendingKeyEvents:(dispatch_block_t)action;
 
 + (void)_setApplicationBundleIdentifier:(NSString *)bundleIdentifier;
 + (void)_clearApplicationBundleIdentifierTestingOverride;
+
+// Accessibility mode is a single UIProcess-wide value, so these are per-process, not per-view.
++ (BOOL)_isAccessibilityEnabledForTesting;
++ (void)_resetAccessibilityModeForTesting;
 
 - (BOOL)_hasSleepDisabler;
 - (WKWebViewAudioRoutingArbitrationStatus)_audioRoutingArbitrationStatus;
@@ -146,7 +182,15 @@ struct WKAppPrivacyReportTestingData {
 
 - (void)_isLayerTreeFrozenForTesting:(void (^)(BOOL frozen))completionHandler WK_API_AVAILABLE(macos(13.0), ios(16.0));
 
+- (void)_numberOfLiveDocumentsForTesting:(void (^)(NSUInteger count))completionHandler;
+
+- (void)_setDisplayForTesting:(uint32_t)displayID nominalFramesPerSecond:(unsigned)nominalFramesPerSecond;
+- (void)_preferredRenderingUpdateIntervalsForTesting:(void (^)(NSArray<NSNumber *> *intervalsInMillisecondsForEachWebProcess))completionHandler;
+
 - (void)_computePagesForPrinting:(_WKFrameHandle *)handle completionHandler:(void(^)(void))completionHandler WK_API_AVAILABLE(macos(13.0), ios(16.0));
+- (void)_endPrintingForTesting:(void(^)(void))completionHandler;
+// Blocks the main thread until the pages have been drawn, as UIKit printing does. Needs printing to have begun.
+- (NSData *)_drawPagesToPDFSynchronouslyForTesting:(_WKFrameHandle *)handle pageCount:(NSUInteger)pageCount;
 
 - (void)_setConnectedToHardwareConsoleForTesting:(BOOL)connected;
 
@@ -160,9 +204,13 @@ struct WKAppPrivacyReportTestingData {
 
 @property (nonatomic, readonly) BOOL _hasAccessibilityActivityForTesting;
 
++ (NSUInteger)_suspendedRemotePageNetworkActivityCountForTesting;
+
 - (void)_setMediaVolumeForTesting:(float)volume;
 
 - (void)_textFragmentRangesWithCompletionHandlerForTesting:(void(^)(NSArray<NSValue *> *fragmentRanges))completionHandler WK_API_AVAILABLE(macos(26.0), ios(26.0), visionos(26.0));
+
+@property (nonatomic, readonly) CGRect _textIndicatorBoundingRectForTesting;
 
 @property (nonatomic, readonly) _WKRectEdge _fixedContainerEdges;
 #if TARGET_OS_IPHONE
@@ -176,6 +224,10 @@ struct WKAppPrivacyReportTestingData {
 #endif
 - (void)_cancelFixedColorExtensionFadeAnimationsForTesting;
 
+- (void)_startMonitoringWheelEventsForTestingWithCompletionHandler:(void(^)(void))completionHandler;
+- (void)_waitForWheelEventsToCompleteForTestingWithCompletionHandler:(void(^)(void))completionHandler;
+- (void)_waitForWheelEventsAndMomentumToCompleteForTestingWithCompletionHandler:(void(^)(void))completionHandler;
+
 - (unsigned)_forwardedLogsCountForTesting;
 - (bool)_receivedLogsDuringLaunchForTesting;
 
@@ -184,8 +236,25 @@ struct WKAppPrivacyReportTestingData {
 - (NSString *)_webContentProcessVariantForFrame:(nullable _WKFrameHandle *)frameHandle;
 
 #if defined(ENABLE_THREADED_ANIMATIONS) && ENABLE_THREADED_ANIMATIONS
-- (NSString *)_animationStackForLayerWithID:(unsigned long long)layerID;
+- (NSString *)_animationStackForLayerWithIDInMainFrame:(unsigned long long)layerID;
+- (NSString *)_animationStackForLayerWithID:(unsigned long long)layerID processID:(uint64_t)processID;
 - (NSString *)_progressBasedTimelinesForScrollingNodeID:(uint64_t)scrollingNodeID processID:(uint64_t)processID;
+- (NSString *)_monotonicTimelinesForProcessID:(uint64_t)processID;
+#endif
+- (bool)_displayLinkWantsHighFrameRate;
+
+- (void)_lastPageLoadNetworkActivityCompletionCodeForTesting:(void(^)(NSNumber * _Nullable completionCode))completionHandler;
+
+- (void)_topDocumentURLsInBackForwardCacheAtIndexForTesting:(NSInteger)relativeIndex completionHandler:(void(^)(NSArray<NSURL *> *topDocumentURLs))completionHandler;
+
+#if TARGET_OS_IPHONE
++ (void)_setVisibilityEndowmentForTesting:(BOOL)isVisible;
+#endif
+
+#if defined(ENABLE_HORIZONTAL_BANNER_VIEW_OVERLAYS) && ENABLE_HORIZONTAL_BANNER_VIEW_OVERLAYS
+- (void)_enableColorExtensionBehaviorForHorizontalBannerViewOverlaysForTesting;
+- (void)_disableColorExtensionBehaviorForHorizontalBannerViewOverlaysForTesting;
+- (void)_clearColorExtensionBehaviorOverridesForHorizontalBannerViewOverlaysForTesting;
 #endif
 
 @end

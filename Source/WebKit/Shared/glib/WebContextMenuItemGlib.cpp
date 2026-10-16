@@ -32,6 +32,7 @@
 #include "APIObject.h"
 #include "WebKitContextMenuGAction.h"
 #include <gio/gio.h>
+#include <wtf/text/CString.h>
 
 #if PLATFORM(GTK) && !USE(GTK4)
 #include <gtk/gtk.h>
@@ -86,7 +87,7 @@ WebContextMenuItemGlib::WebContextMenuItemGlib(GAction* action, const String& ti
 #if PLATFORM(GTK) && !USE(GTK4)
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
 WebContextMenuItemGlib::WebContextMenuItemGlib(GtkAction* action)
-    : WebContextMenuItemData(GTK_IS_TOGGLE_ACTION(action) ? ContextMenuItemType::CheckableAction : ContextMenuItemType::Action, ContextMenuItemBaseApplicationTag, String::fromUTF8(gtk_action_get_label(action)), gtk_action_get_sensitive(action), GTK_IS_TOGGLE_ACTION(action) ? gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(action)) : false)
+    : WebContextMenuItemData(GTK_IS_TOGGLE_ACTION(action) ? ContextMenuItemType::CheckableAction : ContextMenuItemType::Action, ContextMenuItemBaseApplicationTag, String::fromUTF8(gtk_action_get_label(action)), gtk_action_get_sensitive(action), GTK_IS_TOGGLE_ACTION(action) && gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(action)))
 {
     m_gtkAction = action;
     createActionIfNeeded();
@@ -94,9 +95,7 @@ WebContextMenuItemGlib::WebContextMenuItemGlib(GtkAction* action)
 ALLOW_DEPRECATED_DECLARATIONS_END
 #endif
 
-WebContextMenuItemGlib::~WebContextMenuItemGlib()
-{
-}
+WebContextMenuItemGlib::~WebContextMenuItemGlib() = default;
 
 void WebContextMenuItemGlib::createActionIfNeeded()
 {
@@ -104,14 +103,14 @@ void WebContextMenuItemGlib::createActionIfNeeded()
         return;
 
     if (!m_gAction) {
-        const char* name = nullptr;
+        UTF8CString name;
 #if PLATFORM(GTK) && !USE(GTK4)
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
         if (m_gtkAction) // NOLINT
-            name = gtk_action_get_name(m_gtkAction);
+            name = UTF8CString::unsafeFromUTF8(gtk_action_get_name(m_gtkAction));
 ALLOW_DEPRECATED_DECLARATIONS_END
 #endif
-        m_gAction = adoptGRef(webkitContextMenuGActionNew(name, *this));
+        m_gAction = adoptGRef(webkitContextMenuGActionNew(WTF::move(name), *this));
     }
 
 #if PLATFORM(GTK) && !USE(GTK4)
@@ -119,10 +118,10 @@ ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     // Create the GtkAction for backwards compatibility only.
     if (!m_gtkAction) {
         if (type() == ContextMenuItemType::CheckableAction) {
-            m_gtkAction = GTK_ACTION(gtk_toggle_action_new(g_action_get_name(m_gAction.get()), title().utf8().data(), nullptr, nullptr));
+            m_gtkAction = GTK_ACTION(gtk_toggle_action_new(g_action_get_name(m_gAction.get()), title().utf8().legacyCStringPointer(), nullptr, nullptr));
             gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(m_gtkAction), checked());
         } else
-            m_gtkAction = gtk_action_new(g_action_get_name(m_gAction.get()), title().utf8().data(), 0, nullptr);
+            m_gtkAction = gtk_action_new(g_action_get_name(m_gAction.get()), title().utf8().legacyCStringPointer(), 0, nullptr);
         gtk_action_set_sensitive(m_gtkAction, enabled());
     }
 

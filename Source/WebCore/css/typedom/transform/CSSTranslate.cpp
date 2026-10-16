@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2026 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -48,7 +49,7 @@ ExceptionOr<Ref<CSSTranslate>> CSSTranslate::create(Ref<CSSNumericValue> x, Ref<
 {
     auto is2D = z ? CSSTransformComponent::Is2D::No : CSSTransformComponent::Is2D::Yes;
     if (!z)
-        z = CSSUnitValue::create(0.0, CSSUnitType::CSS_PX);
+        z = CSSUnitValue::create(0.0, CSSUnitType::Px);
 
     if (!x->type().matchesTypeOrPercentage<CSSNumericBaseType::Length>()
         || !y->type().matchesTypeOrPercentage<CSSNumericBaseType::Length>()
@@ -63,13 +64,10 @@ ExceptionOr<Ref<CSSTranslate>> CSSTranslate::create(Ref<const CSSFunctionValue> 
     auto makeTranslate = [&](NOESCAPE const Function<ExceptionOr<Ref<CSSTranslate>>(Vector<Ref<CSSNumericValue>>&&)>& create, size_t minNumberOfComponents, std::optional<size_t> maxNumberOfComponents = std::nullopt) -> ExceptionOr<Ref<CSSTranslate>> {
         Vector<Ref<CSSNumericValue>> components;
         for (Ref componentCSSValue : cssFunctionValue.get()) {
-            auto valueOrException = CSSStyleValueFactory::reifyValue(document, componentCSSValue.get(), std::nullopt);
+            auto valueOrException = CSSNumericValue::reifyValue(document, componentCSSValue.get());
             if (valueOrException.hasException())
                 return valueOrException.releaseException();
-            RefPtr numericValue = dynamicDowncast<CSSNumericValue>(valueOrException.releaseReturnValue());
-            if (!numericValue)
-                return Exception { ExceptionCode::TypeError, "Expected a CSSNumericValue."_s };
-            components.append(numericValue.releaseNonNull());
+            components.append(valueOrException.releaseReturnValue());
         }
         if (!maxNumberOfComponents)
             maxNumberOfComponents = minNumberOfComponents;
@@ -82,25 +80,25 @@ ExceptionOr<Ref<CSSTranslate>> CSSTranslate::create(Ref<const CSSFunctionValue> 
     };
 
     switch (cssFunctionValue->name()) {
-    case CSSValueTranslateX:
+    case CSSValueID::TranslateX:
         return makeTranslate([](Vector<Ref<CSSNumericValue>>&& components) {
             return CSSTranslate::create(components[0], CSSNumericFactory::px(0), nullptr);
         }, 1);
-    case CSSValueTranslateY:
+    case CSSValueID::TranslateY:
         return makeTranslate([](Vector<Ref<CSSNumericValue>>&& components) {
             return CSSTranslate::create(CSSNumericFactory::px(0), components[0], nullptr);
         }, 1);
-    case CSSValueTranslateZ:
+    case CSSValueID::TranslateZ:
         return makeTranslate([](Vector<Ref<CSSNumericValue>>&& components) {
             return CSSTranslate::create(CSSNumericFactory::px(0), CSSNumericFactory::px(0), components[0].ptr());
         }, 1);
-    case CSSValueTranslate:
+    case CSSValueID::Translate:
         return makeTranslate([](Vector<Ref<CSSNumericValue>>&& components) {
             if (components.size() == 2)
                 return CSSTranslate::create(components[0], components[1], nullptr);
             return CSSTranslate::create(components[0], CSSNumericFactory::px(0), nullptr);
         }, 1, 2);
-    case CSSValueTranslate3d:
+    case CSSValueID::Translate3d:
         return makeTranslate([](Vector<Ref<CSSNumericValue>>&& components) {
             return CSSTranslate::create(components[0], components[1], components[2].ptr());
         }, 3);
@@ -110,7 +108,7 @@ ExceptionOr<Ref<CSSTranslate>> CSSTranslate::create(Ref<const CSSFunctionValue> 
     }
 }
 
-CSSTranslate::CSSTranslate(CSSTransformComponent::Is2D is2D, Ref<CSSNumericValue> x, Ref<CSSNumericValue> y, Ref<CSSNumericValue> z)
+CSSTranslate::CSSTranslate(CSSTransformComponent::Is2D is2D, Ref<CSSNumericValue>&& x, Ref<CSSNumericValue>&& y, Ref<CSSNumericValue>&& z)
     : CSSTransformComponent(is2D)
     , m_x(WTF::move(x))
     , m_y(WTF::move(y))
@@ -122,12 +120,12 @@ void CSSTranslate::serialize(StringBuilder& builder) const
 {
     // https://drafts.css-houdini.org/css-typed-om/#serialize-a-csstranslate
     builder.append(is2D() ? "translate("_s : "translate3d("_s);
-    m_x->serialize(builder);
+    protect(m_x)->serialize(builder);
     builder.append(", "_s);
-    m_y->serialize(builder);
+    protect(m_y)->serialize(builder);
     if (!is2D()) {
         builder.append(", "_s);
-        m_z->serialize(builder);
+        protect(m_z)->serialize(builder);
     }
     builder.append(')');
 }
@@ -153,9 +151,9 @@ ExceptionOr<Ref<DOMMatrix>> CSSTranslate::toMatrix()
     if (!xUnitValue || !yUnitValue || !zUnitValue)
         return Exception { ExceptionCode::TypeError };
 
-    auto xPx = xUnitValue->convertTo(CSSUnitType::CSS_PX);
-    auto yPx = yUnitValue->convertTo(CSSUnitType::CSS_PX);
-    auto zPx = zUnitValue->convertTo(CSSUnitType::CSS_PX);
+    auto xPx = xUnitValue->convertTo(CSSUnitType::Px);
+    auto yPx = yUnitValue->convertTo(CSSUnitType::Px);
+    auto zPx = zUnitValue->convertTo(CSSUnitType::Px);
 
     if (!xPx || !yPx || !zPx)
         return Exception { ExceptionCode::TypeError };
@@ -176,22 +174,22 @@ ExceptionOr<Ref<DOMMatrix>> CSSTranslate::toMatrix()
 
 RefPtr<CSSValue> CSSTranslate::toCSSValue() const
 {
-    RefPtr x = m_x->toCSSValue();
+    RefPtr x = protect(m_x)->toCSSValue();
     if (!x)
         return nullptr;
 
-    RefPtr y = m_y->toCSSValue();
+    RefPtr y = protect(m_y)->toCSSValue();
     if (!y)
         return nullptr;
 
     if (is2D())
-        return CSSFunctionValue::create(CSSValueTranslate, x.releaseNonNull(), y.releaseNonNull());
+        return CSSFunctionValue::create(CSSValueID::Translate, x.releaseNonNull(), y.releaseNonNull());
 
-    RefPtr z = m_z->toCSSValue();
+    RefPtr z = protect(m_z)->toCSSValue();
     if (!z)
         return nullptr;
 
-    return CSSFunctionValue::create(CSSValueTranslate3d, x.releaseNonNull(), y.releaseNonNull(), z.releaseNonNull());
+    return CSSFunctionValue::create(CSSValueID::Translate3d, x.releaseNonNull(), y.releaseNonNull(), z.releaseNonNull());
 }
 
 } // namespace WebCore

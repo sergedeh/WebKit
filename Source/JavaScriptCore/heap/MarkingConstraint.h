@@ -38,8 +38,9 @@
 
 namespace JSC {
 
-class MarkingConstraintSet;
 class AbstractSlotVisitor;
+class Heap;
+class MarkingConstraintSet;
 class SlotVisitor;
 
 class MarkingConstraint {
@@ -47,18 +48,18 @@ class MarkingConstraint {
     WTF_MAKE_TZONE_ALLOCATED(MarkingConstraint);
 public:
     JS_EXPORT_PRIVATE MarkingConstraint(
-        CString abbreviatedName, CString name, ConstraintVolatility,
+        ASCIICString abbreviatedName, ASCIICString name, ConstraintVolatility,
         ConstraintConcurrency = ConstraintConcurrency::Concurrent,
         ConstraintParallelism = ConstraintParallelism::Sequential);
-    
+
     JS_EXPORT_PRIVATE virtual ~MarkingConstraint();
-    
+
     unsigned index() const { return m_index; }
+
+    const ASCIICString& abbreviatedName() const LIFETIME_BOUND { return m_abbreviatedName; }
+    const ASCIICString& name() const LIFETIME_BOUND { return m_name; }
     
-    const char* abbreviatedName() const LIFETIME_BOUND { return m_abbreviatedName.data(); }
-    const char* name() const LIFETIME_BOUND { return m_name.data(); }
-    
-    void resetStats();
+    void LEGACY_NODELETE resetStats();
     
     size_t lastVisitCount() const { return m_lastVisitCount; }
     
@@ -89,10 +90,11 @@ protected:
     void executeSynchronously(AbstractSlotVisitor&);
 
 private:
-    friend class MarkingConstraintSet; // So it can set m_index.
+    friend class MarkingConstraintSet; // So it can set m_index and m_heap.
     
-    CString m_abbreviatedName;
-    CString m_name;
+    SUPPRESS_FORWARD_DECL_MEMBER Heap* m_heap { nullptr }; // The heap that added this constraint. Heap is not refcounted.
+    ASCIICString m_abbreviatedName;
+    ASCIICString m_name;
     size_t m_lastVisitCount { 0 };
     unsigned m_index { UINT_MAX };
     ConstraintVolatility m_volatility;

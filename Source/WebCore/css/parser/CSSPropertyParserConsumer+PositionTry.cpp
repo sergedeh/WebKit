@@ -25,6 +25,7 @@
 #include "config.h"
 #include "CSSPropertyParserConsumer+PositionTry.h"
 
+#include "CSSCustomIdentValue.h"
 #include "CSSParserContext.h"
 #include "CSSParserTokenRange.h"
 #include "CSSPropertyParserConsumer+Anchor.h"
@@ -40,14 +41,14 @@ RefPtr<CSSValue> consumePositionTryFallbacks(CSSParserTokenRange& range, CSS::Pr
     // <'position-try-fallbacks'> = none | [ [<dashed-ident> || <try-tactic>] | <'position-area'> ]#
     // https://drafts.csswg.org/css-anchor-position-1/#propdef-position-try-fallbacks
 
-    if (auto result = consumeIdent<CSSValueNone>(range))
+    if (auto result = consumeIdent<CSSValueID::None>(range))
         return result;
 
     auto consumeFallback = [&](CSSParserTokenRange& range) -> RefPtr<CSSValue> {
         // Try to parse <'position-area'>
         auto rangeCopy = range;
         // consumePositionArea accepts 'none', so detect and reject it beforehand.
-        if (range.peek().id() == CSSValueNone)
+        if (range.peek().id() == CSSValueID::None)
             return nullptr;
         if (auto positionArea = consumePositionArea(range, state))
             return positionArea;
@@ -56,23 +57,23 @@ RefPtr<CSSValue> consumePositionTryFallbacks(CSSParserTokenRange& range, CSS::Pr
 
         // Try to parse [<dashed-ident> || <try-tactic>]
         // <try-tactic> = flip-block || flip-inline || flip-start || flip-x || flip-y
-        auto tryRuleIdent = consumeDashedIdentRaw(range);
+        auto tryRuleIdent = consumeUnresolvedDashedIdent(range, state);
 
         Vector<CSSValueID, 5> tryTactics;
-        while (auto tactic = consumeIdentRaw<CSSValueFlipBlock, CSSValueFlipInline, CSSValueFlipStart, CSSValueFlipX, CSSValueFlipY>(range)) {
+        while (auto tactic = consumeIdentRaw<CSSValueID::FlipBlock, CSSValueID::FlipInline, CSSValueID::FlipStart, CSSValueID::FlipX, CSSValueID::FlipY>(range)) {
             if (tryTactics.contains(*tactic))
                 return nullptr;
             tryTactics.append(*tactic);
         }
 
-        if (tryRuleIdent.isNull())
-            tryRuleIdent = consumeDashedIdentRaw(range);
+        if (!tryRuleIdent)
+            tryRuleIdent = consumeUnresolvedDashedIdent(range, state);
 
         CSSValueListBuilder list;
-        if (!tryRuleIdent.isNull())
-            list.append(CSSPrimitiveValue::createCustomIdent(tryRuleIdent));
+        if (tryRuleIdent)
+            list.append(CSSCustomIdentValue::create(WTF::move(*tryRuleIdent)));
         for (auto tactic : tryTactics)
-            list.append(CSSPrimitiveValue::create(tactic));
+            list.append(CSSKeywordValue::create(tactic));
 
         // At least one @position-try rule ident or tactic must be present.
         if (list.isEmpty())

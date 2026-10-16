@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2020-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,6 +30,7 @@
 #include "GraphicsContext.h"
 #include "ImageBuffer.h"
 #include "RenderingMode.h"
+#include <wtf/Locker.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -37,22 +38,30 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(NativeImage);
 
 #if !USE(CG) && !USE(SKIA)
-RefPtr<NativeImage> NativeImage::create(PlatformImagePtr&& platformImage)
+RefPtr<NativeImage> NativeImage::create(PlatformImagePtr&& platformImage, std::optional<GainMap>&& gainMap)
 {
     if (!platformImage)
         return nullptr;
-    return adoptRef(*new NativeImage(WTF::move(platformImage)));
+    return adoptRef(*new NativeImage(WTF::move(platformImage), WTF::move(gainMap)));
 }
 
-RefPtr<NativeImage> NativeImage::createTransient(PlatformImagePtr&& image)
+RefPtr<NativeImage> NativeImage::create(PlatformImagePtr&& platformImage)
 {
-    return create(WTF::move(image));
+    return create(WTF::move(platformImage), std::nullopt);
+}
+
+RefPtr<NativeImage> NativeImage::createTransient(PlatformImagePtr&& platformImage)
+{
+    return create(WTF::move(platformImage));
 }
 #endif
 
+NativeImage::NativeImage() = default;
+
 #if !USE(SKIA)
-NativeImage::NativeImage(PlatformImagePtr&& platformImage)
+NativeImage::NativeImage(PlatformImagePtr&& platformImage, std::optional<GainMap>&& gainMap)
     : m_platformImage(WTF::move(platformImage))
+    , m_gainMap(WTF::move(gainMap))
 {
     computeHeadroom();
 }
@@ -64,9 +73,15 @@ NativeImage::~NativeImage()
         observer->willDestroyNativeImage(*this);
 }
 
-const PlatformImagePtr& NativeImage::platformImage() const
+PlatformImagePtr NativeImage::platformImage() const
 {
+    Locker locker { m_lock };
     return m_platformImage;
+}
+
+const std::optional<GainMap>& NativeImage::gainMap() const
+{
+    return m_gainMap;
 }
 
 bool NativeImage::hasHDRContent() const
@@ -74,17 +89,39 @@ bool NativeImage::hasHDRContent() const
     return colorSpace().usesITUR_2100TF();
 }
 
-void NativeImage::replacePlatformImage(PlatformImagePtr&& platformImage)
+void NativeImage::replacePlatformImage(PlatformImagePtr&& platformImage) const
 {
     ASSERT(platformImage);
+    Locker locker { m_lock };
     m_platformImage = WTF::move(platformImage);
-    computeHeadroom();
+    // Intention is that the contents do not change, so properties are not recomputed.
 }
 
 #if !USE(CG)
-void NativeImage::computeHeadroom()
+size_t NativeImage::sizeInBytes() const
+{
+    return size().area() * sizeof(uint32_t);
+}
+
+void NativeImage::computeHeadroom() const
 {
 }
+
+RefPtr<NativeImage> NativeImage::rotatedImage(ImageOrientation orientation)
+{
+    IntSize sizeForRotation = orientation.usesWidthAsHeight() ? size().transposedSize() : size();
+
+    // FIXME: This preserves neither the pixelFormat nor the colorSapace of the original NativeImage.
+    RefPtr buffer = ImageBuffer::create(sizeForRotation, RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1, ColorSpace::SRGB(), PixelFormat::BGRA8);
+    if (!buffer)
+        return nullptr;
+
+    GraphicsContext& context = buffer->context();
+    context.drawNativeImage(*this, { { }, sizeForRotation }, { { }, sizeForRotation }, { orientation });
+
+    return ImageBuffer::sinkIntoNativeImage(WTF::move(buffer));
+}
+
 #endif
 
 } // namespace WebCore

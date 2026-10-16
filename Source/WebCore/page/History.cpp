@@ -28,6 +28,7 @@
 
 #include "BackForwardController.h"
 #include "Document.h"
+#include "DocumentPage.h"
 #include "DocumentQuirks.h"
 #include "DocumentView.h"
 #include "DocumentWindow.h"
@@ -35,7 +36,9 @@
 #include "HistoryController.h"
 #include "HistoryItem.h"
 #include "LocalFrame.h"
+#include "LocalFrameInlines.h"
 #include "LocalFrameLoaderClient.h"
+#include "JSValueInWrappedObjectInlines.h"
 #include "Logging.h"
 #include "Navigation.h"
 #include "NavigationScheduler.h"
@@ -66,7 +69,7 @@ History::History(LocalDOMWindow& window)
 
 static bool isDocumentFullyActive(LocalFrame* frame)
 {
-    return frame && frame->protectedDocument()->isFullyActive();
+    return frame && protect(frame->document())->isFullyActive();
 }
 
 static Exception documentNotFullyActive()
@@ -82,7 +85,7 @@ ExceptionOr<unsigned> History::length() const
     RefPtr page = frame->page();
     if (!page)
         return 0;
-    return page->checkedBackForward()->count();
+    return protect(page->backForward())->count();
 }
 
 ExceptionOr<History::ScrollRestoration> History::scrollRestoration() const
@@ -121,10 +124,10 @@ ExceptionOr<SerializedScriptValue*> History::state()
 
 SerializedScriptValue* History::stateInternal() const
 {
-    RefPtr frame = this->frame();
+    auto* frame = this->frame();
     if (!frame)
         return nullptr;
-    RefPtr historyItem = frame->loader().history().currentItem();
+    auto* historyItem = frame->loader().history().currentItem();
     if (!historyItem)
         return nullptr;
     return historyItem->stateObject();
@@ -170,19 +173,19 @@ ExceptionOr<void> History::forward(Document& document)
 ExceptionOr<void> History::go(int distance)
 {
     RefPtr frame = this->frame();
-    LOG(History, "History %p go(%d) frame %p (main frame %d)", this, distance, frame.get(), frame ? frame->isMainFrame() : false);
+    LOG(History, "History %p go(%d) frame %p (main frame %d)", this, distance, frame.get(), frame && frame->isMainFrame());
 
     if (!isDocumentFullyActive(frame.get()))
         return documentNotFullyActive();
 
-    frame->protectedNavigationScheduler()->scheduleHistoryNavigation(distance);
+    protect(frame->navigationScheduler())->scheduleHistoryNavigation(distance);
     return { };
 }
 
 ExceptionOr<void> History::go(Document& document, int distance)
 {
     RefPtr frame = this->frame();
-    LOG(History, "History %p go(%d) in document %p frame %p (main frame %d)", this, distance, &document, frame.get(), frame ? frame->isMainFrame() : false);
+    LOG(History, "History %p go(%d) in document %p frame %p (main frame %d)", this, distance, &document, frame.get(), frame && frame->isMainFrame());
 
     if (!isDocumentFullyActive(frame.get()))
         return documentNotFullyActive();
@@ -192,7 +195,7 @@ ExceptionOr<void> History::go(Document& document, int distance)
     if (document.canNavigate(frame.get()) != CanNavigateState::Able)
         return { };
 
-    frame->protectedNavigationScheduler()->scheduleHistoryNavigation(distance);
+    protect(frame->navigationScheduler())->scheduleHistoryNavigation(distance);
     return { };
 }
 
@@ -275,7 +278,7 @@ ExceptionOr<void> History::stateObjectAdded(RefPtr<SerializedScriptValue>&& data
     };
 
     if (!urlString.isEmpty()) {
-        fullURL = document->completeURL(urlString);
+        fullURL = document->encodingParseURL(urlString);
         if (!fullURL.isValid())
             return createBlockedURLSecurityErrorWithMessageSuffix("URL is invalid"_s);
 
@@ -306,8 +309,8 @@ ExceptionOr<void> History::stateObjectAdded(RefPtr<SerializedScriptValue>&& data
         return result.releaseException();
 
     if (document->settings().navigationAPIEnabled()) {
-        Ref navigation = document->protectedWindow()->navigation();
-        if (!navigation->dispatchPushReplaceReloadNavigateEvent(fullURL, historyBehavior == NavigationHistoryBehavior::Push ? NavigationNavigationType::Push : NavigationNavigationType::Replace, true, nullptr, data.get()))
+        Ref navigation = protect(document->window())->navigation();
+        if (navigation->dispatchPushReplaceReloadNavigateEvent(fullURL, historyBehavior == NavigationHistoryBehavior::Push ? NavigationNavigationType::Push : NavigationNavigationType::Replace, true, nullptr, data.get()).isNotCompleted())
             return { };
     }
 

@@ -47,17 +47,14 @@
 #include <WebCore/ResourceError.h>
 #include <WebCore/ResourceResponse.h>
 #include <WebCore/SharedBuffer.h>
+#include <wtf/Borrow.h>
 #include <wtf/RunLoop.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebKit {
 using namespace WebCore;
 
 static const unsigned bufferSize = 512 * 1024;
-
-static const int httpOK = 200;
-static const int httpPartialContent = 206;
-static constexpr auto httpOKText = "OK"_s;
-static constexpr auto httpPartialContentText = "Partial Content"_s;
 
 static constexpr auto webKitBlobResourceDomain = "WebKitBlobResource"_s;
 
@@ -80,15 +77,15 @@ NetworkDataTaskBlob::NetworkDataTaskBlob(NetworkSession& session, NetworkDataTas
     , m_fileReferences(fileReferences)
     , m_networkProcess(session.networkProcess())
 {
-    for (auto& fileReference : m_fileReferences)
+    for (Ref fileReference : borrow(m_fileReferences).get())
         fileReference->prepareForFileAccess();
 
-    LOG(NetworkSession, "%p - Created NetworkDataTaskBlob for %s", this, request.url().string().utf8().data());
+    LOG_WITH_STREAM(NetworkSession, stream << this << " - Created NetworkDataTaskBlob for "_s << request.url().string());
 }
 
 NetworkDataTaskBlob::~NetworkDataTaskBlob()
 {
-    for (auto& fileReference : m_fileReferences)
+    for (Ref fileReference : borrow(m_fileReferences).get())
         fileReference->revokeFileAccess();
 
     clearStream();
@@ -152,7 +149,7 @@ void NetworkDataTaskBlob::didReceiveResponse(ResourceResponse&& response)
 
         switch (policyAction) {
         case PolicyAction::Use:
-            buffer().resize(bufferSize);
+            resizeBuffer(bufferSize);
             readAsync();
             break;
         case PolicyAction::LoadWillContinueInAnotherProcess:
@@ -175,7 +172,7 @@ bool NetworkDataTaskBlob::didReceiveData(std::span<const uint8_t> data)
             return false;
     } else {
         ASSERT(m_client);
-        protectedClient()->didReceiveData(SharedBuffer::create(data));
+        protect(client())->didReceiveData(SharedBuffer::create(data));
     }
     return true;
 }
@@ -204,7 +201,7 @@ void NetworkDataTaskBlob::download()
     ASSERT(m_pendingDownloadLocation);
     ASSERT(m_session);
 
-    LOG(NetworkSession, "%p - NetworkDataTaskBlob::download to %s", this, m_pendingDownloadLocation.utf8().data());
+    LOG_WITH_STREAM(NetworkSession, stream << this << " - NetworkDataTaskBlob::download to "_s << m_pendingDownloadLocation);
 
     m_downloadFile = FileSystem::openFile(m_pendingDownloadLocation, FileSystem::FileOpenMode::Truncate);
     if (!m_downloadFile) {
@@ -213,13 +210,13 @@ void NetworkDataTaskBlob::download()
     }
 
     CheckedRef downloadManager = m_networkProcess->downloadManager();
-    Ref download = Download::create(downloadManager, *m_pendingDownloadID, *this, *checkedNetworkSession(), suggestedFilename());
+    Ref download = Download::create(downloadManager, *m_pendingDownloadID, *this, *protect(networkSession()), suggestedFilename());
     downloadManager->dataTaskBecameDownloadTask(*m_pendingDownloadID, download.copyRef());
     download->didCreateDestination(m_pendingDownloadLocation);
 
     ASSERT(!m_client);
 
-    buffer().resize(bufferSize);
+    resizeBuffer(bufferSize);
     readAsync();
 }
 
@@ -233,7 +230,7 @@ bool NetworkDataTaskBlob::writeDownload(std::span<const uint8_t> data)
     }
 
     m_downloadBytesWritten += *bytesWritten;
-    RefPtr download = m_networkProcess->checkedDownloadManager()->download(*m_pendingDownloadID);
+    RefPtr download = protect(m_networkProcess->downloadManager())->download(*m_pendingDownloadID);
     ASSERT(download);
     download->didReceiveData(*bytesWritten, m_downloadBytesWritten, totalSize());
     return true;
@@ -258,7 +255,7 @@ void NetworkDataTaskBlob::didFailDownload(const ResourceError& error)
     if (RefPtr client = m_client.get())
         client->didCompleteWithError(error);
     else {
-        RefPtr download = m_networkProcess->checkedDownloadManager()->download(*m_pendingDownloadID);
+        RefPtr download = protect(m_networkProcess->downloadManager())->download(*m_pendingDownloadID);
         ASSERT(download);
         download->didFail(error, { });
     }
@@ -277,7 +274,7 @@ void NetworkDataTaskBlob::didFinishDownload()
 #endif
 
     clearStream();
-    RefPtr download = m_networkProcess->checkedDownloadManager()->download(*m_pendingDownloadID);
+    RefPtr download = protect(m_networkProcess->downloadManager())->download(*m_pendingDownloadID);
     ASSERT(download);
 
 #if HAVE(MODERN_DOWNLOADPROGRESS)
@@ -302,7 +299,7 @@ void NetworkDataTaskBlob::didFail(Error errorCode)
 
     clearStream();
     ASSERT(m_client);
-    protectedClient()->didCompleteWithError(ResourceError(webKitBlobResourceDomain, static_cast<int>(errorCode), m_firstRequest.url(), String()));
+    protect(client())->didCompleteWithError(ResourceError(webKitBlobResourceDomain, static_cast<int>(errorCode), m_firstRequest.url(), String()));
 }
 
 void NetworkDataTaskBlob::didFinish()
@@ -318,7 +315,7 @@ void NetworkDataTaskBlob::didFinish()
 
     clearStream();
     ASSERT(m_client);
-    protectedClient()->didCompleteWithError({ });
+    protect(client())->didCompleteWithError({ });
 }
 
 } // namespace WebKit

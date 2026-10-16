@@ -24,6 +24,7 @@
 
 #pragma once
 
+#include <WebCore/ScopedName.h>
 #include <WebCore/StyleScrollFunction.h>
 #include <WebCore/StyleValueTypes.h>
 #include <WebCore/StyleViewFunction.h>
@@ -44,8 +45,8 @@ struct SingleAnimationTimeline {
     {
     }
 
-    SingleAnimationTimeline(CustomIdentifier&& identifier)
-        : m_value { identifier }
+    SingleAnimationTimeline(ScopedName&& name)
+        : m_value { name }
     {
     }
 
@@ -61,14 +62,14 @@ struct SingleAnimationTimeline {
 
     bool isAuto() const { return std::holds_alternative<CSS::Keyword::Auto>(m_value); }
     bool isNone() const { return std::holds_alternative<CSS::Keyword::None>(m_value); }
-    bool isCustomIdentifier() const { return std::holds_alternative<CustomIdentifier>(m_value); }
-    std::optional<CustomIdentifier> tryCustomIdentifier() const { return isCustomIdentifier() ? std::make_optional(std::get<CustomIdentifier>(m_value)) : std::nullopt; }
+    bool isScopedName() const { return std::holds_alternative<ScopedName>(m_value); }
+    std::optional<ScopedName> tryScopedName() const { return isScopedName() ? std::make_optional(std::get<ScopedName>(m_value)) : std::nullopt; }
     bool isScrollFunction() const { return std::holds_alternative<ScrollFunction>(m_value); }
     std::optional<ScrollFunction> tryScrollFunction() const { return isScrollFunction() ? std::make_optional(std::get<ScrollFunction>(m_value)) : std::nullopt; }
     bool isViewFunction() const { return std::holds_alternative<ViewFunction>(m_value); }
     std::optional<ViewFunction> tryViewFunction() const { return isViewFunction() ? std::make_optional(std::get<ViewFunction>(m_value)) : std::nullopt; }
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         return WTF::switchOn(m_value, std::forward<F>(f)...);
     }
@@ -76,7 +77,7 @@ struct SingleAnimationTimeline {
     bool operator==(const SingleAnimationTimeline&) const = default;
 
 private:
-    Variant<CSS::Keyword::Auto, CSS::Keyword::None, CustomIdentifier, ScrollFunction, ViewFunction> m_value;
+    Variant<CSS::Keyword::Auto, CSS::Keyword::None, ScopedName, ScrollFunction, ViewFunction> m_value;
 };
 
 // MARK: - Conversion

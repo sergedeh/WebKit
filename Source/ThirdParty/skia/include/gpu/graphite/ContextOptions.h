@@ -12,8 +12,8 @@
 #include "include/core/SkSize.h"
 #include "include/core/SkSpan.h"
 #include "include/gpu/graphite/GraphiteTypes.h"
-#include "include/private/base/SkAPI.h"
-#include "include/private/base/SkMath.h"
+#include "include/private/SkAPI.h"
+#include "include/private/SkMath.h"
 
 #include <optional>
 #include <string>
@@ -69,13 +69,6 @@ struct SK_API ContextOptions {
      * overhead.
      */
     float fMinimumPathSizeForMSAA = 0;
-
-    /**
-     * Will the client make sure to only ever be executing one thread that uses the Context and all
-     * derived classes (e.g. Recorders, Recordings, etc.) at a time. If so we can possibly make some
-     * objects (e.g. VulkanMemoryAllocator) not thread safe to improve single thread performance.
-     */
-    bool fClientWillExternallySynchronizeAllThreads = false;
 
     /**
      * The maximum size of cache textures used for Skia's Glyph cache.
@@ -143,15 +136,10 @@ struct SK_API ContextOptions {
 #endif
 
     /**
-     * If Skia is creating a default VMA allocator for the Vulkan backend this value will be used
-     * for the preferredLargeHeapBlockSize. If the value is not set, then Skia will use an
-     * internally defined default size.
-     *
-     * However, it is highly discouraged to have Skia make a default allocator (and support for
-     * doing so will be removed soon,  b/321962001). Instead clients should create their own
-     * allocator to pass into Skia where they can fine tune this value themeselves.
+     * Enabling switches Graphite from the existing sort-based draw ordering to the new layer-based
+     * system.
      */
-    std::optional<uint64_t> fVulkanVMALargeHeapBlockSize;
+    bool fUseDrawListLayer = false;
 
     /**
      * Client-provided context that is passed to the client-provided PipelineCachingCallback
@@ -239,6 +227,12 @@ struct SK_API ContextOptions {
      * draw calls and surface creation from Recorders spawned from the Context.
      */
      bool fEnableCapture = false;
+
+     /**
+      * Avoid using depth/stencil buffers. This will disable depth-occlusion-culling (more GPU work)
+      * and fall back to analytic path algorithm instead of MSAA (more CPU work).
+      */
+     bool fAvoidDepthMode = false;
 
     /**
      * Private options that are only meant for testing within Skia's tools.

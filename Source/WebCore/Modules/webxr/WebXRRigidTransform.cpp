@@ -30,6 +30,7 @@
 
 #include "DOMPointReadOnly.h"
 #include "ExceptionOr.h"
+#include "JSValueInWrappedObjectInlines.h"
 #include "ScriptWrappableInlines.h"
 #include "TransformationMatrix.h"
 #include <JavaScriptCore/TypedArrayInlines.h>
@@ -154,7 +155,7 @@ const WebXRRigidTransform& WebXRRigidTransform::inverse()
     auto inverseTransform = m_rawTransform.inverse();
     ASSERT(!!inverseTransform);
 
-    m_inverse = WebXRRigidTransform::create(*inverseTransform);
+    lazyInitialize(m_inverse, WebXRRigidTransform::create(*inverseTransform));
     // The inverse of a inverse object should return the original object.
     m_inverse->m_parentInverse = *this;
 

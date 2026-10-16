@@ -34,7 +34,7 @@ namespace WebCore {
 
 GPUBasedCanvasRenderingContext::GPUBasedCanvasRenderingContext(CanvasBase& canvas, CanvasRenderingContext::Type type)
     : CanvasRenderingContext(canvas, type)
-    , ActiveDOMObject(canvas.scriptExecutionContext())
+    , ActiveDOMObject(protect(canvas.scriptExecutionContext()))
 {
     ASSERT(isGPUBased());
 }
@@ -44,10 +44,10 @@ HTMLCanvasElement* GPUBasedCanvasRenderingContext::htmlCanvas() const
     return dynamicDowncast<HTMLCanvasElement>(canvasBase());
 }
 
-void GPUBasedCanvasRenderingContext::markCanvasChanged()
+void GPUBasedCanvasRenderingContext::willUpdateCanvasContents()
 {
     Ref canvas = canvasBase();
-    canvas->didDraw(FloatRect { { }, canvas->size() }, ShouldApplyPostProcessingToDirtyRect::No);
+    canvas->willUpdateContents(FloatRect { { }, canvas->size() }, ShouldApplyPostProcessingToDirtyRect::No);
 }
 
 } // namespace WebCore

@@ -36,6 +36,7 @@
 #include "NodeDocument.h"
 #include "Page.h"
 #include "RenderObject.h"
+#include "RenderView.h"
 
 // Provided by IAccessibleEventID.idl
 #define IA2_EVENT_DOCUMENT_LOAD_COMPLETE    261
@@ -153,12 +154,12 @@ void AXObjectCache::frameLoadingEventPlatformNotification(RenderView* renderView
     }
 }
 
-void AXObjectCache::platformHandleFocusedUIElementChanged(Element*, Element* newFocus)
+void AXObjectCache::platformHandleFocusedUIElementChanged(AccessibilityObject*, AccessibilityObject* newFocus)
 {
     if (!newFocus)
         return;
 
-    Page* page = newFocus->document().page();
+    Page* page = newFocus->page();
     if (!page || !page->chrome().platformPageClient())
         return;
 

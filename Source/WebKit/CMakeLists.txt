@@ -5,6 +5,7 @@ set(WebKit_PRIVATE_INCLUDE_DIRECTORIES
     "${PAL_FRAMEWORK_HEADERS_DIR}"
     "${WebCore_PRIVATE_FRAMEWORK_HEADERS_DIR}"
     "${WebKit_FRAMEWORK_HEADERS_DIR}"
+    "${WebKit_PRIVATE_FRAMEWORK_HEADERS_DIR}"
     "${WebKit_DERIVED_SOURCES_DIR}"
     "${WebKit_DERIVED_SOURCES_DIR}/include"
     "${WEBKIT_DIR}"
@@ -142,7 +143,7 @@ list(APPEND WebKit_UNIFIED_SOURCE_LIST_FILES
 
 set(WebKit_BINDINGS_IN_FILES
     WebProcess/Extensions/Interfaces/WebExtensionAPIAction
-    WebProcess/Extensions/Interfaces/WebExtensionAPIAlarms
+    WebProcess/Extensions/Interfaces/WebExtensionAPIBookmarks
     WebProcess/Extensions/Interfaces/WebExtensionAPICommands
     WebProcess/Extensions/Interfaces/WebExtensionAPICookies
     WebProcess/Extensions/Interfaces/WebExtensionAPIDOM
@@ -156,26 +157,31 @@ set(WebKit_BINDINGS_IN_FILES
     WebProcess/Extensions/Interfaces/WebExtensionAPIExtension
     WebProcess/Extensions/Interfaces/WebExtensionAPILocalization
     WebProcess/Extensions/Interfaces/WebExtensionAPIMenus
-    WebProcess/Extensions/Interfaces/WebExtensionAPINamespace
     WebProcess/Extensions/Interfaces/WebExtensionAPINotifications
+    WebProcess/Extensions/Interfaces/WebExtensionAPIOffscreen
     WebProcess/Extensions/Interfaces/WebExtensionAPIPermissions
     WebProcess/Extensions/Interfaces/WebExtensionAPIPort
-    WebProcess/Extensions/Interfaces/WebExtensionAPIRuntime
     WebProcess/Extensions/Interfaces/WebExtensionAPIScripting
     WebProcess/Extensions/Interfaces/WebExtensionAPISidePanel
     WebProcess/Extensions/Interfaces/WebExtensionAPISidebarAction
     WebProcess/Extensions/Interfaces/WebExtensionAPIStorage
     WebProcess/Extensions/Interfaces/WebExtensionAPIStorageArea
     WebProcess/Extensions/Interfaces/WebExtensionAPITabs
-    WebProcess/Extensions/Interfaces/WebExtensionAPITest
     WebProcess/Extensions/Interfaces/WebExtensionAPIWebNavigation
     WebProcess/Extensions/Interfaces/WebExtensionAPIWebNavigationEvent
-    WebProcess/Extensions/Interfaces/WebExtensionAPIWebPageNamespace
-    WebProcess/Extensions/Interfaces/WebExtensionAPIWebPageRuntime
     WebProcess/Extensions/Interfaces/WebExtensionAPIWebRequest
     WebProcess/Extensions/Interfaces/WebExtensionAPIWebRequestEvent
     WebProcess/Extensions/Interfaces/WebExtensionAPIWindows
     WebProcess/Extensions/Interfaces/WebExtensionAPIWindowsEvent
+)
+
+set(WebKit_CPP_BINDINGS_IN_FILES
+    WebProcess/Extensions/Interfaces/WebExtensionAPIAlarms
+    WebProcess/Extensions/Interfaces/WebExtensionAPINamespace
+    WebProcess/Extensions/Interfaces/WebExtensionAPIRuntime
+    WebProcess/Extensions/Interfaces/WebExtensionAPITest
+    WebProcess/Extensions/Interfaces/WebExtensionAPIWebPageNamespace
+    WebProcess/Extensions/Interfaces/WebExtensionAPIWebPageRuntime
 )
 
 set(WebKit_MESSAGES_IN_FILES
@@ -194,7 +200,7 @@ set(WebKit_MESSAGES_IN_FILES
     GPUProcess/graphics/RemoteImageBufferSet
     GPUProcess/graphics/RemoteRenderingBackend
 
-    GPUProcess/graphics/Model/RemoteDDMesh
+    GPUProcess/graphics/Model/RemoteMesh
 
     GPUProcess/graphics/WebGPU/RemoteAdapter
     GPUProcess/graphics/WebGPU/RemoteBindGroup
@@ -238,10 +244,8 @@ set(WebKit_MESSAGES_IN_FILES
     GPUProcess/media/RemoteMediaEngineConfigurationFactoryProxy
     GPUProcess/media/RemoteMediaPlayerManagerProxy
     GPUProcess/media/RemoteMediaPlayerProxy
-    GPUProcess/media/RemoteMediaResourceManager
-    GPUProcess/media/RemoteMediaSourceProxy
+    GPUProcess/media/RemoteMediaResourceLoader
     GPUProcess/media/RemoteRemoteCommandListenerProxy
-    GPUProcess/media/RemoteSourceBufferProxy
     GPUProcess/media/RemoteVideoFrameObjectHeap
 
     GPUProcess/webrtc/LibWebRTCCodecsProxy
@@ -279,14 +283,11 @@ set(WebKit_MESSAGES_IN_FILES
     NetworkProcess/webrtc/NetworkRTCProvider
     NetworkProcess/webrtc/RTCDataChannelRemoteManagerProxy
 
-    NetworkProcess/webrtc/rice/RiceBackend
-
     NetworkProcess/webtransport/NetworkTransportSession
 
     Shared/AuxiliaryProcess
     Shared/IPCConnectionTester
     Shared/IPCStreamTester
-    Shared/IPCStreamTesterProxy
     Shared/IPCTester
     Shared/IPCTesterReceiver
 
@@ -305,6 +306,7 @@ set(WebKit_MESSAGES_IN_FILES
     UIProcess/VisitedLinkStore
     UIProcess/WebBackForwardList
     UIProcess/WebFrameProxy
+    UIProcess/WebFrameProxyFromNetworkProcess
     UIProcess/WebFullScreenManagerProxy
     UIProcess/WebGeolocationManagerProxy
     UIProcess/WebLockRegistryProxy
@@ -321,11 +323,14 @@ set(WebKit_MESSAGES_IN_FILES
 
     UIProcess/GPU/GPUProcessProxy
 
-    UIProcess/Model/ModelProcessProxy
+    UIProcess/Inspector/Agents/ProxyingNetworkAgent
+    UIProcess/Inspector/Agents/ProxyingPageAgent
 
     UIProcess/Inspector/RemoteWebInspectorUIProxy
     UIProcess/Inspector/WebInspectorBackendProxy
     UIProcess/Inspector/WebInspectorUIProxy
+
+    UIProcess/Model/ModelProcessProxy
 
     UIProcess/Network/NetworkProcessProxy
 
@@ -354,15 +359,14 @@ set(WebKit_MESSAGES_IN_FILES
 
     WebProcess/GPU/media/AudioVideoRendererRemoteMessageReceiver
     WebProcess/GPU/media/RemoteAudioHardwareListener
+    WebProcess/GPU/media/RemoteMediaResourceLoaderProxy
     WebProcess/GPU/media/MediaPlayerPrivateRemote
-    WebProcess/GPU/media/MediaSourcePrivateRemoteMessageReceiver
     WebProcess/GPU/media/RemoteAudioSession
     WebProcess/GPU/media/RemoteAudioSourceProviderManager
     WebProcess/GPU/media/RemoteCDMInstance
     WebProcess/GPU/media/RemoteCDMInstanceSession
     WebProcess/GPU/media/RemoteLegacyCDMSession
     WebProcess/GPU/media/RemoteRemoteCommandListener
-    WebProcess/GPU/media/SourceBufferPrivateRemoteMessageReceiver
 
     WebProcess/GPU/webrtc/LibWebRTCCodecs
     WebProcess/GPU/webrtc/RemoteVideoFrameObjectHeapProxyProcessor
@@ -386,8 +390,6 @@ set(WebKit_MESSAGES_IN_FILES
     WebProcess/Network/webrtc/RTCDataChannelRemoteManager
     WebProcess/Network/webrtc/WebRTCMonitor
     WebProcess/Network/webrtc/WebRTCResolver
-
-    WebProcess/Network/webrtc/rice/RiceBackendProxy
 
     WebProcess/Network/NetworkProcessConnection
     WebProcess/Network/WebResourceLoader
@@ -446,9 +448,11 @@ set(WebKit_SERIALIZATION_IN_FILES
 
     ModelProcess/ModelProcessCreationParameters.serialization.in
 
+    NetworkProcess/NetworkActivityTracker.serialization.in
     NetworkProcess/NetworkProcessCreationParameters.serialization.in
     NetworkProcess/NetworkResourceLoadParameters.serialization.in
     NetworkProcess/NetworkSessionCreationParameters.serialization.in
+    NetworkProcess/PreconnectRequest.serialization.in
 
     NetworkProcess/Classifier/ITPThirdPartyData.serialization.in
     NetworkProcess/Classifier/ITPThirdPartyDataForSpecificFirstParty.serialization.in
@@ -486,6 +490,7 @@ set(WebKit_SERIALIZATION_IN_FILES
     Shared/DrawingAreaInfo.serialization.in
     Shared/EditingRange.serialization.in
     Shared/EditorState.serialization.in
+    Shared/FileSystemHandleInfo.serialization.in
     Shared/FileSystemSyncAccessHandleInfo.serialization.in
     Shared/FocusedElementInformation.serialization.in
     Shared/FrameInfoData.serialization.in
@@ -495,8 +500,11 @@ set(WebKit_SERIALIZATION_IN_FILES
     Shared/GPUProcessConnectionParameters.serialization.in
     Shared/GPUProcessMediaCodecCapabilities.serialization.in
     Shared/GoToBackForwardItemParameters.serialization.in
+    Shared/IPCTester.serialization.in
     Shared/ImageOptions.serialization.in
     Shared/InspectorExtensionTypes.serialization.in
+    Shared/InspectorNetworkTypes.serialization.in
+    Shared/InspectorPageTypes.serialization.in
     Shared/JavaScriptCore.serialization.in
     Shared/JavaScriptEvaluationResult.serialization.in
     Shared/LayerTreeContext.serialization.in
@@ -508,6 +516,8 @@ set(WebKit_SERIALIZATION_IN_FILES
     Shared/NavigationActionData.serialization.in
     Shared/NetworkProcessConnectionParameters.serialization.in
     Shared/NodeHitTestResult.serialization.in
+    Shared/PDFAccessibilityDisplayModeState.serialization.in
+    Shared/PDFDisplayMode.serialization.in
     Shared/Pasteboard.serialization.in
     Shared/PlatformPopupMenuData.serialization.in
     Shared/PolicyDecision.serialization.in
@@ -529,6 +539,7 @@ set(WebKit_SERIALIZATION_IN_FILES
     Shared/SerializedNode.serialization.in
     Shared/ServiceWorkerTimingInfo.serialization.in
     Shared/SessionState.serialization.in
+    Shared/ShareableSpatialImage.serialization.in
     Shared/SyntheticEditingCommandType.serialization.in
     Shared/TextFlags.serialization.in
     Shared/TextManipulationParameters.serialization.in
@@ -540,10 +551,16 @@ set(WebKit_SERIALIZATION_IN_FILES
     Shared/UserContentControllerParameters.serialization.in
     Shared/UserData.serialization.in
     Shared/VisibleContentRectUpdateInfo.serialization.in
+    Shared/VolumetricSceneContentContext.serialization.in
     Shared/WTFArgumentCoders.serialization.in
     Shared/WebBackForwardListCounts.serialization.in
     Shared/WebContextMenuItemData.serialization.in
     Shared/WebCoreArgumentCoders.serialization.in
+    Shared/WebCoreArgumentCodersAuth.serialization.in
+    Shared/WebCoreArgumentCodersMedia.serialization.in
+    Shared/WebCoreArgumentCodersNetwork.serialization.in
+    Shared/WebCoreArgumentCodersPayment.serialization.in
+    Shared/WebCoreArgumentCodersStorage.serialization.in
     Shared/WebCoreFont.serialization.in
     Shared/WebCompiledContentRuleListData.serialization.in
     Shared/WebEvent.serialization.in
@@ -570,6 +587,7 @@ set(WebKit_SERIALIZATION_IN_FILES
     Shared/WebsitePoliciesData.serialization.in
     Shared/WebsitePopUpPolicy.serialization.in
     Shared/WebsitePushAndNotificationsEnabledPolicy.serialization.in
+    Shared/WriteWebArchiveToPasteBoardResult.serialization.in
 
     Shared/API/APIArray.serialization.in
     Shared/API/APIData.serialization.in
@@ -606,14 +624,14 @@ set(WebKit_SERIALIZATION_IN_FILES
     Shared/Extensions/WebExtensionMenuItem.serialization.in
     Shared/Extensions/WebExtensionMessageSenderParameters.serialization.in
     Shared/Extensions/WebExtensionMessageTargetParameters.serialization.in
+    Shared/Extensions/WebExtensionNotification.serialization.in
+    Shared/Extensions/WebExtensionOffscreenDocumentParameters.serialization.in
     Shared/Extensions/WebExtensionSidebarParameters.serialization.in
     Shared/Extensions/WebExtensionStorage.serialization.in
     Shared/Extensions/WebExtensionTab.serialization.in
     Shared/Extensions/WebExtensionWindow.serialization.in
 
     Shared/Gamepad/GamepadData.serialization.in
-
-    Shared/Model/ModelObjectDescriptorBase.serialization.in
 
     Shared/WebGPU/WebGPUBindGroupDescriptor.serialization.in
     Shared/WebGPU/WebGPUBindGroupEntry.serialization.in
@@ -682,6 +700,7 @@ set(WebKit_SERIALIZATION_IN_FILES
     Shared/WebGPU/WebGPUVertexBufferLayout.serialization.in
     Shared/WebGPU/WebGPUVertexState.serialization.in
 
+    Shared/WebsiteData/TimeBasedEvictionMode.serialization.in
     Shared/WebsiteData/UnifiedOriginStorageLevel.serialization.in
     Shared/WebsiteData/WebsiteData.serialization.in
     Shared/WebsiteData/WebsiteDataFetchOption.serialization.in
@@ -725,12 +744,12 @@ set(WebKit_SERIALIZATION_IN_FILES
 )
 
 set(WebCore_GENERATED_SERIALIZATION_IN_FILES
+    CSSValueKeywords.serialization.in
     HTTPHeaderNames.serialization.in
 )
 
 set(WebCore_SERIALIZATION_IN_FILES
     ActivityState.serialization.in
-    DDModel.serialization.in
     DocumentSyncData.serialization.in
     DragActions.serialization.in
     FrameTreeSyncData.serialization.in
@@ -745,8 +764,16 @@ set(WebCore_SERIALIZATION_IN_FILES
     PlatformWheelEvent.serialization.in
     ProtectionSpaceBase.serialization.in
     ScrollTypes.serialization.in
+    SharedTimebase.serialization.in
     WebGPU.serialization.in
 )
+
+if (USE_APPLE_INTERNAL_SDK)
+    set(WebKitAdditions_MESSAGES_IN_FILES
+        ${WebKitAdditions_HEADERS_DIR}/WebPageProxyAdditions.messages.in
+    )
+    set(WebKitAdditions_MESSAGES_IN_ARGS --additions-dir ${WebKitAdditions_HEADERS_DIR})
+endif ()
 
 set(WebKit_FRAMEWORKS
     JavaScriptCore
@@ -755,6 +782,13 @@ set(WebKit_FRAMEWORKS
     WebCore
     bmalloc
 )
+if (APPLE)
+    list(APPEND WebKit_FRAMEWORKS WebKitLegacy)
+endif ()
+if (USE_APPLE_INTERNAL_SDK)
+    list(APPEND WebKit_FRAMEWORKS WebKitAdditions)
+    list(APPEND WebKit_PRIVATE_INCLUDE_DIRECTORIES ${WebKitAdditions_HEADERS_DIR})
+endif ()
 
 set(WebProcess_LIBRARIES WebKit)
 set(NetworkProcess_LIBRARIES WebKit)
@@ -785,66 +819,205 @@ if (USE_LIBWEBRTC)
     list(APPEND WebKit_SYSTEM_INCLUDE_DIRECTORIES "${THIRDPARTY_DIR}/libwebrtc/Source/"
         "${THIRDPARTY_DIR}/libwebrtc/Source/webrtc"
         "${THIRDPARTY_DIR}/libwebrtc/Source/third_party/abseil-cpp")
-    list(APPEND WebKit_LIBRARIES webrtc)
-endif ()
-
-if (USE_GSTREAMER_WEBRTC AND USE_LIBRICE)
-    list(APPEND WebKit_LIBRARIES Rice::Io)
-    list(APPEND WebKit_PRIVATE_INCLUDE_DIRECTORIES "${WEBKIT_DIR}/NetworkProcess/webrtc/rice")
+    if (NOT APPLE)
+        list(APPEND WebKit_LIBRARIES webrtc)
+    endif ()
 endif ()
 
 if (ATOMICS_REQUIRE_LIBATOMIC)
     list(APPEND WebKit_PRIVATE_LIBRARIES atomic)
 endif ()
 
-macro(ADD_WEBKIT_PREFIX_HEADER _target)
-    if (WebKit_USE_PREFIX_HEADER)
-        target_compile_options(${_target} PRIVATE "$<$<COMPILE_LANGUAGE:C,CXX,OBJC,OBJCXX>:-include>" "$<$<COMPILE_LANGUAGE:C,CXX,OBJC,OBJCXX>:${WEBKIT_DIR}/WebKit2Prefix.h>")
-    else ()
-        target_precompile_headers(${_target} PRIVATE WebKit2Prefix.h)
-    endif ()
-endmacro()
-
 set(WebKit_AUTOMATION_PROTOCOL_GENERATOR_EXTRA_FLAGS)
 
 set(WebKit_INTERFACE_LIBRARIES WebKit)
-set(WebKit_INTERFACE_INCLUDE_DIRECTORIES
-    ${WebKit_FRAMEWORK_HEADERS_DIR}
-    ${WebKit_PRIVATE_FRAMEWORK_HEADERS_DIR}
-)
-set(WebKit_INTERFACE_DEPENDENCIES
-    NetworkProcess
-    WebProcess
-)
+if (NOT USE_HEADER_MAPS AND NOT USE_FRAMEWORK_BUNDLES)
+    set(WebKit_INTERFACE_INCLUDE_DIRECTORIES
+        ${WebKit_FRAMEWORK_HEADERS_DIR}
+        ${WebKit_PRIVATE_FRAMEWORK_HEADERS_DIR}
+    )
+    set(WebKit_INTERFACE_DEPENDENCIES "")
+endif ()
+if (NOT USE_EXTENSIONKIT)
+    # ExtensionKit processes (on iOS) are separate targets, and not part of the
+    # WebKit.framework bundle.
+    set(WebKit_INTERFACE_LINK_DEPENDS
+        $<TARGET_FILE:NetworkProcess>
+        $<TARGET_FILE:WebProcess>
+    )
 
-WEBKIT_EXECUTABLE_DECLARE(WebProcess)
-WEBKIT_EXECUTABLE_DECLARE(NetworkProcess)
+    WEBKIT_EXECUTABLE_DECLARE(WebProcess)
+    WEBKIT_EXECUTABLE_DECLARE(NetworkProcess)
 
-if (ENABLE_GPU_PROCESS)
-    WEBKIT_EXECUTABLE_DECLARE(GPUProcess)
-    list(APPEND WebKit_INTERFACE_DEPENDENCIES GPUProcess)
+    if (ENABLE_GPU_PROCESS)
+        WEBKIT_EXECUTABLE_DECLARE(GPUProcess)
+        list(APPEND WebKit_INTERFACE_LINK_DEPENDS $<TARGET_FILE:GPUProcess>)
+    endif ()
 endif ()
 
 set(WebKit_GENERATED_SERIALIZERS_SUFFIX cpp)
 
+# Default Swift interop module path; matches Xcode's WebKit.xcconfig:
+# SWIFT_INCLUDE_PATHS = $(SRCROOT)/Modules/Internal. Must remain Swift-only —
+# loading WebKit_Internal in a Clang context creates a second parse of the
+# WK*Private headers that conflicts with the WebKit_Private framework module.
+set(WebKit_SWIFT_INTEROP_MODULE_PATH "${WEBKIT_DIR}/Modules/Internal")
+set(WebKit_SWIFT_INTEROP_MODULE_PATH_SWIFT_ONLY TRUE)
+
+# WebKit's Swift code names WebCore:: types via the WebCore_Private module. On
+# Apple this is staged from the in-tree map into the WebCore framework bundle by
+# PlatformMac.cmake and found by the Swift Clang importer via -F (same as
+# JavaScriptCore). The non-Apple ports build no framework bundles, so there is no
+# -F module to discover; the in-tree map is also a `framework module` that needs
+# the framework layout. Synthesize a plain module map exposing only what
+# WebBackForwardList.swift names directly (the rest of the WebCore:: types it uses
+# are reachable transitively via WebKit_Internal headers) and put it on the
+# importer's search path below.
+if (ENABLE_BACK_FORWARD_LIST_SWIFT AND NOT USE_FRAMEWORK_BUNDLES)
+    set(WebCore_Private_SWIFT_MODULEMAP_DIR "${CMAKE_BINARY_DIR}/WebKit/SwiftModules/WebCorePrivate")
+    file(MAKE_DIRECTORY "${WebCore_Private_SWIFT_MODULEMAP_DIR}")
+    file(CONFIGURE OUTPUT "${WebCore_Private_SWIFT_MODULEMAP_DIR}/module.modulemap" CONTENT
+"module WebCore_Private [system] {
+    requires cplusplus
+    header \"${WebCore_PRIVATE_HEADERS_DIR}/DiagnosticLoggingKeys.h\"
+    header \"${WebCore_PRIVATE_HEADERS_DIR}/DiagnosticLoggingClient.h\"
+    header \"${WebCore_PRIVATE_HEADERS_DIR}/TextGranularity.h\"
+    export *
+}
+")
+endif ()
+
 WEBKIT_FRAMEWORK_DECLARE(WebKit)
 WEBKIT_INCLUDE_CONFIG_FILES_IF_EXISTS()
+WEBKIT_ADD_TARGET_UNSAFE_BUFFER_WARNINGS(WebKit)
+
+# The full WebKit_Internal C++ module pulls in WebPageProxy.h and friends, which
+# quote-include across the entire WebKit/WebCore/JSC private header set. Mirror
+# the C++ target's include directories to swiftc's Clang importer so those
+# resolve. cmakeconfig.h is force-included because the headers assume the
+# project's prefix header has already defined ENABLE()/HAVE() values.
+#
+# WebCore_DERIVED_SOURCES_DIR and style/computed complete the search path for the
+# WebCore_Private umbrella. Inert on Apple (PlatformMac.cmake applies the live Mac
+# copy) but kept in sync for the non-Apple path below.
+set(WebKit_SWIFT_CLANG_INCLUDE_DIRS
+    ${CMAKE_BINARY_DIR}
+    ${WebKit_DERIVED_SOURCES_DIR}
+    ${WTF_FRAMEWORK_HEADERS_DIR}
+    ${bmalloc_FRAMEWORK_HEADERS_DIR}
+    ${PAL_FRAMEWORK_HEADERS_DIR}
+    ${ICU_INCLUDE_DIRS}
+    ${WebCore_DERIVED_SOURCES_DIR}
+    ${WEBCORE_DIR}/style/computed
+)
+if (NOT USE_FRAMEWORK_BUNDLES)
+    list(APPEND WebKit_SWIFT_CLANG_INCLUDE_DIRS
+        ${WebKit_FRAMEWORK_HEADERS_DIR}
+        ${WebCore_PRIVATE_FRAMEWORK_HEADERS_DIR}
+        ${JavaScriptCore_FRAMEWORK_HEADERS_DIR}
+        ${JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS_DIR}
+        ${WebKit_PRIVATE_INCLUDE_DIRECTORIES}
+    )
+    if (ENABLE_BACK_FORWARD_LIST_SWIFT)
+        list(APPEND WebKit_SWIFT_CLANG_INCLUDE_DIRS ${WebCore_Private_SWIFT_MODULEMAP_DIR})
+    endif ()
+endif ()
+
+if (NOT APPLE AND SWIFT_REQUIRED)
+    # Export-macro stubs, LEGACY_NODELETE=, WK_SUPPORTS_SWIFT_OBJCXX_INTEROP and the
+    # full ENABLE/HAVE/USE config-var set now come from
+    # _WEBKIT_COMPUTE_SWIFT_SHARED_CLANG_FLAGS in WebKitMacros.cmake. Only
+    # Linux-specific importer flags remain here.
+    set(WebKit_SWIFT_CLANG_FLAG_PAIRS
+        # libstdc++ gates coroutine support in <bits/version.h> behind
+        # __glibcxx_want_coroutine.  Swift's Clang 21 compiles <bits/version.h>
+        # as a PCM before that flag is set, so __cpp_lib_coroutine stays
+        # undefined and std::coroutine_handle is not available.  Pre-defining
+        # the flag ensures the PCM gets the right feature-test value.
+        # rdar://175928621
+        "-Xcc -D__glibcxx_want_coroutine=1"
+        "-Xcc -fmodule-map-file=${WTF_HEADERS_DIR}/module.modulemap"
+    )
+    foreach (_dir IN LISTS WebKit_SWIFT_CLANG_INCLUDE_DIRS)
+        list(APPEND WebKit_SWIFT_CLANG_FLAG_PAIRS "-Xcc -I${_dir}")
+    endforeach ()
+    # VFS overlay: inject module.modulemap files for Linux system libraries
+    # (glib, libsoup, etc.) that do not ship their own modulemaps.  The overlay
+    # makes them appear inside the detected ${GLib_INCLUDE_DIR} /
+    # ${Soup3_INCLUDE_DIR} (which may live under /usr or a jhbuild prefix)
+    # without modifying the real filesystem.  Both the
+    # -typecheck/-emit-clang-header custom command and the per-file Swift
+    # compilation receive the flag via SWIFT_EXTRA_OPTIONS and
+    # target_compile_options respectively.
+    set(_linux_mm_src "${CMAKE_SOURCE_DIR}/Source/cmake/linux-modulemaps")
+    set(_linux_mm_dir "${CMAKE_BINARY_DIR}/linux-modulemaps")
+    file(MAKE_DIRECTORY "${_linux_mm_dir}")
+    configure_file("${_linux_mm_src}/glib.modulemap"    "${_linux_mm_dir}/glib.modulemap"    COPYONLY)
+    configure_file("${_linux_mm_src}/libsoup.modulemap" "${_linux_mm_dir}/libsoup.modulemap" COPYONLY)
+    set(_vfs_glib_modulemap    "${_linux_mm_dir}/glib.modulemap")
+    set(_vfs_libsoup_modulemap "${_linux_mm_dir}/libsoup.modulemap")
+    configure_file("${_linux_mm_src}/vfs-overlay.yaml.in" "${_linux_mm_dir}/vfs-overlay.yaml" @ONLY)
+    set(_vfs_overlay "${_linux_mm_dir}/vfs-overlay.yaml")
+    list(APPEND WebKit_SWIFT_CLANG_FLAG_PAIRS "-Xcc -ivfsoverlay")
+    list(APPEND WebKit_SWIFT_CLANG_FLAG_PAIRS "-Xcc ${_vfs_overlay}")
+
+    # Importer flags contributed by the Platform*.cmake file (included above).
+    list(APPEND WebKit_SWIFT_CLANG_FLAG_PAIRS ${WebKit_PLATFORM_SWIFT_CLANG_FLAG_PAIRS})
+
+    foreach (_pair IN LISTS WebKit_SWIFT_CLANG_FLAG_PAIRS)
+        target_compile_options(WebKit PRIVATE "$<$<COMPILE_LANGUAGE:Swift>:SHELL:${_pair}>")
+    endforeach ()
+endif ()
+
+if (SWIFT_REQUIRED)
+    set(WebKit_SWIFT_INTEROP_SOURCES
+        UIProcess/ProvisionalPageProxy.cpp
+        UIProcess/RemotePageProxy.cpp
+        UIProcess/WebBackForwardList.cpp
+        UIProcess/WebPageProxy.cpp
+        UIProcess/Automation/WebAutomationSession.cpp
+        WebProcess/WebPage/IPCTestingAPI.cpp
+        ${WebKit_DERIVED_SOURCES_DIR}/UIProcess/WebBackForwardListMessageReceiver.cpp
+        ${WebKit_DERIVED_SOURCES_DIR}/Shared/IPCTesterReceiverMessageReceiver.cpp
+    )
+    if (NOT WIN32 AND NOT PORT STREQUAL "WPE")
+        list(APPEND WebKit_SWIFT_INTEROP_SOURCES UIProcess/ViewGestureController.cpp)
+    endif ()
+    if (APPLE)
+        list(APPEND WebKit_SWIFT_INTEROP_SOURCES
+            UIProcess/API/ios/WKWebViewIOS.mm
+            UIProcess/API/mac/WKWebViewMac.mm
+            UIProcess/ios/ViewGestureControllerIOS.mm
+            UIProcess/mac/ViewGestureControllerMac.mm
+            UIProcess/mac/WebViewImpl.mm
+
+            UIProcess/mac/AppKitGestures/WKAppKitGestureController.mm
+        )
+    endif ()
+    foreach (_f IN LISTS WebKit_SWIFT_INTEROP_SOURCES)
+        cmake_path(GET _f FILENAME _fn)
+        list(APPEND WebKit_UNIFIED_SOURCE_EXCLUDES "(^|[/\\\\])${_fn}( |$)")
+    endforeach ()
+endif ()
 
 WEBKIT_SETUP_SWIFT_AND_GENERATE_SWIFT_CPP_INTEROP_HEADER(WebKit WebKit
-    "${WEBKIT_DIR}/Modules/Internal"
-    "${WebKit_DERIVED_SOURCES_DIR}/WebKit-Swift-CPP.h")
+    "${WebKit_SWIFT_INTEROP_MODULE_PATH}"
+    "${WebKit_DERIVED_SOURCES_DIR}/WebKit-Swift-Generated.h")
 
-if (PORT STREQUAL GTK OR PORT STREQUAL WPE)
-    WEBKIT_ADD_TARGET_CXX_FLAGS(WebKit
-        -Wunsafe-buffer-usage
-        -Wunsafe-buffer-usage-in-libc-call
-        -fsafe-buffer-usage-suggestions
-    )
+if (SWIFT_REQUIRED)
+    # should match the rest of WebKit and use -Onone, but it negatively impacts build time
+    webkit_target_add_swift_options(WebKit
+        "$<$<AND:$<COMPILE_LANGUAGE:Swift>,$<CONFIG:Debug>>:-O>")
+    # Every frontend job imports most of WebCore's C++ declarations, at a cost
+    # of seconds of CPU time and gigabytes of memory, before compiling anything.
+    # One batch per core repeats that work for each core and competes with the
+    # C++ compiles for memory, so use fewer, larger batches.
+    webkit_target_add_swift_options(WebKit "-driver-batch-count 4")
 endif ()
 
 if (WebKit_PUBLIC_FRAMEWORK_HEADERS)
     WEBKIT_COPY_FILES(WebKit_CopyHeaders
-        DESTINATION ${WebKit_FRAMEWORK_HEADERS_DIR}/WebKit
+        DESTINATION ${WebKit_HEADERS_DIR}
         FILES ${WebKit_PUBLIC_FRAMEWORK_HEADERS}
         FLATTENED
     )
@@ -853,11 +1026,13 @@ endif ()
 
 if (WebKit_PRIVATE_FRAMEWORK_HEADERS)
     WEBKIT_COPY_FILES(WebKit_CopyPrivateHeaders
-        DESTINATION ${WebKit_PRIVATE_FRAMEWORK_HEADERS_DIR}/WebKit
+        DESTINATION ${WebKit_PRIVATE_HEADERS_DIR}
         FILES ${WebKit_PRIVATE_FRAMEWORK_HEADERS}
         FLATTENED
     )
-    list(APPEND WebKit_INTERFACE_DEPENDENCIES WebKit_CopyPrivateHeaders)
+    if (NOT USE_HEADER_MAPS)
+        list(APPEND WebKit_INTERFACE_DEPENDENCIES WebKit_CopyPrivateHeaders)
+    endif ()
 endif ()
 
 # Helper macro which wraps the generate-message-receiver.py script
@@ -868,45 +1043,95 @@ macro(GENERATE_MESSAGE_SOURCES _output_source _inputs)
     unset(_outputs)
     foreach (_file IN ITEMS ${_inputs})
         get_filename_component(_name ${_file} NAME_WE)
-        list(APPEND _input_files ${WEBKIT_DIR}/${_file}.messages.in)
+        get_filename_component(_dir ${_file} DIRECTORY)
+        # Derived .messages.in (LogStream: two-stage gen from LogMessages.in) lives in
+        # DerivedSources, not ${WEBKIT_DIR}. The script searches cwd first so finds either;
+        # DEPENDS needs the actual path. Check source tree first, then derived.
+        if (EXISTS ${WEBKIT_DIR}/${_file}.messages.in)
+            list(APPEND _input_files ${WEBKIT_DIR}/${_file}.messages.in)
+            file(STRINGS ${WEBKIT_DIR}/${_file}.messages.in _swift_attr REGEX "SwiftReceiver")
+            if (_swift_attr)
+                list(APPEND _outputs ${_name}MessageReceiver.swift)
+            endif ()
+        else ()
+            list(APPEND _input_files ${WebKit_DERIVED_SOURCES_DIR}/${_name}.messages.in)
+        endif ()
+        if (_dir)
+            set(_receiver_cpp ${_dir}/${_name}MessageReceiver.cpp)
+        else ()
+            set(_receiver_cpp ${_name}MessageReceiver.cpp)
+        endif ()
         list(APPEND _outputs
-            ${WebKit_DERIVED_SOURCES_DIR}/${_name}MessageReceiver.cpp
-            ${WebKit_DERIVED_SOURCES_DIR}/${_name}Messages.h
+            ${_receiver_cpp}
+            ${_name}Messages.h
         )
-        list(APPEND ${_output_source} ${WebKit_DERIVED_SOURCES_DIR}/${_name}MessageReceiver.cpp)
+        list(APPEND ${_output_source} ${WebKit_DERIVED_SOURCES_DIR}/${_receiver_cpp})
     endforeach ()
+    list(APPEND _outputs
+        MessageArgumentDescriptions.cpp
+        MessageNames.cpp
+        MessageNames.h
+    )
 
     list(APPEND ${_output_source}
         ${WebKit_DERIVED_SOURCES_DIR}/MessageArgumentDescriptions.cpp
         ${WebKit_DERIVED_SOURCES_DIR}/MessageNames.cpp
     )
 
+    set(_messages_stage_dir ${WebKit_DERIVED_SOURCES_DIR}/.messages-stage)
+    # copy_if_different (rather than copy_directory_if_different, which is unavailable on
+    # older CMake versions) copies only changed files back, leaving the timestamps of
+    # unchanged outputs untouched so downstream C++ is not needlessly rebuilt.
+    unset(_absolute_outputs)
+    unset(_messages_copy_commands)
+    foreach (_rel IN LISTS _outputs)
+        list(APPEND _absolute_outputs ${WebKit_DERIVED_SOURCES_DIR}/${_rel})
+        list(APPEND _messages_copy_commands COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_messages_stage_dir}/${_rel} ${WebKit_DERIVED_SOURCES_DIR}/${_rel})
+    endforeach ()
     add_custom_command(
         OUTPUT
-            ${WebKit_DERIVED_SOURCES_DIR}/MessageArgumentDescriptions.cpp
-            ${WebKit_DERIVED_SOURCES_DIR}/MessageNames.cpp
-            ${WebKit_DERIVED_SOURCES_DIR}/MessageNames.h
-            ${_outputs}
+            ${_absolute_outputs}
         MAIN_DEPENDENCY ${WEBKIT_DIR}/Scripts/generate-message-receiver.py
         DEPENDS
             ${WEBKIT_DIR}/Scripts/webkit/__init__.py
             ${WEBKIT_DIR}/Scripts/webkit/messages.py
             ${WEBKIT_DIR}/Scripts/webkit/model.py
+            ${WEBKIT_DIR}/Scripts/webkit/opaque_ipc_types.py
+            ${WEBKIT_DIR}/Scripts/webkit/opaque_ipc_types.tracking.in
             ${WEBKIT_DIR}/Scripts/webkit/parser.py
+            ${WEBKIT_DIR}/Scripts/webkit/untrusted_origins.py
             ${_input_files}
-        COMMAND ${PYTHON_EXECUTABLE} ${WEBKIT_DIR}/Scripts/generate-message-receiver.py ${WEBKIT_DIR} ${_inputs}
+            ${WebKitAdditions_MESSAGES_IN_FILES}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${_messages_stage_dir}
+        COMMAND ${PYTHON_EXECUTABLE} ${WEBKIT_DIR}/Scripts/generate-message-receiver.py --preserve-subdirs ${WEBKIT_DIR} ${_inputs} ${WebKitAdditions_MESSAGES_IN_ARGS} --output-dir ${_messages_stage_dir}
+        ${_messages_copy_commands}
         WORKING_DIRECTORY ${WebKit_DERIVED_SOURCES_DIR}
         VERBATIM
     )
+    execute_process(
+        COMMAND ${PYTHON_EXECUTABLE} ${WEBKIT_DIR}/Scripts/generate-message-receiver.py
+            --preserve-subdirs
+            --output-sources ${WebKit_DERIVED_SOURCES_DIR}/SourcesMessageReceivers.txt
+            ${WEBKIT_DIR} ${_inputs}
+        RESULT_VARIABLE _result
+    )
+    if (_result)
+        message(FATAL_ERROR "generate-message-receiver.py --output-sources failed")
+    endif ()
 endmacro()
 GENERATE_MESSAGE_SOURCES(WebKit_DERIVED_SOURCES "${WebKit_MESSAGES_IN_FILES}")
+list(APPEND WebKit_UNIFIED_SOURCE_LIST_FILES SourcesMessageReceivers.txt)
+list(APPEND WebKit_UNIFIED_SOURCE_EXCLUDES "^[A-Za-z0-9_]+MessageReceiver\\.cpp")
 
 # Helper macro which wraps the bindings script
 #   _output_source is a list name which will contain generated sources.(eg. WebKit_SOURCES)
 #   _inputs are .idl files to generate.
-macro(GENERATE_IDL_BINDINGS _output_source _inputs)
+#   _cpp_inputs are .idl files to generate (CPP sources only).
+macro(GENERATE_IDL_BINDINGS _output_source _inputs _cpp_inputs)
     unset(_input_files)
+    unset(_cpp_input_files)
     unset(_outputs)
+    unset(_import_names)
     foreach (_file IN ITEMS ${_inputs})
         get_filename_component(_name ${_file} NAME_WE)
         list(APPEND _input_files ${WEBKIT_DIR}/${_file}.idl)
@@ -915,21 +1140,44 @@ macro(GENERATE_IDL_BINDINGS _output_source _inputs)
 
             ${WebKit_DERIVED_SOURCES_DIR}/JS${_name}.h
         )
+        list(APPEND _import_names JS${_name}.mm)
+        list(APPEND ${_output_source} ${WebKit_DERIVED_SOURCES_DIR}/JS${_name}.h)
+    endforeach ()
+    foreach (_file IN ITEMS ${_cpp_inputs})
+        get_filename_component(_name ${_file} NAME_WE)
+        list(APPEND _input_files ${WEBKIT_DIR}/${_file}.idl)
+
+        list(APPEND _outputs
+            ${WebKit_DERIVED_SOURCES_DIR}/JS${_name}.cpp
+
+            ${WebKit_DERIVED_SOURCES_DIR}/JS${_name}.h
+        )
+        list(APPEND _cpp_import_names JS${_name}.cpp)
         list(APPEND ${_output_source} ${WebKit_DERIVED_SOURCES_DIR}/JS${_name}.h)
     endforeach ()
 
     add_custom_command(
         OUTPUT
             ${_outputs}
+            ${WebKit_DERIVED_SOURCES_DIR}/JSWebExtensionAPIUnified.mm
+            ${WebKit_DERIVED_SOURCES_DIR}/JSWebExtensionAPIUnified.cpp
         MAIN_DEPENDENCY ${WEBCORE_DIR}/bindings/scripts/generate-bindings-all.pl
         DEPENDS
             ${_input_files}
+           "${WEBCORE_DIR}/bindings/scripts/CodeGenerator.pm"
+           "${WEBCORE_DIR}/bindings/scripts/generate-bindings.pl"
+           "${WEBCORE_DIR}/bindings/scripts/IDLParser.pm"
+           "${WEBKIT_DIR}/WebProcess/Extensions/Bindings/Scripts/CodeGeneratorExtensions.pm"
+           "${WEBKIT_DIR}/WebProcess/Extensions/Bindings/Scripts/GenerateImports.pl"
+           "${WEBKIT_DIR}/WebProcess/Extensions/Bindings/Scripts/IDLAttributes.json"
         COMMAND ${PERL_EXECUTABLE} -I "${WEBKIT_DIR}/WebProcess/Extensions/Bindings/Scripts" ${WEBCORE_DIR}/bindings/scripts/generate-bindings.pl --outputDir . --generator Extensions --idlAttributesFile "${WEBKIT_DIR}/WebProcess/Extensions/Bindings/Scripts/IDLAttributes.json" --idlFileNamesList WebExtensionIDLFileNamesList.txt ${_input_files}
+        COMMAND ${PERL_EXECUTABLE} "${WEBKIT_DIR}/WebProcess/Extensions/Bindings/Scripts/GenerateImports.pl" --output=JSWebExtensionAPIUnified.mm -- ${_import_names}
+        COMMAND ${PERL_EXECUTABLE} "${WEBKIT_DIR}/WebProcess/Extensions/Bindings/Scripts/GenerateImports.pl" --cpp --output=JSWebExtensionAPIUnified.cpp -- ${_cpp_import_names}
         WORKING_DIRECTORY ${WebKit_DERIVED_SOURCES_DIR}
         VERBATIM
     )
 endmacro()
-GENERATE_IDL_BINDINGS(WebKit_DERIVED_SOURCES "${WebKit_BINDINGS_IN_FILES}")
+GENERATE_IDL_BINDINGS(WebKit_DERIVED_SOURCES "${WebKit_BINDINGS_IN_FILES}" "${WebKit_CPP_BINDINGS_IN_FILES}")
 
 foreach (in_file ${WebKit_SERIALIZATION_IN_FILES})
     list(APPEND WebKit_SERIALIZATION_DEPENDENCIES "${WEBKIT_DIR}/${in_file}")
@@ -938,31 +1186,114 @@ foreach (in_file ${WebCore_GENERATED_SERIALIZATION_IN_FILES})
     list(APPEND WebKit_SERIALIZATION_DEPENDENCIES "${WebCore_DERIVED_SOURCES_DIR}/${in_file}")
 endforeach ()
 foreach (in_file ${WebCore_SERIALIZATION_IN_FILES})
-    list(APPEND WebKit_SERIALIZATION_DEPENDENCIES "${WebCore_PRIVATE_FRAMEWORK_HEADERS_DIR}/WebCore/${in_file}")
+    list(APPEND WebKit_SERIALIZATION_DEPENDENCIES "${WebCore_PRIVATE_HEADERS_DIR}/${in_file}")
 endforeach ()
 list(APPEND WebKit_SERIALIZATION_DEPENDENCIES "${WebKit_DERIVED_SOURCES_DIR}/SharedPreferencesForWebProcess.serialization.in")
+list(APPEND WebKit_SERIALIZATION_DEPENDENCIES "${WebKit_DERIVED_SOURCES_DIR}/SecurityFlags.serialization.in")
 
 list(APPEND WebKit_DERIVED_SOURCES
     ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializers.h
-    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializers.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersShared.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersSharedExtensions.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersSharedWebGPU.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersSharedWebCoreArgumentCodersAuth.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersSharedWebCoreArgumentCodersMedia.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersSharedWebCoreArgumentCodersNetwork.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersSharedWebCoreArgumentCodersPayment.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersSharedWebCoreArgumentCodersStorage.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersWebProcess.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersGPUProcess.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersNetworkProcess.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersPlatform.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersModelProcess.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersUIProcess.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersCommon.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
     ${WebKit_DERIVED_SOURCES_DIR}/SerializedTypeInfo.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
     ${WebKit_DERIVED_SOURCES_DIR}/WebKitPlatformGeneratedSerializers.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    ${WebKit_DERIVED_SOURCES_DIR}/JSWebExtensionAPIUnified.cpp
 )
 
+set(_serializers_stage_dir ${WebKit_DERIVED_SOURCES_DIR}/.serializers-stage)
+set(_serializers_outputs
+    GeneratedSerializers.h
+    GeneratedSerializersShared.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    GeneratedSerializersSharedExtensions.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    GeneratedSerializersSharedWebGPU.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    GeneratedSerializersSharedWebCoreArgumentCodersAuth.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    GeneratedSerializersSharedWebCoreArgumentCodersMedia.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    GeneratedSerializersSharedWebCoreArgumentCodersNetwork.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    GeneratedSerializersSharedWebCoreArgumentCodersPayment.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    GeneratedSerializersSharedWebCoreArgumentCodersStorage.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    GeneratedSerializersWebProcess.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    GeneratedSerializersGPUProcess.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    GeneratedSerializersNetworkProcess.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    GeneratedSerializersPlatform.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    GeneratedSerializersModelProcess.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    GeneratedSerializersUIProcess.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    GeneratedSerializersCommon.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    GeneratedWebKitSecureCoding.h
+    GeneratedWebKitSecureCoding.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    SerializedTypeInfo.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    WebKitPlatformGeneratedSerializers.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+)
+# copy_if_different (rather than copy_directory_if_different, which is unavailable on
+# older CMake versions) copies only changed files back, leaving the timestamps of
+# unchanged outputs untouched so downstream C++ is not needlessly rebuilt.
+unset(_serializers_absolute_outputs)
+unset(_serializers_copy_commands)
+foreach (_rel IN LISTS _serializers_outputs)
+    list(APPEND _serializers_absolute_outputs ${WebKit_DERIVED_SOURCES_DIR}/${_rel})
+    list(APPEND _serializers_copy_commands COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_serializers_stage_dir}/${_rel} ${WebKit_DERIVED_SOURCES_DIR}/${_rel})
+endforeach ()
+set(_serializers_input_files_rsp ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersInputFiles.rsp)
+string(JOIN "\n" _serializers_input_files_rsp_content ${WebKit_SERIALIZATION_DEPENDENCIES})
+file(GENERATE OUTPUT ${_serializers_input_files_rsp} CONTENT "${_serializers_input_files_rsp_content}\n")
 add_custom_command(
     OUTPUT
-        ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializers.h
-        ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializers.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
-        ${WebKit_DERIVED_SOURCES_DIR}/SerializedTypeInfo.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
-        ${WebKit_DERIVED_SOURCES_DIR}/WebKitPlatformGeneratedSerializers.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+        ${_serializers_absolute_outputs}
     MAIN_DEPENDENCY ${WEBKIT_DIR}/Scripts/generate-serializers.py
     DEPENDS
         ${WEBKIT_DIR}/Scripts/webkit/opaque_ipc_types.py
         ${WebKit_SERIALIZATION_DEPENDENCIES}
-    COMMAND ${PYTHON_EXECUTABLE} ${WEBKIT_DIR}/Scripts/generate-serializers.py ${WebKit_GENERATED_SERIALIZERS_SUFFIX} ${WebKit_SERIALIZATION_DEPENDENCIES}
+        ${_serializers_input_files_rsp}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${_serializers_stage_dir}
+    COMMAND ${PYTHON_EXECUTABLE} ${WEBKIT_DIR}/Scripts/generate-serializers.py ${WebKit_GENERATED_SERIALIZERS_SUFFIX} --split-by-directory @${_serializers_input_files_rsp} --output-dir ${_serializers_stage_dir}
+    ${_serializers_copy_commands}
     WORKING_DIRECTORY ${WebKit_DERIVED_SOURCES_DIR}
     VERBATIM
 )
+
+# allSerializedTypes() is a single 29000-line function that clang takes tens of minutes to optimize.
+set_source_files_properties(${WebKit_DERIVED_SOURCES_DIR}/SerializedTypeInfo.${WebKit_GENERATED_SERIALIZERS_SUFFIX} PROPERTIES
+    COMPILE_OPTIONS "-O0;-DRELEASE_WITHOUT_OPTIMIZATIONS=ON"
+    SKIP_PRECOMPILE_HEADERS ON)
+
+# These files are very large and exhaust virtual memory on 32-bit ARM.
+if (WTF_CPU_ARM AND NOT CMAKE_CROSSCOMPILING)
+    set(GeneratedSerializers_COMPILE_OPTIONS -O0 -DRELEASE_WITHOUT_OPTIMIZATIONS=ON)
+    foreach (GeneratedSerializers_BASENAME
+        GeneratedSerializersShared
+        GeneratedSerializersSharedExtensions
+        GeneratedSerializersSharedWebGPU
+        GeneratedSerializersSharedWebCoreArgumentCodersAuth
+        GeneratedSerializersSharedWebCoreArgumentCodersMedia
+        GeneratedSerializersSharedWebCoreArgumentCodersNetwork
+        GeneratedSerializersSharedWebCoreArgumentCodersPayment
+        GeneratedSerializersSharedWebCoreArgumentCodersStorage
+        GeneratedSerializersWebProcess
+        GeneratedSerializersGPUProcess
+        GeneratedSerializersNetworkProcess
+        GeneratedSerializersPlatform
+        GeneratedSerializersModelProcess
+        GeneratedSerializersUIProcess
+        GeneratedSerializersCommon
+        WebKitPlatformGeneratedSerializers
+    )
+        set_source_files_properties(${WebKit_DERIVED_SOURCES_DIR}/${GeneratedSerializers_BASENAME}.cpp PROPERTIES
+            COMPILE_OPTIONS "${GeneratedSerializers_COMPILE_OPTIONS}"
+            SKIP_PRECOMPILE_HEADERS ON)
+    endforeach ()
+endif ()
 
 set(WebKit_JSON_RPC_PROTOCOL_GENERATOR_SCRIPTS
     ${PROTOCOL_GENERATOR_SCRIPTS_DIR}/generate-inspector-protocol-bindings.py
@@ -993,6 +1324,8 @@ add_custom_command(
 set(WebKit_WEBDRIVER_BIDI_PROTOCOL_GENERATOR_INPUTS
     ${WEBKIT_DIR}/UIProcess/Automation/protocol/BidiBrowser.json
     ${WEBKIT_DIR}/UIProcess/Automation/protocol/BidiBrowsingContext.json
+    ${WEBKIT_DIR}/UIProcess/Automation/protocol/BidiDigitalCredentials.json
+    ${WEBKIT_DIR}/UIProcess/Automation/protocol/BidiInput.json
     ${WEBKIT_DIR}/UIProcess/Automation/protocol/BidiLog.json
     ${WEBKIT_DIR}/UIProcess/Automation/protocol/BidiPermissions.json
     ${WEBKIT_DIR}/UIProcess/Automation/protocol/BidiScript.json
@@ -1000,11 +1333,16 @@ set(WebKit_WEBDRIVER_BIDI_PROTOCOL_GENERATOR_INPUTS
     ${WEBKIT_DIR}/UIProcess/Automation/protocol/BidiStorage.json
 )
 
+set(_platform_defines_file_arg)
+if (WEBKIT_PLATFORM_FEATURE_DEFINES_FILE)
+    set(_platform_defines_file_arg --defines-file ${WEBKIT_PLATFORM_FEATURE_DEFINES_FILE})
+endif ()
+
 add_custom_command(
     OUTPUT ${WebKit_DERIVED_SOURCES_DIR}/CombinedWebDriverBidiDomains.json
     MAIN_DEPENDENCY ${JavaScriptCore_SCRIPTS_DIR}/generate-combined-inspector-json.py
-    DEPENDS ${WebKit_WEBDRIVER_BIDI_PROTOCOL_GENERATOR_INPUTS}
-    COMMAND ${PYTHON_EXECUTABLE} ${JavaScriptCore_SCRIPTS_DIR}/generate-combined-inspector-json.py ${WebKit_WEBDRIVER_BIDI_PROTOCOL_GENERATOR_INPUTS} "${FEATURE_DEFINES_WITH_SPACE_SEPARATOR}" > ${WebKit_DERIVED_SOURCES_DIR}/CombinedWebDriverBidiDomains.json
+    DEPENDS ${WebKit_WEBDRIVER_BIDI_PROTOCOL_GENERATOR_INPUTS} ${WEBKIT_PLATFORM_FEATURE_DEFINES_FILE}
+    COMMAND ${PYTHON_EXECUTABLE} ${JavaScriptCore_SCRIPTS_DIR}/generate-combined-inspector-json.py ${_platform_defines_file_arg} ${WebKit_WEBDRIVER_BIDI_PROTOCOL_GENERATOR_INPUTS} "${FEATURE_DEFINES_WITH_SPACE_SEPARATOR}" > ${WebKit_DERIVED_SOURCES_DIR}/CombinedWebDriverBidiDomains.json
     VERBATIM)
 
 add_custom_command(
@@ -1049,9 +1387,9 @@ list(APPEND WebKit_HEADERS
 add_custom_command(
     OUTPUT ${WebKit_DERIVED_SOURCES_DIR}/WebKitLogDefinitions.h
     MAIN_DEPENDENCY ${WEBKIT_DIR}/Platform/LogMessages.in
-    DEPENDS ${WebCore_PRIVATE_FRAMEWORK_HEADERS_DIR}/WebCore/generate-log-declarations.py
+    DEPENDS ${WebCore_PRIVATE_HEADERS_DIR}/generate-log-declarations.py
     WORKING_DIRECTORY ${WebKit_DERIVED_SOURCES_DIR}
-    COMMAND ${PYTHON_EXECUTABLE} ${WebCore_PRIVATE_FRAMEWORK_HEADERS_DIR}/WebCore/generate-log-declarations.py ${WEBKIT_DIR}/Platform/LogMessages.in ${WebKit_DERIVED_SOURCES_DIR}/WebKitLogDefinitions.h
+    COMMAND ${PYTHON_EXECUTABLE} ${WebCore_PRIVATE_HEADERS_DIR}/generate-log-declarations.py ${WEBKIT_DIR}/Platform/LogMessages.in ${WebKit_DERIVED_SOURCES_DIR}/WebKitLogDefinitions.h
     VERBATIM)
 list(APPEND WebKit_HEADERS ${WebKit_DERIVED_SOURCES_DIR}/WebKitLogDefinitions.h)
 
@@ -1070,14 +1408,15 @@ set(WebKit_WEB_PREFERENCES_TEMPLATES
 
 set(WebKit_WEB_PREFERENCES
     ${WTF_SCRIPTS_DIR}/Preferences/UnifiedWebPreferences.yaml
+    ${WEB_PREFERENCES_ADDITIONS}
 )
 
 set_source_files_properties(${WebKit_WEB_PREFERENCES} PROPERTIES GENERATED TRUE)
 
 add_custom_command(
     OUTPUT ${WebKit_DERIVED_SOURCES_DIR}/SharedPreferencesForWebProcess.h ${WebKit_DERIVED_SOURCES_DIR}/SharedPreferencesForWebProcess.cpp ${WebKit_DERIVED_SOURCES_DIR}/SharedPreferencesForWebProcess.serialization.in ${WebKit_DERIVED_SOURCES_DIR}/WebPageUpdatePreferences.cpp ${WebKit_DERIVED_SOURCES_DIR}/WebPreferencesDefinitions.h ${WebKit_DERIVED_SOURCES_DIR}/WebPreferencesFeatures.cpp ${WebKit_DERIVED_SOURCES_DIR}/WebPreferencesGetterSetters.cpp ${WebKit_DERIVED_SOURCES_DIR}/WebPreferencesKeys.cpp ${WebKit_DERIVED_SOURCES_DIR}/WebPreferencesKeys.h ${WebKit_DERIVED_SOURCES_DIR}/WebPreferencesStoreDefaultsMap.cpp
-    DEPENDS ${WebKit_WEB_PREFERENCES_TEMPLATES} ${WebKit_WEB_PREFERENCES} WTF_CopyPreferences
-    COMMAND ${RUBY_EXECUTABLE} ${WTF_SCRIPTS_DIR}/GeneratePreferences.rb --frontend WebKit --outputDir "${WebKit_DERIVED_SOURCES_DIR}" --template "$<JOIN:${WebKit_WEB_PREFERENCES_TEMPLATES},;--template;>" ${WebKit_WEB_PREFERENCES}
+    DEPENDS ${WebKit_WEB_PREFERENCES_TEMPLATES} ${WebKit_WEB_PREFERENCES} WTF_CopyPreferences ${WEBKITADDITIONS_HEADERS_DEPENDENCIES}
+    COMMAND ${Ruby_EXECUTABLE} ${WTF_SCRIPTS_DIR}/GeneratePreferences.rb --frontend WebKit --outputDir "${WebKit_DERIVED_SOURCES_DIR}" --template "$<JOIN:${WebKit_WEB_PREFERENCES_TEMPLATES},;--template;>" ${WebKit_WEB_PREFERENCES}
     COMMAND_EXPAND_LISTS
     VERBATIM)
 
@@ -1096,48 +1435,178 @@ list(APPEND WebKit_SOURCES
     ${WebKit_DERIVED_SOURCES_DIR}/WebPreferencesStoreDefaultsMap.cpp
 )
 
-if (ENABLE_SWIFT_DEMO_URI_SCHEME)
+set(WebKit_SECURITY_FLAGS_TEMPLATES
+    ${WEBKIT_DIR}/Scripts/SecurityFlagsTemplates/SecurityFlags.h.erb
+    ${WEBKIT_DIR}/Scripts/SecurityFlagsTemplates/SecurityFlags.cpp.erb
+    ${WEBKIT_DIR}/Scripts/SecurityFlagsTemplates/SecurityFlags.serialization.in.erb
+)
+
+set(WebKit_SECURITY_FLAGS
+    ${WTF_SCRIPTS_DIR}/Preferences/SecurityFlags.yaml
+)
+
+set_source_files_properties(${WebKit_SECURITY_FLAGS} PROPERTIES GENERATED TRUE)
+
+add_custom_command(
+    OUTPUT ${WebKit_DERIVED_SOURCES_DIR}/SecurityFlags.h ${WebKit_DERIVED_SOURCES_DIR}/SecurityFlags.cpp ${WebKit_DERIVED_SOURCES_DIR}/SecurityFlags.serialization.in
+    DEPENDS ${WebKit_SECURITY_FLAGS_TEMPLATES} ${WebKit_SECURITY_FLAGS} WTF_CopyPreferences
+    COMMAND ${Ruby_EXECUTABLE} ${WTF_SCRIPTS_DIR}/GenerateSecurityFlags.rb --outputDir "${WebKit_DERIVED_SOURCES_DIR}" --template "$<JOIN:${WebKit_SECURITY_FLAGS_TEMPLATES},;--template;>" ${WebKit_SECURITY_FLAGS}
+    COMMAND_EXPAND_LISTS
+    VERBATIM)
+
+list(APPEND WebKit_HEADERS
+    ${WebKit_DERIVED_SOURCES_DIR}/SecurityFlags.h
+)
+
+list(APPEND WebKit_SOURCES
+    ${WebKit_DERIVED_SOURCES_DIR}/SecurityFlags.cpp
+)
+
+if (ENABLE_BACK_FORWARD_LIST_SWIFT)
+    set_source_files_properties(
+        ${WebKit_DERIVED_SOURCES_DIR}/WebBackForwardListMessageReceiver.swift
+        PROPERTIES GENERATED TRUE)
     list(APPEND WebKit_SOURCES
-        ${WEBKIT_DIR}/UIProcess/SwiftDemoLogo.swift
+        ${WebKit_DERIVED_SOURCES_DIR}/WebBackForwardListMessageReceiver.swift
+        ${WEBKIT_DIR}/Shared/API/APIArray.swift
+        ${WEBKIT_DIR}/UIProcess/StdlibExtras.swift
+        ${WEBKIT_DIR}/UIProcess/WebBackForwardList.swift
+    )
+endif ()
+
+if (ENABLE_BACK_FORWARD_LIST_SWIFT OR ENABLE_IPC_TESTING_SWIFT)
+    list(APPEND WebKit_SOURCES
+        ${WEBKIT_DIR}/Platform/IPC/MessageCheck.swift
+    )
+endif ()
+
+if (ENABLE_IPC_TESTING_SWIFT)
+    list(APPEND WebKit_SOURCES
+        ${WEBKIT_DIR}/Shared/IPCTesterReceiver.swift
+        ${WebKit_DERIVED_SOURCES_DIR}/IPCTesterReceiverMessageReceiver.swift
+    )
+endif ()
+
+if (SWIFT_REQUIRED)
+    set_source_files_properties(
+        ${WebKit_DERIVED_SOURCES_DIR}/IPCTesterReceiverMessageReceiver.swift
+        PROPERTIES GENERATED TRUE)
+    list(APPEND WebKit_SOURCES
+        ${WEBKIT_DIR}/Shared/Concurrency+Extras.swift
+        ${WEBKIT_DIR}/Shared/Foundation+Extras.swift
+        ${WEBKIT_DIR}/Shared/IPCTesterReceiver.swift
+        ${WEBKIT_DIR}/Shared/RunJavaScriptResult.swift
+        ${WEBKIT_DIR}/Shared/WTFCompletionHandler+Extras.swift
+        ${WEBKIT_DIR}/Shared/WTFExpected+Extras.swift
+        ${WebKit_DERIVED_SOURCES_DIR}/IPCTesterReceiverMessageReceiver.swift
     )
 endif ()
 
 list(APPEND WebKit_SOURCES ${WebKit_DERIVED_SOURCES})
 
 WEBKIT_COMPUTE_SOURCES(WebKit)
+if (DEFINED WebKit_SWIFT_INTEROP_SOURCES)
+    list(REMOVE_ITEM WebKit_SOURCES ${WebKit_SWIFT_INTEROP_SOURCES})
+endif ()
+
+WEBKIT_DEFINE_SUBTARGET_WITH_PREFIX(WebKit WebKitUIProcess
+    PREFIX WebKitUIProcessPrefix.h
+    PREFIX_LANGUAGES CXX OBJCXX
+    DIRS UIProcess)
+WEBKIT_DEFINE_SUBTARGET_WITH_PREFIX(WebKit WebKitWebProcess
+    PREFIX WebKitWebProcessPrefix.h
+    PREFIX_LANGUAGES CXX OBJCXX
+    DIRS WebProcess)
+WEBKIT_DEFINE_SUBTARGET_WITH_PREFIX(WebKit WebKitGPUProcess
+    PREFIX WebKitGPUProcessPrefix.h
+    PREFIX_LANGUAGES CXX OBJCXX
+    DIRS GPUProcess)
+WEBKIT_DEFINE_SUBTARGET_WITH_PREFIX(WebKit WebKitNetworkProcess
+    PREFIX WebKitNetworkProcessPrefix.h
+    PREFIX_LANGUAGES CXX OBJCXX
+    DIRS NetworkProcess)
+WEBKIT_DEFINE_SUBTARGET_WITH_PREFIX(WebKit WebKitShared
+    PREFIX WebKitSharedPrefix.h
+    PREFIX_LANGUAGES CXX OBJCXX
+    DIRS DerivedSources)
+
 WEBKIT_FRAMEWORK(WebKit)
-ADD_WEBKIT_PREFIX_HEADER(WebKit)
+if (USE_APPLE_INTERNAL_SDK)
+    WEBKIT_TARGET_USE_PGO(WebKit PROFILE WebKit)
+endif ()
+WEBKIT_ADD_PREFIX_HEADER(WebKit WebKitPrefix.h PREFIX_LANGUAGES CXX OBJCXX)
 
-list(APPEND WebProcess_PRIVATE_INCLUDE_DIRECTORIES $<TARGET_PROPERTY:WebKit,INCLUDE_DIRECTORIES>)
-WEBKIT_EXECUTABLE(WebProcess)
-ADD_WEBKIT_PREFIX_HEADER(WebProcess)
+if (APPLE AND USE_LIBWEBRTC)
+    target_link_options(WebKit PRIVATE
+        "LINKER:-weak_library,$<TARGET_FILE:webrtc>")
+    add_dependencies(WebKit webrtc)
+endif ()
 
-list(APPEND NetworkProcess_PRIVATE_INCLUDE_DIRECTORIES $<TARGET_PROPERTY:WebKit,INCLUDE_DIRECTORIES>)
-WEBKIT_EXECUTABLE(NetworkProcess)
-ADD_WEBKIT_PREFIX_HEADER(NetworkProcess)
+if (SWIFT_REQUIRED AND WEBKIT_SDK_IS_MACOS)
+    WEBKIT_ADD_SWIFT_PREWARM(WebKit SwiftPrewarmMac.swift)
+endif ()
 
-if (ENABLE_GPU_PROCESS)
-    list(APPEND GPUProcess_PRIVATE_INCLUDE_DIRECTORIES $<TARGET_PROPERTY:WebKit,INCLUDE_DIRECTORIES>)
-    WEBKIT_EXECUTABLE(GPUProcess)
-    ADD_WEBKIT_PREFIX_HEADER(GPUProcess)
+if (DEFINED WebKit_SWIFT_INTEROP_SOURCES)
+    WEBKIT_DEFINE_SUBTARGET(WebKit_SwiftInterop WebKit ${WebKit_SWIFT_INTEROP_SOURCES})
+    WEBKIT_REUSE_PREFIX_HEADER(WebKit_SwiftInterop WebKit WebKitPrefix.h PREFIX_LANGUAGES CXX OBJCXX)
+    target_compile_definitions(WebKit_SwiftInterop PRIVATE WK_COMPILING_SWIFT_INTEROP_SUBTARGET)
+    # Feed objects into the WebKit link via a response file + LINK_DEPENDS so
+    # cmake_object_order_depends_target_WebKit doesn't pick up this sub-target
+    # (and through it, WebKit_SwiftCxxHeader).
+    set(_interop_objs "$<FILTER:$<TARGET_OBJECTS:WebKit_SwiftInterop>,EXCLUDE,\\.(g|p)ch$>")
+    set(_interop_rsp "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/WebKit_SwiftInterop.dir/$<CONFIG>/objects.rsp")
+    file(GENERATE OUTPUT "${_interop_rsp}" CONTENT "$<JOIN:${_interop_objs},\n>")
+    target_link_options(WebKit PRIVATE "@${_interop_rsp}")
+    set_property(TARGET WebKit APPEND PROPERTY LINK_DEPENDS "${_interop_objs};${_interop_rsp}")
+endif ()
+
+if (WebKit_ARC_SOURCES)
+    WEBKIT_DEFINE_SUBTARGET(WebKitARC WebKit ${WebKit_ARC_SOURCES})
+    target_compile_options(WebKitARC PRIVATE -fobjc-arc)
+    WEBKIT_ADD_PREFIX_HEADER(WebKitARC WebKitPrefix.h PREFIX_NO_CODEGEN PREFIX_LANGUAGES OBJCXX)
+    target_sources(WebKit PRIVATE $<TARGET_OBJECTS:WebKitARC>)
+endif ()
+
+if (WEBKIT_SDK_IS_MACOS OR WEBKIT_SDK_IS_IOS_FAMILY)
+    # Must run before the WEBKIT_EXECUTABLE() calls below, which read the code
+    # signing properties it sets on each service.
+    WEBKIT_DEFINE_AUXILIARY_PROCESSES()
+endif ()
+
+if (NOT USE_EXTENSIONKIT)
+    list(APPEND WebProcess_PRIVATE_INCLUDE_DIRECTORIES $<TARGET_PROPERTY:WebKit,INCLUDE_DIRECTORIES>)
+    WEBKIT_EXECUTABLE(WebProcess)
+    WEBKIT_REUSE_PREFIX_HEADER(WebProcess WebKit WebKitPrefix.h PREFIX_LANGUAGES CXX)
+
+    list(APPEND NetworkProcess_PRIVATE_INCLUDE_DIRECTORIES $<TARGET_PROPERTY:WebKit,INCLUDE_DIRECTORIES>)
+    WEBKIT_EXECUTABLE(NetworkProcess)
+    WEBKIT_REUSE_PREFIX_HEADER(NetworkProcess WebKit WebKitPrefix.h PREFIX_LANGUAGES CXX)
+
+    if (ENABLE_GPU_PROCESS)
+        list(APPEND GPUProcess_PRIVATE_INCLUDE_DIRECTORIES $<TARGET_PROPERTY:WebKit,INCLUDE_DIRECTORIES>)
+        WEBKIT_EXECUTABLE(GPUProcess)
+        WEBKIT_REUSE_PREFIX_HEADER(GPUProcess WebKit WebKitPrefix.h PREFIX_LANGUAGES CXX)
+    endif ()
 endif ()
 
 if (COMPILER_IS_GCC_OR_CLANG)
     WEBKIT_ADD_TARGET_CXX_FLAGS(WebKit -Wno-unused-parameter)
-    WEBKIT_ADD_TARGET_CXX_FLAGS(WebProcess -Wno-unused-parameter)
-    WEBKIT_ADD_TARGET_CXX_FLAGS(NetworkProcess -Wno-unused-parameter)
-    if (ENABLE_GPU_PROCESS)
-        WEBKIT_ADD_TARGET_CXX_FLAGS(GPUProcess -Wno-unused-parameter)
+    if (NOT USE_EXTENSIONKIT)
+        WEBKIT_ADD_TARGET_CXX_FLAGS(WebProcess -Wno-unused-parameter)
+        WEBKIT_ADD_TARGET_CXX_FLAGS(NetworkProcess -Wno-unused-parameter)
+        if (ENABLE_GPU_PROCESS)
+            WEBKIT_ADD_TARGET_CXX_FLAGS(GPUProcess -Wno-unused-parameter)
+        endif ()
     endif ()
 endif ()
 
 if (APPLE)
     WEBKIT_ADD_TARGET_CXX_FLAGS(WebKit -fobjc-weak)
+    set_property(TARGET WebKit
+        PROPERTY LINK_LIBRARY_OVERRIDE_WebKitLegacy REEXPORT_FRAMEWORK)
 endif ()
 
-if ("${PORT}" STREQUAL "Mac")
-    WEBKIT_DEFINE_XPC_SERVICES()
-else ()
+if (NOT APPLE)
     if (NOT ANDROID)
         WEBKIT_POPULATE_LIBRARY_VERSION(WEBKIT)
         set_target_properties(WebKit PROPERTIES VERSION ${WEBKIT_VERSION} SOVERSION ${WEBKIT_VERSION_MAJOR})
@@ -1146,11 +1615,14 @@ else ()
     install(TARGETS WebKit WebProcess NetworkProcess
         LIBRARY DESTINATION "${LIB_INSTALL_DIR}"
         RUNTIME DESTINATION "${LIBEXEC_INSTALL_DIR}"
+        FRAMEWORK DESTINATION "${LIB_INSTALL_DIR}"
+        BUNDLE DESTINATION "${LIBEXEC_INSTALL_DIR}"
     )
     if (ENABLE_GPU_PROCESS)
         install(TARGETS GPUProcess
             LIBRARY DESTINATION "${LIB_INSTALL_DIR}"
             RUNTIME DESTINATION "${LIBEXEC_INSTALL_DIR}"
+            BUNDLE DESTINATION "${LIBEXEC_INSTALL_DIR}"
         )
     endif ()
 endif ()

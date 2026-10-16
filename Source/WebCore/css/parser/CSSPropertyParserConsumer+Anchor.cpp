@@ -27,14 +27,20 @@
 #include "config.h"
 #include "CSSPropertyParserConsumer+Anchor.h"
 
+#include "CSSCustomIdentValue.h"
 #include "CSSParserContext.h"
 #include "CSSParserTokenRange.h"
-#include "CSSPrimitiveValueMappings.h"
 #include "CSSPropertyParserConsumer+Ident.h"
+#include "CSSPropertyParserState.h"
 #include "CSSValue.h"
 #include "CSSValueList.h"
 #include "CSSValuePair.h"
 #include "RenderStyleConstants.h"
+#include "StyleKeyword+Mappings.h"
+
+#if ENABLE(SPATIAL_PORTAL)
+#include "CSSPinnedAnchorNameValue.h"
+#endif
 
 namespace WebCore {
 namespace CSSPropertyParserHelpers {
@@ -111,75 +117,75 @@ enum class KeywordType : uint8_t {
     Axisless
 };
 
-static std::optional<KeywordType> getKeywordType(CSSValueID id)
+static std::optional<KeywordType> LEGACY_NODELETE getKeywordType(CSSValueID id)
 {
     switch (id) {
-    case CSSValueLeft:
-    case CSSValueRight:
-    case CSSValueSpanLeft:
-    case CSSValueSpanRight:
-    case CSSValueXStart:
-    case CSSValueXEnd:
-    case CSSValueSpanXStart:
-    case CSSValueSpanXEnd:
-    case CSSValueSelfXStart:
-    case CSSValueSelfXEnd:
-    case CSSValueSpanSelfXStart:
-    case CSSValueSpanSelfXEnd:
+    case CSSValueID::Left:
+    case CSSValueID::Right:
+    case CSSValueID::SpanLeft:
+    case CSSValueID::SpanRight:
+    case CSSValueID::XStart:
+    case CSSValueID::XEnd:
+    case CSSValueID::SpanXStart:
+    case CSSValueID::SpanXEnd:
+    case CSSValueID::SelfXStart:
+    case CSSValueID::SelfXEnd:
+    case CSSValueID::SpanSelfXStart:
+    case CSSValueID::SpanSelfXEnd:
         return KeywordType::PhysicalX;
 
-    case CSSValueTop:
-    case CSSValueBottom:
-    case CSSValueSpanTop:
-    case CSSValueSpanBottom:
-    case CSSValueYStart:
-    case CSSValueYEnd:
-    case CSSValueSpanYStart:
-    case CSSValueSpanYEnd:
-    case CSSValueSelfYStart:
-    case CSSValueSelfYEnd:
-    case CSSValueSpanSelfYStart:
-    case CSSValueSpanSelfYEnd:
+    case CSSValueID::Top:
+    case CSSValueID::Bottom:
+    case CSSValueID::SpanTop:
+    case CSSValueID::SpanBottom:
+    case CSSValueID::YStart:
+    case CSSValueID::YEnd:
+    case CSSValueID::SpanYStart:
+    case CSSValueID::SpanYEnd:
+    case CSSValueID::SelfYStart:
+    case CSSValueID::SelfYEnd:
+    case CSSValueID::SpanSelfYStart:
+    case CSSValueID::SpanSelfYEnd:
         return KeywordType::PhysicalY;
 
-    case CSSValueBlockStart:
-    case CSSValueBlockEnd:
-    case CSSValueSpanBlockStart:
-    case CSSValueSpanBlockEnd:
+    case CSSValueID::BlockStart:
+    case CSSValueID::BlockEnd:
+    case CSSValueID::SpanBlockStart:
+    case CSSValueID::SpanBlockEnd:
         return KeywordType::LogicalBlock;
 
-    case CSSValueInlineStart:
-    case CSSValueInlineEnd:
-    case CSSValueSpanInlineStart:
-    case CSSValueSpanInlineEnd:
+    case CSSValueID::InlineStart:
+    case CSSValueID::InlineEnd:
+    case CSSValueID::SpanInlineStart:
+    case CSSValueID::SpanInlineEnd:
         return KeywordType::LogicalInline;
 
-    case CSSValueSelfBlockStart:
-    case CSSValueSelfBlockEnd:
-    case CSSValueSpanSelfBlockStart:
-    case CSSValueSpanSelfBlockEnd:
+    case CSSValueID::SelfBlockStart:
+    case CSSValueID::SelfBlockEnd:
+    case CSSValueID::SpanSelfBlockStart:
+    case CSSValueID::SpanSelfBlockEnd:
         return KeywordType::SelfLogicalBlock;
 
-    case CSSValueSelfInlineStart:
-    case CSSValueSelfInlineEnd:
-    case CSSValueSpanSelfInlineStart:
-    case CSSValueSpanSelfInlineEnd:
+    case CSSValueID::SelfInlineStart:
+    case CSSValueID::SelfInlineEnd:
+    case CSSValueID::SpanSelfInlineStart:
+    case CSSValueID::SpanSelfInlineEnd:
         return KeywordType::SelfLogicalInline;
 
-    case CSSValueStart:
-    case CSSValueEnd:
-    case CSSValueSpanStart:
-    case CSSValueSpanEnd:
+    case CSSValueID::Start:
+    case CSSValueID::End:
+    case CSSValueID::SpanStart:
+    case CSSValueID::SpanEnd:
         return KeywordType::Ambiguous;
 
-    case CSSValueSelfStart:
-    case CSSValueSelfEnd:
-    case CSSValueSpanSelfStart:
-    case CSSValueSpanSelfEnd:
+    case CSSValueID::SelfStart:
+    case CSSValueID::SelfEnd:
+    case CSSValueID::SpanSelfStart:
+    case CSSValueID::SpanSelfEnd:
         return KeywordType::SelfAmbiguous;
 
-    case CSSValueCenter:
-    case CSSValueSpanAll:
+    case CSSValueID::Center:
+    case CSSValueID::SpanAll:
         return KeywordType::Axisless;
 
     default:
@@ -189,7 +195,7 @@ static std::optional<KeywordType> getKeywordType(CSSValueID id)
 
 // Check if the two keyword types are compatible with each other. For example,
 // <physical-area-x> must go with <physical-area-y> or <axisless-keyword>
-static bool typesAreCompatible(KeywordType dim1Type, KeywordType dim2Type)
+static bool LEGACY_NODELETE typesAreCompatible(KeywordType dim1Type, KeywordType dim2Type)
 {
     switch (dim1Type) {
     case KeywordType::PhysicalX:
@@ -225,7 +231,7 @@ static bool typesAreCompatible(KeywordType dim1Type, KeywordType dim2Type)
 }
 
 // Check if a keyword type is explicit about its axis.
-static bool typeIsAxisExplicit(KeywordType type)
+static bool LEGACY_NODELETE typeIsAxisExplicit(KeywordType type)
 {
     switch (type) {
     case KeywordType::PhysicalX:
@@ -242,7 +248,7 @@ static bool typeIsAxisExplicit(KeywordType type)
 }
 
 // Check if a keyword type refers to the X or block axis.
-static bool typeIsBlockOrXAxis(KeywordType type)
+static bool LEGACY_NODELETE typeIsBlockOrXAxis(KeywordType type)
 {
     switch (type) {
     case KeywordType::PhysicalX:
@@ -256,7 +262,7 @@ static bool typeIsBlockOrXAxis(KeywordType type)
 }
 
 // Check if a keyword type refers to the Y or inline axis.
-static bool typeIsInlineOrYAxis(KeywordType type)
+static bool LEGACY_NODELETE typeIsInlineOrYAxis(KeywordType type)
 {
     switch (type) {
     case KeywordType::PhysicalY:
@@ -269,30 +275,30 @@ static bool typeIsInlineOrYAxis(KeywordType type)
     }
 }
 
-static CSSValueID makeAmbiguous(CSSValueID dim)
+static CSSValueID LEGACY_NODELETE makeAmbiguous(CSSValueID dim)
 {
     switch (dim) {
-    case CSSValueBlockStart: return CSSValueStart;
-    case CSSValueSpanBlockStart: return CSSValueSpanStart;
-    case CSSValueSelfBlockStart: return CSSValueSelfStart;
-    case CSSValueSpanSelfBlockStart: return CSSValueSpanSelfStart;
+    case CSSValueID::BlockStart: return CSSValueID::Start;
+    case CSSValueID::SpanBlockStart: return CSSValueID::SpanStart;
+    case CSSValueID::SelfBlockStart: return CSSValueID::SelfStart;
+    case CSSValueID::SpanSelfBlockStart: return CSSValueID::SpanSelfStart;
 
-    case CSSValueBlockEnd: return CSSValueEnd;
-    case CSSValueSpanBlockEnd: return CSSValueSpanEnd;
-    case CSSValueSelfBlockEnd: return CSSValueSelfEnd;
-    case CSSValueSpanSelfBlockEnd: return CSSValueSpanSelfEnd;
+    case CSSValueID::BlockEnd: return CSSValueID::End;
+    case CSSValueID::SpanBlockEnd: return CSSValueID::SpanEnd;
+    case CSSValueID::SelfBlockEnd: return CSSValueID::SelfEnd;
+    case CSSValueID::SpanSelfBlockEnd: return CSSValueID::SpanSelfEnd;
 
-    case CSSValueInlineStart: return CSSValueStart;
-    case CSSValueSpanInlineStart: return CSSValueSpanStart;
-    case CSSValueSelfInlineStart: return CSSValueSelfStart;
-    case CSSValueSpanSelfInlineStart: return CSSValueSpanSelfStart;
+    case CSSValueID::InlineStart: return CSSValueID::Start;
+    case CSSValueID::SpanInlineStart: return CSSValueID::SpanStart;
+    case CSSValueID::SelfInlineStart: return CSSValueID::SelfStart;
+    case CSSValueID::SpanSelfInlineStart: return CSSValueID::SpanSelfStart;
 
-    case CSSValueInlineEnd: return CSSValueEnd;
-    case CSSValueSpanInlineEnd: return CSSValueSpanEnd;
-    case CSSValueSelfInlineEnd: return CSSValueSelfEnd;
-    case CSSValueSpanSelfInlineEnd: return CSSValueSpanSelfEnd;
+    case CSSValueID::InlineEnd: return CSSValueID::End;
+    case CSSValueID::SpanInlineEnd: return CSSValueID::SpanEnd;
+    case CSSValueID::SelfInlineEnd: return CSSValueID::SelfEnd;
+    case CSSValueID::SpanSelfInlineEnd: return CSSValueID::SpanSelfEnd;
 
-    case CSSValueCenter: return CSSValueCenter;
+    case CSSValueID::Center: return CSSValueID::Center;
 
     default:
         ASSERT_NOT_REACHED();
@@ -315,10 +321,10 @@ RefPtr<CSSValue> valueForPositionArea(CSSValueID dim1, CSSValueID dim2, ValueTyp
     if (!typesAreCompatible(dim1Type, dim2Type))
         return nullptr;
 
-    if (dim1 == CSSValueSpanAll && typeIsAxisExplicit(dim2Type))
-        return CSSPrimitiveValue::create(dim2);
-    if (typeIsAxisExplicit(dim1Type) && dim2 == CSSValueSpanAll)
-        return CSSPrimitiveValue::create(dim1);
+    if (dim1 == CSSValueID::SpanAll && typeIsAxisExplicit(dim2Type))
+        return CSSKeywordValue::create(dim2);
+    if (typeIsAxisExplicit(dim1Type) && dim2 == CSSValueID::SpanAll)
+        return CSSKeywordValue::create(dim1);
 
     // Ensure the X/block axis keyword goes first in the pair.
     if (typeIsInlineOrYAxis(dim1Type) || typeIsBlockOrXAxis(dim2Type)) {
@@ -339,7 +345,7 @@ RefPtr<CSSValue> valueForPositionArea(CSSValueID dim1, CSSValueID dim2, ValueTyp
         }
     }
 
-    return CSSValuePair::create(CSSPrimitiveValue::create(dim1), CSSPrimitiveValue::create(dim2));
+    return CSSValuePair::create(CSSKeywordValue::create(dim1), CSSKeywordValue::create(dim2));
 }
 
 RefPtr<CSSValue> consumePositionArea(CSSParserTokenRange& range, CSS::PropertyParserState&)
@@ -351,18 +357,43 @@ RefPtr<CSSValue> consumePositionArea(CSSParserTokenRange& range, CSS::PropertyPa
     if (!maybeDim1)
         return nullptr;
     auto dim1 = *maybeDim1;
-    if (dim1 == CSSValueNone)
-        return CSSPrimitiveValue::create(CSSValueNone);
+    if (dim1 == CSSValueID::None)
+        return CSSKeywordValue::create(CSSValueID::None);
 
     auto maybeDim2 = consumeIdentRaw(range);
     if (!maybeDim2) {
         if (!getKeywordType(dim1))
             return nullptr;
-        return CSSPrimitiveValue::create(dim1);
+        return CSSKeywordValue::create(dim1);
     }
     auto dim2 = *maybeDim2;
 
     return valueForPositionArea(dim1, dim2, ValueType::Specified);
+}
+
+RefPtr<CSSValue> consumePinnedAnchorName(CSSParserTokenRange& range, CSS::PropertyParserState& state)
+{
+    // <pinned-anchor-name> = <anchor-name> [ '#' <ident> ]?
+    //
+    // With the spatial portal feature enabled, <anchor-name> may be followed by '#' and an identifier
+    // naming an attachment point in the anchor's model asset. The '#' must be adjacent:
+    // "--macbook#lid" parses, "--macbook #lid" does not. Grammar notation can't express adjacency,
+    // hence the token peeking.
+    //
+    // The attachment point is proposed in the Spatial CSS explainer, not yet in a specification.
+    // https://github.com/WebKit/explainers/blob/main/css-spatial/explainer.md
+
+#if ENABLE(SPATIAL_PORTAL)
+    if (state.context.propertySettings.spatialPortalEnabled
+        && range.peek().type() == IdentToken && range.peek().value().startsWith("--"_s)
+        && range.peek(1).type() == HashToken && range.peek(1).getHashTokenType() == HashTokenId) {
+        auto name = range.consume().value().toAtomString();
+        auto attachment = range.consumeIncludingWhitespace().value().toAtomString();
+        return CSSPinnedAnchorNameValue::create(CSS::CustomIdent { WTF::move(name) }, CSS::CustomIdent { WTF::move(attachment) });
+    }
+#endif
+
+    return consumeDashedIdent(range, state);
 }
 
 } // namespace CSSPropertyParserHelpers

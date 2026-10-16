@@ -33,7 +33,7 @@
 namespace WebCore {
 namespace Style {
 
-CSS::LinearEasingFunction toCSSLinearEasingFunction(const LinearTimingFunction& function, const RenderStyle& style)
+CSS::LinearEasingFunction toCSSLinearEasingFunction(const LinearTimingFunction& function, const Style::ComputedStyle& style)
 {
     return CSS::LinearEasingFunction {
         .parameters = {
@@ -52,7 +52,7 @@ CSS::LinearEasingFunction toCSSLinearEasingFunction(const LinearTimingFunction& 
     };
 }
 
-template<typename Resolver> static Ref<TimingFunction> createTimingFunctionWithResolver(const CSS::LinearEasingFunction& function, NOESCAPE Resolver&& resolver)
+template<typename Resolver> static Ref<TimingFunction> createTimingFunctionWithResolver(const CSS::LinearEasingFunction& function, NOESCAPE const Resolver& resolver)
 {
     // https://drafts.csswg.org/css-easing-2/#create-a-linear-easing-function
 
@@ -165,7 +165,7 @@ Ref<TimingFunction> createTimingFunction(const BuilderState& state, const CSS::L
 
 Ref<TimingFunction> createTimingFunctionDeprecated(const CSS::LinearEasingFunction& function)
 {
-    if (!CSS::collectComputedStyleDependencies(function).canResolveDependenciesWithConversionData({ }))
+    if (!CSS::collectComputedStyleDependencies(function).isAbsolute())
         return LinearTimingFunction::create();
 
     return createTimingFunctionWithResolver(function, [&](const auto& value) -> double {

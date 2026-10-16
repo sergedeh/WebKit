@@ -66,7 +66,8 @@ void av1_init_layer_context(AV1_COMP *const cpi) {
       // Initialize the cyclic refresh parameters. If spatial layers are used
       // (i.e., ss_number_layers > 1), these need to be updated per spatial
       // layer. Cyclic refresh is only applied on base temporal layer.
-      if (svc->number_spatial_layers > 1 && tl == 0) {
+      if (svc->number_spatial_layers > 1 && tl == 0 &&
+          cpi->oxcf.q_cfg.aq_mode == CYCLIC_REFRESH_AQ) {
         lc->sb_index = 0;
         lc->actual_num_seg1_blocks = 0;
         lc->actual_num_seg2_blocks = 0;
@@ -89,6 +90,7 @@ void av1_init_layer_context(AV1_COMP *const cpi) {
 bool av1_alloc_layer_context(AV1_COMP *cpi, int num_layers) {
   SVC *const svc = &cpi->svc;
   if (svc->layer_context == NULL || svc->num_allocated_layers < num_layers) {
+    av1_free_svc_cyclic_refresh(cpi);
     assert(num_layers > 1);
     aom_free(svc->layer_context);
     svc->num_allocated_layers = 0;
@@ -139,8 +141,8 @@ void av1_update_layer_context_change_config(AV1_COMP *const cpi,
       lp_rc->buffer_level =
           AOMMIN(lp_rc->buffer_level, lp_rc->maximum_buffer_size);
       lc->framerate = cpi->framerate / lc->framerate_factor;
-      lrc->avg_frame_bandwidth =
-          (int)round(lc->target_bandwidth / lc->framerate);
+      lrc->avg_frame_bandwidth = saturate_cast_double_to_int(
+          round(lc->target_bandwidth / lc->framerate));
       lrc->max_frame_bandwidth = rc->max_frame_bandwidth;
       lrc->rtc_external_ratectrl = rc->rtc_external_ratectrl;
       lrc->worst_quality = av1_quantizer_to_qindex(lc->max_q);
@@ -153,6 +155,7 @@ void av1_update_layer_context_change_config(AV1_COMP *const cpi,
       // or number of spatial layers has changed.
       // Cyclic refresh is only applied on base temporal layer.
       if (svc->number_spatial_layers > 1 && tl == 0 &&
+          cpi->oxcf.q_cfg.aq_mode == CYCLIC_REFRESH_AQ &&
           (lc->map == NULL ||
            svc->prev_number_spatial_layers != svc->number_spatial_layers)) {
         lc->sb_index = 0;
@@ -200,11 +203,12 @@ void av1_update_temporal_layer_framerate(AV1_COMP *const cpi) {
         cpi->framerate / lcprev->framerate_factor;
     const int64_t prev_layer_target_bandwidth = lcprev->layer_target_bitrate;
     if (lc->framerate > prev_layer_framerate) {
-      lc->avg_frame_size =
-          (int)round((lc->target_bandwidth - prev_layer_target_bandwidth) /
-                     (lc->framerate - prev_layer_framerate));
+      lc->avg_frame_size = saturate_cast_double_to_int(
+          round((lc->target_bandwidth - prev_layer_target_bandwidth) /
+                (lc->framerate - prev_layer_framerate)));
     } else {
-      lc->avg_frame_size = (int)round(lc->target_bandwidth / lc->framerate);
+      lc->avg_frame_size = saturate_cast_double_to_int(
+          round(lc->target_bandwidth / lc->framerate));
     }
   }
 }
@@ -385,10 +389,10 @@ int av1_svc_primary_ref_frame(const AV1_COMP *const cpi) {
 
 void av1_free_svc_cyclic_refresh(AV1_COMP *const cpi) {
   SVC *const svc = &cpi->svc;
-  for (int sl = 0; sl < svc->number_spatial_layers; ++sl) {
-    for (int tl = 0; tl < svc->number_temporal_layers; ++tl) {
-      int layer = LAYER_IDS_TO_IDX(sl, tl, svc->number_temporal_layers);
-      LAYER_CONTEXT *const lc = &svc->layer_context[layer];
+  if (svc->layer_context == NULL) return;
+  for (int i = 0; i < svc->num_allocated_layers; ++i) {
+    LAYER_CONTEXT *const lc = &svc->layer_context[i];
+    if (lc->map) {
       aom_free(lc->map);
       lc->map = NULL;
     }
@@ -455,10 +459,6 @@ void av1_one_pass_cbr_svc_start_layer(AV1_COMP *const cpi) {
   cm->height = height;
   alloc_mb_mode_info_buffers(cpi);
   av1_update_frame_size(cpi);
-  if (svc->spatial_layer_id == svc->number_spatial_layers - 1) {
-    svc->mi_cols_full_resoln = cm->mi_params.mi_cols;
-    svc->mi_rows_full_resoln = cm->mi_params.mi_rows;
-  }
 }
 
 enum {
@@ -654,6 +654,7 @@ void av1_svc_check_reset_layer_rc_flag(AV1_COMP *const cpi) {
 void av1_svc_set_last_source(AV1_COMP *const cpi, EncodeFrameInput *frame_input,
                              YV12_BUFFER_CONFIG *prev_source) {
   frame_input->last_source = prev_source != NULL ? prev_source : NULL;
+  if (cpi->svc.source_last_TL0.buffer_alloc_sz == 0) return;
   if (!cpi->ppi->use_svc && cpi->rc.prev_frame_is_dropped &&
       cpi->rc.frame_number_encoded > 0) {
     frame_input->last_source = &cpi->svc.source_last_TL0;

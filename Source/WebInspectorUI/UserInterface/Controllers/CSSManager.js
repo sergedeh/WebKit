@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -23,8 +23,6 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// FIXME: CSSManager lacks advanced multi-target support. (Stylesheets per-target)
-
 WI.CSSManager = class CSSManager extends WI.Object
 {
     constructor()
@@ -40,6 +38,8 @@ WI.CSSManager = class CSSManager extends WI.Object
         WI.DOMNode.addEventListener(WI.DOMNode.Event.AttributeRemoved, this._nodeAttributesDidChange, this);
         WI.DOMNode.addEventListener(WI.DOMNode.Event.EnabledPseudoClassesChanged, this._nodePseudoClassesDidChange, this);
 
+        WI.targetManager.addEventListener(WI.TargetManager.Event.TargetRemoved, this._handleTargetRemoved, this);
+
         this._colorFormatSetting = new WI.Setting("default-color-format", WI.Color.Format.Original);
 
         this._styleSheetIdentifierMap = new Map;
@@ -49,14 +49,20 @@ WI.CSSManager = class CSSManager extends WI.Object
         this._defaultUserPreferences = new Map;
         this._overriddenUserPreferences = new Map;
         this._propertyNameCompletions = null;
+        this._layoutContextTypeChangedMode = WI.CSSManager.LayoutContextTypeChangedMode.Observed;
     }
 
     // Target
 
     initializeTarget(target)
     {
-        if (target.hasDomain("CSS"))
+        if (target.hasDomain("CSS")) {
             target.CSSAgent.enable();
+
+            // Page targets request their document later, and InspectorCSSAgent does not push nodes once it arrives.
+            if (target instanceof WI.FrameTarget && this._layoutContextTypeChangedMode !== WI.CSSManager.LayoutContextTypeChangedMode.Observed)
+                this._setLayoutContextTypeChangedModeForTarget(target, this._layoutContextTypeChangedMode);
+        }
     }
 
     initializeCSSPropertyNameCompletions(target)
@@ -210,8 +216,22 @@ WI.CSSManager = class CSSManager extends WI.Object
             return WI.unlocalizedString("::backdrop");
         case CSSManager.PseudoSelectorNames.SpellingError:
             return WI.unlocalizedString("::spelling-error");
+        case CSSManager.PseudoSelectorNames.Checkmark:
+            return WI.unlocalizedString("::checkmark");
+        case CSSManager.PseudoSelectorNames.PickerIcon:
+            return WI.unlocalizedString("::picker-icon");
         case CSSManager.PseudoSelectorNames.TargetText:
             return WI.unlocalizedString("::target-text");
+        case CSSManager.PseudoSelectorNames.SliderFill:
+            return WI.unlocalizedString("::slider-fill");
+        case CSSManager.PseudoSelectorNames.SliderThumb:
+            return WI.unlocalizedString("::slider-thumb");
+        case CSSManager.PseudoSelectorNames.SliderTrack:
+            return WI.unlocalizedString("::slider-track");
+        case CSSManager.PseudoSelectorNames.Placeholder:
+            return WI.unlocalizedString("::placeholder");
+        case CSSManager.PseudoSelectorNames.FileSelectorButton:
+            return WI.unlocalizedString("::file-selector-button");
         case CSSManager.PseudoSelectorNames.ViewTransition:
             return WI.unlocalizedString("::view-transition");
         case CSSManager.PseudoSelectorNames.ViewTransitionGroup:
@@ -282,8 +302,6 @@ WI.CSSManager = class CSSManager extends WI.Object
 
     get defaultUserPreferences() { return this._defaultUserPreferences; }
 
-    get overriddenUserPreferences() { return this._overriddenUserPreferences; }
-
     get preferredColorFormat()
     {
         return this._colorFormatSetting.value;
@@ -341,11 +359,10 @@ WI.CSSManager = class CSSManager extends WI.Object
 
     set layoutContextTypeChangedMode(layoutContextTypeChangedMode)
     {
-        for (let target of WI.targets) {
-            // COMPATIBILITY (iOS 14.5): CSS.setLayoutContextTypeChangedMode did not exist.
-            if (target.hasCommand("CSS.setLayoutContextTypeChangedMode"))
-                target.CSSAgent.setLayoutContextTypeChangedMode(layoutContextTypeChangedMode);
-        }
+        this._layoutContextTypeChangedMode = layoutContextTypeChangedMode;
+
+        for (let target of WI.targets)
+            this._setLayoutContextTypeChangedModeForTarget(target, layoutContextTypeChangedMode);
     }
 
     canForcePseudoClass(pseudoClass)
@@ -432,14 +449,15 @@ WI.CSSManager = class CSSManager extends WI.Object
         return match[1];
     }
 
-    styleSheetForIdentifier(id)
+    styleSheetForIdentifier(id, target)
     {
-        let styleSheet = this._styleSheetIdentifierMap.get(id);
+        let key = CSSManager.keyForStyleSheet(id, target);
+        let styleSheet = this._styleSheetIdentifierMap.get(key);
         if (styleSheet)
             return styleSheet;
 
-        styleSheet = new WI.CSSStyleSheet(id);
-        this._styleSheetIdentifierMap.set(id, styleSheet);
+        styleSheet = new WI.CSSStyleSheet(id, target);
+        this._styleSheetIdentifierMap.set(key, styleSheet);
         return styleSheet;
     }
 
@@ -458,7 +476,7 @@ WI.CSSManager = class CSSManager extends WI.Object
         return this.styleSheets.filter((styleSheet) => styleSheet.isInspectorStyleSheet() && styleSheet.parentFrame === frame);
     }
 
-    preferredInspectorStyleSheetForFrame(frame, callback)
+    preferredInspectorStyleSheetForFrame(frame, callback, target)
     {
         var inspectorStyleSheets = this.inspectorStyleSheetsForFrame(frame);
         for (let styleSheet of inspectorStyleSheets) {
@@ -468,15 +486,15 @@ WI.CSSManager = class CSSManager extends WI.Object
             }
         }
 
-        let target = WI.assumingMainTarget();
-        target.CSSAgent.createStyleSheet(frame.id, function(error, styleSheetId) {
+        let agentTarget = target || WI.assumingMainTarget();
+        agentTarget.CSSAgent.createStyleSheet(frame.id, function(error, styleSheetId) {
             if (error || !styleSheetId) {
                 WI.reportInternalError(error || styleSheetId);
                 return;
             }
 
             const url = null;
-            let styleSheet = WI.cssManager.styleSheetForIdentifier(styleSheetId);
+            let styleSheet = WI.cssManager.styleSheetForIdentifier(styleSheetId, target);
             styleSheet.updateInfo(url, frame, styleSheet.origin, styleSheet.isInlineStyleTag(), styleSheet.startLineNumber, styleSheet.startColumnNumber);
             styleSheet[WI.CSSManager.PreferredInspectorStyleSheetSymbol] = true;
             callback(styleSheet);
@@ -559,9 +577,9 @@ WI.CSSManager = class CSSManager extends WI.Object
             this._nodeStylesMap[key].mediaQueryResultDidChange();
     }
 
-    styleSheetChanged(styleSheetIdentifier)
+    styleSheetChanged(styleSheetIdentifier, target)
     {
-        var styleSheet = this.styleSheetForIdentifier(styleSheetIdentifier);
+        var styleSheet = this.styleSheetForIdentifier(styleSheetIdentifier, target);
         console.assert(styleSheet);
 
         // Do not observe inline styles
@@ -574,10 +592,13 @@ WI.CSSManager = class CSSManager extends WI.Object
         this._updateResourceContent(styleSheet);
     }
 
-    styleSheetAdded(styleSheetInfo)
+    styleSheetAdded(styleSheetInfo, target)
     {
-        console.assert(!this._styleSheetIdentifierMap.has(styleSheetInfo.styleSheetId), "Attempted to add a CSSStyleSheet but identifier was already in use");
-        let styleSheet = this.styleSheetForIdentifier(styleSheetInfo.styleSheetId);
+        let key = CSSManager.keyForStyleSheet(styleSheetInfo.styleSheetId, target);
+        if (this._styleSheetIdentifierMap.has(key))
+            return;
+
+        let styleSheet = this.styleSheetForIdentifier(styleSheetInfo.styleSheetId, target);
         let parentFrame = WI.networkManager.frameForIdentifier(styleSheetInfo.frameId);
         let origin = WI.CSSManager.protocolStyleSheetOriginToEnum(styleSheetInfo.origin);
         styleSheet.updateInfo(styleSheetInfo.sourceURL, parentFrame, origin, styleSheetInfo.isInline, styleSheetInfo.startLine, styleSheetInfo.startColumn);
@@ -585,19 +606,53 @@ WI.CSSManager = class CSSManager extends WI.Object
         this.dispatchEventToListeners(WI.CSSManager.Event.StyleSheetAdded, {styleSheet});
     }
 
-    styleSheetRemoved(styleSheetIdentifier)
+    styleSheetRemoved(styleSheetIdentifier, target)
     {
-        let styleSheet = this._styleSheetIdentifierMap.get(styleSheetIdentifier);
+        let key = CSSManager.keyForStyleSheet(styleSheetIdentifier, target);
+        let styleSheet = this._styleSheetIdentifierMap.get(key);
         console.assert(styleSheet, "Attempted to remove a CSSStyleSheet that was not tracked");
         if (!styleSheet)
             return;
 
-        this._styleSheetIdentifierMap.delete(styleSheetIdentifier);
+        this._styleSheetIdentifierMap.delete(key);
 
         this.dispatchEventToListeners(WI.CSSManager.Event.StyleSheetRemoved, {styleSheet});
     }
 
     // Private
+
+    static keyForStyleSheet(rawId, target)
+    {
+        if (target instanceof WI.FrameTarget)
+            return `${target.identifier}:${rawId}`;
+        return rawId;
+    }
+
+    _setLayoutContextTypeChangedModeForTarget(target, mode)
+    {
+        // COMPATIBILITY (iOS 14.5): CSS.setLayoutContextTypeChangedMode did not exist.
+        if (target.hasCommand("CSS.setLayoutContextTypeChangedMode"))
+            target.CSSAgent.setLayoutContextTypeChangedMode(mode);
+    }
+
+    _handleTargetRemoved(event)
+    {
+        let {target} = event.data;
+        if (!(target instanceof WI.FrameTarget))
+            return;
+
+        let prefix = target.identifier + ":";
+        let removedKeys = [];
+        for (let key of this._styleSheetIdentifierMap.keys()) {
+            if (typeof key === "string" && key.startsWith(prefix))
+                removedKeys.push(key);
+        }
+        for (let key of removedKeys) {
+            let styleSheet = this._styleSheetIdentifierMap.get(key);
+            this._styleSheetIdentifierMap.delete(key);
+            this.dispatchEventToListeners(WI.CSSManager.Event.StyleSheetRemoved, {styleSheet});
+        }
+    }
 
     _nodePseudoClassesDidChange(event)
     {
@@ -636,7 +691,7 @@ WI.CSSManager = class CSSManager extends WI.Object
         this._styleSheetFrameURLMap.clear();
         this._modifiedStyles.clear();
 
-        // COMPATIBILITY (macOS 14.0, iOS 17.0): the `PrefersColorScheme` override used to be cleared on main frame navigation
+        // COMPATIBILITY (macOS 13.3, iOS 16.4): the `PrefersColorScheme` override used to be cleared on main frame navigation
         // Since support can't be tested directly, check for the `reason` parameter of `Console.messagesCleared` as that change shipped in the same release.
         // FIXME: Use explicit version checking once <https://webkit.org/b/148680> is fixed.
         if (!InspectorBackend.hasEvent("Console.messagesCleared", "reason")) {
@@ -675,7 +730,7 @@ WI.CSSManager = class CSSManager extends WI.Object
     {
         // Clear known stylesheets for this URL and frame. This will cause the style sheets to
         // be updated next time _fetchInfoForAllStyleSheets is called.
-        this._styleSheetIdentifierMap.delete(this._frameURLMapKey(resource.parentFrame, resource.url));
+        this._styleSheetFrameURLMap.delete(this._frameURLMapKey(resource.parentFrame, resource.url));
     }
 
     _frameURLMapKey(frame, url)
@@ -856,14 +911,21 @@ WI.CSSManager.PseudoSelectorNames = {
     After: "after",
     Before: "before",
     Backdrop: "backdrop",
+    Checkmark: "checkmark",
+    FileSelectorButton: "file-selector-button",
     FirstLetter: "first-letter",
     FirstLine: "first-line",
     Highlight: "highlight",
     GrammarError: "grammar-error",
     Marker: "marker",
+    PickerIcon: "picker-icon",
+    Placeholder: "placeholder",
     Selection: "selection",
     SpellingError: "spelling-error",
     TargetText: "target-text",
+    SliderFill: "slider-fill",
+    SliderThumb: "slider-thumb",
+    SliderTrack: "slider-track",
     ViewTransition: "view-transition",
     ViewTransitionGroup: "view-transition-group",
     ViewTransitionImagePair: "view-transition-image-pair",

@@ -26,8 +26,10 @@
 
 #pragma once
 
+#include <WebCore/FrameIdentifier.h>
 #include <optional>
 #include <wtf/Forward.h>
+#include <wtf/Seconds.h>
 
 namespace Inspector {
 class FrontendChannel;
@@ -61,12 +63,25 @@ public:
     virtual void highlight() = 0;
     virtual void hideHighlight() = 0;
 
+    // Frame-scoped highlight overlays under Site Isolation; default to the page-wide versions.
+    virtual void highlightFrame(LocalFrame&) { highlight(); }
+    virtual void hideHighlightForFrame(LocalFrame&) { hideHighlight(); }
+
     virtual void showInspectorIndication() { }
     virtual void hideInspectorIndication() { }
 
     virtual bool overridesShowPaintRects() const { return false; }
     virtual void setShowPaintRects(bool) { }
     virtual void showPaintRect(const FloatRect&) { }
+    // Frame-aware variant: draw the paint rect scoped to a specific local root frame (Site Isolation
+    // per-frame overlays). Defaults to the frame-less version for clients that don't distinguish frames.
+    virtual void showPaintRect(LocalFrame&, const FloatRect& rect) { showPaintRect(rect); }
+    // Tear down any per-frame paint-rect overlay owned by a local root frame that is going away, so
+    // it isn't retained past the frame's lifetime. No-op for clients without per-frame overlays.
+    virtual void willDestroyFrameOverlays(FrameIdentifier) { }
+
+    virtual void frameDebuggerDidPause(FrameIdentifier) { }
+    virtual void frameDebuggerDidContinue(FrameIdentifier) { }
     virtual unsigned paintRectCount() const { return 0; }
     virtual void didSetSearchingForNode(bool) { }
     virtual void elementSelectionChanged(bool) { }
@@ -76,7 +91,7 @@ public:
     virtual void setDeveloperPreferenceOverride(DeveloperPreference, std::optional<bool>) { }
 
 #if ENABLE(INSPECTOR_NETWORK_THROTTLING)
-    virtual bool setEmulatedConditions(std::optional<int64_t>&& /* bytesPerSecondLimit */) { return false; }
+    virtual bool setEmulatedConditions(std::optional<uint64_t> /* bandwidthBytesPerSecond */, Seconds /* latency */) { return false; }
 #endif
 };
 

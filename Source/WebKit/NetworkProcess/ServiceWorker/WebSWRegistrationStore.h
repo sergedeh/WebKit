@@ -55,15 +55,15 @@ private:
     void clearAll(CompletionHandler<void()>&&);
     void flushChanges(CompletionHandler<void()>&&);
     void closeFiles(CompletionHandler<void()>&&);
-    void importRegistrations(CompletionHandler<void(std::optional<Vector<WebCore::ServiceWorkerContextData>>&&)>&&);
+    void importRegistrationsForOrigin(const WebCore::SecurityOriginData&, CompletionHandler<void(std::optional<Vector<WebCore::ServiceWorkerContextData>>&&)>&&);
+    void importOriginList(CompletionHandler<void(std::optional<HashSet<WebCore::ClientOrigin>>&&)>&&);
     void updateRegistration(const WebCore::ServiceWorkerContextData&);
     void removeRegistration(const WebCore::ServiceWorkerRegistrationKey&);
+    void retrieveWorkerScripts(WebCore::ServiceWorkerIdentifier, const WebCore::ServiceWorkerRegistrationKey&, const URL& scriptURL, const Vector<URL>& importedScriptURLs, CompletionHandler<void(std::optional<WebCore::ServiceWorkerScripts>&&)>&&);
 
     void scheduleUpdateIfNecessary();
     void updateToStorage(CompletionHandler<void()>&&);
     void updateTimerFired() { updateToStorage([] { }); }
-
-    RefPtr<WebCore::SWServer> protectedServer() const;
 
     WeakPtr<WebCore::SWServer> m_server;
     ThreadSafeWeakPtr<NetworkStorageManager> m_manager;

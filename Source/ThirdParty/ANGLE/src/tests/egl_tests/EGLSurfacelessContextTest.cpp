@@ -25,7 +25,9 @@ class EGLSurfacelessContextTest : public ANGLETest<>
 
     void testSetUp() override
     {
-        EGLAttrib dispattrs[3] = {EGL_PLATFORM_ANGLE_TYPE_ANGLE, GetParam().getRenderer(),
+        EGLAttrib dispattrs[]  = {EGL_PLATFORM_ANGLE_TYPE_ANGLE, GetParam().getRenderer(),
+                                  EGL_PLATFORM_ANGLE_NATIVE_PLATFORM_TYPE_ANGLE,
+                                  static_cast<EGLAttrib>(GetPbufferOnlyDefaultPlatformType()),
                                   EGL_NONE};
         mDisplay               = eglGetPlatformDisplay(GetEglPlatform(),
                                                        reinterpret_cast<void *>(EGL_DEFAULT_DISPLAY), dispattrs);
@@ -273,7 +275,6 @@ TEST_P(EGLSurfacelessContextTest, Switcheroo)
 }  // anonymous namespace
 
 ANGLE_INSTANTIATE_TEST(EGLSurfacelessContextTest,
-                       WithNoFixture(ES2_D3D9()),
                        WithNoFixture(ES2_D3D11()),
                        WithNoFixture(ES2_METAL()),
                        WithNoFixture(ES2_OPENGL()),

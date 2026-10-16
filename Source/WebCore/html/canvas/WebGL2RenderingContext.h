@@ -55,10 +55,10 @@ public:
     // Buffer objects
     using WebGLRenderingContextBase::bufferData;
     using WebGLRenderingContextBase::bufferSubData;
-    void bufferData(GCGLenum target, const ArrayBufferView& data, GCGLenum usage, GCGLuint srcOffset, GCGLuint length);
-    void bufferSubData(GCGLenum target, long long offset, const ArrayBufferView& data, GCGLuint srcOffset, GCGLuint length);
+    void bufferData(GCGLenum target, const ArrayBufferView& data, GCGLenum usage, uint64_t srcOffset, GCGLuint length);
+    void bufferSubData(GCGLenum target, long long offset, const ArrayBufferView& data, uint64_t srcOffset, GCGLuint length);
     void copyBufferSubData(GCGLenum readTarget, GCGLenum writeTarget, GCGLint64 readOffset, GCGLint64 writeOffset, GCGLint64 size);
-    void getBufferSubData(GCGLenum target, long long srcByteOffset, RefPtr<ArrayBufferView>&& dstData, GCGLuint dstOffset = 0, GCGLuint length = 0);
+    void getBufferSubData(GCGLenum target, long long srcByteOffset, RefPtr<ArrayBufferView>&& dstData, uint64_t dstOffset = 0, GCGLuint length = 0);
     
     // Framebuffer objects
     WebGLAny getFramebufferAttachmentParameter(GCGLenum target, GCGLenum attachment, GCGLenum pname) final;
@@ -85,12 +85,12 @@ public:
     // WebGL 2.0 entry points:
     void texImage2D(GCGLenum target, GCGLint level, GCGLint internalformat, GCGLsizei width, GCGLsizei height, GCGLint border, GCGLenum format, GCGLenum type, GCGLintptr offset);
     ExceptionOr<void> texImage2D(GCGLenum target, GCGLint level, GCGLint internalformat, GCGLsizei width, GCGLsizei height, GCGLint border, GCGLenum format, GCGLenum type, TexImageSource&&);
-    void texImage2D(GCGLenum target, GCGLint level, GCGLint internalformat, GCGLsizei width, GCGLsizei height, GCGLint border, GCGLenum format, GCGLenum type, RefPtr<ArrayBufferView>&& srcData, GCGLuint srcOffset);
+    void texImage2D(GCGLenum target, GCGLint level, GCGLint internalformat, GCGLsizei width, GCGLsizei height, GCGLint border, GCGLenum format, GCGLenum type, RefPtr<ArrayBufferView>&& srcData, uint64_t srcOffset);
 
     void texImage3D(GCGLenum target, GCGLint level, GCGLint internalformat, GCGLsizei width, GCGLsizei height, GCGLsizei depth, GCGLint border, GCGLenum format, GCGLenum type, GCGLint64 pboOffset);
     ExceptionOr<void> texImage3D(GCGLenum target, GCGLint level, GCGLint internalformat, GCGLsizei width, GCGLsizei height, GCGLsizei depth, GCGLint border, GCGLenum format, GCGLenum type, TexImageSource&&);
     void texImage3D(GCGLenum target, GCGLint level, GCGLint internalformat, GCGLsizei width, GCGLsizei height, GCGLsizei depth, GCGLint border, GCGLenum format, GCGLenum type, RefPtr<ArrayBufferView>&& pixels);
-    void texImage3D(GCGLenum target, GCGLint level, GCGLint internalformat, GCGLsizei width, GCGLsizei height, GCGLsizei depth, GCGLint border, GCGLenum format, GCGLenum type, RefPtr<ArrayBufferView>&& srcData, GCGLuint srcOffset);
+    void texImage3D(GCGLenum target, GCGLint level, GCGLint internalformat, GCGLsizei width, GCGLsizei height, GCGLsizei depth, GCGLint border, GCGLenum format, GCGLenum type, RefPtr<ArrayBufferView>&& srcData, uint64_t srcOffset);
 
     // Must override the WebGL 1.0 signature to add extra validation.
     void texSubImage2D(GCGLenum target, GCGLint level, GCGLint xoffset, GCGLint yoffset, GCGLsizei width, GCGLsizei height, GCGLenum format, GCGLenum type, RefPtr<ArrayBufferView>&&) override;
@@ -98,10 +98,10 @@ public:
     // WebGL 2.0 entry points:
     void texSubImage2D(GCGLenum target, GCGLint level, GCGLint xoffset, GCGLint yoffset, GCGLsizei width, GCGLsizei height, GCGLenum format, GCGLenum type, GCGLintptr pboOffset);
     ExceptionOr<void> texSubImage2D(GCGLenum target, GCGLint level, GCGLint xoffset, GCGLint yoffset, GCGLsizei width, GCGLsizei height, GCGLenum format, GCGLenum type, TexImageSource&&);
-    void texSubImage2D(GCGLenum target, GCGLint level, GCGLint xoffset, GCGLint yoffset, GCGLsizei width, GCGLsizei height, GCGLenum format, GCGLenum type, RefPtr<ArrayBufferView>&& srcData, GCGLuint srcOffset);
+    void texSubImage2D(GCGLenum target, GCGLint level, GCGLint xoffset, GCGLint yoffset, GCGLsizei width, GCGLsizei height, GCGLenum format, GCGLenum type, RefPtr<ArrayBufferView>&& srcData, uint64_t srcOffset);
 
     void texSubImage3D(GCGLenum target, GCGLint level, GCGLint xoffset, GCGLint yoffset, GCGLint zoffset, GCGLsizei width, GCGLsizei height, GCGLsizei depth, GCGLenum format, GCGLenum type, GCGLint64 pboOffset);
-    void texSubImage3D(GCGLenum target, GCGLint level, GCGLint xoffset, GCGLint yoffset, GCGLint zoffset, GCGLsizei width, GCGLsizei height, GCGLsizei depth, GCGLenum format, GCGLenum type, RefPtr<ArrayBufferView>&& pixels, GCGLuint srcOffset);
+    void texSubImage3D(GCGLenum target, GCGLint level, GCGLint xoffset, GCGLint yoffset, GCGLint zoffset, GCGLsizei width, GCGLsizei height, GCGLsizei depth, GCGLenum format, GCGLenum type, RefPtr<ArrayBufferView>&& pixels, uint64_t srcOffset);
     ExceptionOr<void> texSubImage3D(GCGLenum target, GCGLint level, GCGLint xoffset, GCGLint yoffset, GCGLint zoffset, GCGLsizei width, GCGLsizei height, GCGLsizei depth, GCGLenum format, GCGLenum type, TexImageSource&&);
 
     void copyTexSubImage3D(GCGLenum target, GCGLint level, GCGLint xoffset, GCGLint yoffset, GCGLint zoffset, GCGLint x, GCGLint y, GCGLsizei width, GCGLsizei height);
@@ -110,18 +110,18 @@ public:
     void compressedTexImage2D(GCGLenum target, GCGLint level, GCGLenum internalformat, GCGLsizei width, GCGLsizei height, GCGLint border, ArrayBufferView& srcData);
     // WebGL 2.0 entry points:
     void compressedTexImage2D(GCGLenum target, GCGLint level, GCGLenum internalformat, GCGLsizei width, GCGLsizei height, GCGLint border, GCGLsizei imageSize, GCGLint64 offset);
-    void compressedTexImage2D(GCGLenum target, GCGLint level, GCGLenum internalformat, GCGLsizei width, GCGLsizei height, GCGLint border, ArrayBufferView& srcData, GCGLuint srcOffset, GCGLuint srcLengthOverride);
+    void compressedTexImage2D(GCGLenum target, GCGLint level, GCGLenum internalformat, GCGLsizei width, GCGLsizei height, GCGLint border, ArrayBufferView& srcData, uint64_t srcOffset, GCGLuint srcLengthOverride);
     void compressedTexImage3D(GCGLenum target, GCGLint level, GCGLenum internalformat, GCGLsizei width, GCGLsizei height, GCGLsizei depth, GCGLint border, GCGLsizei imageSize, GCGLint64 offset);
-    void compressedTexImage3D(GCGLenum target, GCGLint level, GCGLenum internalformat, GCGLsizei width, GCGLsizei height, GCGLsizei depth, GCGLint border, ArrayBufferView& srcData, GCGLuint srcOffset, GCGLuint srcLengthOverride);
+    void compressedTexImage3D(GCGLenum target, GCGLint level, GCGLenum internalformat, GCGLsizei width, GCGLsizei height, GCGLsizei depth, GCGLint border, ArrayBufferView& srcData, uint64_t srcOffset, GCGLuint srcLengthOverride);
 
     // Must override the WebGL 1.0 signature in order to add extra validation.
     void compressedTexSubImage2D(GCGLenum target, GCGLint level, GCGLint xoffset, GCGLint yoffset, GCGLsizei width, GCGLsizei height, GCGLenum format, ArrayBufferView& srcData);
     // WebGL 2.0 entry points:
     void compressedTexSubImage2D(GCGLenum target, GCGLint level, GCGLint xoffset, GCGLint yoffset, GCGLsizei width, GCGLsizei height, GCGLenum format, GCGLsizei imageSize, GCGLintptr offset);
-    void compressedTexSubImage2D(GCGLenum target, GCGLint level, GCGLint xoffset, GCGLint yoffset, GCGLsizei width, GCGLsizei height, GCGLenum format, ArrayBufferView& srcData, GCGLuint srcOffset, GCGLuint srcLengthOverride);
+    void compressedTexSubImage2D(GCGLenum target, GCGLint level, GCGLint xoffset, GCGLint yoffset, GCGLsizei width, GCGLsizei height, GCGLenum format, ArrayBufferView& srcData, uint64_t srcOffset, GCGLuint srcLengthOverride);
 
     void compressedTexSubImage3D(GCGLenum target, GCGLint level, GCGLint xoffset, GCGLint yoffset, GCGLint zoffset, GCGLsizei width, GCGLsizei height, GCGLsizei depth, GCGLenum format, GCGLsizei imageSize, GCGLint64 offset);
-    void compressedTexSubImage3D(GCGLenum target, GCGLint level, GCGLint xoffset, GCGLint yoffset, GCGLint zoffset, GCGLsizei width, GCGLsizei height, GCGLsizei depth, GCGLenum format, ArrayBufferView& srcData, GCGLuint srcOffset, GCGLuint srcLengthOverride);
+    void compressedTexSubImage3D(GCGLenum target, GCGLint level, GCGLint xoffset, GCGLint yoffset, GCGLint zoffset, GCGLsizei width, GCGLsizei height, GCGLsizei depth, GCGLenum format, ArrayBufferView& srcData, uint64_t srcOffset, GCGLuint srcLengthOverride);
 
     // Programs and shaders
     GCGLint getFragDataLocation(WebGLProgram&, const String& name);
@@ -133,16 +133,16 @@ public:
     void uniform2ui(const WebGLUniformLocation*, GCGLuint v0, GCGLuint v1);
     void uniform3ui(const WebGLUniformLocation*, GCGLuint v0, GCGLuint v1, GCGLuint v2);
     void uniform4ui(const WebGLUniformLocation*, GCGLuint v0, GCGLuint v1, GCGLuint v2, GCGLuint v3);
-    void uniform1uiv(const WebGLUniformLocation*, Uint32List&& data, GCGLuint srcOffset, GCGLuint srcLength);
-    void uniform2uiv(const WebGLUniformLocation*, Uint32List&& data, GCGLuint srcOffset, GCGLuint srcLength);
-    void uniform3uiv(const WebGLUniformLocation*, Uint32List&& data, GCGLuint srcOffset, GCGLuint srcLength);
-    void uniform4uiv(const WebGLUniformLocation*, Uint32List&& data, GCGLuint srcOffset, GCGLuint srcLength);
-    void uniformMatrix2x3fv(const WebGLUniformLocation*, GCGLboolean transpose, Float32List&& value, GCGLuint srcOffset, GCGLuint srcLength);
-    void uniformMatrix3x2fv(const WebGLUniformLocation*, GCGLboolean transpose, Float32List&& value, GCGLuint srcOffset, GCGLuint srcLength);
-    void uniformMatrix2x4fv(const WebGLUniformLocation*, GCGLboolean transpose, Float32List&& value, GCGLuint srcOffset, GCGLuint srcLength);
-    void uniformMatrix4x2fv(const WebGLUniformLocation*, GCGLboolean transpose, Float32List&& value, GCGLuint srcOffset, GCGLuint srcLength);
-    void uniformMatrix3x4fv(const WebGLUniformLocation*, GCGLboolean transpose, Float32List&& value, GCGLuint srcOffset, GCGLuint srcLength);
-    void uniformMatrix4x3fv(const WebGLUniformLocation*, GCGLboolean transpose, Float32List&& value, GCGLuint srcOffset, GCGLuint srcLength);
+    void uniform1uiv(const WebGLUniformLocation*, Uint32List&& data, uint64_t srcOffset, GCGLuint srcLength);
+    void uniform2uiv(const WebGLUniformLocation*, Uint32List&& data, uint64_t srcOffset, GCGLuint srcLength);
+    void uniform3uiv(const WebGLUniformLocation*, Uint32List&& data, uint64_t srcOffset, GCGLuint srcLength);
+    void uniform4uiv(const WebGLUniformLocation*, Uint32List&& data, uint64_t srcOffset, GCGLuint srcLength);
+    void uniformMatrix2x3fv(const WebGLUniformLocation*, GCGLboolean transpose, Float32List&& value, uint64_t srcOffset, GCGLuint srcLength);
+    void uniformMatrix3x2fv(const WebGLUniformLocation*, GCGLboolean transpose, Float32List&& value, uint64_t srcOffset, GCGLuint srcLength);
+    void uniformMatrix2x4fv(const WebGLUniformLocation*, GCGLboolean transpose, Float32List&& value, uint64_t srcOffset, GCGLuint srcLength);
+    void uniformMatrix4x2fv(const WebGLUniformLocation*, GCGLboolean transpose, Float32List&& value, uint64_t srcOffset, GCGLuint srcLength);
+    void uniformMatrix3x4fv(const WebGLUniformLocation*, GCGLboolean transpose, Float32List&& value, uint64_t srcOffset, GCGLuint srcLength);
+    void uniformMatrix4x3fv(const WebGLUniformLocation*, GCGLboolean transpose, Float32List&& value, uint64_t srcOffset, GCGLuint srcLength);
     void vertexAttribI4i(GCGLuint index, GCGLint x, GCGLint y, GCGLint z, GCGLint w);
     void vertexAttribI4iv(GCGLuint index, Int32List&& v);
     void vertexAttribI4ui(GCGLuint index, GCGLuint x, GCGLuint y, GCGLuint z, GCGLuint w);
@@ -153,26 +153,26 @@ public:
     using WebGLRenderingContextBase::uniform2fv;
     using WebGLRenderingContextBase::uniform3fv;
     using WebGLRenderingContextBase::uniform4fv;
-    void uniform1fv(const WebGLUniformLocation*, Float32List&& data, GCGLuint srcOffset, GCGLuint srcLength);
-    void uniform2fv(const WebGLUniformLocation*, Float32List&& data, GCGLuint srcOffset, GCGLuint srcLength);
-    void uniform3fv(const WebGLUniformLocation*, Float32List&& data, GCGLuint srcOffset, GCGLuint srcLength);
-    void uniform4fv(const WebGLUniformLocation*, Float32List&& data, GCGLuint srcOffset, GCGLuint srcLength);
+    void uniform1fv(const WebGLUniformLocation*, Float32List&& data, uint64_t srcOffset, GCGLuint srcLength);
+    void uniform2fv(const WebGLUniformLocation*, Float32List&& data, uint64_t srcOffset, GCGLuint srcLength);
+    void uniform3fv(const WebGLUniformLocation*, Float32List&& data, uint64_t srcOffset, GCGLuint srcLength);
+    void uniform4fv(const WebGLUniformLocation*, Float32List&& data, uint64_t srcOffset, GCGLuint srcLength);
 
     using WebGLRenderingContextBase::uniform1iv;
     using WebGLRenderingContextBase::uniform2iv;
     using WebGLRenderingContextBase::uniform3iv;
     using WebGLRenderingContextBase::uniform4iv;
-    void uniform1iv(const WebGLUniformLocation*, Int32List&& data, GCGLuint srcOffset, GCGLuint srcLength);
-    void uniform2iv(const WebGLUniformLocation*, Int32List&& data, GCGLuint srcOffset, GCGLuint srcLength);
-    void uniform3iv(const WebGLUniformLocation*, Int32List&& data, GCGLuint srcOffset, GCGLuint srcLength);
-    void uniform4iv(const WebGLUniformLocation*, Int32List&& data, GCGLuint srcOffset, GCGLuint srcLength);
+    void uniform1iv(const WebGLUniformLocation*, Int32List&& data, uint64_t srcOffset, GCGLuint srcLength);
+    void uniform2iv(const WebGLUniformLocation*, Int32List&& data, uint64_t srcOffset, GCGLuint srcLength);
+    void uniform3iv(const WebGLUniformLocation*, Int32List&& data, uint64_t srcOffset, GCGLuint srcLength);
+    void uniform4iv(const WebGLUniformLocation*, Int32List&& data, uint64_t srcOffset, GCGLuint srcLength);
 
     using WebGLRenderingContextBase::uniformMatrix2fv;
     using WebGLRenderingContextBase::uniformMatrix3fv;
     using WebGLRenderingContextBase::uniformMatrix4fv;
-    void uniformMatrix2fv(const WebGLUniformLocation*, GCGLboolean transpose, Float32List&& data, GCGLuint srcOffset, GCGLuint srcLength);
-    void uniformMatrix3fv(const WebGLUniformLocation*, GCGLboolean transpose, Float32List&& data, GCGLuint srcOffset, GCGLuint srcLength);
-    void uniformMatrix4fv(const WebGLUniformLocation*, GCGLboolean transpose, Float32List&& data, GCGLuint srcOffset, GCGLuint srcLength);
+    void uniformMatrix2fv(const WebGLUniformLocation*, GCGLboolean transpose, Float32List&& data, uint64_t srcOffset, GCGLuint srcLength);
+    void uniformMatrix3fv(const WebGLUniformLocation*, GCGLboolean transpose, Float32List&& data, uint64_t srcOffset, GCGLuint srcLength);
+    void uniformMatrix4fv(const WebGLUniformLocation*, GCGLboolean transpose, Float32List&& data, uint64_t srcOffset, GCGLuint srcLength);
 
     // Writing to the drawing buffer
     void vertexAttribDivisor(GCGLuint index, GCGLuint divisor);
@@ -182,22 +182,22 @@ public:
     
     // Multiple render targets
     void drawBuffers(const Vector<GCGLenum>& buffers);
-    void clearBufferiv(GCGLenum buffer, GCGLint drawbuffer, Int32List&& values, GCGLuint srcOffset);
-    void clearBufferuiv(GCGLenum buffer, GCGLint drawbuffer, Uint32List&& values, GCGLuint srcOffset);
-    void clearBufferfv(GCGLenum buffer, GCGLint drawbuffer, Float32List&& values, GCGLuint srcOffset);
+    void clearBufferiv(GCGLenum buffer, GCGLint drawbuffer, Int32List&& values, uint64_t srcOffset);
+    void clearBufferuiv(GCGLenum buffer, GCGLint drawbuffer, Uint32List&& values, uint64_t srcOffset);
+    void clearBufferfv(GCGLenum buffer, GCGLint drawbuffer, Float32List&& values, uint64_t srcOffset);
     void clearBufferfi(GCGLenum buffer, GCGLint drawbuffer, GCGLfloat depth, GCGLint stencil);
     
     // Query objects
-    RefPtr<WebGLQuery> createQuery();
+    Ref<WebGLQuery> createQuery();
     void deleteQuery(WebGLQuery*);
     GCGLboolean isQuery(WebGLQuery*);
     void beginQuery(GCGLenum target, WebGLQuery&);
-    void endQuery(GCGLenum target);
+    void endQuery(ScriptExecutionContext&, GCGLenum target);
     WebGLAny getQuery(GCGLenum target, GCGLenum pname);
     WebGLAny getQueryParameter(WebGLQuery&, GCGLenum pname);
     
     // Sampler objects
-    RefPtr<WebGLSampler> createSampler();
+    Ref<WebGLSampler> createSampler();
     void deleteSampler(WebGLSampler*);
     GCGLboolean isSampler(WebGLSampler*);
     void bindSampler(GCGLuint unit, WebGLSampler*);
@@ -207,14 +207,14 @@ public:
     
     // Sync objects
     RefPtr<WebGLSync> fenceSync(GCGLenum condition, GCGLbitfield flags);
-    GCGLboolean isSync(WebGLSync*);
+    GCGLboolean LEGACY_NODELETE isSync(WebGLSync*);
     void deleteSync(WebGLSync*);
     GCGLenum clientWaitSync(WebGLSync&, GCGLbitfield flags, GCGLuint64 timeout);
     void waitSync(WebGLSync&, GCGLbitfield flags, GCGLint64 timeout);
     WebGLAny getSyncParameter(WebGLSync&, GCGLenum pname);
     
     // Transform feedback
-    RefPtr<WebGLTransformFeedback> createTransformFeedback();
+    Ref<WebGLTransformFeedback> createTransformFeedback();
     void deleteTransformFeedback(WebGLTransformFeedback* id);
     GCGLboolean isTransformFeedback(WebGLTransformFeedback* id);
     void bindTransformFeedback(GCGLenum target, WebGLTransformFeedback* id);
@@ -237,7 +237,7 @@ public:
     void uniformBlockBinding(WebGLProgram&, GCGLuint uniformBlockIndex, GCGLuint uniformBlockBinding);
     
     // Vertex array objects
-    RefPtr<WebGLVertexArrayObject> createVertexArray();
+    Ref<WebGLVertexArrayObject> createVertexArray();
     void deleteVertexArray(WebGLVertexArrayObject* vertexArray);
     GCGLboolean isVertexArray(WebGLVertexArrayObject* vertexArray);
     void bindVertexArray(WebGLVertexArrayObject* vertexArray);
@@ -249,27 +249,28 @@ public:
     // Must override the WebGL 1.0 signature in order to add extra validation.
     void readPixels(GCGLint x, GCGLint y, GCGLsizei width, GCGLsizei height, GCGLenum format, GCGLenum type, RefPtr<ArrayBufferView>&& pixels) override;
     void readPixels(GCGLint x, GCGLint y, GCGLsizei width, GCGLsizei height, GCGLenum format, GCGLenum type, GCGLintptr offset);
-    void readPixels(GCGLint x, GCGLint y, GCGLsizei width, GCGLsizei height, GCGLenum format, GCGLenum type, ArrayBufferView& dstData, GCGLuint dstOffset);
+    void readPixels(GCGLint x, GCGLint y, GCGLsizei width, GCGLsizei height, GCGLenum format, GCGLenum type, ArrayBufferView& dstData, uint64_t dstOffset);
 
-    GCGLuint maxTransformFeedbackSeparateAttribs() const;
+    GCGLuint LEGACY_NODELETE maxTransformFeedbackSeparateAttribs() const;
 
     bool checkAndTranslateAttachments(ASCIILiteral functionName, GCGLenum, Vector<GCGLenum>&);
 
     void addMembersToOpaqueRoots(JSC::AbstractSlotVisitor&) override;
 
-    bool isTransformFeedbackActiveAndNotPaused();
+    bool LEGACY_NODELETE isTransformFeedbackActiveAndNotPaused();
 
 private:
     using WebGLRenderingContextBase::WebGLRenderingContextBase;
-    void initializeContextState() final;
+    void initializeContextState() WTF_REQUIRES_LOCK(objectGraphLock()) final;
 
-    RefPtr<ArrayBufferView> arrayBufferViewSliceFactory(ASCIILiteral functionName, const ArrayBufferView& data, unsigned startByte, unsigned bytelength);
-    RefPtr<ArrayBufferView> sliceArrayBufferView(ASCIILiteral functionName, const ArrayBufferView& data, GCGLuint srcOffset, GCGLuint length);
+    RefPtr<ArrayBufferView> arrayBufferViewSliceFactory(ASCIILiteral functionName, const ArrayBufferView& data, size_t startByte, size_t numElements);
+    RefPtr<ArrayBufferView> sliceArrayBufferView(ASCIILiteral functionName, const ArrayBufferView& data, uint64_t srcOffset, GCGLuint length);
 
     long long getInt64Parameter(GCGLenum) final;
     Vector<bool> getIndexedBooleanArrayParameter(GCGLenum pname, GCGLuint index);
 
-    void initializeDefaultObjects() final;
+    void initializeDefaultObjects() WTF_REQUIRES_LOCK(objectGraphLock()) final;
+    void detachAndRemoveAllObjects() WTF_REQUIRES_LOCK(objectGraphLock()) final;
     bool validateBufferTarget(ASCIILiteral functionName, GCGLenum target) final;
     bool validateBufferTargetCompatibility(ASCIILiteral, GCGLenum, WebGLBuffer*);
     RefPtr<WebGLBuffer> validateBufferDataParameters(ASCIILiteral functionName, GCGLenum target, GCGLenum usage) final;
@@ -279,9 +280,11 @@ private:
     GCGLint maxColorAttachments() final;
     bool validateCapability(ASCIILiteral functionName, GCGLenum cap) final;
     template<typename T, typename TypedArrayType>
-    std::optional<std::span<const T>> validateClearBuffer(ASCIILiteral functionName, GCGLenum buffer, TypedList<TypedArrayType, T>& values, GCGLuint srcOffset);
+    std::optional<std::span<const T>> validateClearBuffer(ASCIILiteral functionName, GCGLenum buffer, TypedList<TypedArrayType, T>& values, uint64_t srcOffset);
     bool validateFramebufferTarget(GCGLenum target) final;
     WebGLFramebuffer* getFramebufferBinding(GCGLenum target) final;
+    bool isDefaultFramebufferBoundForRead() const final;
+    void rebindFramebuffers() final;
     bool validateNonDefaultFramebufferAttachment(ASCIILiteral functionName, GCGLenum attachment);
     enum ActiveQueryKey { SamplesPassed = 0, PrimitivesWritten = 1, TimeElapsed = 2, NumKeys = 3 };
     std::optional<ActiveQueryKey> validateQueryTarget(ASCIILiteral functionName, GCGLenum target);
@@ -290,7 +293,7 @@ private:
 
     bool setIndexedBufferBinding(ASCIILiteral functionName, GCGLenum target, GCGLuint index, WebGLBuffer*);
 
-    IntRect getTextureSourceSubRectangle(GCGLsizei width, GCGLsizei height);
+    IntRect LEGACY_NODELETE getTextureSourceSubRectangle(GCGLsizei width, GCGLsizei height);
 
     RefPtr<WebGLTexture> validateTexImageBinding(TexImageFunctionID, GCGLenum) final;
 
@@ -315,11 +318,7 @@ private:
         ClearBufferfv,
         ClearBufferfi
     };
-    void updateBuffersToAutoClear(ClearBufferCaller, GCGLenum buffer, GCGLint drawbuffer);
-
-    RefPtr<WebGLTransformFeedback> protectedBoundTransformFeedback() const { return m_boundTransformFeedback; }
-    RefPtr<WebGLVertexArrayObjectBase> protectedBoundVertexArrayObject() const { return m_boundVertexArrayObject; }
-    RefPtr<WebGLFramebuffer> protectedFramebufferBinding() const { return m_framebufferBinding; }
+    void LEGACY_NODELETE updateBuffersToAutoClear(ClearBufferCaller, GCGLenum buffer, GCGLint drawbuffer);
 
     WebGLBindingPoint<WebGLFramebuffer> m_readFramebufferBinding;
     WebGLBindingPoint<WebGLTransformFeedback> m_boundTransformFeedback;

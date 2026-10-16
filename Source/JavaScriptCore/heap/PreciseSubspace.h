@@ -26,7 +26,6 @@
 #pragma once
 
 #include <JavaScriptCore/Subspace.h>
-#include <JavaScriptCore/SubspaceAccess.h>
 
 namespace JSC {
 
@@ -35,7 +34,7 @@ namespace JSC {
 class PreciseSubspace : public Subspace {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(PreciseSubspace, JS_EXPORT_PRIVATE);
 public:
-    JS_EXPORT_PRIVATE PreciseSubspace(CString name, Heap&, const HeapCellType&, AlignedMemoryAllocator*);
+    JS_EXPORT_PRIVATE PreciseSubspace(ASCIICString name, Heap&, const HeapCellType&, AlignedMemoryAllocator*);
     JS_EXPORT_PRIVATE ~PreciseSubspace() override;
 
     void* tryAllocate(size_t cellSize);

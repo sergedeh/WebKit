@@ -159,6 +159,14 @@ video {
     content: normal !important;
 }
 
+/* As discussed in rdar://177547927, use standard by default as we
+ iterate on the overall physically based rendering appearance */
+#if defined(ENABLE_GPU_PROCESS_MODEL) && ENABLE_GPU_PROCESS_MODEL
+model {
+    dynamic-range-limit: standard;
+}
+#endif
+
 audio {
     width: 200px;
     height: 25px;
@@ -170,51 +178,44 @@ audio:not([controls]) {
 
 /* heading elements */
 
-h1 {
+:heading {
     display: block;
+    font-weight: bold;
+}
+
+:heading(1) {
     font-size: 2em;
     margin-block: 0.67__qem 0.67em;
     margin-inline: 0;
-    font-weight: bold;
 }
 
-h2 {
-    display: block;
+:heading(2) {
     font-size: 1.5em;
     margin-block: 0.83__qem 0.83em;
     margin-inline: 0;
-    font-weight: bold;
 }
 
-h3 {
-    display: block;
+:heading(3) {
     font-size: 1.17em;
     margin-block: 1__qem 1em;
     margin-inline: 0;
-    font-weight: bold;
 }
 
-h4 {
-    display: block;
+:heading(4) {
     margin-block: 1.33__qem 1.33em;
     margin-inline: 0;
-    font-weight: bold;
 }
 
-h5 {
-    display: block;
+:heading(5) {
     font-size: .83em;
     margin-block: 1.67__qem 1.67em;
     margin-inline: 0;
-    font-weight: bold;
 }
 
-h6 {
-    display: block;
+:heading(6, 7, 8, 9) {
     font-size: .67em;
     margin-block: 2.33__qem 2.33em;
     margin-inline: 0;
-    font-weight: bold;
 }
 
 /* tables */
@@ -305,15 +306,24 @@ li {
     text-align: match-parent;
 }
 
-:is(dir, dl, menu, ol, ul) :is(dir, dl, menu, ol, ul) {
+/* The rightmost selector is written explicitly rather than with :is() to help with RuleSet bucketing.*/
+:is(dir, dl, menu, ol, ul) dir,
+:is(dir, dl, menu, ol, ul) dl,
+:is(dir, dl, menu, ol, ul) menu,
+:is(dir, dl, menu, ol, ul) ol,
+:is(dir, dl, menu, ol, ul) ul {
     margin-block: 0;
 }
 
-:is(dir, menu, ol, ul) :is(dir, menu, ul) {
+:is(dir, menu, ol, ul) dir,
+:is(dir, menu, ol, ul) menu,
+:is(dir, menu, ol, ul) ul {
     list-style-type: circle;
 }
 
-:is(dir, menu, ol, ul) :is(dir, menu, ol, ul) :is(dir, menu, ul) {
+:is(dir, menu, ol, ul) :is(dir, menu, ol, ul) dir,
+:is(dir, menu, ol, ul) :is(dir, menu, ol, ul) menu,
+:is(dir, menu, ol, ul) :is(dir, menu, ol, ul) ul {
     list-style-type: square;
 }
 
@@ -372,7 +382,7 @@ button {
 }
 
 ::-internal-writing-suggestions {
-    color: color-mix(in srgb, currentColor 50%, transparent);
+    color: color-mix(currentColor 50%, transparent);
 }
 
 input, textarea, select, button {
@@ -392,7 +402,7 @@ input, textarea, select, button {
 }
 
 input[type="hidden"] {
-    display: none;
+    display: none !important;
 }
 
 #if defined(WTF_PLATFORM_IOS_FAMILY) && WTF_PLATFORM_IOS_FAMILY
@@ -745,7 +755,7 @@ input::placeholder {
 }
 
 input:disabled, textarea:disabled {
-    color: color-mix(in hsl, CanvasText 66%, Canvas);
+    color: color-mix(CanvasText 66%, Canvas);
 }
 
 input:is([type="hidden"], [type="image"], [type="file"]) {
@@ -781,7 +791,7 @@ input:-webkit-autofill, input:-webkit-autofill-strong-password, input:-webkit-au
     color: #000000 !important;
 }
 
-:autofill {
+input:autofill {
     field-sizing: fixed !important;
 }
 
@@ -904,7 +914,7 @@ input[type="range"] {
     color: #909090;
 }
 
-input[type="range"]::-webkit-slider-container, input[type="range"]::-webkit-media-slider-container {
+input[type="range"]::-webkit-slider-container {
     flex: 1;
     box-sizing: border-box;
     display: flex;
@@ -919,7 +929,7 @@ input[type="range"]::-webkit-slider-runnable-track {
     display: block;
 }
 
-input[type="range"]::-webkit-slider-thumb, input[type="range"]::-webkit-media-slider-thumb {
+input[type="range"]::-webkit-slider-thumb {
     appearance: auto;
     box-sizing: border-box;
     display: block;
@@ -930,12 +940,6 @@ input[type="range"]::-webkit-slider-thumb, input[type="range"]::-webkit-slider-t
     background-color: white;
     border: initial;
     box-shadow: 0px 6px 13px rgba(0, 0, 0, 0.2), 0px 0.5px 4px rgba(0, 0, 0, 0.2);
-}
-
-input[type="range"]::-webkit-media-slider-thumb {
-    background-color: white;
-    border: 1px solid rgb(66, 66, 66);
-    padding: 0px;
 }
 
 input:disabled, textarea:disabled {
@@ -975,7 +979,7 @@ input[type="file"]:disabled {
 input:is([type="button"], [type="submit"], [type="reset"]):disabled,
 input[type="file"]:disabled::file-selector-button,
 button:disabled,
-select:disabled {
+select:-internal-uses-menulist:disabled {
     background-color: -apple-system-opaque-secondary-fill-disabled;
     color: -apple-system-tertiary-label;
     opacity: initial;
@@ -1032,57 +1036,277 @@ input[type="color"]::-webkit-color-swatch {
 select {
     box-sizing: border-box;
     appearance: auto;
+    border: 1px solid;
+    -webkit-rtl-ordering: logical;
+}
+
+select:-internal-uses-menulist {
 #if defined(WTF_PLATFORM_IOS_FAMILY) && WTF_PLATFORM_IOS_FAMILY
-    letter-spacing: normal;
-    word-spacing: normal;
-    line-height: normal;
-    padding-block: 0;
-    padding-inline: 0.4em;
-    color: -apple-system-blue;
-    font: 11px system-ui;
-    border: 1px solid -webkit-control-background;
-    border-radius: initial;
+    padding-inline: -internal-auto-base(0.4em, 1em 0.7em);
+    color: -internal-auto-base(-apple-system-blue, inherit);
+    font: -internal-auto-base(11px system-ui, inherit);
+    border-color: -internal-auto-base(-webkit-control-background, color-mix(currentColor 50%));
+    border-radius: -internal-auto-base(initial, 4px);
 #if defined(WTF_PLATFORM_VISION) && WTF_PLATFORM_VISION
-    background-color: rgba(0, 0, 0, 0.04);
+    background-color: -internal-auto-base(rgba(0, 0, 0, 0.04), light-dark(transparent, color-mix(currentColor 4%)));
 #else
-    background-color: -apple-system-opaque-secondary-fill;
+    background-color: -internal-auto-base(-apple-system-opaque-secondary-fill, light-dark(transparent, color-mix(currentColor 4%)));
 #endif /* defined(WTF_PLATFORM_VISION) && WTF_PLATFORM_VISION */
 #else
-    border-radius: 5px;
-    border: 1px solid;
-    color: CanvasText;
-    background-color: Canvas;
-#endif
-    align-items: center;
-    white-space: pre;
-    -webkit-rtl-ordering: logical;
+    padding-inline: -internal-auto-base(0, 1em 0.7em);
+    color: -internal-auto-base(CanvasText, inherit);
+    border-color: -internal-auto-base(revert-rule, color-mix(currentColor 50%));
+    border-radius: -internal-auto-base(5px, 4px);
+    background-color: -internal-auto-base(Canvas, light-dark(transparent, color-mix(currentColor 4%)));
+    font: -internal-auto-base(-webkit-small-control, inherit);
+#endif /* defined(WTF_PLATFORM_IOS_FAMILY) && WTF_PLATFORM_IOS_FAMILY */
+    padding-block: -internal-auto-base(0, 0.4lh);
+    align-items: unsafe center;
+    align-content: unsafe center;
+    white-space: -internal-auto-base(pre, nowrap);
     cursor: default;
+    gap: -internal-auto-base(initial, 0.65em);
+    min-block-size: -internal-auto-base(revert-rule, 24px);
+    min-inline-size: -internal-auto-base(revert-rule, 4em);
+    overflow: -internal-auto-base(revert-rule, clip);
+    text-overflow: -internal-auto-base(revert-rule, ellipsis);
+
+    -webkit-rtl-ordering: -internal-auto-base(logical, inherit);
+    text-shadow: -internal-auto-base(none, inherit);
+    letter-spacing: -internal-auto-base(normal, inherit);
+    word-spacing: -internal-auto-base(normal, inherit);
 }
 
-#if !(defined(WTF_PLATFORM_IOS_FAMILY) && WTF_PLATFORM_IOS_FAMILY)
-select:is([size], [multiple]), select[size][multiple] {
-    align-items: normal;
-    cursor: auto;
-    border: 1px inset gray;
-    border-radius: initial;
-    white-space: initial;
+select:-internal-uses-menulist:hover {
+    border-color: -internal-auto-base(revert-rule, color-mix(currentColor 70%));
 }
 
-select:is([size=""], [size="0"], [size="1"]) {
-    align-items: center;
-    border: 1px solid;
-    border-radius: 5px;
-    white-space: pre;
+select:-internal-uses-menulist:active {
+    background-color: -internal-auto-base(revert-rule, color-mix(currentColor 8%));
 }
+
+select:-internal-uses-menulist:user-invalid {
+    border-color: -internal-auto-base(revert-rule, light-dark(#dc3545, oklch(from #db2a37 calc(l + 0.17) c h)));
+}
+
+select:-internal-uses-menulist:disabled {
+#if defined(WTF_PLATFORM_IOS_FAMILY) && WTF_PLATFORM_IOS_FAMILY
+    background-color: -internal-auto-base(-apple-system-opaque-secondary-fill-disabled, color-mix(currentColor 6%));
+    color: -internal-auto-base(-apple-system-tertiary-label, color-mix(currentColor 55%));
+#else
+    background-color: -internal-auto-base(revert-rule, color-mix(currentColor 6%));
+    color: -internal-auto-base(GrayText, color-mix(currentColor 55%));
 #endif
+    border-color: -internal-auto-base(revert-rule, color-mix(currentColor 25%));
+    cursor: -internal-auto-base(revert-rule, not-allowed);
+}
+
+select:-internal-uses-menulist:not([popover]) {
+    display: -internal-auto-base(inline-block, inline-flex);
+}
+
+select:not(:-internal-uses-menulist) {
+    background-color: Canvas;
+    border-style: inset;
+    border-color: gray;
+}
+
+select:not(:-internal-uses-menulist):enabled {
+    color: CanvasText;
+}
+
+select:-internal-uses-menulist > button:first-child {
+    all: unset;
+    display: contents;
+    text-overflow: inherit;
+}
+
+select selectedcontent,
+select::field-content {
+    overflow: clip;
+    text-overflow: inherit;
+    min-inline-size: 0;
+    flex: 1;
+}
+
+select::picker-icon {
+    content: picker-down / "";
+    font: 100% system-ui;
+    text-orientation: sideways;
+    padding-inline: 0.15em;
+    transition: transform 150ms ease-out;
+}
+
+select:open::picker-icon {
+    transform: scale(-1);
+}
+
+:-internal-select-popover {
+    box-sizing: border-box;
+    border: -internal-auto-base(none, 1px solid color-mix(currentColor 50%));
+    border-radius: 4px;
+    padding: 0;
+    color: inherit;
+    background-color: -internal-auto-base(transparent, color-mix(contrast-color(currentColor), white 15%));
+    margin: 0;
+    margin-block: 4px;
+    inset: auto;
+    min-inline-size: -internal-auto-base(unset, anchor-size(self-inline));
+    min-block-size: 1lh;
+    max-block-size: calc(100svb - 8px);
+    align-self: safe normal;
+    overflow: auto;
+    overscroll-behavior: contain;
+    box-shadow:
+        0 4px 6px -1px light-dark(rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.35)),
+        0 8px 16px -4px light-dark(rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0.25));
+    position-area: -internal-auto-base(unset, self-block-end span-self-inline-end);
+    position-try-order: -internal-auto-base(unset, most-block-size);
+    position-try-fallbacks: -internal-auto-base(unset, {
+        flip-block, flip-inline, flip-block flip-inline });
+    display: -internal-auto-base(contents, none);
+}
+
+:-internal-select-popover:popover-open {
+    display: block;
+}
+
+select:-internal-uses-menulist option {
+    min-inline-size: -internal-auto-base(revert-rule, 24px);
+    min-block-size: -internal-auto-base(revert-rule, max(24px, 1lh));
+    padding-block: -internal-auto-base(revert-rule, 0.4lh);
+    padding-inline: -internal-auto-base(revert-rule, 0.75em 1.1em);
+    display: -internal-auto-base(revert-rule, flex);
+    align-items: center;
+    gap: -internal-auto-base(revert-rule, 0.5em);
+}
+
+select option {
+    white-space: nowrap;
+    box-sizing: border-box;
+    outline-offset: -internal-auto-base(revert-rule, inset);
+}
+
+select option:hover,
+select option:focus-visible {
+    background-color: -internal-auto-base(revert-rule, color-mix(currentColor 10%));
+}
+
+select option:active {
+    background-color: -internal-auto-base(revert-rule, color-mix(currentColor 15%));
+}
+
+select option:disabled {
+    color: -internal-auto-base(revert-rule, color-mix(currentColor 55%));
+    background: -internal-auto-base(revert-rule, transparent);
+    cursor: -internal-auto-base(revert-rule, not-allowed);
+}
+
+select option::checkmark {
+    content: "\2713" / "";
+    font: 100% system-ui;
+}
+
+select option:not(:checked)::checkmark {
+    visibility: hidden;
+}
 
 optgroup {
+    display: block;
     font-weight: bolder;
+    box-sizing: border-box;
+}
+
+select:-internal-uses-menulist :is(optgroup, option) + optgroup,
+select:-internal-uses-menulist optgroup + option {
+    border-block-start: -internal-auto-base(revert-rule, 1px solid color-mix(currentColor 12%));
 }
 
 option {
+    display: block;
+}
+
+select optgroup option {
     font-weight: normal;
-    white-space: nowrap;
+}
+
+select optgroup legend,
+optgroup::-internal-optgroup-label {
+    box-sizing: border-box;
+    padding-block: 0.6em 0.15em;
+    padding-inline: 0.75em;
+    min-block-size: 1lh;
+    font-size: 0.85em;
+    font-weight: 400;
+    color: color-mix(currentColor 70%);
+    cursor: default;
+}
+
+@media (prefers-contrast) {
+    :-internal-select-popover {
+        background-color: Canvas;
+        color: CanvasText;
+        border-color: CanvasText;
+    }
+
+    select option:is(:hover, :focus-visible, :active) {
+        background-color: SelectedItem;
+        color: SelectedItemText;
+    }
+    select option:disabled,
+    select optgroup legend,
+    optgroup::-internal-optgroup-label {
+        color: GrayText;
+    }
+}
+
+select::-internal-fallback-popup-menu {
+    min-width: 200px;
+    background-color: Canvas;
+    color: CanvasText;
+    border: 1px solid color-mix(in srgb, CanvasText 25%, transparent);
+    border-radius: 6px;
+    box-shadow: 0 4px 12px color-mix(in srgb, CanvasText 15%, transparent);
+    padding-block: 4px;
+    overflow: auto;
+    max-height: 50vh;
+    box-sizing: border-box;
+    z-index: 2147483647;
+}
+
+select::-internal-fallback-popup-menu-item,
+select::-internal-fallback-popup-menu-item-selected {
+    padding-block: 4px;
+    padding-inline: 12px;
+    cursor: default;
+    border-radius: 4px;
+    margin-inline: 4px;
+}
+
+select::-internal-fallback-popup-menu-item-selected {
+    background-color: color-mix(in srgb, Highlight 25%, Canvas);
+    font-weight: bold;
+}
+
+select::-internal-fallback-popup-menu-item:hover,
+select::-internal-fallback-popup-menu-item-selected:hover {
+    /* Items can have custom colors set but we want to always overrule them. */
+    background-color: Highlight !important;
+    color: HighlightText !important;
+}
+
+select::-internal-fallback-popup-menu-group-label {
+    padding-block: 4px;
+    padding-inline: 12px;
+    font-weight: bold;
+    color: color-mix(in srgb, CanvasText 60%, transparent);
+}
+
+select::-internal-fallback-popup-menu-separator {
+    border: none;
+    border-top: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
+    margin-block: 4px;
+    margin-inline: 8px;
 }
 
 output {
@@ -1253,28 +1477,8 @@ nobr {
 
 /* states */
 
-:focus-visible {
-#if defined(WTF_PLATFORM_IOS_FAMILY) && WTF_PLATFORM_IOS_FAMILY
-    outline: auto 3px -webkit-focus-ring-color;
-#else
-    outline: auto 5px -webkit-focus-ring-color;
-#endif
-}
-
-/* Read-only text fields do not show a focus ring but do still receive focus */
-html:focus-visible, body:focus-visible, input[readonly]:focus, embed:focus-visible, iframe:focus-visible, object:focus-visible {
-    outline: none;
-}
-
-#if !defined(WTF_PLATFORM_IOS_FAMILY) || !WTF_PLATFORM_IOS_FAMILY
-input:focus-visible, textarea:focus-visible, select:focus-visible {
-    outline-offset: -2px;
-}
-#endif
-
-input:is([type="button"], [type="checkbox"], [type="file"], [type="hidden"], [type="image"], [type="radio"], [type="reset"], [type="search"], [type="submit"]):focus-visible,
-input[type="file"]:focus-visible::file-selector-button {
-    outline-offset: 0;
+:not(html, body, input[readonly], applet, embed, iframe, object):focus-visible {
+    outline-style: auto;
 }
 
 a:any-link {
@@ -1337,7 +1541,9 @@ details[open] > summary:first-of-type {
 /* other elements */
 
 frameset, frame {
-    display: block;
+    position: static !important;
+    display: block !important;
+    float: none !important;
 }
 
 frameset {
@@ -1348,7 +1554,7 @@ iframe {
     border: 2px inset;
 }
 
-hr, bdi, output {
+hr, bdi, legend, output {
     unicode-bidi: isolate;
 }
 
@@ -1360,6 +1566,12 @@ bdo, bdo[dir] {
 
 slot {
     display: contents;
+}
+
+/* https://html.spec.whatwg.org/multipage/rendering.html#img-contain-size */
+img:is([sizes="auto" i], [sizes^="auto," i]) {
+    contain: size !important;
+    contain-intrinsic-size: 300px 150px;
 }
 
 #if defined(WTF_PLATFORM_IOS_FAMILY) && WTF_PLATFORM_IOS_FAMILY

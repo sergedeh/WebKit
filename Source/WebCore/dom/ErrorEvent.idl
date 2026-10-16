@@ -29,22 +29,22 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// https://html.spec.whatwg.org/multipage/webappapis.html#errorevent
 [
     Exposed=*,
     JSCustomMarkFunction,
 ] interface ErrorEvent : Event {
-    constructor([AtomString] DOMString type, optional ErrorEventInit eventInitDict = {});
+    [CallWith=CurrentGlobalObject] constructor([AtomString] DOMString type, optional ErrorEventInit eventInitDict = {});
 
     readonly attribute DOMString message;
     readonly attribute USVString filename;
     readonly attribute unsigned long lineno;
     readonly attribute unsigned long colno;
-    [CallWith=CurrentGlobalObject] readonly attribute any error;
+    [CustomGetter] readonly attribute any error;
 };
 
-[
-    LegacyNativeDictionaryRequiredInterfaceNullability,
-] dictionary ErrorEventInit : EventInit {
+// https://html.spec.whatwg.org/multipage/webappapis.html#erroreventinit
+dictionary ErrorEventInit : EventInit {
     DOMString message = "";
     USVString filename = "";
     unsigned long lineno = 0;

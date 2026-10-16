@@ -69,8 +69,8 @@ struct WebsiteData {
 
     HashSet<String> hostNamesWithHSTSCache;
     HashSet<WebCore::RegistrableDomain> registrableDomainsWithResourceLoadStatistics;
-    static WebsiteDataProcessType ownerProcess(WebsiteDataType);
-    static OptionSet<WebsiteDataType> filter(OptionSet<WebsiteDataType>, WebsiteDataProcessType);
+    static WebsiteDataProcessType LEGACY_NODELETE ownerProcess(WebsiteDataType);
+    static OptionSet<WebsiteDataType> LEGACY_NODELETE filter(OptionSet<WebsiteDataType>, WebsiteDataProcessType);
 };
 
 }

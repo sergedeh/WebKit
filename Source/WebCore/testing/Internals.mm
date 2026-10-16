@@ -55,7 +55,8 @@
 #import <pal/spi/cocoa/NSAccessibilitySPI.h>
 #import <wtf/cf/TypeCastsCF.h>
 #import <wtf/cocoa/NSURLExtras.h>
-#import <wtf/spi/darwin/SandboxSPI.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
+#import <wtf/darwin/DarwinExtras.h>
 #import <wtf/unicode/CharacterNames.h>
 
 #if PLATFORM(IOS_FAMILY)
@@ -64,17 +65,19 @@
 
 #if ENABLE(DATA_DETECTION)
 #import <pal/cocoa/DataDetectorsCoreSoftLink.h>
+
+SPECIALIZE_OBJC_TYPE_TRAITS(DDScannerResult, PAL::getDDScannerResultClassSingleton())
 #endif
 
 #import <pal/cocoa/VisionKitCoreSoftLink.h>
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
 
 @interface FakeImageAnalysisResult : NSObject
 - (instancetype)initWithString:(NSString *)fullText;
 @end
 
-static NSRange clampRange(NSRange rangeToClamp, NSRange extentRange)
+static NSRange LEGACY_NODELETE clampRange(NSRange rangeToClamp, NSRange extentRange)
 {
     NSUInteger minRange1 = rangeToClamp.location;
     NSUInteger maxRange1 = NSMaxRange(rangeToClamp);
@@ -121,7 +124,7 @@ static NSRange clampRange(NSRange rangeToClamp, NSRange extentRange)
 
 @end
 
-#endif // ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#endif // ENABLE(IMAGE_ANALYSIS)
 
 #if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebCoreInternalsAdditions.mm>)
 #import <WebKitAdditions/WebCoreInternalsAdditions.mm>
@@ -199,7 +202,7 @@ void Internals::setUsesOverlayScrollbars(bool enabled)
     if (!localFrame)
         return;
 
-    localFrame->protectedView()->scrollbarStyleDidChange();
+    protect(localFrame->view())->scrollbarStyleDidChange();
 }
 
 #endif
@@ -250,7 +253,7 @@ bool Internals::hasSandboxIOKitOpenAccessToClass(const String& process, const St
     UNUSED_PARAM(process); // TODO: add support for getting PID of other WebKit processes.
     pid_t pid = getpid();
 
-    return !sandbox_check(pid, "iokit-open", static_cast<enum sandbox_filter_type>(SANDBOX_FILTER_IOKIT_CONNECTION | SANDBOX_CHECK_NO_REPORT), ioKitClass.utf8().data());
+    return !sandboxCheck(pid, "iokit-open", static_cast<enum sandbox_filter_type>(SANDBOX_FILTER_IOKIT_CONNECTION | SANDBOX_CHECK_NO_REPORT), ioKitClass.utf8());
 }
 
 #if ENABLE(DATA_DETECTION)
@@ -268,7 +271,7 @@ DDScannerResult *Internals::fakeDataDetectorResultForTesting()
         if (!CFArrayGetCount(results.get()))
             return nil;
 
-        return { [[PAL::getDDScannerResultClassSingleton() resultsFromCoreResults:results.get()] firstObject] };
+        return { checked_objc_cast<DDScannerResult>([[PAL::getDDScannerResultClassSingleton() resultsFromCoreResults:results.get()] firstObject]) };
     }();
     return result->get();
 }
@@ -281,7 +284,7 @@ RefPtr<SharedBuffer> Internals::pngDataForTesting()
     return SharedBuffer::createWithContentsOfFile([webCoreBundle pathForResource:@"missingImage" ofType:@"png"]);
 }
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
 
 RetainPtr<VKCImageAnalysis> Internals::fakeImageAnalysisResultForTesting(const Vector<ImageOverlayLine>& lines)
 {
@@ -302,14 +305,14 @@ RetainPtr<VKCImageAnalysis> Internals::fakeImageAnalysisResultForTesting(const V
     return adoptNS((id)[[FakeImageAnalysisResult alloc] initWithString:fullText.createNSString().get()]);
 }
 
-#endif // ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#endif // ENABLE(IMAGE_ANALYSIS)
 
 #if ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
 bool Internals::emitWebCoreLogs(unsigned logCount, bool useMainThread) const
 {
     auto blockPtr = makeBlockPtr([logCount] {
         for (unsigned i = 0; i < logCount; i++)
-            RELEASE_LOG_FORWARDABLE(Testing, WEBCORE_TEST_LOG, i);
+            RELEASE_LOG_FORWARDABLE(Testing, WebCoreTestLog, i);
     });
     if (useMainThread)
         dispatch_async(mainDispatchQueueSingleton(), blockPtr.get());
@@ -322,7 +325,7 @@ bool Internals::emitLogs(const String& logString, unsigned logCount, bool useMai
 {
     auto blockPtr = makeBlockPtr([logString, logCount] {
         for (unsigned i = 0; i < logCount; i++)
-            RELEASE_LOG(Testing, "%s", logString.utf8().data());
+            RELEASE_LOG(Testing, "%s", logString.utf8());
     });
     if (useMainThread)
         dispatch_async(mainDispatchQueueSingleton(), blockPtr.get());

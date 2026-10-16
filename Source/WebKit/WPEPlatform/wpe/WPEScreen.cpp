@@ -26,6 +26,7 @@
 #include "config.h"
 #include "WPEScreen.h"
 
+#include <array>
 #include <wtf/glib/WTFGType.h>
 
 #if USE(LIBDRM)
@@ -41,6 +42,14 @@
 /**
  * WPEScreen:
  *
+ * A monitor connected to a [class@Display].
+ *
+ * [class@Screen] is an abstract class that platform implementations derive to
+ * represent a monitor. Enumerate the screens of a display with
+ * [method@Display.get_n_screens] and [method@Display.get_screen].
+ *
+ * A screen exposes its position, size, physical size, scale and refresh rate,
+ * and provides a [class@ScreenSyncObserver] to be notified on vertical sync.
  */
 struct _WPEScreenPrivate {
     guint32 id;
@@ -170,8 +179,8 @@ static std::optional<uint32_t> findCrtc(WPEScreen* screen, int fd)
     std::optional<uint32_t> crtcIndex;
     uint32_t widthMM = wpe_screen_get_physical_width(screen);
     uint32_t heightMM = wpe_screen_get_physical_height(screen);
-    for (int i = 0; i < resources->count_connectors && !crtcIndex; ++i) {
-        auto* connector = drmModeGetConnector(fd, resources->connectors[i]);
+    for (auto connectorId : unsafeMakeSpan(resources->connectors, resources->count_connectors)) {
+        auto* connector = drmModeGetConnector(fd, connectorId);
         if (!connector)
             continue;
 
@@ -187,8 +196,8 @@ static std::optional<uint32_t> findCrtc(WPEScreen* screen, int fd)
 
         // FIXME: if there are multiple connectors matching the size, check other properties.
         if (drmModeEncoder* encoder = drmModeGetEncoder(fd, connector->encoder_id)) {
-            for (int i = 0; i < resources->count_crtcs; ++i) {
-                if (resources->crtcs[i] == encoder->crtc_id) {
+            for (const auto& [i, crtcId] : unsafeMakeSpan(resources->crtcs, resources->count_crtcs) | std::views::enumerate) {
+                if (crtcId == encoder->crtc_id) {
                     crtcIndex = i;
                     break;
                 }
@@ -196,6 +205,9 @@ static std::optional<uint32_t> findCrtc(WPEScreen* screen, int fd)
             drmModeFreeEncoder(encoder);
         }
         drmModeFreeConnector(connector);
+
+        if (crtcIndex)
+            break;
     }
     drmModeFreeResources(resources);
 
@@ -204,8 +216,8 @@ static std::optional<uint32_t> findCrtc(WPEScreen* screen, int fd)
 
 static void wpeScreenTryEnsureSyncObserver(WPEScreen* screen)
 {
-    drmDevicePtr devices[64];
-    const int devicesNum = drmGetDevices2(0, devices, std::size(devices));
+    std::array<drmDevicePtr, 64> devices;
+    const int devicesNum = drmGetDevices2(0, devices.data(), devices.size());
     if (devicesNum <= 0)
         return;
 
@@ -225,7 +237,7 @@ static void wpeScreenTryEnsureSyncObserver(WPEScreen* screen)
         } else
             g_debug("WPEScreen %u: Failed to find a CRTC for device %s", screen->priv->id, devices[i]->nodes[DRM_NODE_PRIMARY]);
     }
-    drmFreeDevices(devices, devicesNum);
+    drmFreeDevices(devices.data(), devicesNum);
 
     if (!screen->priv->syncObserver)
         g_debug("WPEScreen %u: Could not create a WPEScreenSyncObserverDRM", screen->priv->id);
@@ -373,7 +385,7 @@ static void wpe_screen_class_init(WPEScreenClass* screenClass)
  * @screen: a #WPEScreen
  *
  * Get the @screen identifier.
- * The idenifier is a non-zero value to uniquely identify a #WPEScreen.
+ * The identifier is a non-zero value to uniquely identify a #WPEScreen.
  *
  * Returns: the screen identifier
  */

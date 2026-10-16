@@ -105,6 +105,57 @@ SOFT_LINK_CLASS(UIKit, UIPhysicalKeyboardEvent)
 
 @end
 
+#if HAVE(UIFINDINTERACTION)
+@interface WTRTextSearchAggregator : NSObject <UITextSearchAggregator>
+- (instancetype)initWithCompletionHandler:(void (^)(NSUInteger matchCount))completionHandler;
+@end
+
+@implementation WTRTextSearchAggregator {
+    RetainPtr<NSMutableOrderedSet<UITextRange *>> _foundRanges;
+    BlockPtr<void(NSUInteger)> _completionHandler;
+}
+
+- (instancetype)initWithCompletionHandler:(void (^)(NSUInteger))completionHandler
+{
+    if (!(self = [super init]))
+        return nil;
+
+    _foundRanges = adoptNS([[NSMutableOrderedSet alloc] init]);
+    _completionHandler = makeBlockPtr(completionHandler);
+
+    return self;
+}
+
+- (NSOrderedSet<UITextRange *> *)allFoundRanges
+{
+    return _foundRanges.get();
+}
+
+- (void)foundRange:(UITextRange *)range forSearchString:(NSString *)string inDocument:(UITextSearchDocumentIdentifier)document
+{
+    if (range)
+        [_foundRanges addObject:range];
+}
+
+- (void)finishedSearching
+{
+    if (_completionHandler)
+        _completionHandler([_foundRanges count]);
+}
+
+- (void)invalidateFoundRange:(UITextRange *)range inDocument:(UITextSearchDocumentIdentifier)document
+{
+    [_foundRanges removeObject:range];
+}
+
+- (void)invalidate
+{
+    [_foundRanges removeAllObjects];
+}
+
+@end
+#endif // HAVE(UIFINDINTERACTION)
+
 namespace WTR {
 
 #if HAVE(UI_TEXT_SELECTION_DISPLAY_INTERACTION)
@@ -286,9 +337,9 @@ void UIScriptControllerIOS::retrieveSpeakSelectionContent(JSValueRef callback)
     }).get()];
 }
 
-JSRetainPtr<JSStringRef> UIScriptControllerIOS::accessibilitySpeakSelectionContent() const
+RefPtr<OpaqueJSString> UIScriptControllerIOS::accessibilitySpeakSelectionContent() const
 {
-    return adopt(JSStringCreateWithCFString((CFStringRef)webView().accessibilitySpeakSelectionContent));
+    return adoptRef(JSStringCreateWithCFString((CFStringRef)webView().accessibilitySpeakSelectionContent));
 }
 
 void UIScriptControllerIOS::simulateAccessibilitySettingsChangeNotification(JSValueRef callback)
@@ -331,6 +382,18 @@ void UIScriptControllerIOS::touchDownAtPoint(long x, long y, long touchCount, JS
 
     auto location = globalToContentCoordinates(webView(), x, y);
     [[HIDEventGenerator sharedHIDEventGenerator] touchDown:location touchCount:touchCount completionBlock:makeBlockPtr([this, protectedThis = Ref { *this }, callbackID] {
+        if (!m_context)
+            return;
+        m_context->asyncTaskComplete(callbackID);
+    }).get()];
+}
+
+void UIScriptControllerIOS::touchDownAtPointWithMajorRadius(long x, long y, float majorRadius, float majorRadiusTolerance, JSValueRef callback)
+{
+    unsigned callbackID = m_context->prepareForAsyncTask(callback, CallbackTypeNonPersistent);
+
+    auto location = globalToContentCoordinates(webView(), x, y);
+    [[HIDEventGenerator sharedHIDEventGenerator] touchDown:location majorRadius:majorRadius majorRadiusTolerance:majorRadiusTolerance completionBlock:makeBlockPtr([this, protectedThis = Ref { *this }, callbackID] {
         if (!m_context)
             return;
         m_context->asyncTaskComplete(callbackID);
@@ -718,19 +781,19 @@ void UIScriptControllerIOS::dismissFilePicker(JSValueRef callback)
     }).get()];
 }
 
-JSRetainPtr<JSStringRef> UIScriptControllerIOS::selectFormPopoverTitle() const
+RefPtr<OpaqueJSString> UIScriptControllerIOS::selectFormPopoverTitle() const
 {
-    return adopt(JSStringCreateWithCFString((CFStringRef)webView().selectFormPopoverTitle));
+    return adoptRef(JSStringCreateWithCFString((CFStringRef)webView().selectFormPopoverTitle));
 }
 
-JSRetainPtr<JSStringRef> UIScriptControllerIOS::textContentType() const
+RefPtr<OpaqueJSString> UIScriptControllerIOS::textContentType() const
 {
-    return adopt(JSStringCreateWithCFString((CFStringRef)(webView().textContentTypeForTesting ?: @"")));
+    return adoptRef(JSStringCreateWithCFString((CFStringRef)(webView().textContentTypeForTesting ?: @"")));
 }
 
-JSRetainPtr<JSStringRef> UIScriptControllerIOS::formInputLabel() const
+RefPtr<OpaqueJSString> UIScriptControllerIOS::formInputLabel() const
 {
-    return adopt(JSStringCreateWithCFString((CFStringRef)webView().formInputLabel));
+    return adoptRef(JSStringCreateWithCFString((CFStringRef)webView().formInputLabel));
 }
 
 void UIScriptControllerIOS::selectFormAccessoryPickerRow(long rowIndex)
@@ -919,6 +982,15 @@ double UIScriptControllerIOS::maximumZoomScale() const
     return webView().scrollView.maximumZoomScale;
 }
 
+bool UIScriptControllerIOS::enhancedWindowingEnabled() const
+{
+#if HAVE(UIKIT_RESIZABLE_WINDOWS)
+    return webView().window.windowScene._enhancedWindowingEnabled;
+#else
+    return false;
+#endif
+}
+
 std::optional<bool> UIScriptControllerIOS::stableStateOverride() const
 {
     TestRunnerWKWebView *webView = this->webView();
@@ -1090,19 +1162,25 @@ JSObjectRef UIScriptControllerIOS::inputViewBounds() const
     return JSValueToObject(m_context->jsContext(), [JSValue valueWithObject:toNSDictionary(webView()._inputViewBoundsInWindow) inContext:[JSContext contextWithJSGlobalContextRef:m_context->jsContext()]].JSValueRef, nullptr);
 }
 
-JSRetainPtr<JSStringRef> UIScriptControllerIOS::scrollingTreeAsText() const
+JSObjectRef UIScriptControllerIOS::inputViewBoundsInWebView() const
 {
-    return adopt(JSStringCreateWithCFString((CFStringRef)[webView() _scrollingTreeAsText]));
+    CGRect boundsInWebView = [webView() convertRect:webView()._inputViewBoundsInWindow fromView:nil];
+    return JSValueToObject(m_context->jsContext(), [JSValue valueWithObject:toNSDictionary(boundsInWebView) inContext:[JSContext contextWithJSGlobalContextRef:m_context->jsContext()]].JSValueRef, nullptr);
 }
 
-JSRetainPtr<JSStringRef> UIScriptControllerIOS::uiViewTreeAsText() const
+RefPtr<OpaqueJSString> UIScriptControllerIOS::scrollingTreeAsText() const
 {
-    return adopt(JSStringCreateWithCFString((CFStringRef)[webView() _uiViewTreeAsText]));
+    return adoptRef(JSStringCreateWithCFString((CFStringRef)[webView() _scrollingTreeAsText]));
 }
 
-JSRetainPtr<JSStringRef> UIScriptControllerIOS::uiViewTreeAsTextForViewWithLayerID(unsigned long long layerID) const
+RefPtr<OpaqueJSString> UIScriptControllerIOS::uiViewTreeAsText() const
 {
-    return adopt(JSStringCreateWithCFString((CFStringRef)[webView() _uiViewTreeAsTextForViewWithLayerID:layerID]));
+    return adoptRef(JSStringCreateWithCFString((CFStringRef)[webView() _uiViewTreeAsText]));
+}
+
+RefPtr<OpaqueJSString> UIScriptControllerIOS::uiViewTreeAsTextForViewWithLayerID(unsigned long long layerID) const
+{
+    return adoptRef(JSStringCreateWithCFString((CFStringRef)[webView() _uiViewTreeAsTextForViewWithLayerID:layerID]));
 }
 
 bool UIScriptControllerIOS::mayContainEditableElementsInRect(unsigned x, unsigned y, unsigned width, unsigned height)
@@ -1261,6 +1339,16 @@ void UIScriptControllerIOS::setWillStartInputSessionCallback(JSValueRef callback
         if (!m_context)
             return;
         m_context->fireCallback(CallbackTypeWillStartInputSession);
+    }).get();
+}
+
+void UIScriptControllerIOS::setDidStartInputSessionCallback(JSValueRef callback)
+{
+    UIScriptController::setDidStartInputSessionCallback(callback);
+    webView().didStartInputSessionCallback = makeBlockPtr([this, protectedThis = Ref { *this }] {
+        if (!m_context)
+            return;
+        m_context->fireCallback(CallbackTypeDidStartInputSession);
     }).get();
 }
 
@@ -1443,6 +1531,20 @@ void UIScriptControllerIOS::activateDataListSuggestion(unsigned index, JSValueRe
     }).get());
 }
 
+void UIScriptControllerIOS::insertAutofillSuggestion(JSStringRef username, JSStringRef password, JSValueRef callback)
+{
+    RetainPtr contentView = static_cast<id<UITextInputPrivate>>(platformContentView());
+    RetainPtr suggestion = [UITextAutofillSuggestion autofillSuggestionWithUsername:toWTFString(username).createNSString().get() password:toWTFString(password).createNSString().get()];
+    [contentView insertTextSuggestion:suggestion];
+
+    unsigned callbackID = m_context->prepareForAsyncTask(callback, CallbackTypeNonPersistent);
+    [webView() _doAfterNextPresentationUpdate:makeBlockPtr([this, protectedThis = Ref { *this }, callbackID] {
+        if (!m_context)
+            return;
+        m_context->asyncTaskComplete(callbackID);
+    }).get()];
+}
+
 bool UIScriptControllerIOS::isShowingDataListSuggestions() const
 {
     return [webView() _isShowingDataListSuggestions];
@@ -1452,6 +1554,12 @@ void UIScriptControllerIOS::setSelectedColorForColorPicker(double red, double gr
 {
     UIColor *color = [UIColor colorWithRed:red green:green blue:blue alpha:1.0f];
     [webView() setSelectedColorForColorPicker:color];
+}
+
+bool UIScriptControllerIOS::isShowingColorPicker() const
+{
+    RetainPtr<UIViewController> presentedViewController = webView().window.rootViewController.presentedViewController;
+    return [presentedViewController.get() isKindOfClass:[UIColorPickerViewController class]];
 }
 
 void UIScriptControllerIOS::setKeyboardInputModeIdentifier(JSStringRef identifier)
@@ -1471,7 +1579,7 @@ void UIScriptControllerIOS::setFocusStartsInputSessionPolicy(JSStringRef policyJ
     else if (policyString == "auto"_s)
         webView.get().focusStartsInputSessionPolicy = _WKFocusStartsInputSessionPolicyAuto;
     else
-        NSLog(@"setFocusStartsInputSessionPolicy received an invalid policy `%s`.", policyString.utf8().data());
+        SAFE_WTFLOGALWAYS("setFocusStartsInputSessionPolicy received an invalid policy `%s`.", policyString.utf8());
 }
 
 // FIXME: Write this in terms of HIDEventGenerator once we know how to reset caps lock state
@@ -1511,7 +1619,7 @@ bool UIScriptControllerIOS::isAnimatingDragCancel() const
     return webView()._animatingDragCancel;
 }
 
-JSRetainPtr<JSStringRef> UIScriptControllerIOS::selectionCaretBackgroundColor() const
+RefPtr<OpaqueJSString> UIScriptControllerIOS::selectionCaretBackgroundColor() const
 {
     UIColor *backgroundColor = nil;
 #if HAVE(UI_TEXT_SELECTION_DISPLAY_INTERACTION)
@@ -1523,7 +1631,7 @@ JSRetainPtr<JSStringRef> UIScriptControllerIOS::selectionCaretBackgroundColor() 
         return nil;
 
     auto serialization = WebCoreTestSupport::serializationForCSS(backgroundColor).createCFString();
-    return adopt(JSStringCreateWithCFString(serialization.get()));
+    return adoptRef(JSStringCreateWithCFString(serialization.get()));
 }
 
 JSObjectRef UIScriptControllerIOS::tapHighlightViewRect() const
@@ -1565,6 +1673,13 @@ void UIScriptControllerIOS::setHardwareKeyboardAttached(bool attached)
 {
     GSEventSetHardwareKeyboardAttached(attached, 0);
     TestController::singleton().setIsInHardwareKeyboardMode(attached);
+    if (attached)
+        TestController::singleton().restoreDefaultKeyboardInputModeIfNeeded();
+}
+
+void UIScriptControllerIOS::setShowKeyboardAfterElementFocusDelay(double delay)
+{
+    webView().showKeyboardAfterElementFocusDelay = delay;
 }
 
 void UIScriptControllerIOS::setAllowsViewportShrinkToFit(bool allows)
@@ -1643,6 +1758,26 @@ void UIScriptControllerIOS::presentFindNavigator()
 #endif
 }
 
+void UIScriptControllerIOS::findStringMatchesUsingFindInteraction(JSStringRef string, JSValueRef callback)
+{
+#if HAVE(UIFINDINTERACTION)
+    unsigned callbackID = m_context->prepareForAsyncTask(callback, CallbackTypeNonPersistent);
+
+    RetainPtr aggregator = adoptNS([[WTRTextSearchAggregator alloc] initWithCompletionHandler:makeBlockPtr([this, protectedThis = Ref { *this }, callbackID](NSUInteger matchCount) {
+        if (!m_context)
+            return;
+        JSValueRef matchCountValue = JSValueMakeNumber(m_context->jsContext(), matchCount);
+        m_context->asyncTaskComplete(callbackID, { matchCountValue });
+    }).get()]);
+
+    RetainPtr searchOptions = adoptNS([[UITextSearchOptions alloc] init]);
+    [(id<UITextSearching>)webView() performTextSearchWithQueryString:toWTFString(string).createNSString().get() usingOptions:searchOptions.get() resultAggregator:aggregator.get()];
+#else
+    UNUSED_PARAM(string);
+    UNUSED_PARAM(callback);
+#endif
+}
+
 void UIScriptControllerIOS::dismissFindNavigator()
 {
 #if HAVE(UIFINDINTERACTION)
@@ -1709,15 +1844,15 @@ UITextSelectionDisplayInteraction *UIScriptControllerIOS::textSelectionDisplayIn
 #endif
 
 
-JSRetainPtr<JSStringRef> UIScriptControllerIOS::scrollbarStateForScrollingNodeID(unsigned long long scrollingNodeID, unsigned long long processID, bool isVertical) const
+RefPtr<OpaqueJSString> UIScriptControllerIOS::scrollbarStateForScrollingNodeID(unsigned long long scrollingNodeID, unsigned long long processID, bool isVertical) const
 {
-    return adopt(JSStringCreateWithCFString((CFStringRef) [webView() _scrollbarState:scrollingNodeID processID:processID isVertical:isVertical]));
+    return adoptRef(JSStringCreateWithCFString((CFStringRef) [webView() _scrollbarState:scrollingNodeID processID:processID isVertical:isVertical]));
 }
 
-JSRetainPtr<JSStringRef> UIScriptControllerIOS::frontmostViewAtPoint(int x, int y)
+RefPtr<OpaqueJSString> UIScriptControllerIOS::frontmostViewAtPoint(int x, int y)
 {
     if (RetainPtr view = [platformContentView() _wtr_frontmostViewAtPoint:CGPointMake(x, y)])
-        return adopt(JSStringCreateWithUTF8CString(class_getName([view class])));
+        return adoptRef(JSStringCreateWithUTF8CString(class_getName([view class])));
 
     return nil;
 }

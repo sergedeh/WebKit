@@ -23,6 +23,7 @@
 #include "api/rtp_sender_interface.h"
 #include "api/scoped_refptr.h"
 #include "api/test/rtc_error_matchers.h"
+#include "api/units/time_delta.h"
 #include "api/video/video_source_interface.h"
 #include "call/adaptation/test/fake_resource.h"
 #include "pc/test/fake_periodic_video_source.h"
@@ -58,8 +59,8 @@ TrackWithPeriodicSource CreateTrackWithPeriodicSource(
     Clock& clock,
     scoped_refptr<PeerConnectionFactoryInterface> factory) {
   FakePeriodicVideoSource::Config periodic_track_source_config;
-  periodic_track_source_config.frame_interval_ms = 100;
-  periodic_track_source_config.timestamp_offset_ms = clock.TimeInMilliseconds();
+  periodic_track_source_config.frame_interval = TimeDelta::Millis(100);
+  periodic_track_source_config.timestamp_offset = clock.CurrentTime();
   scoped_refptr<FakePeriodicVideoTrackSource> periodic_track_source =
       make_ref_counted<FakePeriodicVideoTrackSource>(
           periodic_track_source_config, /* remote */ false);
@@ -86,17 +87,14 @@ class PeerConnectionAdaptationIntegrationTest : public ::testing::Test {
   PeerConnectionAdaptationIntegrationTest()
       : env_(CreateTestEnvironment()),
         virtual_socket_server_(),
-        network_thread_(new Thread(&virtual_socket_server_)),
-        worker_thread_(Thread::Create()) {
+        network_thread_(new Thread(&virtual_socket_server_)) {
     RTC_CHECK(network_thread_->Start());
-    RTC_CHECK(worker_thread_->Start());
   }
 
   scoped_refptr<PeerConnectionTestWrapper> CreatePcWrapper(const char* name) {
     scoped_refptr<PeerConnectionTestWrapper> pc_wrapper =
         make_ref_counted<PeerConnectionTestWrapper>(
-            name, env_, &virtual_socket_server_, network_thread_.get(),
-            worker_thread_.get());
+            name, env_, &virtual_socket_server_, network_thread_.get());
     PeerConnectionInterface::RTCConfiguration config;
     config.sdp_semantics = SdpSemantics::kUnifiedPlan;
     EXPECT_TRUE(pc_wrapper->CreatePc(config, CreateBuiltinAudioEncoderFactory(),
@@ -108,7 +106,6 @@ class PeerConnectionAdaptationIntegrationTest : public ::testing::Test {
   const Environment env_;
   VirtualSocketServer virtual_socket_server_;
   std::unique_ptr<Thread> network_thread_;
-  std::unique_ptr<Thread> worker_thread_;
 };
 
 TEST_F(PeerConnectionAdaptationIntegrationTest,

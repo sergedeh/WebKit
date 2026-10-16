@@ -115,8 +115,6 @@ private:
     RemoteDevice& operator=(RemoteDevice&&) = delete;
 
     WebCore::WebGPU::Device& backing() { return m_backing; }
-    Ref<WebGPU::ObjectHeap> protectedObjectHeap() const;
-    Ref<RemoteGPU> protectedGPU() const { return m_gpu; }
 
     void didReceiveStreamMessage(IPC::StreamServerConnection&, IPC::Decoder&) final;
 
@@ -138,7 +136,9 @@ private:
 
     void createShaderModule(const WebGPU::ShaderModuleDescriptor&, WebGPUIdentifier);
     void createComputePipeline(const WebGPU::ComputePipelineDescriptor&, WebGPUIdentifier);
+    void createComputePipelineWithPipelineLayoutFromPipeline(const WebGPU::ComputePipelineDescriptor&, WebGPUIdentifier, WebGPUIdentifier pipelineToReplaceIdentifier, CompletionHandler<void(bool)>&&);
     void createRenderPipeline(const WebGPU::RenderPipelineDescriptor&, WebGPUIdentifier);
+    void createRenderPipelineWithPipelineLayoutFromPipeline(const WebGPU::RenderPipelineDescriptor&, WebGPUIdentifier, WebGPUIdentifier pipelineToReplaceIdentifier, CompletionHandler<void(bool)>&&);
     void createComputePipelineAsync(const WebGPU::ComputePipelineDescriptor&, WebGPUIdentifier, CompletionHandler<void(bool, String&&)>&&);
     void createRenderPipelineAsync(const WebGPU::RenderPipelineDescriptor&, WebGPUIdentifier, CompletionHandler<void(bool, String&&)>&&);
 

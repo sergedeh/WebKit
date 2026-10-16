@@ -39,6 +39,8 @@
 #import <wtf/Lock.h>
 #import <wtf/NeverDestroyed.h>
 #import <wtf/RetainPtr.h>
+#import <wtf/WeakObjCPtr.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 
 WEBCORE_EXPORT NSString * const WAKWindowScreenScaleDidChangeNotification = @"WAKWindowScreenScaleDidChangeNotification";
 WEBCORE_EXPORT NSString * const WAKWindowVisibilityDidChangeNotification = @"WAKWindowVisibilityDidChangeNotification";
@@ -60,6 +62,12 @@ static RetainPtr<WebEvent>& currentEvent()
 }
 
 @implementation WAKWindow {
+    RetainPtr<CALayer> _hostLayer;
+    std::unique_ptr<LegacyTileCache> _tileCache;
+    WeakObjCPtr<CALayer> _rootLayer;
+    RetainPtr<WAKView> _contentView;
+    RetainPtr<WAKView> _responderView;
+    WeakObjCPtr<WAKView> _nextResponder;
     Lock _exposedScrollViewRectLock;
     CGRect _exposedScrollViewRect;
 }
@@ -72,12 +80,12 @@ static RetainPtr<WebEvent>& currentEvent()
     if (!self)
         return nil;
 
-    _hostLayer = [layer retain];
+    _hostLayer = layer;
 
     _frame = [_hostLayer frame];
     _screenScale = WebCore::screenScaleFactor();
 
-    _tileCache = new LegacyTileCache(self);
+    _tileCache = std::unique_ptr<LegacyTileCache>(new LegacyTileCache(self));
 
     _frozenVisibleRect = CGRectNull;
 
@@ -103,20 +111,17 @@ static RetainPtr<WebEvent>& currentEvent()
 
 - (void)dealloc
 {
-    delete _tileCache;
-    [_hostLayer release];
-    
+    _tileCache = nullptr;
+    _hostLayer = nullptr;
+
     [super dealloc];
 }
 
 - (void)setContentView:(WAKView *)view
 {
-    [view retain];
-    [_contentView release];
-
+    _contentView = view;
     if (view)
         _WKViewSetWindow([view _viewRef], self);
-    _contentView = view;
 }
 
 - (WAKView *)contentView
@@ -128,11 +133,9 @@ static RetainPtr<WebEvent>& currentEvent()
 {
     if (_contentView) {
         _WKViewSetWindow([_contentView _viewRef], nil);
-        [_contentView release];
         _contentView = nil;
     }
 
-    [_responderView release];
     _responderView = nil;
 }
 
@@ -143,41 +146,41 @@ static RetainPtr<WebEvent>& currentEvent()
 
 - (WAKView *)_newFirstResponderAfterResigning
 {
-    return _nextResponder;
+    return _nextResponder.getAutoreleased();
 }
 
 - (NSPoint)convertBaseToScreen:(NSPoint)aPoint
 {
-    CALayer* rootLayer = _hostLayer;
-    while (rootLayer.superlayer)
-        rootLayer = rootLayer.superlayer;
+    RetainPtr rootLayer = _hostLayer;
+    while ([rootLayer superlayer])
+        rootLayer = [rootLayer superlayer];
     
     return [_hostLayer convertPoint:aPoint toLayer:rootLayer];
 }
 
 - (NSPoint)convertScreenToBase:(NSPoint)aPoint
 {
-    CALayer* rootLayer = _hostLayer;
-    while (rootLayer.superlayer)
-        rootLayer = rootLayer.superlayer;
+    RetainPtr rootLayer = _hostLayer;
+    while ([rootLayer superlayer])
+        rootLayer = [rootLayer superlayer];
     
     return [_hostLayer convertPoint:aPoint fromLayer:rootLayer];
 }
 
 - (NSRect)convertRectToScreen:(NSRect)windowRect
 {
-    CALayer* rootLayer = _hostLayer;
-    while (rootLayer.superlayer)
-        rootLayer = rootLayer.superlayer;
+    RetainPtr rootLayer = _hostLayer;
+    while ([rootLayer superlayer])
+        rootLayer = [rootLayer superlayer];
 
     return [_hostLayer convertRect:windowRect toLayer:rootLayer];
 }
 
 - (NSRect)convertRectFromScreen:(NSRect)screenRect
 {
-    CALayer* rootLayer = _hostLayer;
-    while (rootLayer.superlayer)
-        rootLayer = rootLayer.superlayer;
+    RetainPtr rootLayer = _hostLayer;
+    while ([rootLayer superlayer])
+        rootLayer = [rootLayer superlayer];
 
     return [_hostLayer convertRect:screenRect fromLayer:rootLayer];
 }
@@ -218,7 +221,6 @@ static RetainPtr<WebEvent>& currentEvent()
     BOOL shouldResign = [super resignFirstResponder];
     if (shouldResign && _responderView && WKViewResignFirstResponder([_responderView _viewRef])) {
         _nextResponder = nil;
-        [_responderView release];
         _responderView = nil;
         return YES;
     }
@@ -227,10 +229,10 @@ static RetainPtr<WebEvent>& currentEvent()
 
 - (BOOL)makeFirstResponder:(NSResponder *)responder
 {
-    if (![responder isKindOfClass:[WAKView class]])
+    RetainPtr view = dynamic_objc_cast<WAKView>(responder);
+    if (!view)
         return NO;
 
-    WAKView *view = static_cast<WAKView*>(responder);
     BOOL result = YES;
     if (view != _responderView) {
         // We need to handle the case of the view not accepting to be a first responder,
@@ -240,7 +242,6 @@ static RetainPtr<WebEvent>& currentEvent()
             _nextResponder = view;
             if (WKViewResignFirstResponder([_responderView _viewRef])) {
                 _nextResponder = nil;
-                [_responderView release];
                 _responderView = nil;
             }  else {
                 _nextResponder = nil;
@@ -250,7 +251,7 @@ static RetainPtr<WebEvent>& currentEvent()
 
         if (result && view) {
             if (acceptsFirstResponder && WKViewBecomeFirstResponder([view _viewRef]))
-                _responderView = [view retain];
+                _responderView = view;
             else
                 result = NO;
         }
@@ -281,7 +282,7 @@ static RetainPtr<WebEvent>& currentEvent()
     // FIXME: Size of the host layer is directly available so there is no real reason to save it here.
     // However we currently use this call to catch changes to the host layer size.
     if (_tileCache)
-        _tileCache->hostLayerSizeChanged();
+        protect(*_tileCache)->hostLayerSizeChanged();
 }
 
 - (void)setScreenSize:(CGSize)size
@@ -325,7 +326,7 @@ static RetainPtr<WebEvent>& currentEvent()
 
 - (CALayer *)rootLayer
 {
-    return _rootLayer;
+    return _rootLayer.getAutoreleased();
 }
 
 - (void)sendEvent:(WebEvent *)event
@@ -404,35 +405,35 @@ static RetainPtr<WebEvent>& currentEvent()
 {
     if (!_tileCache)
         return;    
-    _tileCache->layoutTiles();
+    protect(*_tileCache)->layoutTiles();
 }
 
 - (void)layoutTilesNow
 {
     if (!_tileCache)
         return;
-    _tileCache->layoutTilesNow();
+    protect(*_tileCache)->layoutTilesNow();
 }
 
 - (void)layoutTilesNowForRect:(CGRect)rect
 {
     if (!_tileCache)
         return;
-    _tileCache->layoutTilesNowForRect(WebCore::enclosingIntRect(rect));
+    protect(*_tileCache)->layoutTilesNowForRect(WebCore::enclosingIntRect(rect));
 }
 
 - (void)setNeedsDisplay
 {
     if (!_tileCache)
         return;
-    _tileCache->setNeedsDisplay();
+    protect(*_tileCache)->setNeedsDisplay();
 }
 
 - (void)setNeedsDisplayInRect:(CGRect)rect
 {
     if (!_tileCache)
         return;
-    _tileCache->setNeedsDisplayInRect(WebCore::enclosingIntRect(rect));
+    protect(*_tileCache)->setNeedsDisplayInRect(WebCore::enclosingIntRect(rect));
 }
 
 - (BOOL)tilesOpaque
@@ -446,7 +447,7 @@ static RetainPtr<WebEvent>& currentEvent()
 {
     if (!_tileCache)
         return;
-    _tileCache->setTilesOpaque(opaque);
+    protect(*_tileCache)->setTilesOpaque(opaque);
 }
 
 - (void)setIsInSnapshottingPaint:(BOOL)isInSnapshottingPaint
@@ -469,7 +470,7 @@ static RetainPtr<WebEvent>& currentEvent()
     if (!CGRectIsNull(_frozenVisibleRect))
         return _frozenVisibleRect;
 
-    CALayer* layer = _hostLayer;
+    RetainPtr layer = _hostLayer;
     CGRect bounds = [layer bounds];
     if (_entireWindowVisibleForTesting)
         return bounds;
@@ -478,7 +479,8 @@ static RetainPtr<WebEvent>& currentEvent()
 
     static Class windowClass = NSClassFromString(@"UIWindow");
 
-    while (superlayer && layer != _rootLayer && (!layer.delegate || ![layer.delegate isKindOfClass:windowClass])) {
+    RetainPtr rootLayer = _rootLayer.get();
+    while (superlayer && layer != rootLayer && (![layer delegate] || ![[layer delegate] isKindOfClass:windowClass])) {
         CGRect rectInSuper = [superlayer convertRect:rect fromLayer:layer];
         if ([superlayer masksToBounds] || !respectsMasksToBounds)
             rect = CGRectIntersection([superlayer bounds], rectInSuper);
@@ -510,21 +512,21 @@ static RetainPtr<WebEvent>& currentEvent()
 {
     if (!_tileCache)
         return;
-    _tileCache->removeAllNonVisibleTiles();
+    protect(*_tileCache)->removeAllNonVisibleTiles();
 }
 
 - (void)removeAllTiles
 {
     if (!_tileCache)
         return;
-    _tileCache->removeAllTiles();
+    protect(*_tileCache)->removeAllTiles();
 }
 
 - (void)removeForegroundTiles
 {
     if (!_tileCache)
         return;
-    _tileCache->removeForegroundTiles();
+    protect(*_tileCache)->removeForegroundTiles();
 }
 
 - (void)setTilingMode:(WAKWindowTilingMode)mode
@@ -559,35 +561,35 @@ static RetainPtr<WebEvent>& currentEvent()
 {
     if (!_tileCache)
         return;
-    _tileCache->setZoomedOutScale(scale);
+    protect(*_tileCache)->setZoomedOutScale(scale);
 }
 
 - (float)zoomedOutTileScale
 {
     if (!_tileCache)
         return 1.0f;
-    return _tileCache->zoomedOutScale();
+    return protect(*_tileCache)->zoomedOutScale();
 }
 
 - (void)setCurrentTileScale:(float)scale
 {
     if (!_tileCache)
         return;
-    _tileCache->setCurrentScale(scale);
+    protect(*_tileCache)->setCurrentScale(scale);
 }
 
 - (float)currentTileScale
 {
     if (!_tileCache)
         return 1.0f;
-    return _tileCache->currentScale();
+    return protect(*_tileCache)->currentScale();
 }
 
 - (void)setKeepsZoomedOutTiles:(BOOL)keepsZoomedOutTiles
 {
     if (!_tileCache)
         return;
-    _tileCache->setKeepsZoomedOutTiles(keepsZoomedOutTiles);
+    protect(*_tileCache)->setKeepsZoomedOutTiles(keepsZoomedOutTiles);
 }
 
 - (BOOL)keepsZoomedOutTiles
@@ -599,21 +601,21 @@ static RetainPtr<WebEvent>& currentEvent()
 
 - (LegacyTileCache*)tileCache
 {
-    return _tileCache;
+    return _tileCache.get();
 }
 
 - (void)setContentReplacementImage:(CGImageRef)contentReplacementImage
 {
     if (!_tileCache)
         return;
-    _tileCache->setContentReplacementImage(contentReplacementImage);
+    protect(*_tileCache)->setContentReplacementImage(contentReplacementImage);
 }
 
 - (CGImageRef)contentReplacementImage
 {
     if (!_tileCache)
         return NULL;
-    return _tileCache->contentReplacementImage().autorelease();
+    return protect(*_tileCache)->contentReplacementImage().autorelease();
 }
 
 - (void)displayRect:(NSRect)rect
@@ -659,7 +661,7 @@ static RetainPtr<WebEvent>& currentEvent()
     CGRect visibleRect = [self visibleRect];
     NSLog(@"visibleRect = [%6.1f %6.1f %6.1f %6.1f]", visibleRect.origin.x, visibleRect.origin.y, visibleRect.size.width, visibleRect.size.height);
     _frozenVisibleRect = savedFrozenVisibleRect;
-    _tileCache->dumpTiles();
+    protect(*_tileCache)->dumpTiles();
 }
 
 - (NSString *)description
@@ -669,8 +671,8 @@ static RetainPtr<WebEvent>& currentEvent()
     CGRect frame = [self frame];
     [description appendFormat:@"frame = (%g %g; %g %g); ", frame.origin.x, frame.origin.y, frame.size.width, frame.size.height];
 
-    [description appendFormat:@"first responder = WK %p; ", _responderView];
-    [description appendFormat:@"next responder = WK %p; ", _nextResponder];
+    [description appendFormat:@"first responder = WK %p; ", _responderView.get()];
+    [description appendFormat:@"next responder = WK %p; ", protect(_nextResponder).get()];
 
     [description appendFormat:@"layer = %@>", [_hostLayer description]];
 

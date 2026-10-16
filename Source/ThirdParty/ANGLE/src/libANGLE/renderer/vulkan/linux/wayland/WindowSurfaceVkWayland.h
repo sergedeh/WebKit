@@ -12,8 +12,8 @@
 
 #include "libANGLE/renderer/vulkan/SurfaceVk.h"
 
-struct wl_display;
 struct wl_egl_window;
+struct wl_display;
 
 namespace rx
 {
@@ -25,17 +25,23 @@ class WindowSurfaceVkWayland : public WindowSurfaceVk
     // before the next operation which would provoke a backbuffer to be pulled.
     static void ResizeCallback(wl_egl_window *window, void *payload);
 
+    // waylandDisplay is the wl_display the EGL display was initialized with, and it owns
+    // the window's wl_surface for conformant EGL usage. Passing it explicitly avoids
+    // wl_proxy_get_display(), which only exists in libwayland 1.20+ and otherwise breaks
+    // builds against older system wayland headers (https://anglebug.com/534371626).
     WindowSurfaceVkWayland(const egl::SurfaceState &surfaceState,
                            EGLNativeWindowType window,
-                           wl_display *display);
+                           wl_display *waylandDisplay);
+
+    ~WindowSurfaceVkWayland() override;
 
   private:
     angle::Result createSurfaceVk(vk::ErrorContext *context) override;
     angle::Result getCurrentWindowSize(vk::ErrorContext *context,
                                        gl::Extents *extentsOut) const override;
 
-    wl_display *mWaylandDisplay;
     gl::Extents mExtents;
+    wl_display *mWaylandDisplay;
 };
 
 }  // namespace rx

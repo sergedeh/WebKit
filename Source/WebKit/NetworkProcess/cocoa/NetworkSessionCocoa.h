@@ -63,6 +63,9 @@ struct SessionWrapper : public CanMakeWeakPtr<SessionWrapper>, public CanMakeChe
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(SessionWrapper);
     WTF_STRUCT_OVERRIDE_DELETE_FOR_CHECKED_PTR(SessionWrapper);
 
+    SessionWrapper() = default;
+    ~SessionWrapper();
+
     void initialize(NSURLSessionConfiguration*, NetworkSessionCocoa&, WebCore::StoredCredentialsPolicy, NavigatingToAppBoundDomain);
 
     void recreateSessionWithUpdatedProxyConfigurations(NetworkSessionCocoa&);
@@ -81,8 +84,6 @@ public:
         : sessionWithCredentialStorage(makeUniqueRef<SessionWrapper>())
     { }
 
-    CheckedRef<SessionWrapper> checkedSessionWithCredentialStorage() { return sessionWithCredentialStorage.get(); }
-
     UniqueRef<SessionWrapper> sessionWithCredentialStorage;
     WallTime lastUsed;
 };
@@ -96,13 +97,10 @@ public:
 
     SessionWrapper& initializeEphemeralStatelessSessionIfNeeded(NavigatingToAppBoundDomain, NetworkSessionCocoa&);
 
-    SessionWrapper& isolatedSession(WebCore::StoredCredentialsPolicy, const WebCore::RegistrableDomain&, NavigatingToAppBoundDomain, NetworkSessionCocoa&);
+    CheckedRef<SessionWrapper> isolatedSession(WebCore::StoredCredentialsPolicy, const WebCore::RegistrableDomain&, NavigatingToAppBoundDomain, NetworkSessionCocoa&);
     HashMap<WebCore::RegistrableDomain, std::unique_ptr<IsolatedSession>> isolatedSessions;
 
     std::unique_ptr<IsolatedSession> appBoundSession;
-
-    CheckedRef<SessionWrapper> checkedSessionWithCredentialStorage() { return sessionWithCredentialStorage.get(); }
-    CheckedRef<SessionWrapper> checkedEphemeralStatelessSession() { return ephemeralStatelessSession.get(); }
 
     UniqueRef<SessionWrapper> sessionWithCredentialStorage;
     UniqueRef<SessionWrapper> ephemeralStatelessSession;
@@ -126,11 +124,11 @@ public:
 
     SessionWrapper& initializeEphemeralStatelessSessionIfNeeded(std::optional<WebPageProxyIdentifier>, NavigatingToAppBoundDomain);
 
-    const String& boundInterfaceIdentifier() const;
-    const String& sourceApplicationBundleIdentifier() const;
-    const String& sourceApplicationSecondaryIdentifier() const;
+    const String& boundInterfaceIdentifier() const LIFETIME_BOUND { return m_boundInterfaceIdentifier; }
+    const String& sourceApplicationBundleIdentifier() const LIFETIME_BOUND { return m_sourceApplicationBundleIdentifier; }
+    const String& sourceApplicationSecondaryIdentifier() const LIFETIME_BOUND { return m_sourceApplicationSecondaryIdentifier; }
 #if PLATFORM(IOS_FAMILY)
-    const String& dataConnectionServiceType() const;
+    const String& dataConnectionServiceType() const LIFETIME_BOUND { return m_dataConnectionServiceType; }
 #endif
 
     void setClientAuditToken(const WebCore::AuthenticationChallenge&);
@@ -143,7 +141,7 @@ public:
     bool deviceManagementRestrictionsEnabled() const { return m_deviceManagementRestrictionsEnabled; }
     bool allLoadsBlockedByDeviceManagementRestrictionsForTesting() const { return m_allLoadsBlockedByDeviceManagementRestrictionsForTesting; }
 
-    DMFWebsitePolicyMonitor *deviceManagementPolicyMonitor();
+    DMFWebsitePolicyMonitor *LEGACY_NODELETE deviceManagementPolicyMonitor();
 
     CFDictionaryRef proxyConfiguration() const { return m_proxyConfiguration.get(); }
 
@@ -155,11 +153,10 @@ public:
     void clearAppBoundSession() override;
 #endif
 
-    SessionWrapper& sessionWrapperForTask(std::optional<WebPageProxyIdentifier>, const WebCore::ResourceRequest&, WebCore::StoredCredentialsPolicy, std::optional<NavigatingToAppBoundDomain>);
+    CheckedRef<SessionWrapper> sessionWrapperForTask(std::optional<WebPageProxyIdentifier>, const WebCore::ResourceRequest&, WebCore::StoredCredentialsPolicy, std::optional<NavigatingToAppBoundDomain>);
     bool preventsSystemHTTPProxyAuthentication() const { return m_preventsSystemHTTPProxyAuthentication; }
-    
+
     _NSHSTSStorage *hstsStorage() const;
-    RetainPtr<_NSHSTSStorage> protectedHSTSStorage() const;
 
     NSURLCredentialStorage *nsCredentialStorage() const;
 
@@ -169,7 +166,7 @@ public:
     void removeBlobDataTask(DataTaskIdentifier);
 
 #if HAVE(NW_PROXY_CONFIG)
-    const Vector<RetainPtr<nw_proxy_config_t>>& proxyConfigs() const { return m_nwProxyConfigs; }
+    const Vector<RetainPtr<nw_proxy_config_t>>& proxyConfigs() const LIFETIME_BOUND { return m_nwProxyConfigs; }
 
     void clearProxyConfigData() final;
     void setProxyConfigData(const Vector<std::pair<Vector<uint8_t>, std::optional<WTF::UUID>>>&) final;
@@ -185,7 +182,7 @@ private:
     void clearCredentials(WallTime) final;
 
     bool shouldLogCookieInformation() const override { return m_shouldLogCookieInformation; }
-    SessionWrapper& isolatedSession(WebPageProxyIdentifier, WebCore::StoredCredentialsPolicy, const WebCore::RegistrableDomain&, NavigatingToAppBoundDomain);
+    CheckedRef<SessionWrapper> isolatedSession(WebPageProxyIdentifier, WebCore::StoredCredentialsPolicy, const WebCore::RegistrableDomain&, NavigatingToAppBoundDomain);
 
 #if ENABLE(APP_BOUND_DOMAINS)
     SessionWrapper& appBoundSession(std::optional<WebPageProxyIdentifier>, WebCore::StoredCredentialsPolicy);
@@ -198,11 +195,10 @@ private:
     void deleteAlternativeServicesForHostNames(const Vector<String>&) override;
     void clearAlternativeServices(WallTime) override;
 
-    RefPtr<WebSocketTask> createWebSocketTask(WebPageProxyIdentifier, std::optional<WebCore::FrameIdentifier>, std::optional<WebCore::PageIdentifier>, NetworkSocketChannel&, const WebCore::ResourceRequest&, const String& protocol, const WebCore::ClientOrigin&, bool hadMainFrameMainResourcePrivateRelayed, bool allowPrivacyProxy, OptionSet<WebCore::AdvancedPrivacyProtections>, WebCore::StoredCredentialsPolicy) final;
+    RefPtr<WebSocketTask> createWebSocketTask(WebPageProxyIdentifier, std::optional<WebCore::FrameIdentifier>, std::optional<WebCore::PageIdentifier>, NetworkSocketChannel&, const WebCore::ResourceRequest&, const String& protocol, const WebCore::ClientOrigin&, bool hadMainFrameMainResourcePrivateRelayed, bool allowPrivacyProxy, OptionSet<WebCore::AdvancedPrivacyProtections>, WebCore::StoredCredentialsPolicy, WebCore::IsInitiatedByDedicatedWorker) final;
     void addWebSocketTask(WebPageProxyIdentifier, WebSocketTask&) final;
     void removeWebSocketTask(SessionSet&, WebSocketTask&) final;
 
-    void loadImageForDecoding(WebCore::ResourceRequest&&, WebPageProxyIdentifier, size_t, CompletionHandler<void(Expected<Ref<WebCore::FragmentedSharedBuffer>, WebCore::ResourceError>&&)>&&) final;
     void dataTaskWithRequest(WebPageProxyIdentifier, WebCore::ResourceRequest&&, const std::optional<WebCore::SecurityOriginData>& topOrigin, CompletionHandler<void(DataTaskIdentifier)>&&) final;
     void cancelDataTask(DataTaskIdentifier) final;
     void addWebPageNetworkParameters(WebPageProxyIdentifier, WebPageNetworkParameters&&) final;
@@ -213,26 +209,24 @@ private:
 
     bool isNetworkSessionCocoa() const final { return true; }
 
-    Ref<SessionSet> m_defaultSessionSet;
+    const Ref<SessionSet> m_defaultSessionSet;
     HashMap<WebPageProxyIdentifier, Ref<SessionSet>> m_perPageSessionSets;
     HashMap<WebPageNetworkParameters, WeakPtr<SessionSet>> m_perParametersSessionSets;
 
     void initializeNSURLSessionsInSet(SessionSet&, NSURLSessionConfiguration *);
     SessionSet& sessionSetForPage(std::optional<WebPageProxyIdentifier>);
     const SessionSet& sessionSetForPage(std::optional<WebPageProxyIdentifier>) const;
-    Ref<SessionSet> protectedSessionSetForPage(std::optional<WebPageProxyIdentifier> identifier) { return sessionSetForPage(identifier); }
-    Ref<const SessionSet> protectedSessionSetForPage(std::optional<WebPageProxyIdentifier> identifier) const { return sessionSetForPage(identifier); }
 
     void invalidateAndCancelSessionSet(SessionSet&);
     
     String m_boundInterfaceIdentifier;
     String m_sourceApplicationBundleIdentifier;
     String m_sourceApplicationSecondaryIdentifier;
-    RetainPtr<CFDictionaryRef> m_proxyConfiguration;
+    const RetainPtr<CFDictionaryRef> m_proxyConfiguration;
 #if HAVE(NW_PROXY_CONFIG)
     Vector<RetainPtr<nw_proxy_config_t>> m_nwProxyConfigs;
 #endif
-    RetainPtr<DMFWebsitePolicyMonitor> m_deviceManagementPolicyMonitor;
+    const RetainPtr<DMFWebsitePolicyMonitor> m_deviceManagementPolicyMonitor;
     bool m_deviceManagementRestrictionsEnabled { false };
     bool m_allLoadsBlockedByDeviceManagementRestrictionsForTesting { false };
     bool m_shouldLogCookieInformation { false };

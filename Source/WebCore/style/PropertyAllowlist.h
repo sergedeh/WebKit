@@ -40,15 +40,17 @@ enum class PropertyAllowlist : uint8_t {
     CueSelector,
     CueBackground,
 #endif
+    Highlight,
 };
 
-PropertyAllowlist propertyAllowlistForPseudoElement(PseudoElementType);
+PropertyAllowlist LEGACY_NODELETE propertyAllowlistForPseudoElement(PseudoElementType);
 
-bool isValidMarkerStyleProperty(CSSPropertyID);
+bool LEGACY_NODELETE isValidHighlightStyleProperty(CSSPropertyID);
+bool LEGACY_NODELETE isValidMarkerStyleProperty(CSSPropertyID);
 #if ENABLE(VIDEO)
-bool isValidCueStyleProperty(CSSPropertyID);
-bool isValidCueSelectorStyleProperty(CSSPropertyID);
-bool isValidCueBackgroundStyleProperty(CSSPropertyID);
+bool LEGACY_NODELETE isValidCueStyleProperty(CSSPropertyID);
+bool LEGACY_NODELETE isValidCueSelectorStyleProperty(CSSPropertyID);
+bool LEGACY_NODELETE isValidCueBackgroundStyleProperty(CSSPropertyID);
 #endif
 
 }

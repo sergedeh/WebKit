@@ -43,6 +43,8 @@ class ContextMenuProvider;
 class Event;
 class HitTestResult;
 class Page;
+class Range;
+struct TextCheckingGuesses;
 
 class ContextMenuController {
     WTF_MAKE_TZONE_ALLOCATED(ContextMenuController);
@@ -50,10 +52,10 @@ public:
     ContextMenuController(Page&, UniqueRef<ContextMenuClient>&&);
     ~ContextMenuController();
 
-    Page& page();
-    ContextMenuClient& client() { return m_client.get(); }
+    Page& LEGACY_NODELETE page();
+    ContextMenuClient& client() LIFETIME_BOUND { return m_client.get(); }
 
-    ContextMenu* contextMenu() const { return m_contextMenu.get(); }
+    ContextMenu* contextMenu() const LIFETIME_BOUND { return m_contextMenu.get(); }
     WEBCORE_EXPORT void clearContextMenu();
 
     void handleContextMenuEvent(Event&);
@@ -67,13 +69,13 @@ public:
     WEBCORE_EXPORT void checkOrEnableIfNeeded(ContextMenuItem&) const;
 
     void setContextMenuContext(const ContextMenuContext& context) { m_context = context; }
-    const ContextMenuContext& context() const { return m_context; }
-    const HitTestResult& hitTestResult() const { return m_context.hitTestResult(); }
+    const ContextMenuContext& context() const LIFETIME_BOUND { return m_context; }
+    const HitTestResult& hitTestResult() const LIFETIME_BOUND { return m_context.hitTestResult(); }
 
 #if USE(ACCESSIBILITY_CONTEXT_MENUS)
     void showContextMenuAt(LocalFrame&, const IntPoint& clickPoint);
 #endif
-    
+
 #if ENABLE(SERVICE_CONTROLS)
     void showImageControlsMenu(Event&);
 #endif
@@ -93,13 +95,15 @@ private:
 #if PLATFORM(COCOA)
     void createAndAppendSpeechSubMenu(ContextMenuItem&);
     void createAndAppendSubstitutionsSubMenu(ContextMenuItem&);
-    void createAndAppendTransformationsSubMenu(ContextMenuItem&);
+    bool createAndAppendTransformationsSubMenu(ContextMenuItem&);
 #endif
 #if PLATFORM(GTK)
     void createAndAppendUnicodeSubMenu(ContextMenuItem&);
 #endif
 
     bool shouldEnableCopyLinkWithHighlight() const;
+
+    TextCheckingGuesses guessesForSpellingAndGrammarItems(LocalFrame&);
 
 #if ENABLE(PDFJS)
     void performPDFJSAction(LocalFrame&, const String& action);
@@ -110,6 +114,14 @@ private:
     std::unique_ptr<ContextMenu> m_contextMenu;
     RefPtr<ContextMenuProvider> m_menuProvider;
     ContextMenuContext m_context;
+
+    struct SpellingAndGrammarTarget {
+        Ref<Range> range;
+        String text;
+    };
+    // The unselected word that spelling and grammar items act on.
+    std::optional<SpellingAndGrammarTarget> m_spellingAndGrammarTarget;
+
     bool m_isHandlingContextMenuEvent { false };
 };
 

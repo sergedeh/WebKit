@@ -33,14 +33,15 @@ namespace WebCore {
 void WebTransportBidirectionalStreamSource::doCancel()
 {
     m_isCancelled = true;
+    cancelFinished();
 }
 
 bool WebTransportBidirectionalStreamSource::receiveIncomingStream(JSC::JSGlobalObject& globalObject, Ref<WebTransportBidirectionalStream>& stream)
 {
     if (m_isCancelled)
         return false;
-    auto& jsDOMGlobalObject = *JSC::jsCast<JSDOMGlobalObject*>(&globalObject);
-    Locker<JSC::JSLock> locker(jsDOMGlobalObject.vm().apiLock());
+    auto& jsDOMGlobalObject = downcast<JSDOMGlobalObject>(globalObject);
+    JSC::JSLockHolder lock(jsDOMGlobalObject.vm());
     auto value = toJS(&globalObject, &jsDOMGlobalObject, stream.get());
     if (!controller().enqueue(value)) {
         doCancel();

@@ -52,6 +52,7 @@ bool canonicalizePrePostIncrements(Procedure& proc)
     InsertionSet insertionSet { proc };
     BlockInsertionSet blockInsertionSet { proc };
 
+    proc.resetValueOwners(); // Every candidate below is found and checked through Value::owner.
     Dominators& dominators = proc.dominators();
     BackwardsDominators& backwardsDominators = proc.backwardsDominators();
 
@@ -176,10 +177,15 @@ bool canonicalizePrePostIncrements(Procedure& proc)
                     // which is located just before the memory.
                     auto uses = addressUses.find(address);
                     ASSERT(uses != addressUses.end() && uses->value.size());
+                    bool allUsesDominated = true;
                     for (Value* use : uses->value) {
-                        if (!dominators.dominates(memory->owner, use->owner))
-                            continue;
+                        if (!dominators.dominates(memory->owner, use->owner)) {
+                            allUsesDominated = false;
+                            break;
+                        }
                     }
+                    if (!allUsesDominated)
+                        continue;
 
                     unsigned index = memoryToIndex.get(memory);
                     Value* newAddress = insertionSet.insert<Value>(index, Add, memory->origin(), address->child(0), address->child(1));

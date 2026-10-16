@@ -20,6 +20,7 @@
 #pragma once
 
 #include <WebCore/BlobData.h>
+#include <WebCore/PendingStreamIdentifier.h>
 #include <optional>
 #include <wtf/ArgumentCoder.h>
 #include <wtf/Forward.h>
@@ -39,12 +40,14 @@ namespace WebCore {
 class BlobRegistryImpl;
 class DOMFormData;
 class File;
+class PendingStreamState;
 class SharedBuffer;
 
 struct FormDataElement {
     struct EncodedFileData;
     struct EncodedBlobData;
-    using Data = Variant<Vector<uint8_t>, EncodedFileData, EncodedBlobData>;
+    struct PendingStreamData;
+    using Data = Variant<Vector<uint8_t>, EncodedFileData, EncodedBlobData, PendingStreamData>;
 
     FormDataElement() = default;
     explicit FormDataElement(Data&& data)
@@ -55,6 +58,8 @@ struct FormDataElement {
         : data(EncodedFileData { filename, fileStart, fileLength, expectedFileModificationTime }) { }
     explicit FormDataElement(const URL& blobURL)
         : data(EncodedBlobData { blobURL }) { }
+    explicit FormDataElement(PendingStreamData&& stream)
+        : data(WTF::move(stream)) { }
 
     uint64_t lengthInBytes(NOESCAPE const Function<uint64_t(const URL&)>&) const;
     uint64_t lengthInBytes() const;
@@ -82,18 +87,16 @@ struct FormDataElement {
 
         friend bool operator==(const EncodedBlobData&, const EncodedBlobData&) = default;
     };
-    
+
+    struct PendingStreamData {
+        PendingStreamIdentifier identifier;
+
+        friend bool operator==(const PendingStreamData&, const PendingStreamData&) = default;
+    };
+
     bool operator==(const FormDataElement& other) const
     {
-        if (&other == this)
-            return true;
-        if (data.index() != other.data.index())
-            return false;
-        if (!data.index())
-            return std::get<0>(data) == std::get<0>(other.data);
-        if (data.index() == 1)
-            return std::get<1>(data) == std::get<1>(other.data);
-        return std::get<2>(data) == std::get<2>(other.data);
+        return data == other.data;
     }
 
     Data data;
@@ -126,12 +129,13 @@ public:
 
     WEBCORE_EXPORT static Ref<FormData> create();
     WEBCORE_EXPORT static Ref<FormData> create(std::span<const uint8_t>);
-    WEBCORE_EXPORT static Ref<FormData> create(const CString&);
+    WEBCORE_EXPORT static Ref<FormData> create(std::span<const char8_t>);
     WEBCORE_EXPORT static Ref<FormData> create(Vector<uint8_t>&&);
     WEBCORE_EXPORT static Ref<FormData> create(Vector<WebCore::FormDataElement>&&, uint64_t identifier, bool alwaysStream, Vector<uint8_t>&& boundary);
     static Ref<FormData> create(const Vector<uint8_t>&);
     static Ref<FormData> create(const DOMFormData&, EncodingType = EncodingType::FormURLEncoded);
     static Ref<FormData> createMultiPart(const DOMFormData&);
+    WEBCORE_EXPORT static Ref<FormData> create(PendingStreamIdentifier, RefPtr<WebCore::PendingStreamState>&&);
     WEBCORE_EXPORT ~FormData();
 
     // FIXME: Both these functions perform a deep copy of m_elements, but differ in handling of other data members.
@@ -150,13 +154,17 @@ public:
     // Resolve all blob references so we only have file and data.
     // If the FormData has no blob references to resolve, this is returned.
     WEBCORE_EXPORT Ref<FormData> resolveBlobReferences(BlobRegistryImpl* = nullptr);
-    bool containsBlobElement() const;
+    bool LEGACY_NODELETE containsBlobElement() const;
+
+    WEBCORE_EXPORT bool isPendingStream() const;
+    WEBCORE_EXPORT void setPendingStreamState(Ref<PendingStreamState>&&);
+    PendingStreamState* pendingStreamState() const { return m_pendingStreamState.get(); }
 
     WEBCORE_EXPORT FormDataForUpload prepareForUpload();
 
     bool isEmpty() const { return m_elements.isEmpty(); }
-    const Vector<FormDataElement>& elements() const { return m_elements; }
-    const Vector<uint8_t>& boundary() const { return m_boundary; }
+    const Vector<FormDataElement>& elements() const LIFETIME_BOUND { return m_elements; }
+    const Vector<uint8_t>& boundary() const LIFETIME_BOUND { return m_boundary; }
 
     WEBCORE_EXPORT RefPtr<SharedBuffer> asSharedBuffer() const;
 
@@ -199,6 +207,7 @@ private:
     bool m_alwaysStream { false };
     Vector<uint8_t> m_boundary;
     mutable std::optional<uint64_t> m_lengthInBytes;
+    RefPtr<PendingStreamState> m_pendingStreamState;
 };
 
 inline bool operator==(const FormData& a, const FormData& b)

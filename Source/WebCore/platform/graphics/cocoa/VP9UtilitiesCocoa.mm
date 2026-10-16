@@ -30,17 +30,23 @@
 
 #import "CMUtilities.h"
 #import "FourCC.h"
+#if USE(LIBWEBRTC)
 #import "LibWebRTCProvider.h"
-#import "MediaCapabilitiesInfo.h"
+#endif
+#import "Logging.h"
+#import "MediaStrategy.h"
+#import "PlatformMediaCapabilitiesInfo.h"
+#import "PlatformMediaCapabilitiesVideoConfiguration.h"
 #import "PlatformScreen.h"
+#import "PlatformStrategies.h"
 #import "ScreenProperties.h"
 #import "SharedBuffer.h"
 #import "SystemBattery.h"
 #import "TrackInfo.h"
-#import "VideoConfiguration.h"
 #import "VideoDecoder.h"
 #import <JavaScriptCore/DataView.h>
 #import <webm/common/vp9_header_parser.h>
+#import <wtf/cf/VectorCF.h>
 #import <wtf/text/StringToIntegerConversion.h>
 
 #import <pal/cocoa/AVFoundationSoftLink.h>
@@ -65,9 +71,9 @@ void VP9TestingOverrides::setHardwareDecoderDisabled(std::optional<bool>&& disab
         m_configurationChangedCallback(false);
 }
 
-void VP9TestingOverrides::setVP9HardwareDecoderEnabledOverride(std::optional<bool>&& disabled)
+void VP9TestingOverrides::setVP9HardwareDecoderEnabledOverride(std::optional<bool>&& enabled)
 {
-    m_vp9HardwareDecoderEnabledOverride = WTF::move(disabled);
+    m_vp9HardwareDecoderEnabledOverride = WTF::move(enabled);
     if (m_configurationChangedCallback)
         m_configurationChangedCallback(false);
 }
@@ -126,7 +132,7 @@ enum class ResolutionCategory : uint8_t {
     R_12K,
 };
 
-static ResolutionCategory resolutionCategory(const FloatSize& size)
+static ResolutionCategory LEGACY_NODELETE resolutionCategory(const FloatSize& size)
 {
     auto pixels = size.area();
     if (pixels > 7680 * 4320)
@@ -146,7 +152,9 @@ static ResolutionCategory resolutionCategory(const FloatSize& size)
 
 void registerWebKitVP9Decoder()
 {
+#if USE(LIBWEBRTC)
     LibWebRTCProvider::registerWebKitVP9Decoder();
+#endif
 }
 
 static std::optional<bool> s_vp9HardwareDecoderAvailableInProcess = { };
@@ -196,6 +204,11 @@ bool shouldEnableSWVP9Decoder()
     return isSWDecodersAlwaysEnabled() || (!vp9HardwareDecoderAvailable() && !systemHasBattery());
 }
 
+static bool isVP9HardwareDecoderAvailabilityKnown()
+{
+    return VP9TestingOverrides::singleton().hardwareDecoderDisabled() || VP9TestingOverrides::singleton().vp9HardwareDecoderEnabledOverride();
+}
+
 bool isVP9DecoderAvailable()
 {
     if (isSWDecodersAlwaysEnabled())
@@ -214,6 +227,13 @@ bool isVP8DecoderAvailable()
 
 bool vp9HardwareDecoderAvailable()
 {
+    // If the GPUP hasn't delivered VP9 hardware decoder capability yet,
+    // ensure it's initialized and re-check.
+    if (!isVP9HardwareDecoderAvailabilityKnown() && hasPlatformStrategies()) {
+        RELEASE_LOG_ERROR(Media, "SourceBufferParserWebM::isContentTypeSupported: VP9 availability unknown, ensuring codecs support is initialized");
+        platformStrategies()->mediaStrategy()->ensureCodecsSupportChecksInitialized();
+    }
+
     if (auto disabledForTesting = VP9TestingOverrides::singleton().hardwareDecoderDisabled())
         return !*disabledForTesting;
 
@@ -271,7 +291,8 @@ static bool isVP9CodecConfigurationRecordSupported(const VPCodecConfigurationRec
         auto screenSize = FloatSize(overrideForTesting->width, overrideForTesting->height).scaled(overrideForTesting->scale);
         has4kScreen = resolutionCategory(screenSize) >= ResolutionCategory::R_4K;
     } else {
-        for (auto& screenData : getScreenProperties().screenDataMap.values()) {
+        Ref screen = PlatformScreen::singleton();
+        for (auto& screenData : screen->screenDatas().values()) {
             if (resolutionCategory(screenData.screenRect.size().scaled(screenData.scaleFactor)) >= ResolutionCategory::R_4K) {
                 has4kScreen = true;
                 break;
@@ -313,30 +334,30 @@ bool isVPCodecConfigurationRecordSupported(const VPCodecConfigurationRecord& cod
     return false;
 }
 
-std::optional<MediaCapabilitiesInfo> validateVPParameters(const VPCodecConfigurationRecord& codecConfiguration, const VideoConfiguration& videoConfiguration)
+std::optional<PlatformMediaCapabilitiesInfo> validateVPParameters(const VPCodecConfigurationRecord& codecConfiguration, const PlatformMediaCapabilitiesVideoConfiguration& videoConfiguration)
 {
     if (!isVPCodecConfigurationRecordSupported(codecConfiguration))
         return std::nullopt;
 
-    // VideoConfiguration and VPCodecConfigurationRecord can have conflicting values for HDR properties. If so, reject.
+    // PlatformMediaCapabilitiesVideoConfiguration and VPCodecConfigurationRecord can have conflicting values for HDR properties. If so, reject.
     if (videoConfiguration.transferFunction) {
         // Note: Transfer Characteristics are defined by ISO/IEC 23091-2:2019.
-        if (*videoConfiguration.transferFunction == TransferFunction::SRGB && codecConfiguration.transferCharacteristics > 15)
+        if (*videoConfiguration.transferFunction == PlatformMediaCapabilitiesTransferFunction::SRGB && codecConfiguration.transferCharacteristics > 15)
             return std::nullopt;
-        if (*videoConfiguration.transferFunction == TransferFunction::PQ && codecConfiguration.transferCharacteristics != 16)
+        if (*videoConfiguration.transferFunction == PlatformMediaCapabilitiesTransferFunction::PQ && codecConfiguration.transferCharacteristics != 16)
             return std::nullopt;
-        if (*videoConfiguration.transferFunction == TransferFunction::HLG && codecConfiguration.transferCharacteristics != 18)
+        if (*videoConfiguration.transferFunction == PlatformMediaCapabilitiesTransferFunction::HLG && codecConfiguration.transferCharacteristics != 18)
             return std::nullopt;
     }
 
     if (videoConfiguration.colorGamut) {
-        if (*videoConfiguration.colorGamut == ColorGamut::Rec2020 && codecConfiguration.colorPrimaries != 9)
+        if (*videoConfiguration.colorGamut == PlatformMediaCapabilitiesColorGamut::Rec2020 && codecConfiguration.colorPrimaries != 9)
             return std::nullopt;
     }
     return computeVPParameters(videoConfiguration, vp9HardwareDecoderAvailable());
 }
 
-bool isVPSoftwareDecoderSmooth(const VideoConfiguration& videoConfiguration)
+bool isVPSoftwareDecoderSmooth(const PlatformMediaCapabilitiesVideoConfiguration& videoConfiguration)
 {
     if (videoConfiguration.height <= 1080 && videoConfiguration.framerate > 60)
         return false;
@@ -347,9 +368,9 @@ bool isVPSoftwareDecoderSmooth(const VideoConfiguration& videoConfiguration)
     return true;
 }
 
-std::optional<MediaCapabilitiesInfo> computeVPParameters(const VideoConfiguration& videoConfiguration, bool vp9HardwareDecoderAvailable)
+std::optional<PlatformMediaCapabilitiesInfo> computeVPParameters(const PlatformMediaCapabilitiesVideoConfiguration& videoConfiguration, bool vp9HardwareDecoderAvailable)
 {
-    MediaCapabilitiesInfo info;
+    PlatformMediaCapabilitiesInfo info;
 
     if (vp9HardwareDecoderAvailable) {
         // HW VP9 Decoder does not support alpha channel:
@@ -404,7 +425,8 @@ std::optional<MediaCapabilitiesInfo> computeVPParameters(const VideoConfiguratio
         auto screenSize = FloatSize(overrideForTesting->width, overrideForTesting->height).scaled(overrideForTesting->scale);
         has4kScreen = resolutionCategory(screenSize) >= ResolutionCategory::R_4K;
     } else {
-        for (auto& screenData : getScreenProperties().screenDataMap.values()) {
+        Ref screen = PlatformScreen::singleton();
+        for (auto& screenData : screen->screenDatas().values()) {
             if (resolutionCategory(screenData.screenRect.size().scaled(screenData.scaleFactor)) >= ResolutionCategory::R_4K) {
                 has4kScreen = true;
                 break;
@@ -419,7 +441,7 @@ std::optional<MediaCapabilitiesInfo> computeVPParameters(const VideoConfiguratio
     return info;
 }
 
-static uint8_t convertToColorPrimaries(const Primaries& coefficients)
+static uint8_t LEGACY_NODELETE convertToColorPrimaries(const Primaries& coefficients)
 {
     switch (coefficients) {
     case Primaries::kBt709:
@@ -449,7 +471,7 @@ static uint8_t convertToColorPrimaries(const Primaries& coefficients)
     }
 }
 
-static uint8_t convertToTransferCharacteristics(const TransferCharacteristics& characteristics)
+static uint8_t LEGACY_NODELETE convertToTransferCharacteristics(const TransferCharacteristics& characteristics)
 {
     switch (characteristics) {
     case TransferCharacteristics::kBt709:
@@ -489,7 +511,7 @@ static uint8_t convertToTransferCharacteristics(const TransferCharacteristics& c
     }
 }
 
-static uint8_t convertToMatrixCoefficients(const MatrixCoefficients& coefficients)
+static uint8_t LEGACY_NODELETE convertToMatrixCoefficients(const MatrixCoefficients& coefficients)
 {
     switch (coefficients) {
     case MatrixCoefficients::kRgb:
@@ -514,7 +536,7 @@ static uint8_t convertToMatrixCoefficients(const MatrixCoefficients& coefficient
         return VPConfigurationMatrixCoefficients::BT_2020_Constant_Luminance;
     }
 }
-static uint8_t convertSubsamplingXYToChromaSubsampling(uint64_t x, uint64_t y)
+static uint8_t LEGACY_NODELETE convertSubsamplingXYToChromaSubsampling(uint64_t x, uint64_t y)
 {
     if (x & y)
         return VPConfigurationChromaSubsampling::Subsampling_420_Colocated;
@@ -526,10 +548,13 @@ static uint8_t convertSubsamplingXYToChromaSubsampling(uint64_t x, uint64_t y)
     return VPConfigurationChromaSubsampling::Subsampling_420_Colocated;
 }
 
-static Ref<VideoInfo> createVideoInfoFromVPCodecConfigurationRecord(const VPCodecConfigurationRecord& record, const FloatSize& size, const FloatSize& displaySize)
+static Ref<VideoInfo> createVideoInfoFromVPCodecConfigurationRecord(const VPCodecConfigurationRecord& record, const FloatSize& size, const FloatSize& displaySize, const std::optional<PlatformVideoColorSpace>& colorSpaceOverride = std::nullopt)
 {
     // FIXME: Convert existing struct to an ISOBox and replace the writing code below
     // with a subclass of ISOFullBox.
+
+    auto colorSpace = colorSpaceFromVPCodecConfigurationRecord(record);
+    overrideVideoColorSpaceAsNeeded(colorSpace, colorSpaceOverride);
 
     FourCC codecName = record.codecName == "vp09"_s ? 'vp09' : 'vp08';
     return VideoInfo::create({
@@ -539,8 +564,9 @@ static Ref<VideoInfo> createVideoInfoFromVPCodecConfigurationRecord(const VPCode
         }, {
             .size = size,
             .displaySize = displaySize,
-            .colorSpace = colorSpaceFromVPCodecConfigurationRecord(record),
-            .extensionAtoms = { 1, { computeBoxType(codecName), SharedBuffer::create(vpcCFromVPCodecConfigurationRecord(record)) } },
+            .bitDepth = record.bitDepth,
+            .colorSpace = WTF::move(colorSpace),
+            .extensionAtoms = { FillWith { }, 1, { computeBoxType(codecName), SharedBuffer::create(vpcCFromVPCodecConfigurationRecord(record)) } },
         }
     });
 }
@@ -567,8 +593,8 @@ Ref<VideoInfo> createVideoInfoFromVP9HeaderParser(const vp9_parser::Vp9HeaderPar
         auto& colorValue = video.colour.value();
         if (colorValue.chroma_subsampling_x.is_present() && colorValue.chroma_subsampling_y.is_present())
             record.chromaSubsampling = convertSubsamplingXYToChromaSubsampling(colorValue.chroma_subsampling_x.value(), colorValue.chroma_subsampling_y.value());
-        if (colorValue.range.is_present() && colorValue.range.value() != Range::kUnspecified)
-            record.videoFullRangeFlag = colorValue.range.value() == Range::kFull ? VPConfigurationRange::FullRange : VPConfigurationRange::VideoRange;
+        if (colorValue.range.is_present() && colorValue.range.value() != webm::Range::kUnspecified)
+            record.videoFullRangeFlag = colorValue.range.value() == webm::Range::kFull ? VPConfigurationRange::FullRange : VPConfigurationRange::VideoRange;
         if (colorValue.bits_per_channel.is_present())
             record.bitDepth = colorValue.bits_per_channel.value();
         if (colorValue.transfer_characteristics.is_present())
@@ -662,8 +688,8 @@ Ref<VideoInfo> createVideoInfoFromVP8Header(const VP8FrameHeader& header, const 
         auto& colorValue = video.colour.value();
         if (colorValue.chroma_subsampling_x.is_present() && colorValue.chroma_subsampling_y.is_present())
             record.chromaSubsampling = convertSubsamplingXYToChromaSubsampling(colorValue.chroma_subsampling_x.value(), colorValue.chroma_subsampling_y.value());
-        if (colorValue.range.is_present() && colorValue.range.value() != Range::kUnspecified)
-            record.videoFullRangeFlag = colorValue.range.value() == Range::kFull ? VPConfigurationRange::FullRange : VPConfigurationRange::VideoRange;
+        if (colorValue.range.is_present() && colorValue.range.value() != webm::Range::kUnspecified)
+            record.videoFullRangeFlag = colorValue.range.value() == webm::Range::kFull ? VPConfigurationRange::FullRange : VPConfigurationRange::VideoRange;
         if (colorValue.bits_per_channel.is_present())
             record.bitDepth = colorValue.bits_per_channel.value();
         if (colorValue.transfer_characteristics.is_present())
@@ -675,6 +701,41 @@ Ref<VideoInfo> createVideoInfoFromVP8Header(const VP8FrameHeader& header, const 
     }
 
     return createVideoInfoFromVPCodecConfigurationRecord(record, { static_cast<float>(header.width), static_cast<float>(header.height) }, { static_cast<float>(video.display_width.is_present() ? video.display_width.value() : header.width), static_cast<float>(video.display_height.is_present() ? video.display_height.value() : header.height) });
+}
+
+RetainPtr<CMVideoFormatDescriptionRef> createVP9FormatDescriptionFromRecord(const VPCodecConfigurationRecord& record, const std::optional<PlatformVideoColorSpace>& colorSpaceOverride)
+{
+    ASSERT(record.frameWidth);
+    ASSERT(record.frameHeight);
+
+    Ref videoInfo = createVideoInfoFromVPCodecConfigurationRecord(record, IntSize { record.frameWidth, record.frameHeight }, IntSize { record.frameWidth, record.frameHeight }, colorSpaceOverride);
+    return createFormatDescriptionFromTrackInfo(videoInfo.get());
+}
+
+Ref<VideoInfo> createVideoInfoFromVPCodecConfigurationRecord(const VPCodecConfigurationRecord& record, const std::optional<PlatformVideoColorSpace>& colorSpaceOverride)
+{
+    FloatSize size { static_cast<float>(record.frameWidth), static_cast<float>(record.frameHeight) };
+    return createVideoInfoFromVPCodecConfigurationRecord(record, size, size, colorSpaceOverride);
+}
+
+RefPtr<VideoInfo> createVideoInfoFromVP9Stream(std::span<const uint8_t> data, uint16_t width, uint16_t height)
+{
+    auto parsedRecord = vpCodecConfigurationRecordFromVPXByteStream(VPXCodec::Vp9, data);
+    if (!parsedRecord)
+        return { };
+
+    if (width)
+        parsedRecord->frameWidth = width;
+    if (height)
+        parsedRecord->frameHeight = height;
+
+    if (parsedRecord->colorPrimaries == VPConfigurationColorPrimaries::Unspecified && parsedRecord->transferCharacteristics == VPConfigurationTransferCharacteristics::Unspecified && parsedRecord->matrixCoefficients == VPConfigurationMatrixCoefficients::Unspecified) {
+        parsedRecord->colorPrimaries = VPConfigurationColorPrimaries::BT_709_6;
+        parsedRecord->transferCharacteristics = VPConfigurationTransferCharacteristics::BT_709_6;
+        parsedRecord->matrixCoefficients = VPConfigurationMatrixCoefficients::BT_709_6;
+    }
+
+    return createVideoInfoFromVPCodecConfigurationRecord(*parsedRecord);
 }
 
 }

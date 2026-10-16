@@ -50,7 +50,7 @@ class AXIsolatedTree;
     ThreadSafeWeakPtr<WebCore::AXIsolatedTree> m_isolatedTree;
 
     Lock m_windowLock;
-    WeakObjCPtr<id> m_window;
+    WeakObjCPtr<id> m_window WTF_GUARDED_BY_LOCK(m_windowLock);
 #endif // ENABLE(ACCESSIBILITY_ISOLATED_TREE)
 
     WebCore::IntPoint m_remoteFrameOffset;
@@ -70,7 +70,6 @@ class AXIsolatedTree;
 - (void)setIsolatedTree:(Ref<WebCore::AXIsolatedTree>&&)tree;
 - (RefPtr<WebCore::AXIsolatedTree>)isolatedTree;
 - (void)setWindow:(id)window;
-- (void)_buildIsolatedTreeIfNeeded;
 #endif
 - (void)setRemoteParent:(id)parent token:(NSData *)token;
 - (void)setRemoteFrameOffset:(WebCore::IntPoint)offset;
@@ -80,8 +79,7 @@ class AXIsolatedTree;
 - (id)accessibilityRootObjectWrapper:(WebCore::LocalFrame*)frame;
 - (id)accessibilityFocusedUIElement;
 - (WebCore::IntPoint)accessibilityRemoteFrameOffset;
-- (WebCore::LocalFrame *)focusedLocalFrame;
-- (RefPtr<WebCore::LocalFrame>)protectedFocusedLocalFrame;
+- (WebCore::LocalFrame *)localFocusedFrame;
 - (NSUInteger)remoteTokenHash;
 
 - (BOOL)shouldFallbackToWebContentAXObjectForMainFramePlugin;

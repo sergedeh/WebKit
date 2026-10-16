@@ -4,7 +4,7 @@
              (C) 1998, 1999 Torben Weis (weis@kde.org)
              (C) 1999 Lars Knoll (knoll@kde.org)
              (C) 1999 Antti Koivisto (koivisto@kde.org)
-   Copyright (C) 2004-2025 Apple Inc. All rights reserved.
+   Copyright (C) 2004-2026 Apple Inc. All rights reserved.
 
    This library is free software; you can redistribute it and/or
    modify it under the terms of the GNU Library General Public
@@ -24,7 +24,11 @@
 
 #pragma once
 
-#include "LocalFrameView.h"
+#include <WebCore/DocumentPage.h>
+#include <WebCore/LocalFrame.h>
+#include <WebCore/LocalFrameView.h>
+#include <WebCore/Page.h>
+#include <WebCore/RenderView.h>
 
 namespace WebCore {
 
@@ -53,6 +57,11 @@ inline bool LocalFrameView::hasEnoughContentForVisualMilestones() const
     if (!m_frame->page())
         return false;
     return isVisuallyNonEmpty() && hasContentfulDescendants() && (!m_frame->page()->requestedLayoutMilestones().contains(LayoutMilestone::DidRenderSignificantAmountOfText) || m_renderedSignificantAmountOfText);
+}
+
+inline LocalFrameView& RenderView::frameView() const LIFETIME_BOUND
+{
+    return m_frameView.get();
 }
 
 } // namespace WebCore

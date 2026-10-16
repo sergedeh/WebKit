@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "CSSPrimitiveNumeric.h"
 #include "CSSRule.h"
 #include "StyleRule.h"
 
@@ -37,15 +38,15 @@ class StyleRuleCSSStyleProperties;
 
 class StyleRuleKeyframe final : public StyleRuleBase {
 public:
-    static Ref<StyleRuleKeyframe> create(Ref<StyleProperties>&&);
-    static Ref<StyleRuleKeyframe> create(Vector<std::pair<CSSValueID, double>>&& keys, Ref<StyleProperties>&&);
+    static Ref<StyleRuleKeyframe> LEGACY_NODELETE create(Ref<StyleProperties>&&);
+    static Ref<StyleRuleKeyframe> create(Vector<std::pair<CSSValueID, CSS::Percentage<>>>&& keys, Ref<StyleProperties>&&);
     ~StyleRuleKeyframe();
 
     Ref<StyleRuleKeyframe> copy() const { RELEASE_ASSERT_NOT_REACHED(); }
 
     struct Key {
         CSSValueID rangeName;
-        double offset;
+        CSS::Percentage<> offset;
 
         void writeToString(StringBuilder&) const;
         bool operator==(const Key&) const = default;
@@ -60,7 +61,7 @@ public:
         m_keys.append(key);
     }
 
-    const Vector<Key>& keys() const { return m_keys; };
+    const Vector<Key>& keys() const LIFETIME_BOUND { return m_keys; };
 
     const StyleProperties& properties() const { return m_properties; }
     MutableStyleProperties& mutableProperties();
@@ -80,10 +81,10 @@ public:
     virtual ~CSSKeyframeRule();
 
     String cssText() const final { return m_keyframe->cssText(); }
-    void reattach(StyleRuleBase&) final;
+    void LEGACY_NODELETE reattach(StyleRuleBase&) final;
 
     String keyText() const { return m_keyframe->keyText(); }
-    void setKeyText(const String& text) { m_keyframe->setKeyText(text); }
+    void setKeyText(const String&);
 
     CSSStyleProperties& style();
 

@@ -30,20 +30,26 @@
 #include "ClipboardItem.h"
 #include "CommonAtomStrings.h"
 #include "ContextDestructionObserverInlines.h"
+#include "Document.h"
 #include "DocumentPage.h"
 #include "Editor.h"
+#include "EventLoop.h"
 #include "EventTargetInterfaces.h"
 #include "FrameInlines.h"
 #include "JSBlob.h"
 #include "JSClipboardItem.h"
+#include "JSDOMConvertInterface.h"
+#include "JSDOMConvertSequences.h"
+#include "JSDOMConvertStrings.h"
 #include "JSDOMPromiseDeferred.h"
+#include "LocalDOMWindow.h"
 #include "LocalFrameInlines.h"
 #include "Navigator.h"
 #include "PagePasteboardContext.h"
 #include "Pasteboard.h"
 #include "Settings.h"
 #include "SharedBuffer.h"
-#include "UserGestureIndicator.h"
+#include "TaskSource.h"
 #include "WebContentReader.h"
 #include <wtf/CompletionHandler.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -51,6 +57,22 @@
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Clipboard);
+
+// https://w3c.github.io/clipboard-apis/ requires the relevant global object to have transient
+// activation. Transient activation is not propagated to cross-origin iframes, so a user
+// interaction on a top-level page cannot be used by a cross-origin iframe to access the
+// clipboard via postMessage.
+static bool frameHasTransientActivation(const LocalFrame& frame)
+{
+    RefPtr window = frame.window();
+    return window && window->hasTransientActivation();
+}
+
+static bool documentHasTransientActivation(const Document& document)
+{
+    RefPtr window = document.window();
+    return window && window->hasTransientActivation();
+}
 
 static bool shouldProceedWithClipboardWrite(const LocalFrame& frame)
 {
@@ -62,7 +84,7 @@ static bool shouldProceedWithClipboardWrite(const LocalFrame& frame)
     case ClipboardAccessPolicy::Allow:
         return true;
     case ClipboardAccessPolicy::RequiresUserGesture:
-        return UserGestureIndicator::processingUserGesture();
+        return frameHasTransientActivation(frame);
     case ClipboardAccessPolicy::Deny:
         return false;
     }
@@ -105,21 +127,29 @@ ScriptExecutionContext* Clipboard::scriptExecutionContext() const
 void Clipboard::readText(Ref<DeferredPromise>&& promise)
 {
     RefPtr frame = this->frame();
-    if (!frame) {
+    RefPtr document = frame ? frame->document() : nullptr;
+    if (!document || !documentHasTransientActivation(*document)) {
         promise->reject(ExceptionCode::NotAllowedError);
         return;
     }
 
+    auto reject = [&] {
+        protect(document->eventLoop())->queueTask(TaskSource::Clipboard,
+            [promise = WTF::move(promise)] mutable {
+                promise->reject(ExceptionCode::NotAllowedError);
+            });
+    };
+
     auto pasteboard = Pasteboard::createForCopyAndPaste(PagePasteboardContext::create(frame->pageID()));
     auto changeCountAtStart = pasteboard->changeCount();
     if (!frame->requestDOMPasteAccess()) {
-        promise->reject(ExceptionCode::NotAllowedError);
+        reject();
         return;
     }
 
     auto allInfo = pasteboard->allPasteboardItemInfo();
     if (!allInfo) {
-        promise->reject(ExceptionCode::NotAllowedError);
+        reject();
         return;
     }
 
@@ -133,10 +163,15 @@ void Clipboard::readText(Ref<DeferredPromise>&& promise)
         }
     }
 
-    if (changeCountAtStart == pasteboard->changeCount())
-        promise->resolve<IDLDOMString>(WTF::move(text));
-    else
-        promise->reject(ExceptionCode::NotAllowedError);
+    if (changeCountAtStart != pasteboard->changeCount()) {
+        reject();
+        return;
+    }
+
+    protect(document->eventLoop())->queueTask(TaskSource::Clipboard,
+        [promise = WTF::move(promise), text = WTF::move(text)] mutable {
+            promise->resolve<IDLDOMString>(WTF::move(text));
+        });
 }
 
 void Clipboard::writeText(const String& data, Ref<DeferredPromise>&& promise)
@@ -151,35 +186,40 @@ void Clipboard::writeText(const String& data, Ref<DeferredPromise>&& promise)
     PasteboardCustomData customData;
     customData.writeString(textPlainContentTypeAtom(), data);
     customData.setOrigin(document->originIdentifierForPasteboard());
-    Pasteboard::createForCopyAndPaste(PagePasteboardContext::create(frame->pageID()))->writeCustomData({ WTF::move(customData) });
+    Pasteboard::createForCopyAndPaste(PagePasteboardContext::create(frame->pageID()))->writeCustomData({ WTF::move(customData) }, PasteboardWriteType::AsyncClipboard);
     promise->resolve();
 }
 
 void Clipboard::read(Ref<DeferredPromise>&& promise)
 {
-    auto rejectPromiseAndClearActiveSession = [&] {
+    RefPtr frame = this->frame();
+    RefPtr document = frame ? frame->document() : nullptr;
+    if (!document || !documentHasTransientActivation(*document)) {
         m_activeSession = std::nullopt;
         promise->reject(ExceptionCode::NotAllowedError);
-    };
-
-    RefPtr frame = this->frame();
-    if (!frame) {
-        rejectPromiseAndClearActiveSession();
         return;
     }
+
+    auto reject = [&] {
+        m_activeSession = std::nullopt;
+        protect(document->eventLoop())->queueTask(TaskSource::Clipboard,
+            [promise = WTF::move(promise)] mutable {
+                promise->reject(ExceptionCode::NotAllowedError);
+            });
+    };
 
     auto pasteboard = Pasteboard::createForCopyAndPaste(PagePasteboardContext::create(frame->pageID()));
     auto changeCountAtStart = pasteboard->changeCount();
 
     if (!frame->requestDOMPasteAccess()) {
-        rejectPromiseAndClearActiveSession();
+        reject();
         return;
     }
 
     if (!m_activeSession || m_activeSession->changeCount != changeCountAtStart) {
         auto allInfo = pasteboard->allPasteboardItemInfo();
         if (!allInfo) {
-            rejectPromiseAndClearActiveSession();
+            reject();
             return;
         }
 
@@ -189,7 +229,10 @@ void Clipboard::read(Ref<DeferredPromise>&& promise)
         m_activeSession = {{ WTF::move(pasteboard), WTF::move(clipboardItems), changeCountAtStart }};
     }
 
-    promise->resolve<IDLSequence<IDLInterface<ClipboardItem>>>(m_activeSession->items);
+    protect(document->eventLoop())->queueTask(TaskSource::Clipboard,
+        [promise = WTF::move(promise), items = m_activeSession->items] mutable {
+            promise->resolve<IDLSequence<IDLInterface<ClipboardItem>>>(items);
+        });
 }
 
 void Clipboard::getType(ClipboardItem& item, const String& type, Ref<DeferredPromise>&& promise)
@@ -220,7 +263,7 @@ void Clipboard::getType(ClipboardItem& item, const String& type, Ref<DeferredPro
         return;
     }
 
-    if (type == "image/png"_s) {
+    if (type == "image/png"_s || type == imageSVGContentTypeAtom()) {
         ClipboardImageReader imageReader { frame->document(), type };
         activePasteboard().read(imageReader, itemIndex);
         auto imageBlob = imageReader.takeResult();
@@ -259,7 +302,7 @@ void Clipboard::getType(ClipboardItem& item, const String& type, Ref<DeferredPro
     if (RefPtr page = frame->page())
         resultAsString = page->applyLinkDecorationFiltering(resultAsString, LinkDecorationFilteringTrigger::Paste);
 
-    promise->resolve<IDLInterface<Blob>>(ClipboardItem::blobFromString(frame->protectedDocument().get(), resultAsString, type));
+    promise->resolve<IDLInterface<Blob>>(ClipboardItem::blobFromString(protect(frame->document()).get(), resultAsString, type));
 }
 
 Clipboard::SessionIsValid Clipboard::updateSessionValidity()
@@ -366,21 +409,50 @@ void Clipboard::ItemWriter::didSetAllData()
     }
 
     auto dataToWrite = std::exchange(m_dataToWrite, { });
+    RefPtr context = m_clipboard ? m_clipboard->scriptExecutionContext() : nullptr;
+    if (!context) {
+        reject();
+        return;
+    }
+
+    bool supportsRichContent = context->settingsValues().asyncClipboardRichContentEnabled;
+    if (!supportsRichContent && dataToWrite.size() != 1) {
+        reject();
+        return;
+    }
+
     Vector<PasteboardCustomData> customData;
     customData.reserveInitialCapacity(dataToWrite.size());
-    for (auto data : dataToWrite) {
+    for (auto&& data : WTF::move(dataToWrite)) {
         if (!data) {
             reject();
             return;
         }
-        customData.append(*data);
+
+        if (!supportsRichContent) {
+            bool hasPlainText = false;
+            bool hasUnsupportedData = false;
+            data->forEachPlatformStringOrBuffer([&](auto& type, auto& value) {
+                if (type != textPlainContentTypeAtom() || !std::holds_alternative<String>(value)) {
+                    hasUnsupportedData = true;
+                    return;
+                }
+                hasPlainText = true;
+            });
+            if (!hasPlainText || hasUnsupportedData) {
+                reject();
+                return;
+            }
+        }
+
+        customData.append(WTF::move(*data));
     }
 
-    m_pasteboard->writeCustomData(WTF::move(customData));
+    m_pasteboard->writeCustomData(WTF::move(customData), PasteboardWriteType::AsyncClipboard);
     promise->resolve();
     m_promise = nullptr;
 
-    if (auto clipboard = std::exchange(m_clipboard, nullptr))
+    if (RefPtr clipboard = std::exchange(m_clipboard, nullptr))
         clipboard->didResolveOrReject(*this);
 }
 
@@ -389,7 +461,7 @@ void Clipboard::ItemWriter::reject()
     if (RefPtr promise = std::exchange(m_promise, nullptr))
         promise->reject(ExceptionCode::NotAllowedError);
 
-    if (auto clipboard = std::exchange(m_clipboard, nullptr))
+    if (RefPtr clipboard = std::exchange(m_clipboard, nullptr))
         clipboard->didResolveOrReject(*this);
 }
 

@@ -142,7 +142,7 @@ static String join(const Vector<String>& vector, ASCIILiteral separator)
     return builder.toString();
 }
 
-static CString allPositionTypeFailures(const Position& a, Node* nodeB, unsigned offsetB, std::partial_ordering expectedResult)
+static UTF8CString allPositionTypeFailures(const Position& a, Node* nodeB, unsigned offsetB, std::partial_ordering expectedResult)
 {
     Vector<String> failures;
     for (auto& b : allPositionTypes(nodeB, offsetB)) {
@@ -156,7 +156,7 @@ static CString allPositionTypeFailures(const Position& a, Node* nodeB, unsigned 
     return join(failures, ", "_s).utf8();
 }
 
-static CString allPositionTypeFailures(Node* nodeA, unsigned offsetA, Node* nodeB, unsigned offsetB, std::partial_ordering expectedResult)
+static UTF8CString allPositionTypeFailures(Node* nodeA, unsigned offsetA, Node* nodeB, unsigned offsetB, std::partial_ordering expectedResult)
 {
     Vector<String> failures;
     for (auto& a : allPositionTypes(nodeA, offsetA)) {
@@ -172,25 +172,25 @@ static CString allPositionTypeFailures(Node* nodeA, unsigned offsetA, Node* node
     return join(failures, " | "_s).utf8();
 }
 
-static CString allPositionTypeFailures(Node& nodeA, unsigned offsetA, Node& nodeB, unsigned offsetB, std::partial_ordering expectedResult)
+static UTF8CString allPositionTypeFailures(Node& nodeA, unsigned offsetA, Node& nodeB, unsigned offsetB, std::partial_ordering expectedResult)
 {
     return allPositionTypeFailures(&nodeA, offsetA, &nodeB, offsetB, expectedResult);
 }
 
-static CString allPositionTypeFailures(Node* nodeA, unsigned offsetA, Node& nodeB, unsigned offsetB, std::partial_ordering expectedResult)
+static UTF8CString allPositionTypeFailures(Node* nodeA, unsigned offsetA, Node& nodeB, unsigned offsetB, std::partial_ordering expectedResult)
 {
     return allPositionTypeFailures(nodeA, offsetA, &nodeB, offsetB, expectedResult);
 }
 
-static CString allPositionTypeFailures(const Position& a, Node& nodeB, unsigned offsetB, std::partial_ordering expectedResult)
+static UTF8CString allPositionTypeFailures(const Position& a, Node& nodeB, unsigned offsetB, std::partial_ordering expectedResult)
 {
     return allPositionTypeFailures(a, &nodeB, offsetB, expectedResult);
 }
 
 #define TEST_ALL_POSITION_TYPES(nodeA, offsetA, nodeB, offsetB, expectedResult) \
-    EXPECT_STREQ(allPositionTypeFailures(nodeA, offsetA, nodeB, offsetB, std::partial_ordering::expectedResult).data(), "")
+    EXPECT_EQ(allPositionTypeFailures(nodeA, offsetA, nodeB, offsetB, std::partial_ordering::expectedResult), ""_s)
 #define TEST_ALL_POSITION_TYPES_B(positionA, nodeB, offsetB, expectedResult) \
-    EXPECT_STREQ(allPositionTypeFailures(positionA, nodeB, offsetB, std::partial_ordering::expectedResult).data(), "")
+    EXPECT_EQ(allPositionTypeFailures(positionA, nodeB, offsetB, std::partial_ordering::expectedResult), ""_s)
 
 static Position makePositionBefore(Node& node)
 {
@@ -295,6 +295,34 @@ TEST(DocumentOrder, Positions)
     TEST_ALL_POSITION_TYPES_B(makePositionAfter(document), h, 0, greater);
 
     // FIXME: Add tests that cover shadow trees.
+}
+
+TEST(Position, EqualsAfterChildrenVersusOffsetInAnchor)
+{
+    auto document = createDocument();
+    auto& body = *document->body();
+
+    body.appendChild(HTMLDivElement::create(document));
+    body.appendChild(HTMLDivElement::create(document));
+    body.appendChild(HTMLDivElement::create(document));
+    ASSERT_EQ(body.countChildNodes(), 3u);
+
+    Position afterChildren { &body, Position::PositionIsAfterChildren };
+    Position offsetAtEnd = makeContainerOffsetPosition(&body, body.countChildNodes()); // (body, 3)
+
+    EXPECT_TRUE(offsetAtEnd.equals(afterChildren));
+    EXPECT_TRUE(afterChildren.equals(offsetAtEnd));
+
+    Position offsetAtStart = makeContainerOffsetPosition(&body, 0u);
+    EXPECT_FALSE(afterChildren.equals(offsetAtStart));
+    EXPECT_FALSE(offsetAtStart.equals(afterChildren));
+
+    Ref empty = HTMLDivElement::create(document);
+    body.appendChild(empty);
+    Position emptyAfterChildren { empty.ptr(), Position::PositionIsAfterChildren };
+    Position emptyOffsetZero = makeContainerOffsetPosition(empty.ptr(), 0u);
+    EXPECT_TRUE(emptyAfterChildren.equals(emptyOffsetZero));
+    EXPECT_TRUE(emptyOffsetZero.equals(emptyAfterChildren));
 }
 
 } // namespace TestWebKitAPI

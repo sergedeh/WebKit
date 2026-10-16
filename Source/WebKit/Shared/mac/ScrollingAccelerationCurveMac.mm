@@ -32,12 +32,13 @@
 #import "NativeWebWheelEvent.h"
 #import <pal/spi/cg/CoreGraphicsSPI.h>
 #import <pal/spi/cocoa/IOKitSPI.h>
+#import <wtf/Borrow.h>
 #import <wtf/cf/TypeCastsCF.h>
 #import <wtf/darwin/DispatchExtras.h>
 
 namespace WebKit {
 
-static float fromFixedPoint(float value)
+static float LEGACY_NODELETE fromFixedPoint(float value)
 {
     return value / 65536.0f;
 }
@@ -82,15 +83,17 @@ static ScrollingAccelerationCurve fromIOHIDCurveArrayWithAcceleration(NSArray<NS
         curves.append({ curveAcceleration, curve });
     }];
 
+    Borrow borrowedCurves = curves;
+
     // Interpolation if desiredAcceleration is in between two curves.
-    if (curves[currentIndex].first < desiredAcceleration && (currentIndex + 1) < curves.size()) {
-        const auto& lowCurve = curves[currentIndex];
-        const auto& highCurve = curves[currentIndex + 1];
+    if (borrowedCurves[currentIndex].first < desiredAcceleration && (currentIndex + 1) < borrowedCurves->size()) {
+        const auto& lowCurve = borrowedCurves[currentIndex];
+        const auto& highCurve = borrowedCurves[currentIndex + 1];
         float ratio = (desiredAcceleration - lowCurve.first) / (highCurve.first - lowCurve.first);
         return ScrollingAccelerationCurve::interpolate(lowCurve.second, highCurve.second, ratio);
     }
 
-    return curves[currentIndex].second;
+    return borrowedCurves[currentIndex].second;
 }
 
 static RetainPtr<IOHIDEventSystemClientRef> createHIDClient()
@@ -113,21 +116,21 @@ static std::optional<ScrollingAccelerationCurve> fromIOHIDDevice(IOHIDEventSende
         return std::nullopt;
     }
 
-    auto curves = adoptCF(dynamic_cf_cast<CFArrayRef>(IOHIDServiceClientCopyProperty(ioHIDService.get(), CFSTR(kHIDScrollAccelParametricCurvesKey))));
+    auto curves = dynamic_cf_cast<CFArrayRef>(adoptCF(IOHIDServiceClientCopyProperty(ioHIDService.get(), CFSTR(kHIDScrollAccelParametricCurvesKey))));
     if (!curves) {
         RELEASE_LOG(ScrollAnimations, "ScrollingAccelerationCurve::fromIOHIDDevice failed to look up curves");
         return std::nullopt;
     }
 
     auto readFixedPointServiceKey = [&] (CFStringRef key) -> std::optional<float> {
-        auto valueCF = adoptCF(dynamic_cf_cast<CFNumberRef>(IOHIDServiceClientCopyProperty(ioHIDService.get(), key)));
+        auto valueCF = dynamic_cf_cast<CFNumberRef>(adoptCF(IOHIDServiceClientCopyProperty(ioHIDService.get(), key)));
         if (!valueCF)
             return std::nullopt;
         return fromFixedPoint([(NSNumber *)valueCF.get() floatValue]);
     };
 
     auto scrollAcceleration = [&] () -> std::optional<float> {
-        if (auto scrollAccelerationType = adoptCF(dynamic_cf_cast<CFStringRef>(IOHIDServiceClientCopyProperty(ioHIDService.get(), CFSTR("HIDScrollAccelerationType"))))) {
+        if (auto scrollAccelerationType = dynamic_cf_cast<CFStringRef>(adoptCF(IOHIDServiceClientCopyProperty(ioHIDService.get(), CFSTR("HIDScrollAccelerationType"))))) {
             if (auto acceleration = readFixedPointServiceKey(scrollAccelerationType.get()))
                 return acceleration;
         }
@@ -153,7 +156,7 @@ static std::optional<ScrollingAccelerationCurve> fromIOHIDDevice(IOHIDEventSende
 
     static CFStringRef dispatchFrameRateKey = CFSTR("ScrollMomentumDispatchRate");
     static constexpr float defaultDispatchFrameRate = 60;
-    auto frameRateCF = adoptCF(dynamic_cf_cast<CFNumberRef>(IOHIDServiceClientCopyProperty(ioHIDService.get(), dispatchFrameRateKey)));
+    auto frameRateCF = dynamic_cf_cast<CFNumberRef>(adoptCF(IOHIDServiceClientCopyProperty(ioHIDService.get(), dispatchFrameRateKey)));
     float frameRate = frameRateCF ? fromCFNumber(frameRateCF.get()) : defaultDispatchFrameRate;
 
     return fromIOHIDCurveArrayWithAcceleration((NSArray *)curves.get(), *scrollAcceleration, *resolution, frameRate);

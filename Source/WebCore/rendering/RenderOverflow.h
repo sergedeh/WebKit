@@ -28,7 +28,7 @@
 namespace WebCore
 {
 // RenderOverflow is a class for tracking content that spills out of a box.
-// This class is used by RenderBox and LegacyInlineFlowBox.
+// This class is used by RenderBox.
 //
 // There are three types of overflow:
 // * layout overflow (which is expected to be reachable via scrolling mechanisms)
@@ -68,6 +68,8 @@ public:
     void addLayoutOverflow(const LayoutRect&);
     void addVisualOverflow(const LayoutRect&);
     void addContentOverflow(const LayoutRect& rect) { m_contentArea.uniteEvenIfEmpty(rect); }
+    void addContentOverflowX(const LayoutRect& rect) { m_contentArea.uniteXEvenIfEmpty(rect); }
+    void addContentOverflowY(const LayoutRect& rect) { m_contentArea.uniteYEvenIfEmpty(rect); }
 
     void setLayoutOverflow(const LayoutRect& rect) { m_layoutOverflow = rect; }
     void setVisualOverflow(const LayoutRect& rect) { m_visualOverflow = rect; }

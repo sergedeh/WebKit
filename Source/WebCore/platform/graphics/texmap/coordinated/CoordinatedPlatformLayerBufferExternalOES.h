@@ -25,25 +25,31 @@
 
 #pragma once
 
-#if USE(COORDINATED_GRAPHICS)
+#if USE(COORDINATED_GRAPHICS) && USE(TEXTURE_MAPPER)
 #include "CoordinatedPlatformLayerBuffer.h"
 
 namespace WebCore {
+
+class BitmapTexture;
 
 class CoordinatedPlatformLayerBufferExternalOES final : public CoordinatedPlatformLayerBuffer {
 public:
     static std::unique_ptr<CoordinatedPlatformLayerBufferExternalOES> create(unsigned textureID, const IntSize&, OptionSet<TextureMapperFlags>, std::unique_ptr<GLFence>&&);
     CoordinatedPlatformLayerBufferExternalOES(unsigned textureID, const IntSize&, OptionSet<TextureMapperFlags>, std::unique_ptr<GLFence>&&);
+    static std::unique_ptr<CoordinatedPlatformLayerBufferExternalOES> create(Ref<BitmapTexture>&&, OptionSet<TextureMapperFlags>, std::unique_ptr<GLFence>&&);
+    CoordinatedPlatformLayerBufferExternalOES(Ref<BitmapTexture>&&, OptionSet<TextureMapperFlags>, std::unique_ptr<GLFence>&&);
+
     virtual ~CoordinatedPlatformLayerBufferExternalOES();
 
 private:
     void paintToTextureMapper(TextureMapper&, const FloatRect&, const TransformationMatrix& modelViewMatrix = TransformationMatrix(), float opacity = 1.0) override;
 
     unsigned m_textureID { 0 };
+    const RefPtr<BitmapTexture> m_texture;
 };
 
 } // namespace WebCore
 
 SPECIALIZE_TYPE_TRAITS_COORDINATED_PLATFORM_LAYER_BUFFER_TYPE(CoordinatedPlatformLayerBufferExternalOES, Type::ExternalOES)
 
-#endif // USE(COORDINATED_GRAPHICS)
+#endif // USE(COORDINATED_GRAPHICS) && USE(TEXTURE_MAPPER)

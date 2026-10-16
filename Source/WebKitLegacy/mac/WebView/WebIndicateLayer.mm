@@ -34,7 +34,6 @@
 #import <pal/spi/cocoa/QuartzCoreSPI.h>
 #import <wtf/NeverDestroyed.h>
 
-using namespace WebCore;
 
 @implementation WebIndicateLayer
 
@@ -47,20 +46,20 @@ using namespace WebCore;
     _webView = webView;
 
     self.canDrawConcurrently = NO;
-    self.contentsScale = [[_webView window] screenScale];
+    self.contentsScale = [[protect(_webView) window] screenScale];
 
     // Blue highlight color.
-    constexpr auto highlightColor = SRGBA<uint8_t> { 111, 168, 220, 168 };
-    self.backgroundColor = cachedCGColor(highlightColor).get();
+    constexpr auto highlightColor = WebCore::SRGBA<uint8_t> { 111, 168, 220, 168 };
+    self.backgroundColor = WebCore::cachedCGColor(highlightColor).get();
 
     return self;
 }
 
 - (void)layoutSublayers
 {
-    CGFloat documentScale = [[[_webView mainFrame] documentView] scale];
+    CGFloat documentScale = [[[protect(_webView) mainFrame] documentView] scale];
     [self setTransform:CATransform3DMakeScale(documentScale, documentScale, 1.0)];
-    [self setFrame:[_webView frame]];
+    [self setFrame:[protect(_webView) frame]];
 }
 
 - (id<CAAction>)actionForKey:(NSString *)key

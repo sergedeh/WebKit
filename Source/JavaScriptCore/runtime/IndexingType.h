@@ -25,13 +25,14 @@
 
 #pragma once
 
-#include <JavaScriptCore/Options.h>
-#include <JavaScriptCore/SpeculatedType.h>
 #include <cstdint>
+#include <wtf/Forward.h>
 #include <wtf/LockAlgorithm.h>
-#include <wtf/StdLibExtras.h>
+#include <wtf/PrintStream.h>
 
 namespace JSC {
+
+class JSValue;
 
 /*
     Structure of the IndexingType
@@ -211,25 +212,21 @@ inline unsigned arrayIndexFromIndexingType(IndexingType indexingType)
     return (indexingType & IndexingShapeMask) >> IndexingShapeShift;
 }
 
-inline IndexingType indexingTypeForValue(JSValue value)
-{
-    if (value.isInt32())
-        return Int32Shape;
-
-    if (value.isNumber() && value.asNumber() == value.asNumber() && Options::allowDoubleShape())
-        return DoubleShape;
-
-    return ContiguousShape;
-}
+inline IndexingType indexingTypeForValue(JSValue); // Defined in IndexingTypeInlines.h
 
 // Return an indexing type that can handle all of the elements of both indexing types.
-IndexingType leastUpperBoundOfIndexingTypes(IndexingType, IndexingType);
+inline IndexingType leastUpperBoundOfIndexingTypes(IndexingType a, IndexingType b)
+{
+    // It doesn't make sense to LUB something that is an array with something that isn't.
+    ASSERT((a & IsArray) == (b & IsArray));
 
-bool isProvenValidTypeForIndexingShapeStorage(IndexingType, SpeculatedType);
-IndexingType leastUpperBoundOfIndexingTypeAndTypeForSpeculation(IndexingType, SpeculatedType);
-IndexingType leastUpperBoundOfIndexingTypeAndValue(IndexingType, JSValue);
+    // Boy, this sure is easy right now.
+    return std::max(a, b);
+}
 
-void dumpIndexingType(PrintStream&, IndexingType);
+inline IndexingType leastUpperBoundOfIndexingTypeAndValue(IndexingType, JSValue); // Defined in IndexingTypeInlines.h
+
+JS_EXPORT_PRIVATE void dumpIndexingType(PrintStream&, IndexingType);
 MAKE_PRINT_ADAPTOR(IndexingTypeDump, IndexingType, dumpIndexingType);
 
 static const IndexingType AllWritableArrayTypes    = IndexingShapeMask | IsArray;

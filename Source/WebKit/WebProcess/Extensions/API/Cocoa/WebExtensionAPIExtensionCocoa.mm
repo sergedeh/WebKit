@@ -29,6 +29,7 @@
 
 #import "config.h"
 #import "WebExtensionAPIExtension.h"
+#import "WebExtensionAPIKeys.h"
 
 #if ENABLE(WK_WEB_EXTENSIONS)
 
@@ -37,15 +38,9 @@
 #import "WebExtensionAPIWindows.h"
 #import "WebExtensionContextMessages.h"
 #import "WebExtensionUtilities.h"
+#import "WebFrame.h"
 #import "WebPage.h"
 #import "WebProcess.h"
-
-static NSString * const typeKey = @"type";
-static NSString * const tabIdKey = @"tabId";
-static NSString * const windowIdKey = @"windowId";
-
-static NSString * const popupKey = @"popup";
-static NSString * const tabKey = @"tab";
 
 namespace WebKit {
 
@@ -88,12 +83,13 @@ bool WebExtensionAPIExtension::parseViewFilters(NSDictionary *filter, std::optio
 
 bool WebExtensionAPIExtension::isPropertyAllowed(const ASCIILiteral& name, WebPage*)
 {
-    if (protectedExtensionContext()->isUnsupportedAPI(propertyPath(), name)) [[unlikely]]
+    RefPtr context = extensionContext();
+    if (context->isUnsupportedAPI(propertyPath(), name)) [[unlikely]]
         return false;
 
     // This method was removed in manifest version 3.
     if (name == "getURL"_s)
-        return !extensionContext().supportsManifestVersion(3);
+        return !context->supportsManifestVersion(3);
 
     ASSERT_NOT_REACHED();
     return false;
@@ -110,7 +106,7 @@ JSValue *WebExtensionAPIExtension::getBackgroundPage(JSContextRef context)
 {
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/extension/getBackgroundPage
 
-    auto backgroundPage = protectedExtensionContext()->backgroundPage();
+    auto backgroundPage = extensionContext().backgroundPage();
     if (!backgroundPage)
         return toJSValue(context, JSValueMakeNull(context));
 
@@ -161,6 +157,14 @@ NSArray *WebExtensionAPIExtension::getViews(JSContextRef context, NSDictionary *
 bool WebExtensionAPIExtension::isInIncognitoContext(WebPage& page)
 {
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/extension/inIncognitoContext
+
+    // Extension pages (background, popup, etc.) are never in an incognito context.
+    if (protect(extensionContext())->isURLForThisExtension(page.mainWebFrame().url()))
+        return false;
+
+    // Pages in the controller's own non-persistent session are not incognito.
+    if (page.sessionID() == extensionContext().defaultSessionID())
+        return false;
 
     return page.usesEphemeralSession();
 }

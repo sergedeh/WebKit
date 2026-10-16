@@ -50,14 +50,16 @@ private:
     void findString(JSStringRef, unsigned long, unsigned long) override;
     JSObjectRef contentsOfUserInterfaceItem(JSStringRef) const override;
     void setDefaultCalendarType(JSStringRef calendarIdentifier, JSStringRef localeIdentifier) override;
-    JSRetainPtr<JSStringRef> lastUndoLabel() const override;
-    JSRetainPtr<JSStringRef> firstRedoLabel() const override;
-    JSRetainPtr<JSStringRef> caLayerTreeAsText() const override;
-    JSRetainPtr<JSStringRef> caLayerTreeAsTextForLayerWithID(uint64_t layerID) const override;
+    RefPtr<OpaqueJSString> lastUndoLabel() const override;
+    RefPtr<OpaqueJSString> firstRedoLabel() const override;
+    RefPtr<OpaqueJSString> caLayerTreeAsText() const override;
+    RefPtr<OpaqueJSString> caLayerTreeAsTextForLayerWithID(uint64_t layerID) const override;
     NSUndoManager *platformUndoManager() const override;
     JSObjectRef propertiesOfLayerWithID(uint64_t layerID) const final;
+    RefPtr<OpaqueJSString> delegatedZoomOverrideAsText() const final;
 
-    JSRetainPtr<JSStringRef> scrollingTreeAsText() const override;
+    RefPtr<OpaqueJSString> scrollingTreeAsText() const override;
+    RefPtr<OpaqueJSString> scrollingTreeIncludingNodeIDsAsText() const override;
 
     void setDidShowContextMenuCallback(JSValueRef) override;
     void setDidDismissContextMenuCallback(JSValueRef) override;
@@ -80,6 +82,8 @@ private:
     void dismissContactPickerWithContacts(JSValueRef) override;
 
     void completeTaskAsynchronouslyAfterActivityStateUpdate(unsigned callbackID);
+
+    void simulateAvailableSpeechVoicesDidChangeOnBackgroundThread(JSValueRef) override;
 
     unsigned long countOfUpdatesWithLayerChanges() const override;
 
@@ -106,9 +110,10 @@ private:
     void setObscuredInsets(double top, double right, double bottom, double left) final;
 
 #if ENABLE(THREADED_ANIMATIONS)
-    JSRetainPtr<JSStringRef> animationStackForLayerWithID(uint64_t layerID) const final;
-    JSRetainPtr<JSStringRef> progressBasedTimelinesForScrollingNodeID(unsigned long long scrollingNodeID, unsigned long long processID) const final;
+    RefPtr<OpaqueJSString> animationStackForLayerWithID(uint64_t layerID) const final;
+    RefPtr<OpaqueJSString> progressBasedTimelinesForScrollingNodeID(unsigned long long scrollingNodeID, unsigned long long processID) const final;
 #endif
+    bool displayLinkWantsHighFrameRate() const final;
 };
 
 } // namespace WTR

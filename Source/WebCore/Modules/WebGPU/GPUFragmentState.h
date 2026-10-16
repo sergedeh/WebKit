@@ -29,6 +29,7 @@
 #include "GPUProgrammableStage.h"
 #include "WebGPUFragmentState.h"
 #include <optional>
+#include <wtf/Forward.h>
 #include <wtf/Vector.h>
 
 namespace WebCore {
@@ -36,7 +37,6 @@ namespace WebCore {
 struct GPUFragmentState : public GPUProgrammableStage {
     WebGPU::FragmentState convertToBacking() const
     {
-        ASSERT(module);
         return {
             {
                 module->backing(),
@@ -50,6 +50,8 @@ struct GPUFragmentState : public GPUProgrammableStage {
             }),
         };
     }
+
+    Ref<JSON::Object> toJSON() const;
 
     Vector<std::optional<GPUColorTargetState>> targets;
 };

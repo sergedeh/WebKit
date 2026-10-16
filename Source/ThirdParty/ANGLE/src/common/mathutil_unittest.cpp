@@ -7,11 +7,9 @@
 //   Unit tests for the utils defined in mathutil.h
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #include "mathutil.h"
+
+#include <array>
 
 #include <gtest/gtest.h>
 
@@ -24,10 +22,17 @@ namespace
 // For floats f1 and f2, unpackSnorm2x16(packSnorm2x16(f1, f2)) should be same as f1 and f2.
 TEST(MathUtilTest, packAndUnpackSnorm2x16)
 {
-    const float input[8][2] = {
-        {0.0f, 0.0f},    {1.0f, 1.0f},          {-1.0f, 1.0f},           {-1.0f, -1.0f},
-        {0.875f, 0.75f}, {0.00392f, -0.99215f}, {-0.000675f, 0.004954f}, {-0.6937f, -0.02146f}};
-    const float floatFaultTolerance = 0.0001f;
+    static constexpr std::array<std::array<float, 2>, 8> input = {{
+        {0.0f, 0.0f},
+        {1.0f, 1.0f},
+        {-1.0f, 1.0f},
+        {-1.0f, -1.0f},
+        {0.875f, 0.75f},
+        {0.00392f, -0.99215f},
+        {-0.000675f, 0.004954f},
+        {-0.6937f, -0.02146f},
+    }};
+    const float floatFaultTolerance                            = 0.0001f;
     float outputVal1, outputVal2;
 
     for (size_t i = 0; i < 8; i++)
@@ -68,10 +73,17 @@ TEST(MathUtilTest, packAndUnpackSnorm2x16Infinity)
 // For floats f1 and f2, unpackUnorm2x16(packUnorm2x16(f1, f2)) should be same as f1 and f2.
 TEST(MathUtilTest, packAndUnpackUnorm2x16)
 {
-    const float input[8][2] = {
-        {0.0f, 0.0f},    {1.0f, 1.0f},          {-1.0f, 1.0f},           {-1.0f, -1.0f},
-        {0.875f, 0.75f}, {0.00392f, -0.99215f}, {-0.000675f, 0.004954f}, {-0.6937f, -0.02146f}};
-    const float floatFaultTolerance = 0.0001f;
+    static constexpr std::array<std::array<float, 2>, 8> input = {{
+        {0.0f, 0.0f},
+        {1.0f, 1.0f},
+        {-1.0f, 1.0f},
+        {-1.0f, -1.0f},
+        {0.875f, 0.75f},
+        {0.00392f, -0.99215f},
+        {-0.000675f, 0.004954f},
+        {-0.6937f, -0.02146f},
+    }};
+    const float floatFaultTolerance                            = 0.0001f;
     float outputVal1, outputVal2;
 
     for (size_t i = 0; i < 8; i++)
@@ -114,11 +126,17 @@ TEST(MathUtilTest, packAndUnpackUnorm2x16Infinity)
 // For floats f1 and f2, unpackHalf2x16(packHalf2x16(f1, f2)) should be same as f1 and f2.
 TEST(MathUtilTest, packAndUnpackHalf2x16)
 {
-    const float input[8][2] = {
-        {0.0f, 0.0f},    {1.0f, 1.0f},          {-1.0f, 1.0f},           {-1.0f, -1.0f},
-        {0.875f, 0.75f}, {0.00392f, -0.99215f}, {-0.000675f, 0.004954f}, {-0.6937f, -0.02146f},
-    };
-    const float floatFaultTolerance = 0.0005f;
+    static constexpr std::array<std::array<float, 2>, 8> input = {{
+        {0.0f, 0.0f},
+        {1.0f, 1.0f},
+        {-1.0f, 1.0f},
+        {-1.0f, -1.0f},
+        {0.875f, 0.75f},
+        {0.00392f, -0.99215f},
+        {-0.000675f, 0.004954f},
+        {-0.6937f, -0.02146f},
+    }};
+    const float floatFaultTolerance                            = 0.0005f;
     float outputVal1, outputVal2;
 
     for (size_t i = 0; i < 8; i++)
@@ -133,14 +151,16 @@ TEST(MathUtilTest, packAndUnpackHalf2x16)
 // For floats f1 to f4, unpackUnorm4x8(packUnorm4x8(f1, f2, f3, f4)) should be same as f1 to f4.
 TEST(MathUtilTest, packAndUnpackUnorm4x8)
 {
-    const float input[5][4] = {{0.0f, 0.0f, 0.0f, 0.0f},
-                               {1.0f, 1.0f, 1.0f, 1.0f},
-                               {-1.0f, 1.0f, -1.0f, 1.0f},
-                               {-1.0f, -1.0f, -1.0f, -1.0f},
-                               {64.0f / 255.0f, 128.0f / 255.0f, 32.0f / 255.0f, 16.0f / 255.0f}};
+    static constexpr std::array<std::array<float, 4>, 5> input = {{
+        {0.0f, 0.0f, 0.0f, 0.0f},
+        {1.0f, 1.0f, 1.0f, 1.0f},
+        {-1.0f, 1.0f, -1.0f, 1.0f},
+        {-1.0f, -1.0f, -1.0f, -1.0f},
+        {64.0f / 255.0f, 128.0f / 255.0f, 32.0f / 255.0f, 16.0f / 255.0f},
+    }};
 
     const float floatFaultTolerance = 0.005f;
-    float outputVals[4];
+    std::array<float, 4> outputVals;
 
     for (size_t i = 0; i < 5; i++)
     {
@@ -158,14 +178,16 @@ TEST(MathUtilTest, packAndUnpackUnorm4x8)
 // For floats f1 to f4, unpackSnorm4x8(packSnorm4x8(f1, f2, f3, f4)) should be same as f1 to f4.
 TEST(MathUtilTest, packAndUnpackSnorm4x8)
 {
-    const float input[5][4] = {{0.0f, 0.0f, 0.0f, 0.0f},
-                               {1.0f, 1.0f, 1.0f, 1.0f},
-                               {-1.0f, 1.0f, -1.0f, 1.0f},
-                               {-1.0f, -1.0f, -1.0f, -1.0f},
-                               {64.0f / 127.0f, -8.0f / 127.0f, 32.0f / 127.0f, 16.0f / 127.0f}};
+    static constexpr std::array<std::array<float, 4>, 5> input = {{
+        {0.0f, 0.0f, 0.0f, 0.0f},
+        {1.0f, 1.0f, 1.0f, 1.0f},
+        {-1.0f, 1.0f, -1.0f, 1.0f},
+        {-1.0f, -1.0f, -1.0f, -1.0f},
+        {64.0f / 127.0f, -8.0f / 127.0f, 32.0f / 127.0f, 16.0f / 127.0f},
+    }};
 
     const float floatFaultTolerance = 0.01f;
-    float outputVals[4];
+    std::array<float, 4> outputVals;
 
     for (size_t i = 0; i < 5; i++)
     {
@@ -203,6 +225,25 @@ TEST(MathUtilTest, isInf)
     EXPECT_FALSE(isInf(bitCast<float>(1u << 31 | 0xffu << 23 | 0x7fffffu)));
     EXPECT_FALSE(isInf(bitCast<float>(0xfeu << 23 | 0x7fffffu)));
     EXPECT_FALSE(isInf(bitCast<float>(1u << 31 | 0xfeu << 23 | 0x7fffffu)));
+}
+
+// Test the correctness of gl::isOutsideOfBounds function.
+TEST(MathUtilTest, isOutsideOfBounds)
+{
+    EXPECT_TRUE(isOutsideOfBounds(0.5f, 1.0f, 16.0f));
+    EXPECT_TRUE(isOutsideOfBounds(17.0f, 1.0f, 16.0f));
+    EXPECT_FALSE(isOutsideOfBounds(1.0f, 1.0f, 16.0f));
+    EXPECT_FALSE(isOutsideOfBounds(16.0f, 1.0f, 16.0f));
+    EXPECT_FALSE(isOutsideOfBounds(8.0f, 1.0f, 16.0f));
+
+    EXPECT_TRUE(isOutsideOfBounds(std::numeric_limits<float>::quiet_NaN(), 1.0f, 16.0f));
+    EXPECT_TRUE(isOutsideOfBounds(std::numeric_limits<float>::signaling_NaN(), 1.0f, 16.0f));
+
+    EXPECT_TRUE(isOutsideOfBounds(0, 1, 10));
+    EXPECT_TRUE(isOutsideOfBounds(11, 1, 10));
+    EXPECT_FALSE(isOutsideOfBounds(1, 1, 10));
+    EXPECT_FALSE(isOutsideOfBounds(10, 1, 10));
+    EXPECT_FALSE(isOutsideOfBounds(5, 1, 10));
 }
 
 TEST(MathUtilTest, CountLeadingZeros)
@@ -560,39 +601,42 @@ TEST(MathUtilTest, Float32ToFloat16)
 // Tests the RGB float to 999E5 conversion
 TEST(MathUtilTest, convertRGBFloatsTo999E5)
 {
-    const int numTests                  = 18;
-    const float input[numTests][3]      = {// The basics
-                                      {0.0f, 0.0f, 0.0f},
-                                      {0.0f, 0.0f, 1.0f},
-                                      {0.0f, 1.0f, 0.0f},
-                                      {0.0f, 1.0f, 1.0f},
-                                      {1.0f, 0.0f, 0.0f},
-                                      {1.0f, 0.0f, 1.0f},
-                                      {1.0f, 1.0f, 0.0f},
-                                      {1.0f, 1.0f, 1.0f},
-                                      // Extended range
-                                      {0.0f, 0.0f, 1.5f},
-                                      {0.0f, 2.0f, 0.0f},
-                                      {0.0f, 2.5f, 3.0f},
-                                      {3.5f, 0.0f, 0.0f},
-                                      {4.0f, 0.0f, 4.5f},
-                                      {5.0f, 5.5f, 0.0f},
-                                      {6.0f, 6.5f, 7.0f},
-                                      // Random
-                                      {0.1f, 9.6f, 3.2f},
-                                      {2.0f, 1.7f, 8.6f},
-                                      {0.7f, 4.2f, 9.1f}};
-    const unsigned int result[numTests] = {// The basics
-                                           0x00000000, 0x84000000, 0x80020000, 0x84020000,
-                                           0x80000100, 0x84000100, 0x80020100, 0x84020100,
-                                           // Extended range
-                                           0x86000000, 0x88020000, 0x8E028000, 0x880001C0,
-                                           0x94800100, 0x9002C140, 0x97034180,
-                                           // Random
-                                           0x999A6603, 0x9C4C6C40, 0x9C8D0C16};
+    const int numTests                                                = 18;
+    static constexpr std::array<std::array<float, 3>, numTests> input = {{
+        // The basics
+        {0.0f, 0.0f, 0.0f},
+        {0.0f, 0.0f, 1.0f},
+        {0.0f, 1.0f, 0.0f},
+        {0.0f, 1.0f, 1.0f},
+        {1.0f, 0.0f, 0.0f},
+        {1.0f, 0.0f, 1.0f},
+        {1.0f, 1.0f, 0.0f},
+        {1.0f, 1.0f, 1.0f},
+        // Extended range
+        {0.0f, 0.0f, 1.5f},
+        {0.0f, 2.0f, 0.0f},
+        {0.0f, 2.5f, 3.0f},
+        {3.5f, 0.0f, 0.0f},
+        {4.0f, 0.0f, 4.5f},
+        {5.0f, 5.5f, 0.0f},
+        {6.0f, 6.5f, 7.0f},
+        // Random
+        {0.1f, 9.6f, 3.2f},
+        {2.0f, 1.7f, 8.6f},
+        {0.7f, 4.2f, 9.1f},
+    }};
+    static constexpr std::array<unsigned int, numTests> result        = {
+        // The basics
+        0x00000000, 0x84000000, 0x80020000, 0x84020000, 0x80000100, 0x84000100, 0x80020100,
+        0x84020100,
+        // Extended range
+        0x86000000, 0x88020000, 0x8E028000, 0x880001C0, 0x94800100, 0x9002C140, 0x97034180,
+        // Random
+        0x999A6603, 0x9C4C6C40, 0x9C8D0C16};
 
     for (int i = 0; i < numTests; i++)
     {
+
         EXPECT_EQ(convertRGBFloatsTo999E5(input[i][0], input[i][1], input[i][2]), result[i]);
     }
 }
@@ -600,36 +644,38 @@ TEST(MathUtilTest, convertRGBFloatsTo999E5)
 // Tests the 999E5 to RGB float conversion
 TEST(MathUtilTest, convert999E5toRGBFloats)
 {
-    const int numTests                 = 18;
-    const float result[numTests][3]    = {// The basics
-                                       {0.0f, 0.0f, 0.0f},
-                                       {0.0f, 0.0f, 1.0f},
-                                       {0.0f, 1.0f, 0.0f},
-                                       {0.0f, 1.0f, 1.0f},
-                                       {1.0f, 0.0f, 0.0f},
-                                       {1.0f, 0.0f, 1.0f},
-                                       {1.0f, 1.0f, 0.0f},
-                                       {1.0f, 1.0f, 1.0f},
-                                       // Extended range
-                                       {0.0f, 0.0f, 1.5f},
-                                       {0.0f, 2.0f, 0.0f},
-                                       {0.0f, 2.5f, 3.0f},
-                                       {3.5f, 0.0f, 0.0f},
-                                       {4.0f, 0.0f, 4.5f},
-                                       {5.0f, 5.5f, 0.0f},
-                                       {6.0f, 6.5f, 7.0f},
-                                       // Random
-                                       {0.1f, 9.6f, 3.2f},
-                                       {2.0f, 1.7f, 8.6f},
-                                       {0.7f, 4.2f, 9.1f}};
-    const unsigned int input[numTests] = {// The basics
-                                          0x00000000, 0x84000000, 0x80020000, 0x84020000,
-                                          0x80000100, 0x84000100, 0x80020100, 0x84020100,
-                                          // Extended range
-                                          0x86000000, 0x88020000, 0x8E028000, 0x880001C0,
-                                          0x94800100, 0x9002C140, 0x97034180,
-                                          // Random
-                                          0x999A6603, 0x9C4C6C40, 0x9C8D0C16};
+    const int numTests                                                 = 18;
+    static constexpr std::array<std::array<float, 3>, numTests> result = {{
+        // The basics
+        {0.0f, 0.0f, 0.0f},
+        {0.0f, 0.0f, 1.0f},
+        {0.0f, 1.0f, 0.0f},
+        {0.0f, 1.0f, 1.0f},
+        {1.0f, 0.0f, 0.0f},
+        {1.0f, 0.0f, 1.0f},
+        {1.0f, 1.0f, 0.0f},
+        {1.0f, 1.0f, 1.0f},
+        // Extended range
+        {0.0f, 0.0f, 1.5f},
+        {0.0f, 2.0f, 0.0f},
+        {0.0f, 2.5f, 3.0f},
+        {3.5f, 0.0f, 0.0f},
+        {4.0f, 0.0f, 4.5f},
+        {5.0f, 5.5f, 0.0f},
+        {6.0f, 6.5f, 7.0f},
+        // Random
+        {0.1f, 9.6f, 3.2f},
+        {2.0f, 1.7f, 8.6f},
+        {0.7f, 4.2f, 9.1f},
+    }};
+    static constexpr std::array<unsigned int, numTests> input          = {
+        // The basics
+        0x00000000, 0x84000000, 0x80020000, 0x84020000, 0x80000100, 0x84000100, 0x80020100,
+        0x84020100,
+        // Extended range
+        0x86000000, 0x88020000, 0x8E028000, 0x880001C0, 0x94800100, 0x9002C140, 0x97034180,
+        // Random
+        0x999A6603, 0x9C4C6C40, 0x9C8D0C16};
     // Note: quite a low tolerance is required
     const float floatFaultTolerance = 0.05f;
     float outR, outG, outB;
@@ -1110,6 +1156,30 @@ TEST(MathUtilTest, NormalizedToFloatSnorm26)
     EXPECT_NEAR((normalizedToFloat<26>(+16777215)), +0.5f, 0.00000003);
     EXPECT_NEAR((normalizedToFloat<26>(-16777215)), -0.5f, 0.00000003);
     EXPECT_NEAR((normalizedToFloat<26>(-16777216)), -0.5f, 0.00000003);
+}
+
+// Test UnsignedCeilDivide
+TEST(MathUtilTest, UnsignedCeilDivide)
+{
+    EXPECT_EQ(0u, rx::UnsignedCeilDivide(0u, 5u));
+    EXPECT_EQ(1u, rx::UnsignedCeilDivide(1u, 5u));
+    EXPECT_EQ(1u, rx::UnsignedCeilDivide(4u, 5u));
+    EXPECT_EQ(1u, rx::UnsignedCeilDivide(5u, 5u));
+    EXPECT_EQ(2u, rx::UnsignedCeilDivide(6u, 5u));
+}
+
+// Test UnsignedCeilDivide64
+TEST(MathUtilTest, UnsignedCeilDivide64)
+{
+    EXPECT_EQ(0ull, rx::UnsignedCeilDivide64(0ull, 5ull));
+    EXPECT_EQ(1ull, rx::UnsignedCeilDivide64(1ull, 5ull));
+    EXPECT_EQ(1ull, rx::UnsignedCeilDivide64(4ull, 5ull));
+    EXPECT_EQ(1ull, rx::UnsignedCeilDivide64(5ull, 5ull));
+    EXPECT_EQ(2ull, rx::UnsignedCeilDivide64(6ull, 5ull));
+
+    uint64_t largeValue = 0xFFFFFFFF00000000ull;
+    EXPECT_EQ(0xFFFFFFFFull, rx::UnsignedCeilDivide64(largeValue, 0x100000000ull));
+    EXPECT_EQ(0x100000000ull, rx::UnsignedCeilDivide64(largeValue + 1, 0x100000000ull));
 }
 
 }  // anonymous namespace

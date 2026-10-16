@@ -60,17 +60,14 @@ bool HTMLUListElement::hasPresentationalHintsForAttribute(const QualifiedName& n
 void HTMLUListElement::collectPresentationalHintsForAttribute(const QualifiedName& name, const AtomString& value, MutableStyleProperties& style)
 {
     if (name == typeAttr) {
-        auto valueLowerCase = value.convertToASCIILowercase();
-        if (valueLowerCase == "disc"_s)
-            addPropertyToPresentationalHintStyle(style, CSSPropertyListStyleType, CSSValueDisc);
-        else if (valueLowerCase == "circle"_s)
-            addPropertyToPresentationalHintStyle(style, CSSPropertyListStyleType, CSSValueCircle);
-        else if (valueLowerCase == "round"_s)
-            addPropertyToPresentationalHintStyle(style, CSSPropertyListStyleType, CSSValueRound);
-        else if (valueLowerCase == "square"_s)
-            addPropertyToPresentationalHintStyle(style, CSSPropertyListStyleType, CSSValueSquare);
-        else if (valueLowerCase == "none"_s)
-            addPropertyToPresentationalHintStyle(style, CSSPropertyListStyleType, CSSValueNone);
+        if (equalLettersIgnoringASCIICase(value, "disc"_s))
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::ListStyleType, CSSValueID::Disc);
+        else if (equalLettersIgnoringASCIICase(value, "circle"_s))
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::ListStyleType, CSSValueID::Circle);
+        else if (equalLettersIgnoringASCIICase(value, "square"_s))
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::ListStyleType, CSSValueID::Square);
+        else if (equalLettersIgnoringASCIICase(value, "none"_s))
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::ListStyleType, CSSValueID::None);
     } else
         HTMLElement::collectPresentationalHintsForAttribute(name, value, style);
 }

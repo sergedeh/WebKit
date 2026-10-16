@@ -24,6 +24,9 @@
 #pragma once
 
 #include <WebCore/ExceptionOr.h>
+#include <WebCore/HTMLFrameOwnerElement.h>
+#include <WebCore/LocalDOMWindow.h>
+#include <WebCore/RemoteFrame.h>
 #include <wtf/Forward.h>
 
 namespace JSC {
@@ -34,7 +37,7 @@ class JSGlobalObject;
 namespace WebCore {
 
 class DOMWindow;
-class LocalDOMWindow;
+class Frame;
 class LocalFrame;
 class Node;
 
@@ -46,8 +49,10 @@ namespace BindingSecurity {
 
 template<typename T> T* checkSecurityForNode(JSC::JSGlobalObject&, T&);
 template<typename T> T* checkSecurityForNode(JSC::JSGlobalObject&, T*);
+template<typename T> T* checkSecurityForNodeWithFrameOwner(JSC::JSGlobalObject&, T*, const HTMLFrameOwnerElement&);
 template<typename T> ExceptionOr<T*> checkSecurityForNode(JSC::JSGlobalObject&, ExceptionOr<T*>&&);
 template<typename T> ExceptionOr<T*> checkSecurityForNode(JSC::JSGlobalObject&, ExceptionOr<T&>&&);
+template<typename T> ExceptionOr<T*> checkSecurityForNodeWithDOMWindow(JSC::JSGlobalObject&, ExceptionOr<T*>&&, const DOMWindow&);
 
 bool shouldAllowAccessToDOMWindow(JSC::JSGlobalObject*, LocalDOMWindow&, SecurityReportingOption = LogSecurityError);
 bool shouldAllowAccessToDOMWindow(JSC::JSGlobalObject&, LocalDOMWindow&, String& message);
@@ -57,8 +62,8 @@ bool shouldAllowAccessToDOMWindow(JSC::JSGlobalObject*, DOMWindow&, SecurityRepo
 bool shouldAllowAccessToDOMWindow(JSC::JSGlobalObject&, DOMWindow&, String& message);
 bool shouldAllowAccessToDOMWindow(JSC::JSGlobalObject*, DOMWindow*, SecurityReportingOption = LogSecurityError);
 bool shouldAllowAccessToDOMWindow(JSC::JSGlobalObject&, DOMWindow*, String& message);
-bool shouldAllowAccessToFrame(JSC::JSGlobalObject*, LocalFrame*, SecurityReportingOption = LogSecurityError);
-bool shouldAllowAccessToFrame(JSC::JSGlobalObject&, LocalFrame&, String& message);
+bool shouldAllowAccessToFrame(JSC::JSGlobalObject*, Frame*, SecurityReportingOption = LogSecurityError);
+bool shouldAllowAccessToFrame(JSC::JSGlobalObject&, Frame&, String& message);
 bool shouldAllowAccessToNode(JSC::JSGlobalObject&, Node*);
 
 }
@@ -73,6 +78,18 @@ template<typename T> inline T* BindingSecurity::checkSecurityForNode(JSC::JSGlob
     return shouldAllowAccessToNode(lexicalGlobalObject, node) ? node : nullptr;
 }
 
+template<typename T> inline T* BindingSecurity::checkSecurityForNodeWithFrameOwner(JSC::JSGlobalObject& lexicalGlobalObject, T* node, const HTMLFrameOwnerElement& owner)
+{
+    if (node)
+        return shouldAllowAccessToNode(lexicalGlobalObject, node) ? node : nullptr;
+
+    // Perform access check to log cross-origin error if there is one, matching
+    // behavior before Site Isolation.
+    if (RefPtr frame = dynamicDowncast<RemoteFrame>(owner.contentFrame()))
+        shouldAllowAccessToFrame(&lexicalGlobalObject, frame);
+    return nullptr;
+}
+
 template<typename T> inline ExceptionOr<T*> BindingSecurity::checkSecurityForNode(JSC::JSGlobalObject& lexicalGlobalObject, ExceptionOr<T*>&& value)
 {
     if (value.hasException())
@@ -85,6 +102,26 @@ template<typename T> inline ExceptionOr<T*> BindingSecurity::checkSecurityForNod
     if (value.hasException())
         return value.releaseException();
     return checkSecurityForNode(lexicalGlobalObject, value.releaseReturnValue());
+}
+
+template<typename T> inline ExceptionOr<T*> BindingSecurity::checkSecurityForNodeWithDOMWindow(JSC::JSGlobalObject& lexicalGlobalObject, ExceptionOr<T*>&& value, const DOMWindow& window)
+{
+    if (value.hasException())
+        return value.releaseException();
+
+    RefPtr node = value.releaseReturnValue();
+    if (node)
+        return shouldAllowAccessToNode(lexicalGlobalObject, node.get()) ? node.get() : nullptr;
+
+    // With site isolation, the owner element is in the parent's process. Explicitly
+    // check the remote parent frame to log the cross-origin error.
+    if (RefPtr localWindow = dynamicDowncast<LocalDOMWindow>(window)) {
+        if (RefPtr frame = localWindow->frame()) {
+            if (RefPtr parentFrame = dynamicDowncast<RemoteFrame>(frame->tree().parent()))
+                shouldAllowAccessToFrame(&lexicalGlobalObject, parentFrame.get());
+        }
+    }
+    return nullptr;
 }
 
 } // namespace WebCore

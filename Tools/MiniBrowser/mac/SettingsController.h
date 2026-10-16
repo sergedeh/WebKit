@@ -61,6 +61,8 @@ typedef NS_ENUM(NSInteger, AttachmentElementEnabledState) {
 @property (nonatomic, readonly) BOOL animatedImageAsyncDecodingEnabled;
 @property (nonatomic, readonly) BOOL appleColorFilterEnabled;
 @property (nonatomic, readonly) BOOL punchOutWhiteBackgroundsInDarkMode;
+@property (nonatomic, readonly) BOOL axCustomColorModeEnabled;
+@property (nonatomic, readonly) BOOL showAXCustomColorModeControls;
 @property (nonatomic, readonly) BOOL useSystemAppearance;
 @property (nonatomic, readonly) BOOL dataDetectorsEnabled;
 @property (nonatomic, readonly) BOOL useMockCaptureDevices;
@@ -73,6 +75,8 @@ typedef NS_ENUM(NSInteger, AttachmentElementEnabledState) {
 @property (nonatomic, readonly) BOOL allowUniversalAccessFromFileURLs;
 @property (nonatomic, readonly) BOOL siteSpecificQuirksModeEnabled;
 @property (nonatomic, readonly) BOOL tabFocusesLinksEnabled;
+@property (nonatomic, readonly) BOOL useFindDelegate;
+@property (nonatomic, readonly) BOOL acceptAllTLSCertificates;
 
 @property (nonatomic, readonly) NSString *defaultURL;
 @property (nonatomic, readonly) NSString *customUserAgent;

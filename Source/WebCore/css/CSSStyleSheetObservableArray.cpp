@@ -28,9 +28,10 @@
 
 #include "Document.h"
 #include "JSCSSStyleSheet.h"
-#include "JSDOMConvert.h"
+#include "JSDOMConvertInterface.h"
 #include "ShadowRoot.h"
 #include "TreeScope.h"
+#include <JavaScriptCore/JSGlobalObjectInlines.h>
 
 namespace WebCore {
 
@@ -56,17 +57,20 @@ bool CSSStyleSheetObservableArray::setValueAt(JSC::JSGlobalObject* lexicalGlobal
     if (sheetConversionResult.hasException(scope)) [[unlikely]]
         return false;
 
-    if (auto exception = shouldThrowWhenAddingSheet(sheetConversionResult.returnValue())) {
+    if (auto exception = shouldThrowWhenAddingSheet(protect(sheetConversionResult.returnValue()))) {
         throwException(lexicalGlobalObject, scope, createDOMException(*lexicalGlobalObject, WTF::move(*exception)));
         return false;
     }
 
+    RefPtr<CSSStyleSheet> oldSheet;
     if (index == m_sheets.size())
-        m_sheets.append(sheetConversionResult.returnValue());
+        m_sheets.append(protect(sheetConversionResult.returnValue()));
     else
-        m_sheets[index] = sheetConversionResult.returnValue();
+        oldSheet = std::exchange(m_sheets[index], sheetConversionResult.returnValue());
 
-    didAddSheet(sheetConversionResult.releaseReturnValue());
+    didAddSheet(protect(sheetConversionResult.returnValue()));
+    if (oldSheet)
+        didRemoveSheet(*oldSheet);
     return true;
 }
 
@@ -74,20 +78,23 @@ void CSSStyleSheetObservableArray::removeLast()
 {
     RELEASE_ASSERT(!m_sheets.isEmpty());
     auto sheet = m_sheets.takeLast();
-    willRemoveSheet(sheet);
+    didRemoveSheet(sheet);
 }
 
 void CSSStyleSheetObservableArray::shrinkTo(unsigned length)
 {
     RELEASE_ASSERT(length <= m_sheets.size());
+    auto removedSheets = m_sheets.subvector(length);
     m_sheets.shrink(length);
+    for (auto& sheet : removedSheets)
+        didRemoveSheet(sheet);
 }
 
 JSC::JSValue CSSStyleSheetObservableArray::valueAt(JSC::JSGlobalObject* lexicalGlobalObject, unsigned index) const
 {
     if (index >= m_sheets.size())
         return JSC::jsUndefined();
-    return toJS(lexicalGlobalObject, JSC::jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), m_sheets[index]);
+    return toJS(lexicalGlobalObject, downcast<JSDOMGlobalObject>(lexicalGlobalObject), m_sheets[index]);
 }
 
 ExceptionOr<void> CSSStyleSheetObservableArray::setSheets(Vector<Ref<CSSStyleSheet>>&& sheets)
@@ -97,11 +104,11 @@ ExceptionOr<void> CSSStyleSheetObservableArray::setSheets(Vector<Ref<CSSStyleShe
             return WTF::move(*exception);
     }
 
-    for (auto& sheet : m_sheets)
-        willRemoveSheet(sheet);
-    m_sheets = WTF::move(sheets);
+    auto oldSheets = std::exchange(m_sheets, WTF::move(sheets));
     for (auto& sheet : m_sheets)
         didAddSheet(sheet);
+    for (auto& sheet : oldSheets)
+        didRemoveSheet(sheet);
 
     return { };
 }
@@ -128,13 +135,16 @@ TreeScope* CSSStyleSheetObservableArray::treeScope() const
 void CSSStyleSheetObservableArray::didAddSheet(CSSStyleSheet& sheet)
 {
     if (m_treeScope)
-        sheet.addAdoptingTreeScope(*m_treeScope);
+        sheet.addAdoptingTreeScope(*protect(m_treeScope));
 }
 
-void CSSStyleSheetObservableArray::willRemoveSheet(CSSStyleSheet& sheet)
+void CSSStyleSheetObservableArray::didRemoveSheet(CSSStyleSheet& sheet)
 {
-    if (m_treeScope)
-        sheet.removeAdoptingTreeScope(*m_treeScope);
+    if (!m_treeScope)
+        return;
+    if (m_sheets.containsIf([&](auto& remainingSheet) { return remainingSheet.ptr() == &sheet; }))
+        return;
+    sheet.removeAdoptingTreeScope(*protect(m_treeScope));
 }
 
 } // namespace WebCore

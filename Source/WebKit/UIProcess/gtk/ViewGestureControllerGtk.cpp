@@ -33,6 +33,7 @@
 #include "WebPageProxy.h"
 #include <WebCore/Scrollbar.h>
 #include <WebCore/UserInterfaceLayoutDirection.h>
+#include <array>
 
 namespace WebKit {
 using namespace WebCore;
@@ -60,18 +61,22 @@ static const float swipeOverlayBorderOpacity = 0.05;
 static const float swipeOverlayOutlineOpacity = 0.05;
 static const float swipeOverlayDimmingOpacity = 0.12;
 static const float swipeOverlayShadowWidth = 57;
-static const GskColorStop swipeOverlayShadowStops[] = {
+static constexpr auto swipeOverlayShadowStops = WTF::toArray<GskColorStop>({
     { 0,     { 0, 0, 0, 0.08  } },
     { 0.125, { 0, 0, 0, 0.053 } },
     { 0.428, { 0, 0, 0, 0.026 } },
     { 0.714, { 0, 0, 0, 0.01  } },
     { 1,     { 0, 0, 0, 0     } }
-};
+});
 #endif
 
 static bool isEventStop(PlatformGtkScrollData* event)
 {
     return event->isEnd;
+}
+
+void ViewGestureController::platformInitialize()
+{
 }
 
 void ViewGestureController::platformTeardown()
@@ -173,7 +178,7 @@ bool ViewGestureController::SwipeProgressTracker::handleEvent(PlatformGtkScrollD
     }
 
     if (m_state == State::Pending) {
-        m_viewGestureController->beginSwipeGesture(m_targetItem.get(), m_direction);
+        m_viewGestureController->beginSwipeGesture(protect(m_targetItem), m_direction);
         m_state = State::Scrolling;
     }
 
@@ -209,7 +214,7 @@ bool ViewGestureController::SwipeProgressTracker::handleEvent(PlatformGtkScrollD
     float minProgress = !swipingLeft ? -1 : 0;
     m_progress = clampTo<float>(m_progress, minProgress, maxProgress);
 
-    m_viewGestureController->handleSwipeGesture(m_targetItem.get(), m_progress, m_direction);
+    m_viewGestureController->handleSwipeGesture(protect(m_targetItem), m_progress, m_direction);
 
     return true;
 }
@@ -274,7 +279,7 @@ gboolean ViewGestureController::SwipeProgressTracker::onAnimationTick(GdkFrameCl
 
     m_progress = m_startProgress + (m_endProgress - m_startProgress) * easeOutCubic(animationProgress);
 
-    m_viewGestureController->handleSwipeGesture(m_targetItem.get(), m_progress, m_direction);
+    m_viewGestureController->handleSwipeGesture(protect(m_targetItem), m_progress, m_direction);
     if (frameTime >= m_endTime) {
         m_tickCallbackID = 0;
         endAnimation();
@@ -287,7 +292,7 @@ gboolean ViewGestureController::SwipeProgressTracker::onAnimationTick(GdkFrameCl
 void ViewGestureController::SwipeProgressTracker::endAnimation()
 {
     m_state = State::Finishing;
-    m_viewGestureController->endSwipeGesture(m_targetItem.get(), m_cancelled);
+    m_viewGestureController->endSwipeGesture(protect(m_targetItem), m_cancelled);
 }
 
 #if !USE(GTK4)
@@ -519,7 +524,7 @@ void ViewGestureController::snapshot(GtkSnapshot* snapshot, GskRenderNode* pageR
     gtk_snapshot_append_color(snapshot, &outline, &outlineRect);
     gtk_snapshot_push_opacity(snapshot, shadowOpacity);
     gtk_snapshot_append_linear_gradient(snapshot, &shadowRect, &shadowStart, &shadowEnd,
-        swipeOverlayShadowStops, G_N_ELEMENTS(swipeOverlayShadowStops));
+        swipeOverlayShadowStops.data(), swipeOverlayShadowStops.size());
     gtk_snapshot_pop(snapshot);
 
     gtk_snapshot_pop(snapshot);

@@ -25,11 +25,11 @@
 
 #pragma once
 
+#include <JavaScriptCore/ExceptionHelpers.h>
 #include <JavaScriptCore/ExecutableBaseInlines.h>
 #include <JavaScriptCore/FunctionExecutable.h>
 #include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/JSFunction.h>
-#include <JavaScriptCore/JSRemoteFunction.h>
 #include <JavaScriptCore/NativeExecutable.h>
 #include <JavaScriptCore/WebAssemblyFunction.h>
 #include <wtf/text/MakeString.h>
@@ -115,11 +115,6 @@ inline bool JSFunction::isClassConstructorFunction() const
     return !isHostFunction() && jsExecutable()->isClassConstructorFunction();
 }
 
-inline bool JSFunction::isRemoteFunction() const
-{
-    return inherits<JSRemoteFunction>();
-}
-
 inline TaggedNativeFunction JSFunction::nativeFunction()
 {
     ASSERT(isHostFunctionNonInline());
@@ -130,11 +125,6 @@ inline TaggedNativeFunction JSFunction::nativeConstructor()
 {
     ASSERT(isHostFunctionNonInline());
     return static_cast<NativeExecutable*>(executable())->constructor();
-}
-
-inline bool isRemoteFunction(JSValue value)
-{
-    return value.inherits<JSRemoteFunction>();
 }
 
 inline bool JSFunction::hasReifiedLength() const
@@ -154,10 +144,11 @@ inline bool JSFunction::hasReifiedName() const
 inline double JSFunction::originalLength(VM& vm)
 {
     if (inherits<JSBoundFunction>())
-        return jsCast<JSBoundFunction*>(this)->length(vm);
-    if (inherits<JSRemoteFunction>())
-        return jsCast<JSRemoteFunction*>(this)->length(vm);
-    ASSERT(!isHostFunction());
+        return uncheckedDowncast<JSBoundFunction>(this)->length(vm);
+    if (isHostFunction()) {
+        // The original length is captured in NativeExecutable at creation time.
+        return uncheckedDowncast<NativeExecutable>(executable())->length();
+    }
     return jsExecutable()->parameterCount();
 }
 
@@ -178,20 +169,20 @@ inline JSString* JSFunction::originalName(JSGlobalObject* globalObject)
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (this->inherits<JSBoundFunction>()) {
-        JSString* nameMayBeNull = jsCast<JSBoundFunction*>(this)->nameMayBeNull();
+        JSString* nameMayBeNull = uncheckedDowncast<JSBoundFunction>(this)->nameMayBeNull();
         if (nameMayBeNull)
             RELEASE_AND_RETURN(scope, jsString(globalObject, vm.smallStrings.boundPrefixString(), nameMayBeNull));
         return jsEmptyString(vm);
     }
 
-    if (this->inherits<JSRemoteFunction>()) {
-        JSString* nameMayBeNull = jsCast<JSRemoteFunction*>(this)->nameMayBeNull();
-        if (nameMayBeNull)
-            return nameMayBeNull;
-        return jsEmptyString(vm);
+    if (isHostFunction()) {
+        // Mirror the JS path below: build a fresh JSString from the original name stored on
+        // NativeExecutable. NativeExecutable is shared and uniquely keyed by name, so this
+        // always returns the original (creation-time) value even after the JSFunction's "name"
+        // property has been reified or mutated.
+        return uncheckedDowncast<NativeExecutable>(executable())->nameJSString(vm);
     }
 
-    ASSERT(!isHostFunction());
     const Identifier& ecmaName = jsExecutable()->ecmaName();
     String name;
     // https://tc39.github.io/ecma262/#sec-exports-runtime-semantics-evaluation
@@ -214,9 +205,14 @@ inline JSString* JSFunction::originalName(JSGlobalObject* globalObject)
 
 inline bool JSFunction::canAssumeNameAndLengthAreOriginal(VM&)
 {
-    // Bound functions are not eagerly generating name and length.
-    // Thus, we can use FunctionRareData's tracking. This is useful to optimize func.bind().bind() case.
-    if (isNonBoundHostFunction())
+    // Plain host, builtin, and JS functions all reify length/name lazily; the original value is
+    // recoverable via originalLength()/originalName() (from NativeExecutable for hosts, from
+    // FunctionExecutable for JS), so the only thing we have to refuse is bound functions
+    // (which set their length/name at bind time, not via FunctionRareData tracking) and any
+    // function whose length or name has since been user-mutated.
+    //
+    // This must be synced with JSBoundFunction::canSkipNameAndLengthMaterialization().
+    if (this->inherits<JSBoundFunction>())
         return false;
     FunctionRareData* rareData = this->rareData();
     if (!rareData)
@@ -239,7 +235,7 @@ inline bool JSFunction::canUseAllocationProfiles()
         if (isHostFunction())
             return false;
 
-        VM& vm = globalObject()->vm();
+        VM& vm = this->vm();
         unsigned attributes;
         JSValue prototype = getDirect(vm, vm.propertyNames->prototype, attributes);
         if (!prototype || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
@@ -266,7 +262,7 @@ inline FunctionRareData* JSFunction::ensureRareDataAndObjectAllocationProfile(JS
 
 inline JSString* JSFunction::asStringConcurrently() const
 {
-    if (inherits<JSBoundFunction>() || inherits<JSRemoteFunction>())
+    if (inherits<JSBoundFunction>())
         return nullptr;
     if (isHostFunction())
         return static_cast<NativeExecutable*>(executable())->asStringConcurrently();
@@ -278,7 +274,7 @@ inline CallData JSFunction::getCallDataInline(JSCell* cell)
     // Keep this function OK for invocation from concurrent compilers.
     CallData callData;
 
-    JSFunction* thisObject = jsCast<JSFunction*>(cell);
+    JSFunction* thisObject = uncheckedDowncast<JSFunction>(cell);
     if (thisObject->isHostFunction()) {
         callData.type = CallData::Type::Native;
         callData.native.function = thisObject->nativeFunction();
@@ -301,10 +297,10 @@ inline CallData JSFunction::getConstructDataInline(JSCell* cell)
     // Keep this function OK for invocation from concurrent compilers.
     CallData constructData;
 
-    JSFunction* thisObject = jsCast<JSFunction*>(cell);
+    JSFunction* thisObject = uncheckedDowncast<JSFunction>(cell);
     if (thisObject->isHostFunction()) {
         if (thisObject->inherits<JSBoundFunction>()) {
-            if (jsCast<JSBoundFunction*>(thisObject)->canConstruct()) {
+            if (uncheckedDowncast<JSBoundFunction>(thisObject)->canConstruct()) {
                 constructData.type = CallData::Type::Native;
                 constructData.native.function = thisObject->nativeConstructor();
                 constructData.native.isBoundFunction = true;

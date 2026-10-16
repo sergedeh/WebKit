@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,7 +25,7 @@
 
 WI.ResourceHeadersContentView = class ResourceHeadersContentView extends WI.ContentView
 {
-    constructor(resource, delegate)
+    constructor(resource, entry, delegate)
     {
         super(null);
 
@@ -37,6 +37,7 @@ WI.ResourceHeadersContentView = class ResourceHeadersContentView extends WI.Cont
         this._resource.addEventListener(WI.Resource.Event.RequestHeadersDidChange, this._resourceRequestHeadersDidChange, this);
         this._resource.addEventListener(WI.Resource.Event.ResponseReceived, this._resourceResponseReceived, this);
 
+        this._entry = entry;
         this._delegate = delegate;
 
         this._searchQuery = null;
@@ -45,8 +46,6 @@ WI.ResourceHeadersContentView = class ResourceHeadersContentView extends WI.Cont
         this._searchIndex = -1;
         this._automaticallyRevealFirstSearchResult = false;
         this._bouncyHighlightElement = null;
-        this._popover = null;
-        this._popoverCallStackIconElement = null;
 
         this._redirectDetailsSections = [];
 
@@ -252,8 +251,6 @@ WI.ResourceHeadersContentView = class ResourceHeadersContentView extends WI.Cont
         let detailsElement = this._summarySection.detailsElement;
         detailsElement.removeChildren();
 
-        this._summarySection.toggleError(this._resource.hadLoadingError());
-
         for (let redirect of this._resource.redirects)
             this._summarySection.appendKeyValuePair(WI.UIString("URL"), redirect.url.insertWordBreakCharacters(), "url");
         this._summarySection.appendKeyValuePair(WI.UIString("URL"), this._resource.displayURL.insertWordBreakCharacters(), "url");
@@ -273,47 +270,14 @@ WI.ResourceHeadersContentView = class ResourceHeadersContentView extends WI.Cont
 
         let initiatorLocation = this._resource.initiatorSourceCodeLocation;
         if (initiatorLocation) {
-
-            let fragment = document.createDocumentFragment();
-
             const options = {
                 dontFloat: true,
                 ignoreSearchTab: true,
                 ignoreNetworkTab: true,
+                stackTrace: this._resource.initiatorStackTrace,
             };
-            let link = WI.createSourceCodeLocationLink(initiatorLocation, options);
-            fragment.appendChild(link);
-
-            if (this._resource.initiatorStackTrace) {
-                this._popoverCallStackIconElement = document.createElement("img");
-                this._popoverCallStackIconElement.className = "call-stack";
-                fragment.appendChild(this._popoverCallStackIconElement);
-
-                this._popoverCallStackIconElement.addEventListener("click", (event) => {
-                    if (!this._popover) {
-                        this._popover = new WI.Popover(this);
-                        this._popover.windowResizeHandler = () => { this._presentPopoverBelowCallStackElement(); };
-                    }
-
-                    const selectable = false;
-                    let callFramesTreeOutline = new WI.TreeOutline(selectable);
-                    callFramesTreeOutline.disclosureButtons = false;
-                    let callFrameTreeController = new WI.StackTraceTreeController(callFramesTreeOutline);
-                    callFrameTreeController.stackTrace = this._resource.initiatorStackTrace;
-
-                    let popoverContent = document.createElement("div");
-                    popoverContent.appendChild(callFrameTreeController.treeOutline.element);
-                    this._popover.content = popoverContent;
-
-                    this._presentPopoverBelowCallStackElement();
-                });
-            }
-
-            let pair = this._summarySection.appendKeyValuePair(WI.UIString("Initiator"), fragment);
+            let pair = this._summarySection.appendKeyValuePair(WI.UIString("Initiator"), WI.createSourceCodeLocationLink(initiatorLocation, options));
             pair.classList.add("initiator");
-
-            if (this._popover && this._popover.visible)
-                this._presentPopoverBelowCallStackElement();
         }
     }
 
@@ -325,6 +289,7 @@ WI.ResourceHeadersContentView = class ResourceHeadersContentView extends WI.Cont
             let redirect = this._resource.redirects[i];
 
             let redirectRequestSection = new WI.ResourceDetailsSection(WI.UIString("Request"), "redirect");
+            redirectRequestSection.toggleError(redirect.responseStatusCode >= 400);
 
             // FIXME: <https://webkit.org/b/190214> Web Inspector: expose full load metrics for redirect requests
             redirectRequestSection.appendKeyValuePair(`${redirect.requestMethod} ${redirect.urlComponents.path}`, null, "h1-status");
@@ -336,8 +301,18 @@ WI.ResourceHeadersContentView = class ResourceHeadersContentView extends WI.Cont
             this._redirectDetailsSections.push(redirectRequestSection);
 
             let redirectResponseSection = new WI.ResourceDetailsSection(WI.UIString("Redirect Response"), "redirect");
+            redirectResponseSection.toggleError(redirect.responseStatusCode >= 400);
 
-            // FIXME: <https://webkit.org/b/190214> Web Inspector: expose full load metrics for redirect requests
+            let navLink = WI.createGoToArrowButton();
+            navLink.classList.add("redirect-nav-link");
+            navLink.title = WI.UIString("View Redirect");
+            navLink.addEventListener("click", (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                this._delegate?.showRedirect?.(redirect, this._resource, this._entry);
+            });
+            redirectResponseSection._titleElement.appendChild(navLink);
+
             redirectResponseSection.appendKeyValuePair(`${redirect.responseStatusCode} ${redirect.responseStatusText}`, null, "h1-status");
 
             for (let [key, value] of this._createSortedArrayForHeaders(redirect.responseHeaders))
@@ -352,6 +327,8 @@ WI.ResourceHeadersContentView = class ResourceHeadersContentView extends WI.Cont
     {
         let detailsElement = this._requestHeadersSection.detailsElement;
         detailsElement.removeChildren();
+
+        this._requestHeadersSection.toggleError(this._resource.hadLoadingError());
 
         // A revalidation request still sends a request even though we served from cache, so show the request.
         if (this._resource.statusCode !== 304) {
@@ -399,6 +376,7 @@ WI.ResourceHeadersContentView = class ResourceHeadersContentView extends WI.Cont
         }
 
         this._responseHeadersSection.toggleIncomplete(false);
+        this._responseHeadersSection.toggleError(this._resource.hadLoadingError());
 
         let protocol = this._resource.protocol || "";
         if (protocol.startsWith("http/1")) {
@@ -492,9 +470,9 @@ WI.ResourceHeadersContentView = class ResourceHeadersContentView extends WI.Cont
         for (let element of elements) {
             let matchRanges = [];
             let text = element.textContent;
-            let match;
-            while (match = searchRegex.exec(text))
+            WI.SearchUtilities.forEachMatch(searchRegex, text, (match) => {
                 matchRanges.push({offset: match.index, length: match[0].length});
+            });
 
             if (matchRanges.length) {
                 let highlightedNodes = WI.highlightRangesWithStyleClass(element, matchRanges, "search-highlight", this._searchDOMChanges);
@@ -533,12 +511,6 @@ WI.ResourceHeadersContentView = class ResourceHeadersContentView extends WI.Cont
         this._bouncyHighlightElement.style.fontWeight = computedStyles.fontWeight;
 
         this.element.appendChild(this._bouncyHighlightElement);
-    }
-
-    _presentPopoverBelowCallStackElement()
-    {
-        let bounds = WI.Rect.rectFromClientRect(this._popoverCallStackIconElement.getBoundingClientRect());
-        this._popover.present(bounds.pad(2), [WI.RectEdge.MAX_Y, WI.RectEdge.MIN_Y, WI.RectEdge.MAX_X]);
     }
 
     _resourceMetricsDidChange(event)

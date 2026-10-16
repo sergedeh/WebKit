@@ -35,7 +35,7 @@ WI.Gradient = class Gradient
 
     static angleFromString(string)
     {
-        let match = string.match(/([-\d\.]+)(\w+)/);
+        let match = string.match(/([-\d.]+)(\w+)/);
         if (!match || !Object.values(WI.Gradient.AngleUnits).includes(match[2]))
             return null;
 
@@ -61,8 +61,8 @@ WI.Gradient = class Gradient
         var currentParam = "";
         var openParentheses = 0;
         var ch = openingParenthesisIndex + 1;
-        var c = null;
-        while (c = cssString[ch]) {
+        let c;
+        while ((c = cssString[ch])) {
             if (c === "(")
                 openParentheses++;
             if (c === ")")
@@ -134,6 +134,7 @@ WI.Gradient = class Gradient
                     stop.offset = parseFloat(component.shift()) / 100;
                 return stop;
             }
+            return null;
         });
 
         if (!stops.length)
@@ -147,8 +148,7 @@ WI.Gradient = class Gradient
             if (!stop)
                 return null;
 
-            if (!stop.offset)
-                stop.offset = i / (count - 1);
+            stop.offset ??= i / (count - 1);
         }
 
         return stops;
@@ -375,7 +375,7 @@ WI.RadialGradient = class RadialGradient extends WI.Gradient
 
     static fromComponents(components)
     {
-        let sizing = !WI.Color.fromString(components[0].join(" ")) ? components.shift().join(" ") : "";
+        let sizing = !WI.Color.fromString(components[0][0]) ? components.shift().join(" ") : "";
 
         let stops = WI.Gradient.stopsWithComponents(components);
         if (!stops)
@@ -442,7 +442,7 @@ WI.ConicGradient = class ConicGradient extends WI.Gradient
         let position = null;
         let hasCustomAngleOrPosition = false;
 
-        if (components[0][0] == "from") {
+        if (components[0][0] === "from") {
             components[0].shift();
             angle = WI.Gradient.angleFromString(components[0][0]);
             if (!angle)
@@ -450,7 +450,7 @@ WI.ConicGradient = class ConicGradient extends WI.Gradient
             components[0].shift();
             hasCustomAngleOrPosition = true;
         }
-        if (components[0][0] == "at") {
+        if (components[0][0] === "at") {
             components[0].shift();
             // FIXME: <https://webkit.org/b/234643> (Web Inspector: allow editing positions in gradient editor)
             if (components[0].length <= 0)

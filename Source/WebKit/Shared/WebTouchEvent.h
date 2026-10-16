@@ -56,17 +56,19 @@ public:
     };
 
     WebPlatformTouchPoint() = default;
-    WebPlatformTouchPoint(unsigned identifier, WebCore::DoublePoint locationInRootView, WebCore::DoublePoint locationInViewport, State phase)
+    WebPlatformTouchPoint(unsigned identifier, WebCore::DoublePoint locationInRootView, WebCore::DoublePoint previousLocationInRootView, WebCore::DoublePoint locationInViewport, State phase)
         : m_identifier(identifier)
         , m_locationInRootView(locationInRootView)
+        , m_previousLocationInRootView(previousLocationInRootView)
         , m_locationInViewport(locationInViewport)
         , m_phase(phase)
     {
     }
 #if ENABLE(IOS_TOUCH_EVENTS)
-    WebPlatformTouchPoint(unsigned identifier, WebCore::DoublePoint locationInRootView, WebCore::DoublePoint locationInViewport, State phase, double radiusX, double radiusY, double rotationAngle, double twist, double force, double altitudeAngle, double azimuthAngle, TouchType touchType)
+    WebPlatformTouchPoint(unsigned identifier, WebCore::DoublePoint locationInRootView, WebCore::DoublePoint previousLocationInRootView, WebCore::DoublePoint locationInViewport, State phase, double radiusX, double radiusY, double rotationAngle, double twist, double force, double altitudeAngle, double azimuthAngle, TouchType touchType)
         : m_identifier(identifier)
         , m_locationInRootView(locationInRootView)
+        , m_previousLocationInRootView(previousLocationInRootView)
         , m_locationInViewport(locationInViewport)
         , m_phase(phase)
         , m_radiusX(radiusX)
@@ -83,6 +85,7 @@ public:
 
     unsigned identifier() const { return m_identifier; }
     WebCore::DoublePoint locationInRootView() const { return m_locationInRootView; }
+    WebCore::DoublePoint previousLocationInRootView() const { return m_previousLocationInRootView; }
     WebCore::DoublePoint locationInViewport() const { return m_locationInViewport; }
     State phase() const { return m_phase; }
     State state() const { return phase(); }
@@ -112,6 +115,7 @@ public:
 private:
     unsigned m_identifier { 0 };
     WebCore::DoublePoint m_locationInRootView;
+    WebCore::DoublePoint m_previousLocationInRootView;
     WebCore::DoublePoint m_locationInViewport;
     State m_phase { State::Released };
 #if ENABLE(IOS_TOUCH_EVENTS)
@@ -126,57 +130,68 @@ private:
 #endif
 };
 
+class WebTouchEvent;
+
+// Field order matches WebEvent.serialization.in.
+struct WebTouchEventData {
+    Vector<WebPlatformTouchPoint> touchPoints;
+    Vector<Ref<WebTouchEvent>> coalescedEvents;
+    Vector<Ref<WebTouchEvent>> predictedEvents;
+    WebCore::DoublePoint position;
+    bool isPotentialTap { false };
+    bool isGesture { false };
+    float gestureScale { 0 };
+    float gestureRotation { 0 };
+    bool canPreventNativeGestures { true };
+};
+
+struct WebTouchEventInit {
+    WebEventData event;
+    WebTouchEventData touch;
+};
+
 class WebTouchEvent : public WebEvent {
+    WTF_MAKE_TZONE_ALLOCATED(WebTouchEvent);
 public:
-    WebTouchEvent(WebEvent&& event, const Vector<WebPlatformTouchPoint>& touchPoints, const Vector<WebTouchEvent>& coalescedEvents, const Vector<WebTouchEvent>& predictedEvents, WebCore::DoublePoint position, bool isPotentialTap, bool isGesture, float gestureScale, float gestureRotation, bool canPreventNativeGestures = true)
-        : WebEvent(WTF::move(event))
-        , m_touchPoints(touchPoints)
-        , m_coalescedEvents(coalescedEvents)
-        , m_predictedEvents(predictedEvents)
-        , m_position(position)
-        , m_canPreventNativeGestures(canPreventNativeGestures)
-        , m_isPotentialTap(isPotentialTap)
-        , m_isGesture(isGesture)
-        , m_gestureScale(gestureScale)
-        , m_gestureRotation(gestureRotation)
-    {
-        ASSERT(type() == WebEventType::TouchStart || type() == WebEventType::TouchMove || type() == WebEventType::TouchEnd || type() == WebEventType::TouchCancel);
-    }
+    static Ref<WebTouchEvent> create(WebEventData&&, WebTouchEventData&&);
+    static Ref<WebTouchEvent> create(WebTouchEventInit&&);
 
-    const Vector<WebPlatformTouchPoint>& touchPoints() const { return m_touchPoints; }
+    // Deep copy, including the coalesced and predicted events. Callers that mutate an event they
+    // did not create must copy first, since events are now shared rather than copied by value.
+    Ref<WebTouchEvent> copy() const;
 
-    const Vector<WebTouchEvent>& coalescedEvents() const { return m_coalescedEvents; }
-    void setCoalescedEvents(const Vector<WebTouchEvent>& coalescedEvents) { m_coalescedEvents = coalescedEvents; }
+    const Vector<WebPlatformTouchPoint>& touchPoints() const LIFETIME_BOUND { return m_data.touchPoints; }
 
-    const Vector<WebTouchEvent>& predictedEvents() const { return m_predictedEvents; }
-    void setPredictedEvents(const Vector<WebTouchEvent>& predictedEvents) { m_predictedEvents = predictedEvents; }
+    const Vector<Ref<WebTouchEvent>>& coalescedEvents() const LIFETIME_BOUND { return m_data.coalescedEvents; }
+    void setCoalescedEvents(const Vector<Ref<WebTouchEvent>>& coalescedEvents) { m_data.coalescedEvents = coalescedEvents; }
 
-    WebCore::DoublePoint position() const { return m_position; }
+    const Vector<Ref<WebTouchEvent>>& predictedEvents() const LIFETIME_BOUND { return m_data.predictedEvents; }
+    void setPredictedEvents(const Vector<Ref<WebTouchEvent>>& predictedEvents) { m_data.predictedEvents = predictedEvents; }
+
+    WebCore::DoublePoint position() const { return m_data.position; }
 
     void transformToRemoteFrameCoordinates(const WebCore::RemoteFrameGeometryTransformer&);
 
-    bool isPotentialTap() const { return m_isPotentialTap; }
+    bool isPotentialTap() const { return m_data.isPotentialTap; }
 
-    bool isGesture() const { return m_isGesture; }
-    float gestureScale() const { return m_gestureScale; }
-    float gestureRotation() const { return m_gestureRotation; }
+    bool isGesture() const { return m_data.isGesture; }
+    float gestureScale() const { return m_data.gestureScale; }
+    float gestureRotation() const { return m_data.gestureRotation; }
 
-    bool canPreventNativeGestures() const { return m_canPreventNativeGestures; }
-    void setCanPreventNativeGestures(bool canPreventNativeGestures) { m_canPreventNativeGestures = canPreventNativeGestures; }
+    bool canPreventNativeGestures() const { return m_data.canPreventNativeGestures; }
+    void setCanPreventNativeGestures(bool canPreventNativeGestures) { m_data.canPreventNativeGestures = canPreventNativeGestures; }
 
     bool allTouchPointsAreReleased() const;
-    
-private:
-    Vector<WebPlatformTouchPoint> m_touchPoints;
-    Vector<WebTouchEvent> m_coalescedEvents;
-    Vector<WebTouchEvent> m_predictedEvents;
 
-    WebCore::DoublePoint m_position;
-    bool m_canPreventNativeGestures { false };
-    bool m_isPotentialTap { false };
-    bool m_isGesture { false };
-    float m_gestureScale { 0 };
-    float m_gestureRotation { 0 };
+    const WebTouchEventData& touchData() const LIFETIME_BOUND { return m_data; }
+
+protected:
+    WebTouchEvent(WebEventData&&, WebTouchEventData&&);
+
+private:
+    static bool isTouchEventType(WebEventType);
+
+    WebTouchEventData m_data;
 #if ASSERT_ENABLED
     bool m_hasTransformedToRemoteFrameCoordinates { false };
 #endif
@@ -204,9 +219,9 @@ public:
     uint32_t id() const { return m_id; }
     State state() const { return m_state; }
 
-    const WebCore::DoublePoint& screenPosition() const { return m_screenPosition; }
-    const WebCore::DoublePoint& position() const { return m_position; }
-    const WebCore::DoubleSize& radius() const { return m_radius; }
+    const WebCore::DoublePoint& screenPosition() const LIFETIME_BOUND { return m_screenPosition; }
+    const WebCore::DoublePoint& position() const LIFETIME_BOUND { return m_position; }
+    const WebCore::DoubleSize& radius() const LIFETIME_BOUND { return m_radius; }
     float rotationAngle() const { return m_rotationAngle; }
     float force() const { return m_force; }
 
@@ -222,28 +237,54 @@ private:
     float m_force;
 };
 
+class WebTouchEvent;
+
+// Field order matches WebEvent.serialization.in.
+struct WebTouchEventData {
+    Vector<WebPlatformTouchPoint> touchPoints;
+    Vector<Ref<WebTouchEvent>> coalescedEvents;
+    Vector<Ref<WebTouchEvent>> predictedEvents;
+};
+
+struct WebTouchEventInit {
+    WebEventData event;
+    WebTouchEventData touch;
+};
+
 class WebTouchEvent : public WebEvent {
+    WTF_MAKE_TZONE_ALLOCATED(WebTouchEvent);
 public:
-    WebTouchEvent(WebEvent&&, Vector<WebPlatformTouchPoint>&&, Vector<WebTouchEvent>&&, Vector<WebTouchEvent>&&);
+    static Ref<WebTouchEvent> create(WebEventData&&, WebTouchEventData&&);
+    static Ref<WebTouchEvent> create(WebTouchEventInit&&);
 
-    const Vector<WebPlatformTouchPoint>& touchPoints() const { return m_touchPoints; }
+    // See the IOS_FAMILY variant.
+    Ref<WebTouchEvent> copy() const;
 
-    const Vector<WebTouchEvent>& coalescedEvents() const { return m_coalescedEvents; }
+    const Vector<WebPlatformTouchPoint>& touchPoints() const LIFETIME_BOUND { return m_data.touchPoints; }
 
-    const Vector<WebTouchEvent>& predictedEvents() const { return m_predictedEvents; }
+    const Vector<Ref<WebTouchEvent>>& coalescedEvents() const LIFETIME_BOUND { return m_data.coalescedEvents; }
+
+    const Vector<Ref<WebTouchEvent>>& predictedEvents() const LIFETIME_BOUND { return m_data.predictedEvents; }
 
     bool allTouchPointsAreReleased() const;
+
+#if ENABLE(COORDINATED_TOUCH_EVENTS)
+    void mergeMovedTouchPointsFrom(const WebTouchEvent&);
+#endif
 
 #if USE(LIBWPE) || ENABLE(WPE_PLATFORM)
     virtual bool isNativeWebTouchEvent() const { return false; }
 #endif
 
+    const WebTouchEventData& touchData() const LIFETIME_BOUND { return m_data; }
+
+protected:
+    WebTouchEvent(WebEventData&&, WebTouchEventData&&);
+
 private:
     static bool isTouchEventType(WebEventType);
 
-    Vector<WebPlatformTouchPoint> m_touchPoints;
-    Vector<WebTouchEvent> m_coalescedEvents;
-    Vector<WebTouchEvent> m_predictedEvents;
+    WebTouchEventData m_data;
 };
 
 #endif // PLATFORM(IOS_FAMILY)

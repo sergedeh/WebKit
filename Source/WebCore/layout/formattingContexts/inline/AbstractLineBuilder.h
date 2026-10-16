@@ -25,10 +25,11 @@
 
 #pragma once
 
+#include "InlineFormattingContext.h"
+#include "InlineLine.h"
 #include <WebCore/FormattingConstraints.h>
 #include <WebCore/InlineContentBreaker.h>
 #include <WebCore/InlineLayoutState.h>
-#include <WebCore/InlineLine.h>
 #include <WebCore/InlineLineTypes.h>
 #include <WebCore/LineLayoutResult.h>
 
@@ -38,14 +39,17 @@ namespace Layout {
 struct LineInput {
     InlineItemRange needsLayoutRange;
     InlineRect initialLogicalRect;
+    std::optional<BlockOverflowEllipsis> blockEllipsis { };
 };
+
+using WrapOpportunityList = Vector<const InlineItem*, 32>;
 
 class AbstractLineBuilder {
 public:
     virtual LineLayoutResult layoutInlineContent(const LineInput&, const std::optional<PreviousLine>&, bool isFirstFormattedLineCandidate) = 0;
     virtual ~AbstractLineBuilder() { };
 
-    void setIntrinsicWidthMode(IntrinsicWidthMode);
+    void LEGACY_NODELETE setIntrinsicWidthMode(IntrinsicWidthMode);
 
 protected:
     AbstractLineBuilder(InlineFormattingContext&, const ElementBox& rootBox, HorizontalConstraints rootHorizontalConstraints, const InlineItemList&);
@@ -59,23 +63,23 @@ protected:
 
     bool isFirstFormattedLineCandidate() const { return m_isFirstFormattedLineCandidate; }
 
-    InlineContentBreaker& inlineContentBreaker() { return m_inlineContentBreaker; }
+    InlineContentBreaker& inlineContentBreaker() LIFETIME_BOUND { return m_inlineContentBreaker; }
 
-    InlineFormattingContext& formattingContext() { return m_inlineFormattingContext; }
-    const InlineFormattingContext& formattingContext() const { return m_inlineFormattingContext; }
-    const HorizontalConstraints& rootHorizontalConstraints() const { return m_rootHorizontalConstraints; }
-    const InlineLayoutState& layoutState() const;
-    InlineLayoutState& layoutState();
-    const BlockLayoutState& blockLayoutState() const { return layoutState().parentBlockLayoutState(); }
-    BlockLayoutState& blockLayoutState() { return layoutState().parentBlockLayoutState(); }
+    InlineFormattingContext& formattingContext() LIFETIME_BOUND { return m_inlineFormattingContext; }
+    const InlineFormattingContext& formattingContext() const LIFETIME_BOUND { return m_inlineFormattingContext; }
+    const HorizontalConstraints& rootHorizontalConstraints() const LIFETIME_BOUND { return m_rootHorizontalConstraints; }
+    const InlineLayoutState& LEGACY_NODELETE layoutState() const LIFETIME_BOUND;
+    InlineLayoutState& LEGACY_NODELETE layoutState() LIFETIME_BOUND;
+    const BlockLayoutState& blockLayoutState() const LIFETIME_BOUND { return layoutState().parentBlockLayoutState(); }
+    BlockLayoutState& blockLayoutState() LIFETIME_BOUND { return layoutState().parentBlockLayoutState(); }
     const ElementBox& root() const { return m_rootBox; }
-    const RenderStyle& rootStyle() const;
+    const Style::ComputedStyle& rootStyle() const LIFETIME_BOUND;
 
 protected:
     Line m_line;
     InlineRect m_lineLogicalRect;
     std::span<const InlineItem> m_inlineItemList;
-    Vector<const InlineItem*, 32> m_wrapOpportunityList;
+    WrapOpportunityList m_wrapOpportunityList;
     std::optional<InlineTextItem> m_partialLeadingTextItem;
     std::optional<PreviousLine> m_previousLine { };
     bool m_isFirstFormattedLineCandidate { false };

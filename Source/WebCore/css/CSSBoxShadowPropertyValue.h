@@ -33,14 +33,14 @@ class CSSBoxShadowPropertyValue final : public CSSValue {
 public:
     static Ref<CSSBoxShadowPropertyValue> create(CSS::BoxShadowProperty);
 
-    const CSS::BoxShadowProperty& shadow() const { return m_shadow; }
+    const CSS::BoxShadowProperty& shadow() const LIFETIME_BOUND { return m_shadow; }
 
     String customCSSText(const CSS::SerializationContext&) const;
     bool equals(const CSSBoxShadowPropertyValue&) const;
 
     IterationStatus customVisitChildren(NOESCAPE const Function<IterationStatus(CSSValue&)>&) const;
 
-    Ref<DeprecatedCSSOMValue> createDeprecatedCSSOMWrapper(CSSStyleDeclaration&) const;
+    Ref<DeprecatedCSSOMValue> customCreateDeprecatedCSSOMWrapper(CSSStyleDeclaration&) const;
 
 private:
     CSSBoxShadowPropertyValue(CSS::BoxShadowProperty&&);

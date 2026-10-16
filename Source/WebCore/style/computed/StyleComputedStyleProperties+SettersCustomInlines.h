@@ -32,7 +32,7 @@
 #define SET_NESTED(group, parent, variable, value) SET_STYLE_PROPERTY(group->parent->variable, group.access().parent.access().variable, value)
 #define SET_DOUBLY_NESTED(group, grandparent, parent, variable, value) SET_STYLE_PROPERTY(group->grandparent->parent->variable, group.access().grandparent.access().parent.access().variable, value)
 #define SET_NESTED_STRUCT(group, parent, variable, value) SET_STYLE_PROPERTY(group->parent.variable, group.access().parent.variable, value)
-#define SET_STYLE_PROPERTY_PAIR(read, write, variable1, value1, variable2, value2) do { Ref readable = Ref { *read }; if (!compareEqual(readable->variable1, value1) || !compareEqual(readable->variable2, value2)) { auto& writable = write; writable.variable1 = value1; writable.variable2 = value2; } } while (0)
+#define SET_STYLE_PROPERTY_PAIR(read, write, variable1, value1, variable2, value2) do { Ref readable { *read }; if (!compareEqual(readable->variable1, value1) || !compareEqual(readable->variable2, value2)) { auto& writable = write; writable.variable1 = value1; writable.variable2 = value2; } } while (0)
 #define SET_PAIR(group, variable1, value1, variable2, value2) SET_STYLE_PROPERTY_PAIR(group, group.access(), variable1, value1, variable2, value2)
 #define SET_NESTED_PAIR(group, parent, variable1, value1, variable2, value2) SET_STYLE_PROPERTY_PAIR(group->parent, group.access().parent.access(), variable1, value1, variable2, value2)
 #define SET_DOUBLY_NESTED_PAIR(group, grandparent, parent, variable1, value1, variable2, value2) SET_STYLE_PROPERTY_PAIR(group->grandparent->parent, group.access().grandparent.access().parent.access(), variable1, value1, variable2, value2)
@@ -69,11 +69,7 @@ inline bool ComputedStyleProperties::setWritingMode(StyleWritingMode mode)
 
 inline bool ComputedStyleProperties::setZoom(Zoom zoom)
 {
-    // Clamp the effective zoom value to avoid overflow in derived computations.
-    // This matches other engines values for compatibility.
-    constexpr float minEffectiveZoom = 1e-6f;
-    constexpr float maxEffectiveZoom = 1e6f;
-    setUsedZoom(clampTo<float>(usedZoom() * evaluate<float>(zoom), minEffectiveZoom, maxEffectiveZoom));
+    setUsedZoom(clampTo<float>(usedZoom() * evaluate<float>(zoom), Zoom::minEffective, Zoom::maxEffective));
 
     if (compareEqual(m_nonInheritedData->rareData->zoom, zoom))
         return false;
@@ -90,14 +86,15 @@ inline void ComputedStyleProperties::setAppearance(StyleAppearance appearance)
 
 inline void ComputedStyleProperties::setBlendMode(BlendMode mode)
 {
-    SET_NESTED(m_nonInheritedData, rareData, effectiveBlendMode, static_cast<unsigned>(mode));
-    SET(m_inheritedRareData, isInSubtreeWithBlendMode, mode != BlendMode::Normal);
+    SET_NESTED(m_nonInheritedData, rareData, blendMode, static_cast<unsigned>(mode));
+    if (!m_nonInheritedData->rareData->overrideBlendMode)
+        SET(m_inheritedRareData, isInSubtreeWithBlendMode, mode != BlendMode::Normal);
 }
 
-inline void ComputedStyleProperties::setDisplay(DisplayType value)
+inline void ComputedStyleProperties::setDisplay(Display value)
 {
-    m_nonInheritedFlags.originalDisplay = static_cast<unsigned>(value);
-    m_nonInheritedFlags.effectiveDisplay = static_cast<unsigned>(value);
+    m_nonInheritedFlags.originalDisplay = value.toRaw();
+    m_nonInheritedFlags.display = value.toRaw();
 }
 
 // FIXME: Support generating properties that have their storage spread out
@@ -131,9 +128,6 @@ inline void ComputedStyleProperties::setTextAutospace(TextAutospace value)
 
 inline void ComputedStyleProperties::setFontSize(float size)
 {
-    // size must be specifiedSize if Text Autosizing is enabled, but computedSize if text
-    // zoom is enabled (if neither is enabled it's irrelevant as they're probably the same).
-
     ASSERT(std::isfinite(size));
     if (!std::isfinite(size) || size < 0)
         size = 0;
@@ -141,8 +135,8 @@ inline void ComputedStyleProperties::setFontSize(float size)
         size = std::min(maximumAllowedFontSize, size);
 
     auto description = fontDescription();
-    description.setSpecifiedSize(size);
     description.setComputedSize(size);
+    description.setUsedSize(size, description.usedZoomFactor());
     setFontDescription(WTF::move(description));
 
     // Whenever the font size changes, letter-spacing and word-spacing, which are dependent on font-size, must be re-synchronized.
@@ -243,7 +237,7 @@ inline void ComputedStyleProperties::setFontSynthesisSmallCaps(FontSynthesisLong
     setFontDescription(WTF::move(description));
 }
 
-inline void ComputedStyleProperties::setFontSynthesisStyle(FontSynthesisLonghandValue value)
+inline void ComputedStyleProperties::setFontSynthesisStyle(FontSynthesisStyleLonghandValue value)
 {
     auto description = fontDescription();
     description.setFontSynthesisStyle(value);
@@ -309,7 +303,7 @@ inline void ComputedStyleProperties::setFontVariantPosition(FontVariantPosition 
 inline void ComputedStyleProperties::setLocale(WebkitLocale value)
 {
     auto description = fontDescription();
-    description.setSpecifiedLocale(value.takePlatform());
+    description.setComputedLocale(value.takePlatform());
     setFontDescription(WTF::move(description));
 }
 

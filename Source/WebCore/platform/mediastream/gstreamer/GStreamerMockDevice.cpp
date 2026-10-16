@@ -26,6 +26,7 @@
 #include "CaptureDevice.h"
 #include "GStreamerCommon.h"
 #include "GUniquePtrGStreamer.h"
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/WTFGType.h>
 
 using namespace WebCore;
@@ -61,6 +62,7 @@ GstDevice* webkitMockDeviceCreate(const CaptureDevice& captureDevice)
 
     switch (captureDevice.type()) {
     case CaptureDevice::DeviceType::Camera:
+    case CaptureDevice::DeviceType::Canvas:
     case CaptureDevice::DeviceType::Screen:
     case CaptureDevice::DeviceType::Window:
         deviceClass = "Video/Source"_s;
@@ -78,9 +80,9 @@ GstDevice* webkitMockDeviceCreate(const CaptureDevice& captureDevice)
 
     auto displayName = captureDevice.label();
     GUniquePtr<GstStructure> properties(gst_structure_new("webkit-mock-device", "persistent-id", G_TYPE_STRING, captureDevice.persistentId().ascii().data(), "is-default", G_TYPE_BOOLEAN, captureDevice.isDefault(), nullptr));
-    GST_DEBUG("Creating mock device with name %s and properties %" GST_PTR_FORMAT, displayName.utf8().data(), properties.get());
-    auto* device = WEBKIT_MOCK_DEVICE_CAST(g_object_new(GST_TYPE_MOCK_DEVICE, "display-name", displayName.utf8().data(),
-        "device-class", deviceClass.characters(), "caps", caps.get(), "properties", properties.get(), nullptr));
+    GST_DEBUG("Creating mock device with name %s and properties %" GST_PTR_FORMAT, displayName.utf8(), properties.get());
+    auto* device = WEBKIT_MOCK_DEVICE_CAST(gObjectNew(GST_TYPE_MOCK_DEVICE, "display-name", displayName.utf8(),
+        "device-class", deviceClass.characters(), "caps", caps.get(), "properties", properties.get()));
     gst_object_ref_sink(device);
     return GST_DEVICE_CAST(device);
 }

@@ -20,7 +20,6 @@
 #include "config.h"
 #include "MediaQueryList.h"
 
-#include "AddEventListenerOptionsInlines.h"
 #include "ContextDestructionObserverInlines.h"
 #include "DocumentQuirks.h"
 #include "EventNames.h"
@@ -60,7 +59,7 @@ Ref<MediaQueryList> MediaQueryList::create(Document& document, MediaQueryMatcher
 MediaQueryList::~MediaQueryList()
 {
     if (m_matcher)
-        m_matcher->removeMediaQueryList(*this);
+        protect(m_matcher)->removeMediaQueryList(*this);
 }
 
 void MediaQueryList::detachFromMatcher()
@@ -80,7 +79,7 @@ void MediaQueryList::addListener(RefPtr<EventListener>&& listener)
     if (!listener)
         return;
 
-    addEventListener(eventNames().changeEvent, listener.releaseNonNull(), { });
+    addEventListener(eventNames().changeEvent, listener.releaseNonNull());
 }
 
 void MediaQueryList::removeListener(RefPtr<EventListener>&& listener)
@@ -130,14 +129,14 @@ bool MediaQueryList::matches()
     if (m_dynamicDependencies.contains(MQ::MediaQueryDynamicDependency::Viewport))  {
         if (RefPtr document = dynamicDowncast<Document>(scriptExecutionContext())) {
             if (RefPtr ownerElement = document->ownerElement()) {
-                ownerElement->document().updateLayout();
-                m_matcher->evaluateAll(MediaQueryMatcher::EventMode::Schedule);
+                protect(ownerElement->document())->updateLayout();
+                protect(m_matcher)->evaluateAll(MediaQueryMatcher::EventMode::Schedule);
             }
         }
     }
 
     if (m_evaluationRound != m_matcher->evaluationRound())
-        setMatches(m_matcher->evaluate(m_mediaQueries));
+        setMatches(protect(m_matcher)->evaluate(m_mediaQueries));
 
     return m_matches;
 }

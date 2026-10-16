@@ -27,6 +27,8 @@ CODE_SIGN_IDENTITY = -;
 AD_HOC_CODE_SIGNING_ALLOWED = YES;
 
 ALWAYS_SEARCH_USER_PATHS = NO;
+ENABLE_USER_SCRIPT_SANDBOXING = YES;
+EXCLUDED_USER_SCRIPT_SANDBOXING_PHASE_NAMES = $(inherited) "Generate Unified Sources" "Generate Derived Sources" "Generate <wtf/Platform.h> args" "Check For Inappropriate Files In Framework" "Check For Inappropriate Macros in External Headers" "Check .xcfilelists" "Migrate WebCore Headers and Generate Export List" "Generate Preferences" "Audit SPI use" "Work around 109484516";
 
 CLANG_CXX_LANGUAGE_STANDARD = c++2b;
 CLANG_CXX_LIBRARY = libc++;
@@ -83,7 +85,7 @@ CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
 OTHER_MIGFLAGS = -F$(BUILT_PRODUCTS_DIR);
 CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
 PREBINDING = NO;
-WARNING_CFLAGS = $(inherited) $(WK_FIXME_WARNING_CFLAGS) -Wcast-qual -Wchar-subscripts -Wextra-tokens -Winit-self -Wmissing-noreturn -Wpacked -Wpointer-arith -Wredundant-decls -Wwrite-strings -Wexit-time-destructors -Wglobal-constructors -Wtautological-compare -Wimplicit-fallthrough -Wvla -Wliteral-conversion -Wthread-safety;
+WARNING_CFLAGS = $(inherited) $(WK_FIXME_WARNING_CFLAGS) -Wcast-qual -Wchar-subscripts -Wextra-tokens -Winit-self -Wmissing-noreturn -Wpacked -Wpointer-arith -Wredundant-decls -Wwrite-strings -Wexit-time-destructors -Wglobal-constructors -Wtautological-compare -Wimplicit-fallthrough -Wvla -Wliteral-conversion;
 
 // Remove WK_FIXME_WARNING_CFLAGS once all warnings are fixed.
 WK_FIXME_WARNING_CFLAGS = -Wno-unused-parameter;

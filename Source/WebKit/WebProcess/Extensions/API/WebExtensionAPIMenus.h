@@ -54,14 +54,14 @@ public:
 
     double actionMenuTopLevelLimit() const { return webExtensionActionMenuItemTopLevelLimit; }
 
-    const ClickHandlerMap& clickHandlers() const { return m_clickHandlerMap; }
+    const ClickHandlerMap& clickHandlers() const LIFETIME_BOUND { return m_clickHandlerMap; }
 
 private:
     enum class ForUpdate : bool { No, Yes };
     bool parseCreateAndUpdateProperties(ForUpdate, NSDictionary *, const URL& baseURL, std::optional<WebExtensionMenuItemParameters>&, RefPtr<WebExtensionCallbackHandler>&, NSString **outExceptionString);
 
     Markable<WebCore::FrameIdentifier> m_frameIdentifier;
-    RefPtr<WebExtensionAPIEvent> m_onClicked;
+    const RefPtr<WebExtensionAPIEvent> m_onClicked;
     ClickHandlerMap m_clickHandlerMap;
 #endif
 };

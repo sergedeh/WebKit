@@ -89,12 +89,12 @@ void WorkerOrWorkletThread::startRunningDebuggerTasks()
     m_pausedForDebugger = true;
 
     // FIXME: Add support for debugging workers running on the main thread.
-    if (!is<WorkerDedicatedRunLoop>(m_runLoop.get()))
+    if (!is<WorkerDedicatedRunLoop>(m_runLoop))
         return;
 
     MessageQueueWaitResult result;
     do {
-        result = downcast<WorkerDedicatedRunLoop>(m_runLoop.get()).runInDebuggerMode(*protectedGlobalScope());
+        result = downcast<WorkerDedicatedRunLoop>(m_runLoop).runInDebuggerMode(*protect(globalScope()));
     } while (result != MessageQueueTerminated && m_pausedForDebugger);
 }
 
@@ -106,8 +106,8 @@ void WorkerOrWorkletThread::stopRunningDebuggerTasks()
 void WorkerOrWorkletThread::runEventLoop()
 {
     // Does not return until terminated.
-    if (auto* runLoop = dynamicDowncast<WorkerDedicatedRunLoop>(m_runLoop.get()))
-        runLoop->run(protectedGlobalScope().get());
+    if (auto* runLoop = dynamicDowncast<WorkerDedicatedRunLoop>(m_runLoop))
+        runLoop->run(protect(globalScope()).get());
 }
 
 void WorkerOrWorkletThread::workerOrWorkletThread()
@@ -119,7 +119,7 @@ void WorkerOrWorkletThread::workerOrWorkletThread()
         if (!m_globalScope)
             return;
 
-        downcast<WorkerMainRunLoop>(m_runLoop.get()).setGlobalScope(*protectedGlobalScope());
+        downcast<WorkerMainRunLoop>(m_runLoop).setGlobalScope(*globalScope());
 
         String exceptionMessage;
         evaluateScriptIfNecessary(exceptionMessage);
@@ -141,7 +141,6 @@ void WorkerOrWorkletThread::workerOrWorkletThread()
     g_main_context_push_thread_default(mainContext.get());
 #endif
 
-    WorkerOrWorkletScriptController* scriptController;
     {
         // Mutex protection is necessary to ensure that we don't change m_globalScope
         // while WorkerThread::stop() is accessing it. Note that WorkerThread::stop() can
@@ -155,7 +154,7 @@ void WorkerOrWorkletThread::workerOrWorkletThread()
             return;
         }
 
-        scriptController = m_globalScope->script();
+        CheckedPtr scriptController = m_globalScope->script();
 
         if (m_runLoop->terminated()) {
             // The worker was terminated before the thread had a chance to run. Since the context didn't exist yet,
@@ -170,7 +169,7 @@ void WorkerOrWorkletThread::workerOrWorkletThread()
 
         // If the worker was somehow terminated while processing debugger commands.
         if (m_runLoop->terminated())
-            scriptController->forbidExecution();
+            protect(m_globalScope->script())->forbidExecution();
     }
 
     String exceptionMessage;
@@ -188,7 +187,7 @@ void WorkerOrWorkletThread::workerOrWorkletThread()
 #endif
 
     if (!m_childThreads.isEmptyIgnoringNullReferences()) {
-        m_runWhenLastChildThreadIsGone = [this, protectedThis = WTF::move(protectedThis)]() mutable {
+        m_runWhenLastChildThreadIsGone = [this, protectedThis = Ref { *this }]() mutable {
             destroyWorkerGlobalScope(WTF::move(protectedThis));
         };
         return;
@@ -252,7 +251,7 @@ void WorkerOrWorkletThread::start(Function<void(const String&)>&& evaluateCallba
     // Force the Thread object to be initialized fully before storing it to m_thread (and becoming visible to other threads).
     WTF::storeStoreFence();
 
-    m_thread = WTF::move(thread);
+    lazyInitialize(m_thread, WTF::move(thread));
 }
 
 void WorkerOrWorkletThread::stop(Function<void()>&& stoppedCallback)
@@ -263,7 +262,7 @@ void WorkerOrWorkletThread::stop(Function<void()>&& stoppedCallback)
     if (!m_threadCreationAndGlobalScopeLock.tryLock()) {
         // The thread is still starting, spin the runloop and try again to avoid deadlocks if the worker thread
         // needs to interact with the main thread during startup.
-        callOnMainThread([this, stoppedCallback = WTF::move(stoppedCallback)]() mutable {
+        callOnMainThread([this, protectedThis = Ref { *this }, stoppedCallback = WTF::move(stoppedCallback)]() mutable {
             stop(WTF::move(stoppedCallback));
         });
         return;
@@ -279,10 +278,10 @@ void WorkerOrWorkletThread::stop(Function<void()>&& stoppedCallback)
 
     // Ensure that tasks are being handled by thread event loop. If script execution weren't forbidden, a while(1) loop in JS could keep the thread alive forever.
     if (globalScope()) {
-        if (auto* script = globalScope()->script())
+        if (CheckedPtr script = globalScope()->script())
             script->scheduleExecutionTermination();
 
-        if (is<WorkerMainRunLoop>(m_runLoop.get())) {
+        if (is<WorkerMainRunLoop>(m_runLoop)) {
             auto globalScope = std::exchange(m_globalScope, nullptr);
             globalScope->prepareForDestruction();
             globalScope->clearScript();
@@ -315,7 +314,7 @@ void WorkerOrWorkletThread::stop(Function<void()>&& stoppedCallback)
 void WorkerOrWorkletThread::suspend()
 {
     m_isSuspended = true;
-    if (is<WorkerMainRunLoop>(m_runLoop.get()))
+    if (is<WorkerMainRunLoop>(m_runLoop))
         return;
 
     m_runLoop->postTask([protectedThis = Ref { *this }](ScriptExecutionContext&) {
@@ -333,7 +332,7 @@ void WorkerOrWorkletThread::resume()
 {
     ASSERT(m_isSuspended);
     m_isSuspended = false;
-    if (is<WorkerMainRunLoop>(m_runLoop.get()))
+    if (is<WorkerMainRunLoop>(m_runLoop))
         return;
 
     m_suspensionSemaphore.signal();
@@ -358,16 +357,6 @@ void WorkerOrWorkletThread::removeChildThread(WorkerOrWorkletThread& childThread
     m_childThreads.remove(childThread);
     if (m_childThreads.isEmptyIgnoringNullReferences() && m_runWhenLastChildThreadIsGone)
         std::exchange(m_runWhenLastChildThreadIsGone, nullptr)();
-}
-
-CheckedPtr<WorkerLoaderProxy> WorkerOrWorkletThread::checkedWorkerLoaderProxy() const
-{
-    return workerLoaderProxy();
-}
-
-RefPtr<WorkerOrWorkletGlobalScope> WorkerOrWorkletThread::protectedGlobalScope() const
-{
-    return m_globalScope.get();
 }
 
 } // namespace WebCore

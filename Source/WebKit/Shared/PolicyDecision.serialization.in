@@ -21,6 +21,14 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 enum class WebKit::SafeBrowsingCheckOngoing : bool;
+enum class WebCore::OriginKeyed : bool;
+
+header: <WebCore/AgentClusterAssignment.h>
+struct WebCore::AgentClusterAssignment {
+    std::optional<WebCore::AgentClusterIdentifier> identifier;
+    WebCore::OriginKeyed isOriginKeyed;
+    WebCore::DocumentIsolationPolicy documentIsolationPolicy;
+};
 
 [RValue] struct WebKit::PolicyDecision {
     std::optional<WebKit::NavigatingToAppBoundDomain> isNavigatingToAppBoundDomain;
@@ -31,6 +39,9 @@ enum class WebKit::SafeBrowsingCheckOngoing : bool;
     std::optional<WebKit::SandboxExtensionHandle> sandboxExtensionHandle;
     std::optional<WebKit::PolicyDecisionConsoleMessage> consoleMessage;
     WebKit::SafeBrowsingCheckOngoing isSafeBrowsingCheckOngoing;
+    RefPtr<WebKit::FrameState> backForwardFrameState;
+    WebCore::AgentClusterAssignment agentClusterAssignment;
+    std::optional<WebCore::RegistrableDomain> unpartitionedStorageSite;
 }
 
 [CustomHeader] struct WebKit::PolicyDecisionConsoleMessage {

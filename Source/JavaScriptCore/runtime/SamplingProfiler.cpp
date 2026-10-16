@@ -41,11 +41,11 @@
 #include "NativeCallee.h"
 #include "NativeCalleeRegistry.h"
 #include "NativeExecutable.h"
+#include "TopExceptionScope.h"
 #include "VM.h"
 #include "VMTrapsInlines.h"
 #include "WasmCallee.h"
 #include "WasmCapabilities.h"
-#include <wtf/CommaPrinter.h>
 #include <wtf/FilePrintStream.h>
 #include <wtf/HashSet.h>
 #include <wtf/JSONValues.h>
@@ -109,7 +109,7 @@ public:
         return m_depth;
     }
 
-    bool wasValidWalk() const
+    bool LEGACY_NODELETE wasValidWalk() const
     {
         return !m_bailingOut;
     }
@@ -152,7 +152,7 @@ protected:
                         if (isInlined)
                             stackTrace[m_depth].wasmIndexOrName = origin;
                     }
-                    stackTrace[m_depth].wasmPCMap = NativeCalleeRegistry::singleton().codeOriginMap(wasmCallee);
+                    stackTrace[m_depth].wasmPCMap = wasmCallee->pcToCodeOriginMap();
 #endif
 #endif
                     break;
@@ -172,7 +172,7 @@ protected:
         m_callFrame = m_callFrame->unsafeCallerFrame(m_entryFrame);
     }
 
-    bool isAtTop() const
+    bool LEGACY_NODELETE isAtTop() const
     {
         return !m_callFrame;
     }
@@ -203,7 +203,7 @@ protected:
         }
     }
 
-    bool isValidFramePointer(void* callFrame)
+    bool LEGACY_NODELETE isValidFramePointer(void* callFrame)
     {
         uint8_t* fpCast = std::bit_cast<uint8_t*>(callFrame);
         for (auto& thread : m_vm.heap.machineThreads().threads(m_machineThreadsLocker)) {
@@ -282,7 +282,7 @@ public:
 
 private:
 
-    bool isCFrame()
+    bool LEGACY_NODELETE isCFrame()
     {
         return frame()->callerFrame != m_callFrame;
     }
@@ -306,7 +306,7 @@ private:
         Base::resetAtMachineFrame();
     }
 
-    CallerFrameAndPC* frame()
+    CallerFrameAndPC* LEGACY_NODELETE frame()
     {
         return reinterpret_cast<CallerFrameAndPC*>(m_machineFrame);
     }
@@ -474,7 +474,7 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
     }
 }
 
-static ALWAYS_INLINE BytecodeIndex tryGetBytecodeIndex(unsigned llintPC, CodeBlock* codeBlock)
+static ALWAYS_INLINE BytecodeIndex LEGACY_NODELETE tryGetBytecodeIndex(unsigned llintPC, CodeBlock* codeBlock)
 {
 #if ENABLE(DFG_JIT)
     RELEASE_ASSERT(!codeBlock->hasCodeOrigins());
@@ -488,7 +488,6 @@ static ALWAYS_INLINE BytecodeIndex tryGetBytecodeIndex(unsigned llintPC, CodeBlo
 
 void SamplingProfiler::processUnverifiedStackTraces()
 {
-    // This function needs to be called from the JSC execution thread.
     RELEASE_ASSERT(m_lock.isLocked());
 
     TinyBloomFilter<uintptr_t> filter = m_vm.heap.objectSpace().blocks().filter();
@@ -585,7 +584,7 @@ void SamplingProfiler::processUnverifiedStackTraces()
             };
 
             if (calleeCell->type() != JSFunctionType) {
-                if (JSObject* object = jsDynamicCast<JSObject*>(calleeCell))
+                if (JSObject* object = dynamicDowncast<JSObject>(calleeCell))
                     addCallee(object);
 
                 if (!alreadyHasExecutable)
@@ -594,12 +593,12 @@ void SamplingProfiler::processUnverifiedStackTraces()
                 return;
             }
 
-            addCallee(jsCast<JSFunction*>(calleeCell));
+            addCallee(uncheckedDowncast<JSFunction>(calleeCell));
 
             if (alreadyHasExecutable)
                 return;
 
-            ExecutableBase* executable = jsCast<JSFunction*>(calleeCell)->executable();
+            ExecutableBase* executable = uncheckedDowncast<JSFunction>(calleeCell)->executable();
             if (!executable) {
                 setFallbackFrameType();
                 return;
@@ -806,7 +805,10 @@ String SamplingProfiler::StackFrame::nameFromCallee(VM& vm)
 
     DeferTermination deferScope(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSGlobalObject* globalObject = callee->globalObject();
+    JSGlobalObject* globalObject = callee->realmMayBeNull();
+    if (!globalObject)
+        return String();
+
     auto getPropertyIfPureOperation = [&] (const Identifier& ident) -> String {
         PropertySlot slot(callee, PropertySlot::InternalMethodType::VMInquiry, &vm);
         PropertyName propertyName(ident);
@@ -1061,6 +1063,7 @@ static String tierName(SamplingProfiler::StackFrame& frame)
             case Wasm::CompilationMode::JSToWasmICMode:
             case Wasm::CompilationMode::WasmToJSMode:
             case Wasm::CompilationMode::WasmBuiltinMode:
+            case Wasm::CompilationMode::RestoreFrameMode:
                 // Just say "Wasm" for now.
                 break;
             case Wasm::CompilationMode::BBQMode:
@@ -1109,7 +1112,7 @@ Ref<JSON::Value> SamplingProfiler::stackTracesAsJSON()
         result->setString("category"_s, tierName(stackFrame));
         uint32_t flags = 0;
         if (stackFrame.frameType == SamplingProfiler::FrameType::Executable && stackFrame.executable) {
-            if (auto* executable = jsDynamicCast<FunctionExecutable*>(stackFrame.executable); executable && executable->isBuiltinFunction())
+            if (auto* executable = dynamicDowncast<FunctionExecutable>(stackFrame.executable); executable && executable->isBuiltinFunction())
                 flags = 1;
         }
         result->setDouble("flags"_s, flags);
@@ -1191,11 +1194,11 @@ void SamplingProfiler::reportDataToOptionFile()
     if (m_needsReportAtExit) {
         m_needsReportAtExit = false;
         JSLockHolder holder(m_vm);
-        const char* path = Options::samplingProfilerPath();
+        const char8_t* path = Options::samplingProfilerPath();
         StringPrintStream pathOut;
         pathOut.print(path, "/");
         pathOut.print("JSCSampilingProfile-", reinterpret_cast<uintptr_t>(this), ".txt");
-        auto out = FilePrintStream::open(pathOut.toCString().data(), "w");
+        auto out = FilePrintStream::open(pathOut.toUTF8CString(), "w"_s);
         reportTopFunctions(*out);
         reportTopBytecodes(*out);
     }
@@ -1311,13 +1314,13 @@ void SamplingProfiler::reportTopBytecodes(PrintStream& out)
         auto frameDescription = makeString(frame.displayName(m_vm), descriptionForLocation(frame.semanticLocation, frame.wasmCompilationMode, frame.wasmOffset));
         if (std::optional<std::pair<StackFrame::CodeLocation, CodeBlock*>> machineLocation = frame.machineLocation) {
             frameDescription = makeString(frameDescription, " <-- "_s,
-                unsafeSpan(machineLocation->second->inferredName().data()), descriptionForLocation(machineLocation->first, std::nullopt, BytecodeIndex()));
+                machineLocation->second->inferredName(), descriptionForLocation(machineLocation->first, std::nullopt, BytecodeIndex()));
         }
         bytecodeCounts.add(frameDescription, 0).iterator->value++;
 
         tierCounts.add(tierName(frame), 0).iterator->value++;
         if (frame.frameType == SamplingProfiler::FrameType::Executable && frame.executable) {
-            if (auto* executable = jsDynamicCast<FunctionExecutable*>(frame.executable)) {
+            if (auto* executable = dynamicDowncast<FunctionExecutable>(frame.executable)) {
                 if (executable->isBuiltinFunction())
                     tierCounts.add(Tiers::builtin, 0).iterator->value++;
             }

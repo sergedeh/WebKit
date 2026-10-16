@@ -83,29 +83,26 @@ private:
 
 // -- Caches --
 
-DOMCache<WebCore::Node*, __unsafe_unretained WKDOMNode *>& WKDOMNodeCache();
-DOMCache<WebCore::Range*, __unsafe_unretained WKDOMRange *>& WKDOMRangeCache();
+DOMCache<WebCore::Node*, __unsafe_unretained WKDOMNode *>& LEGACY_NODELETE WKDOMNodeCache();
+DOMCache<WebCore::Range*, __unsafe_unretained WKDOMRange *>& LEGACY_NODELETE WKDOMRangeCache();
 
 // -- Node and classes derived from Node. --
 
-WebCore::Node* toWebCoreNode(WKDOMNode *);
-RefPtr<WebCore::Node> toProtectedWebCoreNode(WKDOMNode *);
-WKDOMNode *toWKDOMNode(WebCore::Node*);
+WebCore::Node* CLANG_POINTER_CONVERSION toWebCoreNode(WKDOMNode *);
+WKDOMNode *CLANG_POINTER_CONVERSION toWKDOMNode(WebCore::Node*);
 
-WebCore::Element* toWebCoreElement(WKDOMElement *);
-WKDOMElement *toWKDOMElement(WebCore::Element*);
+WebCore::Element* CLANG_POINTER_CONVERSION toWebCoreElement(WKDOMElement *);
+WKDOMElement *CLANG_POINTER_CONVERSION toWKDOMElement(WebCore::Element*);
 
-WebCore::Document* toWebCoreDocument(WKDOMDocument *);
-RefPtr<WebCore::Document> toProtectedWebCoreDocument(WKDOMDocument *);
-WKDOMDocument *toWKDOMDocument(WebCore::Document*);
+WebCore::Document* CLANG_POINTER_CONVERSION toWebCoreDocument(WKDOMDocument *);
+WKDOMDocument *CLANG_POINTER_CONVERSION toWKDOMDocument(WebCore::Document*);
 
-WebCore::Text* toWebCoreText(WKDOMText *);
-WKDOMText *toWKDOMText(WebCore::Text*);
+WebCore::Text* CLANG_POINTER_CONVERSION toWebCoreText(WKDOMText *);
+WKDOMText *CLANG_POINTER_CONVERSION toWKDOMText(WebCore::Text*);
 
 // -- Range. --
 
 WebCore::Range* toWebCoreRange(WKDOMRange *);
-RefPtr<WebCore::Range> toProtectedWebCoreRange(WKDOMRange *);
 WKDOMRange *toWKDOMRange(WebCore::Range*);
 
 } // namespace WebKit

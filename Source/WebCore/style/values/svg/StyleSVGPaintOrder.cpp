@@ -25,6 +25,7 @@
 #include "config.h"
 #include "StyleSVGPaintOrder.h"
 
+#include "CSSKeywordValue.h"
 #include "StyleBuilderChecking.h"
 
 namespace WebCore {
@@ -61,15 +62,15 @@ std::span<const PaintType, 3> SVGPaintOrder::paintTypes() const
 
 auto CSSValueConversion<SVGPaintOrder>::operator()(BuilderState& state, const CSSValue& value) -> SVGPaintOrder
 {
-    if (RefPtr primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value)) {
-        switch (primitiveValue->valueID()) {
-        case CSSValueNormal:
+    if (auto* keywordValue = dynamicDowncast<CSSKeywordValue>(value)) {
+        switch (keywordValue->valueID()) {
+        case CSSValueID::Normal:
             return CSS::Keyword::Normal { };
-        case CSSValueFill:
+        case CSSValueID::Fill:
             return CSS::Keyword::Fill { };
-        case CSSValueStroke:
+        case CSSValueID::Stroke:
             return CSS::Keyword::Stroke { };
-        case CSSValueMarkers:
+        case CSSValueID::Markers:
             return CSS::Keyword::Markers { };
         default:
             state.setCurrentPropertyInvalidAtComputedValueTime();
@@ -77,15 +78,15 @@ auto CSSValueConversion<SVGPaintOrder>::operator()(BuilderState& state, const CS
         }
     }
 
-    auto list = requiredListDowncast<CSSValueList, CSSPrimitiveValue, 1>(state, value);
+    auto list = requiredListDowncast<CSSValueList, CSSKeywordValue, 1>(state, value);
     if (!list)
         return CSS::Keyword::Normal { };
 
-    switch (Ref first = list->item(0); first->valueID()) {
-    case CSSValueFill:
+    switch (auto& first = list->item(0); first.valueID()) {
+    case CSSValueID::Fill:
         if (list->size() > 1) {
-            switch (Ref second = list->item(1); second->valueID()) {
-            case CSSValueMarkers:
+            switch (auto& second = list->item(1); second.valueID()) {
+            case CSSValueID::Markers:
                 return { CSS::Keyword::Fill { }, CSS::Keyword::Markers { } };
             default:
                 state.setCurrentPropertyInvalidAtComputedValueTime();
@@ -93,10 +94,10 @@ auto CSSValueConversion<SVGPaintOrder>::operator()(BuilderState& state, const CS
             }
         }
         return CSS::Keyword::Fill { };
-    case CSSValueStroke:
+    case CSSValueID::Stroke:
         if (list->size() > 1) {
-            switch (Ref second = list->item(1); second->valueID()) {
-            case CSSValueMarkers:
+            switch (auto& second = list->item(1); second.valueID()) {
+            case CSSValueID::Markers:
                 return { CSS::Keyword::Stroke { }, CSS::Keyword::Markers { } };
             default:
                 state.setCurrentPropertyInvalidAtComputedValueTime();
@@ -104,10 +105,10 @@ auto CSSValueConversion<SVGPaintOrder>::operator()(BuilderState& state, const CS
             }
         }
         return CSS::Keyword::Stroke { };
-    case CSSValueMarkers:
+    case CSSValueID::Markers:
         if (list->size() > 1) {
-            switch (Ref second = list->item(1); second->valueID()) {
-            case CSSValueStroke:
+            switch (auto& second = list->item(1); second.valueID()) {
+            case CSSValueID::Stroke:
                 return { CSS::Keyword::Markers { }, CSS::Keyword::Stroke { } };
             default:
                 state.setCurrentPropertyInvalidAtComputedValueTime();

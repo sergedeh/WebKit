@@ -63,7 +63,7 @@ public:
     enum PullMode { Copy, Mix };
     bool pullSamples(AudioBufferList&, size_t, uint64_t, double, PullMode);
 
-    bool pullAvailableSamplesAsChunks(AudioBufferList&, size_t frameCount, uint64_t timeStamp, Function<void()>&&);
+    bool pullAvailableSamplesAsChunks(AudioBufferList&, size_t frameCount, uint64_t timeStamp, NOESCAPE const Function<void()>&);
     bool pullAvailableSampleChunk(AudioBufferList&, size_t frameCount, uint64_t timeStamp, PullMode);
 
     void setVolume(float volume) { m_volume = volume; }
@@ -79,7 +79,6 @@ public:
 
 #if !RELEASE_LOG_DISABLED
     const Logger& logger() const final { return m_logger; }
-    Ref<const Logger> protectedLogger() const { return m_logger; }
     uint64_t logIdentifier() const final { return m_logIdentifier; }
     void setLogger(Ref<const Logger>&&, uint64_t);
 #endif

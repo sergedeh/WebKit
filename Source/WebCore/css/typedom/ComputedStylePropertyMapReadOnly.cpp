@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2022 Igalia S.L.
+ * Copyright (C) 2026 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -32,7 +33,7 @@
 #include "Document.h"
 #include "Element.h"
 #include "NodeDocument.h"
-#include "RenderStyle+GettersInlines.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "StyleCustomProperty.h"
 #include "StyleExtractor.h"
 #include "StylePropertyShorthand.h"
@@ -54,17 +55,17 @@ ComputedStylePropertyMapReadOnly::ComputedStylePropertyMapReadOnly(Element& elem
 
 RefPtr<CSSValue> ComputedStylePropertyMapReadOnly::propertyValue(CSSPropertyID propertyID) const
 {
-    return Style::Extractor { m_element.get() }.propertyValue(propertyID, Style::Extractor::UpdateLayout::Yes, Style::ExtractorState::PropertyValueType::Computed);
+    return Style::Extractor { protect(m_element) }.propertyValue(propertyID, Style::Extractor::UpdateLayout::Yes, Style::ExtractorState::PropertyValueType::Computed);
 }
 
 String ComputedStylePropertyMapReadOnly::shorthandPropertySerialization(CSSPropertyID propertyID) const
 {
-    return Style::Extractor { m_element.get() }.propertyValueSerialization(propertyID, CSS::defaultSerializationContext(), Style::Extractor::UpdateLayout::Yes, Style::ExtractorState::PropertyValueType::Computed);
+    return Style::Extractor { protect(m_element) }.propertyValueSerialization(propertyID, CSS::defaultSerializationContext(), Style::Extractor::UpdateLayout::Yes, Style::ExtractorState::PropertyValueType::Computed);
 }
 
 RefPtr<CSSValue> ComputedStylePropertyMapReadOnly::customPropertyValue(const AtomString& property) const
 {
-    return Style::Extractor { m_element.get() }.customPropertyValue(property);
+    return Style::Extractor { protect(m_element) }.customPropertyValue(property);
 }
 
 unsigned ComputedStylePropertyMapReadOnly::size() const
@@ -74,13 +75,13 @@ unsigned ComputedStylePropertyMapReadOnly::size() const
     if (!element)
         return 0;
 
-    Style::Extractor::updateStyleIfNeededForProperty(*element.get(), CSSPropertyCustom);
+    Style::Extractor::updateStyleIfNeededForProperty(*element.get(), std::nullopt, CSSPropertyID::Custom);
 
     CheckedPtr style = element->computedStyle();
     if (!style)
         return 0;
 
-    return element->document().exposedComputedCSSPropertyIDs().size() + style->inheritedCustomProperties().size() + style->nonInheritedCustomProperties().size();
+    return protect(element->document())->exposedComputedCSSPropertyIDs().size() + style->inheritedCustomProperties().size() + style->nonInheritedCustomProperties().size();
 }
 
 Vector<StylePropertyMapReadOnly::StylePropertyMapEntry> ComputedStylePropertyMapReadOnly::entries(ScriptExecutionContext*) const
@@ -93,7 +94,7 @@ Vector<StylePropertyMapReadOnly::StylePropertyMapEntry> ComputedStylePropertyMap
     Vector<StylePropertyMapReadOnly::StylePropertyMapEntry> values;
 
     // Ensure custom property counts are correct.
-    Style::Extractor::updateStyleIfNeededForProperty(*element.get(), CSSPropertyCustom);
+    Style::Extractor::updateStyleIfNeededForProperty(*element.get(), std::nullopt, CSSPropertyID::Custom);
 
     CheckedPtr style = element->computedStyle();
     if (!style)
@@ -108,7 +109,14 @@ Vector<StylePropertyMapReadOnly::StylePropertyMapEntry> ComputedStylePropertyMap
     Style::Extractor computedStyleExtractor { element.get() };
     values.appendContainerWithMapping(exposedComputedCSSPropertyIDs, [&](auto propertyID) {
         auto value = computedStyleExtractor.propertyValue(propertyID, Style::Extractor::UpdateLayout::No, Style::ExtractorState::PropertyValueType::Computed);
-        return makeKeyValuePair(nameString(propertyID), StylePropertyMapReadOnly::reifyValueToVector(document, WTF::move(value), propertyID));
+        return makeKeyValuePair(
+            nameString(propertyID),
+            StylePropertyMapReadOnly::reifyValueToVector(
+                document,
+                WTF::move(value),
+                propertyID
+            )
+        );
     });
 
     for (const RefPtr map : { nonInheritedCustomProperties.ptr(), inheritedCustomProperties.ptr() }) {
@@ -119,7 +127,7 @@ Vector<StylePropertyMapReadOnly::StylePropertyMapEntry> ComputedStylePropertyMap
                     StylePropertyMapReadOnly::reifyValueToVector(
                         document,
                         computedStyleExtractor.customPropertyValue(it.value->name()),
-                        std::nullopt
+                        AtomString { it.value->name() }
                     )
                 )
             );

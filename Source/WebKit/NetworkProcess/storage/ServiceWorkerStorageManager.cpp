@@ -26,6 +26,7 @@
 #include "config.h"
 #include "ServiceWorkerStorageManager.h"
 
+#include <WebCore/ClientOrigin.h>
 #include <WebCore/SWRegistrationDatabase.h>
 #include <WebCore/ServiceWorkerContextData.h>
 #include <WebCore/ServiceWorkerRegistrationKey.h>
@@ -67,10 +68,34 @@ std::optional<Vector<WebCore::ServiceWorkerContextData>> ServiceWorkerStorageMan
     return std::nullopt;
 }
 
+std::optional<Vector<WebCore::ServiceWorkerContextData>> ServiceWorkerStorageManager::importRegistrations(const WebCore::SecurityOriginData& topOrigin)
+{
+    if (auto database = ensureDatabase())
+        return database->importRegistrations(topOrigin);
+
+    return std::nullopt;
+}
+
+std::optional<HashSet<WebCore::ClientOrigin>> ServiceWorkerStorageManager::importOrigins()
+{
+    if (auto database = ensureDatabase())
+        return database->importOrigins();
+
+    return std::nullopt;
+}
+
 std::optional<Vector<WebCore::ServiceWorkerScripts>> ServiceWorkerStorageManager::updateRegistrations(const Vector<WebCore::ServiceWorkerContextData>& registrationsToUpdate, const Vector<WebCore::ServiceWorkerRegistrationKey>& registrationsToDelete)
 {
     if (auto database = ensureDatabase())
         return database->updateRegistrations(registrationsToUpdate, registrationsToDelete);
+
+    return std::nullopt;
+}
+
+std::optional<WebCore::ServiceWorkerScripts> ServiceWorkerStorageManager::retrieveWorkerScripts(WebCore::ServiceWorkerIdentifier identifier, const WebCore::ServiceWorkerRegistrationKey& registrationKey, const URL& mainScriptURL, const Vector<URL>& importedScriptURLs)
+{
+    if (auto database = ensureDatabase())
+        return database->retrieveWorkerScripts(identifier, registrationKey, mainScriptURL, importedScriptURLs);
 
     return std::nullopt;
 }

@@ -26,43 +26,40 @@
 #pragma once
 
 #include "BlockLayoutState.h"
-#include "InlineLine.h"
-#include "InlineLineBuilder.h"
+#include "FloatingContext.h"
+#include "InlineLineRun.h"
+#include "LineLayoutResult.h"
 #include <WebCore/InlineLineTypes.h>
 
 namespace WebCore {
 namespace Layout {
 
-class FloatingContext;
 class InlineFormattingContext;
 class InlineLevelBox;
+class LineBox;
 
 class InlineFormattingUtils {
 public:
     InlineFormattingUtils(const InlineFormattingContext&);
 
-    InlineLayoutUnit logicalTopForNextLine(const LineLayoutResult&, const InlineRect& lineLogicalRect, const FloatingContext&, const BlockLayoutState::MarginState&) const;
-
-    ContentHeightAndMargin inlineBlockContentHeightAndMargin(const Box&, const HorizontalConstraints&, const OverriddenVerticalValues&) const;
-    ContentWidthAndMargin inlineBlockContentWidthAndMargin(const Box&, const HorizontalConstraints&, const OverriddenHorizontalValues&) const;
+    InlineLayoutUnit logicalTopForNextLine(const LineLayoutResult&, const InlineRect& lineLogicalRect, const FloatingContext&) const;
 
     enum class IsIntrinsicWidthMode : bool { No, Yes };
-    enum class LineEndsWithLineBreak : bool { No, Yes };
-    InlineLayoutUnit computedTextIndent(IsIntrinsicWidthMode, IsFirstFormattedLine, std::optional<LineEndsWithLineBreak> previousLineEndsWithLineBreak, InlineLayoutUnit availableWidth) const;
+    enum class PreviousLineEndsParagraph : bool { No, Yes };
+    InlineLayoutUnit computedTextIndent(IsIntrinsicWidthMode, IsFirstFormattedLine, std::optional<PreviousLineEndsParagraph>, InlineLayoutUnit availableWidth) const;
+    static InlineLayoutUnit computedTextIndentForFirstLine(const ElementBox& root, InlineLayoutUnit availableWidth);
 
-    bool inlineLevelBoxAffectsLineBox(const InlineLevelBox&) const;
+    bool inlineLevelBoxAffectsLineBox(const InlineLevelBox&, const LineBox&) const;
 
     InlineLayoutUnit initialLineHeight(bool isFirstLine) const;
 
     FloatingContext::Constraints floatConstraintsForLine(InlineLayoutUnit lineLogicalTop, InlineLayoutUnit contentLogicalHeight, const FloatingContext&) const;
 
-    static InlineRect flipVisualRectToLogicalForWritingMode(const InlineRect& visualRect, WritingMode);
+    static InlineRect LEGACY_NODELETE flipVisualRectToLogicalForWritingMode(const InlineRect& visualRect, WritingMode);
 
-    void adjustMarginStartForListMarker(const ElementBox&, LayoutUnit nestedListMarkerMarginStart, InlineLayoutUnit rootInlineBoxOffset) const;
+    static InlineLayoutUnit horizontalAlignmentOffset(const Style::ComputedStyle& rootStyle, InlineLayoutUnit contentLogicalRight, InlineLayoutUnit lineLogicalRight, InlineLayoutUnit hangingTrailingWidth, bool isLastLineOrLineEndsWithForcedLineBreak, std::optional<TextDirection> inlineBaseDirectionOverride = std::nullopt);
 
-    static InlineLayoutUnit horizontalAlignmentOffset(const RenderStyle& rootStyle, InlineLayoutUnit contentLogicalRight, InlineLayoutUnit lineLogicalRight, InlineLayoutUnit hangingTrailingWidth, bool isLastLineOrLineEndsWithForcedLineBreak, std::optional<TextDirection> inlineBaseDirectionOverride = std::nullopt);
-
-    static InlineItemPosition leadingInlineItemPositionForNextLine(InlineItemPosition lineContentEnd, std::optional<InlineItemPosition> previousLineContentEnd, bool lineHasIntrusiveOrNewlyPlacedFloat, InlineItemPosition layoutRangeEnd);
+    static InlineItemPosition leadingInlineItemPositionForNextLine(const LineLayoutResult&, std::optional<InlineItemPosition> previousLineContentEnd, InlineItemPosition layoutRangeEnd);
 
     InlineLayoutUnit inlineItemWidth(const InlineItem&, InlineLayoutUnit contentLogicalLeft, bool useFirstLineStyle) const;
 
@@ -70,27 +67,18 @@ public:
 
     static std::pair<InlineLayoutUnit, InlineLayoutUnit> textEmphasisForInlineBox(const Box&, const ElementBox& rootBox);
 
-    static LineEndingTruncationPolicy lineEndingTruncationPolicy(const RenderStyle& rootStyle, size_t numberOfContentfulLines, std::optional<size_t> numberOfVisibleLinesAllowed, bool currentLineIsContentful);
+    static LineEndingTruncationPolicy LEGACY_NODELETE lineEndingTruncationPolicy(const Style::ComputedStyle& rootStyle, size_t numberOfContentfulLines, std::optional<size_t> numberOfVisibleLinesAllowed, bool currentLineIsContentful);
 
-    static std::optional<LineLayoutResult::InlineContentEnding> inlineContentEnding(const Line::Result&);
+    static std::optional<LineLayoutResult::InlineContentEnding> inlineContentEnding(const LineResult&);
 
-    bool shouldDiscardRemainingContentInBlockDirection() const;
+    bool LEGACY_NODELETE shouldDiscardRemainingContentInBlockDirection() const;
 
-    enum class SnapDirection : uint8_t { Floor, Ceil, Round };
-    static InlineLayoutUnit snapToInt(InlineLayoutUnit, const InlineLevelBox&, SnapDirection = SnapDirection::Round);
-    static InlineLayoutUnit snapToInt(InlineLayoutUnit, const Box&, SnapDirection = SnapDirection::Round);
-
-    static InlineLayoutUnit ascent(const FontMetrics&, FontBaseline, const InlineLevelBox&);
-    static InlineLayoutUnit descent(const FontMetrics&, FontBaseline, const InlineLevelBox&);
-
-    static InlineLayoutUnit ascent(const FontMetrics&, FontBaseline, const Box&);
-    static InlineLayoutUnit descent(const FontMetrics&, FontBaseline, const Box&);
+    std::optional<BlockOverflowEllipsis> blockEllipsisForLine() const;
 
 private:
-    InlineLayoutUnit contentLeftAfterLastLine(const ConstraintsForInFlowContent&, std::optional<InlineLayoutUnit> lastLineLogicalBottom, const FloatingContext&) const;
     bool isAtSoftWrapOpportunity(const InlineItem& previous, const InlineItem& next) const;
 
-    const InlineFormattingContext& formattingContext() const { return m_inlineFormattingContext; }
+    const InlineFormattingContext& formattingContext() const LIFETIME_BOUND { return m_inlineFormattingContext; }
 
 private:
     const InlineFormattingContext& m_inlineFormattingContext;

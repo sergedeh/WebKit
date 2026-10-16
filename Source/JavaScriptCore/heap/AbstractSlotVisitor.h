@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <JavaScriptCore/CollectionScope.h>
 #include <JavaScriptCore/JSCJSValue.h>
 #include <JavaScriptCore/MarkStack.h>
 #include <JavaScriptCore/RootMarkReason.h>
@@ -36,6 +37,7 @@
 
 namespace JSC {
 
+class Collector;
 class ConservativeRoots;
 class Heap;
 class HeapCell;
@@ -131,16 +133,19 @@ public:
 
     virtual ~AbstractSlotVisitor() = default;
 
-    MarkStackArray& collectorMarkStack() { return m_collectorStack; }
-    MarkStackArray& mutatorMarkStack() { return m_mutatorStack; }
-    const MarkStackArray& collectorMarkStack() const { return m_collectorStack; }
-    const MarkStackArray& mutatorMarkStack() const { return m_mutatorStack; }
+    MarkStackArray& collectorMarkStack() LIFETIME_BOUND { return m_collectorStack; }
+    MarkStackArray& mutatorMarkStack() LIFETIME_BOUND { return m_mutatorStack; }
+    const MarkStackArray& collectorMarkStack() const LIFETIME_BOUND { return m_collectorStack; }
+    const MarkStackArray& mutatorMarkStack() const LIFETIME_BOUND { return m_mutatorStack; }
 
-    bool isEmpty() { return m_collectorStack.isEmpty() && m_mutatorStack.isEmpty(); }
+    inline bool isEmpty(); // Defined in AbstractSlotVisitorInlines.h
 
-    VM& vm();
-    const VM& vm() const;
-    JSC::Heap* heap() const;
+    Collector& collector() const { return m_collector; }
+
+    CollectionScope collectionScope() const { return m_collectionScope; }
+    bool isAnalyzingHeap() const { return m_isAnalyzingHeap; }
+
+    inline void LEGACY_NODELETE didStartMarking(CollectionScope, bool isAnalyzingHeap); // Defined in AbstractSlotVisitorInlines.h
 
     virtual void append(const ConservativeRoots&) = 0;
 
@@ -203,17 +208,17 @@ public:
     RootMarkReason rootMarkReason() const { return m_rootMarkReason; }
     void setRootMarkReason(RootMarkReason reason) { m_rootMarkReason = reason; }
 
-    virtual bool mutatorIsStopped() const = 0;
+    virtual bool mutatorsAreStopped() const = 0;
 
     virtual void didRace(const VisitRaceKey&) = 0;
     void didRace(JSCell* cell, const char* reason) { didRace(VisitRaceKey(cell, reason)); }
 
     virtual void visitAsConstraint(const JSCell*) = 0;
 
-    const char* codeName() const { return m_codeName.data(); }
+    const ASCIICString& codeName() const LIFETIME_BOUND { return m_codeName; }
 
 protected:
-    inline AbstractSlotVisitor(Heap&, CString codeName, ConcurrentPtrHashSet&);
+    inline AbstractSlotVisitor(Collector&, ASCIICString codeName, ConcurrentPtrHashSet&);
 
     virtual void didAddOpaqueRoot(void*) { }
     virtual void didFindOpaqueRoot(void*) { }
@@ -226,9 +231,9 @@ protected:
 
     size_t m_visitCount { 0 };
 
-    JSC::Heap& m_heap;
+    Collector& m_collector;
     ReferrerContext* m_context { nullptr };
-    CString m_codeName;
+    ASCIICString m_codeName;
 
     MarkingConstraint* m_currentConstraint { nullptr };
     SUPPRESS_FORWARD_DECL_MEMBER MarkingConstraintSolver* m_currentSolver { nullptr }; // MarkingConstraintSolver is not refcounted
@@ -238,6 +243,9 @@ protected:
     bool m_suppressVerifier { false };
     bool m_ignoreNewOpaqueRoots { false }; // Useful as a debugging mode.
     bool m_needsExtraOpaqueRootHandling { false };
+    CollectionScope m_collectionScope { CollectionScope::Full };
+    // Whether any of the collection's heaps is being analyzed. Each cell is analyzed by its own VM's analyzer.
+    bool m_isAnalyzingHeap { false };
 
     friend class MarkingConstraintSolver;
 };

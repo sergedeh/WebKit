@@ -19,7 +19,7 @@
 
 #pragma once
 
-#if USE(COORDINATED_GRAPHICS)
+#if USE(COORDINATED_GRAPHICS) && USE(TEXTURE_MAPPER)
 #include "CoordinatedBackingStoreTile.h"
 #include "TextureMapperBackingStore.h"
 #include <wtf/HashMap.h>
@@ -38,12 +38,14 @@ public:
     ~CoordinatedBackingStore() = default;
 
     void resize(const FloatSize&, float scale);
+    float scale() const { return m_scale; }
 
     void createTile(uint32_t tileID);
     void removeTile(uint32_t tileID);
     void updateTile(uint32_t tileID, const IntRect&, const IntRect&, Ref<CoordinatedTileBuffer>&&, const IntPoint&);
 
-    void processPendingUpdates(TextureMapper&);
+    bool hasPendingUpdates() const { return m_hasPendingTileUpdates; }
+    void processPendingUpdates();
 
     void paintToTextureMapper(TextureMapper&, const FloatRect&, const TransformationMatrix&, float) override;
     void drawBorder(TextureMapper&, const Color&, float borderWidth, const FloatRect&, const TransformationMatrix&) override;
@@ -55,8 +57,9 @@ private:
     HashMap<uint32_t, CoordinatedBackingStoreTile> m_tiles;
     FloatSize m_size;
     float m_scale { 1. };
+    bool m_hasPendingTileUpdates { false };
 };
 
 } // namespace WebKit
 
-#endif // USE(COORDINATED_GRAPHICS)
+#endif // USE(COORDINATED_GRAPHICS) && USE(TEXTURE_MAPPER)

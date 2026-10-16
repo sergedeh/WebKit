@@ -25,7 +25,6 @@
 
 #pragma once
 
-#include <JavaScriptCore/LineColumn.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashTraits.h>
 #include <wtf/IterationStatus.h>
@@ -38,13 +37,15 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
+class ConcurrentJSLocker;
+
 // See comment at the top of ExpressionInfo.cpp on how ExpressionInfo works.
 
 class ExpressionInfo {
     WTF_MAKE_NONCOPYABLE(ExpressionInfo);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ExpressionInfo);
 public:
-    enum class FieldID : uint8_t { InstPC, Divot, Start, End, Line, Column };
+    enum class FieldID : uint8_t { InstPC, Divot, Start, End };
 
     class Decoder;
 
@@ -58,25 +59,23 @@ public:
     };
 
     struct Entry {
-        void reset()
+        void LEGACY_NODELETE reset()
         {
             instPC = 0;
-            lineColumn = { 0, 0 };
             divot = 0;
             startOffset = 0;
             endOffset = 0;
         }
 
         InstPC instPC { 0 };
-        LineColumn lineColumn;
         unsigned divot { 0 };
         unsigned startOffset { 0 }; // This value is relative to divot.
         unsigned endOffset { 0 }; // This value is relative to divot.
     };
 
     struct EncodedInfo {
-        bool isAbsInstPC() const;
-        bool isExtension() const;
+        bool LEGACY_NODELETE isAbsInstPC() const;
+        bool LEGACY_NODELETE isExtension() const;
         unsigned value;
     };
 
@@ -84,7 +83,7 @@ public:
 
     class Encoder {
     public:
-        void encode(InstPC, unsigned divot, unsigned startOffset, unsigned endOffset, LineColumn);
+        void encode(InstPC, unsigned divot, unsigned startOffset, unsigned endOffset);
 
         template<typename RemapFunc>
         void remap(Vector<unsigned>&& adjustments, RemapFunc);
@@ -107,17 +106,17 @@ public:
             SortOrder order { SortOrder::Multi };
         };
 
-        static EncodedInfo encodeAbsInstPC(InstPC absInstPC);
-        static EncodedInfo encodeExtension(unsigned offset);
-        static constexpr EncodedInfo encodeExtensionEnd();
-        static EncodedInfo encodeSingle(FieldID, unsigned);
-        static EncodedInfo encodeDuo(FieldID, unsigned value1, FieldID, unsigned value2);
-        static EncodedInfo encodeMultiHeader(unsigned numWides, Wide*);
-        static EncodedInfo encodeBasic(const Diff&);
+        static EncodedInfo LEGACY_NODELETE encodeAbsInstPC(InstPC absInstPC);
+        static EncodedInfo LEGACY_NODELETE encodeExtension(unsigned offset);
+        static constexpr EncodedInfo LEGACY_NODELETE encodeExtensionEnd();
+        static EncodedInfo LEGACY_NODELETE encodeSingle(FieldID, unsigned);
+        static EncodedInfo LEGACY_NODELETE encodeDuo(FieldID, unsigned value1, FieldID, unsigned value2);
+        static EncodedInfo LEGACY_NODELETE encodeMultiHeader(unsigned numWides, Wide*);
+        static EncodedInfo LEGACY_NODELETE encodeBasic(const Diff&);
 
-        void adjustInstPC(EncodedInfo*, unsigned instPCDelta);
+        void adjustInstPC(unsigned infoIndex, unsigned instPCDelta);
 
-        template<unsigned bitCount> bool fits(Wide);
+        template<unsigned bitCount> bool LEGACY_NODELETE fits(Wide);
         template<typename T, unsigned bitCount> bool fits(T);
 
         Entry m_entry;
@@ -134,9 +133,9 @@ public:
         Decoder(const ExpressionInfo&);
         Decoder(Vector<ExpressionInfo::EncodedInfo>&);
 
-        IterationStatus decode(std::optional<InstPC> targetInstPC = std::nullopt);
+        IterationStatus LEGACY_NODELETE decode(std::optional<InstPC> targetInstPC = std::nullopt);
 
-        void recacheInfo(Vector<ExpressionInfo::EncodedInfo>&);
+        void LEGACY_NODELETE recacheInfo(Vector<ExpressionInfo::EncodedInfo>&);
         EncodedInfo* currentInfo() const { return m_currentInfo; }
 
         // This is meant to be used to jump to the start of a chapter, where the encoder
@@ -153,7 +152,6 @@ public:
         unsigned divot() const { return m_entry.divot; }
         unsigned startOffset() const { return m_entry.startOffset; }
         unsigned endOffset() const { return m_entry.endOffset; }
-        LineColumn lineColumn() const { return m_entry.lineColumn; }
 
     private:
         struct Wide {
@@ -180,11 +178,12 @@ public:
 
     ~ExpressionInfo() = default;
 
-    LineColumn lineColumnForInstPC(InstPC);
-    Entry entryForInstPC(InstPC);
+    // The caller holds the owning UnlinkedCodeBlock's lock, because compiler threads also look up
+    // entries (useSourceCodeDump) and lookups fill a cache.
+    Entry entryForInstPC(const ConcurrentJSLocker&, InstPC);
 
     bool isEmpty() const { return !m_numberOfEncodedInfo; };
-    size_t byteSize() const;
+    size_t LEGACY_NODELETE byteSize() const;
 
     template<unsigned bitCount>
     static void print(PrintStream&, FieldID, unsigned value);
@@ -194,10 +193,10 @@ private:
     ExpressionInfo(unsigned numberOfChapters, unsigned numberOfEncodedInfo, unsigned numberOfEncodedInfoExtensions);
     ExpressionInfo(Vector<Chapter>&&, Vector<EncodedInfo>&&, unsigned numberOfEncodedInfoExtensions);
 
-    template<typename T, unsigned bitCount> static T cast(unsigned);
+    template<typename T, unsigned bitCount> static T LEGACY_NODELETE cast(unsigned);
 
-    static bool isSpecial(unsigned);
-    static bool isWideOrSpecial(unsigned);
+    static bool LEGACY_NODELETE isSpecial(unsigned);
+    static bool LEGACY_NODELETE isWideOrSpecial(unsigned);
 
     static size_t payloadSizeInBytes(size_t numChapters, size_t numberOfEncodedInfo, size_t numberOfEncodedInfoExtensions)
     {
@@ -210,7 +209,8 @@ private:
         return sizeof(ExpressionInfo) + payloadSizeInBytes(numChapters, numberOfEncodedInfo, numberOfEncodedInfoExtensions);
     }
 
-    EncodedInfo* findChapterEncodedInfoJustBelow(InstPC) const;
+    EncodedInfo* LEGACY_NODELETE findChapterEncodedInfoJustBelow(InstPC) const;
+    Entry LEGACY_NODELETE decodeEntryForInstPC(InstPC);
 
     Chapter* chapters() const
     {
@@ -248,24 +248,18 @@ private:
 
     // Number of bits of each field in Basic encoding.
     static constexpr unsigned instPCBits = 5;
-    static constexpr unsigned divotBits = 7;
-    static constexpr unsigned startBits = 6;
-    static constexpr unsigned endBits = 6;
-    static constexpr unsigned lineBits = 3;
-    static constexpr unsigned columnBits = 5;
-    static_assert(instPCBits + divotBits + startBits + endBits + lineBits + columnBits == bitsPerWord);
+    static constexpr unsigned divotBits = 11;
+    static constexpr unsigned startBits = 8;
+    static constexpr unsigned endBits = 8;
+    static_assert(instPCBits + divotBits + startBits + endBits == bitsPerWord);
 
     // Bias values used for the signed diff values which make it easier to do range checks on these.
     static constexpr unsigned divotBias = (1 << divotBits) / 2;
-    static constexpr unsigned lineBias = (1 << lineBits) / 2;
-    static constexpr unsigned columnBias = (1 << columnBits) / 2;
 
     static constexpr unsigned instPCShift = bitsPerWord - instPCBits;
     static constexpr unsigned divotShift = instPCShift - divotBits;
     static constexpr unsigned startShift = divotShift - startBits;
     static constexpr unsigned endShift = startShift - endBits;
-    static constexpr unsigned lineShift = endShift - lineBits;
-    static constexpr unsigned columnShift = lineShift - columnBits;
 
     static constexpr unsigned specialHeader = (1 << instPCBits) - 1;
     static constexpr unsigned wideHeader = specialHeader - 1;
@@ -274,10 +268,6 @@ private:
     static constexpr unsigned maxBiasedDivotValue = (1 << divotBits) - 1;
     static constexpr unsigned maxStartValue = (1 << startBits) - 1;
     static constexpr unsigned maxEndValue = (1 << endBits) - 1;
-    static constexpr unsigned maxBiasedLineValue = (1 << lineBits) - 1;
-
-    static constexpr unsigned sameAsDivotValue = (1 << columnBits) - 1;
-    static constexpr unsigned maxBiasedColumnValue = sameAsDivotValue - 1;
 
     // Number of bits in Wide / Special encodings.
     static constexpr unsigned specialValueBits = 26;
@@ -317,9 +307,8 @@ private:
 
     static constexpr unsigned numberOfWordsBetweenChapters = 10000;
 
-    using LineColumnMap = UncheckedKeyHashMap<InstPC, LineColumn, WTF::IntHash<InstPC>, WTF::UnsignedWithZeroKeyHashTraits<InstPC>>;
+    UncheckedKeyHashMap<InstPC, Entry, WTF::IntHash<InstPC>, WTF::UnsignedWithZeroKeyHashTraits<InstPC>> m_cachedEntries;
 
-    mutable LineColumnMap m_cachedLineColumns;
     unsigned m_numberOfChapters;
     unsigned m_numberOfEncodedInfo;
     unsigned m_numberOfEncodedInfoExtensions;

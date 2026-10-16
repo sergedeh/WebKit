@@ -27,6 +27,7 @@
 
 #include "config.h"
 #include "RenderSVGEllipse.h"
+#include "RenderObjectNode.h"
 
 #include "RenderSVGShapeInlines.h"
 #include "SVGCircleElement.h"
@@ -38,7 +39,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderSVGEllipse);
 
-RenderSVGEllipse::RenderSVGEllipse(SVGGraphicsElement& element, RenderStyle&& style)
+RenderSVGEllipse::RenderSVGEllipse(SVGGraphicsElement& element, Style::ComputedStyle&& style)
     : RenderSVGShape(Type::SVGEllipse, element, WTF::move(style))
 {
 }
@@ -54,6 +55,7 @@ void RenderSVGEllipse::updateShapeFromElement()
     m_fillBoundingBox = FloatRect();
     m_strokeBoundingBox = std::nullopt;
     m_approximateStrokeBoundingBox = std::nullopt;
+    m_hitTestStrokeBoundingBox = std::nullopt;
     m_center = FloatPoint();
     m_radii = FloatSize();
 
@@ -76,19 +78,20 @@ void RenderSVGEllipse::updateShapeFromElement()
 
     m_fillBoundingBox = FloatRect(m_center.x() - m_radii.width(), m_center.y() - m_radii.height(), 2 * m_radii.width(), 2 * m_radii.height());
     m_strokeBoundingBox = m_fillBoundingBox;
-    if (style().hasStroke())
+    if (!style().stroke().isNone())
         m_strokeBoundingBox->inflate(strokeWidth() / 2);
 }
 
 void RenderSVGEllipse::calculateRadiiAndCenter()
 {
     Ref graphicsElement = this->graphicsElement();
+    auto usedZoom = style().usedZoomForLength();
     SVGLengthContext lengthContext(graphicsElement.ptr());
     m_center = FloatPoint(
-        lengthContext.valueForLength(style().cx(), Style::ZoomNeeded { }, SVGLengthMode::Width),
-        lengthContext.valueForLength(style().cy(), Style::ZoomNeeded { }, SVGLengthMode::Height));
+        lengthContext.valueForLength(style().cx(), usedZoom, SVGLengthMode::Width),
+        lengthContext.valueForLength(style().cy(), usedZoom, SVGLengthMode::Height));
     if (is<SVGCircleElement>(graphicsElement)) {
-        float radius = lengthContext.valueForLength(style().r(), Style::ZoomNeeded { });
+        float radius = lengthContext.valueForLength(style().r(), usedZoom);
         m_radii = FloatSize(radius, radius);
         return;
     }
@@ -98,8 +101,8 @@ void RenderSVGEllipse::calculateRadiiAndCenter()
     auto& rx = style().rx();
     auto& ry = style().ry();
     m_radii = FloatSize(
-        lengthContext.valueForLength(rx.isAuto() ? ry : rx, Style::ZoomNeeded { }, SVGLengthMode::Width),
-        lengthContext.valueForLength(ry.isAuto() ? rx : ry, Style::ZoomNeeded { }, SVGLengthMode::Height));
+        lengthContext.valueForLength(rx.isAuto() ? ry : rx, usedZoom, SVGLengthMode::Width),
+        lengthContext.valueForLength(ry.isAuto() ? rx : ry, usedZoom, SVGLengthMode::Height));
     if (rx.isAuto())
         m_radii.setWidth(m_radii.height());
     else if (ry.isAuto())
@@ -117,7 +120,7 @@ void RenderSVGEllipse::fillShape(GraphicsContext& context) const
 
 void RenderSVGEllipse::strokeShape(GraphicsContext& context) const
 {
-    if (!style().hasStroke() || !style().strokeWidth().isPossiblyPositive())
+    if (style().stroke().isNone() || !style().strokeWidth().isPossiblyPositive())
         return;
     if (hasPath()) {
         RenderSVGShape::strokeShape(context);

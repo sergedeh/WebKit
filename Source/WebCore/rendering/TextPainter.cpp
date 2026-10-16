@@ -27,21 +27,24 @@
 #include "DisplayListRecorderImpl.h"
 #include "FilterOperations.h"
 #include "FontCascade.h"
+#include "FontCascadeInlines.h"
 #include "GraphicsContext.h"
+#include "InlineDisplayBox.h"
 #include "InlineIteratorTextBox.h"
 #include "LayoutIntegrationInlineContent.h"
-#include "LegacyInlineTextBox.h"
 #include "RenderCombineText.h"
 #include "RenderLayer.h"
-#include "RenderStyle.h"
 #include "StyleAppleColorFilter.h"
+#include "StyleColorResolver.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "StyleTextShadow.h"
 #include "TextBoxPainter.h"
 #include <wtf/NeverDestroyed.h>
+#include <wtf/unicode/CharacterNames.h>
 
 namespace WebCore {
 
-ShadowApplier::ShadowApplier(const RenderStyle& style, GraphicsContext& context, const Style::TextShadow* shadow, const Style::AppleColorFilter& colorFilter, const FloatRect& textRect, bool isLastShadowIteration, bool lastShadowIterationShouldDrawText, bool opaque, bool ignoreWritingMode)
+ShadowApplier::ShadowApplier(const Style::ComputedStyle& style, GraphicsContext& context, const Style::TextShadow* shadow, const Style::AppleColorFilter& colorFilter, const FloatRect& textRect, bool isLastShadowIteration, bool lastShadowIterationShouldDrawText, bool opaque, bool ignoreWritingMode)
     : m_context { context }
     , m_shadow { shadow }
     , m_onlyDrawsShadow { !isLastShadowIteration || !lastShadowIterationShouldDrawText }
@@ -100,7 +103,7 @@ ShadowApplier::~ShadowApplier()
         m_context.clearDropShadow();
 }
 
-TextPainter::TextPainter(GraphicsContext& context, const FontCascade& font, const RenderStyle& renderStyle, const TextPaintStyle& textPaintStyle, const Style::TextShadows& shadow, const Style::AppleColorFilter& shadowColorFilter, const AtomString& emphasisMark, float emphasisMarkOffset, const RenderCombineText* combinedText)
+TextPainter::TextPainter(GraphicsContext& context, const FontCascade& font, const Style::ComputedStyle& renderStyle, const TextPaintStyle& textPaintStyle, const Style::TextShadows& shadow, const Style::AppleColorFilter& shadowColorFilter, const AtomString& emphasisMark, float emphasisMarkOffset, const RenderCombineText* combinedText)
     : m_context(context)
     , m_font(font)
     , m_renderStyle(renderStyle)
@@ -110,7 +113,6 @@ TextPainter::TextPainter(GraphicsContext& context, const FontCascade& font, cons
     , m_shadowColorFilter(shadowColorFilter)
     , m_combinedText(combinedText)
     , m_emphasisMarkOffset(emphasisMarkOffset)
-    , m_writingMode(renderStyle.writingMode())
 {
 }
 
@@ -131,10 +133,24 @@ void TextPainter::paintTextOrEmphasisMarks(const FontCascade& font, const TextRu
     else if (startOffset || endOffset < textRun.length() || !glyphDisplayList)
         m_context.drawText(font, textRun, textOrigin, startOffset, endOffset);
     else {
-        // Replaying back a whole cached glyph run to the GraphicsContext.
-        GraphicsContextStateSaver stateSaver(m_context);
-        m_context.translate(textOrigin);
-        m_context.drawDisplayList(*glyphDisplayList);
+        bool needsStateSave = false;
+        for (auto& item : glyphDisplayList->items()) {
+            if (std::holds_alternative<DisplayList::SetInlineFillColor>(item)
+                || std::holds_alternative<DisplayList::SetInlineStroke>(item)) {
+                needsStateSave = true;
+                break;
+            }
+        }
+
+        if (needsStateSave) {
+            GraphicsContextStateSaver stateSaver(m_context);
+            m_context.translate(textOrigin);
+            m_context.drawDisplayList(*glyphDisplayList);
+        } else {
+            m_context.translate(textOrigin);
+            m_context.drawDisplayList(*glyphDisplayList);
+            m_context.translate(-textOrigin);
+        }
     }
 }
 
@@ -203,13 +219,13 @@ void TextPainter::paintTextAndEmphasisMarksIfNeeded(const TextRun& textRun, cons
         return;
 
     FloatPoint boxOrigin = boxRect.location();
-    updateGraphicsContext(m_context, paintStyle, UseEmphasisMarkColor);
+    updateGraphicsContext(m_context, paintStyle, FillColorType::EmphasisMark);
     static NeverDestroyed<TextRun> objectReplacementCharacterTextRun(StringView { span(objectReplacementCharacter) });
     CheckedRef emphasisMarkTextRun = m_combinedText ? objectReplacementCharacterTextRun.get() : textRun;
     auto emphasisMarkTextOrigin = textOrigin;
 
     if (m_combinedText) {
-        auto ascent = m_combinedText->settings().subpixelInlineLayoutEnabled() ? LayoutUnit(m_font->metricsOfPrimaryFont().ascent()) : LayoutUnit(m_font->metricsOfPrimaryFont().intAscent());
+        auto ascent = LayoutUnit(m_font->metricsOfPrimaryFont().ascent());
         emphasisMarkTextOrigin = { boxOrigin.x() + boxRect.width() / 2, boxOrigin.y() + ascent };
         m_context.concatCTM(rotation(boxRect, RotationDirection::Clockwise));
     }
@@ -228,7 +244,16 @@ void TextPainter::paintRange(const TextRun& textRun, const FloatRect& boxRect, c
     paintTextAndEmphasisMarksIfNeeded(textRun, boxRect, textOrigin, start, end, m_style, m_shadow, m_shadowColorFilter);
 }
 
-bool TextPainter::shouldUseGlyphDisplayList(const PaintInfo& paintInfo, const RenderStyle& style)
+void TextPainter::setGlyphDisplayListIfNeeded(const InlineDisplay::Box& box, const PaintInfo& paintInfo, const Style::ComputedStyle& style, const TextRun& textRun)
+{
+    if (!shouldUseGlyphDisplayList(paintInfo, style)) {
+        const_cast<InlineDisplay::Box&>(box).removeFromGlyphDisplayListCache();
+        return;
+    }
+    m_glyphDisplayList = GlyphDisplayListCache::singleton().get(box, m_font, m_context, textRun, paintInfo);
+}
+
+bool TextPainter::shouldUseGlyphDisplayList(const PaintInfo& paintInfo, const Style::ComputedStyle& style)
 {
     return !paintInfo.context().paintingDisabled() && paintInfo.enclosingSelfPaintingLayer() && FontCascade::canUseGlyphDisplayList(style);
 }
@@ -250,13 +275,8 @@ String TextPainter::cachedGlyphDisplayListsForTextNodeAsText(Text& textNode, Opt
 
     StringBuilder builder;
 
-    for (auto textBox : InlineIterator::textBoxesFor(*textNode.checkedRenderer())) {
-        RefPtr<const DisplayList::DisplayList> displayList;
-        if (auto* legacyInlineBox = textBox.legacyInlineBox())
-            displayList = TextPainter::glyphDisplayListIfExists(*legacyInlineBox);
-        else
-            displayList = TextPainter::glyphDisplayListIfExists(*textBox.inlineBox());
-        if (displayList) {
+    for (auto textBox : InlineIterator::textBoxesFor(*protect(textNode.renderer()))) {
+        if (RefPtr displayList = GlyphDisplayListCache::singleton().getIfExists(textBox.displayBox())) {
             builder.append(displayList->asText(flags));
             builder.append('\n');
         }

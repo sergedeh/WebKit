@@ -25,6 +25,7 @@
 #import "WebScriptWorld.h"
 
 #import "WebScriptWorldInternal.h"
+#import <WebCore/DOMWrapperWorld.h>
 #import <WebCore/JSDOMBinding.h>
 #import <WebCore/ScriptController.h>
 #import <JavaScriptCore/APICast.h>
@@ -41,13 +42,15 @@
 @end
 
 using WorldMap = HashMap<SingleThreadWeakRef<WebCore::DOMWrapperWorld>, WebScriptWorld*>;
-static WorldMap& allWorlds()
+static WorldMap& LEGACY_NODELETE allWorlds()
 {
     static WorldMap& map = *new WorldMap;
     return map;
 }
 
-@implementation WebScriptWorld
+@implementation WebScriptWorld {
+    RetainPtr<WebScriptWorldPrivate> _private;
+}
 
 - (id)initWithWorld:(Ref<WebCore::DOMWrapperWorld>&&)world
 {
@@ -55,7 +58,7 @@ static WorldMap& allWorlds()
     if (!self)
         return nil;
 
-    _private = [[WebScriptWorldPrivate alloc] init];
+    _private = adoptNS([[WebScriptWorldPrivate alloc] init]);
     _private->world = WTF::move(world);
 
     ASSERT_ARG(world, !allWorlds().contains(*_private->world));
@@ -71,16 +74,13 @@ static WorldMap& allWorlds()
 
 - (void)unregisterWorld
 {
-    _private->world->clearWrappers();
+    protect(_private->world)->clearWrappers();
 }
 
 - (void)dealloc
 {
     ASSERT(allWorlds().contains(*_private->world));
-    allWorlds().remove(*_private->world);
-
-    [_private release];
-    _private = nil;
+    allWorlds().remove(protect(*_private->world));
     [super dealloc];
 }
 

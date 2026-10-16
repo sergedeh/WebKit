@@ -39,15 +39,15 @@ void lowerStackArgs(Code& code)
 {
     PhaseScope phaseScope(code, "lowerStackArgs"_s);
     
-    // Now we need to deduce how much argument area we need.
+    // Now we need to deduce how much argument area we need. We always reserve the conservative
+    // register bytes for Bank::FP because CallArgs do not record which bank they are.
+    unsigned conservativeCallArgBytes = code.usesSIMD() ? conservativeRegisterBytes(Bank::FP) : conservativeRegisterBytesWithoutVectors(Bank::FP);
     for (BasicBlock* block : code) {
         for (Inst& inst : *block) {
-            for (Arg& arg : inst.args) {
+            for (Arg& arg : inst.args()) {
                 if (arg.isCallArg()) {
                     ASSERT(arg.offset() >= 0);
-                    // We always check the conservative register bytes for Bank::FP because
-                    // CallArgs do not store which bank they are.
-                    code.requestCallArgAreaSizeInBytes(arg.offset() + (code.usesSIMD() ? conservativeRegisterBytes(Bank::FP) : conservativeRegisterBytesWithoutVectors(Bank::FP)));
+                    code.requestCallArgAreaSizeInBytes(arg.offset() + conservativeCallArgBytes);
                 }
             }
         }
@@ -99,10 +99,6 @@ void lowerStackArgs(Code& code)
                 insertionSet.insert(insertionIndex, Add64, inst.origin, Air::Tmp(MacroAssembler::stackPointerRegister), tmp);
                 result = Arg::addr(tmp, 0);
                 return result;
-#elif CPU(ARM)
-                // We solve this in AirAllocateRegistersAndStackAndGenerateCode.cpp.
-                UNUSED_PARAM(insertionIndex);
-                return result;
 #elif CPU(X86_64)
                 UNUSED_PARAM(insertionIndex);
                 // Can't happen on x86: immediates are always big enough for frame size.
@@ -133,29 +129,29 @@ void lowerStackArgs(Code& code)
                 // taking into account the Width to see if we can compute the immediate
                 // is wrong.
                 auto lowerArmLea = [&] (Value::OffsetType offset, Tmp base) {
-                    ASSERT(inst.args[1].isTmp());
+                    ASSERT(inst.args()[1].isTmp());
 
                     if (Arg::isValidImmForm(offset))
-                        inst = Inst(inst.kind.opcode == Lea32 ? Add32 : Add64, inst.origin, Arg::imm(offset), base, inst.args[1]);
+                        inst = Inst(inst.kind.opcode == Lea32 ? Add32 : Add64, inst.origin, Arg::imm(offset), base, inst.args()[1]);
                     else {
                         Air::Tmp tmp = Air::Tmp(extendedOffsetAddrRegister());
                         Arg offsetArg = Arg::bigImm(offset);
                         insertionSet.insert(instIndex, Move, inst.origin, offsetArg, tmp);
-                        inst = Inst(inst.kind.opcode == Lea32 ? Add32 : Add64, inst.origin, tmp, base, inst.args[1]);
+                        inst = Inst(inst.kind.opcode == Lea32 ? Add32 : Add64, inst.origin, tmp, base, inst.args()[1]);
                     }
                 };
 
-                switch (inst.args[0].kind()) {
+                switch (inst.args()[0].kind()) {
                 case Arg::Stack: {
-                    StackSlot* slot = inst.args[0].stackSlot();
-                    lowerArmLea(inst.args[0].offset() + slot->offsetFromFP(), Tmp(GPRInfo::callFrameRegister));
+                    StackSlot* slot = inst.args()[0].stackSlot();
+                    lowerArmLea(inst.args()[0].offset() + slot->offsetFromFP(), Tmp(GPRInfo::callFrameRegister));
                     break;
                 }
                 case Arg::CallArg:
-                    lowerArmLea(inst.args[0].offset() - code.frameSize(), Tmp(GPRInfo::callFrameRegister));
+                    lowerArmLea(inst.args()[0].offset() - code.frameSize(), Tmp(GPRInfo::callFrameRegister));
                     break;
                 case Arg::Addr:
-                    lowerArmLea(inst.args[0].offset(), inst.args[0].base());
+                    lowerArmLea(inst.args()[0].offset(), inst.args()[0].base());
                     break;
                 case Arg::ExtendedOffsetAddr:
                     ASSERT_NOT_REACHED();
@@ -171,21 +167,33 @@ void lowerStackArgs(Code& code)
             // In that case, split the move into separate load and store instructions so that the extendedOffsetReg can
             // be used for each address, one at a time.
             std::optional<Width> moveWidth = isMove(inst);
-            if (isARM64() && moveWidth && inst.args.size() == 3 && inst.args[0].isStack()) {
-                Arg& src = inst.args[0];
+            if (isARM64() && moveWidth && inst.args().size() == 3 && inst.args()[0].isStack()) {
+                Arg& src = inst.args()[0];
                 src = stackAddr(instIndex, src, *moveWidth, src.offset() + src.stackSlot()->offsetFromFP());
                 if (extendedOffsetAddrRegInUse) {
-                    Arg scratch = inst.args[2];
+                    Arg scratch = inst.args()[2];
                     ASSERT(scratch.isReg());
                     // Insert Mov src, scratchReg
-                    insertionSet.insert(instIndex, inst.kind.opcode, inst.origin, src, scratch);
+                    insertionSet.insert(instIndex, static_cast<Opcode>(inst.kind.opcode), inst.origin, src, scratch);
                     extendedOffsetAddrRegInUse = false; // Used by the inserted instruction; no longer needed.
                     // Modify inst to be 'Move scratch, dest'.
-                    src = scratch;
-                    inst.args.resize(2);
+                    inst.setArgs(scratch, inst.args()[1]);
                 }
                 // Fall through to handle remainder of the original or modified inst, including potential ZDef handling.
             }
+
+            // The scan below only ever acts on Stack and CallArg operands, and after register
+            // allocation most instructions have neither. Checking that does not need the Arg roles,
+            // and iterating args() directly can only over-approximate what forEachArg reports.
+            bool mayHaveStackArg = false;
+            for (Arg& arg : inst.args()) {
+                if (arg.isStack() || arg.isCallArg()) {
+                    mayHaveStackArg = true;
+                    break;
+                }
+            }
+            if (!mayHaveStackArg)
+                continue;
 
             inst.forEachArg(
                 [&] (Arg& arg, Arg::Role role, Bank, Width width) {
@@ -208,7 +216,7 @@ void lowerStackArgs(Code& code)
                             Air::Opcode storeOpcode = Move32;
                             Air::Arg::Kind operandKind = Arg::ZeroReg;
                             Air::Arg operand = Arg::zeroReg();
-#elif CPU(X86_64) || CPU(ARM)
+#elif CPU(X86_64)
                             Air::Opcode storeOpcode = Move32;
                             Air::Arg::Kind operandKind = Arg::Imm;
                             Air::Arg operand = Arg::imm(0);

@@ -28,4 +28,39 @@
     EnabledBySetting=WirelessPlaybackMediaPlayerEnabled,
     LegacyNoInterfaceObject,
 ] interface MockMediaDeviceRoute {
+    undefined setURLCallback(MockMediaDeviceRouteURLCallback? callback);
+
+    attribute DOMString deviceName;
+    attribute DOMString protocolTypeIdentifier;
+    readonly attribute DOMString routeName;
+    readonly attribute boolean connected;
+    attribute boolean ready;
+    attribute boolean playing;
+    attribute boolean hasPlaybackError;
+    attribute sequence<MockMediaDeviceRouteAudioOption> audioOptions;
+    attribute float playbackRate;
+    attribute float currentPlaybackPosition;
+    attribute MockMediaDeviceRouteTimeRange timeRange;
+    attribute float volume;
+    attribute boolean muted;
+    readonly attribute DOMString lastSeekTolerance;
+};
+
+[
+    Conditional=WIRELESS_PLAYBACK_MEDIA_PLAYER,
+    JSGenerateToJSObject,
+    JSGenerateToNativeObject,
+] dictionary MockMediaDeviceRouteTimeRange {
+    required double start;
+    required double duration;
+};
+
+[
+    Conditional=WIRELESS_PLAYBACK_MEDIA_PLAYER,
+    JSGenerateToJSObject,
+    JSGenerateToNativeObject,
+] dictionary MockMediaDeviceRouteAudioOption {
+    required DOMString displayName;
+    required DOMString identifier;
+    DOMString extendedLanguageTag;
 };

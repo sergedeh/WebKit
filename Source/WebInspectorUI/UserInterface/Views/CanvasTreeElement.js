@@ -34,6 +34,7 @@ WI.CanvasTreeElement = class CanvasTreeElement extends WI.FolderizedTreeElement
 
         this.registerFolderizeSettings("shader-programs", WI.UIString("Shader Programs"), this.representedObject.shaderProgramCollection, WI.ShaderProgramTreeElement);
 
+        this.representedObject.addEventListener(WI.Canvas.Event.NameChanged, this._handleNameChanged, this);
         this.representedObject.addEventListener(WI.Canvas.Event.RecordingStarted, this._updateStatus, this);
         this.representedObject.addEventListener(WI.Canvas.Event.RecordingStopped, this._updateStatus, this);
         this.representedObject.shaderProgramCollection.addEventListener(WI.Collection.Event.ItemAdded, this._handleItemAdded, this);
@@ -114,18 +115,7 @@ WI.CanvasTreeElement = class CanvasTreeElement extends WI.FolderizedTreeElement
 
     _handleMouseOver(event)
     {
-        if (this.representedObject.cssCanvasName || this.representedObject.contextType === WI.Canvas.ContextType.WebGPU) {
-            this.representedObject.requestClientNodes((clientNodes) => {
-                WI.domManager.highlightDOMNodeList(clientNodes);
-            });
-        } else {
-            this.representedObject.requestNode((node) => {
-                if (!node || !node.ownerDocument)
-                    return;
-
-                node.highlight();
-            });
-        }
+        this.representedObject.highlight();
     }
 
     _handleMouseOut(event)
@@ -145,5 +135,10 @@ WI.CanvasTreeElement = class CanvasTreeElement extends WI.FolderizedTreeElement
             if (this.status && this.status.__showingSpinner)
                 this.status = "";
         }
+    }
+
+    _handleNameChanged()
+    {
+        this.mainTitle = this.representedObject.displayName;
     }
 };

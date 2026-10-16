@@ -127,22 +127,33 @@ void Plan::fail(String&& errorMessage, CompilationError error)
     complete();
 }
 
+void Plan::failAtFunction(FunctionCodeIndex functionIndex, String&& errorMessage, CompilationError error)
+{
+    ASSERT(errorMessage);
+    // Non-function failures (OOM, parse, cancel) win over function validation errors.
+    if (failed() && (!m_errorFunctionIndex || *m_errorFunctionIndex <= functionIndex))
+        return;
+    dataLogLnIf(WasmPlanInternal::verbose, "failing function ", functionIndex, " with message: ", errorMessage);
+    m_errorMessage = WTF::move(errorMessage);
+    m_errorFunctionIndex = functionIndex;
+    m_error = error;
+}
+
 Plan::~Plan() = default;
 
-CString Plan::signpostMessage(CompilationMode compilationMode, uint32_t functionIndexSpace) const
+UTF8CString Plan::signpostMessage(CompilationMode compilationMode, uint32_t functionIndexSpace) const
 {
-    CString signpostMessage;
-    const FunctionData& function = m_moduleInformation->functions[functionIndexSpace - m_moduleInformation->importFunctionTypeIndices.size()];
+    const FunctionData& function = m_moduleInformation->functions[functionIndexSpace - m_moduleInformation->importFunctionTypeSignatureIndices.size()];
     StringPrintStream stream;
-    stream.print(compilationMode, " ", makeString(IndexOrName(functionIndexSpace, m_moduleInformation->nameSection->get(functionIndexSpace))), " instructions size = ", function.data.size());
-    return stream.toCString();
+    stream.print(compilationMode, " ", makeString(IndexOrName(functionIndexSpace, m_moduleInformation->nameSection().get(functionIndexSpace))), " instructions size = ", function.data.size());
+    return stream.toUTF8CString();
 }
 
 void Plan::beginCompilerSignpost(CompilationMode compilationMode, uint32_t functionIndexSpace) const
 {
     if (Options::useCompilerSignpost()) [[unlikely]] {
         auto message = signpostMessage(compilationMode, functionIndexSpace);
-        WTFBeginSignpost(this, JSCJITCompiler, "%" PUBLIC_LOG_STRING, message.data() ? message.data() : "(nullptr)");
+        WTFBeginSignpost(this, JSCJITCompiler, "%" PUBLIC_LOG_STRING, message.isNull() ? "(nullptr)"_s : message);
     }
 }
 
@@ -155,7 +166,7 @@ void Plan::endCompilerSignpost(CompilationMode compilationMode, uint32_t functio
 {
     if (Options::useCompilerSignpost()) [[unlikely]] {
         auto message = signpostMessage(compilationMode, functionIndexSpace);
-        WTFEndSignpost(this, JSCJITCompiler, "%" PUBLIC_LOG_STRING, message.data() ? message.data() : "(nullptr)");
+        WTFEndSignpost(this, JSCJITCompiler, "%" PUBLIC_LOG_STRING, message.isNull() ? "(nullptr)"_s : message);
     }
 }
 

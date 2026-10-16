@@ -54,7 +54,7 @@ static constexpr int maximumWeekInMaximumYear = 37; // The week of 275760-09-13
 static constexpr std::array<int, 12> daysInMonth { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
 
 // 'month' is 0-based.
-static int maxDayOfMonth(int year, int month)
+static int LEGACY_NODELETE maxDayOfMonth(int year, int month)
 {
     if (month != 1) // February?
         return daysInMonth[month];
@@ -62,7 +62,7 @@ static int maxDayOfMonth(int year, int month)
 }
 
 // 'month' is 0-based.
-static int dayOfWeek(int year, int month, int day)
+static int LEGACY_NODELETE dayOfWeek(int year, int month, int day)
 {
     int shiftedMonth = month + 2;
     // 2:January, 3:Feburuary, 4:March, ...
@@ -87,7 +87,7 @@ int DateComponents::maxWeekNumberInYear() const
     return day == Thursday || (day == Wednesday && isLeapYear(m_year)) ? maximumWeekNumber : maximumWeekNumber - 1;
 }
 
-template<typename CharacterType> static unsigned countDigits(StringParsingBuffer<CharacterType> buffer)
+template<typename CharacterType> static unsigned LEGACY_NODELETE countDigits(StringParsingBuffer<CharacterType> buffer)
 {
     auto begin = buffer.position();
     skipWhile<isASCIIDigit>(buffer);
@@ -95,7 +95,7 @@ template<typename CharacterType> static unsigned countDigits(StringParsingBuffer
 }
 
 // Differences from parseInteger<int>: Takes StringParsingBuffer. Does not allow leading or trailing spaces. Does not allow leading "+".
-template<typename CharacterType> static std::optional<int> parseInt(StringParsingBuffer<CharacterType>& buffer, unsigned maximumNumberOfDigitsToParse)
+template<typename CharacterType> static std::optional<int> LEGACY_NODELETE parseInt(StringParsingBuffer<CharacterType>& buffer, unsigned maximumNumberOfDigitsToParse)
 {
     if (maximumNumberOfDigitsToParse > buffer.lengthRemaining() || !maximumNumberOfDigitsToParse)
         return std::nullopt;
@@ -117,7 +117,7 @@ template<typename CharacterType> static std::optional<int> parseInt(StringParsin
     return value;
 }
 
-template<typename CharacterType> static std::optional<int> parseIntWithinLimits(StringParsingBuffer<CharacterType>& buffer, unsigned maximumNumberOfDigitsToParse, int minimumValue, int maximumValue)
+template<typename CharacterType> static std::optional<int> LEGACY_NODELETE parseIntWithinLimits(StringParsingBuffer<CharacterType>& buffer, unsigned maximumNumberOfDigitsToParse, int minimumValue, int maximumValue)
 {
     auto value = parseInt(buffer, maximumNumberOfDigitsToParse);
     if (!(value && *value >= minimumValue && *value <= maximumValue))
@@ -141,7 +141,7 @@ template<typename CharacterType> bool DateComponents::parseYear(StringParsingBuf
     return true;
 }
 
-static bool withinHTMLDateLimits(int year, int month)
+static bool LEGACY_NODELETE withinHTMLDateLimits(int year, int month)
 {
     if (year < DateComponents::minimumYear())
         return false;
@@ -150,7 +150,7 @@ static bool withinHTMLDateLimits(int year, int month)
     return month <= maximumMonthInMaximumYear;
 }
 
-static bool withinHTMLDateLimits(int year, int month, int monthDay)
+static bool LEGACY_NODELETE withinHTMLDateLimits(int year, int month, int monthDay)
 {
     if (year < DateComponents::minimumYear())
         return false;
@@ -161,7 +161,7 @@ static bool withinHTMLDateLimits(int year, int month, int monthDay)
     return monthDay <= maximumDayInMaximumMonth;
 }
 
-static bool withinHTMLDateLimits(int year, int month, int monthDay, int hour, int minute, int second, int millisecond)
+static bool LEGACY_NODELETE withinHTMLDateLimits(int year, int month, int monthDay, int hour, int minute, int second, int millisecond)
 {
     if (year < DateComponents::minimumYear())
         return false;
@@ -177,7 +177,7 @@ static bool withinHTMLDateLimits(int year, int month, int monthDay, int hour, in
     return !hour && !minute && !second && !millisecond;
 }
 
-template<typename F> static std::optional<DateComponents> createFromString(StringView source, F&& parseFunction)
+template<typename F> static std::optional<DateComponents> createFromString(StringView source, NOESCAPE const F& parseFunction)
 {
     if (source.isEmpty())
         return std::nullopt;
@@ -491,7 +491,7 @@ template<typename CharacterType> bool DateComponents::parseTime(StringParsingBuf
 
 // Gecko allows both 'T' and a space as datetime-local separator (see https://github.com/whatwg/html/issues/2276).
 // WPT tests also expect this behavior.
-template<typename CharacterType> static bool isDateTimeLocalSeparator(CharacterType c)
+template<typename CharacterType> static bool LEGACY_NODELETE isDateTimeLocalSeparator(CharacterType c)
 {
     return c == 'T' || c == ' ';
 }
@@ -521,7 +521,7 @@ static inline double positiveFmod(double value, double divider)
     return remainder < 0 ? remainder + divider : remainder;
 }
 
-template<typename F> static std::optional<DateComponents> createFromTimeOffset(double timeOffset, F&& function)
+template<typename F> static std::optional<DateComponents> createFromTimeOffset(double timeOffset, NOESCAPE const F& function)
 {
     DateComponents result;
     if (!function(result, timeOffset))
@@ -663,7 +663,7 @@ bool DateComponents::setMonthsSinceEpoch(double months)
 
 // Offset from January 1st to Monday of the ISO 8601's first week.
 //   ex. If January 1st is Friday, such Monday is 3 days later. Returns 3.
-static int offsetTo1stWeekStart(int year)
+static int LEGACY_NODELETE offsetTo1stWeekStart(int year)
 {
     int offsetTo1stWeekStart = 1 - dayOfWeek(year, 0, 1);
     if (offsetTo1stWeekStart <= -4)

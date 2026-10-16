@@ -25,11 +25,11 @@
 
 #pragma once
 
+#include "FetchOptions.h"
+#include "LoadableScript.h"
+#include "LoadableScriptError.h"
+#include "ModuleFetchParameters.h"
 #include <JavaScriptCore/ScriptFetcher.h>
-#include <WebCore/FetchOptions.h>
-#include <WebCore/LoadableScript.h>
-#include <WebCore/LoadableScriptError.h>
-#include <WebCore/ModuleFetchParameters.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
@@ -70,7 +70,6 @@ public:
     std::optional<LoadableScript::Error> error() const { return m_error; }
     bool wasCanceled() const { return m_wasCanceled; }
     UniquedStringImpl* moduleKey() const { return m_moduleKey.get(); }
-    RefPtr<UniquedStringImpl> protectedModuleKey() const { return m_moduleKey; }
     ModuleFetchParameters& parameters() { return m_parameters.get(); }
 
     void setReferrerPolicy(ReferrerPolicy referrerPolicy)

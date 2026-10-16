@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 Samuel Weinig <sam@webkit.org>
+ * Copyright (C) 2025-2026 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,24 +25,30 @@
 
 #pragma once
 
-#include <WebCore/IntPoint.h>
 #include <WebCore/RenderStyleConstants.h>
 #include <WebCore/StyleImage.h>
+#include <WebCore/StylePrimitiveNumericTypes.h>
 #include <WebCore/StyleValueTypes.h>
 
 namespace WebCore {
+
+class Cursor;
+class IntPoint;
+class LocalFrame;
+class RenderObject;
+
 namespace Style {
 
 // <cursor-image> = [ <url> | <url-set> ] <number>{2}?
 // https://drafts.csswg.org/css-ui-4/#typedef-cursor-cursor-image
-struct CursorImage {
-    Ref<StyleImage> image;
-    IntPoint hotSpot { -1, -1 };
+struct CursorImageAndHotSpot {
+    Ref<Image> image;
+    std::optional<SpaceSeparatedPoint<Number<>>> hotSpot;
 
-    bool operator==(const CursorImage&) const = default;
+    bool operator==(const CursorImageAndHotSpot&) const = default;
 };
 
-using CursorImageList = CommaSeparatedRefCountedFixedVector<CursorImage>;
+using CursorImageList = CommaSeparatedRefCountedFixedVector<CursorImageAndHotSpot>;
 
 // <'cursor'> = <cursor-image>#? <cursor-predefined>
 // https://drafts.csswg.org/css-ui-4/#propdef-cursor
@@ -75,6 +81,8 @@ struct Cursor {
     {
     }
 
+    std::optional<WebCore::Cursor> selectImageCursor(const RenderObject*, const LocalFrame&, float deviceScaleFactor, IntPoint pointInMainFrame) const;
+
     bool operator==(const Cursor&) const = default;
 };
 
@@ -90,15 +98,15 @@ template<size_t I> const auto& get(const Cursor& value)
 
 template<> struct CSSValueConversion<Cursor> { auto operator()(BuilderState&, const CSSValue&) -> Cursor; };
 
-template<> struct CSSValueCreation<CursorImage> { Ref<CSSValue> operator()(CSSValuePool&, const RenderStyle&, const CursorImage&); };
+template<> struct CSSValueCreation<CursorImageAndHotSpot> { Ref<CSSValue> operator()(CSSValuePool&, const Style::ComputedStyle&, const CursorImageAndHotSpot&); };
 
 // MARK: - Serialization
 
-template<> struct Serialize<CursorImage> { void operator()(StringBuilder&, const CSS::SerializationContext&, const RenderStyle&, const CursorImage&); };
+template<> struct Serialize<CursorImageAndHotSpot> { void operator()(StringBuilder&, const CSS::SerializationContext&, const Style::ComputedStyle&, const CursorImageAndHotSpot&); };
 
 // MARK: - Logging
 
-WTF::TextStream& operator<<(WTF::TextStream&, const CursorImage&);
+WTF::TextStream& operator<<(WTF::TextStream&, const CursorImageAndHotSpot&);
 
 } // namespace Style
 } // namespace WebCore

@@ -35,7 +35,6 @@
 #include "JITWorklistThread.h"
 #include "SlotVisitorInlines.h"
 #include "VMInlines.h"
-#include <wtf/CompilationThread.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace JSC {
@@ -195,6 +194,12 @@ size_t JITWorklist::queueLength(const AbstractLocker&) const
     return queueLength;
 }
 
+size_t JITWorklist::totalOngoingCompilations() const
+{
+    Locker locker { *m_lock };
+    return totalOngoingCompilations(locker);
+}
+
 size_t JITWorklist::totalOngoingCompilations(const AbstractLocker&) const
 {
     size_t total = 0;
@@ -333,7 +338,7 @@ void JITWorklist::removeDeadPlans(VM& vm)
     removeMatchingPlansForVM(vm, [&](JITPlan& plan) {
         if (!plan.isKnownToBeLiveAfterGC())
             return true;
-        plan.finalizeInGC();
+        plan.reconcileWeakReferencesAtGCEnd();
         return false;
     });
 
@@ -366,15 +371,14 @@ unsigned JITWorklist::setMaximumNumberOfConcurrentFTLCompilations(unsigned n)
 }
 
 template<typename Visitor>
-void JITWorklist::visitWeakReferences(Visitor& visitor)
+void JITWorklist::visitWeakReferences(VM& vm, Visitor& visitor)
 {
-    VM* vm = &visitor.heap()->vm();
-    if (!vm->numberOfActiveJITPlans())
+    if (!vm.numberOfActiveJITPlans())
         return;
     {
         Locker locker { *m_lock };
         for (auto& entry : m_plans) {
-            if (entry.value->vm() != vm)
+            if (entry.value->vm() != &vm)
                 continue;
             entry.value->checkLivenessAndVisitChildren(visitor);
         }
@@ -386,12 +390,12 @@ void JITWorklist::visitWeakReferences(Visitor& visitor)
     for (auto& thread : m_threads) {
         thread->m_rightToRun.assertIsOwner();
         Safepoint* safepoint = thread->m_safepoint;
-        if (safepoint && safepoint->vm() == vm)
+        if (safepoint && safepoint->vm() == &vm)
             safepoint->checkLivenessAndVisitChildren(visitor);
     }
 }
-template void JITWorklist::visitWeakReferences(AbstractSlotVisitor&);
-template void JITWorklist::visitWeakReferences(SlotVisitor&);
+template void JITWorklist::visitWeakReferences(VM&, AbstractSlotVisitor&);
+template void JITWorklist::visitWeakReferences(VM&, SlotVisitor&);
 
 void JITWorklist::dump(PrintStream& out) const
 {
@@ -436,7 +440,7 @@ JITWorklist::State JITWorklist::removeAllReadyPlansForVM(VM& vm, Vector<Ref<JITP
 }
 
 template<typename MatchFunction>
-void JITWorklist::removeMatchingPlansForVM(VM& vm, const MatchFunction& matches)
+void JITWorklist::removeMatchingPlansForVM(VM& vm, NOESCAPE const MatchFunction& matches)
 {
     Locker locker { *m_lock };
     UncheckedKeyHashSet<JITCompilationKey> deadPlanKeys;

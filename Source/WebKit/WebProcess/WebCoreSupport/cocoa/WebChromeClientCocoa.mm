@@ -49,6 +49,12 @@ RefPtr<Icon> WebChromeClient::createIconForFiles(const Vector<String>& filenames
     return Icon::create(iconForFiles(filenames).get());
 }
 
+bool WebChromeClient::hasStablePageScaleFactor() const
+{
+    RefPtr page = m_page.get();
+    return page && page->hasStablePageScaleFactor();
+}
+
 void AXRelayProcessSuspendedNotification::sendProcessSuspendMessage(bool suspended)
 {
     if (!AXObjectCache::accessibilityEnabled())
@@ -59,7 +65,7 @@ void AXRelayProcessSuspendedNotification::sendProcessSuspendMessage(bool suspend
 #else
     NSDictionary *message = @{ @"pid" : @(getpid()), @"suspended" : @(suspended) };
     NSData *data = [NSKeyedArchiver archivedDataWithRootObject:message requiringSecureCoding:YES error:nil];
-    m_page->relayAccessibilityNotification("AXProcessSuspended"_s, data);
+    protect(m_page)->relayAccessibilityNotification("AXProcessSuspended"_s, data);
 #endif
 }
 

@@ -28,7 +28,6 @@
 
 #include <atomic>
 #include <ctime>
-#include <wtf/CanMakeWeakPtr.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/Forward.h>
 #include <wtf/Function.h>
@@ -83,19 +82,15 @@ struct MemoryPressureHandlerConfiguration {
     Seconds pollInterval;
 };
 
-class MemoryPressureHandler : public CanMakeWeakPtr<MemoryPressureHandler> {
+class MemoryPressureHandler {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(MemoryPressureHandler);
     friend class WTF::NeverDestroyed<MemoryPressureHandler>;
 public:
     WTF_EXPORT_PRIVATE static MemoryPressureHandler& singleton();
 
-    // Do nothing since this is a singleton.
-    void ref() const { }
-    void deref() const { }
-
     WTF_EXPORT_PRIVATE void install();
 
-    WTF_EXPORT_PRIVATE void setMemoryFootprintPollIntervalForTesting(Seconds);
+    WTF_EXPORT_PRIVATE void LEGACY_NODELETE setMemoryFootprintPollIntervalForTesting(Seconds);
     WTF_EXPORT_PRIVATE void setShouldUsePeriodicMemoryMonitor(bool);
 
 #if OS(LINUX) || OS(FREEBSD) || OS(HAIKU) || OS(QNX)
@@ -143,6 +138,8 @@ public:
         RELEASE_ASSERT(!m_installed);
         m_dispatchQueue = WTF::move(queue);
     }
+
+    WTF_EXPORT_PRIVATE void setDispatchQueueWithLabel(ASCIILiteral);
 #endif
 
     class ReliefLogger {
@@ -154,12 +151,7 @@ public:
         {
         }
 
-        ~ReliefLogger()
-        {
-            if (loggingEnabled())
-                logMemoryUsageChange();
-        }
-
+        ~ReliefLogger();
 
         const char* logString() const { return m_logString; }
         static void setLoggingEnabled(bool enabled) { s_loggingEnabled = enabled; }
@@ -205,7 +197,7 @@ public:
     WTF_EXPORT_PRIVATE void beginSimulatedMemoryPressure();
     WTF_EXPORT_PRIVATE void endSimulatedMemoryPressure();
 
-    WTF_EXPORT_PRIVATE void setProcessState(WebsamProcessState);
+    WTF_EXPORT_PRIVATE void LEGACY_NODELETE setProcessState(WebsamProcessState);
     WebsamProcessState processState() const { return m_processState; }
 
     WTF_EXPORT_PRIVATE static ASCIILiteral processStateDescription();
@@ -220,8 +212,8 @@ public:
 
 private:
     std::optional<size_t> thresholdForMemoryKill();
-    size_t thresholdForPolicy(MemoryUsagePolicy);
-    MemoryUsagePolicy policyForFootprint(size_t);
+    size_t LEGACY_NODELETE thresholdForPolicy(MemoryUsagePolicy);
+    MemoryUsagePolicy LEGACY_NODELETE policyForFootprint(size_t);
 
     void memoryPressureStatusChanged();
 
@@ -235,7 +227,7 @@ private:
     void didExceedProcessMemoryLimit(ProcessMemoryLimit);
     void respondToMemoryPressure(Critical, Synchronous = Synchronous::No);
     void platformReleaseMemory(Critical);
-    void platformInitialize();
+    void LEGACY_NODELETE platformInitialize();
 
     void measurementTimerFired();
     void shrinkOrDie(size_t killThreshold);
@@ -264,12 +256,16 @@ private:
     Configuration m_configuration;
 
 #if OS(WINDOWS)
+    friend VOID CALLBACK lowMemoryNotificationCallback(PVOID, BOOLEAN);
     void windowsMeasurementTimerFired();
+    void windowsLowMemoryNotificationFired();
+    void beginWaitingForLowMemoryNotification();
     RunLoop::Timer m_windowsMeasurementTimer;
     Win32Handle m_lowMemoryHandle;
+    HANDLE m_lowMemoryWaitHandle { nullptr };
 #endif
 
-#if OS(LINUX) || OS(FREEBSD) || OS(HAIKU) || OS(QNX)
+#if (OS(LINUX) || OS(FREEBSD) || OS(HAIKU) || OS(QNX)) && !OS(ANDROID)
     RunLoop::Timer m_holdOffTimer;
     void holdOffTimerFired();
 #endif
@@ -283,6 +279,7 @@ private:
 
 using WTF::Critical;
 using WTF::MemoryPressureHandler;
+using WTF::MemoryPressureHandlerConfiguration;
 using WTF::Synchronous;
 using WTF::SystemMemoryPressureStatus;
 using WTF::WebsamProcessState;

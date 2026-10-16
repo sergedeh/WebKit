@@ -26,8 +26,7 @@
 #pragma once
 
 #include "IDBCursor.h"
-#include <WebCore/IDBIndexInfo.h>
-#include <WebCore/IDBRequest.h>
+#include "IDBIndexInfo.h"
 #include <wtf/TZoneMalloc.h>
 #include <wtf/UniqueRef.h>
 
@@ -38,9 +37,12 @@ class CallFrame;
 namespace WebCore {
 
 class IDBKeyRange;
+class IDBRequest;
 class WebCoreOpaqueRoot;
 
+struct IDBGetAllOptions;
 struct IDBKeyRangeData;
+struct ParsedGetAllQueryOrOptions;
 
 class IDBIndex final : public ActiveDOMObject {
     WTF_MAKE_TZONE_ALLOCATED(IDBIndex);
@@ -49,13 +51,12 @@ public:
 
     virtual ~IDBIndex();
 
-    const String& name() const;
+    const String& LEGACY_NODELETE name() const;
     ExceptionOr<void> setName(const String&);
-    IDBObjectStore& objectStore();
-    Ref<IDBObjectStore> protectedObjectStore();
-    const IDBKeyPath& keyPath() const;
-    bool unique() const;
-    bool multiEntry() const;
+    IDBObjectStore& LEGACY_NODELETE objectStore();
+    const IDBKeyPath& LEGACY_NODELETE keyPath() const;
+    bool LEGACY_NODELETE unique() const;
+    bool LEGACY_NODELETE multiEntry() const;
 
     void rollbackInfoForVersionChangeAbort();
 
@@ -72,21 +73,20 @@ public:
     ExceptionOr<Ref<IDBRequest>> getKey(IDBKeyRange*);
     ExceptionOr<Ref<IDBRequest>> getKey(JSC::JSGlobalObject&, JSC::JSValue key);
 
-    ExceptionOr<Ref<IDBRequest>> getAll(RefPtr<IDBKeyRange>&&, std::optional<uint32_t> count);
-    ExceptionOr<Ref<IDBRequest>> getAll(JSC::JSGlobalObject&, JSC::JSValue key, std::optional<uint32_t> count);
-    ExceptionOr<Ref<IDBRequest>> getAllKeys(RefPtr<IDBKeyRange>&&, std::optional<uint32_t> count);
-    ExceptionOr<Ref<IDBRequest>> getAllKeys(JSC::JSGlobalObject&, JSC::JSValue key, std::optional<uint32_t> count);
+    ExceptionOr<Ref<IDBRequest>> getAll(JSC::JSGlobalObject&, JSC::JSValue queryOrOptions, std::optional<uint32_t> count);
+    ExceptionOr<Ref<IDBRequest>> getAllKeys(JSC::JSGlobalObject&, JSC::JSValue queryOrOptions, std::optional<uint32_t> count);
+    ExceptionOr<Ref<IDBRequest>> getAllRecords(JSC::JSGlobalObject&, IDBGetAllOptions&&);
 
-    const IDBIndexInfo& info() const { return m_info; }
+    const IDBIndexInfo& info() const LIFETIME_BOUND { return m_info; }
 
-    void markAsDeleted();
+    void LEGACY_NODELETE markAsDeleted();
     bool isDeleted() const { return m_deleted; }
 
     // ActiveDOMObject.
-    void ref() const final;
+    void LEGACY_NODELETE ref() const final;
     void deref() const final;
 
-    WebCoreOpaqueRoot opaqueRoot();
+    WebCoreOpaqueRoot LEGACY_NODELETE opaqueRoot();
 
 private:
     IDBIndex(ScriptExecutionContext&, const IDBIndexInfo&, IDBObjectStore&);
@@ -94,10 +94,9 @@ private:
     ExceptionOr<Ref<IDBRequest>> doCount(const IDBKeyRangeData&);
     ExceptionOr<Ref<IDBRequest>> doGet(ExceptionOr<IDBKeyRangeData>);
     ExceptionOr<Ref<IDBRequest>> doGetKey(ExceptionOr<IDBKeyRangeData>);
-    ExceptionOr<Ref<IDBRequest>> doOpenCursor(IDBCursorDirection, Function<ExceptionOr<RefPtr<IDBKeyRange>>()> &&);
-    ExceptionOr<Ref<IDBRequest>> doOpenKeyCursor(IDBCursorDirection, Function<ExceptionOr<RefPtr<IDBKeyRange>>()> &&);
-    ExceptionOr<Ref<IDBRequest>> doGetAll(std::optional<uint32_t> count, Function<ExceptionOr<RefPtr<IDBKeyRange>>()> &&);
-    ExceptionOr<Ref<IDBRequest>> doGetAllKeys(std::optional<uint32_t> count, Function<ExceptionOr<RefPtr<IDBKeyRange>>()> &&);
+    ExceptionOr<Ref<IDBRequest>> doOpenCursor(IDBCursorDirection, NOESCAPE const Function<ExceptionOr<RefPtr<IDBKeyRange>>()>&);
+    ExceptionOr<Ref<IDBRequest>> doOpenKeyCursor(IDBCursorDirection, NOESCAPE const Function<ExceptionOr<RefPtr<IDBKeyRange>>()>&);
+    ExceptionOr<Ref<IDBRequest>> doGetAllShared(IndexedDB::GetAllType, NOESCAPE const Function<ExceptionOr<ParsedGetAllQueryOrOptions>()>&);
 
     // ActiveDOMObject.
     bool virtualHasPendingActivity() const final;
@@ -112,6 +111,6 @@ private:
     const CheckedRef<IDBObjectStore> m_objectStore;
 };
 
-WebCoreOpaqueRoot root(IDBIndex*);
+WebCoreOpaqueRoot LEGACY_NODELETE root(IDBIndex*);
 
 } // namespace WebCore

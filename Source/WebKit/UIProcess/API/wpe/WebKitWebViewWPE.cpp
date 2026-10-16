@@ -70,16 +70,16 @@ void webkitWebViewRestoreWindow(WebKitWebView*, CompletionHandler<void()>&& comp
 /**
  * webkit_web_view_new:
  * @backend: (transfer full) (nullable): wrapped WPE view backend which
- *    will determine the behaviour of the new [class@WebView], or %NULL to use the WPE platform API.
+ *    will determine the behavior of the new [class@WebView], or %NULL to use the WPE platform API.
  *
  * Creates a new web view with a default configuration.
  *
  * The new view will use the default [class@WebContext] and will not
  * have an associated [class@UserContentManager].
  *
- * See also [id@webkit_web_view_new_with_context],
- * [id@webkit_web_view_new_with_user_content_manager]), and
- * [id@webkit_web_view_new_with_settings].
+ * Set the [property@WebView:web-context],
+ * [property@WebView:user-content-manager] or [property@WebView:settings]
+ * properties at construction to use a different configuration.
  *
  * Returns: The newly created web view.
  */
@@ -97,122 +97,6 @@ WebKitWebView* webkit_web_view_new(WebKitWebViewBackend* backend)
         nullptr));
 }
 
-#if !ENABLE(2022_GLIB_API)
-/**
- * webkit_web_view_new_with_context:
- * @backend: (transfer full) (not nullable): wrapped WPE view backend which
- *    will determine the behaviour of the new [class@WebView].
- * @context: the web context the new [class@WebView] will use.
- *
- * Creates a new web view with a given context.
- *
- * The new web view will use the given [class@WebContext] and will not have
- * an associated [class@UserContentManager].
- *
- * See also [id@webkit_web_view_new_with_user_content_manager] and
- * [id@webkit_web_view_new_with_settings].
- *
- * Returns: The newly created web view.
- */
-WebKitWebView* webkit_web_view_new_with_context(WebKitWebViewBackend* backend, WebKitWebContext* context)
-{
-    g_return_val_if_fail(backend, nullptr);
-    g_return_val_if_fail(WEBKIT_IS_WEB_CONTEXT(context), nullptr);
-
-    return WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW,
-        "backend", backend,
-#if !ENABLE(2022_GLIB_API)
-        "is-ephemeral", webkit_web_context_is_ephemeral(context),
-#endif
-        "web-context", context,
-        nullptr));
-}
-#endif
-
-#if !ENABLE(2022_GLIB_API)
-/**
- * webkit_web_view_new_with_related_view: (constructor)
- * @backend: (transfer full) (not nullable): wrapped WPE view backend which
- *    will determine the behaviour of the new [class@WebView].
- * @web_view: the related web view.
- *
- * Creates a new web view sharing the same configuration and web process as another.
- *
- * A related view should always be set when creating a [class@WebView] in a handler
- * for the [signal@WebView::create] signal.
- *
- * The new view will also have the same [class@UserContentManager] and
- * [class@Settings] as the related @web_view.
- *
- * Returns: (transfer full): The newly created web view.
- *
- * Since: 2.4
- */
-WebKitWebView* webkit_web_view_new_with_related_view(WebKitWebViewBackend* backend, WebKitWebView* webView)
-{
-    g_return_val_if_fail(backend, nullptr);
-    g_return_val_if_fail(WEBKIT_IS_WEB_VIEW(webView), nullptr);
-
-    return WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW,
-        "backend", backend,
-        "user-content-manager", webkit_web_view_get_user_content_manager(webView),
-        "settings", webkit_web_view_get_settings(webView),
-        "related-view", webView,
-        nullptr));
-}
-
-/**
- * webkit_web_view_new_with_settings:
- * @backend: (transfer full) (not nullable): wrapped WPE view backend which
- *    will determine the behaviour of the new [class@WebView].
- * @settings: settings for the new view.
- *
- * Creates a new web view with the given settings.
- *
- * See also [id@webkit_web_view_new_with_context], and
- * [id@webkit_web_view_new_with_user_content_manager].
- *
- * Returns: (transfer full): The newly created web view.
- *
- * Since: 2.6
- */
-WebKitWebView* webkit_web_view_new_with_settings(WebKitWebViewBackend* backend, WebKitSettings* settings)
-{
-    g_return_val_if_fail(backend, nullptr);
-    g_return_val_if_fail(WEBKIT_IS_SETTINGS(settings), nullptr);
-
-    return WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW,
-        "backend", backend,
-        "settings", settings,
-        nullptr));
-}
-
-/**
- * webkit_web_view_new_with_user_content_manager:
- * @backend: (transfer full) (not nullable): wrapped WPE view backend which
- *    will determine the behaviour of the new [class@WebView].
- * @user_content_manager: the user content manager for the new view.
- *
- * Creates a new web view with the given user content manager.
- *
- * The content loaded in the new [class@WebView] may be affected by the
- * configuration of the given [class@UserContentManager].
- *
- * Returns: (transfer full): The newly created web view.
- *
- * Since: 2.6
- */
-WebKitWebView* webkit_web_view_new_with_user_content_manager(WebKitWebViewBackend* backend, WebKitUserContentManager* userContentManager)
-{
-    g_return_val_if_fail(backend, nullptr);
-    g_return_val_if_fail(WEBKIT_IS_USER_CONTENT_MANAGER(userContentManager), nullptr);
-
-    return WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW,
-        "backend", backend,
-        "user-content-manager", userContentManager,
-        nullptr));
-}
-#endif
 #endif // USE(LIBWPE)
 
 /**
@@ -222,7 +106,7 @@ WebKitWebView* webkit_web_view_new_with_user_content_manager(WebKitWebViewBacken
  *
  * Sets the color that will be used to draw the @web_view background before
  * the actual contents are rendered. Note that if the web page loaded in @web_view
- * specifies a background color, it will take precedence over the background color.
+ * specifies a background color, it will take precedence over the @color.
  * By default the @web_view background color is opaque white.
  *
  * Since: 2.24
@@ -266,6 +150,92 @@ void webkit_web_view_get_background_color(WebKitWebView* webView, WebKitColor* c
     webkitColorFillFromWebCoreColor(webCoreColor.value_or(WebCore::Color::white), color);
 }
 
+guint createContextMenuSignal(WebKitWebViewClass* webViewClass)
+{
+    /**
+     * WebKitWebView::context-menu:
+     * @web_view: the #WebKitWebView on which the signal is emitted
+     * @context_menu: the proposed #WebKitContextMenu
+     * @hit_test_result: a #WebKitHitTestResult
+     *
+     * Emitted when a context menu is about to be displayed to give the application
+     * a chance to customize the proposed menu, prevent the menu from being displayed,
+     * or build its own context menu.
+     *
+     * - To customize the proposed menu you can use webkit_context_menu_prepend(),
+     *  webkit_context_menu_append() or webkit_context_menu_insert() to add new
+     *  #WebKitContextMenuItem objects to @context_menu, webkit_context_menu_move_item()
+     *  to reorder existing items, or webkit_context_menu_remove() to remove an
+     *  existing item. The signal handler should return %FALSE, and the menu represented
+     *  by @context_menu will be shown.
+     * - To prevent the menu from being displayed you can just connect to this signal
+     *  and return %TRUE so that the proposed menu will not be shown.
+     * - To build your own menu, you can remove all items from the proposed menu with
+     *  webkit_context_menu_remove_all(), add your own items and return %FALSE so
+     *  that the menu will be shown. You can also ignore the proposed #WebKitContextMenu,
+     *  build your own menu and return %TRUE to prevent the proposed menu from being shown.
+     * - If you just want the default menu to be shown always, simply don't connect to this
+     *  signal because showing the proposed context menu is the default behavior.
+     *
+     * If the signal handler returns %FALSE the context menu represented by @context_menu
+     * will be shown, if it returns %TRUE the context menu will not be shown.
+     *
+     * The proposed #WebKitContextMenu passed in @context_menu argument is only valid
+     * during the signal emission.
+     *
+     * Returns: %TRUE to stop other handlers from being invoked for the event.
+     *    %FALSE to propagate the event further.
+     */
+    return g_signal_new(
+        "context-menu",
+        G_TYPE_FROM_CLASS(webViewClass),
+        G_SIGNAL_RUN_LAST,
+        G_STRUCT_OFFSET(WebKitWebViewClass, context_menu),
+        g_signal_accumulator_true_handled, nullptr,
+        g_cclosure_marshal_generic,
+        G_TYPE_BOOLEAN,
+        2,
+        WEBKIT_TYPE_CONTEXT_MENU,
+        WEBKIT_TYPE_HIT_TEST_RESULT);
+}
+
+guint createRunColorChooserSignal(WebKitWebViewClass* webViewClass)
+{
+    /**
+     * WebKitWebView::run-color-chooser:
+     * @web_view: the [class@WebView] on which the signal is emitted
+     * @request: a [class@ColorChooserRequest]
+     *
+     * This signal is emitted when the user interacts with a <input
+     * type='color' /> HTML element, requesting from WebKit to show
+     * a dialog to select a color. To let the application know the details of
+     * the color chooser, as well as to allow the client application to either
+     * cancel the request or perform an actual color selection, the signal will
+     * pass an instance of the [class@ColorChooserRequest] in the @request
+     * argument.
+     *
+     * It is possible to handle this request asynchronously by increasing the
+     * reference count of the request.
+     *
+     * WPE does not provide a default color chooser, so the request is finished
+     * keeping the initial color when the signal is not handled.
+     *
+     * Returns: %TRUE to stop other handlers from being invoked for the event.
+     *   %FALSE to propagate the event further.
+     *
+     * Since: 2.56
+     */
+    return g_signal_new(
+        "run-color-chooser",
+        G_TYPE_FROM_CLASS(webViewClass),
+        G_SIGNAL_RUN_LAST,
+        G_STRUCT_OFFSET(WebKitWebViewClass, run_color_chooser),
+        g_signal_accumulator_true_handled, nullptr,
+        g_cclosure_marshal_generic,
+        G_TYPE_BOOLEAN, 1,
+        WEBKIT_TYPE_COLOR_CHOOSER_REQUEST);
+}
+
 guint createShowOptionMenuSignal(WebKitWebViewClass* webViewClass)
 {
     /**
@@ -303,7 +273,7 @@ guint createShowOptionMenuSignal(WebKitWebViewClass* webViewClass)
  * webkit_web_view_toggle_inspector:
  * @web_view: a #WebKitWebView
  *
- * Show or hide the web inspector of @web_view
+ * Show or hide the web inspector of @web_view.
  * Note that local inspector is only supported by
  * WPEWebKit when using WPE Platform API.
  *

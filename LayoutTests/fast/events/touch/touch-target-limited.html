@@ -1,7 +1,7 @@
 <!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML//EN">
 <html>
 <head>
-<script src="../../../resources/js-test-pre.js"></script>
+<script src="../../../resources/js-test.js"></script>
 <!--
   Touch tests that involve the ontouchstart, ontouchmove, ontouchend or ontouchcancel callbacks
   should be written in an asynchronous fashion so they can be run on mobile platforms like Android.
@@ -78,8 +78,7 @@ function declareTouchMove(div_id)
 
         if (++totalTouchMoveCount == 6)
         {
-            testRunner.notifyDone();
-            isSuccessfullyParsed();
+            finishJSTest();
         }
     }
 }
@@ -91,38 +90,42 @@ div2.addEventListener("touchstart", declareTouchStart(), false);
 div2.addEventListener("touchmove", declareTouchMove(), false);
 
 description("Tests that the target of touches match the element where the event originated, not where the touch is currently occurring. This is a limited version of test touch-target.html that avoids the situation where one touch point is released while another is maintained.");
+window.jsTestIsAsync = true;
 
-if (window.testRunner) {
-    testRunner.waitUntilDone();
+
+async function runTest() {
+    if (window.eventSender) {
+        eventSender.clearTouchPoints();
+        eventSender.addTouchPoint(50, 150);
+        eventSender.addTouchPoint(50, 250);
+        await eventSender.asyncTouchStart();
+
+        eventSender.updateTouchPoint(0, 50, 250);
+        eventSender.updateTouchPoint(1, 50, 150);
+        await eventSender.asyncTouchMove();
+
+        eventSender.updateTouchPoint(0, 1000, 1000);
+        eventSender.updateTouchPoint(1, 1000, 1000);
+        await eventSender.asyncTouchMove();
+
+        eventSender.releaseTouchPoint(0);
+        eventSender.releaseTouchPoint(1);
+        await eventSender.asyncTouchEnd();
+
+        eventSender.addTouchPoint(50, 250);
+        eventSender.addTouchPoint(50, 150);
+        await eventSender.asyncTouchStart();
+
+        eventSender.updateTouchPoint(0, 500, 500);
+        eventSender.updateTouchPoint(1, 500, 500);
+        await eventSender.asyncTouchMove();
+    } else
+        debug('This test requires DRT.');
 }
 
-if (window.eventSender) {
-    eventSender.clearTouchPoints();
-    eventSender.addTouchPoint(50, 150);
-    eventSender.addTouchPoint(50, 250);
-    eventSender.touchStart();
-
-    eventSender.updateTouchPoint(0, 50, 250);
-    eventSender.updateTouchPoint(1, 50, 150);
-    eventSender.touchMove();
-
-    eventSender.updateTouchPoint(0, 1000, 1000);
-    eventSender.updateTouchPoint(1, 1000, 1000);
-    eventSender.touchMove();
-
-    eventSender.releaseTouchPoint(0);
-    eventSender.releaseTouchPoint(1);
-    eventSender.touchEnd();
-
-    eventSender.addTouchPoint(50, 250);
-    eventSender.addTouchPoint(50, 150);
-    eventSender.touchStart();
-
-    eventSender.updateTouchPoint(0, 500, 500);
-    eventSender.updateTouchPoint(1, 500, 500);
-    eventSender.touchMove();
-} else
-    debug('This test requires DRT.');
+onload = async () => {
+    await runTest();
+}
 
 </script>
 </body>

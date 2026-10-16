@@ -28,13 +28,14 @@
 
 #import "ResourceHandle.h"
 #import <pal/spi/cocoa/NSURLConnectionSPI.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 
 namespace WebCore {
 
 static MonotonicTime dateToMonotonicTime(NSDate *date)
 {
     if (auto interval = date.timeIntervalSince1970)
-        return WallTime::fromRawSeconds(interval).approximateMonotonicTime();
+        return WallTime::fromRawSeconds(interval).approximate<MonotonicTime>();
     return { };
 }
 
@@ -92,7 +93,7 @@ Box<NetworkLoadMetrics> copyTimingData(NSURLConnection *connection, const Resour
     RetainPtr<NSDictionary> timingData = [connection _timingData];
 
     auto timingValue = [&](NSString *key) -> RetainPtr<NSDate> {
-        if (RetainPtr<NSNumber> number = [timingData objectForKey:key]) {
+        if (RetainPtr number = dynamic_objc_cast<NSNumber>([timingData objectForKey:key])) {
             if (double doubleValue = number.get().doubleValue)
                 return adoptNS([[NSDate alloc] initWithTimeIntervalSinceReferenceDate:doubleValue]);
         }

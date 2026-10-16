@@ -56,7 +56,7 @@ JSC_DEFINE_HOST_FUNCTION(constructJSWebAssemblyGlobal, (JSGlobalObject* globalOb
         JSValue argument = callFrame->argument(0);
         if (!argument.isObject())
             return throwVMTypeError(globalObject, throwScope, "WebAssembly.Global expects its first argument to be an object"_s);
-        globalDescriptor = jsCast<JSObject*>(argument);
+        globalDescriptor = uncheckedDowncast<JSObject>(argument);
     }
 
     Wasm::Mutability mutability;
@@ -97,7 +97,7 @@ JSC_DEFINE_HOST_FUNCTION(constructJSWebAssemblyGlobal, (JSGlobalObject* globalOb
 
     uint64_t initialValue = 0;
     JSValue argument = callFrame->argument(1);
-    switch (type.kind) {
+    switch (type.kind()) {
     case Wasm::TypeKind::I32: {
         if (!argument.isUndefined()) {
             int32_t value = argument.toInt32(globalObject);

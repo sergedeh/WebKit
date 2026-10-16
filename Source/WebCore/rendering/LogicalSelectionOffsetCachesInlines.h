@@ -29,7 +29,7 @@ namespace WebCore {
 void LogicalSelectionOffsetCaches::ContainingBlockInfo::setBlock(RenderBlock* block, const LogicalSelectionOffsetCaches* cache, bool parentCacheHasFloatsOrFragmentedFlows)
 {
     m_block = block;
-    bool blockHasFloatsOrFragmentedFlows = m_block ? (m_block->containsFloats() || m_block->enclosingFragmentedFlow()) : false;
+    bool blockHasFloatsOrFragmentedFlows = m_block && (m_block->containsFloats() || m_block->enclosingFragmentedFlow());
     m_hasFloatsOrFragmentedFlows = parentCacheHasFloatsOrFragmentedFlows || m_hasFloatsOrFragmentedFlows || blockHasFloatsOrFragmentedFlows;
     m_cache = cache;
     m_cachedLogicalLeftSelectionOffset = false;
@@ -60,11 +60,6 @@ LayoutUnit LogicalSelectionOffsetCaches::ContainingBlockInfo::logicalRightSelect
 
 LogicalSelectionOffsetCaches::LogicalSelectionOffsetCaches(RenderBlock& rootBlock)
 {
-#if ENABLE(TEXT_SELECTION)
-    // FIXME: We should either move this assertion to the caller (if applicable) or structure the code
-    // such that we can remove this assertion.
-    ASSERT(rootBlock.isSelectionRoot());
-#endif
     // LogicalSelectionOffsetCaches should not be used on an orphaned tree.
     m_containingBlockForFixedPosition.setBlock(RenderObject::containingBlockForPositionType(PositionType::Fixed, rootBlock), nullptr);
     m_containingBlockForAbsolutePosition.setBlock(RenderObject::containingBlockForPositionType(PositionType::Absolute, rootBlock), nullptr);
@@ -78,7 +73,7 @@ LogicalSelectionOffsetCaches::LogicalSelectionOffsetCaches(RenderBlock& block, c
     if (block.canContainFixedPositionObjects())
         m_containingBlockForFixedPosition.setBlock(&block, &cache, cache.m_containingBlockForFixedPosition.hasFloatsOrFragmentedFlows());
 
-    if (block.canContainAbsolutelyPositionedObjects() && !block.isRenderInline() && !block.isAnonymousBlock())
+    if (block.canContainAbsolutelyPositionedObjects() && !block.isInlineBox() && !block.isAnonymousBlock())
         m_containingBlockForAbsolutePosition.setBlock(&block, &cache, cache.m_containingBlockForAbsolutePosition.hasFloatsOrFragmentedFlows());
 
     m_containingBlockForInflowPosition.setBlock(&block, &cache, cache.m_containingBlockForInflowPosition.hasFloatsOrFragmentedFlows());

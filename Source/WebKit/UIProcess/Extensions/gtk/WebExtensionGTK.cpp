@@ -25,11 +25,12 @@
 #include "Logging.h"
 #include <WebCore/LocalizedStrings.h>
 #include <gtk/gtk.h>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/GRefPtr.h>
 
 namespace WebKit {
 
-Expected<Ref<WebCore::Icon>, RefPtr<API::Error>> WebExtension::iconForPath(const String& path, WebCore::FloatSize sizeForResizing, std::optional<double> idealDisplayScale)
+std::expected<Ref<WebCore::Icon>, RefPtr<API::Error>> WebExtension::iconForPath(const String& path, WebCore::FloatSize sizeForResizing, std::optional<double> idealDisplayScale)
 {
     ASSERT(path);
 
@@ -38,7 +39,7 @@ Expected<Ref<WebCore::Icon>, RefPtr<API::Error>> WebExtension::iconForPath(const
         return makeUnexpected(dataResult.error());
 
     Ref imageData = dataResult.value();
-    auto gimageBytes = adoptGRef(g_bytes_new(imageData->span().data(), imageData->size()));
+    GRefPtr gimageBytes = gBytesNew(imageData->span());
 
     if (!sizeForResizing.isZero()) {
         GUniqueOutPtr<GError> error;

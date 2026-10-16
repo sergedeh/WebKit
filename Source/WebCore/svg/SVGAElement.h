@@ -31,6 +31,7 @@ namespace WebCore {
 
 class DOMTokenList;
 
+enum class ReferrerPolicy : uint8_t;
 enum class Relation : uint8_t;
 
 class SVGAElement final : public SVGGraphicsElement, public SVGURIReference {
@@ -41,11 +42,16 @@ public:
     ~SVGAElement();
 
     AtomString target() const final { return AtomString { m_target->currentValue() }; }
-    Ref<SVGAnimatedString>& targetAnimated() { return m_target; }
+    SVGAnimatedString& targetAnimated() { return m_target; }
+
+    URL hrefURL() const;
 
     SharedStringHash visitedLinkHash() const;
 
     DOMTokenList& relList();
+
+    String referrerPolicyForBindings() const;
+    ReferrerPolicy referrerPolicy() const;
 
 private:
     SVGAElement(const QualifiedName&, Document&);
@@ -55,25 +61,23 @@ private:
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) final;
     void svgAttributeChanged(const QualifiedName&) final;
 
-    RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) final;
+    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
     bool childShouldCreateRenderer(const Node&) const final;
 
     bool isValid() const final { return SVGTests::isValid(); }
     String title() const final;
     void defaultEventHandler(Event&) final;
 
-    bool hasRel(Relation) const;
-    
     bool supportsFocus() const final;
     bool isMouseFocusable() const final;
     bool isKeyboardFocusable(const FocusEventData&) const final;
-    bool isURLAttribute(const Attribute&) const final;
+    bool LEGACY_NODELETE isURLAttribute(const Attribute&) const final;
     bool canStartSelection() const final;
     int defaultTabIndex() const final;
 
     bool willRespondToMouseClickEventsWithEditability(Editability) const final;
 
-    Ref<SVGAnimatedString> m_target { SVGAnimatedString::create(this) };
+    const Ref<SVGAnimatedString> m_target { SVGAnimatedString::create(this) };
 
     OptionSet<Relation> m_linkRelations;
 

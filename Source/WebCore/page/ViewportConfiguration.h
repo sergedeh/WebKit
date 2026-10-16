@@ -67,23 +67,25 @@ public:
         friend bool operator==(const Parameters&, const Parameters&) = default;
     };
 
+    static constexpr double minimumShrinkToFitWidthWhenPreferringHorizontalScrolling = 820;
+
     WEBCORE_EXPORT ViewportConfiguration();
 
-    const Parameters& defaultConfiguration() const { return m_defaultConfiguration; }
+    const Parameters& defaultConfiguration() const LIFETIME_BOUND { return m_defaultConfiguration; }
     WEBCORE_EXPORT void setDefaultConfiguration(const Parameters&);
 
-    const IntSize& contentsSize() const { return m_contentSize; }
+    const IntSize& contentsSize() const LIFETIME_BOUND { return m_contentSize; }
     WEBCORE_EXPORT bool setContentsSize(const IntSize&);
 
-    const FloatSize& viewLayoutSize() const { return m_viewLayoutSize; }
+    const FloatSize& viewLayoutSize() const LIFETIME_BOUND { return m_viewLayoutSize; }
 
-    const FloatSize& minimumLayoutSize() const { return m_minimumLayoutSize; }
+    const FloatSize& minimumLayoutSize() const LIFETIME_BOUND { return m_minimumLayoutSize; }
     WEBCORE_EXPORT bool setViewLayoutSize(const FloatSize&, std::optional<double>&& scaleFactor = std::nullopt, std::optional<double>&& effectiveWidth = std::nullopt);
 
-    const OptionSet<DisabledAdaptations>& disabledAdaptations() const { return m_disabledAdaptations; }
+    const OptionSet<DisabledAdaptations>& disabledAdaptations() const LIFETIME_BOUND { return m_disabledAdaptations; }
     WEBCORE_EXPORT bool setDisabledAdaptations(const OptionSet<DisabledAdaptations>&);
 
-    const ViewportArguments& viewportArguments() const { return m_viewportArguments; }
+    const ViewportArguments& viewportArguments() const LIFETIME_BOUND { return m_viewportArguments; }
     WEBCORE_EXPORT bool setViewportArguments(const ViewportArguments&);
 
     WEBCORE_EXPORT bool setCanIgnoreScalingConstraints(bool);
@@ -146,17 +148,17 @@ public:
     bool avoidsUnsafeArea() const { return m_configuration.avoidsUnsafeArea; }
 
     // Matches a width=device-width, initial-scale=1 viewport.
-    WEBCORE_EXPORT Parameters nativeWebpageParameters();
-    static Parameters nativeWebpageParametersWithoutShrinkToFit();
-    static Parameters nativeWebpageParametersWithShrinkToFit();
+    WEBCORE_EXPORT Parameters LEGACY_NODELETE nativeWebpageParameters();
+    static Parameters LEGACY_NODELETE nativeWebpageParametersWithoutShrinkToFit();
+    static Parameters LEGACY_NODELETE nativeWebpageParametersWithShrinkToFit();
 #if ENABLE(PDF_PLUGIN)
     WEBCORE_EXPORT static Parameters pluginDocumentParameters();
 #endif
-    WEBCORE_EXPORT static Parameters webpageParameters();
-    WEBCORE_EXPORT static Parameters textDocumentParameters();
-    WEBCORE_EXPORT static Parameters imageDocumentParameters();
-    WEBCORE_EXPORT static Parameters xhtmlMobileParameters();
-    WEBCORE_EXPORT static Parameters testingParameters();
+    WEBCORE_EXPORT static Parameters LEGACY_NODELETE webpageParameters();
+    WEBCORE_EXPORT static Parameters LEGACY_NODELETE textDocumentParameters();
+    WEBCORE_EXPORT static Parameters LEGACY_NODELETE imageDocumentParameters();
+    WEBCORE_EXPORT static Parameters LEGACY_NODELETE xhtmlMobileParameters();
+    WEBCORE_EXPORT static Parameters LEGACY_NODELETE testingParameters();
 
     String description() const;
 #if !LOG_DISABLED
@@ -165,16 +167,16 @@ public:
 
 private:
     void updateConfiguration();
-    double viewportArgumentsLength(double length) const;
+    double LEGACY_NODELETE viewportArgumentsLength(double length) const;
     double initialScaleFromSize(double width, double height, bool shouldIgnoreScalingConstraints) const;
 
-    bool shouldOverrideDeviceWidthAndShrinkToFit() const;
-    bool shouldIgnoreScalingConstraintsRegardlessOfContentSize() const;
+    bool LEGACY_NODELETE shouldOverrideDeviceWidthAndShrinkToFit() const;
+    bool LEGACY_NODELETE shouldIgnoreScalingConstraintsRegardlessOfContentSize() const;
     bool shouldIgnoreScalingConstraints() const;
     bool shouldIgnoreVerticalScalingConstraints() const;
     bool shouldIgnoreHorizontalScalingConstraints() const;
-    void updateDefaultConfiguration();
-    bool canOverrideConfigurationParameters() const;
+    void LEGACY_NODELETE updateDefaultConfiguration();
+    bool LEGACY_NODELETE canOverrideConfigurationParameters() const;
 
     constexpr bool layoutSizeIsExplicitlyScaled() const
     {

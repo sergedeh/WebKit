@@ -36,7 +36,7 @@ struct Scale {
     struct Function : TransformFunctionWrapper<ScaleTransformFunction> {
         using TransformFunctionWrapper<ScaleTransformFunction>::TransformFunctionWrapper;
 
-        template<typename... F> decltype(auto) switchOn(F&&...) const;
+        template<typename... F> decltype(auto) switchOn(NOESCAPE F&&...) const;
     };
 
     Scale(CSS::Keyword::None) : value { nullptr } { }
@@ -47,13 +47,13 @@ struct Scale {
     bool isRepresentableIn2D() const { return !value || value->isRepresentableIn2D(); }
     bool is3DOperation() const { return value && value->is3DOperation(); }
 
-    void apply(TransformationMatrix&, const FloatSize&) const;
+    void apply(TransformationMatrix&, const FloatSize&, ZoomFactor) const;
 
     bool isNone() const { return !value; }
     bool isFunction() const { return !!value; }
 
     template<typename> bool holdsAlternative() const;
-    template<typename... F> decltype(auto) switchOn(F&&...) const;
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&...) const;
 
     bool operator==(const Scale& other) const
     {
@@ -69,7 +69,7 @@ private:
 
 // MARK: Scale Function
 
-template<typename... F> decltype(auto) Scale::Function::switchOn(F&&... f) const
+template<typename... F> decltype(auto) Scale::Function::switchOn(NOESCAPE F&&... f) const
 {
     auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
@@ -89,7 +89,7 @@ template<typename T> bool Scale::holdsAlternative() const
     else if constexpr (std::same_as<T, Function>)           return isFunction();
 }
 
-template<typename... F> decltype(auto) Scale::switchOn(F&&... f) const
+template<typename... F> decltype(auto) Scale::switchOn(NOESCAPE F&&... f) const
 {
     auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
@@ -110,7 +110,7 @@ template<> struct Blending<Scale> {
 
 // MARK: - Platform
 
-template<> struct ToPlatform<Scale> { auto operator()(const Scale&, const FloatSize&) -> RefPtr<TransformOperation>; };
+template<> struct ToPlatform<Scale> { auto operator()(const Scale&, const FloatSize&, ZoomFactor) -> RefPtr<TransformOperation>; };
 
 } // namespace Style
 } // namespace WebCore

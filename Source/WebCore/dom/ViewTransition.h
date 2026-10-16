@@ -36,6 +36,7 @@
 #include "ViewTransitionUpdateCallback.h"
 #include "VisibilityChangeClient.h"
 #include <wtf/CheckedRef.h>
+#include <wtf/OrderedHashSet.h>
 #include <wtf/Ref.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/text/AtomString.h>
@@ -54,7 +55,6 @@ class DOMPromise;
 class DeferredPromise;
 class RenderLayerModelObject;
 class RenderViewTransitionCapture;
-class RenderLayerModelObject;
 class ViewTransitionTypeSet;
 template<typename> class ExceptionOr;
 
@@ -156,7 +156,7 @@ public:
     }
 
 private:
-    ListHashSet<AtomString> m_keys;
+    OrderedHashSet<AtomString> m_keys;
     HashMap<AtomString, UniqueRef<CapturedElement>> m_map;
 };
 
@@ -166,8 +166,9 @@ public:
 
     OrderedNamedElementsMap namedElements;
     FloatSize initialLargeViewportSize;
-    float initialPageZoom;
+    float initialPageZoom { 1 };
     MonotonicTime startTime;
+    RefPtr<SecurityOrigin> oldDocumentOrigin;
 };
 
 class ViewTransition : public RefCounted<ViewTransition>, public VisibilityChangeClient, public ActiveDOMObject {
@@ -175,7 +176,10 @@ class ViewTransition : public RefCounted<ViewTransition>, public VisibilityChang
 public:
     static Ref<ViewTransition> createSamePage(Document&, RefPtr<ViewTransitionUpdateCallback>&&, Vector<AtomString>&&);
     static RefPtr<ViewTransition> resolveInboundCrossDocumentViewTransition(Document&, std::unique_ptr<ViewTransitionParams>);
-    static Ref<ViewTransition> setupCrossDocumentViewTransition(Document&);
+    // Given the old document's params once its state has been captured, or null if the transition was
+    // skipped. Proceeds with the navigation, which must not happen before then.
+    using OutboundPostCaptureSteps = CompletionHandler<void(std::unique_ptr<ViewTransitionParams>&&)>;
+    static Ref<ViewTransition> setupCrossDocumentViewTransition(Document&, OutboundPostCaptureSteps&& = { });
     ~ViewTransition();
 
     // ContextDestructionObserver.
@@ -195,17 +199,16 @@ public:
 
     UniqueRef<ViewTransitionParams> takeViewTransitionParams();
 
-    DOMPromise& ready();
-    DOMPromise& updateCallbackDone();
-    DOMPromise& finished();
+    DOMPromise& LEGACY_NODELETE ready();
+    DOMPromise& LEGACY_NODELETE updateCallbackDone();
+    DOMPromise& LEGACY_NODELETE finished();
 
     ViewTransitionPhase phase() const { return m_phase; }
     const OrderedNamedElementsMap& namedElements() const { return m_namedElements; };
 
-    Document* document() const;
-    RefPtr<Document> protectedDocument() const { return document(); }
+    Document* LEGACY_NODELETE document() const;
 
-    bool documentElementIsCaptured() const;
+    bool LEGACY_NODELETE documentElementIsCaptured() const;
 
     const ViewTransitionTypeSet& types() const { return m_types; }
     void setTypes(Ref<ViewTransitionTypeSet>&&);
@@ -229,6 +232,8 @@ private:
     void setupDynamicStyleSheet(const AtomString&, const CapturedElement&);
 
     void callUpdateCallback();
+    void scheduleUpdateCallback();
+    static void flushUpdateCallbackQueue(Document&);
 
     ExceptionOr<void> updatePseudoElementStylesRead();
     void updatePseudoElementStylesWrite();
@@ -236,6 +241,8 @@ private:
     ExceptionOr<void> checkForViewportSizeChange();
 
     void clearViewTransition();
+
+    void runOutboundPostCaptureSteps();
 
     // VisibilityChangeClient.
     void visibilityStateChanged() final;
@@ -249,9 +256,9 @@ private:
     OrderedNamedElementsMap m_namedElements;
     ViewTransitionPhase m_phase { ViewTransitionPhase::PendingCapture };
     FloatSize m_initialLargeViewportSize;
-    float m_initialPageZoom;
+    float m_initialPageZoom { 1 };
 
-    RefPtr<ViewTransitionUpdateCallback> m_updateCallback;
+    const RefPtr<ViewTransitionUpdateCallback> m_updateCallback;
     bool m_isCrossDocument { false };
 
     using PromiseAndWrapper = std::pair<Ref<DOMPromise>, Ref<DeferredPromise>>;
@@ -259,6 +266,9 @@ private:
     PromiseAndWrapper m_updateCallbackDone;
     PromiseAndWrapper m_finished;
     EventLoopTimerHandle m_updateCallbackTimeout;
+
+    // Set on the old document's transition while a cross-document navigation waits for it to capture.
+    OutboundPostCaptureSteps m_outboundPostCaptureSteps;
 
     Ref<ViewTransitionTypeSet> m_types;
 };

@@ -34,7 +34,6 @@ namespace Style {
 // https://drafts.csswg.org/css-values-4/#coordinating-list-property
 
 template<typename T> concept CoordinatedValueListValue = requires(T value) {
-    { T::computedValueUsesUsedValues } -> std::same_as<const bool&>;
     { T::baseProperty.value } -> std::same_as<const CSSPropertyID&>;
     { value.clone(std::declval<const T&>()) } -> std::same_as<T>;
     { value.isInitial() } -> std::same_as<bool>;
@@ -50,7 +49,7 @@ template<CSSPropertyID> struct CoordinatedValueListPropertyAccessor;
 template<CSSPropertyID> struct CoordinatedValueListPropertyConstAccessor;
 
 #define DECLARE_COORDINATED_VALUE_LIST_PROPERTY(ownerType, property, type, lowercaseName, uppercaseName) \
-    PropertyNameConstant<CSSProperty##property>{},
+    PropertyNameConstant<CSSPropertyID::property>{},
 \
 
 #define INTERNAL_DECLARE_COORDINATED_VALUE_LIST_PROPERTY_ACCESSOR_COMMON(ownerType, property, type, lowercaseName, uppercaseName) \
@@ -62,7 +61,7 @@ template<CSSPropertyID> struct CoordinatedValueListPropertyConstAccessor;
 \
 
 #define DECLARE_COORDINATED_VALUE_LIST_PROPERTY_ACCESSOR_REFERENCE(ownerType, property, type, lowercaseName, uppercaseName) \
-    template<> struct CoordinatedValueListPropertyAccessor<CSSProperty##property> { \
+    template<> struct CoordinatedValueListPropertyAccessor<CSSPropertyID::property> { \
         using Type = type; \
         \
         ownerType& value; \
@@ -74,13 +73,13 @@ template<CSSPropertyID> struct CoordinatedValueListPropertyConstAccessor;
         \
         INTERNAL_DECLARE_COORDINATED_VALUE_LIST_PROPERTY_ACCESSOR_COMMON(ownerType, property, type, lowercaseName, uppercaseName) \
         \
-        bool operator==(const CoordinatedValueListPropertyAccessor<CSSProperty##property>& other) const \
+        bool operator==(const CoordinatedValueListPropertyAccessor<CSSPropertyID::property>& other) const \
         { \
             return get() == other.get() && state() == other.state(); \
         } \
     }; \
     \
-    template<> struct CoordinatedValueListPropertyConstAccessor<CSSProperty##property> { \
+    template<> struct CoordinatedValueListPropertyConstAccessor<CSSPropertyID::property> { \
         using Type = type; \
         \
         const ownerType& value; \
@@ -89,7 +88,7 @@ template<CSSPropertyID> struct CoordinatedValueListPropertyConstAccessor;
         \
         INTERNAL_DECLARE_COORDINATED_VALUE_LIST_PROPERTY_ACCESSOR_COMMON(ownerType, property, type, lowercaseName, uppercaseName) \
         \
-        bool operator==(const CoordinatedValueListPropertyConstAccessor<CSSProperty##property>& other) const \
+        bool operator==(const CoordinatedValueListPropertyConstAccessor<CSSPropertyID::property>& other) const \
         { \
             return get() == other.get() && state() == other.state(); \
         } \
@@ -97,7 +96,7 @@ template<CSSPropertyID> struct CoordinatedValueListPropertyConstAccessor;
 \
 
 #define DECLARE_COORDINATED_VALUE_LIST_PROPERTY_ACCESSOR_VALUE(ownerType, property, type, lowercaseName, uppercaseName) \
-    template<> struct CoordinatedValueListPropertyAccessor<CSSProperty##property> { \
+    template<> struct CoordinatedValueListPropertyAccessor<CSSPropertyID::property> { \
         using Type = type; \
         \
         ownerType& value; \
@@ -109,13 +108,13 @@ template<CSSPropertyID> struct CoordinatedValueListPropertyConstAccessor;
         \
         INTERNAL_DECLARE_COORDINATED_VALUE_LIST_PROPERTY_ACCESSOR_COMMON(ownerType, property, type, lowercaseName, uppercaseName) \
         \
-        bool operator==(const CoordinatedValueListPropertyAccessor<CSSProperty##property>& other) const \
+        bool operator==(const CoordinatedValueListPropertyAccessor<CSSPropertyID::property>& other) const \
         { \
             return get() == other.get() && state() == other.state(); \
         } \
     }; \
     \
-    template<> struct CoordinatedValueListPropertyConstAccessor<CSSProperty##property> { \
+    template<> struct CoordinatedValueListPropertyConstAccessor<CSSPropertyID::property> { \
         using Type = type; \
         \
         const ownerType& value; \
@@ -124,7 +123,7 @@ template<CSSPropertyID> struct CoordinatedValueListPropertyConstAccessor;
         \
         INTERNAL_DECLARE_COORDINATED_VALUE_LIST_PROPERTY_ACCESSOR_COMMON(ownerType, property, type, lowercaseName, uppercaseName) \
         \
-        bool operator==(const CoordinatedValueListPropertyConstAccessor<CSSProperty##property>& other) const \
+        bool operator==(const CoordinatedValueListPropertyConstAccessor<CSSPropertyID::property>& other) const \
         { \
             return get() == other.get() && state() == other.state(); \
         } \
@@ -136,7 +135,7 @@ template<CSSPropertyID> struct CoordinatedValueListPropertyConstAccessor;
 \
 
 #define DECLARE_COORDINATED_VALUE_LIST_PROPERTY_ACCESSOR_SHORTHAND(ownerType, property, type, lowercaseName, uppercaseName) \
-    template<> struct CoordinatedValueListPropertyAccessor<CSSProperty##property> { \
+    template<> struct CoordinatedValueListPropertyAccessor<CSSPropertyID::property> { \
         using Type = type; \
         \
         ownerType& value; \
@@ -152,7 +151,7 @@ template<CSSPropertyID> struct CoordinatedValueListPropertyConstAccessor;
         bool isFilled() const { return value.is##uppercaseName##Filled(); } \
     }; \
     \
-    template<> struct CoordinatedValueListPropertyConstAccessor<CSSProperty##property> { \
+    template<> struct CoordinatedValueListPropertyConstAccessor<CSSPropertyID::property> { \
         using Type = type; \
         \
         const ownerType& value; \
@@ -250,21 +249,21 @@ template<CSSPropertyID> struct CoordinatedValueListPropertyConstAccessor;
 
 // Applies the provided functor to each property of the CoordinatedValueList value, invoking the functor with each properties CSSPropertyID as the first template argument, and then and'ing the results.
 template<CoordinatedValueListValue T, typename F>
-constexpr bool allOfCoordinatedValueListProperties(NOESCAPE F&& f)
+constexpr bool allOfCoordinatedValueListProperties(NOESCAPE const F& f)
 {
     return WTF::apply([&]<typename... Ts>(const Ts& ...) { return (f.template operator()<Ts::value>() && ...); }, T::properties);
 }
 
 // Applies the provided functor to each property of the CoordinatedValueList value, invoking the functor with each properties CSSPropertyID as the first template argument, and then or'ing the results.
 template<CoordinatedValueListValue T, typename F>
-constexpr bool anyOfCoordinatedValueListProperties(NOESCAPE F&& f)
+constexpr bool anyOfCoordinatedValueListProperties(NOESCAPE const F& f)
 {
     return WTF::apply([&]<typename... Ts>(const Ts& ...) { return (f.template operator()<Ts::value>() || ...); }, T::properties);
 }
 
 // Applies the provided functor to each property of the CoordinatedValueList value, invoking the functor with each properties CSSPropertyID as the first template argument.
 template<CoordinatedValueListValue T, typename F>
-constexpr void eachCoordinatedValueListProperties(NOESCAPE F&& f)
+constexpr void eachCoordinatedValueListProperties(NOESCAPE const F& f)
 {
     WTF::apply([&]<typename... Ts>(const Ts& ...) { (f.template operator()<Ts::value>(), ...); }, T::properties);
 }
@@ -289,6 +288,15 @@ bool allPropertiesAreUnsetOrFilled(const T& value)
     return allOfCoordinatedValueListProperties<T>([&value]<CSSPropertyID propertyID>() {
         using PropertyAccessor = CoordinatedValueListPropertyConstAccessor<propertyID>;
         return !PropertyAccessor { value }.isSet();
+    });
+}
+
+template<CoordinatedValueListValue T>
+bool allPropertiesAreSet(const T& value)
+{
+    return allOfCoordinatedValueListProperties<T>([&value]<CSSPropertyID propertyID>() {
+        using PropertyAccessor = CoordinatedValueListPropertyConstAccessor<propertyID>;
+        return PropertyAccessor { value }.isSet();
     });
 }
 

@@ -28,7 +28,10 @@
 #include "StyleSheet.h"
 #include <libxml/parser.h>
 #include <libxslt/transform.h>
+#include <wtf/CheckedPtr.h>
+#include <wtf/Lock.h>
 #include <wtf/Ref.h>
+#include <wtf/ThreadAssertions.h>
 #include <wtf/TypeCasts.h>
 
 namespace WebCore {
@@ -66,7 +69,7 @@ public:
     
     void checkLoaded();
     
-    const URL& finalURL() const { return m_finalURL; }
+    const URL& finalURL() const LIFETIME_BOUND { return m_finalURL; }
 
     void loadChildSheets();
     void loadChildSheet(const String& href);
@@ -75,7 +78,7 @@ public:
 
     Document* ownerDocument();
     XSLStyleSheet* parentStyleSheet() const override { return m_parentStyleSheet.get(); }
-    void setParentStyleSheet(XSLStyleSheet* parent);
+    void LEGACY_NODELETE setParentStyleSheet(XSLStyleSheet* parent);
 
     xmlDocPtr document();
     xsltStylesheetPtr compileStyleSheet();
@@ -83,17 +86,18 @@ public:
 
     void clearDocuments();
 
-    void markAsProcessed();
+    void LEGACY_NODELETE markAsProcessed();
     bool processed() const { return m_processed; }
     
     String type() const override { return "text/xml"_s; }
     bool disabled() const override { return m_isDisabled; }
     void setDisabled(bool b) override { m_isDisabled = b; }
-    Node* ownerNode() const override { return m_ownerNode.get(); }
+    Node* ownerNode() const override { assertIsOwnerThread(); return m_ownerNode.get(); }
     String href() const override { return m_originalURL; }
     String title() const override { return { }; }
 
-    void clearOwnerNode() override { m_ownerNode = nullptr; }
+    void clearOwnerNode() override;
+    WebCoreOpaqueRoot opaqueRootForGCThread() override;
     URL baseURL() const override { return m_finalURL; }
     bool isLoading() const override;
 
@@ -106,7 +110,11 @@ private:
 
     void clearXSLStylesheetDocument();
 
-    WeakPtr<Node, WeakPtrImplWithEventTargetData> m_ownerNode;
+    mutable Lock m_opaqueRootLockForGC;
+    // Only mutated on the main thread while holding m_opaqueRootLockForGC, so main-thread reads
+    // use assertIsOwnerThread() instead of locking; the GC thread must lock even to read.
+    CheckedPtr<Node> m_ownerNode WTF_GUARDED_BY_LOCK(m_opaqueRootLockForGC);
+    WTF_DECLARE_OWNER_THREAD_ASSERTIONS(m_opaqueRootLockForGC, mainThreadLike);
     String m_originalURL;
     URL m_finalURL;
     bool m_isDisabled { false };

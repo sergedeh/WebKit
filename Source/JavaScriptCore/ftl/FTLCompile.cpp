@@ -36,22 +36,137 @@
 #include "B3ValueInlines.h"
 #include "CodeBlockWithJITType.h"
 #include "CCallHelpers.h"
+#include "DFGGraph.h"
 #include "DFGGraphSafepoint.h"
+#include "DFGNode.h"
 #include "FTLJITCode.h"
+#include "InlineCallFrame.h"
 #include "JITThunks.h"
 #include "LLIntEntrypoint.h"
 #include "LLIntThunks.h"
 #include "LinkBuffer.h"
+#include "Options.h"
 #include "PCToCodeOriginMap.h"
 #include "ThunkGenerators.h"
-#include <wtf/RecursableLambda.h>
-#include <wtf/SetForScope.h>
 
 namespace JSC { namespace FTL {
 
-const char* const tierName = "FTL ";
-
 using namespace DFG;
+
+static void collectIRDumpDebugInfo(State& state, DFG::Graph& graph, CodeBlock* codeBlock)
+{
+    if (!Options::useIRDump() || !state.proc->needsPCToOriginMap())
+        return;
+
+    auto debugInfo = makeUnique<IRDumpDebugInfo>(codeBlock->inferredName());
+    auto nodeToLineIndex = graph.collectIRDumpDebugInfo(*debugInfo);
+
+    auto& originMap = state.proc->pcToOriginMap();
+    void* codeStart = state.b3CodeLinkBuffer->entrypoint<DisassemblyPtrTag>().untaggedPtr();
+
+    DFG::Node* current = nullptr;
+    uint32_t currentLineIndex = 0;
+    std::optional<uint32_t> currentCodeOffset;
+    auto flush = [&] {
+        if (currentCodeOffset)
+            debugInfo->codeEntries.append({ currentCodeOffset.value(), currentLineIndex });
+        current = nullptr;
+        currentLineIndex = 0;
+        currentCodeOffset = std::nullopt;
+    };
+
+    auto append = [&](DFG::Node* node, uint32_t codeOffset, uint32_t lineIndex) {
+        if (current != node)
+            flush();
+        current = node;
+        currentLineIndex = lineIndex;
+        if (!currentCodeOffset)
+            currentCodeOffset = codeOffset;
+    };
+
+    for (auto& range : originMap.ranges()) {
+        auto origin = range.origin;
+        if (!origin || !origin.isDFGOrigin())
+            continue;
+        DFG::Node* node = origin.dfgOrigin();
+        if (!node)
+            continue;
+
+        auto it = nodeToLineIndex.find(node);
+        if (it == nodeToLineIndex.end())
+            continue;
+
+        auto location = state.b3CodeLinkBuffer->locationOf<DisassemblyPtrTag>(range.label);
+        uint32_t codeOffset = static_cast<uint32_t>(location.dataLocation<uintptr_t>() - reinterpret_cast<uintptr_t>(codeStart));
+        append(node, codeOffset, it->value);
+    }
+    flush();
+
+    state.b3CodeLinkBuffer->setIRDumpDebugInfo(WTF::move(debugInfo));
+}
+
+static void collectSourceCodeDumpDebugInfo(State& state, CodeBlock* codeBlock)
+{
+    if (!Options::useSourceCodeDump() || !state.proc->needsPCToOriginMap())
+        return;
+
+    auto debugInfo = makeUnique<SourceCodeDumpDebugInfo>(codeBlock->inferredName());
+
+    auto& originMap = state.proc->pcToOriginMap();
+    void* codeStart = state.b3CodeLinkBuffer->entrypoint<DisassemblyPtrTag>().untaggedPtr();
+
+    CodeOrigin currentOrigin;
+    std::optional<uint32_t> currentCodeOffset;
+    LineColumn currentLineColumn;
+    SourceProvider* currentProvider = nullptr;
+    auto flush = [&] {
+        if (currentCodeOffset && currentProvider)
+            debugInfo->codeEntries.append({ currentCodeOffset.value(), currentLineColumn, *currentProvider });
+        currentOrigin = CodeOrigin();
+        currentCodeOffset = std::nullopt;
+        currentLineColumn = { };
+        currentProvider = nullptr;
+    };
+
+    for (auto& range : originMap.ranges()) {
+        auto origin = range.origin;
+        if (!origin || !origin.isDFGOrigin())
+            continue;
+        DFG::Node* node = origin.dfgOrigin();
+        if (!node)
+            continue;
+
+        CodeOrigin codeOrigin = node->origin.semantic;
+        if (!codeOrigin.isSet())
+            continue;
+
+        if (currentOrigin == codeOrigin)
+            continue;
+
+        flush();
+
+        InlineCallFrame* inlineCallFrame = codeOrigin.inlineCallFrame();
+        CodeBlock* originCodeBlock = inlineCallFrame
+            ? inlineCallFrame->baselineCodeBlock.get()
+            : codeBlock;
+        if (!originCodeBlock)
+            continue;
+
+        BytecodeIndex bytecodeIndex = codeOrigin.bytecodeIndex();
+        if (bytecodeIndex.offset() >= originCodeBlock->instructionsSize())
+            continue;
+
+        currentOrigin = codeOrigin;
+        currentLineColumn = originCodeBlock->lineColumnForBytecodeIndex(bytecodeIndex);
+        currentProvider = originCodeBlock->ownerExecutable()->source().provider();
+
+        auto location = state.b3CodeLinkBuffer->locationOf<DisassemblyPtrTag>(range.label);
+        currentCodeOffset = static_cast<uint32_t>(location.dataLocation<uintptr_t>() - reinterpret_cast<uintptr_t>(codeStart));
+    }
+    flush();
+
+    state.b3CodeLinkBuffer->setSourceCodeDumpDebugInfo(WTF::move(debugInfo));
+}
 
 void compile(State& state, Safepoint::Result& safepointResult)
 {
@@ -113,9 +228,8 @@ void compile(State& state, Safepoint::Result& safepointResult)
     if (graph.needsScopeRegister() && codeBlock->scopeRegister().isValid())
         codeBlock->setScopeRegister(codeBlock->scopeRegister() + localsOffset);
 
+    state.jitCode->setOSRExitLocalsOffset(localsOffset);
     for (OSRExitDescriptor& descriptor : state.jitCode->osrExitDescriptors) {
-        for (unsigned i = descriptor.m_values.size(); i--;)
-            descriptor.m_values[i] = descriptor.m_values[i].withLocalsOffset(localsOffset);
         for (ExitTimeObjectMaterialization* materialization : descriptor.m_materializations)
             materialization->accountForLocalsOffset(localsOffset);
     }
@@ -147,7 +261,7 @@ void compile(State& state, Safepoint::Result& safepointResult)
             CCallHelpers::JumpList mainPathJumps;
 
             arityCheckLabel = jit.label();
-            jit.load32(CCallHelpers::calleeFramePayloadSlot(CallFrameSlot::argumentCountIncludingThis).withOffset(sizeof(CallerFrameAndPC) - prologueStackPointerDelta()), GPRInfo::argumentGPR2);
+            jit.load32(CCallHelpers::calleeFrameLowWordSlot(CallFrameSlot::argumentCountIncludingThis).withOffset(sizeof(CallerFrameAndPC) - prologueStackPointerDelta()), GPRInfo::argumentGPR2);
             mainPathJumps.append(jit.branch32(CCallHelpers::AboveOrEqual, GPRInfo::argumentGPR2, CCallHelpers::TrustedImm32(codeBlock->numParameters())));
 
             unsigned numberOfParameters = codeBlock->numParameters();
@@ -203,6 +317,9 @@ void compile(State& state, Safepoint::Result& safepointResult)
         return;
     }
 
+    collectIRDumpDebugInfo(state, graph, codeBlock);
+    collectSourceCodeDumpDebugInfo(state, codeBlock);
+
     if (vm.shouldBuilderPCToCodeOriginMapping()) {
         B3::PCToOriginMap originMap = state.proc->releasePCToOriginMap();
         state.jitCode->common.m_pcToCodeOriginMap = makeUnique<PCToCodeOriginMap>(PCToCodeOriginMapBuilder(PCToCodeOriginMapBuilder::JSCodeOriginMap, vm, WTF::move(originMap)), *state.b3CodeLinkBuffer);
@@ -227,7 +344,7 @@ void compile(State& state, Safepoint::Result& safepointResult)
     if (compilation) [[unlikely]] {
         compilation->addDescription(
             Profiler::OriginStack(),
-            toCString("Generated FTL DFG IR for ", CodeBlockWithJITType(codeBlock, JITType::FTLJIT), ", instructions size = ", graph.m_codeBlock->instructionsSize(), ":\n"));
+            toUTF8CString("Generated FTL DFG IR for ", CodeBlockWithJITType(codeBlock, JITType::FTLJIT), ", instructions size = ", graph.m_codeBlock->instructionsSize(), ":\n"));
 
         graph.ensureSSADominators();
         graph.ensureSSANaturalLoops();
@@ -236,18 +353,18 @@ void compile(State& state, Safepoint::Result& safepointResult)
 
         DumpContext dumpContext;
         StringPrintStream out;
-        Node* lastNode = nullptr;
+        DFG::Node* lastNode = nullptr;
         for (size_t blockIndex = 0; blockIndex < graph.numBlocks(); ++blockIndex) {
             DFG::BasicBlock* block = graph.block(blockIndex);
             if (!block)
                 continue;
 
             graph.dumpBlockHeader(out, prefix, block, Graph::DumpLivePhisOnly, &dumpContext);
-            compilation->addDescription(Profiler::OriginStack(), out.toCString());
+            compilation->addDescription(Profiler::OriginStack(), out.toUTF8CString());
             out.reset();
 
             for (size_t nodeIndex = 0; nodeIndex < block->size(); ++nodeIndex) {
-                Node* node = block->at(nodeIndex);
+                DFG::Node* node = block->at(nodeIndex);
 
                 Profiler::OriginStack stack;
 
@@ -257,12 +374,12 @@ void compile(State& state, Safepoint::Result& safepointResult)
                 }
 
                 if (graph.dumpCodeOrigin(out, prefix, lastNode, node, &dumpContext)) {
-                    compilation->addDescription(stack, out.toCString());
+                    compilation->addDescription(stack, out.toUTF8CString());
                     out.reset();
                 }
 
                 graph.dump(out, prefix, node, &dumpContext);
-                compilation->addDescription(stack, out.toCString());
+                compilation->addDescription(stack, out.toUTF8CString());
                 out.reset();
 
                 if (node->origin.semantic.isSet())
@@ -271,18 +388,18 @@ void compile(State& state, Safepoint::Result& safepointResult)
         }
 
         dumpContext.dump(out, prefix);
-        compilation->addDescription(Profiler::OriginStack(), out.toCString());
+        compilation->addDescription(Profiler::OriginStack(), out.toUTF8CString());
         out.reset();
 
         out.print("\n\n\n    FTL B3/Air Disassembly:\n");
-        compilation->addDescription(Profiler::OriginStack(), out.toCString());
+        compilation->addDescription(Profiler::OriginStack(), out.toUTF8CString());
         out.reset();
 
-        state.dumpDisassembly(out, *state.b3CodeLinkBuffer, scopedLambda<void(Node*)>([&] (Node*) {
-            compilation->addDescription({ }, out.toCString());
+        state.dumpDisassembly(out, *state.b3CodeLinkBuffer, [&] (DFG::Node*) {
+            compilation->addDescription({ }, out.toUTF8CString());
             out.reset();
-        }));
-        compilation->addDescription({ }, out.toCString());
+        });
+        compilation->addDescription({ }, out.toUTF8CString());
         out.reset();
 
         state.jitCode->common.compilation = compilation;

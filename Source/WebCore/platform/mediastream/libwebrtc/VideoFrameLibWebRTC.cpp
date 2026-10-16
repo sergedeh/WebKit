@@ -34,9 +34,9 @@
 
 namespace WebCore {
 
-static PlatformVideoColorSpace defaultVPXColorSpace()
+static PlatformVideoColorSpace LEGACY_NODELETE defaultVPXColorSpace()
 {
-    return { PlatformVideoColorPrimaries::Bt709, PlatformVideoTransferCharacteristics::Bt709, PlatformVideoMatrixCoefficients::Bt709, false };
+    return { .primaries = PlatformVideoColorPrimaries::Bt709, .transfer = PlatformVideoTransferCharacteristics::Bt709, .matrix = PlatformVideoMatrixCoefficients::Bt709, .fullRange = false };
 }
 
 RefPtr<VideoFrameLibWebRTC> VideoFrameLibWebRTC::create(MediaTime presentationTime, bool isMirrored, Rotation rotation, std::optional<PlatformVideoColorSpace>&& colorSpace, Ref<webrtc::VideoFrameBuffer>&& buffer, ConversionCallback&& conversionCallback)
@@ -84,7 +84,13 @@ CVPixelBufferRef VideoFrameLibWebRTC::pixelBuffer() const
 
 Ref<VideoFrame> VideoFrameLibWebRTC::clone()
 {
-    return adoptRef(*new VideoFrameLibWebRTC(presentationTime(), isMirrored(), rotation(), PlatformVideoColorSpace { colorSpace() }, m_buffer.get(), ConversionCallback { m_conversionCallback }));
+    Locker locker { m_pixelBufferLock };
+    Ref clone = adoptRef(*new VideoFrameLibWebRTC(presentationTime(), isMirrored(), rotation(), PlatformVideoColorSpace { colorSpace() }, m_buffer.get(), ConversionCallback { m_conversionCallback }));
+
+    Locker cloneLocker { clone->m_pixelBufferLock };
+    clone->m_pixelBuffer = m_pixelBuffer;
+
+    return clone;
 }
 
 }

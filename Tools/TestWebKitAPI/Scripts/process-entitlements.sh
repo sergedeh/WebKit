@@ -3,7 +3,8 @@ set -e
 
 function plistbuddy()
 {
-    /usr/libexec/PlistBuddy -c "$*" "${WK_PROCESSED_XCENT_FILE}"
+    /usr/libexec/PlistBuddy -c "$*" "${WK_PROCESSED_XCENT_FILE}" | fgrep -vE "(File Doesn't Exist|Initializing Plist)" || true
+    return ${PIPESTATUS[0]}
 }
 
 function plistbuddy_base()
@@ -36,6 +37,7 @@ process_restricted_testwebkitapi_entitlements()
     plistbuddy Add :com.apple.private.webkit.adattributiond.testing bool YES
     plistbuddy Add :com.apple.private.webkit.webpush bool YES
     plistbuddy Add :com.apple.private.webkit.webpush.inject bool YES
+    plistbuddy Add :com.apple.private.messages.enhanced-link-security bool YES
 }
 
 # ========================================
@@ -56,6 +58,7 @@ function process_mac_testwebkitapi_entitlements()
 
         plistbuddy Add :com.apple.hid.manager.user-access-device bool YES
         plistbuddy Add :com.apple.private.hid.client.event-filter bool YES
+        plistbuddy Add :com.apple.private.hid.client.event-dispatch.internal bool YES
     fi
 }
 

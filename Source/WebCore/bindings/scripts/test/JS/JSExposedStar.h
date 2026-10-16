@@ -31,13 +31,7 @@ class JSExposedStar : public JSEventTarget {
 public:
     using Base = JSEventTarget;
     using DOMWrapped = ExposedStar;
-    static JSExposedStar* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<ExposedStar>&& impl)
-    {
-        SUPPRESS_UNCOUNTED_LOCAL auto& vm = globalObject->vm();
-        JSExposedStar* ptr = new (NotNull, JSC::allocateCell<JSExposedStar>(vm)) JSExposedStar(structure, *globalObject, WTF::move(impl));
-        ptr->finishCreation(vm);
-        return ptr;
-    }
+    static JSExposedStar* create(JSC::Structure*, JSDOMGlobalObject*, Ref<ExposedStar>&&);
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
@@ -45,12 +39,10 @@ public:
 
     DECLARE_INFO;
 
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
-    }
-
+    static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue);
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
+    static bool isExposedInGlobalObject(JSDOMGlobalObject&);
+    static constexpr bool isRestrictedToSameAgentCluster = false;
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
@@ -61,10 +53,9 @@ public:
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
     ExposedStar& wrapped() const
     {
-        return static_cast<ExposedStar&>(Base::wrapped());
+        // JSExposedStar wrappers always wrap ExposedStar objects.
+        SUPPRESS_MEMORY_UNSAFE_CAST return static_cast<ExposedStar&>(Base::wrapped());
     }
-
-    Ref<ExposedStar> protectedWrapped() const;
 
 protected:
     JSExposedStar(JSC::Structure*, JSDOMGlobalObject&, Ref<ExposedStar>&&);

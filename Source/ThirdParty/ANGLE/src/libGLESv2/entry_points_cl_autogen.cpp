@@ -32,7 +32,7 @@ cl_int CL_API_CALL clGetPlatformIDs(cl_uint num_entries,
 
     ANGLE_CL_VALIDATE_ERROR(GetPlatformIDs, num_entries, platforms, num_platforms);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = GetPlatformIDs(num_entries, platforms, num_platforms);
     ANGLE_CAPTURE_CL(GetPlatformIDs, true, num_entries, platforms, num_platforms, returnValue);
     return returnValue;
@@ -58,7 +58,7 @@ cl_int CL_API_CALL clGetPlatformInfo(cl_platform_id platform,
     ANGLE_CL_VALIDATE_ERROR(GetPlatformInfo, platform, param_namePacked, param_value_size,
                             param_value, param_value_size_ret);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = GetPlatformInfo(platform, param_namePacked, param_value_size, param_value,
                                          param_value_size_ret);
     ANGLE_CAPTURE_CL(GetPlatformInfo, true, platform, param_namePacked, param_value_size,
@@ -112,7 +112,7 @@ cl_int CL_API_CALL clGetDeviceInfo(cl_device_id device,
     ANGLE_CL_VALIDATE_ERROR(GetDeviceInfo, device, param_namePacked, param_value_size, param_value,
                             param_value_size_ret);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = GetDeviceInfo(device, param_namePacked, param_value_size, param_value,
                                        param_value_size_ret);
     ANGLE_CAPTURE_CL(GetDeviceInfo, true, device, param_namePacked, param_value_size, param_value,
@@ -197,7 +197,7 @@ cl_int CL_API_CALL clRetainContext(cl_context context)
 
     ANGLE_CL_VALIDATE_ERROR(RetainContext, context);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = RetainContext(context);
     ANGLE_CAPTURE_CL(RetainContext, true, context, returnValue);
     return returnValue;
@@ -209,7 +209,7 @@ cl_int CL_API_CALL clReleaseContext(cl_context context)
 
     ANGLE_CL_VALIDATE_ERROR(ReleaseContext, context);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = ReleaseContext(context);
     ANGLE_CAPTURE_CL(ReleaseContext, true, context, returnValue);
     return returnValue;
@@ -233,7 +233,7 @@ cl_int CL_API_CALL clGetContextInfo(cl_context context,
     ANGLE_CL_VALIDATE_ERROR(GetContextInfo, context, param_namePacked, param_value_size,
                             param_value, param_value_size_ret);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = GetContextInfo(context, param_namePacked, param_value_size, param_value,
                                         param_value_size_ret);
     ANGLE_CAPTURE_CL(GetContextInfo, true, context, param_namePacked, param_value_size, param_value,
@@ -247,7 +247,7 @@ cl_int CL_API_CALL clRetainCommandQueue(cl_command_queue command_queue)
 
     ANGLE_CL_VALIDATE_ERROR(RetainCommandQueue, command_queue);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = RetainCommandQueue(command_queue);
     ANGLE_CAPTURE_CL(RetainCommandQueue, true, command_queue, returnValue);
     return returnValue;
@@ -259,7 +259,7 @@ cl_int CL_API_CALL clReleaseCommandQueue(cl_command_queue command_queue)
 
     ANGLE_CL_VALIDATE_ERROR(ReleaseCommandQueue, command_queue);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = ReleaseCommandQueue(command_queue);
     ANGLE_CAPTURE_CL(ReleaseCommandQueue, true, command_queue, returnValue);
     return returnValue;
@@ -283,7 +283,7 @@ cl_int CL_API_CALL clGetCommandQueueInfo(cl_command_queue command_queue,
     ANGLE_CL_VALIDATE_ERROR(GetCommandQueueInfo, command_queue, param_namePacked, param_value_size,
                             param_value, param_value_size_ret);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = GetCommandQueueInfo(command_queue, param_namePacked, param_value_size,
                                              param_value, param_value_size_ret);
     ANGLE_CAPTURE_CL(GetCommandQueueInfo, true, command_queue, param_namePacked, param_value_size,
@@ -325,7 +325,7 @@ cl_int CL_API_CALL clRetainMemObject(cl_mem memobj)
 
     ANGLE_CL_VALIDATE_ERROR(RetainMemObject, memobj);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = RetainMemObject(memobj);
     ANGLE_CAPTURE_CL(RetainMemObject, true, memobj, returnValue);
     return returnValue;
@@ -337,7 +337,7 @@ cl_int CL_API_CALL clReleaseMemObject(cl_mem memobj)
 
     ANGLE_CL_VALIDATE_ERROR(ReleaseMemObject, memobj);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = ReleaseMemObject(memobj);
     ANGLE_CAPTURE_CL(ReleaseMemObject, true, memobj, returnValue);
     return returnValue;
@@ -363,7 +363,7 @@ cl_int CL_API_CALL clGetSupportedImageFormats(cl_context context,
     ANGLE_CL_VALIDATE_ERROR(GetSupportedImageFormats, context, flagsPacked, image_typePacked,
                             num_entries, image_formats, num_image_formats);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = GetSupportedImageFormats(context, flagsPacked, image_typePacked,
                                                   num_entries, image_formats, num_image_formats);
     ANGLE_CAPTURE_CL(GetSupportedImageFormats, true, context, flagsPacked, image_typePacked,
@@ -389,7 +389,7 @@ cl_int CL_API_CALL clGetMemObjectInfo(cl_mem memobj,
     ANGLE_CL_VALIDATE_ERROR(GetMemObjectInfo, memobj, param_namePacked, param_value_size,
                             param_value, param_value_size_ret);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = GetMemObjectInfo(memobj, param_namePacked, param_value_size, param_value,
                                           param_value_size_ret);
     ANGLE_CAPTURE_CL(GetMemObjectInfo, true, memobj, param_namePacked, param_value_size,
@@ -429,7 +429,7 @@ cl_int CL_API_CALL clRetainSampler(cl_sampler sampler)
 
     ANGLE_CL_VALIDATE_ERROR(RetainSampler, sampler);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = RetainSampler(sampler);
     ANGLE_CAPTURE_CL(RetainSampler, true, sampler, returnValue);
     return returnValue;
@@ -441,7 +441,7 @@ cl_int CL_API_CALL clReleaseSampler(cl_sampler sampler)
 
     ANGLE_CL_VALIDATE_ERROR(ReleaseSampler, sampler);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = ReleaseSampler(sampler);
     ANGLE_CAPTURE_CL(ReleaseSampler, true, sampler, returnValue);
     return returnValue;
@@ -465,7 +465,7 @@ cl_int CL_API_CALL clGetSamplerInfo(cl_sampler sampler,
     ANGLE_CL_VALIDATE_ERROR(GetSamplerInfo, sampler, param_namePacked, param_value_size,
                             param_value, param_value_size_ret);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = GetSamplerInfo(sampler, param_namePacked, param_value_size, param_value,
                                         param_value_size_ret);
     ANGLE_CAPTURE_CL(GetSamplerInfo, true, sampler, param_namePacked, param_value_size, param_value,
@@ -538,7 +538,7 @@ cl_int CL_API_CALL clRetainProgram(cl_program program)
 
     ANGLE_CL_VALIDATE_ERROR(RetainProgram, program);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = RetainProgram(program);
     ANGLE_CAPTURE_CL(RetainProgram, true, program, returnValue);
     return returnValue;
@@ -550,7 +550,7 @@ cl_int CL_API_CALL clReleaseProgram(cl_program program)
 
     ANGLE_CL_VALIDATE_ERROR(ReleaseProgram, program);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = ReleaseProgram(program);
     ANGLE_CAPTURE_CL(ReleaseProgram, true, program, returnValue);
     return returnValue;
@@ -600,7 +600,7 @@ cl_int CL_API_CALL clGetProgramInfo(cl_program program,
     ANGLE_CL_VALIDATE_ERROR(GetProgramInfo, program, param_namePacked, param_value_size,
                             param_value, param_value_size_ret);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = GetProgramInfo(program, param_namePacked, param_value_size, param_value,
                                         param_value_size_ret);
     ANGLE_CAPTURE_CL(GetProgramInfo, true, program, param_namePacked, param_value_size, param_value,
@@ -627,7 +627,7 @@ cl_int CL_API_CALL clGetProgramBuildInfo(cl_program program,
     ANGLE_CL_VALIDATE_ERROR(GetProgramBuildInfo, program, device, param_namePacked,
                             param_value_size, param_value, param_value_size_ret);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = GetProgramBuildInfo(program, device, param_namePacked, param_value_size,
                                              param_value, param_value_size_ret);
     ANGLE_CAPTURE_CL(GetProgramBuildInfo, true, program, device, param_namePacked, param_value_size,
@@ -670,7 +670,7 @@ cl_int CL_API_CALL clCreateKernelsInProgram(cl_program program,
 
     ANGLE_CL_VALIDATE_ERROR(CreateKernelsInProgram, program, num_kernels, kernels, num_kernels_ret);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = CreateKernelsInProgram(program, num_kernels, kernels, num_kernels_ret);
     ANGLE_CAPTURE_CL(CreateKernelsInProgram, true, program, num_kernels, kernels, num_kernels_ret,
                      returnValue);
@@ -683,7 +683,7 @@ cl_int CL_API_CALL clRetainKernel(cl_kernel kernel)
 
     ANGLE_CL_VALIDATE_ERROR(RetainKernel, kernel);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = RetainKernel(kernel);
     ANGLE_CAPTURE_CL(RetainKernel, true, kernel, returnValue);
     return returnValue;
@@ -695,7 +695,7 @@ cl_int CL_API_CALL clReleaseKernel(cl_kernel kernel)
 
     ANGLE_CL_VALIDATE_ERROR(ReleaseKernel, kernel);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = ReleaseKernel(kernel);
     ANGLE_CAPTURE_CL(ReleaseKernel, true, kernel, returnValue);
     return returnValue;
@@ -713,7 +713,7 @@ cl_int CL_API_CALL clSetKernelArg(cl_kernel kernel,
 
     ANGLE_CL_VALIDATE_ERROR(SetKernelArg, kernel, arg_index, arg_size, arg_value);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = SetKernelArg(kernel, arg_index, arg_size, arg_value);
     ANGLE_CAPTURE_CL(SetKernelArg, true, kernel, arg_index, arg_size, arg_value, returnValue);
     return returnValue;
@@ -737,7 +737,7 @@ cl_int CL_API_CALL clGetKernelInfo(cl_kernel kernel,
     ANGLE_CL_VALIDATE_ERROR(GetKernelInfo, kernel, param_namePacked, param_value_size, param_value,
                             param_value_size_ret);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = GetKernelInfo(kernel, param_namePacked, param_value_size, param_value,
                                        param_value_size_ret);
     ANGLE_CAPTURE_CL(GetKernelInfo, true, kernel, param_namePacked, param_value_size, param_value,
@@ -764,7 +764,7 @@ cl_int CL_API_CALL clGetKernelWorkGroupInfo(cl_kernel kernel,
     ANGLE_CL_VALIDATE_ERROR(GetKernelWorkGroupInfo, kernel, device, param_namePacked,
                             param_value_size, param_value, param_value_size_ret);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = GetKernelWorkGroupInfo(kernel, device, param_namePacked, param_value_size,
                                                 param_value, param_value_size_ret);
     ANGLE_CAPTURE_CL(GetKernelWorkGroupInfo, true, kernel, device, param_namePacked,
@@ -779,7 +779,7 @@ cl_int CL_API_CALL clWaitForEvents(cl_uint num_events, const cl_event *event_lis
 
     ANGLE_CL_VALIDATE_ERROR(WaitForEvents, num_events, event_list);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = WaitForEvents(num_events, event_list);
     ANGLE_CAPTURE_CL(WaitForEvents, true, num_events, event_list, returnValue);
     return returnValue;
@@ -817,7 +817,7 @@ cl_int CL_API_CALL clRetainEvent(cl_event event)
 
     ANGLE_CL_VALIDATE_ERROR(RetainEvent, event);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = RetainEvent(event);
     ANGLE_CAPTURE_CL(RetainEvent, true, event, returnValue);
     return returnValue;
@@ -829,7 +829,7 @@ cl_int CL_API_CALL clReleaseEvent(cl_event event)
 
     ANGLE_CL_VALIDATE_ERROR(ReleaseEvent, event);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = ReleaseEvent(event);
     ANGLE_CAPTURE_CL(ReleaseEvent, true, event, returnValue);
     return returnValue;
@@ -853,7 +853,7 @@ cl_int CL_API_CALL clGetEventProfilingInfo(cl_event event,
     ANGLE_CL_VALIDATE_ERROR(GetEventProfilingInfo, event, param_namePacked, param_value_size,
                             param_value, param_value_size_ret);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = GetEventProfilingInfo(event, param_namePacked, param_value_size,
                                                param_value, param_value_size_ret);
     ANGLE_CAPTURE_CL(GetEventProfilingInfo, true, event, param_namePacked, param_value_size,
@@ -867,7 +867,7 @@ cl_int CL_API_CALL clFlush(cl_command_queue command_queue)
 
     ANGLE_CL_VALIDATE_ERROR(Flush, command_queue);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = Flush(command_queue);
     ANGLE_CAPTURE_CL(Flush, true, command_queue, returnValue);
     return returnValue;
@@ -879,7 +879,7 @@ cl_int CL_API_CALL clFinish(cl_command_queue command_queue)
 
     ANGLE_CL_VALIDATE_ERROR(Finish, command_queue);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = Finish(command_queue);
     ANGLE_CAPTURE_CL(Finish, true, command_queue, returnValue);
     return returnValue;
@@ -1254,7 +1254,7 @@ cl_int CL_API_CALL clEnqueueUnmapMemObject(cl_command_queue command_queue,
     ANGLE_CL_VALIDATE_ERROR(EnqueueUnmapMemObject, command_queue, memobj, mapped_ptr,
                             num_events_in_wait_list, event_wait_list, event);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = EnqueueUnmapMemObject(command_queue, memobj, mapped_ptr,
                                                num_events_in_wait_list, event_wait_list, event);
     ANGLE_CAPTURE_CL(EnqueueUnmapMemObject, true, command_queue, memobj, mapped_ptr,
@@ -1440,7 +1440,7 @@ cl_int CL_API_CALL clEnqueueMarker(cl_command_queue command_queue, cl_event *eve
 
     ANGLE_CL_VALIDATE_ERROR(EnqueueMarker, command_queue, event);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = EnqueueMarker(command_queue, event);
     ANGLE_CAPTURE_CL(EnqueueMarker, true, command_queue, event, returnValue);
     return returnValue;
@@ -1456,7 +1456,7 @@ cl_int CL_API_CALL clEnqueueWaitForEvents(cl_command_queue command_queue,
 
     ANGLE_CL_VALIDATE_ERROR(EnqueueWaitForEvents, command_queue, num_events, event_list);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = EnqueueWaitForEvents(command_queue, num_events, event_list);
     ANGLE_CAPTURE_CL(EnqueueWaitForEvents, true, command_queue, num_events, event_list,
                      returnValue);
@@ -1469,7 +1469,7 @@ cl_int CL_API_CALL clEnqueueBarrier(cl_command_queue command_queue)
 
     ANGLE_CL_VALIDATE_ERROR(EnqueueBarrier, command_queue);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = EnqueueBarrier(command_queue);
     ANGLE_CAPTURE_CL(EnqueueBarrier, true, command_queue, returnValue);
     return returnValue;
@@ -1481,7 +1481,7 @@ cl_int CL_API_CALL clUnloadCompiler()
 
     ANGLE_CL_VALIDATE_ERROR(UnloadCompiler);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = UnloadCompiler();
     ANGLE_CAPTURE_CL(UnloadCompiler, true, returnValue);
     return returnValue;
@@ -1628,7 +1628,7 @@ cl_int CL_API_CALL clSetMemObjectDestructorCallback(cl_mem memobj,
 
     ANGLE_CL_VALIDATE_ERROR(SetMemObjectDestructorCallback, memobj, pfn_notify, user_data);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = SetMemObjectDestructorCallback(memobj, pfn_notify, user_data);
     ANGLE_CAPTURE_CL(SetMemObjectDestructorCallback, true, memobj, pfn_notify, user_data,
                      returnValue);
@@ -1661,7 +1661,7 @@ cl_int CL_API_CALL clSetUserEventStatus(cl_event event, cl_int execution_status)
 
     ANGLE_CL_VALIDATE_ERROR(SetUserEventStatus, event, execution_status);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = SetUserEventStatus(event, execution_status);
     ANGLE_CAPTURE_CL(SetUserEventStatus, true, event, execution_status, returnValue);
     return returnValue;
@@ -1853,7 +1853,7 @@ cl_int CL_API_CALL clRetainDevice(cl_device_id device)
 
     ANGLE_CL_VALIDATE_ERROR(RetainDevice, device);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = RetainDevice(device);
     ANGLE_CAPTURE_CL(RetainDevice, true, device, returnValue);
     return returnValue;
@@ -1865,7 +1865,7 @@ cl_int CL_API_CALL clReleaseDevice(cl_device_id device)
 
     ANGLE_CL_VALIDATE_ERROR(ReleaseDevice, device);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = ReleaseDevice(device);
     ANGLE_CAPTURE_CL(ReleaseDevice, true, device, returnValue);
     return returnValue;
@@ -2011,7 +2011,7 @@ cl_int CL_API_CALL clUnloadPlatformCompiler(cl_platform_id platform)
 
     ANGLE_CL_VALIDATE_ERROR(UnloadPlatformCompiler, platform);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = UnloadPlatformCompiler(platform);
     ANGLE_CAPTURE_CL(UnloadPlatformCompiler, true, platform, returnValue);
     return returnValue;
@@ -2037,7 +2037,7 @@ cl_int CL_API_CALL clGetKernelArgInfo(cl_kernel kernel,
     ANGLE_CL_VALIDATE_ERROR(GetKernelArgInfo, kernel, arg_index, param_namePacked, param_value_size,
                             param_value, param_value_size_ret);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = GetKernelArgInfo(kernel, arg_index, param_namePacked, param_value_size,
                                           param_value, param_value_size_ret);
     ANGLE_CAPTURE_CL(GetKernelArgInfo, true, kernel, arg_index, param_namePacked, param_value_size,
@@ -2066,7 +2066,7 @@ cl_int CL_API_CALL clEnqueueFillBuffer(cl_command_queue command_queue,
     ANGLE_CL_VALIDATE_ERROR(EnqueueFillBuffer, command_queue, buffer, pattern, pattern_size, offset,
                             size, num_events_in_wait_list, event_wait_list, event);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = EnqueueFillBuffer(command_queue, buffer, pattern, pattern_size, offset,
                                            size, num_events_in_wait_list, event_wait_list, event);
     ANGLE_CAPTURE_CL(EnqueueFillBuffer, true, command_queue, buffer, pattern, pattern_size, offset,
@@ -2095,7 +2095,7 @@ cl_int CL_API_CALL clEnqueueFillImage(cl_command_queue command_queue,
     ANGLE_CL_VALIDATE_ERROR(EnqueueFillImage, command_queue, image, fill_color, origin, region,
                             num_events_in_wait_list, event_wait_list, event);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = EnqueueFillImage(command_queue, image, fill_color, origin, region,
                                           num_events_in_wait_list, event_wait_list, event);
     ANGLE_CAPTURE_CL(EnqueueFillImage, true, command_queue, image, fill_color, origin, region,
@@ -2347,7 +2347,7 @@ cl_int CL_API_CALL clSetKernelArgSVMPointer(cl_kernel kernel,
 
     ANGLE_CL_VALIDATE_ERROR(SetKernelArgSVMPointer, kernel, arg_index, arg_value);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = SetKernelArgSVMPointer(kernel, arg_index, arg_value);
     ANGLE_CAPTURE_CL(SetKernelArgSVMPointer, true, kernel, arg_index, arg_value, returnValue);
     return returnValue;
@@ -2368,7 +2368,7 @@ cl_int CL_API_CALL clSetKernelExecInfo(cl_kernel kernel,
     ANGLE_CL_VALIDATE_ERROR(SetKernelExecInfo, kernel, param_namePacked, param_value_size,
                             param_value);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = SetKernelExecInfo(kernel, param_namePacked, param_value_size, param_value);
     ANGLE_CAPTURE_CL(SetKernelExecInfo, true, kernel, param_namePacked, param_value_size,
                      param_value, returnValue);
@@ -2431,7 +2431,7 @@ cl_int CL_API_CALL clEnqueueSVMMemcpy(cl_command_queue command_queue,
     ANGLE_CL_VALIDATE_ERROR(EnqueueSVMMemcpy, command_queue, blocking_copy, dst_ptr, src_ptr, size,
                             num_events_in_wait_list, event_wait_list, event);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = EnqueueSVMMemcpy(command_queue, blocking_copy, dst_ptr, src_ptr, size,
                                           num_events_in_wait_list, event_wait_list, event);
     ANGLE_CAPTURE_CL(EnqueueSVMMemcpy, true, command_queue, blocking_copy, dst_ptr, src_ptr, size,
@@ -2459,7 +2459,7 @@ cl_int CL_API_CALL clEnqueueSVMMemFill(cl_command_queue command_queue,
     ANGLE_CL_VALIDATE_ERROR(EnqueueSVMMemFill, command_queue, svm_ptr, pattern, pattern_size, size,
                             num_events_in_wait_list, event_wait_list, event);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = EnqueueSVMMemFill(command_queue, svm_ptr, pattern, pattern_size, size,
                                            num_events_in_wait_list, event_wait_list, event);
     ANGLE_CAPTURE_CL(EnqueueSVMMemFill, true, command_queue, svm_ptr, pattern, pattern_size, size,
@@ -2490,7 +2490,7 @@ cl_int CL_API_CALL clEnqueueSVMMap(cl_command_queue command_queue,
     ANGLE_CL_VALIDATE_ERROR(EnqueueSVMMap, command_queue, blocking_map, flagsPacked, svm_ptr, size,
                             num_events_in_wait_list, event_wait_list, event);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = EnqueueSVMMap(command_queue, blocking_map, flagsPacked, svm_ptr, size,
                                        num_events_in_wait_list, event_wait_list, event);
     ANGLE_CAPTURE_CL(EnqueueSVMMap, true, command_queue, blocking_map, flagsPacked, svm_ptr, size,
@@ -2534,7 +2534,7 @@ cl_int CL_API_CALL clSetDefaultDeviceCommandQueue(cl_context context,
 
     ANGLE_CL_VALIDATE_ERROR(SetDefaultDeviceCommandQueue, context, device, command_queue);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = SetDefaultDeviceCommandQueue(context, device, command_queue);
     ANGLE_CAPTURE_CL(SetDefaultDeviceCommandQueue, true, context, device, command_queue,
                      returnValue);
@@ -2552,7 +2552,7 @@ cl_int CL_API_CALL clGetDeviceAndHostTimer(cl_device_id device,
 
     ANGLE_CL_VALIDATE_ERROR(GetDeviceAndHostTimer, device, device_timestamp, host_timestamp);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = GetDeviceAndHostTimer(device, device_timestamp, host_timestamp);
     ANGLE_CAPTURE_CL(GetDeviceAndHostTimer, true, device, device_timestamp, host_timestamp,
                      returnValue);
@@ -2566,7 +2566,7 @@ cl_int CL_API_CALL clGetHostTimer(cl_device_id device, cl_ulong *host_timestamp)
 
     ANGLE_CL_VALIDATE_ERROR(GetHostTimer, device, host_timestamp);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = GetHostTimer(device, host_timestamp);
     ANGLE_CAPTURE_CL(GetHostTimer, true, device, host_timestamp, returnValue);
     return returnValue;
@@ -2695,7 +2695,7 @@ cl_int CL_API_CALL clSetProgramReleaseCallback(cl_program program,
 
     ANGLE_CL_VALIDATE_ERROR(SetProgramReleaseCallback, program, pfn_notify, user_data);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = SetProgramReleaseCallback(program, pfn_notify, user_data);
     ANGLE_CAPTURE_CL(SetProgramReleaseCallback, true, program, pfn_notify, user_data, returnValue);
     return returnValue;
@@ -2714,7 +2714,7 @@ cl_int CL_API_CALL clSetProgramSpecializationConstant(cl_program program,
     ANGLE_CL_VALIDATE_ERROR(SetProgramSpecializationConstant, program, spec_id, spec_size,
                             spec_value);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = SetProgramSpecializationConstant(program, spec_id, spec_size, spec_value);
     ANGLE_CAPTURE_CL(SetProgramSpecializationConstant, true, program, spec_id, spec_size,
                      spec_value, returnValue);
@@ -2734,7 +2734,7 @@ cl_int CL_API_CALL clSetContextDestructorCallback(cl_context context,
 
     ANGLE_CL_VALIDATE_ERROR(SetContextDestructorCallback, context, pfn_notify, user_data);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = SetContextDestructorCallback(context, pfn_notify, user_data);
     ANGLE_CAPTURE_CL(SetContextDestructorCallback, true, context, pfn_notify, user_data,
                      returnValue);
@@ -2808,6 +2808,37 @@ cl_mem CL_API_CALL clCreateImageWithProperties(cl_context context,
     return object;
 }
 
+// cl_arm_import_memory
+cl_mem CL_API_CALL clImportMemoryARM(cl_context context,
+                                     cl_mem_flags flags,
+                                     const cl_import_properties_arm *properties,
+                                     void *memory,
+                                     size_t size,
+                                     cl_int *errcode_ret)
+{
+    CL_EVENT(ImportMemoryARM,
+             "context = 0x%016" PRIxPTR ", flags = %llu, properties = 0x%016" PRIxPTR
+             ", memory = 0x%016" PRIxPTR ", size = %zu, errcode_ret = 0x%016" PRIxPTR "",
+             (uintptr_t)context, static_cast<unsigned long long>(flags), (uintptr_t)properties,
+             (uintptr_t)memory, size, (uintptr_t)errcode_ret);
+
+    MemFlags flagsPacked = PackParam<MemFlags>(flags);
+
+    ANGLE_CL_VALIDATE_ERRCODE_RET(ImportMemoryARM, context, flagsPacked, properties, memory, size);
+
+    cl::gClErrorTls = CL_SUCCESS;
+    cl_mem object   = ImportMemoryARM(context, flagsPacked, properties, memory, size);
+
+    ASSERT((cl::gClErrorTls == CL_SUCCESS) == (object != nullptr));
+    if (errcode_ret != nullptr)
+    {
+        *errcode_ret = cl::gClErrorTls;
+    }
+    ANGLE_CAPTURE_CL(ImportMemoryARM, true, context, flagsPacked, properties, memory, size,
+                     errcode_ret, object);
+    return object;
+}
+
 // cl_khr_external_memory
 cl_int CL_API_CALL clEnqueueAcquireExternalMemObjectsKHR(cl_command_queue command_queue,
                                                          cl_uint num_mem_objects,
@@ -2874,7 +2905,7 @@ cl_int CL_API_CALL clIcdGetPlatformIDsKHR(cl_uint num_entries,
 
     ANGLE_CL_VALIDATE_ERROR(IcdGetPlatformIDsKHR, num_entries, platforms, num_platforms);
 
-    cl::gClErrorTls = CL_SUCCESS;
+    cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = IcdGetPlatformIDsKHR(num_entries, platforms, num_platforms);
     ANGLE_CAPTURE_CL(IcdGetPlatformIDsKHR, true, num_entries, platforms, num_platforms,
                      returnValue);
@@ -2907,6 +2938,41 @@ cl_int CL_API_CALL clIcdSetPlatformDispatchDataKHR(cl_platform_id platform, void
     cl::gClErrorTls    = CL_SUCCESS;
     cl_int returnValue = IcdSetPlatformDispatchDataKHR(platform, dispatch_data);
     ANGLE_CAPTURE_CL(IcdSetPlatformDispatchDataKHR, true, platform, dispatch_data, returnValue);
+    return returnValue;
+}
+
+// cl_khr_subgroups
+cl_int CL_API_CALL clGetKernelSubGroupInfoKHR(cl_kernel in_kernel,
+                                              cl_device_id in_device,
+                                              cl_kernel_sub_group_info param_name,
+                                              size_t input_value_size,
+                                              const void *input_value,
+                                              size_t param_value_size,
+                                              void *param_value,
+                                              size_t *param_value_size_ret)
+{
+    CL_EVENT(GetKernelSubGroupInfoKHR,
+             "in_kernel = 0x%016" PRIxPTR ", in_device = 0x%016" PRIxPTR
+             ", param_name = %u, input_value_size = %zu, input_value = 0x%016" PRIxPTR
+             ", param_value_size = %zu, param_value = 0x%016" PRIxPTR
+             ", param_value_size_ret = 0x%016" PRIxPTR "",
+             (uintptr_t)in_kernel, (uintptr_t)in_device, param_name, input_value_size,
+             (uintptr_t)input_value, param_value_size, (uintptr_t)param_value,
+             (uintptr_t)param_value_size_ret);
+
+    KernelSubGroupInfo param_namePacked = PackParam<KernelSubGroupInfo>(param_name);
+
+    ANGLE_CL_VALIDATE_ERROR(GetKernelSubGroupInfoKHR, in_kernel, in_device, param_namePacked,
+                            input_value_size, input_value, param_value_size, param_value,
+                            param_value_size_ret);
+
+    cl::gClErrorTls = CL_SUCCESS;
+    cl_int returnValue =
+        GetKernelSubGroupInfoKHR(in_kernel, in_device, param_namePacked, input_value_size,
+                                 input_value, param_value_size, param_value, param_value_size_ret);
+    ANGLE_CAPTURE_CL(GetKernelSubGroupInfoKHR, true, in_kernel, in_device, param_namePacked,
+                     input_value_size, input_value, param_value_size, param_value,
+                     param_value_size_ret, returnValue);
     return returnValue;
 }
 

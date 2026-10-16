@@ -27,6 +27,7 @@
 #include "HTMLParserOptions.h"
 
 #include "Document.h"
+#include "FrameDestructionObserverInlines.h"
 #include "LocalFrame.h"
 #include "ScriptController.h"
 #include "Settings.h"
@@ -37,6 +38,7 @@ HTMLParserOptions::HTMLParserOptions()
     : scriptingFlag(false)
     , usePreHTML5ParserQuirks(false)
     , enhancedSelect(false)
+    , enhancedSelectQuirk(false)
     , maximumDOMTreeDepth(Settings::defaultMaximumHTMLParserDOMTreeDepth)
 {
 }
@@ -47,10 +49,11 @@ HTMLParserOptions::HTMLParserOptions(Document& document)
     if (document.settings().htmlParserScriptingFlagPolicy() == HTMLParserScriptingFlagPolicy::Enabled)
         scriptingFlag = true;
     else
-        scriptingFlag = frame && frame->checkedScript()->canExecuteScripts(ReasonForCallingCanExecuteScripts::NotAboutToExecuteScript) && document.allowsContentJavaScript();
+        scriptingFlag = frame && protect(frame->script())->canExecuteScripts(ReasonForCallingCanExecuteScripts::NotAboutToExecuteScript) && document.allowsContentJavaScript();
 
     usePreHTML5ParserQuirks = document.settings().usePreHTML5ParserQuirks();
     enhancedSelect = document.settings().htmlEnhancedSelectParsingEnabled();
+    enhancedSelectQuirk = document.settings().htmlEnhancedSelectParsingQuirkEnabled();
     maximumDOMTreeDepth = document.settings().maximumHTMLParserDOMTreeDepth();
 }
 

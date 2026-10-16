@@ -37,7 +37,10 @@
 
 namespace JSC {
 
-constinit const char radixDigits[] = "0123456789abcdefghijklmnopqrstuvwxyz";
+bool JSValue::isHeapBigIntSlow() const
+{
+    return isHeapBigInt();
+}
 
 double JSValue::toIntegerPreserveNaN(JSGlobalObject* globalObject) const
 {
@@ -269,18 +272,7 @@ void JSValue::dumpInContextAssumingStructure(
     else if (isInt32())
         out.printf("Int32: %d", asInt32());
     else if (isDouble()) {
-#if USE(JSVALUE64)
         out.printf("Double: %lld, %lf", (long long)reinterpretDoubleToInt64(asDouble()), asDouble());
-#else
-        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-        union {
-            double asDouble;
-            uint32_t asTwoInt32s[2];
-        } u;
-        u.asDouble = asDouble();
-        out.printf("Double: %08x:%08x, %lf", u.asTwoInt32s[1], u.asTwoInt32s[0], asDouble());
-        WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-#endif
     } else if (isCell()) {
         if (structure->classInfoForCells()->isSubClassOf(JSString::info())) {
             JSString* string = asString(asCell());
@@ -302,24 +294,25 @@ void JSValue::dumpInContextAssumingStructure(
             out.print(",length:(", string->length(), ")");
             out.print(": ", impl);
         } else if (structure->classInfoForCells()->isSubClassOf(RegExp::info()))
-            out.print("RegExp: ", *jsCast<RegExp*>(asCell()));
+            out.print("RegExp: ", *uncheckedDowncast<RegExp>(asCell()));
         else if (structure->classInfoForCells()->isSubClassOf(Symbol::info()))
             out.print("Symbol: ", RawPointer(asCell()));
         else if (structure->classInfoForCells()->isSubClassOf(Structure::info()))
-            out.print("Structure: ", inContext(*jsCast<Structure*>(asCell()), context));
+            out.print("Structure: ", inContext(*uncheckedDowncast<Structure>(asCell()), context));
         else if (isHeapBigInt())
-            out.print("BigInt[heap-allocated]: addr=", RawPointer(asCell()), ", length=", jsCast<JSBigInt*>(asCell())->length(), ", sign=", jsCast<JSBigInt*>(asCell())->sign());
+            out.print("BigInt[heap-allocated]: addr=", RawPointer(asCell()), ", length=", uncheckedDowncast<JSBigInt>(asCell())->length(), ", sign=", uncheckedDowncast<JSBigInt>(asCell())->sign());
         else if (structure->classInfoForCells()->isSubClassOf(JSObject::info())) {
             out.print("Object: ", RawPointer(asCell()));
-            out.print(" with butterfly ", RawPointer(asObject(asCell())->butterfly()), "(base=", RawPointer(asObject(asCell())->butterfly()->base(structure)), ")");
+            auto* butterfly = asObject(asCell())->butterfly();
+            out.print(" with butterfly ", RawPointer(butterfly));
+            if (butterfly)
+                out.print("(base=", RawPointer(butterfly->base(structure)), ")");
             out.print(" (Structure ", inContext(*structure, context), ")");
         } else {
             out.print("Cell: ", RawPointer(asCell()));
             out.print(" (", inContext(*structure, context), ")");
         }
-#if USE(JSVALUE64)
         out.print(", StructureID: ", asCell()->structureID().bits());
-#endif
     } else if (isTrue())
         out.print("True");
     else if (isFalse())
@@ -439,9 +432,9 @@ WTF::String JSValue::toWTFStringForConsole(JSGlobalObject* globalObject) const
     RETURN_IF_EXCEPTION(scope, { });
     if (isString())
         return tryMakeString('"', result.data, '"');
-    if (jsDynamicCast<JSArray*>(*this))
+    if (is<JSArray>(*this))
         return tryMakeString('[', result.data, ']');
-    if (jsDynamicCast<JSBigInt*>(*this))
+    if (is<JSBigInt>(*this))
         return tryMakeString(result.data, 'n');
     return result;
 }

@@ -37,11 +37,10 @@
 namespace WebCore {
 namespace MQ {
 
-MediaQueryEvaluator::MediaQueryEvaluator(const AtomString& mediaType, const Document& document, const RenderStyle* rootElementStyle)
+MediaQueryEvaluator::MediaQueryEvaluator(const AtomString& mediaType, const Document& document)
     : GenericMediaQueryEvaluator()
     , m_mediaType(mediaType)
     , m_document(document)
-    , m_rootElementStyle(rootElementStyle)
 {
 }
 
@@ -79,14 +78,21 @@ bool MediaQueryEvaluator::evaluate(const MediaQuery& query) const
         if (!document)
             return m_staticMediaConditionResult;
 
-        CheckedPtr rootElementStyle = m_rootElementStyle;
-        if (!rootElementStyle)
-            return m_staticMediaConditionResult;
-
         if (!document->view() || !document->documentElement())
             return EvaluationResult::Unknown;
 
-        FeatureEvaluationContext context { *document, { *rootElementStyle, rootElementStyle.get(), nullptr, document->renderView() }, nullptr };
+        CheckedRef initialStyle = document->initialStyle();
+        FeatureEvaluationContext context {
+            .document = *document,
+            .conversionData = CSSToLengthConversionData {
+                initialStyle,
+                initialStyle.ptr(),
+                initialStyle.ptr(),
+                protect(document->renderView()),
+                nullptr
+            },
+            .renderer = nullptr
+        };
         return evaluateCondition(*query.condition, context);
     }();
 

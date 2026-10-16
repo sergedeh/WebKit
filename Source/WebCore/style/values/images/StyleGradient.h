@@ -84,7 +84,8 @@ using GradientAngularColorStop = GradientColorStop<GradientAngularColorStopColor
 using GradientAngularColorStopList = GradientColorStopList<GradientAngularColorStop>;
 
 using GradientLinearColorStopColor = Markable<Color>;
-using GradientLinearColorStopPosition = std::optional<LengthPercentage<>>;
+// FIXME: `GradientLinearColorStopPosition` should use a range of `All`, but doing so was causing imported/w3c/web-platform-tests/css/css-images/gradient/gradient-infinity-001.html to fail for the GTK/WPE graphics backends.
+using GradientLinearColorStopPosition = std::optional<LengthPercentage<CSS::AllLayoutUnitClamped>>;
 using GradientLinearColorStop = GradientColorStop<GradientLinearColorStopColor, GradientLinearColorStopPosition>;
 using GradientLinearColorStopList = GradientColorStopList<GradientLinearColorStop>;
 
@@ -93,9 +94,9 @@ using GradientDeprecatedColorStopPosition = NumberOrPercentageResolvedToNumber<>
 using GradientDeprecatedColorStop = GradientColorStop<GradientDeprecatedColorStopColor, GradientDeprecatedColorStopPosition>;
 using GradientDeprecatedColorStopList = GradientColorStopList<GradientDeprecatedColorStop>;
 
-template<> struct ToCSS<GradientAngularColorStop> { auto operator()(const GradientAngularColorStop&, const RenderStyle&) -> CSS::GradientAngularColorStop; };
-template<> struct ToCSS<GradientLinearColorStop> { auto operator()(const GradientLinearColorStop&, const RenderStyle&) -> CSS::GradientLinearColorStop; };
-template<> struct ToCSS<GradientDeprecatedColorStop> { auto operator()(const GradientDeprecatedColorStop&, const RenderStyle&) -> CSS::GradientDeprecatedColorStop; };
+template<> struct ToCSS<GradientAngularColorStop> { auto operator()(const GradientAngularColorStop&, const Style::ComputedStyle&) -> CSS::GradientAngularColorStop; };
+template<> struct ToCSS<GradientLinearColorStop> { auto operator()(const GradientLinearColorStop&, const Style::ComputedStyle&) -> CSS::GradientLinearColorStop; };
+template<> struct ToCSS<GradientDeprecatedColorStop> { auto operator()(const GradientDeprecatedColorStop&, const Style::ComputedStyle&) -> CSS::GradientDeprecatedColorStop; };
 
 template<> struct ToStyle<CSS::GradientAngularColorStop> { auto operator()(const CSS::GradientAngularColorStop&, const BuilderState&) -> GradientAngularColorStop; };
 template<> struct ToStyle<CSS::GradientLinearColorStop> { auto operator()(const CSS::GradientLinearColorStop&, const BuilderState&) -> GradientLinearColorStop; };
@@ -368,32 +369,35 @@ DEFINE_TYPE_MAPPING(CSS::ConicGradient, ConicGradient)
 
 using Gradient = Variant<
     // Linear
-    FunctionNotation<CSSValueLinearGradient, LinearGradient>,
-    FunctionNotation<CSSValueRepeatingLinearGradient, LinearGradient>,
-    FunctionNotation<CSSValueWebkitLinearGradient, PrefixedLinearGradient>,
-    FunctionNotation<CSSValueWebkitRepeatingLinearGradient, PrefixedLinearGradient>,
-    FunctionNotation<CSSValueWebkitGradient, DeprecatedLinearGradient>,
+    FunctionNotation<CSSValueID::LinearGradient, LinearGradient>,
+    FunctionNotation<CSSValueID::RepeatingLinearGradient, LinearGradient>,
+    FunctionNotation<CSSValueID::WebkitLinearGradient, PrefixedLinearGradient>,
+    FunctionNotation<CSSValueID::WebkitRepeatingLinearGradient, PrefixedLinearGradient>,
+    FunctionNotation<CSSValueID::WebkitGradient, DeprecatedLinearGradient>,
 
     // Radial
-    FunctionNotation<CSSValueRadialGradient, RadialGradient>,
-    FunctionNotation<CSSValueRepeatingRadialGradient, RadialGradient>,
-    FunctionNotation<CSSValueWebkitRadialGradient, PrefixedRadialGradient>,
-    FunctionNotation<CSSValueWebkitRepeatingRadialGradient, PrefixedRadialGradient>,
-    FunctionNotation<CSSValueWebkitGradient, DeprecatedRadialGradient>,
+    FunctionNotation<CSSValueID::RadialGradient, RadialGradient>,
+    FunctionNotation<CSSValueID::RepeatingRadialGradient, RadialGradient>,
+    FunctionNotation<CSSValueID::WebkitRadialGradient, PrefixedRadialGradient>,
+    FunctionNotation<CSSValueID::WebkitRepeatingRadialGradient, PrefixedRadialGradient>,
+    FunctionNotation<CSSValueID::WebkitGradient, DeprecatedRadialGradient>,
 
     // Conic
-    FunctionNotation<CSSValueConicGradient, ConicGradient>,
-    FunctionNotation<CSSValueRepeatingConicGradient, ConicGradient>
+    FunctionNotation<CSSValueID::ConicGradient, ConicGradient>,
+    FunctionNotation<CSSValueID::RepeatingConicGradient, ConicGradient>
 >;
 
 // Creates a platform gradient from the style representation.
-Ref<WebCore::Gradient> createPlatformGradient(const Gradient&, const FloatSize&, const RenderStyle&);
+Ref<WebCore::Gradient> createPlatformGradient(const Gradient&, const FloatSize&, const Style::ComputedStyle&);
 
 // Returns whether it caching based on the gradient's stops is allowed.
 WEBCORE_EXPORT bool stopsAreCacheable(const Gradient&);
 
+// Returns whether any of the gradient's stops depend on currentColor.
+bool containsCurrentColor(const Gradient&);
+
 // Returns whether the gradient is opaque.
-bool isOpaque(const Gradient&, const RenderStyle&);
+bool isOpaque(const Gradient&, const Style::ComputedStyle&);
 
 } // namespace Style
 } // namespace WebCore

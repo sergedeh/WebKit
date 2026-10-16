@@ -43,14 +43,16 @@
 
 #pragma once
 
-#include <JavaScriptCore/DateInstanceCache.h>
+#include <JavaScriptCore/JSCTimeZone.h>
 #include <JavaScriptCore/JSExportMacros.h>
+#include <JavaScriptCore/PureNaN.h>
 #include <wtf/Compiler.h>
 #include <wtf/DateMath.h>
-#include <wtf/GregorianDateTime.h>
+#include <wtf/HashFunctions.h>
+#include <wtf/PlainGregorianDateTime.h>
 #include <wtf/Platform.h>
-#include <wtf/SaturatedArithmetic.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/TimeZone.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -62,10 +64,6 @@ class OpaqueICUTimeZone;
 class VM;
 
 static constexpr double minECMAScriptTime = -8.64E15;
-
-#if PLATFORM(COCOA)
-extern JS_EXPORT_PRIVATE std::atomic<uint64_t> lastTimeZoneID;
-#endif
 
 // We do not expose icu::TimeZone in this header file. And we cannot use icu::TimeZone forward declaration
 // because icu namespace can be an alias to icu$verNum namespace.
@@ -93,36 +91,31 @@ public:
 
     bool hasTimeZoneChange()
     {
-#if PLATFORM(COCOA)
-        return m_cachedTimezoneID != lastTimeZoneID;
+#if USE(TIME_ZONE_CHANGE_NOTIFICATIONS)
+        return m_cachedTimeZoneID != WTF::lastTimeZoneID();
 #else
-        return true; // always force a time zone check.
+        return true;
 #endif
     }
 
-    void resetIfNecessary()
-    {
-#if PLATFORM(COCOA)
-        if (!hasTimeZoneChange()) [[likely]]
-            return;
-        m_cachedTimezoneID = lastTimeZoneID;
-#endif
-        resetIfNecessarySlow();
-    }
+    JS_EXPORT_PRIVATE void clearForTimeZoneChange();
 
-    JS_EXPORT_PRIVATE void resetIfNecessarySlow();
+    // A DateInstance's cached local-time breakdown is only valid for the zone it was computed in,
+    // and nothing tracks which instances hold one, so a zone change has to sweep the heap. Skip
+    // that walk entirely while no instance has decomposed a local time.
+    void noteCachedLocalGregorianDateTime() { m_mayHaveCachedLocalGregorianDateTime = true; }
+    bool takeMayHaveCachedLocalGregorianDateTime() { return std::exchange(m_mayHaveCachedLocalGregorianDateTime, false); }
 
-    String defaultTimeZone();
+    TimeZone defaultTimeZone();
     String timeZoneDisplayName(bool isDST);
-    Ref<DateInstanceData> cachedDateInstanceData(double millisecondsFromEpoch);
 
-    void msToGregorianDateTime(double millisecondsFromEpoch, TimeType outputTimeType, GregorianDateTime&);
-    double gregorianDateTimeToMS(const GregorianDateTime&, double milliseconds, TimeType);
+    // Whether to consult the cross-instance memo. It pays off for a Date built from a time value
+    // some other Date has already decomposed, and costs a probe for one being walked forward.
+    enum class UseSharedCache : bool { No, Yes };
+    PlainGregorianDateTime msToGregorianDateTime(double millisecondsFromEpoch, TimeType outputTimeType, UseSharedCache = UseSharedCache::Yes);
+    double gregorianDateTimeToMS(int32_t year, int32_t month, int32_t monthDay, int32_t hour, int32_t minute, int32_t second, double milliseconds, TimeType);
     double localTimeToMS(double milliseconds, TimeType);
     JS_EXPORT_PRIVATE double parseDate(JSGlobalObject*, VM&, const WTF::String&);
-    std::tuple<int32_t, int32_t, int32_t> yearMonthDayFromDaysWithCache(int32_t days);
-
-    static void timeZoneChanged();
 
 private:
     class DSTCache {
@@ -158,7 +151,7 @@ private:
         LocalTimeOffset localTimeOffset(DateCache&, int64_t millisecondsFromEpoch, TimeType);
 
     private:
-        LocalTimeOffsetCache* leastRecentlyUsed(LocalTimeOffsetCache* exclude);
+        LocalTimeOffsetCache* LEGACY_NODELETE leastRecentlyUsed(LocalTimeOffsetCache* exclude);
         std::tuple<LocalTimeOffsetCache*, LocalTimeOffsetCache*> probe(int64_t millisecondsFromEpoch);
         void extendTheAfterCache(int64_t millisecondsFromEpoch, LocalTimeOffset);
 
@@ -175,31 +168,58 @@ private:
         int32_t m_day { 0 };
     };
 
+    // Memoizes the broken-down form of a time value across DateInstances: building a fresh Date
+    // from a time value another Date has already decomposed is a common shape.
+    class BrokenDownDateCache {
+    public:
+        static constexpr unsigned cacheSize = 8;
+
+        PlainGregorianDateTime get(double millisecondsFromEpoch)
+        {
+            auto& entry = lookup(millisecondsFromEpoch);
+            if (entry.key != millisecondsFromEpoch)
+                return { };
+            return entry.value;
+        }
+
+        void set(double millisecondsFromEpoch, PlainGregorianDateTime value)
+        {
+            lookup(millisecondsFromEpoch) = { millisecondsFromEpoch, value };
+        }
+
+        void reset() { m_entries.fill({ }); }
+
+    private:
+        struct Entry {
+            double key { PNaN };
+            PlainGregorianDateTime value;
+        };
+
+        Entry& lookup(double millisecondsFromEpoch)
+        {
+            return m_entries[WTF::FloatHash<double>::hash(millisecondsFromEpoch) & (cacheSize - 1)];
+        }
+
+        std::array<Entry, cacheSize> m_entries { };
+    };
+
     void timeZoneCacheSlow();
-    LocalTimeOffset localTimeOffset(int64_t millisecondsFromEpoch, TimeType inputTimeType = TimeType::UTCTime)
-    {
-        using Underlying = std::underlying_type_t<TimeType>;
-        static_assert(!static_cast<Underlying>(TimeType::UTCTime));
-        static_assert(static_cast<Underlying>(TimeType::LocalTime) == 1);
-        return m_caches[static_cast<unsigned>(inputTimeType)].localTimeOffset(*this, millisecondsFromEpoch, inputTimeType);
-    }
+    LocalTimeOffset localTimeOffset(int64_t millisecondsFromEpoch, TimeType = TimeType::UTCTime);
 
     LocalTimeOffset calculateLocalTimeOffset(double millisecondsFromEpoch, TimeType inputTimeType);
+    PlainGregorianDateTime computeGregorianDateTime(double millisecondsFromEpoch, TimeType outputTimeType);
+    std::tuple<int32_t, int32_t, int32_t> yearMonthDayFromDaysWithCache(int32_t days);
 
-    OpaqueICUTimeZone* timeZoneCache()
-    {
-        if (!m_timeZoneCache)
-            timeZoneCacheSlow();
-        return m_timeZoneCache.get();
-    }
+    OpaqueICUTimeZone* timeZoneCache();
 
     std::unique_ptr<OpaqueICUTimeZone, OpaqueICUTimeZoneDeleter> m_timeZoneCache;
     std::array<DSTCache, 2> m_caches;
     std::optional<YearMonthDayCache> m_yearMonthDayCache;
     String m_cachedDateString;
     double m_cachedDateStringValue;
-    DateInstanceCache m_dateInstanceCache;
-    uint64_t m_cachedTimezoneID { 0 };
+    std::array<BrokenDownDateCache, 2> m_brokenDownDateCaches;
+    uint64_t m_cachedTimeZoneID { 0 };
+    bool m_mayHaveCachedLocalGregorianDateTime { false };
     String m_timeZoneStandardDisplayNameCache;
     String m_timeZoneDSTDisplayNameCache;
 };

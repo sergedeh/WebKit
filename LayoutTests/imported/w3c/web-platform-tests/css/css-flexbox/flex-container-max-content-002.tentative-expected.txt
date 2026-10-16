@@ -1,0 +1,87 @@
+X
+
+X
+
+X
+
+X X
+X X
+
+X X
+X X
+
+X X
+X X
+X
+
+X
+
+X
+
+X X
+X X
+
+X X
+X X
+
+X X
+X X
+X
+
+X
+
+X
+
+X X
+X X
+
+X X
+X X
+
+X X
+X X
+X
+
+X
+
+X
+
+X X
+X X
+
+X X
+X X
+
+X X
+X X
+
+PASS .flex 1
+PASS .flex 2
+PASS .flex 3
+PASS .flex 4
+PASS .flex 5
+PASS .flex 6
+PASS .flex 7
+PASS .flex 8
+PASS .flex 9
+PASS .flex 10
+PASS .flex 11
+PASS .flex 12
+PASS .flex 13
+PASS .flex 14
+PASS .flex 15
+PASS .flex 16
+PASS .flex 17
+PASS .flex 18
+PASS .flex 19
+PASS .flex 20
+PASS .flex 21
+PASS .flex 22
+FAIL .flex 23 assert_equals:
+<div class="flex min" style="flex-flow: column wrap" data-expected-width="180" data-expected-height="45">
+  <div data-expected-width="85" data-expected-height="35">X X</div>
+  <div data-expected-width="85" data-expected-height="35">X X</div>
+</div>
+width expected 180 but got 95
+PASS .flex 24
+

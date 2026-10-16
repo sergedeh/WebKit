@@ -30,6 +30,7 @@
 #import "DOMTokenListInternal.h"
 #import <WebCore/DOMTokenList.h>
 #import "ExceptionHandlers.h"
+#import <WebCore/ElementInlines.h>
 #import <WebCore/HTMLAnchorElement.h>
 #import <WebCore/HTMLNames.h>
 #import <WebCore/JSExecState.h>
@@ -38,7 +39,7 @@
 #import <wtf/GetPtr.h>
 #import <wtf/URL.h>
 
-#define IMPL static_cast<WebCore::HTMLAnchorElement*>(reinterpret_cast<WebCore::Node*>(_internal))
+#define IMPL protect(downcast<WebCore::HTMLAnchorElement>(reinterpret_cast<WebCore::Node*>(_internal)))
 
 @implementation DOMHTMLAnchorElement
 

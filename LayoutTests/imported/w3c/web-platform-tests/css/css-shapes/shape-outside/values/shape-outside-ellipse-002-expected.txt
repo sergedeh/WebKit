@@ -53,10 +53,10 @@ PASS ellipse(at top 50% right 80px) serializes as ellipse(at right 80px top 50%)
 PASS ellipse(at top 50px left 50%) serializes as ellipse(at left 50% top 50px) - inline
 PASS ellipse(at top 50px left 50px) serializes as ellipse(at left 50px top 50px) - inline
 PASS ellipse(at top 50px right 80%) serializes as ellipse(at right 80% top 50px) - inline
-PASS ellipse(at bottom 70%  left 50%) serializes as ellipse(at left 50% bottom 70%) - inline
-PASS ellipse(at bottom 70%  left 50px) serializes as ellipse(at left 50px bottom 70%) - inline
-PASS ellipse(at bottom 70%  right 80%) serializes as ellipse(at right 80% bottom 70%) - inline
-PASS ellipse(at bottom 70%  right 80px) serializes as ellipse(at right 80px bottom 70%) - inline
+PASS ellipse(at bottom 70% left 50%) serializes as ellipse(at left 50% bottom 70%) - inline
+PASS ellipse(at bottom 70% left 50px) serializes as ellipse(at left 50px bottom 70%) - inline
+PASS ellipse(at bottom 70% right 80%) serializes as ellipse(at right 80% bottom 70%) - inline
+PASS ellipse(at bottom 70% right 80px) serializes as ellipse(at right 80px bottom 70%) - inline
 PASS ellipse(at bottom 70px left 50%) serializes as ellipse(at left 50% bottom 70px) - inline
 PASS ellipse(at bottom 70px right 50%) serializes as ellipse(at right 50% bottom 70px) - inline
 PASS ellipse(at bottom 70px right 80px) serializes as ellipse(at right 80px bottom 70px) - inline

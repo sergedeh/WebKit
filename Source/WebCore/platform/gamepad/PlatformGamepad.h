@@ -28,19 +28,16 @@
 #if ENABLE(GAMEPAD)
 
 #include <WebCore/GamepadHapticEffectType.h>
-#include <WebCore/SharedGamepadValue.h>
+#include <wtf/CanMakeWeakPtr.h>
 #include <wtf/CheckedRef.h>
 #include <wtf/CompletionHandler.h>
-#include <wtf/Forward.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/TZoneMallocInlines.h>
-#include <wtf/WeakHashMap.h>
-#include <wtf/WeakHashSet.h>
-#include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
 
+class SharedGamepadValue;
 struct GamepadEffectParameters;
 
 class PlatformGamepad : public CanMakeWeakPtr<PlatformGamepad>, public CanMakeCheckedPtr<PlatformGamepad> {
@@ -49,12 +46,12 @@ class PlatformGamepad : public CanMakeWeakPtr<PlatformGamepad>, public CanMakeCh
 public:
     virtual ~PlatformGamepad() = default;
 
-    const String& id() const { return m_id; }
-    const String& mapping() const { return m_mapping; }
+    const String& id() const LIFETIME_BOUND { return m_id; }
+    const String& mapping() const LIFETIME_BOUND { return m_mapping; }
     unsigned index() const { return m_index; }
     virtual MonotonicTime lastUpdateTime() const { return m_lastUpdateTime; }
     MonotonicTime connectTime() const { return m_connectTime; }
-    const GamepadHapticEffectTypeSet& supportedEffectTypes() const { return m_supportedEffectTypes; }
+    const GamepadHapticEffectTypeSet& supportedEffectTypes() const LIFETIME_BOUND { return m_supportedEffectTypes; }
     
     virtual const Vector<SharedGamepadValue>& axisValues() const = 0;
     virtual const Vector<SharedGamepadValue>& buttonValues() const = 0;

@@ -45,11 +45,11 @@ public:
     Structure* oldStructure() const { return m_oldStructure; }
     Structure* newStructure() const { return m_newStructure; }
 
-    bool attemptToMerge(const SetPrivateBrandVariant& other);
+    bool LEGACY_NODELETE attemptToMerge(const SetPrivateBrandVariant& other);
 
     DECLARE_VISIT_AGGREGATE;
     template<typename Visitor> void markIfCheap(Visitor&);
-    bool finalize(VM&);
+    bool isStillLive(VM&);
 
     void dump(PrintStream&) const;
     void dumpInContext(PrintStream&, DumpContext*) const;

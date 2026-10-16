@@ -27,11 +27,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #pragma once
 
 #include <WebCore/Exception.h>
-#include <utility>
 #include <wtf/CrossThreadCopier.h>
-#include <wtf/Expected.h>
-#include <wtf/StdLibExtras.h>
-#include <wtf/Unexpected.h>
 
 namespace WebCore {
 
@@ -47,13 +43,13 @@ public:
 
 
     bool hasException() const;
-    const Exception& exception() const;
+    const Exception& exception() const LIFETIME_BOUND;
     Exception releaseException();
-    const ReturnType& returnValue() const;
+    const ReturnType& returnValue() const LIFETIME_BOUND;
     ReturnType releaseReturnValue();
     
 private:
-    Expected<ReturnType, Exception> m_value;
+    std::expected<ReturnType, Exception> m_value;
 #if ASSERT_ENABLED
     bool m_wasReleased { false };
 #endif
@@ -68,9 +64,9 @@ public:
     ExceptionOr(ReturnReferenceType&);
 
     bool hasException() const;
-    const Exception& exception() const;
+    const Exception& exception() const LIFETIME_BOUND;
     Exception releaseException();
-    const ReturnReferenceType& returnValue() const;
+    const ReturnReferenceType& returnValue() const LIFETIME_BOUND;
     ReturnReferenceType& releaseReturnValue();
     
 private:
@@ -85,11 +81,11 @@ public:
     ExceptionOr() = default;
 
     bool hasException() const;
-    const Exception& exception() const;
+    const Exception& exception() const LIFETIME_BOUND;
     Exception releaseException();
 
 private:
-    Expected<void, Exception> m_value;
+    std::expected<void, Exception> m_value;
 #if ASSERT_ENABLED
     bool m_wasReleased { false };
 #endif

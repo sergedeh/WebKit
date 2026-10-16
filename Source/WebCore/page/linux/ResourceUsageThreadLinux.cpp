@@ -43,6 +43,7 @@
 #include <unistd.h>
 #include <wtf/Threading.h>
 #include <wtf/linux/CurrentProcessMemoryStatus.h>
+#include <wtf/posix/POSIXExtras.h>
 #include <wtf/text/StringToIntegerConversion.h>
 
 #if USE(COORDINATED_GRAPHICS)
@@ -135,7 +136,7 @@ IGNORE_CLANG_WARNINGS_BEGIN("unsafe-buffer-usage-in-libc-call")
 static bool threadCPUUsage(pid_t id, float period, ThreadInfo& info)
 {
     String path = makeString("/proc/self/task/"_s, id, "/stat"_s);
-    int fd = open(path.utf8().data(), O_RDONLY);
+    int fd = posixOpen(path.utf8(), O_RDONLY);
     if (fd < 0)
         return false;
 
@@ -177,7 +178,6 @@ static bool threadCPUUsage(pid_t id, float period, ThreadInfo& info)
         name++;
         info.name = String::fromUTF8({ name, position });
     }
-    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     // Move after state.
     position += 4;
@@ -189,6 +189,7 @@ static bool threadCPUUsage(pid_t id, float period, ThreadInfo& info)
             position++;
         position++;
     }
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     unsigned long long utime = strtoull(position, &position, 10);
     unsigned long long stime = strtoull(position, &position, 10);

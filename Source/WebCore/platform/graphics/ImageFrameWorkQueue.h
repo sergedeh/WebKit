@@ -42,7 +42,13 @@ public:
         SubsamplingLevel subsamplingLevel;
         ImageAnimatingState animatingState;
         DecodingOptions options;
-        friend bool operator==(const Request&, const Request&) = default;
+        bool isCompatibleWith(const Request& other) const
+        {
+            return index == other.index
+                && subsamplingLevel == other.subsamplingLevel
+                && animatingState == other.animatingState
+                && options.isCompatibleWith(other.options);
+        }
     };
 
     static Ref<ImageFrameWorkQueue> create(BitmapImageSource&);
@@ -60,18 +66,16 @@ public:
 private:
     ImageFrameWorkQueue(BitmapImageSource&);
 
-    Ref<BitmapImageSource> protectedSource() const { return m_source.get().releaseNonNull(); }
-
     static const int BufferSize = 8;
     using RequestQueue = SynchronizedFixedQueue<Request, BufferSize>;
     using DecodeQueue = Deque<Request, BufferSize>;
 
     RequestQueue& requestQueue();
-    DecodeQueue& decodeQueue() { return m_decodeQueue; }
+    DecodeQueue& decodeQueue() LIFETIME_BOUND { return m_decodeQueue; }
 
     Seconds minimumDecodingDurationForTesting() const { return m_minimumDecodingDurationForTesting; }
 
-    ThreadSafeWeakPtr<BitmapImageSource> m_source;
+    ThreadSafeWeakRef<BitmapImageSource> m_source;
 
     RefPtr<RequestQueue> m_requestQueue;
     DecodeQueue m_decodeQueue;

@@ -45,9 +45,9 @@ public:
 
     ~WebKitBufferNamespace();
 
-    Vector<AtomString> supportedPropertyNames() const;
+    Vector<AtomString> LEGACY_NODELETE supportedPropertyNames() const;
     WebKitBuffer* namedItem(DOMWrapperWorld&, const AtomString&);
-    bool isSupportedPropertyName(const AtomString&);
+    bool LEGACY_NODELETE isSupportedPropertyName(const AtomString&);
 
 private:
     explicit WebKitBufferNamespace(LocalFrame&, UserContentProvider&);

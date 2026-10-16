@@ -1,46 +1,59 @@
 -- texttree
 
 root
-    role='banner'
-        aria-label='Main Page Title','Welcome to Test Page'
-    navigation,role='navigation',aria-label='Main navigation'
-        list
-            list-item
-                link,'Section 1'
-            list-item
-                link,'Section 2'
-    role='main'
-        section,aria-label='Interactive Elements'
-            button,aria-describedby='This button does nothing',aria-label='Test button','Click Me'
+    role=banner
+        label='Main Page Title' 'Welcome to Test Page'
+    navigation label='Main navigation'
+        link 'Section 1'
+        link 'Section 2'
+    role=main
+        section label='Interactive Elements'
+            button describedby='This button does nothing' label='Test button' 'Click Me'
             'This button does nothing'
-            input,'text',uid=…,placeholder='Enter text here'
-            role='button',title='Test action','Clickable Div'
-        section,aria-label='Content with Roles'
-            article,role='article','Article Title\n\nJanuary 1, 2024\nThis is some article content with highlighted text.'
-            role='complementary',aria-label='Related information'
+            input uid=… placeholder='Enter text here'
+            role=button title='Test action' 'Clickable Div'
+        section label='Content with Roles'
+            article
+                'Article Title'
+                'January 1, 2024'
+                'This is some article content with highlighted text.'
+            label='Related information'
                 'Related Links'
-                list
-                    list-item
-                        link,'Example Link'
-                    list-item
-                        link,'Test Link'
-            role='region'
-                role='status','Ready'
-                button,'Update Status'
-            textarea,uid=…,'This is a text box'
-            contentEditable,uid=…,role='textbox'
+                link 'Example Link'
+                link 'Test Link'
+            role=region
+                role=status 'Ready'
+                button 'Update Status'
+            textarea uid=… 'This is a text box'
+            contentEditable uid=… role=textbox
                 subscript
                     'WebKit home page:'
-                    link,'webkit.org'
-            form,autocomplete='on',name='signup'
+                    link 'webkit.org'
+            form autocomplete=on name=signup
                 'Sign up for our newsletter'
-                input,'text',uid=…,placeholder='Username',name='username',minlength=3,maxlength=20,required
-                input,'text',uid=…,placeholder='Email',pattern='[a-z0-9._%+-]+@[a-z0-9.-]+\\.[a-z]{2,}$',name='email',required
-                input,'text',uid=…,placeholder='Zip Code',pattern='[0-9]{5}',name='zipcode',minlength=5,maxlength=5
-    role='contentinfo'
-        'Footer content with'
-        role='img',aria-label='copyright symbol','©'
-        '2024'
+                input uid=… placeholder=Username name=username minlength=3 maxlength=20 required
+                input uid=… placeholder=Email pattern=[a-z0-9._%+-]+@[a-z0-9.-]+\\.[a-z]{2,}$ name=email required
+                input uid=… placeholder='Zip Code' pattern=[0-9]{5} name=zipcode minlength=5 maxlength=5
+                input range uid=… name=volume value=42
+                input button uid=… name=cancel value=Cancel
+                input uid=… name=submit value='Sign Up Now'
+            button 'Change'
+            button 'Add passkey'
+            form autocomplete=on name=two-step
+                button 'Turn on'
+            form label='Delete account' autocomplete=on
+                button 'Delete'
+            select uid=…
+                option value=one 'Number 1'
+                option value=two 'Number 2'
+                option selected value=three 'Number 3'
+            select uid=… multiple
+                option selected value=banana
+                option selected value=pear
+                option value=apple
+    'Footer content with'
+    role=img label='copyright symbol' '©'
+    '2024'
 
 -- html
 
@@ -48,7 +61,7 @@ root
     <div role='banner'>
         <h1 aria-label='Main Page Title'>Welcome to Test Page</h1>
     </div>
-    <nav role='navigation' aria-label='Main navigation'>
+    <nav aria-label='Main navigation'>
         <ul>
             <li>
                 <a>Section 1</a>
@@ -66,8 +79,12 @@ root
             <div role='button' title='Test action'>Clickable Div</div>
         </section>
         <section aria-label='Content with Roles'>
-            <article role='article'>Article Title  January 1, 2024 This is some article content with highlighted text.</article>
-            <aside role='complementary' aria-label='Related information'>
+            <article>
+                Article Title
+                January 1, 2024
+                This is some article content with highlighted text.
+            </article>
+            <aside aria-label='Related information'>
                 Related Links
                 <ul>
                     <li>
@@ -83,7 +100,7 @@ root
                 <button>Update Status</button>
             </div>
             <textarea uid=…>This is a text box</textarea>
-            <div uid=… role='textbox'> contenteditable
+            <div uid=… role='textbox' contenteditable>
                 <sub>
                     WebKit home page:
                     <a>webkit.org</a>
@@ -94,14 +111,33 @@ root
                 <input type='text' uid=… placeholder='Username' name='username' minlength=3 maxlength=20 required>
                 <input type='text' uid=… placeholder='Email' pattern='[a-z0-9._%+-]+@[a-z0-9.-]+\\.[a-z]{2,}$' name='email' required>
                 <input type='text' uid=… placeholder='Zip Code' pattern='[0-9]{5}' name='zipcode' minlength=5 maxlength=5>
+                <input type='range' uid=… name='volume' value='42'>
+                <input type='button' uid=… name='cancel' value='Cancel'>
+                <input type='submit' uid=… name='submit' value='Sign Up Now'>
             </form>
+            <button>Change</button>
+            <button>Add passkey</button>
+            <form autocomplete='on' name='two-step'>
+                <button>Turn on</button>
+            </form>
+            <form aria-label='Delete account' autocomplete='on'>
+                <button>Delete</button>
+            </form>
+            <select uid=…>
+                <option value='one'>Number 1</option>
+                <option value='two'>Number 2</option>
+                <option value='three' selected>Number 3</option>
+            </select>
+            <select uid=…>
+                <option value='banana' selected>Banana</option>
+                <option value='pear' selected>Pear</option>
+                <option value='apple'>Apple</option>
+            </select>
         </section>
     </main>
-    <footer role='contentinfo'>
-        Footer content with
-        <span role='img' aria-label='copyright symbol'>©</span>
-        2024
-    </footer>
+    Footer content with
+    <span role='img' aria-label='copyright symbol'>©</span>
+    2024
 </body>
 
 -- json
@@ -130,7 +166,6 @@ root
     {
       "type": "navigation",
       "nodeName": "nav",
-      "role": "navigation",
       "aria-label": "Main navigation",
       "children": [
         {
@@ -234,18 +269,24 @@ root
             {
               "type": "article",
               "nodeName": "article",
-              "role": "article",
               "children": [
                 {
                   "type": "text",
-                  "content": "Article Title January 1, 2024 This is some article content with highlighted text."
+                  "content": "Article Title"
+                },
+                {
+                  "type": "text",
+                  "content": "January 1, 2024"
+                },
+                {
+                  "type": "text",
+                  "content": "This is some article content with highlighted text."
                 }
               ]
             },
             {
               "type": "container",
               "nodeName": "aside",
-              "role": "complementary",
               "aria-label": "Related information",
               "children": [
                 {
@@ -419,39 +460,157 @@ root
                       "content": "Zip Code"
                     }
                   ]
+                },
+                {
+                  "type": "input",
+                  "nodeName": "input",
+                  "uid": "…",
+                  "controlType": "range",
+                  "name": "volume",
+                  "value": "42"
+                },
+                {
+                  "type": "input",
+                  "nodeName": "input",
+                  "uid": "…",
+                  "controlType": "button",
+                  "name": "cancel",
+                  "value": "Cancel"
+                },
+                {
+                  "type": "input",
+                  "nodeName": "input",
+                  "uid": "…",
+                  "controlType": "submit",
+                  "name": "submit",
+                  "value": "Sign Up Now"
                 }
               ]
+            },
+            {
+              "type": "button",
+              "nodeName": "button",
+              "children": [
+                {
+                  "type": "text",
+                  "content": "Change"
+                }
+              ]
+            },
+            {
+              "type": "button",
+              "nodeName": "button",
+              "children": [
+                {
+                  "type": "text",
+                  "content": "Add passkey"
+                }
+              ]
+            },
+            {
+              "type": "form",
+              "nodeName": "form",
+              "autocomplete": "on",
+              "name": "two-step",
+              "children": [
+                {
+                  "type": "button",
+                  "nodeName": "button",
+                  "children": [
+                    {
+                      "type": "text",
+                      "content": "Turn on"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "form",
+              "nodeName": "form",
+              "aria-label": "Delete account",
+              "autocomplete": "on",
+              "children": [
+                {
+                  "type": "button",
+                  "nodeName": "button",
+                  "children": [
+                    {
+                      "type": "text",
+                      "content": "Delete"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "select",
+              "nodeName": "select",
+              "uid": "…",
+              "options": [
+                {
+                  "value": "one",
+                  "label": "Number 1",
+                  "selected": false
+                },
+                {
+                  "value": "two",
+                  "label": "Number 2",
+                  "selected": false
+                },
+                {
+                  "value": "three",
+                  "label": "Number 3",
+                  "selected": true
+                }
+              ]
+            },
+            {
+              "type": "select",
+              "nodeName": "select",
+              "uid": "…",
+              "options": [
+                {
+                  "value": "banana",
+                  "label": "Banana",
+                  "selected": true
+                },
+                {
+                  "value": "pear",
+                  "label": "Pear",
+                  "selected": true
+                },
+                {
+                  "value": "apple",
+                  "label": "Apple",
+                  "selected": false
+                }
+              ],
+              "multiple": true
             }
           ]
         }
       ]
     },
     {
+      "type": "text",
+      "content": "Footer content with"
+    },
+    {
       "type": "container",
-      "nodeName": "footer",
-      "role": "contentinfo",
+      "nodeName": "span",
+      "role": "img",
+      "aria-label": "copyright symbol",
       "children": [
         {
           "type": "text",
-          "content": "Footer content with"
-        },
-        {
-          "type": "container",
-          "nodeName": "span",
-          "role": "img",
-          "aria-label": "copyright symbol",
-          "children": [
-            {
-              "type": "text",
-              "content": "©"
-            }
-          ]
-        },
-        {
-          "type": "text",
-          "content": "2024"
+          "content": "©"
         }
       ]
+    },
+    {
+      "type": "text",
+      "content": "2024"
     }
   ],
   "version": 2

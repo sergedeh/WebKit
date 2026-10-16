@@ -27,8 +27,8 @@ webkit_platform_headers: "StreamConnectionEncoder.h"
 }
 
 header: <wtf/text/CString.h>
-[CustomHeader, WebKitPlatform, AdditionalEncoder=StreamConnectionEncoder] class WTF::CString {
-   std::span<const char> span()
+[Alias=class CString<char8_t>, CustomHeader, WebKitPlatform, AdditionalEncoder=StreamConnectionEncoder] alias WTF::UTF8CString {
+   std::span<const char8_t> span()
 }
 
 [AdditionalEncoder=StreamConnectionEncoder] class WTF::MediaTime {
@@ -54,9 +54,9 @@ header: <wtf/text/AtomString.h>
     String string()
 }
 
-[WebKitPlatform] class WTF::UUID {
+[WebKitPlatform, AdditionalEncoder=StreamConnectionEncoder, CreateUsing=tryCreate] class WTF::UUID {
     uint64_t high();
-    [Validator='WTF::UUID::isValid(*high, *low)'] uint64_t low();
+    uint64_t low();
 }
 
 header: <wtf/JSONValues.h>
@@ -67,6 +67,7 @@ header: <wtf/JSONValues.h>
 header: <wtf/ObjectIdentifier.h>
 template: class WebKit::WebURLSchemeHandler
 template: enum class WebCore::AXIDType
+template: enum class WebCore::AXTreeIDType
 template: struct WebCore::BackgroundFetchRecordIdentifierType
 template: struct WebCore::NodeIdentifierType
 template: struct WebCore::JSHandleIdentifierType
@@ -86,6 +87,9 @@ template: enum class WebCore::TextManipulationItemIdentifierType
 template: enum class WebCore::TextManipulationTokenIdentifierType
 template: struct WebCore::WindowIdentifierType
 template: enum class WebCore::WorkletGlobalScopeIdentifierType
+#if ENABLE(WEBXR_HIT_TEST)
+template: struct WebCore::XRHitTestSourceIdentifierType
+#endif
 template: struct WebKit::AudioMediaStreamTrackRendererInternalUnitIdentifierType
 template: struct WebKit::ContentWorldIdentifierType
 template: enum class WebKit::ImageAnalysisRequestIdentifierType
@@ -97,8 +101,6 @@ template: struct WebKit::RemoteCDMInstanceIdentifierType
 template: struct WebKit::RemoteCDMInstanceSessionIdentifierType
 template: struct WebKit::RemoteLegacyCDMIdentifierType
 template: struct WebKit::RemoteLegacyCDMSessionIdentifierType
-template: enum class WebKit::RemoteMediaSourceIdentifierType
-template: enum class WebKit::RemoteSourceBufferIdentifierType
 template: struct WebKit::RetrieveRecordResponseBodyCallbackIdentifierType
 template: struct WebKit::ShapeDetectionIdentifierType
 template: struct WebKit::StorageAreaImplIdentifierType
@@ -110,6 +112,7 @@ template: enum class WebKit::VisitedLinkTableIdentifierType
 template: enum class WebKit::WCLayerTreeHostIdentifierType
 template: enum class WebKit::WebExtensionControllerIdentifierType
 template: enum class WebKit::XRDeviceIdentifierType
+template: struct WebCore::AgentClusterIdentifierType
 template: struct WebCore::AttributedStringTextListIDType
 #if PLATFORM(COCOA)
 template: struct WebCore::AttributedStringTextTableBlockIDType
@@ -117,6 +120,8 @@ template: struct WebCore::AttributedStringTextTableIDType
 #endif
 template: struct WebCore::BackForwardFrameItemIdentifierType
 template: struct WebCore::BackForwardItemIdentifierType
+template: struct WebCore::BrowsingContextGroupIdentifierType
+template: struct WebCore::DebuggerPauseSessionIdentifierType
 template: struct WebCore::DictationContextType
 template: struct WebCore::FrameIdentifierType
 template: struct WebCore::HTMLMediaElementType
@@ -126,11 +131,14 @@ template: struct WebCore::MediaPlayerClientIdentifierType
 template: struct WebCore::MediaSessionIdentifierType
 template: struct WebCore::ModelPlayerIdentifierType
 template: struct WebCore::NavigationIdentifierType
+template: struct WebCore::PendingNavigateEventIdentifierType
 template: struct WebCore::PageIdentifierType
 template: struct WebCore::PlatformLayerIdentifierType
 template: struct WebCore::PlaybackTargetClientContextIdentifierType
 template: struct WebCore::PushSubscriptionIdentifierType
+template: struct WebCore::NonSerializedDataIdentifierType
 template: struct WebCore::ProcessIdentifierType
+template: struct WebCore::ScrollRequestIdentifierType
 template: struct WebCore::ScrollingNodeIDType
 template: struct WebCore::SharedWorkerObjectIdentifierType
 template: struct WebCore::SleepDisablerIdentifierType
@@ -156,11 +164,14 @@ template: struct WebKit::MessageBatchIdentifierType
 template: struct WebKit::NetworkResourceLoadIdentifierType
 template: struct WebKit::PDFPluginIdentifierType
 template: struct WebKit::PageGroupIdentifierType
+template: struct WebKit::PolicyListenerIdentifierType
+#if ENABLE(WEBDRIVER_BIDI)
+template: struct WebKit::RealmIdentifierType
+#endif
 template: struct WebKit::RemoteAudioDestinationIdentifierType
 template: struct WebKit::RemoteAudioHardwareListenerIdentifierType
-template: struct WebKit::RemoteMediaResourceIdentifierType
+template: struct WebKit::RemoteMediaResourceLoaderIdentifierType
 template: struct WebKit::RemoteRemoteCommandListenerIdentifierType
-template: struct WebKit::RiceBackendIdentifierType
 template: struct WebKit::SampleBufferDisplayLayerIdentifierType
 template: struct WebKit::ScriptMessageHandlerIdentifierType
 template: struct WebKit::TapIdentifierType
@@ -176,7 +187,7 @@ template: struct WebKit::WebPageProxyIdentifierType
 template: struct WebKit::WebURLSchemeHandlerIdentifierType
 template: struct WebKit::WebUndoStepIDType
 [WebKitPlatform, AdditionalEncoder=StreamConnectionEncoder] class WTF::ObjectIdentifier {
-    [Validator='WTF::ObjectIdentifierGenericBase<uint64_t>::isValidIdentifier(*toUInt64)'] uint64_t toUInt64()
+    [Validator='WTF::ObjectIdentifierGenericBase::isValidIdentifier(*toUInt64)'] uint64_t toUInt64()
 }
 
 header: <wtf/ObjectIdentifier.h>
@@ -196,6 +207,7 @@ template: struct WebCore::LibWebRTCSocketIdentifierType
 template: enum class WebCore::MainThreadPermissionObserverIdentifierType
 template: enum class WebCore::OpaqueOriginIdentifierType
 template: enum class WebCore::PortIdentifierType
+template: struct WebCore::PendingStreamIdentifierType
 template: enum class WebCore::RTCDataChannelLocalIdentifierType
 template: enum class WebCore::RTCEncodedStreamProducerIdentifierType
 template: struct WebCore::RenderingResourceIdentifierType
@@ -216,9 +228,10 @@ template: struct WebKit::RemoteGraphicsContextIdentifierType
 template: struct WebKit::RemoteDisplayListIdentifierType
 template: struct WebKit::RemoteDisplayListRecorderIdentifierType
 template: struct WebKit::RemoteGraphicsContextGLIdentifierType
+template: struct WebKit::RemoteMediaResourceIdentifierType
+template: struct WebKit::RemotePathImplIdentifierType
 template: struct WebKit::RemoteRenderingBackendIdentifierType
 template: struct WebKit::RemoteSerializedImageBufferIdentifierType
-template: struct WebKit::RemoteSnapshotIdentifierType
 template: struct WebKit::RemoteSnapshotRecorderIdentifierType
 template: struct WebKit::RemoteVideoFrameIdentifierType
 template: struct WebKit::VideoDecoderIdentifierType
@@ -228,13 +241,13 @@ template: struct IPC::AsyncReplyIDType
 template: struct WebCore::FileSystemHandleIdentifierType
 template: struct WebCore::FileSystemSyncAccessHandleIdentifierType
 template: struct WebCore::WebSocketIdentifierType
-template: struct WebKit::DDModelIdentifierType
+template: struct WebKit::WebModelIdentifierType
 template: struct WebKit::QuotaIncreaseRequestIdentifierType
 template: struct WebKit::StorageAreaIdentifierType
 template: struct WebKit::WebGPUIdentifierType
 template: struct WebKit::WebTransportSessionIdentifierType
 [WebKitPlatform, CustomHeader, AdditionalEncoder=StreamConnectionEncoder] class WTF::AtomicObjectIdentifier {
-    [Validator='WTF::ObjectIdentifierGenericBase<uint64_t>::isValidIdentifier(*toUInt64)'] uint64_t toUInt64()
+    [Validator='WTF::ObjectIdentifierGenericBase::isValidIdentifier(*toUInt64)'] uint64_t toUInt64()
 }
 
 #if OS(WINDOWS)
@@ -259,10 +272,6 @@ header: <wtf/MemoryPressureHandler.h>
     Critical,
 }
 
-header: <wtf/Variant.h>
-[AdditionalEncoder=StreamConnectionEncoder, Nested] struct std::monostate {
-}
-
 enum class WTFLogLevel : uint8_t {
     Always,
     Error,
@@ -279,3 +288,7 @@ using FileSystem::Salt = std::array<uint8_t, 8>;
     FixedVector<uint8_t> data;
 }
 #endif
+
+header: <wtf/NativePromise.h>
+[CustomHeader] struct WTF::detail::VoidPlaceholder {
+}

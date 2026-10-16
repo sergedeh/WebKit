@@ -30,6 +30,11 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/glib/GRefPtr.h>
 
+#if ENABLE(DEVELOPER_MODE)
+#include "WPEEventInternal.h"
+#include <wtf/Vector.h>
+#endif
+
 struct WPEEventPointerButton {
     WPEModifiers modifiers { static_cast<WPEModifiers>(0) };
     unsigned button { 0 };
@@ -67,6 +72,11 @@ struct WPEEventTouch {
     uint32_t sequenceID { 0 };
     double x { 0 };
     double y { 0 };
+#if ENABLE(DEVELOPER_MODE)
+    // All the touch points of a touch event created by wpeEventTouchCreateForTesting().
+    // sequenceID, x and y hold the primary touch point.
+    std::optional<Vector<WPETouchPoint>> touchPointsForTesting;
+#endif
 };
 
 /**
@@ -149,7 +159,7 @@ WPEEventType wpe_event_get_event_type(WPEEvent* event)
  * wpe_event_get_view:
  * @event: a #WPEEvent
  *
- * Get the #WPEView associated to @event
+ * Get the #WPEView associated with @event
  *
  * Returns: (transfer none): a #WPEView
  */
@@ -261,7 +271,7 @@ WPEModifiers wpe_event_get_modifiers(WPEEvent* event)
  * a position, %FALSE is returned.
  *
  * Returns: %TRUE if position is returned in @x and @y,
- *    or %FALSE if @event doesn't have a positon
+ *    or %FALSE if @event doesn't have a position
  */
 gboolean wpe_event_get_position(WPEEvent* event, double* x, double* y)
 {
@@ -314,7 +324,7 @@ gboolean wpe_event_get_position(WPEEvent* event, double* x, double* y)
  *
  * Create a #WPEEvent for a pointer button press or release.
  *
- * Returns: (transfer full): a new allocated #WPEEvent.
+ * Returns: (transfer full): a newly allocated #WPEEvent.
  */
 WPEEvent* wpe_event_pointer_button_new(WPEEventType type, WPEView* view, WPEInputSource source, guint32 time, WPEModifiers modifiers, guint button, double x, double y, guint pressCount)
 {
@@ -346,7 +356,7 @@ guint wpe_event_pointer_button_get_button(WPEEvent* event)
  * wpe_event_pointer_button_get_press_count:
  * @event: a #WPEEvent
  *
- * Get the numbbr of button presses for @event
+ * Get the number of button presses for @event
  * Note that @event must be a pointer button press event (%WPE_EVENT_POINTER_DOWN).
  *
  * Returns: the press count of @event
@@ -368,12 +378,12 @@ guint wpe_event_pointer_button_get_press_count(WPEEvent* event)
  * @modifiers: a #WPEModifiers
  * @x: the x coordinate of the pointer
  * @y: the y coordinate of the pointer
- * @delta_x: the x coordainte movement delta
+ * @delta_x: the x coordinate movement delta
  * @delta_y: the y coordinate movement delta
  *
  * Create a #WPEEvent for a pointer move.
  *
- * Returns: (transfer full): a new allocated #WPEEvent.
+ * Returns: (transfer full): a newly allocated #WPEEvent.
  */
 WPEEvent* wpe_event_pointer_move_new(WPEEventType type, WPEView* view, WPEInputSource source, guint32 time, WPEModifiers modifiers, double x, double y, double deltaX, double deltaY)
 {
@@ -419,7 +429,7 @@ void wpe_event_pointer_move_get_delta(WPEEvent* event, double* deltaX, double* d
  *
  * Create a #WPEEvent for a scroll.
  *
- * Returns: (transfer full): a new allocated #WPEEvent.
+ * Returns: (transfer full): a newly allocated #WPEEvent.
  */
 WPEEvent* wpe_event_scroll_new(WPEView* view, WPEInputSource source, guint32 time, WPEModifiers modifiers, double deltaX, double deltaY, gboolean preciseDeltas, gboolean isStop, double x, double y)
 {
@@ -494,7 +504,7 @@ gboolean wpe_event_scroll_is_stop(WPEEvent* event)
  *
  * Create a #WPEEvent for a keyboard key press or release
  *
- * Returns: (transfer full): a new allocated #WPEEvent.
+ * Returns: (transfer full): a newly allocated #WPEEvent.
  */
 WPEEvent* wpe_event_keyboard_new(WPEEventType type, WPEView* view, WPEInputSource source, guint32 time, WPEModifiers modifiers, guint keycode, guint keyval)
 {
@@ -540,7 +550,7 @@ guint wpe_event_keyboard_get_keyval(WPEEvent* event)
 
 /**
  * wpe_event_touch_new:
- * @type: a #WPEEventType (%WPE_EVENT_TOUCH_DOWN, %WPE_EVENT_TOUCH_UP, %WPE_EVENT_TOUCH_MOVER or %WPE_EVENT_TOUCH_CANCEL)
+ * @type: a #WPEEventType (%WPE_EVENT_TOUCH_DOWN, %WPE_EVENT_TOUCH_UP, %WPE_EVENT_TOUCH_MOVE or %WPE_EVENT_TOUCH_CANCEL)
  * @view: a #WPEView
  * @source: a #WPEInputSource
  * @time: the event timestamp
@@ -551,14 +561,19 @@ guint wpe_event_keyboard_get_keyval(WPEEvent* event)
  *
  * Create a #WPEEvent for a touch
  *
- * Returns: (transfer full): a new allocated #WPEEvent.
+ * Returns: (transfer full): a newly allocated #WPEEvent.
  */
 WPEEvent* wpe_event_touch_new(WPEEventType type, WPEView* view, WPEInputSource source, guint32 time, WPEModifiers modifiers, guint32 sequenceID, double x, double y)
 {
     g_return_val_if_fail(type == WPE_EVENT_TOUCH_DOWN || type == WPE_EVENT_TOUCH_UP || type == WPE_EVENT_TOUCH_MOVE || type == WPE_EVENT_TOUCH_CANCEL, nullptr);
     g_return_val_if_fail(WPE_IS_VIEW(view), nullptr);
 
-    return new _WPEEvent { view, type, source, time, { nullptr, nullptr }, WPEEventTouch { modifiers, sequenceID, x, y }, 1 };
+    WPEEventTouch touch;
+    touch.modifiers = modifiers;
+    touch.sequenceID = sequenceID;
+    touch.x = x;
+    touch.y = y;
+    return new _WPEEvent { view, type, source, time, { nullptr, nullptr }, WTF::move(touch), 1 };
 }
 
 /**
@@ -566,7 +581,7 @@ WPEEvent* wpe_event_touch_new(WPEEventType type, WPEView* view, WPEInputSource s
  * @event: a #WPEEvent
  *
  * Get the sequence identifier of @event.
- * Note that @event must be a touch event (%WPE_EVENT_TOUCH_DOWN, %WPE_EVENT_TOUCH_UP, %WPE_EVENT_TOUCH_MOVER or %WPE_EVENT_TOUCH_CANCEL)
+ * Note that @event must be a touch event (%WPE_EVENT_TOUCH_DOWN, %WPE_EVENT_TOUCH_UP, %WPE_EVENT_TOUCH_MOVE or %WPE_EVENT_TOUCH_CANCEL)
  *
  * Returns: the event sequence identifier
  */
@@ -577,3 +592,34 @@ guint32 wpe_event_touch_get_sequence_id(WPEEvent* event)
 
     return std::get<WPEEventTouch>(event->variant).sequenceID;
 }
+
+#if ENABLE(DEVELOPER_MODE)
+WPEEvent* wpeEventTouchCreateForTesting(WPEEventType type, WPEView* view, WPEInputSource source, guint32 time, WPEModifiers modifiers, Vector<WPETouchPoint>&& touchPoints, size_t primaryIndex)
+{
+    ASSERT(type == WPE_EVENT_TOUCH_DOWN || type == WPE_EVENT_TOUCH_UP || type == WPE_EVENT_TOUCH_MOVE || type == WPE_EVENT_TOUCH_CANCEL);
+    ASSERT(touchPoints.isEmpty() || primaryIndex < touchPoints.size());
+    WPEEventTouch touch;
+    touch.modifiers = modifiers;
+    if (primaryIndex < touchPoints.size()) {
+        const auto& primary = touchPoints[primaryIndex];
+        touch.sequenceID = primary.sequenceID;
+        touch.x = primary.x;
+        touch.y = primary.y;
+    }
+    touch.touchPointsForTesting = WTF::move(touchPoints);
+    return new _WPEEvent { view, type, source, time, { nullptr, nullptr }, WTF::move(touch), 1 };
+}
+
+bool wpeEventIsTouchForTesting(WPEEvent* event)
+{
+    if (!(event->type == WPE_EVENT_TOUCH_DOWN || event->type == WPE_EVENT_TOUCH_UP || event->type == WPE_EVENT_TOUCH_MOVE || event->type == WPE_EVENT_TOUCH_CANCEL))
+        return false;
+    return !!std::get<WPEEventTouch>(event->variant).touchPointsForTesting;
+}
+
+const Vector<WPETouchPoint>& wpeEventTouchPointsForTesting(WPEEvent* event)
+{
+    ASSERT(wpeEventIsTouchForTesting(event));
+    return *std::get<WPEEventTouch>(event->variant).touchPointsForTesting;
+}
+#endif

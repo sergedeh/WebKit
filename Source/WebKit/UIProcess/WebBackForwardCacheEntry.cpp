@@ -29,6 +29,9 @@
 #include "Logging.h"
 #include "SuspendedPageProxy.h"
 #include "WebBackForwardCache.h"
+#include "WebBackForwardListFrameItem.h"
+#include "WebBackForwardListItem.h"
+#include "WebFrameProxy.h"
 #include "WebProcessMessages.h"
 #include "WebProcessProxy.h"
 #include <wtf/TZoneMallocInlines.h>
@@ -39,15 +42,16 @@ static const Seconds expirationDelay { 30_min };
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WebBackForwardCacheEntry);
 
-Ref<WebBackForwardCacheEntry> WebBackForwardCacheEntry::create(WebBackForwardCache& backForwardCache, WebCore::BackForwardItemIdentifier backForwardItemID, WebCore::ProcessIdentifier processIdentifier, RefPtr<SuspendedPageProxy>&& suspendedPage)
+Ref<WebBackForwardCacheEntry> WebBackForwardCacheEntry::create(WebBackForwardCache& backForwardCache, WebCore::BackForwardItemIdentifier backForwardItemID, WebCore::BackForwardFrameItemIdentifier backForwardFrameItemID, WebCore::ProcessIdentifier processIdentifier, RefPtr<SuspendedPageProxy>&& suspendedPage)
 {
-    return adoptRef(*new WebBackForwardCacheEntry(backForwardCache, backForwardItemID, processIdentifier, WTF::move(suspendedPage)));
+    return adoptRef(*new WebBackForwardCacheEntry(backForwardCache, backForwardItemID, backForwardFrameItemID, processIdentifier, WTF::move(suspendedPage)));
 }
 
-WebBackForwardCacheEntry::WebBackForwardCacheEntry(WebBackForwardCache& backForwardCache, WebCore::BackForwardItemIdentifier backForwardItemID, WebCore::ProcessIdentifier processIdentifier, RefPtr<SuspendedPageProxy>&& suspendedPage)
+WebBackForwardCacheEntry::WebBackForwardCacheEntry(WebBackForwardCache& backForwardCache, WebCore::BackForwardItemIdentifier backForwardItemID, WebCore::BackForwardFrameItemIdentifier backForwardFrameItemID, WebCore::ProcessIdentifier processIdentifier, RefPtr<SuspendedPageProxy>&& suspendedPage)
     : m_backForwardCache(backForwardCache)
     , m_processIdentifier(processIdentifier)
     , m_backForwardItemID(backForwardItemID)
+    , m_backForwardFrameItemID(backForwardFrameItemID)
     , m_suspendedPage(WTF::move(suspendedPage))
     , m_expirationTimer(RunLoop::mainSingleton(), "WebBackForwardCacheEntry::ExpirationTimer"_s, this, &WebBackForwardCacheEntry::expirationTimerFired)
 {
@@ -56,10 +60,13 @@ WebBackForwardCacheEntry::WebBackForwardCacheEntry(WebBackForwardCache& backForw
 
 WebBackForwardCacheEntry::~WebBackForwardCacheEntry()
 {
-    if (m_backForwardItemID && !m_suspendedPage) {
-        if (auto process = this->process())
-            process->sendWithAsyncReply(Messages::WebProcess::ClearCachedPage(*m_backForwardItemID), [] { });
-    }
+    // m_backForwardFrameItemID is cleared by takeSuspendedPage() and
+    // takeForRestoration(), so this skips on the BFCache restore path.
+    if (!m_backForwardFrameItemID)
+        return;
+
+    for (auto& process : allProcesses())
+        process->sendWithAsyncReply(Messages::WebProcess::ClearCachedPage(*m_backForwardFrameItemID), [] { });
 }
 
 WebBackForwardCache* WebBackForwardCacheEntry::backForwardCache() const
@@ -67,11 +74,20 @@ WebBackForwardCache* WebBackForwardCacheEntry::backForwardCache() const
     return m_backForwardCache.get();
 }
 
+void WebBackForwardCacheEntry::setSuspendedPage(Ref<SuspendedPageProxy>&& suspendedPage)
+{
+    m_suspendedPage = WTF::move(suspendedPage);
+}
+
+void WebBackForwardCacheEntry::clearSuspendedPage()
+{
+    m_suspendedPage = nullptr;
+}
+
 Ref<SuspendedPageProxy> WebBackForwardCacheEntry::takeSuspendedPage()
 {
     ASSERT(m_suspendedPage);
-    m_backForwardItemID = std::nullopt;
-    m_expirationTimer.stop();
+    markAsTakenForRestoration();
     return std::exchange(m_suspendedPage, nullptr).releaseNonNull();
 }
 
@@ -83,14 +99,85 @@ RefPtr<WebProcessProxy> WebBackForwardCacheEntry::process() const
     return process;
 }
 
+HashSet<Ref<WebProcessProxy>> WebBackForwardCacheEntry::iframeProcesses() const
+{
+    HashSet<Ref<WebProcessProxy>> result;
+    for (Ref<WebFrameProxy> root : m_cachedChildren) {
+        result.add(Ref { root->process() });
+        for (RefPtr frame = root->traverseNext().frame; frame; frame = frame->traverseNext().frame)
+            result.add(Ref { frame->process() });
+    }
+
+    if (RefPtr suspendedPage = m_suspendedPage; suspendedPage && suspendedPage->suspendedFrameItemID() == m_backForwardFrameItemID)
+        result.addAll(suspendedPage->iframeProcesses());
+
+    return result;
+}
+
+HashSet<Ref<WebProcessProxy>> WebBackForwardCacheEntry::allProcesses() const
+{
+    HashSet<Ref<WebProcessProxy>> result = iframeProcesses();
+    if (RefPtr mainProcess = process())
+        result.add(mainProcess.releaseNonNull());
+    return result;
+}
+
+void WebBackForwardCacheEntry::setCachedChildren(Vector<Ref<WebFrameProxy>>&& children)
+{
+    ASSERT(m_cachedChildren.isEmpty());
+    m_cachedChildren = WTF::move(children);
+}
+
+std::pair<Vector<Ref<WebFrameProxy>>, Vector<Ref<WebProcessProxy>>> WebBackForwardCacheEntry::takeForRestoration()
+{
+    markAsTakenForRestoration();
+    auto children = std::exchange(m_cachedChildren, { });
+    Vector<Ref<WebProcessProxy>> processes;
+    HashSet<WebCore::ProcessIdentifier> visited;
+    for (auto& root : children) {
+        Ref rootProcess = root->process();
+        if (visited.add(rootProcess->coreProcessIdentifier()).isNewEntry)
+            processes.append(WTF::move(rootProcess));
+        for (RefPtr frame = root->traverseNext().frame; frame; frame = frame->traverseNext().frame) {
+            Ref frameProcess = frame->process();
+            if (visited.add(frameProcess->coreProcessIdentifier()).isNewEntry)
+                processes.append(WTF::move(frameProcess));
+        }
+    }
+    return { WTF::move(children), WTF::move(processes) };
+}
+
+bool WebBackForwardCacheEntry::referencesIframeProcess(WebCore::ProcessIdentifier processIdentifier) const
+{
+    for (Ref<WebFrameProxy> root : m_cachedChildren) {
+        if (root->process().coreProcessIdentifier() == processIdentifier)
+            return true;
+        for (RefPtr frame = root->traverseNext().frame; frame; frame = frame->traverseNext().frame) {
+            if (frame->process().coreProcessIdentifier() == processIdentifier)
+                return true;
+        }
+    }
+    return false;
+}
+
+void WebBackForwardCacheEntry::markAsTakenForRestoration()
+{
+    m_backForwardItemID = std::nullopt;
+    m_backForwardFrameItemID = std::nullopt;
+    m_expirationTimer.stop();
+}
+
 void WebBackForwardCacheEntry::expirationTimerFired()
 {
     ASSERT(m_backForwardItemID);
-    RELEASE_LOG(BackForwardCache, "%p - WebBackForwardCacheEntry::expirationTimerFired backForwardItemID=%s, hasSuspendedPage=%d", this, m_backForwardItemID->toString().utf8().data(), !!m_suspendedPage);
-    RefPtr item = WebBackForwardListItem::itemForID(*m_backForwardItemID);
+    ASSERT(m_backForwardFrameItemID);
+    RELEASE_LOG(BackForwardCache, "%p - WebBackForwardCacheEntry::expirationTimerFired backForwardItemID=%s backForwardFrameItemID=%s, hasSuspendedPage=%d", this, m_backForwardItemID->toString().utf8(), m_backForwardFrameItemID->toString().utf8(), !!m_suspendedPage);
+    RefPtr item = WebBackForwardListFrameItem::itemForID(*m_backForwardItemID, *m_backForwardFrameItemID);
     ASSERT(item);
-    if (RefPtr backForwardCache = m_backForwardCache.get())
-        backForwardCache->removeEntry(*item);
+    if (RefPtr backForwardCache = m_backForwardCache.get()) {
+        if (RefPtr backForwardListItem = item->backForwardListItem())
+            backForwardCache->removeEntry(*backForwardListItem);
+    }
 }
 
 } // namespace WebKit

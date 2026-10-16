@@ -18,9 +18,9 @@
  */
 
 #include "config.h"
-#include "RefTrackerMixin.h"
+#include <wtf/RefTrackerMixin.h>
 
-#include <ranges>
+#include <vector>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 

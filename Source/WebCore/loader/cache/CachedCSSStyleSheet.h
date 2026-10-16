@@ -39,7 +39,11 @@ public:
     virtual ~CachedCSSStyleSheet();
 
     enum class MIMETypeCheckHint { Strict, Lax };
-    const String sheetText(MIMETypeCheckHint = MIMETypeCheckHint::Strict, bool* hasValidMIMEType = nullptr, bool* hasHTTPStatusOK = nullptr) const;
+    enum class Error : bool { UnsuccessfulRequest, InvalidMIMEType };
+    // Per spec, CSS stylesheets loaded as JavaScript modules are treated as
+    // UTF-8 encoded, regardless of any encoding hints.
+    enum class ForceUTF8Encoding : bool { No, Yes };
+    std::expected<String, Error> sheetText(MIMETypeCheckHint = MIMETypeCheckHint::Strict, ForceUTF8Encoding = ForceUTF8Encoding::No) const;
 
     RefPtr<StyleSheetContents> restoreParsedStyleSheet(const CSSParserContext&, CachePolicy, FrameLoader&);
     void saveParsedStyleSheet(Ref<StyleSheetContents>&&);
@@ -48,9 +52,8 @@ public:
 
 private:
     String responseMIMEType() const;
-    bool canUseSheet(MIMETypeCheckHint, bool* hasValidMIMEType, bool* hasHTTPStatusOK) const;
+    std::optional<Error> canUseSheet(MIMETypeCheckHint) const;
     bool mayTryReplaceEncodedData() const final { return true; }
-    Ref<TextResourceDecoder> protectedDecoder() const;
 
     void didAddClient(CachedResourceClient&) final;
 

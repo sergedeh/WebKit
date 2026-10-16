@@ -44,10 +44,6 @@
 
 namespace WebCore {
 
-namespace Style {
-struct SingleAnimationRange;
-}
-
 class AnimationEffect : public RefCountedAndCanMakeWeakPtr<AnimationEffect> {
     WTF_MAKE_TZONE_ALLOCATED(AnimationEffect);
 public:
@@ -64,15 +60,14 @@ public:
     ExceptionOr<void> updateTiming(Document&, const OptionalEffectTiming&);
 
     virtual void animationDidTick() { };
-    virtual void animationBecameReady() { };
     virtual void animationDidChangeTimingProperties() { };
     virtual void animationWasCanceled() { };
     virtual void animationSuspensionStateDidChange(bool) { };
     virtual void animationTimelineDidChange();
     virtual void animationDidFinish() { };
     virtual void animationPlaybackRateDidChange();
-    virtual void animationProgressBasedTimelineSourceDidChangeMetrics(const Style::SingleAnimationRange&);
-    void animationRangeDidChange();
+    virtual void animationProgressBasedTimelineSourceDidChangeMetrics(const ResolvableTimelineRange&);
+    void LEGACY_NODELETE animationRangeDidChange();
 
     AnimationEffectTiming timing() const { return m_timing; }
 
@@ -81,14 +76,14 @@ public:
 
     WebAnimationTime delay();
     Seconds specifiedDelay() const { return m_timing.specifiedStartDelay; }
-    void setDelay(const Seconds&);
+    void LEGACY_NODELETE setDelay(const Seconds&);
 
     WebAnimationTime endDelay();
     Seconds specifiedEndDelay() const { return m_timing.specifiedEndDelay; }
-    void setEndDelay(const Seconds&);
+    void LEGACY_NODELETE setEndDelay(const Seconds&);
 
     FillMode fill() const { return m_timing.fill; }
-    void setFill(FillMode);
+    void LEGACY_NODELETE setFill(FillMode);
 
     double iterationStart() const { return m_timing.iterationStart; }
     ExceptionOr<void> setIterationStart(double);
@@ -97,12 +92,12 @@ public:
     ExceptionOr<void> setIterations(double);
 
     WebAnimationTime iterationDuration();
-    WebAnimationTime iterationDuration() const;
+    WebAnimationTime LEGACY_NODELETE iterationDuration() const;
     std::optional<Seconds> specifiedIterationDuration() const { return m_timing.specifiedIterationDuration; }
-    void setIterationDuration(const std::optional<Seconds>&);
+    void LEGACY_NODELETE setIterationDuration(const std::optional<Seconds>&);
 
     PlaybackDirection direction() const { return m_timing.direction; }
-    void setDirection(PlaybackDirection);
+    void LEGACY_NODELETE setDirection(PlaybackDirection);
 
     TimingFunction* timingFunction() const { return m_timing.timingFunction.get(); }
     void setTimingFunction(const RefPtr<TimingFunction>&);

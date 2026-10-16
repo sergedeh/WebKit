@@ -33,6 +33,7 @@
 #include "Event.h"
 #include "EventNames.h"
 #include "HTMLMediaElement.h"
+#include "JSDOMConvertNumbers.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JSNodeCustom.h"
 #include "Logging.h"
@@ -55,7 +56,7 @@ Ref<RemotePlayback> RemotePlayback::create(HTMLMediaElement& element)
 }
 
 RemotePlayback::RemotePlayback(HTMLMediaElement& element)
-    : WebCore::ActiveDOMObject(element.scriptExecutionContext())
+    : WebCore::ActiveDOMObject(protect(element.scriptExecutionContext()))
 #if !RELEASE_LOG_DISABLED
     , m_logger(element.logger())
     , m_logIdentifier(element.logIdentifier())
@@ -66,9 +67,10 @@ RemotePlayback::RemotePlayback(HTMLMediaElement& element)
 
 RemotePlayback::~RemotePlayback() = default;
 
-WebCoreOpaqueRoot RemotePlayback::opaqueRootConcurrently() const
+WebCoreOpaqueRoot RemotePlayback::opaqueRoot() const
 {
-    return root(m_mediaElement.get());
+    // Cannot ref m_mediaElement here since this may get called on a GC thread.
+    SUPPRESS_UNCOUNTED_ARG return root(m_mediaElement.get());
 }
 
 Node* RemotePlayback::ownerNode() const
@@ -115,7 +117,7 @@ void RemotePlayback::watchAvailability(Ref<RemotePlaybackAvailabilityCallback>&&
         playback.m_callbackMap.add(callbackId, WTF::move(callback));
 
         // 8. Fulfill promise with the callbackId and run the following steps in parallel:
-        promise->whenSettled([protectedThis = Ref { playback }, callbackId] {
+        promise->whenSettled([protectedThis = protect(playback), callbackId] {
             // 8.1 Queue a task to invoke the callback with the current availability for the media element.
             queueTaskKeepingObjectAlive(protectedThis.get(), TaskSource::MediaElement, [callbackId, available = protectedThis->m_available](auto& playback) {
                 if (playback.isContextStopped())
@@ -124,13 +126,13 @@ void RemotePlayback::watchAvailability(Ref<RemotePlaybackAvailabilityCallback>&&
                 if (foundCallback == playback.m_callbackMap.end())
                     return;
 
-                foundCallback->value->invoke(available);
+                protect(foundCallback->value)->invoke(available);
             });
 
             // 8.2 Run the algorithm to monitor the list of available remote playback devices.
-            if (protectedThis->m_mediaElement) {
-                protectedThis->availabilityChanged(protectedThis->m_mediaElement->mediaSession().hasWirelessPlaybackTargets());
-                protectedThis->m_mediaElement->remoteHasAvailabilityCallbacksChanged();
+            if (RefPtr mediaElement = protectedThis->m_mediaElement) {
+                protectedThis->availabilityChanged(protect(mediaElement->mediaSession())->hasWirelessPlaybackTargets());
+                mediaElement->remoteHasAvailabilityCallbacksChanged();
             }
         });
         promise->resolve<IDLLong>(callbackId);
@@ -180,7 +182,7 @@ void RemotePlayback::cancelWatchAvailability(std::optional<int32_t> id, Ref<Defe
         // 7. If the set of availability callbacks is now empty and there is no pending request to initiate remote
         //    playback, cancel any pending task to monitor the list of available remote playback devices for power
         //    saving purposes.
-        playback.m_mediaElement->remoteHasAvailabilityCallbacksChanged();
+        protect(playback.m_mediaElement)->remoteHasAvailabilityCallbacksChanged();
 
         // 8. Fulfill promise.
         promise->resolve();
@@ -205,7 +207,8 @@ void RemotePlayback::prompt(Ref<DeferredPromise>&& promise)
 
         // 3. If the disableRemotePlayback attribute is present for the media element, reject the promise with
         //    InvalidStateError and abort all the remaining steps.
-        if (!playback.m_mediaElement || playback.m_mediaElement->isWirelessPlaybackTargetDisabled()) {
+        RefPtr mediaElement = playback.m_mediaElement;
+        if (!mediaElement || mediaElement->isWirelessPlaybackTargetDisabled()) {
             ERROR_LOG_WITH_THIS(&playback, identifier, "promise rejected, remote playback disabled");
             promise->reject(ExceptionCode::InvalidStateError);
             return;
@@ -219,8 +222,8 @@ void RemotePlayback::prompt(Ref<DeferredPromise>&& promise)
         // 5. OPTIONALLY, if the user agent knows a priori that showing the UI for this particular media element
         //    is not feasible, reject promise with a NotSupportedError and abort all remaining steps.
 #if !(PLATFORM(IOS) || PLATFORM(VISION))
-        if (playback.m_mediaElement->readyState() < HTMLMediaElementEnums::HAVE_METADATA) {
-            ERROR_LOG_WITH_THIS(&playback, identifier, "promise rejected, readyState = ", playback.m_mediaElement->readyState());
+        if (mediaElement->readyState() < HTMLMediaElementEnums::HAVE_METADATA) {
+            ERROR_LOG_WITH_THIS(&playback, identifier, "promise rejected, readyState = ", mediaElement->readyState());
             promise->reject(ExceptionCode::NotSupportedError);
             return;
         }
@@ -252,9 +255,9 @@ void RemotePlayback::prompt(Ref<DeferredPromise>&& promise)
         }
 
         playback.m_promptPromises.append(WTF::move(promise));
-        playback.availabilityChanged(playback.m_mediaElement->mediaSession().hasWirelessPlaybackTargets());
-        playback.m_mediaElement->remoteHasAvailabilityCallbacksChanged();
-        playback.m_mediaElement->webkitShowPlaybackTargetPicker();
+        playback.availabilityChanged(protect(mediaElement->mediaSession())->hasWirelessPlaybackTargets());
+        mediaElement->remoteHasAvailabilityCallbacksChanged();
+        mediaElement->webkitShowPlaybackTargetPicker();
 
         // NOTE: Steps 10-12 are implemented in the following methods:
     });

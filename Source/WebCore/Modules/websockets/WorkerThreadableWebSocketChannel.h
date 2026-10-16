@@ -58,8 +58,8 @@ public:
     ConnectStatus connect(const URL&, const String& protocol) final;
     String subprotocol() final;
     String extensions() final;
-    void send(CString&&) final;
-    void send(const JSC::ArrayBuffer&, unsigned byteOffset, unsigned byteLength) final;
+    void send(UTF8CString&&) final;
+    void send(const JSC::ArrayBuffer&, size_t byteOffset, size_t byteLength) final;
     void send(Blob&) final;
     void close(int code, const String& reason) final;
     void fail(String&& reason) final;
@@ -75,11 +75,11 @@ public:
         WTF_MAKE_TZONE_ALLOCATED(Peer);
         WTF_MAKE_NONCOPYABLE(Peer);
     public:
-        static Ref<Peer> create(Ref<ThreadableWebSocketChannelClientWrapper>&&, ScriptExecutionContext&, ScriptExecutionContextIdentifier, const String& taskMode, SocketProvider&);
+        static Ref<Peer> create(Ref<ThreadableWebSocketChannelClientWrapper>&&, ScriptExecutionContext&, ScriptExecutionContextIdentifier, const String& taskMode, SocketProvider&, IsInitiatedByDedicatedWorker);
         ~Peer();
 
         ConnectStatus connect(const URL&, const String& protocol);
-        void send(CString&&);
+        void send(UTF8CString&&);
         void send(const JSC::ArrayBuffer&);
         void send(Blob&);
         void bufferedAmount();
@@ -93,14 +93,14 @@ public:
         void didConnect() final;
         void didReceiveMessage(String&& message) final;
         void didReceiveBinaryData(Vector<uint8_t>&&) final;
-        void didUpdateBufferedAmount(unsigned bufferedAmount) final;
+        void didUpdateBufferedAmount(uint64_t bufferedAmount) final;
         void didStartClosingHandshake() final;
-        void didClose(unsigned unhandledBufferedAmount, ClosingHandshakeCompletionStatus, unsigned short code, const String& reason) final;
+        void didClose(uint64_t unhandledBufferedAmount, ClosingHandshakeCompletionStatus, unsigned short code, const String& reason) final;
         void didReceiveMessageError(String&& reason) final;
         void didUpgradeURL() final;
 
     private:
-        Peer(Ref<ThreadableWebSocketChannelClientWrapper>&&, ScriptExecutionContext&, ScriptExecutionContextIdentifier, const String& taskMode, SocketProvider&);
+        Peer(Ref<ThreadableWebSocketChannelClientWrapper>&&, ScriptExecutionContext&, ScriptExecutionContextIdentifier, const String& taskMode, SocketProvider&, IsInitiatedByDedicatedWorker);
 
         ThreadSafeWeakPtr<ThreadableWebSocketChannelClientWrapper> m_workerClientWrapper;
         RefPtr<ThreadableWebSocketChannel> m_mainWebSocketChannel;
@@ -122,8 +122,8 @@ private:
         ~Bridge();
         void initialize(WorkerGlobalScope&);
         void connect(const URL&, const String& protocol);
-        void send(CString&&);
-        void send(const JSC::ArrayBuffer&, unsigned byteOffset, unsigned byteLength);
+        void send(UTF8CString&&);
+        void send(const JSC::ArrayBuffer&, size_t byteOffset, size_t byteLength);
         void send(Blob&);
         void close(int code, const String& reason);
         void fail(String&& reason);
@@ -137,7 +137,7 @@ private:
         static void setWebSocketChannel(ScriptExecutionContext*, Bridge* thisPtr, Peer*, Ref<ThreadableWebSocketChannelClientWrapper>&&);
 
         // Executed on the main thread to create a Peer for this bridge.
-        static RefPtr<Peer> mainThreadInitialize(ScriptExecutionContext&, WorkerThread&, ScriptExecutionContextIdentifier, Ref<ThreadableWebSocketChannelClientWrapper>&&, const String& taskMode, Ref<SocketProvider>&&);
+        static RefPtr<Peer> mainThreadInitialize(ScriptExecutionContext&, WorkerThread&, ScriptExecutionContextIdentifier, Ref<ThreadableWebSocketChannelClientWrapper>&&, const String& taskMode, Ref<SocketProvider>&&, IsInitiatedByDedicatedWorker);
 
         // Executed on the worker context's thread.
         void clearClientWrapper();
@@ -160,7 +160,7 @@ private:
     bool hasCreatedHandshake() const final { return false; }
     bool isConnected() const final { return false; }
     ResourceRequest clientHandshakeRequest(const CookieGetter&) const final { return m_handshakeRequest; }
-    const ResourceResponse& serverHandshakeResponse() const final { return m_handshakeResponse; }
+    const ResourceResponse& serverHandshakeResponse() const LIFETIME_BOUND final { return m_handshakeResponse; }
 
     const Ref<WorkerGlobalScope> m_workerGlobalScope;
     const Ref<ThreadableWebSocketChannelClientWrapper> m_workerClientWrapper;

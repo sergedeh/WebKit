@@ -21,11 +21,12 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
 // THE POSSIBILITY OF SUCH DAMAGE.
 
-#if HAVE_CORE_ANIMATION_SEPARATED_LAYERS && compiler(>=6.0)
+#if HAVE_CORE_ANIMATION_SEPARATED_LAYERS
 
+import IOSurface
 import os
-@_weakLinked internal import RealityKit
-internal import WebKit_Internal
+@_weakLinked import RealityKit
+import WebKit_Internal
 
 @objc
 @implementation
@@ -41,7 +42,7 @@ extension WKSeparatedImageView {
             self.portalEntity?.components[ImagePresentationComponent.self]?.desiredViewingMode =
                 desiredViewingModeSpatial ? .spatial3D : .mono
             if let imageHash = self.imageHash {
-                ImagePresentationCache.shared.updateDesiredViewingMode(for: imageHash, desiredViewingModeSpatial)
+                ImagePresentationCache.shared[imageHash]?.desiredViewingModeSpatial = desiredViewingModeSpatial
             }
             #endif
         }
@@ -55,11 +56,11 @@ extension WKSeparatedImageView {
     final var imageHash: NSString?
 
     @nonobjc
-    final var computeHashTask: Task<Void, Error>?
+    final var computeHashTask: Task<Void, any Error>?
     @nonobjc
-    final var pickViewModeTask: Task<ViewMode, Error>?
+    final var pickViewModeTask: Task<ViewMode, any Error>?
     @nonobjc
-    final var generate3DImageTask: Task<Void, Error>?
+    final var generate3DImageTask: Task<Void, any Error>?
 
     #if canImport(RealityFoundation, _version: 387)
     @nonobjc
@@ -133,9 +134,7 @@ extension WKSeparatedImageView {
             return
         }
         Task {
-            // The compiler can't guarantee (yet) this closure won't be called multiple times.
-            nonisolated(unsafe) let captured = surface
-            await processSurface(captured)
+            await processSurface(surface)
         }
     }
 
@@ -174,10 +173,9 @@ extension WKSeparatedImageView: WKObservingLayerDelegate {
     }
 }
 
-@objc
-protocol WKObservingLayerDelegate {
-    nonisolated func layerSeparatedDidChange()
-    nonisolated func layerWasCleared()
+protocol WKObservingLayerDelegate: AnyObject {
+    func layerSeparatedDidChange()
+    func layerWasCleared()
 }
 
 class WKObservingLayer: CALayer {
@@ -234,7 +232,7 @@ extension WKSeparatedImageView {
 
 // MARK: - Extensions
 
-extension Logger {
+extension os.Logger {
     static let separatedImage = Logger(subsystem: "com.apple.WebKit", category: "SeparatedImage")
 }
 

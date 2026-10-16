@@ -55,27 +55,27 @@ namespace WebKit {
 
 #pragma mark - Conversions from web types to platform types.
 
-CocoaWritingToolsBehavior convertToCocoaWritingToolsBehavior(WebCore::WritingTools::Behavior);
+CocoaWritingToolsBehavior LEGACY_NODELETE convertToCocoaWritingToolsBehavior(WebCore::WritingTools::Behavior);
 
-WTRequestedTool convertToPlatformRequestedTool(WebCore::WritingTools::RequestedTool);
+WTRequestedTool LEGACY_NODELETE convertToPlatformRequestedTool(WebCore::WritingTools::RequestedTool);
 
-WTTextSuggestionState convertToPlatformTextSuggestionState(WebCore::WritingTools::TextSuggestionState);
+WTTextSuggestionState LEGACY_NODELETE convertToPlatformTextSuggestionState(WebCore::WritingTools::TextSuggestionState);
 
 RetainPtr<WTContext> convertToPlatformContext(const WebCore::WritingTools::Context&);
 
 #pragma mark - Conversions from platform types to web types.
 
-WebCore::WritingTools::Behavior convertToWebWritingToolsBehavior(CocoaWritingToolsBehavior);
+WebCore::WritingTools::Behavior LEGACY_NODELETE convertToWebWritingToolsBehavior(CocoaWritingToolsBehavior);
 
-WebCore::WritingTools::RequestedTool convertToWebRequestedTool(WTRequestedTool);
+WebCore::WritingTools::RequestedTool LEGACY_NODELETE convertToWebRequestedTool(WTRequestedTool);
 
-WebCore::WritingTools::TextSuggestionState convertToWebTextSuggestionState(WTTextSuggestionState);
+WebCore::WritingTools::TextSuggestionState LEGACY_NODELETE convertToWebTextSuggestionState(WTTextSuggestionState);
 
-WebCore::WritingTools::Action convertToWebAction(WTAction);
+WebCore::WritingTools::Action LEGACY_NODELETE convertToWebAction(WTAction);
 
-WebCore::WritingTools::SessionType convertToWebSessionType(WTSessionType);
+WebCore::WritingTools::SessionType LEGACY_NODELETE convertToWebSessionType(WTSessionType);
 
-WebCore::WritingTools::SessionCompositionType convertToWebCompositionSessionType(WTCompositionSessionType);
+WebCore::WritingTools::SessionCompositionType LEGACY_NODELETE convertToWebCompositionSessionType(WTCompositionSessionType);
 
 std::optional<WebCore::WritingTools::Context> convertToWebContext(WTContext *);
 

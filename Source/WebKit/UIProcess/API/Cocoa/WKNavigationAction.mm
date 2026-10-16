@@ -44,7 +44,7 @@
 
 @implementation WKNavigationAction
 
-static WKNavigationType toWKNavigationType(WebCore::NavigationType navigationType)
+static WKNavigationType LEGACY_NODELETE toWKNavigationType(WebCore::NavigationType navigationType)
 {
     switch (navigationType) {
     case WebCore::NavigationType::LinkClicked:
@@ -86,7 +86,7 @@ static WKSyntheticClickType toWKSyntheticClickType(WebKit::WebMouseEventSyntheti
     if (WebCoreObjCScheduleDeallocateOnMainRunLoop(WKNavigationAction.class, self))
         return;
 
-    _navigationAction->~NavigationAction();
+    SUPPRESS_UNCOUNTED_ARG _navigationAction->~NavigationAction();
 
     [super dealloc];
 }
@@ -105,12 +105,12 @@ static WKSyntheticClickType toWKSyntheticClickType(WebKit::WebMouseEventSyntheti
 
 - (WKFrameInfo *)sourceFrame
 {
-    return wrapper(protect(*_navigationAction)->sourceFrame());
+    return wrapper(_navigationAction->sourceFrame());
 }
 
 - (WKFrameInfo *)targetFrame
 {
-    return wrapper(_navigationAction->protectedTargetFrame().get());
+    return wrapper(_navigationAction->targetFrame());
 }
 
 - (WKNavigationType)navigationType
@@ -128,6 +128,11 @@ static WKSyntheticClickType toWKSyntheticClickType(WebKit::WebMouseEventSyntheti
 - (BOOL)shouldPerformDownload
 {
     return _navigationAction->shouldPerformDownload();
+}
+
+- (WKNavigation *)mainFrameNavigation
+{
+    return wrapper(_navigationAction->mainFrameNavigation());
 }
 
 #if PLATFORM(IOS_FAMILY)
@@ -216,7 +221,7 @@ static WKSyntheticClickType toWKSyntheticClickType(WebKit::WebMouseEventSyntheti
 
 - (_WKUserInitiatedAction *)_userInitiatedAction
 {
-    return wrapper(_navigationAction->protectedUserInitiatedAction().get());
+    return wrapper(_navigationAction->userInitiatedAction());
 }
 
 - (BOOL)isContentRuleListRedirect
@@ -236,9 +241,8 @@ static WKSyntheticClickType toWKSyntheticClickType(WebKit::WebMouseEventSyntheti
 
 - (WKNavigation *)_mainFrameNavigation
 {
-    return wrapper(_navigationAction->protectedMainFrameNavigation().get());
+    return [self mainFrameNavigation];
 }
-
 
 - (void)_storeSKAdNetworkAttribution
 {
@@ -257,6 +261,15 @@ static WKSyntheticClickType toWKSyntheticClickType(WebKit::WebMouseEventSyntheti
     protect(page->websiteDataStore())->storePrivateClickMeasurement(*privateClickMeasurement);
 }
 
+- (WKHitTestResult *)hitTestResult
+{
+#if PLATFORM(MAC) || HAVE(UIKIT_WITH_MOUSE_SUPPORT)
+    return self._hitTestResult;
+#else
+    return nil;
+#endif
+}
+
 - (_WKHitTestResult *)_hitTestResult
 {
 #if PLATFORM(MAC) || HAVE(UIKIT_WITH_MOUSE_SUPPORT)
@@ -270,7 +283,7 @@ static WKSyntheticClickType toWKSyntheticClickType(WebKit::WebMouseEventSyntheti
     if (!page)
         return nil;
 
-    auto apiHitTestResult = API::HitTestResult::create(webHitTestResultData.value(), page.get());
+    auto apiHitTestResult = API::HitTestResult::create(webHitTestResultData.value(), page.get(), RefPtr { _navigationAction->hitTestJSHandle() });
     return retainPtr(wrapper(apiHitTestResult)).autorelease();
 #else
     return nil;

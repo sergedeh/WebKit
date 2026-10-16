@@ -32,6 +32,7 @@
 #import <UIKit/UIKit.h>
 #endif
 #import <WebCore/DigitalCredential.h>
+#import <WebCore/DigitalCredentialsRequestData.h>
 #import <wtf/Forward.h>
 
 OBJC_CLASS WKWebView;
@@ -43,7 +44,6 @@ class WebPageProxy;
 @class WKDigitalCredentialsPicker;
 
 namespace WebCore {
-struct DigitalCredentialsRequestData;
 struct DigitalCredentialsResponseData;
 struct ExceptionData;
 }
@@ -60,7 +60,7 @@ struct ExceptionData;
 
 - (instancetype)initWithView:(WKWebView *)view page:(WebKit::WebPageProxy*)page;
 
-- (void)presentWithRequestData:(const WebCore::DigitalCredentialsRequestData&)requestData completionHandler:(CompletionHandler<void(Expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData>&&)>&&)completionHandler;
+- (void)presentWithRequestData:(const WebCore::DigitalCredentialsRequestData&)requestData completionHandler:(CompletionHandler<void(std::expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData>&&)>&&)completionHandler;
 - (void)dismissWithCompletionHandler:(CompletionHandler<void(bool)>&&)completionHandler;
 @end
 

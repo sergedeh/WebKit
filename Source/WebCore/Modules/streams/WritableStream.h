@@ -36,8 +36,14 @@ namespace WebCore {
 class Exception;
 class InternalWritableStream;
 class JSDOMGlobalObject;
+class MessagePort;
+class WritableStreamDefaultWriter;
 class WritableStreamSink;
 template<typename> class ExceptionOr;
+
+struct DetachedWritableStream {
+    Ref<MessagePort> writableStreamPort;
+};
 
 class WritableStream : public RefCountedAndCanMakeWeakPtr<WritableStream> {
 public:
@@ -50,11 +56,13 @@ public:
     void lock();
     bool locked() const;
 
+    ExceptionOr<Ref<WritableStreamDefaultWriter>> getWriter(JSDOMGlobalObject&);
+
     void closeIfPossible();
     void errorIfPossible(Exception&&);
     void errorIfPossible(JSC::JSGlobalObject&, JSC::JSValue);
 
-    InternalWritableStream& internalWritableStream();
+    InternalWritableStream& LEGACY_NODELETE internalWritableStream();
     enum class Type : uint8_t {
         Default,
         FileSystem,
@@ -65,6 +73,10 @@ public:
 
     enum class State : uint8_t { Writable, Closed, Errored };
     State state() const;
+
+    bool canTransfer() const;
+    ExceptionOr<DetachedWritableStream> runTransferSteps(JSDOMGlobalObject&);
+    static ExceptionOr<Ref<WritableStream>> runTransferReceivingSteps(JSDOMGlobalObject&, DetachedWritableStream&&);
 
 protected:
     static ExceptionOr<Ref<WritableStream>> create(JSC::JSGlobalObject&, JSC::JSValue, JSC::JSValue);

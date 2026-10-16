@@ -24,10 +24,15 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
  */
 
-#ifndef LocalizedStrings_h
-#define LocalizedStrings_h
+#pragma once
 
 #include <wtf/Forward.h>
+#include <wtf/StdLibExtras.h>
+
+#if PLATFORM(COCOA)
+#include <CoreFoundation/CFString.h>
+#include <wtf/RetainPtr.h>
+#endif
 
 #ifdef __OBJC__
 #include <wtf/Platform.h>
@@ -146,7 +151,9 @@ namespace WebCore {
     WEBCORE_EXPORT String contextMenuItemTagMakeUpperCase();
     WEBCORE_EXPORT String contextMenuItemTagMakeLowerCase();
     WEBCORE_EXPORT String contextMenuItemTagCapitalize();
-    String contextMenuItemTagChangeBack(const String& replacedString);
+    WEBCORE_EXPORT String contextMenuItemTagConvertToTraditionalChinese();
+    WEBCORE_EXPORT String contextMenuItemTagConvertToSimplifiedChinese();
+    String LEGACY_NODELETE contextMenuItemTagChangeBack(const String& replacedString);
 #endif
     String contextMenuItemTagOpenVideoInNewWindow();
     String contextMenuItemTagOpenAudioInNewWindow();
@@ -161,8 +168,8 @@ namespace WebCore {
     String contextMenuItemTagEnterVideoFullscreen();
     WEBCORE_EXPORT String contextMenuItemTagExitVideoFullscreen();
 #if PLATFORM(MAC) && ENABLE(VIDEO_PRESENTATION_MODE)
-    String contextMenuItemTagEnterVideoEnhancedFullscreen();
-    WEBCORE_EXPORT String contextMenuItemTagExitVideoEnhancedFullscreen();
+    String contextMenuItemTagEnterPictureInPicture();
+    WEBCORE_EXPORT String contextMenuItemTagExitPictureInPicture();
     String contextMenuItemTagEnterVideoViewer();
     WEBCORE_EXPORT String contextMenuItemTagExitVideoViewer();
 #endif
@@ -177,7 +184,7 @@ namespace WebCore {
 #endif
     WEBCORE_EXPORT String contextMenuItemTagInspectElement();
 #if HAVE(TRANSLATION_UI_SERVICES)
-    String contextMenuItemTagTranslate(const String& selectedString);
+    WEBCORE_EXPORT String contextMenuItemTagTranslate(const String& selectedString);
 #endif
 #if ENABLE(WRITING_TOOLS)
     String contextMenuItemTagWritingTools();
@@ -189,9 +196,7 @@ namespace WebCore {
     WEBCORE_EXPORT String contextMenuItemPDFOpenWithDefaultViewer(const String& appName);
 #endif
 #if ENABLE(PDFJS) || ENABLE(UNIFIED_PDF)
-    WEBCORE_EXPORT String contextMenuItemPDFSinglePage();
     WEBCORE_EXPORT String contextMenuItemPDFSinglePageContinuous();
-    WEBCORE_EXPORT String contextMenuItemPDFTwoPages();
     WEBCORE_EXPORT String contextMenuItemPDFTwoPagesContinuous();
     WEBCORE_EXPORT String contextMenuItemPDFZoomIn();
     WEBCORE_EXPORT String contextMenuItemPDFZoomOut();
@@ -201,6 +206,11 @@ namespace WebCore {
     WEBCORE_EXPORT String contextMenuItemPDFAutoSize();
 #endif
 #endif // ENABLE(CONTEXT_MENU)
+
+#if ENABLE(PDFJS) || ENABLE(UNIFIED_PDF)
+    WEBCORE_EXPORT String contextMenuItemPDFSinglePage();
+    WEBCORE_EXPORT String contextMenuItemPDFTwoPages();
+#endif
 
     WEBCORE_EXPORT String pdfDocumentTypeDescription();
 
@@ -264,6 +274,7 @@ namespace WebCore {
     String AXMenuListPopupActionVerb();
     String AXLinkActionVerb();
     String AXListItemActionVerb();
+    String AXShowWritingToolsLabel();
 
 #if PLATFORM(COCOA)
     String AXMeterGaugeRegionOptimumText();
@@ -309,8 +320,9 @@ namespace WebCore {
     WEBCORE_EXPORT String multipleFileUploadText(unsigned numberOfFiles);
     String unknownFileSizeText();
 
-#if PLATFORM(IOS_FAMILY)
     String htmlSelectMultipleItems(size_t num);
+
+#if PLATFORM(IOS_FAMILY)
     String fileButtonChooseMediaFileLabel();
     String fileButtonChooseMultipleMediaFilesLabel();
     String fileButtonNoMediaFileSelectedLabel();
@@ -377,6 +389,8 @@ namespace WebCore {
     String addTextTrackKindEasyReaderSuffix(const String&);
     String textTrackKindForcedDisplayName();
     String addTextTrackKindForcedSuffix(const String&);
+    String textTrackKindGeneratedDisplayName();
+    String addTextTrackKindGeneratedSuffix(const String&);
     String audioTrackKindDescriptionsDisplayName();
     String addAudioTrackKindDescriptionsSuffix(const String&);
     String audioTrackKindCommentaryDisplayName();
@@ -425,7 +439,7 @@ namespace WebCore {
     WEBCORE_EXPORT String contextMenuItemTagLookUpImage();
 #endif
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
     WEBCORE_EXPORT String contextMenuItemTagCopySubject();
     WEBCORE_EXPORT String contextMenuItemTitleRemoveBackground();
 #endif
@@ -479,21 +493,21 @@ namespace WebCore {
 #endif
 
 #if PLATFORM(COCOA)
-#define WEB_UI_FORMAT_CFSTRING(string, description, ...) WebCore::formatLocalizedString(CFSTR(string), __VA_ARGS__)
-#define WEB_UI_FORMAT_CFSTRING_KEY(string, key, description, ...) WebCore::formatLocalizedString(CFSTR(key), __VA_ARGS__)
-#define WEB_UI_FORMAT_STRING(string, description, ...) WebCore::formatLocalizedString(CFSTR(string), __VA_ARGS__)
+#define WEB_UI_FORMAT_CFSTRING(string, description, ...) WebCore::formatLocalizedString(CFSTR(string), LOG_PRINTF_TYPE(__VA_ARGS__))
+#define WEB_UI_FORMAT_CFSTRING_KEY(string, key, description, ...) WebCore::formatLocalizedString(CFSTR(key), LOG_PRINTF_TYPE(__VA_ARGS__))
+#define WEB_UI_FORMAT_STRING(string, description, ...) WebCore::formatLocalizedString(CFSTR(string), LOG_PRINTF_TYPE(__VA_ARGS__))
 #elif PLATFORM(WIN)
-#define WEB_UI_FORMAT_STRING(string, description, ...) WebCore::formatLocalizedString(L##string, __VA_ARGS__)
+#define WEB_UI_FORMAT_STRING(string, description, ...) WebCore::formatLocalizedString(L##string, LOG_PRINTF_TYPE(__VA_ARGS__))
 #elif USE(GLIB) && defined(GETTEXT_PACKAGE)
-#define WEB_UI_FORMAT_STRING(string, description, ...) WebCore::formatLocalizedString(_(string), __VA_ARGS__)
+#define WEB_UI_FORMAT_STRING(string, description, ...) WebCore::formatLocalizedString(_(string), LOG_PRINTF_TYPE(__VA_ARGS__))
 #else
-#define WEB_UI_FORMAT_STRING(string, description, ...) WebCore::formatLocalizedString(string, __VA_ARGS__)
+#define WEB_UI_FORMAT_STRING(string, description, ...) WebCore::formatLocalizedString(string, LOG_PRINTF_TYPE(__VA_ARGS__))
 #endif
 
 #if PLATFORM(COCOA)
     WEBCORE_EXPORT String formatLocalizedString(CFStringRef format, ...) CF_FORMAT_FUNCTION(1, 2);
 #elif PLATFORM(WIN)
-    WEBCORE_EXPORT String formatLocalizedString(const wchar_t* format, ...) WTF_ATTRIBUTE_PRINTF(1, 2);
+    WEBCORE_EXPORT String formatLocalizedString(const wchar_t* format, ...);
 #else
     WEBCORE_EXPORT String formatLocalizedString(const char* format, ...) WTF_ATTRIBUTE_PRINTF(1, 2);
 #endif
@@ -509,5 +523,3 @@ namespace WebCore {
 #endif
 
 } // namespace WebCore
-
-#endif // LocalizedStrings_h

@@ -33,12 +33,11 @@
 #include "ComposedTreeAncestorIterator.h"
 #include "DeprecatedCSSOMValue.h"
 #include "NodeDocument.h"
-#include "NodeInlines.h"
 #include "RenderBox.h"
 #include "RenderBoxModelObject.h"
-#include "RenderStyle+GettersInlines.h"
 #include "Settings.h"
 #include "ShorthandSerializer.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "StylePropertiesInlines.h"
 #include "StylePropertyShorthand.h"
 #include "StyleScope.h"
@@ -112,7 +111,7 @@ const Settings* CSSComputedStyleDeclaration::settings() const
 
 const FixedVector<CSSPropertyID>& CSSComputedStyleDeclaration::exposedComputedCSSPropertyIDs() const
 {
-    return protectedElement()->protectedDocument()->exposedComputedCSSPropertyIDs();
+    return protect(element().document())->exposedComputedCSSPropertyIDs();
 }
 
 String CSSComputedStyleDeclaration::getPropertyValue(CSSPropertyID propertyID) const
@@ -128,9 +127,9 @@ unsigned CSSComputedStyleDeclaration::length() const
     if (m_isEmpty)
         return 0;
 
-    Style::Extractor::updateStyleIfNeededForProperty(m_element.get(), CSSPropertyCustom);
+    Style::Extractor::updateStyleIfNeededForProperty(m_element.get(), m_pseudoElementIdentifier, CSSPropertyID::Custom);
 
-    CheckedPtr style = protectedElement()->computedStyle(m_pseudoElementIdentifier);
+    CheckedPtr style = protect(element())->computedStyle(m_pseudoElementIdentifier);
     if (!style)
         return 0;
 
@@ -148,7 +147,7 @@ String CSSComputedStyleDeclaration::item(unsigned i) const
     if (i < exposedComputedCSSPropertyIDs().size())
         return nameString(exposedComputedCSSPropertyIDs().at(i));
 
-    CheckedPtr style = protectedElement()->computedStyle(m_pseudoElementIdentifier);
+    CheckedPtr style = protect(element())->computedStyle(m_pseudoElementIdentifier);
     if (!style)
         return String();
 
@@ -180,21 +179,14 @@ RefPtr<DeprecatedCSSOMValue> CSSComputedStyleDeclaration::getPropertyCSSValue(co
     if (m_isEmpty)
         return nullptr;
 
-    if (isCustomPropertyName(propertyName)) {
-        auto value = extractor().customPropertyValue(AtomString { propertyName });
-        if (!value)
-            return nullptr;
-        return value->createDeprecatedCSSOMWrapper(*this);
-    }
+    if (isCustomPropertyName(propertyName))
+        return extractor().customPropertyValueDeprecatedCSSOMValue(AtomString { propertyName }, *this);
 
     auto propertyID = cssPropertyID(propertyName);
-    if (!propertyID)
+    if (propertyID == CSSPropertyID::Invalid)
         return nullptr;
 
-    auto value = extractor().propertyValue(propertyID);
-    if (!value)
-        return nullptr;
-    return value->createDeprecatedCSSOMWrapper(*this);
+    return extractor().propertyValueDeprecatedCSSOMValue(propertyID, *this);
 }
 
 String CSSComputedStyleDeclaration::getPropertyValue(const String& propertyName)
@@ -206,7 +198,7 @@ String CSSComputedStyleDeclaration::getPropertyValue(const String& propertyName)
         return extractor().customPropertyValueSerialization(AtomString { propertyName }, CSS::defaultSerializationContext());
 
     auto propertyID = cssPropertyID(propertyName);
-    if (!propertyID)
+    if (propertyID == CSSPropertyID::Invalid)
         return String();
 
     return extractor().propertyValueSerialization(propertyID, CSS::defaultSerializationContext());

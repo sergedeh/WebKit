@@ -21,16 +21,17 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
 // THE POSSIBILITY OF SUCH DAMAGE.
 
-#if ENABLE_SWIFTUI && compiler(>=6.0)
+#if ENABLE_SWIFTUI
 
 import Foundation
-internal import WebKit_Private
+import WebKit_Private
 
 private struct DefaultNavigationDecider: WebPage.NavigationDeciding {
 }
 
 @MainActor
-final class WKNavigationDelegateAdapter: NSObject, WKNavigationDelegate {
+@_expose(!Cxx)
+final class WKNavigationDelegateAdapter: NSObject, WKNavigationDelegate, WKHistoryDelegatePrivate {
     init(navigationDecider: (any WebPage.NavigationDeciding)?) {
         self.navigationDecider = navigationDecider ?? DefaultNavigationDecider()
     }
@@ -95,7 +96,13 @@ final class WKNavigationDelegateAdapter: NSObject, WKNavigationDelegate {
         backForwardListItemAdded itemAdded: WKBackForwardListItem!,
         removed itemsRemoved: [WKBackForwardListItem]!
     ) {
-        owner?.backForwardList = .init(webView.backForwardList)
+        owner?.didChangeBackForwardList()
+    }
+
+    // swift-format-ignore: NoLeadingUnderscores
+    @objc(_webView:didUpdateHistoryTitle:forURL:)
+    func _webView(_ webView: WKWebView, didUpdateHistoryTitle title: String, for url: URL) {
+        owner?.didChangeBackForwardList()
     }
 
     // MARK: Navigation decisions
@@ -124,6 +131,15 @@ final class WKNavigationDelegateAdapter: NSObject, WKNavigationDelegate {
         respondTo challenge: URLAuthenticationChallenge
     ) async -> (URLSession.AuthChallengeDisposition, URLCredential?) {
         await navigationDecider.decideAuthenticationChallengeDisposition(for: challenge)
+    }
+
+    @available(anyAppleOSAndDownlevels 27.0, *)
+    func webView(
+        _ webView: WKWebView,
+        willSubmitForm formInfo: WKFormInfo
+    ) async {
+        let convertedFormInfo = WebPage.FormInfo(formInfo)
+        await navigationDecider.willSubmit(formInfo: convertedFormInfo)
     }
 }
 

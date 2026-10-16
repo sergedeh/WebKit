@@ -26,13 +26,14 @@
 
 #include "config.h"
 #include "WebFakeXRDevice.h"
+#include "PlatformXR.h"
 
 #if ENABLE(WEBXR)
 
 #include "DOMPointReadOnly.h"
-#include "GraphicsContextGL.h"
 #include "JSDOMPromiseDeferred.h"
 #include "WebFakeXRInputController.h"
+#include <JavaScriptCore/HeapCellInlines.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/MathExtras.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -62,6 +63,11 @@ SimulatedXRDevice::SimulatedXRDevice()
     : m_frameTimer(*this, &SimulatedXRDevice::frameTimerFired)
 {
     m_supportsOrientationTracking = true;
+#if ENABLE(WEBXR_LAYERS)
+    // Same approach as Chromium. From a typical 16 max layer limit we remove the projection layer which is always there
+    // and then we divide by 2 to account for the fact that each layer can be stereo (two views).
+    m_maxRenderLayers = (16 - 1) / 2;
+#endif
 }
 
 SimulatedXRDevice::~SimulatedXRDevice()
@@ -98,14 +104,14 @@ void SimulatedXRDevice::setViewerOrigin(const std::optional<PlatformXR::FrameDat
 
 void SimulatedXRDevice::setVisibilityState(XRVisibilityState visibilityState)
 {
-    if (m_trackingAndRenderingClient)
-        m_trackingAndRenderingClient->updateSessionVisibilityState(visibilityState);
+    if (RefPtr client = m_trackingAndRenderingClient)
+        client->updateSessionVisibilityState(visibilityState);
 }
 
 void SimulatedXRDevice::simulateShutdownCompleted()
 {
-    if (m_trackingAndRenderingClient)
-        m_trackingAndRenderingClient->sessionDidEnd();
+    if (RefPtr client = m_trackingAndRenderingClient)
+        client->sessionDidEnd();
 }
 
 WebCore::IntSize SimulatedXRDevice::recommendedResolution(PlatformXR::SessionMode)
@@ -125,8 +131,8 @@ void SimulatedXRDevice::initializeTrackingAndRendering(const WebCore::SecurityOr
             auto protectedThis = weakThis.get();
             if (!protectedThis)
                 return;
-            if (m_trackingAndRenderingClient)
-                m_trackingAndRenderingClient->sessionDidInitializeInputSources({ });
+            if (RefPtr client = m_trackingAndRenderingClient)
+                client->sessionDidInitializeInputSources({ });
         });
     }
     m_frameData.environmentBlendMode = (sessionMode == PlatformXR::SessionMode::ImmersiveAr) ? PlatformXR::XREnvironmentBlendMode::AlphaBlend : PlatformXR::XREnvironmentBlendMode::Opaque;
@@ -145,6 +151,19 @@ void SimulatedXRDevice::stopTimer()
     if (m_frameTimer.isActive())
         m_frameTimer.stop();
 }
+
+#if ENABLE(WEBXR_HIT_TEST)
+static PlatformXR::FrameData::Pose rigidTransformToPose(TransformationMatrix matrix)
+{
+    TransformationMatrix::Decomposed4Type decomposed;
+    if (!matrix.decompose4(decomposed))
+        return { { }, { } };
+
+    FloatPoint3D position(decomposed.translateX, decomposed.translateY, decomposed.translateZ);
+    PlatformXR::FrameData::FloatQuaternion orientation(decomposed.quaternion.x, decomposed.quaternion.y, decomposed.quaternion.z, decomposed.quaternion.w);
+    return { position, orientation };
+};
+#endif
 
 void SimulatedXRDevice::frameTimerFired()
 {
@@ -194,44 +213,77 @@ void SimulatedXRDevice::frameTimerFired()
             .direction = mapPoint(transform, ray.direction, 0)
         };
     };
-    // Non-transient hit test
-    for (const auto& pair : m_hitTestSources) {
-        std::optional<PlatformXR::FrameData::Pose> origin;
-        WTF::switchOn(pair.value->nativeOrigin, [&](const PlatformXR::ReferenceSpaceType& referenceSpaceType) {
+    auto matrixFromPose = [](const PlatformXR::FrameData::Pose& pose) -> TransformationMatrix {
+        TransformationMatrix matrix;
+        matrix.translate3d(pose.position.x(), pose.position.y(), pose.position.z());
+        matrix.multiply(TransformationMatrix::fromQuaternion({ pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w }));
+        return matrix;
+    };
+
+    auto hitTestWorldToOrigin = [&matrixFromPose](const PlatformXR::FrameData::Pose& origin, Vector<PlatformXR::FrameData::HitTestResult> hitTestInWorld) -> Vector<PlatformXR::FrameData::HitTestResult> {
+        auto originTransform = matrixFromPose(origin);
+        if (!originTransform.isInvertible())
+            return { };
+
+        Vector<PlatformXR::FrameData::HitTestResult> results;
+        auto originToWorld = originTransform.inverse().value();
+        for (auto& hit : hitTestInWorld) {
+            auto hitInOrigin = originToWorld * matrixFromPose(hit.pose);
+            results.append(rigidTransformToPose(hitInOrigin));
+        }
+        return results;
+    };
+
+    auto computeOrigin = [&data](PlatformXR::NativeOriginInformation nativeOrigin) {
+        return WTF::switchOn(nativeOrigin, [&](const PlatformXR::ReferenceSpaceType& referenceSpaceType) -> std::optional<PlatformXR::FrameData::Pose> {
             switch (referenceSpaceType) {
             case PlatformXR::ReferenceSpaceType::Viewer:
-                origin = data.origin;
-                break;
+                return data.origin;
             case PlatformXR::ReferenceSpaceType::Local:
-                origin = PlatformXR::FrameData::Pose();
-                break;
+                return PlatformXR::FrameData::Pose();
             case PlatformXR::ReferenceSpaceType::LocalFloor:
-                origin = data.floorTransform;
-                break;
+                return data.floorTransform;
             default:
-                break;
+                return std::nullopt;
             }
-        }, [&](const PlatformXR::InputSourceSpaceInfo& inputSource) {
+        }, [&](const PlatformXR::InputSourceSpaceInfo& inputSource) -> std::optional<PlatformXR::FrameData::Pose> {
             auto i = data.inputSources.findIf([&](auto& item) { return item.handle == inputSource.handle; });
             if (i == notFound)
-                return;
+                return std::nullopt;
             if (inputSource.type == PlatformXR::InputSourceSpaceType::TargetRay)
-                origin = data.inputSources[i].pointerOrigin.pose;
+                return data.inputSources[i].pointerOrigin.pose;
             else
-                origin = data.inputSources[i].gripOrigin.value_or(PlatformXR::FrameData::InputSourcePose { }).pose;
+                return data.inputSources[i].gripOrigin.value_or(PlatformXR::FrameData::InputSourcePose { }).pose;
         });
+    };
+
+    // Non-transient hit test
+    for (const auto& pair : m_hitTestSources) {
+        auto origin = computeOrigin(pair.value->nativeOrigin);
         if (!origin)
             continue;
         PlatformXR::Ray ray = transformRay(*origin, pair.value->offsetRay);
-        data.hitTestResults.add(pair.key, hitTestWorld(ray, pair.value->entityTypes));
+        auto hitInWorld = hitTestWorld(ray, pair.value->entityTypes);
+        data.hitTestResults.add(pair.key, hitTestWorldToOrigin(origin.value(), hitInWorld));
     }
+
     // Transient hit test
     for (const auto& pair : m_transientInputHitTestSources) {
         Vector<PlatformXR::FrameData::TransientInputHitTestResult> results;
         for (const auto& source : data.inputSources) {
+            std::optional<PlatformXR::FrameData::Pose> origin;
+            auto i = data.inputSources.findIf([&](auto& item) {
+                return item.handle == source.handle;
+            });
+            if (i == notFound)
+                continue;
+            origin = data.inputSources[i].pointerOrigin.pose;
+            if (!origin)
+                continue;
             if (source.profiles.contains(pair.value->profile)) {
                 PlatformXR::Ray ray = transformRay(source.pointerOrigin.pose, pair.value->offsetRay);
-                results.append({ source.handle, hitTestWorld(ray, pair.value->entityTypes) });
+                auto hitInWorld = hitTestWorld(ray, pair.value->entityTypes);
+                results.append({ source.handle, hitTestWorldToOrigin(origin.value(), hitInWorld) });
             }
         }
         data.transientInputHitTestResults.add(pair.key, WTF::move(results));
@@ -249,14 +301,32 @@ void SimulatedXRDevice::requestFrame(std::optional<PlatformXR::RequestData>&&, R
         m_frameTimer.startOneShot(FakeXRFrameTime);
 }
 
-std::optional<PlatformXR::LayerHandle> SimulatedXRDevice::createLayerProjection(uint32_t width, uint32_t height, bool alpha)
+std::optional<PlatformXR::LayerHandle> SimulatedXRDevice::createLayer(IntSize size)
+{
+    PlatformXR::LayerHandle handle = ++m_layerIndex;
+    m_layers.add(handle, size);
+    return handle;
+}
+
+std::optional<PlatformXR::LayerInfo> SimulatedXRDevice::createLayerProjection(uint32_t width, uint32_t height, bool alpha)
 {
     // TODO: Might need to pass the format type to WebXROpaqueFramebuffer to ensure alpha is handled correctly in tests.
     UNUSED_PARAM(alpha);
-    PlatformXR::LayerHandle handle = ++m_layerIndex;
-    m_layers.add(handle, IntSize { static_cast<int>(width), static_cast<int>(height) });
-    return handle;
+    auto handle = createLayer({ static_cast<int>(width), static_cast<int>(height) });
+    if (!handle)
+        return std::nullopt;
+    return PlatformXR::LayerInfo { *handle, 1 };
 }
+
+#if ENABLE(WEBXR_LAYERS)
+std::optional<PlatformXR::LayerInfo> SimulatedXRDevice::createCompositionLayer(PlatformXR::CompositionLayerType, IntSize size, PlatformXR::LayerLayout)
+{
+    auto handle = createLayer(size);
+    if (!handle)
+        return std::nullopt;
+    return PlatformXR::LayerInfo { *handle, 1 };
+}
+#endif
 
 void SimulatedXRDevice::deleteLayer(PlatformXR::LayerHandle handle)
 {
@@ -269,10 +339,10 @@ void SimulatedXRDevice::deleteLayer(PlatformXR::LayerHandle handle)
 #if ENABLE(WEBXR_HIT_TEST)
 void SimulatedXRDevice::requestHitTestSource(const PlatformXR::HitTestOptions& options, CompletionHandler<void(WebCore::ExceptionOr<PlatformXR::HitTestSource>)>&& completionHandler)
 {
-    auto addResult = m_hitTestSources.add(m_nextHitTestSource, makeUniqueRef<PlatformXR::HitTestOptions>(options));
+    auto sourceId = PlatformXR::HitTestSource::generate();
+    auto addResult = m_hitTestSources.add(sourceId, makeUniqueRef<PlatformXR::HitTestOptions>(options));
     ASSERT_UNUSED(addResult.isNewEntry, addResult);
-    completionHandler(m_nextHitTestSource);
-    m_nextHitTestSource++;
+    completionHandler(WTF::move(sourceId));
 }
 
 void SimulatedXRDevice::deleteHitTestSource(PlatformXR::HitTestSource source)
@@ -283,10 +353,10 @@ void SimulatedXRDevice::deleteHitTestSource(PlatformXR::HitTestSource source)
 
 void SimulatedXRDevice::requestTransientInputHitTestSource(const PlatformXR::TransientInputHitTestOptions& options, CompletionHandler<void(WebCore::ExceptionOr<PlatformXR::TransientInputHitTestSource>)>&& completionHandler)
 {
-    auto addResult = m_transientInputHitTestSources.add(m_nextTransientInputHitTestSource, makeUniqueRef<PlatformXR::TransientInputHitTestOptions>(options));
+    auto sourceId = PlatformXR::TransientInputHitTestSource::generate();
+    auto addResult = m_transientInputHitTestSources.add(sourceId, makeUniqueRef<PlatformXR::TransientInputHitTestOptions>(options));
     ASSERT_UNUSED(addResult.isNewEntry, addResult);
-    completionHandler(m_nextTransientInputHitTestSource);
-    m_nextTransientInputHitTestSource++;
+    completionHandler(WTF::move(sourceId));
 }
 
 void SimulatedXRDevice::deleteTransientInputHitTestSource(PlatformXR::TransientInputHitTestSource source)
@@ -393,14 +463,6 @@ Vector<PlatformXR::FrameData::HitTestResult> SimulatedXRDevice::hitTestWorld(con
                 }
                 return true;
             };
-            auto rigidTransformToPose = [](TransformationMatrix matrix) -> PlatformXR::FrameData::Pose {
-                TransformationMatrix::Decomposed4Type decomposed;
-                bool succeeded = matrix.decompose4(decomposed);
-                RELEASE_ASSERT(succeeded);
-                FloatPoint3D position(decomposed.translateX, decomposed.translateY, decomposed.translateZ);
-                PlatformXR::FrameData::FloatQuaternion orientation(decomposed.quaternion.x, decomposed.quaternion.y, decomposed.quaternion.z, decomposed.quaternion.w);
-                return { position, orientation };
-            };
             constexpr double epsilon = 0.001;
 
             // 1. Calculate plane normal in world coordinates.
@@ -480,10 +542,12 @@ Vector<PlatformXR::FrameData::HitTestResult> SimulatedXRDevice::hitTestWorld(con
         // This situation is possible when a ray intersects the region through an edge shared
         // by 2 faces.
         std::ranges::sort(resultsForFaces, { }, &HitTestResult::distance);
+        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
         for (auto it = resultsForFaces.begin(); it != resultsForFaces.end(); it++) {
             if (it == resultsForFaces.begin() || it->distance != (it-1)->distance)
                 resultsForRegions.append(*it);
         }
+        WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     }
     std::ranges::sort(resultsForRegions, { }, &HitTestResult::distance);
     return resultsForRegions.map([](auto& x) { return PlatformXR::FrameData::HitTestResult { x.pose }; });

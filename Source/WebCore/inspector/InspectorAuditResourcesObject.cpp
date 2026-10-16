@@ -45,7 +45,7 @@ namespace WebCore {
 using namespace Inspector;
 
 #define ERROR_IF_NO_ACTIVE_AUDIT() \
-    if (!m_auditAgent.hasActiveAudit()) \
+    if (!m_auditAgent->hasActiveAudit()) \
         return Exception { ExceptionCode::NotAllowedError, "Cannot be called outside of a Web Inspector Audit"_s };
 
 InspectorAuditResourcesObject::InspectorAuditResourcesObject(InspectorAuditAgent& auditAgent)
@@ -61,8 +61,10 @@ InspectorAuditResourcesObject::InspectorAuditResourcesObject(InspectorAuditAgent
 
 InspectorAuditResourcesObject::~InspectorAuditResourcesObject()
 {
-    for (auto* cachedResource : m_resources.values())
-        cachedResource->removeClient(clientForResource(*cachedResource));
+    for (auto& weakResource : m_resources.values()) {
+        if (RefPtr cachedResource = weakResource.get())
+            cachedResource->removeClient(clientForResource(*cachedResource));
+    }
 }
 
 ExceptionOr<Vector<InspectorAuditResourcesObject::Resource>> InspectorAuditResourcesObject::getResources(Document& document)
@@ -75,24 +77,19 @@ ExceptionOr<Vector<InspectorAuditResourcesObject::Resource>> InspectorAuditResou
     if (!frame)
         return Exception { ExceptionCode::NotAllowedError, "Cannot be called with a detached document"_s };
 
-    for (auto* cachedResource : ResourceUtilities::cachedResourcesForFrame(frame)) {
+    for (RefPtr cachedResource : ResourceUtilities::cachedResourcesForFrame(frame)) {
         Resource resource;
         resource.url = cachedResource->url().string();
         resource.mimeType = cachedResource->mimeType();
 
-        bool exists = false;
-        for (const auto& entry : m_resources) {
-            if (entry.value == cachedResource) {
-                resource.id = entry.key;
-                exists = true;
-                break;
-            }
-        }
-        if (!exists) {
+        if (auto identifier = m_resourceIdentifiers.getOptional(*cachedResource))
+            resource.id = WTF::move(*identifier);
+        else {
             cachedResource->addClient(clientForResource(*cachedResource));
 
             resource.id = String::number(m_resources.size() + 1);
             m_resources.add(resource.id, cachedResource);
+            m_resourceIdentifiers.add(*cachedResource, resource.id);
         }
 
         resources.append(WTF::move(resource));
@@ -109,7 +106,7 @@ ExceptionOr<InspectorAuditResourcesObject::ResourceContent> InspectorAuditResour
     if (!frame)
         return Exception { ExceptionCode::NotAllowedError, "Cannot be called with a detached document"_s };
 
-    auto* cachedResource = m_resources.get(id);
+    RefPtr cachedResource = m_resources.get(id);
     if (!cachedResource)
         return Exception { ExceptionCode::NotFoundError, makeString("Unknown identifier "_s, id) };
 

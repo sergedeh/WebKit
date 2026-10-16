@@ -52,16 +52,15 @@ struct SharedPreferencesForWebProcess;
 
 class RemoteCDMProxy : public RefCounted<RemoteCDMProxy>, public IPC::MessageReceiver {
 public:
-    static RefPtr<RemoteCDMProxy> create(RemoteCDMFactoryProxy&, std::unique_ptr<WebCore::CDMPrivate>&&);
+    static Ref<RemoteCDMProxy> create(RemoteCDMFactoryProxy&, UniqueRef<WebCore::CDMPrivate>&&);
     ~RemoteCDMProxy();
 
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 
-    const RemoteCDMConfiguration& configuration() const { return m_configuration.get(); }
+    const RemoteCDMConfiguration& configuration() const LIFETIME_BOUND { return m_configuration.get(); }
 
     RemoteCDMFactoryProxy* factory() const { return m_factory.get(); }
-    RefPtr<RemoteCDMFactoryProxy> protectedFactory() const { return m_factory.get(); }
 
     bool supportsInitData(const String&, const WebCore::SharedBuffer&);
     RefPtr<WebCore::SharedBuffer> sanitizeResponse(const WebCore::SharedBuffer& response);
@@ -75,7 +74,7 @@ public:
 
 private:
     friend class RemoteCDMFactoryProxy;
-    RemoteCDMProxy(RemoteCDMFactoryProxy&, std::unique_ptr<WebCore::CDMPrivate>&&, UniqueRef<RemoteCDMConfiguration>&&);
+    RemoteCDMProxy(RemoteCDMFactoryProxy&, UniqueRef<WebCore::CDMPrivate>&&, UniqueRef<RemoteCDMConfiguration>&&);
 
     // IPC::MessageReceiver
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
@@ -88,7 +87,7 @@ private:
     void setLogIdentifier(uint64_t);
 
     WeakPtr<RemoteCDMFactoryProxy> m_factory;
-    const std::unique_ptr<WebCore::CDMPrivate> m_private;
+    const UniqueRef<WebCore::CDMPrivate> m_private;
     const UniqueRef<RemoteCDMConfiguration> m_configuration;
 
 #if !RELEASE_LOG_DISABLED

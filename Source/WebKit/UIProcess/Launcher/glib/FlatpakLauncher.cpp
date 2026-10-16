@@ -30,14 +30,20 @@
 
 #include <gio/gio.h>
 #include <wtf/FileSystem.h>
+#include <wtf/glib/GSpanExtras.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/glib/Sandbox.h>
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GTK/WPE port
+#include <wtf/text/MakeString.h>
 
 namespace WebKit {
 
-GRefPtr<GSubprocess> flatpakSpawn(GSubprocessLauncher* launcher, const WebKit::ProcessLauncher::LaunchOptions& launchOptions, char** argv, int childProcessSocket, GError** error)
+static bool canPossiblyExposePath(const String& path)
+{
+    // The child process's /app and /usr will both be identical to the parent process's.
+    return !path.startsWith("/app"_s) && !path.startsWith("/usr"_s);
+}
+
+GRefPtr<GSubprocess> flatpakSpawn(GSubprocessLauncher* launcher, const WebKit::ProcessLauncher::LaunchOptions& launchOptions, Vector<char*>& argv, int childProcessSocket, GError** error)
 {
     ASSERT(launcher);
 
@@ -45,76 +51,76 @@ GRefPtr<GSubprocess> flatpakSpawn(GSubprocessLauncher* launcher, const WebKit::P
     // bubblewrap sandbox we do outside but flatpak offers the ability to create new sandboxes
     // for us using flatpak-spawn.
 
-    GUniquePtr<char> childProcessSocketArg(g_strdup_printf("--forward-fd=%d", childProcessSocket));
-    Vector<CString> flatpakArgs = {
-        "flatpak-spawn",
-        childProcessSocketArg.get(),
-        "--expose-pids",
-        "--watch-bus"
+    Vector<UTF8CString> flatpakArgs = {
+        "flatpak-spawn"_s,
+        makeString("--forward-fd="_s, childProcessSocket).utf8(),
+        "--expose-pids"_s,
+        "--watch-bus"_s
     };
 
     if (launchOptions.processType == ProcessLauncher::ProcessType::Web) {
-        flatpakArgs.appendVector(Vector<CString>({
-            "--sandbox",
-            "--no-network",
-            "--sandbox-flag=share-gpu",
-            "--sandbox-flag=share-display",
-            "--sandbox-flag=share-sound",
-            "--sandbox-flag=allow-a11y",
-            "--sandbox-flag=allow-dbus", // Note that this only allows portals and $appid.Sandbox.* access
-        }));
+        flatpakArgs.appendList({
+            "--sandbox"_s,
+            // The current working directory might not be visible in the sub-sandbox.
+            "--directory=/"_s,
+            "--no-network"_s,
+            "--sandbox-flag=share-gpu"_s,
+            "--sandbox-flag=share-display"_s,
+            "--sandbox-flag=share-sound"_s,
+            "--sandbox-flag=allow-a11y"_s,
+            "--sandbox-flag=allow-dbus"_s, // Note that this only allows portals and $appid.Sandbox.* access
+        });
 
         // GST_DEBUG_FILE points to an absolute file path, so we need write permissions for its parent directory.
         if (const char* debugFilePath = g_getenv("GST_DEBUG_FILE")) {
             auto parentDir = FileSystem::parentPath(FileSystem::stringFromFileSystemRepresentation(debugFilePath));
-            GUniquePtr<gchar> pathArg(g_strdup_printf("--sandbox-expose-path=%s", parentDir.utf8().data()));
-            flatpakArgs.append(pathArg.get());
+            if (canPossiblyExposePath(parentDir)) {
+                flatpakArgs.append(makeString("--sandbox-expose-path="_s, parentDir).utf8());
+            }
         }
 
         // GST_DEBUG_DUMP_DOT_DIR might not exist when the application starts, so we need write
         // permissions for its parent directory.
         if (const char* dotDir = g_getenv("GST_DEBUG_DUMP_DOT_DIR")) {
             auto parentDir = FileSystem::parentPath(FileSystem::stringFromFileSystemRepresentation(dotDir));
-            GUniquePtr<gchar> pathArg(g_strdup_printf("--sandbox-expose-path=%s", parentDir.utf8().data()));
-            flatpakArgs.append(pathArg.get());
+            if (canPossiblyExposePath(parentDir)) {
+                flatpakArgs.append(makeString("--sandbox-expose-path="_s, parentDir).utf8());
+            }
         }
 
         for (const auto& pathAndPermission : launchOptions.extraSandboxPaths) {
-            const char* formatString = pathAndPermission.value == SandboxPermission::ReadOnly ? "--sandbox-expose-path-ro=%s": "--sandbox-expose-path=%s";
-            GUniquePtr<gchar> pathArg(g_strdup_printf(formatString, pathAndPermission.key.data()));
-            flatpakArgs.append(pathArg.get());
+            if (canPossiblyExposePath(String::fromUTF8WithLatin1Fallback(pathAndPermission.key.span()))) {
+                auto option = pathAndPermission.value == SandboxPermission::ReadOnly ? "--sandbox-expose-path-ro="_s : "--sandbox-expose-path="_s;
+                flatpakArgs.append(makeString(option, pathAndPermission.key.span()).utf8());
+            }
         }
 
 #if USE(ATSPI)
         RELEASE_ASSERT(isInsideFlatpak());
         if (checkFlatpakPortalVersion(7)) {
             auto busName = launchOptions.extraInitializationData.get<HashTranslatorASCIILiteral>("accessibilityBusName"_s);
-            GUniquePtr<gchar> a11yOwnNameArg(g_strdup_printf("--sandbox-a11y-own-name=%s", busName.utf8().data()));
-            flatpakArgs.append(a11yOwnNameArg.get());
+            flatpakArgs.append(makeString("--sandbox-a11y-own-name="_s, busName).utf8());
         }
 #endif
     }
 
     // We need to pass our full environment to the subprocess.
     GUniquePtr<char*> environ(g_get_environ());
-    for (char** variable = environ.get(); variable && *variable; variable++) {
-        GUniquePtr<char> arg(g_strconcat("--env=", *variable, nullptr));
-        flatpakArgs.append(arg.get());
+    for (auto* variable : span(environ)) {
+        GUniquePtr<char> arg(g_strconcat("--env=", variable, nullptr));
+        flatpakArgs.append(UTF8CString::unsafeFromUTF8(arg.get()));
     }
 
-    char** newArgv = g_newa(char*, g_strv_length(argv) + flatpakArgs.size() + 1);
+    Vector<char*> newArgv(argv.size() + flatpakArgs.size());
     size_t i = 0;
 
     for (const auto& arg : flatpakArgs)
-        newArgv[i++] = const_cast<char*>(arg.data());
-    for (size_t x = 0; argv[x]; x++)
-        newArgv[i++] = argv[x];
-    newArgv[i++] = nullptr;
+        newArgv[i++] = const_cast<char*>(arg.legacyCStringPointer());
+    for (const auto& arg : argv)
+        newArgv[i++] = arg;
 
-    return adoptGRef(g_subprocess_launcher_spawnv(launcher, newArgv, error));
+    return adoptGRef(g_subprocess_launcher_spawnv(launcher, newArgv.span().data(), error));
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 };
 

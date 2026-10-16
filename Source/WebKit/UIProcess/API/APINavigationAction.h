@@ -26,6 +26,7 @@
 #pragma once
 
 #include "APIFrameInfo.h"
+#include "APIJSHandle.h"
 #include "APINavigation.h"
 #include "APIObject.h"
 #include "APIUserInitiatedAction.h"
@@ -45,19 +46,20 @@ public:
 
     FrameInfo* sourceFrame() const { return m_sourceFrame.get(); }
     FrameInfo* targetFrame() const { return m_targetFrame.get(); }
-    RefPtr<FrameInfo> protectedTargetFrame() const { return m_targetFrame; }
-    const WTF::String& targetFrameName() const { return m_targetFrameName; }
+    const WTF::String& targetFrameName() const LIFETIME_BOUND { return m_targetFrameName; }
 
-    const WebCore::ResourceRequest& request() const { return m_request; }
-    const WTF::URL& originalURL() const { return !m_originalURL.isNull() ? m_originalURL : m_request.url(); }
+    const WebCore::ResourceRequest& request() const LIFETIME_BOUND { return m_request; }
+    const WTF::URL& originalURL() const LIFETIME_BOUND { return !m_originalURL.isNull() ? m_originalURL : m_request.url(); }
 
     WebCore::NavigationType navigationType() const { return m_navigationActionData.navigationType; }
     OptionSet<WebKit::WebEventModifier> modifiers() const { return m_navigationActionData.modifiers; }
     WebKit::WebMouseEventButton mouseButton() const { return m_navigationActionData.mouseButton; }
     WebKit::WebMouseEventSyntheticClickType syntheticClickType() const { return m_navigationActionData.syntheticClickType; }
 #if PLATFORM(MAC) || HAVE(UIKIT_WITH_MOUSE_SUPPORT)
-    const std::optional<WebKit::WebHitTestResultData>& webHitTestResultData() const { return m_navigationActionData.webHitTestResultData; }
+    const std::optional<WebKit::WebHitTestResultData>& webHitTestResultData() const LIFETIME_BOUND { return m_navigationActionData.webHitTestResultData; }
 #endif
+    JSHandle* hitTestJSHandle() const { return m_hitTestJSHandle.get(); }
+    void setHitTestJSHandle(RefPtr<JSHandle>&& handle) { m_hitTestJSHandle = WTF::move(handle); }
     WebCore::FloatPoint clickLocationInRootViewCoordinates() const { return m_navigationActionData.clickLocationInRootViewCoordinates; }
     bool canHandleRequest() const { return m_navigationActionData.canHandleRequest; }
     bool shouldOpenExternalSchemes() const { return m_navigationActionData.shouldOpenExternalURLsPolicy == WebCore::ShouldOpenExternalURLsPolicy::ShouldAllow || m_navigationActionData.shouldOpenExternalURLsPolicy == WebCore::ShouldOpenExternalURLsPolicy::ShouldAllowExternalSchemesButNotAppLinks; }
@@ -71,17 +73,15 @@ public:
     bool isProcessingUserGesture() const { return m_userInitiatedAction; }
     bool isProcessingUnconsumedUserGesture() const { return m_userInitiatedAction && !m_userInitiatedAction->consumed(); }
     UserInitiatedAction* userInitiatedAction() const { return m_userInitiatedAction.get(); }
-    RefPtr<UserInitiatedAction> protectedUserInitiatedAction() const { return m_userInitiatedAction; }
 
     Navigation* mainFrameNavigation() const { return m_mainFrameNavigation.get(); }
-    RefPtr<Navigation> protectedMainFrameNavigation() const { return m_mainFrameNavigation; }
 
 #if HAVE(APP_SSO)
     bool shouldPerformSOAuthorization() { return m_shouldPerformSOAuthorization; }
     void unsetShouldPerformSOAuthorization() { m_shouldPerformSOAuthorization = false; }
 #endif
 
-    const WebKit::NavigationActionData& data() const { return m_navigationActionData; }
+    const WebKit::NavigationActionData& data() const LIFETIME_BOUND { return m_navigationActionData; }
     std::optional<WebCore::FrameIdentifier> mainFrameIDBeforeNavigationActionDecision() { return m_mainFrameIDBeforeNavigationDecision; }
     
 private:
@@ -104,8 +104,8 @@ private:
     {
     }
 
-    RefPtr<FrameInfo> m_sourceFrame;
-    RefPtr<FrameInfo> m_targetFrame;
+    const RefPtr<FrameInfo> m_sourceFrame;
+    const RefPtr<FrameInfo> m_targetFrame;
     WTF::String m_targetFrameName;
 
     WebCore::ResourceRequest m_request;
@@ -116,10 +116,11 @@ private:
     bool m_shouldPerformSOAuthorization { true };
 #endif
 
-    RefPtr<UserInitiatedAction> m_userInitiatedAction;
+    const RefPtr<UserInitiatedAction> m_userInitiatedAction;
 
     const WebKit::NavigationActionData m_navigationActionData;
-    RefPtr<Navigation> m_mainFrameNavigation;
+    RefPtr<JSHandle> m_hitTestJSHandle;
+    const RefPtr<Navigation> m_mainFrameNavigation;
     std::optional<WebCore::FrameIdentifier> m_mainFrameIDBeforeNavigationDecision;
 };
 

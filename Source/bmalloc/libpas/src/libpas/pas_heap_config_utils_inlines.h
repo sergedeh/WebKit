@@ -54,8 +54,7 @@ typedef struct {
 
 #define PAS_BASIC_HEAP_CONFIG_DEFINITIONS(name, upcase_name, ...) \
     pas_basic_heap_page_caches name ## _page_caches = \
-        PAS_BASIC_HEAP_PAGE_CACHES_INITIALIZER(PAS_SMALL_SHARED_PAGE_LOG_SHIFT, \
-                                               PAS_MEDIUM_SHARED_PAGE_LOG_SHIFT); \
+        PAS_BASIC_HEAP_PAGE_CACHES_INITIALIZER(upcase_name ## _HEAP_CONFIG.memory_flavor); \
     \
     pas_basic_heap_runtime_config name ## _intrinsic_runtime_config = { \
         .base = { \
@@ -63,8 +62,6 @@ typedef struct {
             .sharing_mode = pas_share_pages, \
             .statically_allocated = true, \
             .is_part_of_heap = true, \
-            .directory_size_bound_for_partial_views = \
-                PAS_INTRINSIC_BOUND_FOR_PARTIAL_VIEWS, \
             .directory_size_bound_for_baseline_allocators = \
                 PAS_INTRINSIC_BOUND_FOR_BASELINE_ALLOCATORS, \
             .directory_size_bound_for_no_view_cache = \
@@ -85,8 +82,6 @@ typedef struct {
             .sharing_mode = pas_share_pages, \
             .statically_allocated = false, \
             .is_part_of_heap = true, \
-            .directory_size_bound_for_partial_views = \
-                PAS_PRIMITIVE_BOUND_FOR_PARTIAL_VIEWS, \
             .directory_size_bound_for_baseline_allocators = \
                 PAS_PRIMITIVE_BOUND_FOR_BASELINE_ALLOCATORS, \
             .directory_size_bound_for_no_view_cache = \
@@ -106,8 +101,6 @@ typedef struct {
             .sharing_mode = pas_share_pages, \
             .statically_allocated = false, \
             .is_part_of_heap = true, \
-            .directory_size_bound_for_partial_views = \
-                PAS_TYPED_BOUND_FOR_PARTIAL_VIEWS, \
             .directory_size_bound_for_baseline_allocators = \
                 PAS_TYPED_BOUND_FOR_BASELINE_ALLOCATORS, \
             .directory_size_bound_for_no_view_cache = \
@@ -127,8 +120,6 @@ typedef struct {
             .sharing_mode = pas_share_pages, \
             .statically_allocated = false, \
             .is_part_of_heap = true, \
-            .directory_size_bound_for_partial_views = \
-                PAS_FLEX_BOUND_FOR_PARTIAL_VIEWS, \
             .directory_size_bound_for_baseline_allocators = \
                 PAS_FLEX_BOUND_FOR_BASELINE_ALLOCATORS, \
             .directory_size_bound_for_no_view_cache = \
@@ -143,8 +134,7 @@ typedef struct {
     }; \
     \
     void* name ## _heap_config_allocate_small_segregated_page( \
-        pas_segregated_heap* heap, pas_physical_memory_transaction* transaction, \
-        pas_segregated_page_role role) \
+        pas_segregated_heap* heap, pas_physical_memory_transaction* transaction) \
     { \
         pas_basic_heap_config_definitions_arguments arguments = {__VA_ARGS__}; \
         \
@@ -160,20 +150,9 @@ typedef struct {
         \
         page_caches = ((pas_basic_heap_runtime_config*)heap->runtime_config)->page_caches; \
         \
-        switch (role) { \
-        case pas_segregated_page_shared_role: \
-            megapage_cache = &page_caches->small_other_megapage_cache; \
-            megapage_kind = pas_small_other_fast_megapage_kind; \
-            PAS_PROFILE(SMALL_SHARED_SEGREGATED_PAGE_ALLOCATION, heap, megapage_cache); \
-            PAS_MTE_HANDLE(SMALL_SHARED_SEGREGATED_PAGE_ALLOCATION, heap, megapage_cache); \
-            break; \
-        case pas_segregated_page_exclusive_role: \
-            megapage_cache = &page_caches->small_exclusive_segregated_megapage_cache; \
-            megapage_kind = pas_small_exclusive_segregated_fast_megapage_kind; \
-            PAS_PROFILE(SMALL_EXCLUSIVE_SEGREGATED_PAGE_ALLOCATION, heap, megapage_cache); \
-            PAS_MTE_HANDLE(SMALL_EXCLUSIVE_SEGREGATED_PAGE_ALLOCATION, heap, megapage_cache); \
-            break; \
-        } \
+        megapage_cache = &page_caches->small_exclusive_segregated_megapage_cache; \
+        megapage_kind = pas_small_exclusive_segregated_fast_megapage_kind; \
+        PAS_PROFILE(SMALL_EXCLUSIVE_SEGREGATED_PAGE_ALLOCATION, heap, megapage_cache); \
         \
         allocation = pas_fast_megapage_cache_try_allocate( \
             megapage_cache, \
@@ -205,7 +184,6 @@ typedef struct {
         megapage_cache = &page_caches->small_other_megapage_cache; \
         \
         PAS_PROFILE(SMALL_BITFIT_PAGE_ALLOCATION, heap, megapage_cache); \
-        PAS_MTE_HANDLE(SMALL_BITFIT_PAGE_ALLOCATION, heap, megapage_cache); \
         allocation = pas_fast_megapage_cache_try_allocate( \
             megapage_cache, \
             &name ## _megapage_table, \
@@ -219,8 +197,7 @@ typedef struct {
     } \
     \
     void* name ## _heap_config_allocate_medium_segregated_page( \
-        pas_segregated_heap* heap, pas_physical_memory_transaction* transaction, \
-        pas_segregated_page_role role) \
+        pas_segregated_heap* heap, pas_physical_memory_transaction* transaction) \
     { \
         pas_basic_heap_config_definitions_arguments arguments = {__VA_ARGS__}; \
         \
@@ -228,8 +205,6 @@ typedef struct {
         pas_basic_heap_page_caches* page_caches; \
         pas_megapage_cache* megapage_cache; \
         void* allocation; \
-        \
-        PAS_UNUSED_PARAM(role); \
         \
         page_config = upcase_name ## _HEAP_CONFIG.medium_segregated_config; \
         \
@@ -239,7 +214,6 @@ typedef struct {
         megapage_cache = &page_caches->medium_megapage_cache; \
         \
         PAS_PROFILE(MEDIUM_SEGREGATED_PAGE_ALLOCATION, heap, megapage_cache); \
-        PAS_MTE_HANDLE(MEDIUM_SEGREGATED_PAGE_ALLOCATION, heap, megapage_cache); \
         allocation = pas_medium_megapage_cache_try_allocate( \
             megapage_cache, \
             page_config.base.page_config_ptr, \
@@ -268,7 +242,6 @@ typedef struct {
         megapage_cache = &page_caches->medium_megapage_cache; \
         \
         PAS_PROFILE(MEDIUM_BITFIT_PAGE_ALLOCATION, heap, megapage_cache); \
-        PAS_MTE_HANDLE(MEDIUM_BITFIT_PAGE_ALLOCATION, heap, megapage_cache); \
         allocation = pas_medium_megapage_cache_try_allocate( \
             megapage_cache, \
             page_config.base.page_config_ptr, \
@@ -297,7 +270,6 @@ typedef struct {
         megapage_cache = &page_caches->medium_megapage_cache; \
         \
         PAS_PROFILE(MARGE_BITFIT_PAGE_ALLOCATION, heap, megapage_cache); \
-        PAS_MTE_HANDLE(MARGE_BITFIT_PAGE_ALLOCATION, heap, megapage_cache); \
         allocation = pas_medium_megapage_cache_try_allocate( \
             megapage_cache, \
             page_config.base.page_config_ptr, \
@@ -320,13 +292,16 @@ typedef struct {
     } \
     \
     pas_fast_megapage_table name ## _megapage_table = PAS_FAST_MEGAPAGE_TABLE_INITIALIZER; \
-    pas_page_header_table name ## _medium_page_header_table = PAS_PAGE_HEADER_TABLE_INITIALIZER( \
+    pas_page_header_table name ## _medium_segregated_page_header_table = PAS_PAGE_HEADER_TABLE_INITIALIZER( \
         upcase_name ##_HEAP_CONFIG.medium_segregated_config.base.page_size); \
+    pas_page_header_table name ## _medium_bitfit_page_header_table = PAS_PAGE_HEADER_TABLE_INITIALIZER( \
+        upcase_name ##_HEAP_CONFIG.medium_bitfit_config.base.page_size); \
     pas_page_header_table name ## _marge_page_header_table = PAS_PAGE_HEADER_TABLE_INITIALIZER( \
         upcase_name ##_HEAP_CONFIG.marge_bitfit_config.base.page_size); \
     \
     pas_basic_heap_config_root_data name ## _root_data = { \
-        .medium_page_header_table = &name ## _medium_page_header_table, \
+        .medium_segregated_page_header_table = &name ## _medium_segregated_page_header_table, \
+        .medium_bitfit_page_header_table = &name ## _medium_bitfit_page_header_table, \
         .marge_page_header_table = &name ## _marge_page_header_table \
     }; \
     \
@@ -343,7 +318,7 @@ typedef struct {
     PAS_BASIC_SEGREGATED_PAGE_CONFIG_DEFINITIONS( \
         name ## _medium_segregated, \
         .page_config = upcase_name ## _HEAP_CONFIG.medium_segregated_config, \
-        .header_table = &name ## _medium_page_header_table); \
+        .header_table = &name ## _medium_segregated_page_header_table); \
     \
     PAS_BASIC_BITFIT_PAGE_CONFIG_DEFINITIONS( \
         name ## _small_bitfit, \
@@ -353,7 +328,7 @@ typedef struct {
     PAS_BASIC_BITFIT_PAGE_CONFIG_DEFINITIONS( \
         name ## _medium_bitfit, \
         .page_config = upcase_name ## _HEAP_CONFIG.medium_bitfit_config, \
-        .header_table = &name ## _medium_page_header_table); \
+        .header_table = &name ## _medium_bitfit_page_header_table); \
     \
     PAS_BASIC_BITFIT_PAGE_CONFIG_DEFINITIONS( \
         name ## _marge_bitfit, \

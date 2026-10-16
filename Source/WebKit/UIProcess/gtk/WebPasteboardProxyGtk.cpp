@@ -53,7 +53,7 @@ void WebPasteboardProxy::readText(IPC::Connection& connection, const String& pas
         return;
     }
 
-    Clipboard::get(pasteboardName).readBuffer(pasteboardType.utf8().data(), [completionHandler = WTF::move(completionHandler)](auto&& buffer) mutable {
+    Clipboard::get(pasteboardName).readBuffer(pasteboardType.utf8(), [completionHandler = WTF::move(completionHandler)](auto&& buffer) mutable {
         completionHandler(String::fromUTF8(buffer->span()));
     }, connection.inDispatchSyncMessageCount() > 1 ? Clipboard::ReadMode::Synchronous : Clipboard::ReadMode::Asynchronous);
 }
@@ -65,7 +65,7 @@ void WebPasteboardProxy::readFilePaths(IPC::Connection& connection, const String
 
 void WebPasteboardProxy::readBuffer(IPC::Connection& connection, const String& pasteboardName, const String& pasteboardType, CompletionHandler<void(RefPtr<SharedBuffer>&&)>&& completionHandler)
 {
-    Clipboard::get(pasteboardName).readBuffer(pasteboardType.utf8().data(), [completionHandler = WTF::move(completionHandler)](auto&& buffer) mutable {
+    Clipboard::get(pasteboardName).readBuffer(pasteboardType.utf8(), [completionHandler = WTF::move(completionHandler)](auto&& buffer) mutable {
         completionHandler(WTF::move(buffer));
     }, connection.inDispatchSyncMessageCount() > 1 ? Clipboard::ReadMode::Synchronous : Clipboard::ReadMode::Asynchronous);
 }
@@ -143,6 +143,8 @@ void WebPasteboardProxy::writeCustomData(IPC::Connection&, const Vector<Pasteboa
                 selectionData.setMarkup(std::get<String>(stringOrBuffer));
             else if (type == "text/uri-list"_s)
                 selectionData.setURIList(std::get<String>(stringOrBuffer));
+            else if (type == "image/svg+xml"_s)
+                selectionData.addBuffer(type, SharedBuffer::create(std::get<String>(stringOrBuffer).utf8().span()));
         }
     });
 
@@ -163,6 +165,8 @@ static WebCore::PasteboardItemInfo pasteboardItemInfoFromFormats(Vector<String>&
         info.webSafeTypesByFidelity.append("text/uri-list"_s);
     if (formats.contains("image/png"_s))
         info.webSafeTypesByFidelity.append("image/png"_s);
+    if (formats.contains("image/svg+xml"_s))
+        info.webSafeTypesByFidelity.append("image/svg+xml"_s);
     info.platformTypesByFidelity = WTF::move(formats);
     return info;
 }
@@ -217,7 +221,7 @@ void WebPasteboardProxy::readBufferFromPasteboard(IPC::Connection& connection, s
         return;
     }
 
-    Clipboard::get(pasteboardName).readBuffer(pasteboardType.utf8().data(), [completionHandler = WTF::move(completionHandler)](auto&& buffer) mutable {
+    Clipboard::get(pasteboardName).readBuffer(pasteboardType.utf8(), [completionHandler = WTF::move(completionHandler)](auto&& buffer) mutable {
         completionHandler(WTF::move(buffer));
     }, connection.inDispatchSyncMessageCount() > 1 ? Clipboard::ReadMode::Synchronous : Clipboard::ReadMode::Asynchronous);
 }

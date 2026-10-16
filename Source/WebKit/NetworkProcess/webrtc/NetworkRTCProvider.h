@@ -45,7 +45,6 @@
 
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <webrtc/p2p/base/basic_packet_socket_factory.h>
-#include <webrtc/rtc_base/third_party/sigslot/sigslot.h>
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 
 #endif
@@ -93,7 +92,7 @@ public:
     void ref() const final { ThreadSafeRefCounted::ref(); }
     void deref() const final { ThreadSafeRefCounted::deref(); }
 
-    void didReceiveNetworkRTCMonitorMessage(IPC::Connection& connection, IPC::Decoder& decoder) { protectedRTCMonitor()->didReceiveMessage(connection, decoder); }
+    void didReceiveNetworkRTCMonitorMessage(IPC::Connection& connection, IPC::Decoder& decoder) { protect(m_rtcMonitor)->didReceiveMessage(connection, decoder); }
 
     class Socket {
     public:
@@ -116,14 +115,13 @@ public:
     void callOnRTCNetworkThread(Function<void()>&&);
 
     IPC::Connection& connection() { return m_ipcConnection.get(); }
-    Ref<IPC::Connection> protectedConnection() { return m_ipcConnection.get(); }
 
     void closeSocket(WebCore::LibWebRTCSocketIdentifier);
 
 #if PLATFORM(COCOA)
-    bool webRTCInterfaceMonitoringViaNWEnabled() const;
-    const std::optional<audit_token_t>& sourceApplicationAuditToken() const { return m_sourceApplicationAuditToken; }
-    const char* applicationBundleIdentifier() const { return m_applicationBundleIdentifier.data(); }
+    bool LEGACY_NODELETE webRTCInterfaceMonitoringViaNWEnabled() const;
+    const std::optional<audit_token_t>& sourceApplicationAuditToken() const LIFETIME_BOUND { return m_sourceApplicationAuditToken; }
+    const UTF8CString& applicationBundleIdentifier() const LIFETIME_BOUND { return m_applicationBundleIdentifier; }
 #endif
 
     std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess(IPC::Connection&);
@@ -159,15 +157,13 @@ private:
 
     void signalSocketIsClosed(WebCore::LibWebRTCSocketIdentifier);
 
-    void assertIsRTCNetworkThread();
-
-    Ref<NetworkRTCMonitor> protectedRTCMonitor();
+    void LEGACY_NODELETE assertIsRTCNetworkThread();
 
     static constexpr size_t maxSockets { 256 };
 
     StdMap<WebCore::LibWebRTCSocketIdentifier, std::unique_ptr<Socket>, SocketComparator> m_sockets;
     WeakPtr<NetworkConnectionToWebProcess> m_connection;
-    Ref<IPC::Connection> m_ipcConnection;
+    const Ref<IPC::Connection> m_ipcConnection;
     bool m_isStarted { true };
 
     NetworkRTCMonitor m_rtcMonitor;
@@ -177,12 +173,12 @@ private:
 #if PLATFORM(COCOA)
     HashMap<WebPageProxyIdentifier, String> m_attributedBundleIdentifiers;
     std::optional<audit_token_t> m_sourceApplicationAuditToken;
-    CString m_applicationBundleIdentifier;
+    UTF8CString m_applicationBundleIdentifier;
     const Ref<WorkQueue> m_rtcNetworkThreadQueue;
 #endif
 
 #if !PLATFORM(COCOA)
-    UniqueRef<webrtc::BasicPacketSocketFactory> m_packetSocketFactory;
+    const UniqueRef<webrtc::BasicPacketSocketFactory> m_packetSocketFactory;
 #endif
 };
 

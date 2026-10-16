@@ -20,6 +20,40 @@
             "enum": [ "tab", "window" ]
         },
         {
+            "id": "ImageFormat",
+            "description": "The format of a captured screenshot image.",
+            "spec": "https://w3c.github.io/webdriver-bidi/#cddl-type-browsingcontextimageformat",
+            "type": "object",
+            "properties": [
+                { "name": "type", "type": "string", "description": "The MIME type of the image format, e.g. 'image/png'." },
+                { "name": "quality", "type": "number", "optional": true, "description": "The compression quality for lossy formats, in the range 0 to 1." }
+            ]
+        },
+        {
+            "id": "ImageSize",
+            "description": "An upper bound on the dimensions of a captured screenshot image.",
+            "spec": "https://w3c.github.io/webdriver-bidi/#cddl-type-browsingcontextimagesize",
+            "type": "object",
+            "properties": [
+                { "name": "maxWidth", "type": "integer", "optional": true, "description": "The maximum width of the captured image, greater than 1." },
+                { "name": "maxHeight", "type": "integer", "optional": true, "description": "The maximum height of the captured image, greater than 1." }
+            ]
+        },
+        {
+            "id": "ClipRectangle",
+            "description": "A rectangle to clip a captured screenshot to, either an element ('element') or a box in viewport coordinates ('box').",
+            "spec": "https://w3c.github.io/webdriver-bidi/#cddl-type-browsingcontextcliprectangle",
+            "type": "object",
+            "properties": [
+                { "name": "type", "type": "string", "description": "Either 'element' or 'box'." },
+                { "name": "element", "type": "object", "optional": true, "description": "A script.SharedReference to the element to clip to, when type is 'element'." },
+                { "name": "x", "type": "number", "optional": true, "description": "The x coordinate of the box, when type is 'box'." },
+                { "name": "y", "type": "number", "optional": true, "description": "The y coordinate of the box, when type is 'box'." },
+                { "name": "width", "type": "number", "optional": true, "description": "The width of the box, when type is 'box'." },
+                { "name": "height", "type": "number", "optional": true, "description": "The height of the box, when type is 'box'." }
+            ]
+        },
+        {
             "id": "Info",
             "description": "Information about a navigable.",
             "spec": "https://w3c.github.io/webdriver-bidi/#type-browsingContext-Info",
@@ -65,6 +99,34 @@
             "spec": "https://w3c.github.io/webdriver-bidi/#type-browsingContext-UserPromptType",
             "type": "string",
             "enum": [ "alert", "beforeunload", "confirm", "prompt" ]
+        },
+        {
+            "id": "Locator",
+            "description": "Defines a strategy for locating nodes within a document.",
+            "spec": "https://w3c.github.io/webdriver-bidi/#type-browsingContext-Locator",
+            "type": "object",
+            "properties": [
+                { "name": "type", "$ref": "BidiBrowsingContext.LocatorType" },
+                { "name": "value", "type": "any" }
+            ]
+        },
+        {
+            "id": "LocatorType",
+            "description": "The type of locator strategy to use for finding nodes.",
+            "spec": "https://w3c.github.io/webdriver-bidi/#type-browsingContext-Locator",
+            "bug": "https://bugs.webkit.org/show_bug.cgi?id=288329",
+            "type": "string",
+            "enum": [ "css" ]
+        },
+        {
+            "id": "Viewport",
+            "description": "Represents viewport dimensions.",
+            "spec": "https://w3c.github.io/webdriver-bidi/#command-browsingContext-setViewport",
+            "type": "object",
+            "properties": [
+                { "name": "width", "type": "integer" },
+                { "name": "height", "type": "integer" }
+            ]
         }
     ],
     "commands": [
@@ -76,6 +138,23 @@
             "async": true,
             "parameters": [
                 { "name": "context", "$ref": "BidiBrowsingContext.BrowsingContext", "description": "The identifier of the browsing context to activate.  It is an error to pass a non-top level traversable." }
+            ]
+        },
+        {
+            "name": "captureScreenshot",
+            "description": "Captures an image of the given navigable, and returns it as a Base64-encoded string.",
+            "spec": "https://w3c.github.io/webdriver-bidi/#command-browsingContext-captureScreenshot",
+            "wpt": "https://github.com/web-platform-tests/wpt/tree/master/webdriver/tests/bidi/browsing_context/capture_screenshot",
+            "async": true,
+            "parameters": [
+                { "name": "context", "$ref": "BidiBrowsingContext.BrowsingContext", "description": "The identifier of the browsing context to capture." },
+                { "name": "origin", "type": "string", "optional": true, "description": "The origin of the coordinate system the capture is taken from: 'viewport' (default) or 'document'. Validated by the command implementation, as invalid values must be rejected rather than ignored." },
+                { "name": "format", "$ref": "BidiBrowsingContext.ImageFormat", "optional": true, "description": "The format of the captured image (default is PNG)." },
+                { "name": "clip", "$ref": "BidiBrowsingContext.ClipRectangle", "optional": true, "description": "A rectangle to clip the captured image to." },
+                { "name": "imageSize", "$ref": "BidiBrowsingContext.ImageSize", "optional": true, "description": "An upper bound on the dimensions of the captured image." }
+            ],
+            "returns": [
+                { "name": "data", "type": "string", "description": "The Base64-encoded image data." }
             ]
         },
         {
@@ -118,6 +197,23 @@
             ]
         },
         {
+            "name": "locateNodes",
+            "description": "Locates nodes within a browsing context using the provided locator strategy.",
+            "spec": "https://w3c.github.io/webdriver-bidi/#command-browsingContext-locateNodes",
+            "wpt": "https://github.com/web-platform-tests/wpt/tree/master/webdriver/tests/bidi/browsing_context/locate_nodes",
+            "async": true,
+            "parameters": [
+                { "name": "context", "$ref": "BidiBrowsingContext.BrowsingContext", "description": "The identifier of the browsing context to search within." },
+                { "name": "locator", "$ref": "BidiBrowsingContext.Locator", "description": "The locator strategy and value to use for finding nodes." },
+                { "name": "maxNodeCount", "type": "number", "optional": true, "description": "Maximum number of nodes to return. If not specified, all matching nodes are returned." },
+                { "name": "serializationOptions", "$ref": "BidiScript.SerializationOptions", "optional": true, "description": "Options for controlling how nodes are serialized in the response." },
+                { "name": "startNodes", "type": "array", "items": { "$ref": "BidiScript.RemoteValue" }, "optional": true, "description": "Optional array of node references to start the search from." }
+            ],
+            "returns": [
+                { "name": "nodes", "type": "array", "items": { "$ref": "BidiScript.RemoteValue" }, "description": "Array of nodes matching the locator." }
+            ]
+        },
+        {
             "name": "getTree",
             "description": "Describes the frame tree at a particular moment in time. Returns a tree of all descendant navigables including the given parent itself, or all top-level contexts when no parent is provided.",
             "spec": "https://w3c.github.io/webdriver-bidi/#command-browsingContext-getTree",
@@ -140,7 +236,7 @@
             "parameters": [
                 { "name": "context", "$ref": "BidiBrowsingContext.BrowsingContext", "description": "The identifier of the browsing context to navigate." },
                 { "name": "url", "type": "string", "description": "The URL to navigate to." },
-                { "name": "wait", "$ref": "BidiBrowsingContext.ReadinessState", "optional": true, "description": "The readiness state at which the command will return (default is 'none')." }
+                { "name": "wait", "type": "string", "optional": true, "description": "The readiness state at which the command will return (default is 'none'). Should be a BidiBrowsingContext.ReadinessState value." }
             ],
             "returns": [
                 { "name": "url", "type": "string", "description": "The URL the browsing context navigated to." },
@@ -171,6 +267,19 @@
             "parameters": [
                 { "name": "context", "$ref": "BidiBrowsingContext.BrowsingContext", "description": "The identifier of the browsing context to traverse history." },
                 { "name": "delta", "type": "integer", "description": "The number of steps to traverse in history. Positive values go forward, negative values go backward, and a value of zero will succeed with no action." }
+            ],
+            "async": true
+        },
+        {
+            "name": "setViewport",
+            "description": "Sets the viewport dimensions and/or device pixel ratio for a browsing context.",
+            "spec": "https://w3c.github.io/webdriver-bidi/#command-browsingContext-setViewport",
+            "wpt": "https://github.com/web-platform-tests/wpt/tree/master/webdriver/tests/bidi/browsing_context/set_viewport",
+            "parameters": [
+                { "name": "context", "$ref": "BidiBrowsingContext.BrowsingContext", "optional": true, "description": "The identifier of the browsing context to set viewport for." },
+                { "name": "viewport", "$ref": "BidiBrowsingContext.Viewport", "optional": true, "nullable": true, "description": "The viewport dimensions to set. If null, resets to default." },
+                { "name": "devicePixelRatio", "type": "number", "optional": true, "nullable": true, "description": "The device pixel ratio to set. If null, resets to default." },
+                { "name": "userContexts", "type": "array", "items": { "$ref": "BidiBrowser.UserContext" }, "optional": true, "description": "User context IDs to apply the viewport to." }
             ],
             "async": true
         }

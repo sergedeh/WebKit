@@ -27,12 +27,17 @@
 
 #if ENABLE(WEBASSEMBLY_BBQJIT)
 
+#include "MathCommon.h"
 #include "PCToCodeOriginMap.h"
 #include "SimpleRegisterAllocator.h"
 #include "WasmCallingConvention.h"
 #include "WasmCompilationContext.h"
 #include "WasmFunctionParser.h"
 #include "WasmLimits.h"
+#include "js/JSWebAssemblyInstance.h"
+#include <span>
+#include <wtf/BitVector.h>
+#include <wtf/CheckedArithmetic.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -47,7 +52,7 @@ namespace BBQJITImpl {
 class BBQJIT {
 public:
     using ErrorType = String;
-    using PartialResult = Expected<void, ErrorType>;
+    using PartialResult = std::expected<void, ErrorType>;
     using Address = MacroAssembler::Address;
     using BaseIndex = MacroAssembler::BaseIndex;
     using Imm32 = MacroAssembler::Imm32;
@@ -70,11 +75,6 @@ public:
     static_assert(maxFunctionLocals < 1 << LocalIndexBits);
 
     static constexpr GPRReg wasmScratchGPR = GPRInfo::nonPreservedNonArgumentGPR0; // Scratch registers to hold temporaries in operations.
-#if USE(JSVALUE32_64)
-    static constexpr GPRReg wasmScratchGPR2 = GPRInfo::nonPreservedNonArgumentGPR2;
-#else
-    static constexpr GPRReg wasmScratchGPR2 = InvalidGPRReg;
-#endif
     static constexpr FPRReg wasmScratchFPR = FPRInfo::nonPreservedNonArgumentFPR0;
 
 #if CPU(X86_64)
@@ -83,13 +83,8 @@ public:
     static constexpr GPRReg shiftRCX = InvalidGPRReg;
 #endif
 
-#if USE(JSVALUE64)
     static constexpr GPRReg wasmBaseMemoryPointer = GPRInfo::wasmBaseMemoryPointer;
     static constexpr GPRReg wasmBoundsCheckingSizeRegister = GPRInfo::wasmBoundsCheckingSizeRegister;
-#else
-    static constexpr GPRReg wasmBaseMemoryPointer = InvalidGPRReg;
-    static constexpr GPRReg wasmBoundsCheckingSizeRegister = InvalidGPRReg;
-#endif
 
 public:
     struct Location {
@@ -99,75 +94,68 @@ public:
             Gpr = 2,
             Fpr = 3,
             Global = 4,
-            StackArgument = 5,
-            Gpr2 = 6
+            StackArgument = 5
         };
 
         Location()
             : m_kind(None)
         { }
 
-        static Location none();
+        static Location LEGACY_NODELETE none();
 
-        static Location fromStack(int32_t stackOffset);
+        static Location LEGACY_NODELETE fromStack(int32_t stackOffset);
 
-        static Location fromStackArgument(int32_t stackOffset);
+        static Location LEGACY_NODELETE fromStackArgument(int32_t stackOffset);
 
-        static Location fromGPR(GPRReg gpr);
+        static Location LEGACY_NODELETE fromGPR(GPRReg gpr);
 
-        static Location fromGPR2(GPRReg hi, GPRReg lo);
+        static Location LEGACY_NODELETE fromFPR(FPRReg fpr);
 
-        static Location fromFPR(FPRReg fpr);
+        static Location LEGACY_NODELETE fromGlobal(int32_t globalOffset);
 
-        static Location fromGlobal(int32_t globalOffset);
+        static Location LEGACY_NODELETE fromArgumentLocation(ArgumentLocation argLocation, TypeKind type);
 
-        static Location fromArgumentLocation(ArgumentLocation argLocation, TypeKind type);
+        static bool rangesOverlap(Location a, uint32_t aSize, Location b, uint32_t bSize);
 
-        bool isNone() const;
+        bool LEGACY_NODELETE isNone() const;
 
-        bool isGPR() const;
+        bool LEGACY_NODELETE isGPR() const;
 
-        bool isGPR2() const;
+        bool LEGACY_NODELETE isFPR() const;
 
-        bool isFPR() const;
+        bool LEGACY_NODELETE isRegister() const;
 
-        bool isRegister() const;
+        bool LEGACY_NODELETE isStack() const;
 
-        bool isStack() const;
+        bool LEGACY_NODELETE isStackArgument() const;
 
-        bool isStackArgument() const;
+        bool LEGACY_NODELETE isGlobal() const;
 
-        bool isGlobal() const;
+        bool LEGACY_NODELETE isMemory() const;
 
-        bool isMemory() const;
+        int32_t LEGACY_NODELETE asStackOffset() const;
 
-        int32_t asStackOffset() const;
+        Address LEGACY_NODELETE asStackAddress() const;
 
-        Address asStackAddress() const;
+        int32_t LEGACY_NODELETE asGlobalOffset() const;
 
-        int32_t asGlobalOffset() const;
+        Address LEGACY_NODELETE asGlobalAddress() const;
 
-        Address asGlobalAddress() const;
+        int32_t LEGACY_NODELETE asStackArgumentOffset() const;
 
-        int32_t asStackArgumentOffset() const;
+        Address LEGACY_NODELETE asStackArgumentAddress() const;
 
-        Address asStackArgumentAddress() const;
+        Address LEGACY_NODELETE asAddress() const;
 
-        Address asAddress() const;
-
-        GPRReg asGPR() const;
-        FPRReg asFPR() const;
+        GPRReg LEGACY_NODELETE asGPR() const;
+        FPRReg LEGACY_NODELETE asFPR() const;
         Reg asReg() const { return isGPR() ? Reg(asGPR()) : Reg(asFPR()); }
-
-        GPRReg asGPRlo() const;
-
-        GPRReg asGPRhi() const;
 
         void dump(PrintStream& out) const;
 
-        bool operator==(Location other) const;
+        bool LEGACY_NODELETE operator==(Location other) const;
 
-        Kind kind() const;
+        Kind LEGACY_NODELETE kind() const;
 
     private:
         union {
@@ -185,27 +173,21 @@ public:
                 Kind m_padFpr;
                 FPRReg m_fpr;
             };
-            struct {
-                Kind m_padGpr2;
-                GPRReg m_gprhi, m_gprlo;
-            };
         };
     };
 
     static_assert(sizeof(Location) == 4);
 
-    static bool isValidValueTypeKind(TypeKind kind);
+    static bool LEGACY_NODELETE isValidValueTypeKind(TypeKind kind);
 
-    static TypeKind pointerType();
+    static TypeKind LEGACY_NODELETE pointerType();
 
-    static bool isFloatingPointType(TypeKind type);
-
-    static bool typeNeedsGPR2(TypeKind type);
+    static bool LEGACY_NODELETE isFloatingPointType(TypeKind type);
 
 public:
     static uint32_t sizeOfType(TypeKind type);
 
-    static TypeKind toValueKind(TypeKind kind);
+    static TypeKind LEGACY_NODELETE toValueKind(TypeKind kind);
 
     class Value {
     public:
@@ -334,11 +316,7 @@ public:
 
         ALWAYS_INLINE static Value fromPointer(void* pointer)
         {
-#if USE(JSVALUE64)
             return fromI64(std::bit_cast<uintptr_t>(pointer));
-#else
-            return fromI32(std::bit_cast<uintptr_t>(pointer));
-#endif
         }
 
         ALWAYS_INLINE static Value fromRef(TypeKind refType, EncodedJSValue ref)
@@ -404,18 +382,11 @@ public:
             : m_kind(None)
         { }
 
-        int32_t asI64hi() const;
-
-        int32_t asI64lo() const;
-
         void dump(PrintStream& out) const;
 
     private:
         union {
             int32_t m_i32;
-            struct {
-                int32_t lo, hi;
-            } m_i32_pair;
             int64_t m_i64;
             float m_f32;
             double m_f64;
@@ -438,10 +409,10 @@ public:
         };
 
         static RegisterBinding none() { return RegisterBinding(); }
-        static RegisterBinding fromValue(Value value);
-        static RegisterBinding scratch();
+        static RegisterBinding LEGACY_NODELETE fromValue(Value);
+        static RegisterBinding LEGACY_NODELETE scratch();
 
-        Value toValue() const;
+        Value LEGACY_NODELETE toValue() const;
 
         bool isNone() const { return m_kind == None; }
         bool isValid() const { return m_kind != None; }
@@ -451,7 +422,7 @@ public:
 
         void dump(PrintStream& out) const;
 
-        unsigned hash() const;
+        unsigned LEGACY_NODELETE hash() const;
 
         TypeKind m_type { 0 };
         unsigned m_kind : 3 { None };
@@ -644,10 +615,6 @@ public:
                 m_preserved.add(location.asGPR(), IgnoreVectors);
             else if (location.isFPR())
                 m_preserved.add(location.asFPR(), Width::Width128);
-            else if (location.isGPR2()) {
-                m_preserved.add(location.asGPRlo(), IgnoreVectors);
-                m_preserved.add(location.asGPRhi(), IgnoreVectors);
-            }
             initializedPreservedSet(args...);
         }
 
@@ -707,22 +674,11 @@ public:
         }
 
         // This function is intentionally not using implicitSlots since arguments and results should not include implicit slot.
-        Location allocateArgumentOrResult(BBQJIT& generator, TypeKind type, unsigned i, RegisterSet& remainingGPRs, RegisterSet& remainingFPRs);
+        Location LEGACY_NODELETE allocateArgumentOrResult(BBQJIT& generator, TypeKind type, unsigned i, RegisterSet& remainingGPRs, RegisterSet& remainingFPRs);
 
         template<typename Stack>
         void flushAtBlockBoundary(BBQJIT& generator, unsigned targetArity, Stack& expressionStack, bool endOfWasmBlock)
         {
-            // First, we flush all locals that were allocated outside of their designated slots in this block.
-            for (unsigned i = 0; i < expressionStack.size(); ++i) {
-                if (expressionStack[i].value().isLocal())
-                    m_touchedLocals.add(expressionStack[i].value().asLocal());
-            }
-            for (LocalOrTempIndex touchedLocal : m_touchedLocals) {
-                Value value = Value::fromLocal(generator.m_localTypes[touchedLocal], touchedLocal);
-                if (generator.locationOf(value).isRegister())
-                    generator.flushValue(value);
-            }
-
             // If we are a catch block, we need to flush the exception value, since it's not represented on the expression stack.
             if (isAnyCatch(*this)) {
                 Value value = generator.exception(*this);
@@ -735,6 +691,20 @@ public:
             for (unsigned i = 0; i < expressionStack.size(); ++i) {
                 Value& value = expressionStack[i].value();
                 int resultIndex = static_cast<int>(i) - static_cast<int>(expressionStack.size() - targetArity);
+
+                if (value.isLocal()) {
+                    Value local = value;
+                    value = Value::fromTemp(local.type(), static_cast<LocalOrTempIndex>(enclosedHeight() + implicitSlots() + i));
+                    Location source = generator.locationOf(local);
+                    bool isPinnedInPlace = generator.isPinnedLocalRegister(source);
+                    if (!(endOfWasmBlock && resultIndex >= 0)) {
+                        generator.emitMove(local, generator.locationOf(value));
+                    } else if (source.isRegister() && !isPinnedInPlace) {
+                        generator.unbind(local, source);
+                        generator.bind(value, source);
+                    } else
+                        generator.emitMove(local, generator.allocate(value));
+                }
 
                 // Next, we turn all constants into temporaries, so they can be given persistent slots on the stack.
                 // If this is the end of the enclosing wasm block, we know we won't need them again, so this can be skipped.
@@ -753,6 +723,12 @@ public:
                         generator.consume(value);
                 }
             }
+
+            // Locals go back to their canonical slots so the paths meeting at the successor agree on
+            // where to find them. A pinned local's register is already the same on every path.
+            generator.flushAllLocals();
+            generator.assertPinnedLocalsAreResident();
+            generator.m_localsOnExpressionStack.clearAll();
         }
 
         template<typename Stack, size_t N>
@@ -828,14 +804,14 @@ public:
             for (unsigned i = 0; i < predecessor.resultLocations().size(); ++i) {
                 unsigned offset = expressionStack.size() - predecessor.resultLocations().size();
                 // Intentionally not using implicitSlots since results should not include implicit slot.
-                expressionStack[i + offset].value() = Value::fromTemp(expressionStack[i + offset].type().kind, predecessor.enclosedHeight() + i);
+                expressionStack[i + offset].value() = Value::fromTemp(expressionStack[i + offset].type().kind(), predecessor.enclosedHeight() + i);
                 generator.bind(expressionStack[i + offset].value(), predecessor.resultLocations()[i]);
             }
         }
 
-        void convertIfToBlock();
+        void LEGACY_NODELETE convertIfToBlock();
 
-        void convertLoopToBlock();
+        void LEGACY_NODELETE convertLoopToBlock();
 
         void addBranch(Jump jump);
 
@@ -849,20 +825,20 @@ public:
 
         void linkIfBranch(MacroAssembler::AbstractMacroAssemblerType* masm);
 
-        void dump(PrintStream& out) const;
+        void LEGACY_NODELETE dump(PrintStream& out) const;
 
-        LocalOrTempIndex enclosedHeight() const;
+        LocalOrTempIndex LEGACY_NODELETE enclosedHeight() const;
 
-        unsigned implicitSlots() const;
+        unsigned LEGACY_NODELETE implicitSlots() const;
 
-        const Vector<Location, 2>& targetLocations() const;
+        const Vector<Location, 2>& LEGACY_NODELETE targetLocations() const;
 
-        const Vector<Location, 2>& argumentLocations() const;
+        const Vector<Location, 2>& LEGACY_NODELETE argumentLocations() const;
 
-        const Vector<Location, 2>& resultLocations() const;
+        const Vector<Location, 2>& LEGACY_NODELETE resultLocations() const;
 
-        BlockType blockType() const;
-        const BlockSignature& signature() const;
+        BlockType LEGACY_NODELETE blockType() const;
+        const BlockSignature& LEGACY_NODELETE signature() const;
 
         FunctionArgCount branchTargetArity() const;
 
@@ -870,40 +846,38 @@ public:
 
         Type argumentType(unsigned i) const;
 
-        CatchKind catchKind() const;
+        CatchKind LEGACY_NODELETE catchKind() const;
 
-        void setCatchKind(CatchKind catchKind);
+        void LEGACY_NODELETE setCatchKind(CatchKind catchKind);
 
-        unsigned tryStart() const;
+        unsigned LEGACY_NODELETE tryStart() const;
 
-        unsigned tryEnd() const;
+        unsigned LEGACY_NODELETE tryEnd() const;
 
-        unsigned tryCatchDepth() const;
+        unsigned LEGACY_NODELETE tryCatchDepth() const;
 
-        void setTryInfo(unsigned tryStart, unsigned tryEnd, unsigned tryCatchDepth);
+        void LEGACY_NODELETE setTryInfo(unsigned tryStart, unsigned tryEnd, unsigned tryCatchDepth);
 
         struct TryTableTarget {
             CatchKind type;
             uint32_t tag;
-            const TypeDefinition* exceptionSignature;
+            const RTT* exceptionSignature;
             ControlRef target;
         };
         using TargetList = Vector<TryTableTarget>;
 
         void setTryTableTargets(TargetList&&);
 
-        void setIfBranch(MacroAssembler::Jump branch);
+        void LEGACY_NODELETE setIfBranch(MacroAssembler::Jump branch);
 
-        void setLoopLabel(MacroAssembler::Label label);
+        void LEGACY_NODELETE setLoopLabel(MacroAssembler::Label label);
 
-        const MacroAssembler::Label& loopLabel() const;
-
-        void touch(LocalOrTempIndex local);
+        const MacroAssembler::Label& LEGACY_NODELETE loopLabel() const;
 
     private:
         friend class BBQJIT;
 
-        void fillLabels(CCallHelpers::Label label);
+        void LEGACY_NODELETE fillLabels(CCallHelpers::Label label);
 
         BlockSignature m_signature;
         BlockType m_blockType;
@@ -915,11 +889,10 @@ public:
         MacroAssembler::Label m_loopLabel;
         MacroAssembler::Jump m_ifBranch;
         LocalOrTempIndex m_enclosedHeight; // Height of enclosed expression stack, used as the base for all temporary locations.
-        BitVector m_touchedLocals; // Number of locals allocated to registers in this block.
         unsigned m_tryStart { 0 };
         unsigned m_tryEnd { 0 };
         unsigned m_tryCatchDepth { 0 };
-        Vector<TryTableTarget, 8> m_tryTableTargets;
+        TargetList m_tryTableTargets;
     };
 
     friend struct ControlData;
@@ -935,7 +908,7 @@ public:
     using CatchHandler = FunctionParser<BBQJIT>::CatchHandler;
     using ArgumentList = FunctionParser<BBQJIT>::ArgumentList;
 
-    unsigned stackCheckSize() const { return alignedFrameSize(m_maxCalleeStackSize + m_frameSize); }
+    uint32_t stackCheckSize() const { return m_frameSize; }
 
 private:
     unsigned m_loggingIndent = 0;
@@ -1085,16 +1058,16 @@ public:
     static constexpr bool tierSupportsSIMD() { return true; }
     static constexpr bool validateFunctionBodySize = true;
 
-    BBQJIT(CompilationContext&, const TypeDefinition& signature, Module&, CalleeGroup&, IPIntCallee& profiledCallee, BBQCallee& callee, const FunctionData& function, FunctionCodeIndex functionIndex, const ModuleInformation& info, Vector<UnlinkedWasmToWasmCall>& unlinkedWasmToWasmCalls, MemoryMode mode, InternalFunction* compilation);
+    BBQJIT(CompilationContext&, const RTT& signature, Module&, CalleeGroup&, IPIntCallee& profiledCallee, BBQCallee& callee, const FunctionData& function, FunctionCodeIndex functionIndex, const ModuleInformation& info, Vector<UnlinkedWasmToWasmCall>& unlinkedWasmToWasmCalls, MemoryMode mode, InternalFunction* compilation);
 
     ALWAYS_INLINE static Value emptyExpression()
     {
         return Value::none();
     }
 
-    void setParser(FunctionParser<BBQJIT>* parser);
+    void LEGACY_NODELETE setParser(FunctionParser<BBQJIT>* parser);
 
-    bool addArguments(const TypeDefinition& signature);
+    bool addArguments(const RTT& signature);
 
     Value addConstant(Type type, uint64_t value);
 
@@ -1102,7 +1075,7 @@ public:
 
     PartialResult addLocal(Type type, uint32_t numberOfLocals);
 
-    Value instanceValue();
+    Value LEGACY_NODELETE instanceValue();
 
     // Tables
     [[nodiscard]] PartialResult addTableGet(unsigned tableIndex, Value index, Value& result);
@@ -1131,9 +1104,9 @@ public:
 
     // Globals
 
-    Value topValue(TypeKind type);
+    Value LEGACY_NODELETE topValue(TypeKind type, unsigned offset = 0);
 
-    Value exception(const ControlData& control);
+    Value LEGACY_NODELETE exception(const ControlData& control);
 
     [[nodiscard]] PartialResult getGlobal(uint32_t index, Value& result);
 
@@ -1142,39 +1115,79 @@ public:
 
     [[nodiscard]] PartialResult setGlobal(uint32_t index, Value value);
 
+    void emitZeroExtendAddressOperand(bool is64Bit, Value operand);
+
     // Memory
 
-    inline Location emitCheckAndPreparePointer(Value pointer, uint32_t uoffset, uint32_t sizeOfOperation)
+    inline Location emitCheckAndPreparePointer(Value pointer, uint64_t uoffset, uint32_t sizeOfOperation, uint8_t memoryIndex)
     {
+        if (m_info.memory(memoryIndex).doesAccessOverflow(uoffset, sizeOfOperation)) {
+            recordJumpToThrowException(ExceptionType::OutOfBoundsMemoryAccess, m_jit.jump());
+            consume(pointer);
+            return Location::fromGPR(wasmScratchGPR);
+        }
+
         ScratchScope<1, 0> scratches(*this);
         Location pointerLocation;
+
+        std::optional<ScratchScope<2, 0>> nonZeroMemoryScratches;
+        GPRReg baseRegister = wasmBaseMemoryPointer;
+        GPRReg boundsCheckingSizeRegister = wasmBoundsCheckingSizeRegister;
+        if (memoryIndex) {
+            nonZeroMemoryScratches.emplace(*this);
+            baseRegister = nonZeroMemoryScratches->gpr(0);
+            boundsCheckingSizeRegister = nonZeroMemoryScratches->gpr(1);
+            m_jit.loadPtr(
+                Address(GPRInfo::wasmContextInstancePointer, JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(memoryIndex)),
+                baseRegister);
+            m_jit.loadPtr(
+                Address(GPRInfo::wasmContextInstancePointer, JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(memoryIndex) + sizeof(void*)),
+                boundsCheckingSizeRegister);
+        }
+
+        uint64_t boundary = static_cast<uint64_t>(sizeOfOperation) + uoffset - 1;
+
         if (pointer.isConst()) {
+            uint64_t constantPointer = m_info.memory(memoryIndex).isMemory64()
+                ? pointer.asI64()
+                : static_cast<uint32_t>(pointer.asI32());
+
+            if (sumOverflows<uint64_t>(constantPointer, boundary)) {
+                recordJumpToThrowException(ExceptionType::OutOfBoundsMemoryAccess, m_jit.jump());
+                consume(pointer);
+                return Location::fromGPR(wasmScratchGPR);
+            }
+
             pointerLocation = Location::fromGPR(scratches.gpr(0));
             emitMoveConst(pointer, pointerLocation);
         } else
             pointerLocation = loadIfNecessary(pointer);
         ASSERT(pointerLocation.isGPR());
 
-#if USE(JSVALUE32_64)
-        ScratchScope<2, 0> globals(*this);
-        GPRReg wasmBaseMemoryPointer = globals.gpr(0);
-        GPRReg wasmBoundsCheckingSizeRegister = globals.gpr(1);
-        loadWebAssemblyGlobalState(wasmBaseMemoryPointer, wasmBoundsCheckingSizeRegister);
-#endif
-
-        uint64_t boundary = static_cast<uint64_t>(sizeOfOperation) + uoffset - 1;
-        switch (m_mode) {
+        switch (m_info.memoryModeForAccess(memoryIndex, m_mode)) {
         case MemoryMode::BoundsChecking: {
             // We're not using signal handling only when the memory is not shared.
             // Regardless of signaling, we must check that no memory access exceeds the current memory size.
-            m_jit.zeroExtend32ToWord(pointerLocation.asGPR(), wasmScratchGPR);
-            if (boundary)
-                m_jit.addPtr(TrustedImmPtr(boundary), wasmScratchGPR);
-            recordJumpToThrowException(ExceptionType::OutOfBoundsMemoryAccess, m_jit.branchPtr(RelationalCondition::AboveOrEqual, wasmScratchGPR, wasmBoundsCheckingSizeRegister));
+
+            if (m_info.memory(memoryIndex).isMemory64()) {
+                if (boundary) {
+                    m_jit.move(TrustedImmPtr(boundary), wasmScratchGPR);
+                    Jump overflow = m_jit.branchAddPtr(ResultCondition::Carry, pointerLocation.asGPR(), wasmScratchGPR);
+                    recordJumpToThrowException(ExceptionType::OutOfBoundsMemoryAccess, overflow);
+                } else
+                    m_jit.move(pointerLocation.asGPR(), wasmScratchGPR);
+            } else {
+                m_jit.zeroExtend32ToWord(pointerLocation.asGPR(), wasmScratchGPR);
+                if (boundary)
+                    m_jit.addPtr(TrustedImmPtr(boundary), wasmScratchGPR);
+            }
+
+            recordJumpToThrowException(ExceptionType::OutOfBoundsMemoryAccess, m_jit.branchPtr(RelationalCondition::AboveOrEqual, wasmScratchGPR, boundsCheckingSizeRegister));
             break;
         }
 
         case MemoryMode::Signaling: {
+            RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(!m_info.memory(memoryIndex).isMemory64());
             // We've virtually mapped 4GiB+redzone for this memory. Only the user-allocated pages are addressable, contiguously in range [0, current],
             // and everything above is mapped PROT_NONE. We don't need to perform any explicit bounds check in the 4GiB range because WebAssembly register
             // memory accesses are 32-bit. However WebAssembly register + offset accesses perform the addition in 64-bit which can push an access above
@@ -1185,8 +1198,8 @@ public:
             // PROT_NONE region, but it's better if we use a smaller immediate because it can codegens better. We know that anything equal to or greater
             // than the declared 'maximum' will trap, so we can compare against that number. If there was no declared 'maximum' then we still know that
             // any access equal to or greater than 4GiB will trap, no need to add the redzone.
-            if (uoffset >= Memory::fastMappedRedzoneBytes()) {
-                uint64_t maximum = m_info.memory.maximum() ? m_info.memory.maximum().bytes() : std::numeric_limits<uint32_t>::max();
+            if (boundary >= Memory::fastMappedRedzoneBytes()) {
+                uint64_t maximum = m_info.memory(memoryIndex).maximum() ? m_info.memory(memoryIndex).maximum().bytes() : std::numeric_limits<uint32_t>::max();
                 m_jit.zeroExtend32ToWord(pointerLocation.asGPR(), wasmScratchGPR);
                 if (boundary)
                     m_jit.addPtr(TrustedImmPtr(boundary), wasmScratchGPR);
@@ -1197,10 +1210,17 @@ public:
         }
 
 #if CPU(ARM64)
-        m_jit.addZeroExtend64(wasmBaseMemoryPointer, pointerLocation.asGPR(), wasmScratchGPR);
+        if (m_info.memory(memoryIndex).isMemory64())
+            m_jit.addPtr(baseRegister, pointerLocation.asGPR(), wasmScratchGPR);
+        else
+            m_jit.addZeroExtend64(baseRegister, pointerLocation.asGPR(), wasmScratchGPR);
 #else
-        m_jit.zeroExtend32ToWord(pointerLocation.asGPR(), wasmScratchGPR);
-        m_jit.addPtr(wasmBaseMemoryPointer, wasmScratchGPR);
+        if (m_info.memory(memoryIndex).isMemory64())
+            m_jit.addPtr(baseRegister, pointerLocation.asGPR(), wasmScratchGPR);
+        else {
+            m_jit.zeroExtend32ToWord(pointerLocation.asGPR(), wasmScratchGPR);
+            m_jit.addPtr(baseRegister, wasmScratchGPR);
+        }
 #endif
 
         consume(pointer);
@@ -1208,7 +1228,7 @@ public:
     }
 
     template<typename Functor>
-    auto emitCheckAndPrepareAndMaterializePointerApply(Value pointer, uint32_t uoffset, uint32_t sizeOfOperation, Functor&& functor) -> decltype(auto);
+    auto emitCheckAndPrepareAndMaterializePointerApply(Value pointer, uint64_t uoffset, uint32_t sizeOfOperation, uint8_t memoryIndex, NOESCAPE const Functor&) -> decltype(auto);
 
     static inline uint32_t sizeOfLoadOp(LoadOpType op)
     {
@@ -1260,7 +1280,7 @@ public:
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    Address materializePointer(Location pointerLocation, uint32_t uoffset);
+    Address materializePointer(Location pointerLocation, uint64_t uoffset, Width accessWidth);
 
     constexpr static const char* LOAD_OP_NAMES[14] = {
         "I32Load", "I64Load", "F32Load", "F64Load",
@@ -1268,7 +1288,7 @@ public:
         "I64Load8S", "I64Load8U", "I64Load16S", "I64Load16U", "I64Load32S", "I64Load32U"
     };
 
-    [[nodiscard]] PartialResult load(LoadOpType loadOp, Value pointer, Value& result, uint32_t uoffset);
+    [[nodiscard]] PartialResult load(LoadOpType loadOp, Value pointer, Value& result, uint64_t uoffset, uint8_t memoryIndex);
 
     inline uint32_t sizeOfStoreOp(StoreOpType op)
     {
@@ -1296,17 +1316,17 @@ public:
         "I64Store8", "I64Store16", "I64Store32",
     };
 
-    [[nodiscard]] PartialResult store(StoreOpType storeOp, Value pointer, Value value, uint32_t uoffset);
+    [[nodiscard]] PartialResult store(StoreOpType storeOp, Value pointer, Value value, uint64_t uoffset, uint8_t memoryIndex);
 
-    [[nodiscard]] PartialResult addGrowMemory(Value delta, Value& result);
+    [[nodiscard]] PartialResult addGrowMemory(Value delta, Value& result, uint8_t memoryIndex);
 
-    [[nodiscard]] PartialResult addCurrentMemory(Value& result);
+    [[nodiscard]] PartialResult addCurrentMemory(Value& result, uint8_t memoryIndex);
 
-    [[nodiscard]] PartialResult addMemoryFill(Value dstAddress, Value targetValue, Value count);
+    [[nodiscard]] PartialResult addMemoryFill(Value dstAddress, Value targetValue, Value count, uint8_t memoryIndex);
 
-    [[nodiscard]] PartialResult addMemoryCopy(Value dstAddress, Value srcAddress, Value count);
+    [[nodiscard]] PartialResult addMemoryCopy(Value dstAddress, Value srcAddress, Value count, uint8_t dstMemoryIndex, uint8_t srcMemoryIndex);
 
-    [[nodiscard]] PartialResult addMemoryInit(unsigned dataSegmentIndex, Value dstAddress, Value srcAddress, Value length);
+    [[nodiscard]] PartialResult addMemoryInit(unsigned dataSegmentIndex, Value dstAddress, Value srcAddress, Value length, uint8_t memoryIndex);
 
     [[nodiscard]] PartialResult addDataDrop(unsigned dataSegmentIndex);
 
@@ -1330,30 +1350,30 @@ public:
     Location emitMaterializeAtomicOperand(Value value);
 
     template<typename Functor>
-    void emitAtomicOpGeneric(ExtAtomicOpType op, Address address, GPRReg oldGPR, GPRReg scratchGPR, const Functor& functor);
+    void emitAtomicOpGeneric(ExtAtomicOpType, Address, GPRReg oldGPR, GPRReg scratchGPR, NOESCAPE const Functor&);
 
     template<typename Functor>
-    void emitAtomicOpGeneric(ExtAtomicOpType op, Address address, Location old, Location cur, const Functor& functor);
+    void emitAtomicOpGeneric(ExtAtomicOpType, Address, Location old, Location cur, NOESCAPE const Functor&);
 
-    [[nodiscard]] Value emitAtomicLoadOp(ExtAtomicOpType loadOp, Type valueType, Location pointer, uint32_t uoffset);
+    [[nodiscard]] Value emitAtomicLoadOp(ExtAtomicOpType loadOp, Type valueType, Location pointer, uint64_t uoffset);
 
-    [[nodiscard]] PartialResult atomicLoad(ExtAtomicOpType loadOp, Type valueType, ExpressionType pointer, ExpressionType& result, uint32_t uoffset);
+    [[nodiscard]] PartialResult atomicLoad(ExtAtomicOpType loadOp, Type valueType, ExpressionType pointer, ExpressionType& result, uint64_t uoffset, uint8_t memoryIndex);
 
-    void emitAtomicStoreOp(ExtAtomicOpType storeOp, Type, Location pointer, Value value, uint32_t uoffset);
+    void emitAtomicStoreOp(ExtAtomicOpType storeOp, Type, Location pointer, Value, uint64_t uoffset);
 
-    [[nodiscard]] PartialResult atomicStore(ExtAtomicOpType storeOp, Type valueType, ExpressionType pointer, ExpressionType value, uint32_t uoffset);
+    [[nodiscard]] PartialResult atomicStore(ExtAtomicOpType storeOp, Type valueType, ExpressionType pointer, ExpressionType value, uint64_t uoffset, uint8_t memoryIndex);
 
-    Value emitAtomicBinaryRMWOp(ExtAtomicOpType op, Type valueType, Location pointer, Value value, uint32_t uoffset);
+    Value emitAtomicBinaryRMWOp(ExtAtomicOpType op, Type valueType, Location pointer, Value value, uint64_t uoffset);
 
-    [[nodiscard]] PartialResult atomicBinaryRMW(ExtAtomicOpType op, Type valueType, ExpressionType pointer, ExpressionType value, ExpressionType& result, uint32_t uoffset);
+    [[nodiscard]] PartialResult atomicBinaryRMW(ExtAtomicOpType op, Type valueType, ExpressionType pointer, ExpressionType value, ExpressionType& result, uint64_t uoffset, uint8_t memoryIndex);
 
-    [[nodiscard]] Value emitAtomicCompareExchange(ExtAtomicOpType op, Type, Location pointer, Value expected, Value value, uint32_t uoffset);
+    [[nodiscard]] Value emitAtomicCompareExchange(ExtAtomicOpType op, Type, Location pointer, Value expected, Value value, uint64_t uoffset);
 
-    [[nodiscard]] PartialResult atomicCompareExchange(ExtAtomicOpType op, Type valueType, ExpressionType pointer, ExpressionType expected, ExpressionType value, ExpressionType& result, uint32_t uoffset);
+    [[nodiscard]] PartialResult atomicCompareExchange(ExtAtomicOpType op, Type valueType, ExpressionType pointer, ExpressionType expected, ExpressionType value, ExpressionType& result, uint64_t uoffset, uint8_t memoryIndex);
 
-    [[nodiscard]] PartialResult atomicWait(ExtAtomicOpType op, ExpressionType pointer, ExpressionType value, ExpressionType timeout, ExpressionType& result, uint32_t uoffset);
+    [[nodiscard]] PartialResult atomicWait(ExtAtomicOpType op, ExpressionType pointer, ExpressionType value, ExpressionType timeout, ExpressionType& result, uint64_t uoffset, uint8_t memoryIndex);
 
-    [[nodiscard]] PartialResult atomicNotify(ExtAtomicOpType op, ExpressionType pointer, ExpressionType count, ExpressionType& result, uint32_t uoffset);
+    [[nodiscard]] PartialResult atomicNotify(ExtAtomicOpType op, ExpressionType pointer, ExpressionType count, ExpressionType& result, uint64_t uoffset, uint8_t memoryIndex);
 
     [[nodiscard]] PartialResult atomicFence(ExtAtomicOpType, uint8_t);
 
@@ -1375,17 +1395,22 @@ public:
         I64TruncF64U
     };
 
-    TruncationKind truncationKind(OpType truncationOp);
+    TruncationKind LEGACY_NODELETE truncationKind(OpType truncationOp);
 
-    TruncationKind truncationKind(Ext1OpType truncationOp);
+    TruncationKind LEGACY_NODELETE truncationKind(Ext1OpType truncationOp);
 
-    FloatingPointRange lookupTruncationRange(TruncationKind truncationKind);
+    FloatingPointRange LEGACY_NODELETE lookupTruncationRange(TruncationKind truncationKind);
 
     void truncInBounds(TruncationKind truncationKind, Location operandLocation, Location resultLocation, FPRReg scratch1FPR, FPRReg scratch2FPR);
 
     [[nodiscard]] PartialResult truncTrapping(OpType truncationOp, Value operand, Value& result, Type returnType, Type operandType);
     [[nodiscard]] PartialResult truncSaturated(Ext1OpType truncationOp, Value operand, Value& result, Type returnType, Type operandType);
 
+    // Wide arithmetic
+    [[nodiscard]] PartialResult addI64Add128(Value lhsLo, Value lhsHi, Value rhsLo, Value rhsHi, Value& resultLo, Value& resultHi);
+    [[nodiscard]] PartialResult addI64Sub128(Value lhsLo, Value lhsHi, Value rhsLo, Value rhsHi, Value& resultLo, Value& resultHi);
+    [[nodiscard]] PartialResult addI64MulWideS(Value lhs, Value rhs, Value& resultLo, Value& resultHi);
+    [[nodiscard]] PartialResult addI64MulWideU(Value lhs, Value rhs, Value& resultLo, Value& resultHi);
 
     // GC
     [[nodiscard]] PartialResult addRefI31(ExpressionType value, ExpressionType& result);
@@ -1394,61 +1419,59 @@ public:
 
     [[nodiscard]] PartialResult addI31GetU(TypedExpression value, ExpressionType& result);
 
-    const Ref<TypeDefinition> getTypeDefinition(uint32_t typeIndex);
-
-    // Given a type index, verify that it's an array type and return its expansion
-    const ArrayType* getArrayTypeDefinition(uint32_t typeIndex);
-
     // Given a type index for an array signature, look it up, expand it and
     // return the element type
-    StorageType getArrayElementType(uint32_t typeIndex);
+    StorageType getArrayElementType(TypeSignatureIndex typeIndex);
 
-    // This will replace the existing value with a new value. Note that if this is an F32 then the top bits may be garbage but that's ok for our current usage.
-    Value marshallToI64(Value value);
+    Value marshallToInt(Value);
 
-    void emitAllocateGCArrayUninitialized(GPRReg result, uint32_t typeIndex, ExpressionType size, GPRReg scratchGPR, GPRReg scratchGPR2);
-    [[nodiscard]] PartialResult addArrayNew(uint32_t typeIndex, ExpressionType size, ExpressionType initValue, ExpressionType& result);
-    [[nodiscard]] PartialResult addArrayNewDefault(uint32_t typeIndex, ExpressionType size, ExpressionType& result);
+    void emitAllocateGCArrayUninitialized(GPRReg result, TypeSignatureIndex typeIndex, ExpressionType size, GPRReg scratchGPR, GPRReg scratchGPR2);
+    [[nodiscard]] PartialResult addArrayNew(TypeSignatureIndex typeIndex, ExpressionType size, ExpressionType initValue, ExpressionType& result);
+    [[nodiscard]] PartialResult addArrayNewDefault(TypeSignatureIndex typeIndex, ExpressionType size, ExpressionType& result);
 
     using ArraySegmentOperation = EncodedJSValue SYSV_ABI (&)(JSC::JSWebAssemblyInstance*, uint32_t, uint32_t, uint32_t, uint32_t);
-    void pushArrayNewFromSegment(ArraySegmentOperation operation, uint32_t typeIndex, uint32_t segmentIndex, ExpressionType arraySize, ExpressionType offset, ExceptionType exceptionType, ExpressionType& result);
+    void pushArrayNewFromSegment(ArraySegmentOperation, TypeSignatureIndex typeIndex, uint32_t segmentIndex, ExpressionType arraySize, ExpressionType offset, ExceptionType, ExpressionType& result);
 
-    [[nodiscard]] PartialResult addArrayNewData(uint32_t typeIndex, uint32_t dataIndex, ExpressionType arraySize, ExpressionType offset, ExpressionType& result);
+    [[nodiscard]] PartialResult addArrayNewData(TypeSignatureIndex typeIndex, uint32_t dataIndex, ExpressionType arraySize, ExpressionType offset, ExpressionType& result);
 
-    [[nodiscard]] PartialResult addArrayNewElem(uint32_t typeIndex, uint32_t elemSegmentIndex, ExpressionType arraySize, ExpressionType offset, ExpressionType& result);
+    [[nodiscard]] PartialResult addArrayNewElem(TypeSignatureIndex typeIndex, uint32_t elemSegmentIndex, ExpressionType arraySize, ExpressionType offset, ExpressionType& result);
 
     void emitArrayStoreElementUnchecked(StorageType elementType, GPRReg payloadGPR, Location index, Value value, bool preserveIndex = false);
     void emitArrayStoreElementUnchecked(StorageType elementType, GPRReg payloadGPR, Value index, Value value);
-    void emitArraySetUnchecked(uint32_t typeIndex, Value arrayref, Value index, Value value);
+    void emitArraySetUnchecked(TypeSignatureIndex typeIndex, Value arrayref, Value index, Value value);
 
-    [[nodiscard]] PartialResult addArrayNewFixed(uint32_t typeIndex, ArgumentList& args, ExpressionType& result);
+    [[nodiscard]] PartialResult addArrayNewFixed(TypeSignatureIndex typeIndex, ArgumentList& args, ExpressionType& result);
 
     void emitArrayGetPayload(StorageType, GPRReg arrayGPR, GPRReg payloadGPR);
+    void emitZeroExtendI32(Value, GPRReg resultGPR);
+    void emitGetArraySizeWithNullCheck(TypedExpression array, GPRReg lengthGPR);
+    void emitArrayRangeCheck(GPRReg lengthGPR, Value offset, Value size, ExceptionType);
+    void emitArrayElementAddress(StorageType elementType, Value array, Value index, GPRReg resultGPR);
 
-    [[nodiscard]] PartialResult addArrayGet(ExtGCOpType arrayGetKind, uint32_t typeIndex, TypedExpression arrayref, ExpressionType index, ExpressionType& result);
+    [[nodiscard]] PartialResult addArrayGet(ExtGCOpType arrayGetKind, TypeSignatureIndex typeIndex, TypedExpression arrayref, ExpressionType index, ExpressionType& result);
 
-    [[nodiscard]] PartialResult addArraySet(uint32_t typeIndex, TypedExpression arrayref, ExpressionType index, ExpressionType value);
+    [[nodiscard]] PartialResult addArraySet(TypeSignatureIndex typeIndex, TypedExpression arrayref, ExpressionType index, ExpressionType value);
 
     [[nodiscard]] PartialResult addArrayLen(TypedExpression arrayref, ExpressionType& result);
 
-    [[nodiscard]] PartialResult addArrayFill(uint32_t typeIndex, TypedExpression arrayref, ExpressionType offset, ExpressionType value, ExpressionType size);
+    [[nodiscard]] PartialResult addArrayFill(TypeSignatureIndex typeIndex, TypedExpression arrayref, ExpressionType offset, ExpressionType value, ExpressionType size);
 
-    [[nodiscard]] PartialResult addArrayCopy(uint32_t dstTypeIndex, TypedExpression dst, ExpressionType dstOffset, uint32_t srcTypeIndex, TypedExpression src, ExpressionType srcOffset, ExpressionType size);
+    [[nodiscard]] PartialResult addArrayCopy(TypeSignatureIndex dstTypeIndex, TypedExpression dst, ExpressionType dstOffset, TypeSignatureIndex srcTypeIndex, TypedExpression src, ExpressionType srcOffset, ExpressionType size);
 
-    [[nodiscard]] PartialResult addArrayInitElem(uint32_t dstTypeIndex, TypedExpression dst, ExpressionType dstOffset, uint32_t srcElementIndex, ExpressionType srcOffset, ExpressionType size);
+    [[nodiscard]] PartialResult addArrayInitElem(TypeSignatureIndex dstTypeIndex, TypedExpression dst, ExpressionType dstOffset, uint32_t srcElementIndex, ExpressionType srcOffset, ExpressionType size);
 
-    [[nodiscard]] PartialResult addArrayInitData(uint32_t dstTypeIndex, TypedExpression dst, ExpressionType dstOffset, uint32_t srcDataIndex, ExpressionType srcOffset, ExpressionType size);
+    [[nodiscard]] PartialResult addArrayInitData(TypeSignatureIndex dstTypeIndex, TypedExpression dst, ExpressionType dstOffset, uint32_t srcDataIndex, ExpressionType srcOffset, ExpressionType size);
 
     // Returns true if a writeBarrier/mutatorFence is needed.
-    [[nodiscard]] bool emitStructSet(GPRReg structGPR, const StructType& structType, uint32_t fieldIndex, Value value);
+    [[nodiscard]] bool emitStructSet(GPRReg structGPR, const RTT& structType, uint32_t fieldIndex, Value value);
 
-    void emitAllocateGCStructUninitialized(GPRReg resultGPR, uint32_t typeIndex, GPRReg scratchGPR, GPRReg scratchGPR2);
-    [[nodiscard]] PartialResult addStructNewDefault(uint32_t typeIndex, ExpressionType& result);
-    [[nodiscard]] PartialResult addStructNew(uint32_t typeIndex, ArgumentList& args, Value& result);
+    void emitAllocateGCStructUninitialized(GPRReg resultGPR, TypeSignatureIndex typeIndex, GPRReg scratchGPR, GPRReg scratchGPR2);
+    [[nodiscard]] PartialResult addStructNewDefault(TypeSignatureIndex typeIndex, ExpressionType& result);
+    [[nodiscard]] PartialResult addStructNew(TypeSignatureIndex typeIndex, ArgumentList& args, Value& result);
 
-    [[nodiscard]] PartialResult addStructGet(ExtGCOpType structGetKind, TypedExpression structValue, const StructType& structType, const RTT&, uint32_t fieldIndex, Value& result);
+    [[nodiscard]] PartialResult addStructGet(ExtGCOpType structGetKind, TypedExpression structValue, const RTT& structType, uint32_t fieldIndex, Value& result);
 
-    [[nodiscard]] PartialResult addStructSet(TypedExpression structValue, const StructType& structType, const RTT&, uint32_t fieldIndex, Value value);
+    [[nodiscard]] PartialResult addStructSet(TypedExpression structValue, const RTT& structType, uint32_t fieldIndex, Value value);
 
     enum class CastKind { Test, Cast };
     void emitRefTestOrCast(CastKind, const TypedExpression&, GPRReg, bool allowNull, int32_t toHeapType, JumpList& failureCases);
@@ -1626,7 +1649,10 @@ public:
     template<typename IntType, bool IsMod>
     void emitModOrDiv(Value& lhs, Location lhsLocation, Value& rhs, Location rhsLocation, Value& result, Location resultLocation);
 
-    template<typename IntType>
+    // signed INT_MIN / -1 is the only integer div/rem that can overflow.
+    enum class ConstantDivOverflow { CanOverflow, CannotOverflow };
+
+    template<typename IntType, ConstantDivOverflow = ConstantDivOverflow::CannotOverflow>
     Value checkConstantDivision(const Value& lhs, const Value& rhs);
 
     [[nodiscard]] PartialResult addI32DivS(Value lhs, Value rhs, Value& result);
@@ -1655,17 +1681,12 @@ public:
     void emitFloatingPointMinOrMax(FPRReg left, FPRReg right, FPRReg result);
 
     template<MinOrMax IsMinOrMax, typename FloatType>
-    constexpr FloatType computeFloatingPointMinOrMax(FloatType left, FloatType right)
+    FloatType computeFloatingPointMinOrMax(FloatType left, FloatType right)
     {
-        if (std::isnan(left))
-            return left;
-        if (std::isnan(right))
-            return right;
-
         if constexpr (IsMinOrMax == MinOrMax::Min)
-            return std::min<FloatType>(left, right);
+            return Math::fMin<FloatType>(left, right);
         else
-            return std::max<FloatType>(left, right);
+            return Math::fMax<FloatType>(left, right);
     }
 
     [[nodiscard]] PartialResult addF32Min(Value lhs, Value rhs, Value& result);
@@ -1915,7 +1936,7 @@ public:
 
     [[nodiscard]] PartialResult addRefIsNull(Value operand, Value& result);
 
-    [[nodiscard]] PartialResult addRefAsNonNull(Value value, Value& result);
+    [[nodiscard]] PartialResult addRefAsNonNull(TypedExpression value, Value& result);
 
     [[nodiscard]] PartialResult addRefEq(Value ref0, Value ref1, Value& result);
 
@@ -1926,45 +1947,45 @@ public:
     // Control flow
     [[nodiscard]] ControlData addTopLevel(BlockSignature&&);
 
-    bool hasLoops() const;
+    bool LEGACY_NODELETE hasLoops() const;
 
     MacroAssembler::Label addLoopOSREntrypoint();
 
-    [[nodiscard]] PartialResult addBlock(BlockSignature&&, Stack& enclosingStack, ControlType& result, Stack& newStack);
+    [[nodiscard]] PartialResult addBlock(BlockSignature&&, std::span<TypedExpression> args, ControlType& result);
 
-    B3::Type toB3Type(Type type);
+    B3::Type LEGACY_NODELETE toB3Type(Type);
 
-    B3::Type toB3Type(TypeKind kind);
+    B3::Type toB3Type(TypeKind);
 
-    B3::ValueRep toB3Rep(Location location);
+    B3::ValueRep toB3Rep(Location);
 
-    StackMap makeStackMap(const ControlData& data, Stack& enclosingStack);
+    StackMap makeStackMap(const ControlData&, std::span<const TypedExpression> enclosingStack);
 
-    void emitLoopTierUpCheckAndOSREntryData(const ControlData&, Stack& enclosingStack, unsigned loopIndex);
+    void emitLoopTierUpCheckAndOSREntryData(const ControlData&, std::span<const TypedExpression> enclosingStack, unsigned loopIndex);
 
-    [[nodiscard]] PartialResult addLoop(BlockSignature&&, Stack& enclosingStack, ControlType& result, Stack& newStack, uint32_t loopIndex);
+    [[nodiscard]] PartialResult addLoop(BlockSignature&&, std::span<TypedExpression> args, ControlType& result, uint32_t loopIndex);
 
-    [[nodiscard]] PartialResult addIf(Value condition, BlockSignature&&, Stack& enclosingStack, ControlData& result, Stack& newStack);
+    [[nodiscard]] PartialResult addIf(Value condition, BlockSignature&&, std::span<TypedExpression> args, ControlData& result);
 
-    [[nodiscard]] PartialResult addElse(ControlData& data, Stack& expressionStack);
+    [[nodiscard]] PartialResult addElse(ControlData& data, std::span<TypedExpression> ifBranchResults);
 
     [[nodiscard]] PartialResult addElseToUnreachable(ControlData& data);
 
-    [[nodiscard]] PartialResult addTry(BlockSignature&&, Stack& enclosingStack, ControlType& result, Stack& newStack);
-    [[nodiscard]] PartialResult addTryTable(BlockSignature&&, Stack& enclosingStack, const Vector<CatchHandler>& targets, ControlType& result, Stack& newStack);
+    [[nodiscard]] PartialResult addTry(BlockSignature&&, std::span<TypedExpression> args, ControlType& result);
+    [[nodiscard]] PartialResult addTryTable(BlockSignature&&, std::span<TypedExpression> args, const Vector<CatchHandler>& targets, ControlType& result);
 
     void emitCatchPrologue();
 
     void emitCatchAllImpl(ControlData& dataCatch);
 
-    void emitCatchImpl(ControlData& dataCatch, const TypeDefinition& exceptionSignature, ResultList& results);
+    void emitCatchImpl(ControlData& dataCatch, const RTT& exceptionSignature, ResultList& results);
     void emitCatchTableImpl(ControlData& entryData, ControlType::TryTableTarget&);
 
-    [[nodiscard]] PartialResult addCatch(unsigned exceptionIndex, const TypeDefinition& exceptionSignature, Stack& expressionStack, ControlType& data, ResultList& results);
+    [[nodiscard]] PartialResult addCatch(unsigned exceptionIndex, const RTT& exceptionSignature, std::span<TypedExpression> expressionStack, ControlType& data, ResultList& results);
 
-    [[nodiscard]] PartialResult addCatchToUnreachable(unsigned exceptionIndex, const TypeDefinition& exceptionSignature, ControlType& data, ResultList& results);
+    [[nodiscard]] PartialResult addCatchToUnreachable(unsigned exceptionIndex, const RTT& exceptionSignature, ControlType& data, ResultList& results);
 
-    [[nodiscard]] PartialResult addCatchAll(Stack& expressionStack, ControlType& data);
+    [[nodiscard]] PartialResult addCatchAll(std::span<TypedExpression> expressionStack, ControlType& data);
 
     [[nodiscard]] PartialResult addCatchAllToUnreachable(ControlType& data);
 
@@ -1972,31 +1993,33 @@ public:
 
     [[nodiscard]] PartialResult addDelegateToUnreachable(ControlType& target, ControlType& data);
 
-    [[nodiscard]] PartialResult addThrow(unsigned exceptionIndex, ArgumentList& arguments, Stack&);
+    [[nodiscard]] PartialResult addThrow(unsigned exceptionIndex, ArgumentList& arguments, std::span<TypedExpression>);
 
     [[nodiscard]] PartialResult addRethrow(unsigned, ControlType& data);
 
-    [[nodiscard]] PartialResult addThrowRef(ExpressionType exception, Stack&);
+    [[nodiscard]] PartialResult addThrowRef(TypedExpression exception, std::span<TypedExpression>);
 
     void prepareForExceptions();
 
-    [[nodiscard]] PartialResult addReturn(const ControlData& data, const Stack& returnValues);
+    [[nodiscard]] PartialResult addReturn(const ControlData& data, std::span<const TypedExpression> returnValues);
 
-    [[nodiscard]] PartialResult addBranch(ControlData& target, Value condition, Stack& results);
+    [[nodiscard]] PartialResult addBranch(ControlData& target, Value condition, std::span<TypedExpression> results);
 
-    [[nodiscard]] PartialResult addBranchNull(ControlData& data, ExpressionType reference, Stack& returnValues, bool shouldNegate, ExpressionType& result);
+    [[nodiscard]] PartialResult addBranchNull(ControlData& data, ExpressionType reference, std::span<TypedExpression> returnValues, bool shouldNegate, ExpressionType& result);
 
-    [[nodiscard]] PartialResult addBranchCast(ControlData& data, ExpressionType reference, Stack& returnValues, bool allowNull, int32_t heapType, bool shouldNegate);
+    [[nodiscard]] PartialResult addBranchCast(ControlData& data, ExpressionType reference, std::span<TypedExpression> returnValues, bool allowNull, int32_t heapType, bool shouldNegate);
 
-    [[nodiscard]] PartialResult addSwitch(Value condition, const Vector<ControlData*>& targets, ControlData& defaultTarget, Stack& results);
+    [[nodiscard]] PartialResult addSwitch(Value condition, const Vector<ControlData*>& targets, ControlData& defaultTarget, std::span<TypedExpression> results);
 
-    [[nodiscard]] PartialResult endBlock(ControlEntry& entry, Stack& stack);
+    [[nodiscard]] PartialResult endBlock(ControlEntry& entry, std::span<TypedExpression> enclosedStack);
 
-    [[nodiscard]] PartialResult addEndToUnreachable(ControlEntry& entry, Stack& stack, bool unreachable = true);
+    [[nodiscard]] PartialResult addEndToUnreachable(ControlEntry& entry, std::span<TypedExpression> enclosedStack);
+
+    [[nodiscard]] PartialResult addEndToUnreachableImpl(ControlEntry& entry, std::span<TypedExpression> enclosedStack, bool unreachable);
 
     int alignedFrameSize(int frameSize) const;
 
-    [[nodiscard]] PartialResult endTopLevel(const Stack&);
+    [[nodiscard]] PartialResult endTopLevel(std::span<const TypedExpression>);
 
     enum BranchFoldResult {
         BranchAlwaysTaken,
@@ -2004,15 +2027,15 @@ public:
         BranchNotFolded
     };
 
-    [[nodiscard]] BranchFoldResult tryFoldFusedBranchCompare(OpType, ExpressionType);
+    [[nodiscard]] BranchFoldResult LEGACY_NODELETE tryFoldFusedBranchCompare(OpType, ExpressionType);
     [[nodiscard]] Jump emitFusedBranchCompareBranch(OpType, ExpressionType, Location);
     [[nodiscard]] BranchFoldResult tryFoldFusedBranchCompare(OpType, ExpressionType, ExpressionType);
     [[nodiscard]] Jump emitFusedBranchCompareBranch(OpType, ExpressionType, Location, ExpressionType, Location);
 
-    [[nodiscard]] PartialResult addFusedBranchCompare(OpType, ControlType& target, ExpressionType, Stack&);
-    [[nodiscard]] PartialResult addFusedBranchCompare(OpType, ControlType& target, ExpressionType, ExpressionType, Stack&);
-    [[nodiscard]] PartialResult addFusedIfCompare(OpType, ExpressionType, BlockSignature&&, Stack&, ControlType&, Stack&);
-    [[nodiscard]] PartialResult addFusedIfCompare(OpType, ExpressionType, ExpressionType, BlockSignature&&, Stack&, ControlType&, Stack&);
+    [[nodiscard]] PartialResult addFusedBranchCompare(OpType, ControlType& target, ExpressionType, std::span<TypedExpression>);
+    [[nodiscard]] PartialResult addFusedBranchCompare(OpType, ControlType& target, ExpressionType, ExpressionType, std::span<TypedExpression>);
+    [[nodiscard]] PartialResult addFusedIfCompare(OpType, ExpressionType, BlockSignature&&, std::span<TypedExpression> args, ControlType&);
+    [[nodiscard]] PartialResult addFusedIfCompare(OpType, ExpressionType, ExpressionType, BlockSignature&&, std::span<TypedExpression> args, ControlType&);
 
     // Flush a value to its canonical slot.
     void flushValue(Value value);
@@ -2030,30 +2053,30 @@ public:
     void flushRegisters();
 
     template<typename Args>
-    void saveValuesAcrossCallAndPassArguments(const Args& arguments, const CallInformation& callInfo, const TypeDefinition& signature);
+    void saveValuesAcrossCallAndPassArguments(const Args& arguments, const CallInformation&, const RTT& signature);
 
-    void slowPathSpillBindings(const RegisterBindings& bindings);
+    void slowPathSpillBindings(const RegisterBindings&);
     void slowPathRestoreBindings(const RegisterBindings&);
-    void restoreValuesAfterCall(const CallInformation& callInfo);
+    void LEGACY_NODELETE restoreValuesAfterCall(const CallInformation&);
 
     template<size_t N>
-    void returnValuesFromCall(Vector<Value, N>& results, const FunctionSignature& functionType, const CallInformation& callInfo);
+    void returnValuesFromCall(Vector<Value, N>& results, const RTT& functionType, const CallInformation&);
 
-    template<typename Func, size_t N>
-    void emitCCall(Func function, const Vector<Value, N>& arguments);
+    template<typename Func>
+    void emitCCall(Func function, std::span<const Value> arguments);
 
-    template<typename Func, size_t N>
-    void emitCCall(Func function, const Vector<Value, N>& arguments, Value& result);
+    template<typename Func>
+    void emitCCall(Func function, std::span<const Value> arguments, Value& result);
 
-    void emitTailCall(FunctionSpaceIndex, const TypeDefinition& signature, ArgumentList& arguments);
-    [[nodiscard]] PartialResult addCall(unsigned, FunctionSpaceIndex, const TypeDefinition& signature, ArgumentList& arguments, ResultList& results, CallType = CallType::Call);
+    void emitTailCall(FunctionSpaceIndex, const RTT& signature, ArgumentList& arguments);
+    [[nodiscard]] PartialResult addCall(unsigned, FunctionSpaceIndex, const RTT& signature, ArgumentList& arguments, ResultList& results, CallType = CallType::Call);
 
-    void emitIndirectCall(const char* opcode, unsigned callProfileIndex, const Value& callee, GPRReg importableFunction, const TypeDefinition& signature, ArgumentList& arguments, ResultList& results);
-    void emitIndirectTailCall(const char* opcode, const Value& callee, GPRReg importableFunction, const TypeDefinition& signature, ArgumentList& arguments);
+    void emitIndirectCall(const char* opcode, unsigned callProfileIndex, const Value& callee, GPRReg importableFunction, const RTT& signature, ArgumentList& arguments, ResultList& results);
+    void emitIndirectTailCall(const char* opcode, const Value& callee, GPRReg importableFunction, const RTT& signature, ArgumentList& arguments);
 
-    [[nodiscard]] PartialResult addCallIndirect(unsigned, unsigned tableIndex, const TypeDefinition& originalSignature, ArgumentList& args, ResultList& results, CallType = CallType::Call);
+    [[nodiscard]] PartialResult addCallIndirect(unsigned, unsigned tableIndex, const RTT& expandedSignature, ArgumentList& args, ResultList& results, CallType = CallType::Call);
 
-    [[nodiscard]] PartialResult addCallRef(unsigned, const TypeDefinition& originalSignature, ArgumentList& args, ResultList& results, CallType = CallType::Call);
+    [[nodiscard]] PartialResult addCallRef(unsigned, const RTT& expandedSignature, ArgumentList& args, ResultList& results, CallType = CallType::Call);
 
     [[nodiscard]] PartialResult addUnreachable();
 
@@ -2067,13 +2090,13 @@ public:
 
     // SIMD
 
-    bool usesSIMD();
+    bool LEGACY_NODELETE usesSIMD();
 
-    void notifyFunctionUsesSIMD();
+    void LEGACY_NODELETE notifyFunctionUsesSIMD();
 
-    PartialResult addSIMDLoad(ExpressionType, uint32_t, ExpressionType&);
+    PartialResult addSIMDLoad(ExpressionType, uint64_t, ExpressionType&, uint8_t);
 
-    PartialResult addSIMDStore(ExpressionType, ExpressionType, uint32_t);
+    PartialResult addSIMDStore(ExpressionType, ExpressionType, uint64_t, uint8_t);
 
     PartialResult addSIMDSplat(SIMDLane, ExpressionType, ExpressionType&);
 
@@ -2083,23 +2106,23 @@ public:
 
     PartialResult addSIMDExtmul(SIMDLaneOperation, SIMDInfo, ExpressionType, ExpressionType, ExpressionType&);
 
-    PartialResult addSIMDLoadSplat(SIMDLaneOperation, ExpressionType, uint32_t, ExpressionType&);
+    PartialResult addSIMDLoadSplat(SIMDLaneOperation, ExpressionType, uint64_t, ExpressionType&, uint8_t);
 
-    PartialResult addSIMDLoadLane(SIMDLaneOperation, ExpressionType, ExpressionType, uint32_t, uint8_t, ExpressionType&);
+    PartialResult addSIMDLoadLane(SIMDLaneOperation, ExpressionType, ExpressionType, uint64_t, uint8_t, ExpressionType&, uint8_t);
 
-    PartialResult addSIMDStoreLane(SIMDLaneOperation, ExpressionType, ExpressionType, uint32_t, uint8_t);
+    PartialResult addSIMDStoreLane(SIMDLaneOperation, ExpressionType, ExpressionType, uint64_t, uint8_t, uint8_t);
 
-    PartialResult addSIMDLoadExtend(SIMDLaneOperation, ExpressionType, uint32_t, ExpressionType&);
+    PartialResult addSIMDLoadExtend(SIMDLaneOperation, ExpressionType, uint64_t, ExpressionType&, uint8_t);
 
-    PartialResult addSIMDLoadPad(SIMDLaneOperation, ExpressionType, uint32_t, ExpressionType&);
+    PartialResult addSIMDLoadPad(SIMDLaneOperation, ExpressionType, uint64_t, ExpressionType&, uint8_t);
 
     void materializeVectorConstant(v128_t, Location);
 
-    ExpressionType addConstant(v128_t);
+    ExpressionType addSIMDConstant(v128_t);
 
-    PartialResult addExtractLane(SIMDInfo, uint8_t, Value, Value&);
+    PartialResult addSIMDExtractLane(SIMDInfo, uint8_t, Value, Value&);
 
-    PartialResult addReplaceLane(SIMDInfo, uint8_t, ExpressionType, ExpressionType, ExpressionType&);
+    PartialResult addSIMDReplaceLane(SIMDInfo, uint8_t, ExpressionType, ExpressionType, ExpressionType&);
 
     PartialResult addSIMDI_V(SIMDLaneOperation, SIMDInfo, ExpressionType, ExpressionType&);
 
@@ -2119,19 +2142,21 @@ public:
 
     void dump(const ControlStack&, const Stack*);
     void didFinishParsingLocals();
-    void didPopValueFromStack(ExpressionType, ASCIILiteral);
+    void LEGACY_NODELETE didPopValueFromStack(ExpressionType, ASCIILiteral);
 
     void finalize();
 
-    Vector<UnlinkedHandlerInfo>&& takeExceptionHandlers();
-    FixedBitVector&& takeDirectCallees();
-    Vector<CCallHelpers::Label>&& takeCatchEntrypoints();
+    Vector<UnlinkedHandlerInfo>&& LEGACY_NODELETE takeExceptionHandlers();
+    FixedBitVector&& LEGACY_NODELETE takeDirectCallees();
+    Vector<CCallHelpers::Label>&& LEGACY_NODELETE takeCatchEntrypoints();
     Box<PCToCodeOriginMapBuilder> takePCToCodeOriginMapBuilder();
 
     std::unique_ptr<BBQDisassembler> takeDisassembler();
 
+    const RegisterAtOffsetList& LEGACY_NODELETE calleeSaveRegisters() const LIFETIME_BOUND { return m_calleeSaves; }
+
 private:
-    static bool isScratch(Location loc);
+    static bool LEGACY_NODELETE isScratch(Location);
 
     void emitStoreConst(Value constant, Location dst);
     void emitStoreConst(StorageType, Value constant, BaseIndex dst);
@@ -2173,45 +2198,97 @@ private:
     template<size_t N, typename OverflowHandler>
     void emitShuffle(Vector<Value, N, OverflowHandler>& srcVector, Vector<Location, N, OverflowHandler>& dstVector);
 
-    ControlData& currentControlData();
+    ControlData& LEGACY_NODELETE currentControlData();
 
-    void setLRUKey(Location, LocalOrTempIndex key);
-    void increaseLRUKey(Location);
+    void LEGACY_NODELETE setLRUKey(Location, LocalOrTempIndex key);
+    void LEGACY_NODELETE increaseLRUKey(Location);
     uint32_t nextLRUKey() { return ++m_lastUseTimestamp; }
 
-    Location bind(Value value);
+    Location bind(Value);
 
-    Location allocate(Value value);
+    Location allocate(Value);
 
-    Location allocateWithHint(Value value, Location hint);
+    Location allocateWithHint(Value, Location hint);
 
-    Location locationOfWithoutBinding(Value value);
+    Location LEGACY_NODELETE locationOfWithoutBinding(Value);
 
-    Location locationOf(Value value);
+    Location locationOf(Value);
 
-    Location loadIfNecessary(Value value);
+    Location loadIfNecessary(Value);
 
     // This should generally be avoided if possible but sometimes you just *need* a value in a register.
-    Location materializeToGPR(Value, std::optional<ScratchScope<1, 0>>&);
+    // Pass NeedsWritableGPR::Yes to write to the register that comes back: a local's register is
+    // the local's storage, so one of those is copied rather than handed out.
+    enum class NeedsWritableGPR : bool { No, Yes };
+    Location materializeToGPR(Value, std::optional<ScratchScope<1, 0>>&, NeedsWritableGPR = NeedsWritableGPR::No);
 
-    void consume(Value value);
+    void consume(Value);
 
-    Location bind(Value value, Location loc);
+    Location bind(Value, Location);
 
-    void unbind(Value value, Location loc);
+    void unbind(Value, Location);
 
     void unbindAllRegisters();
+
+    void flushAllLocals();
+    void unbindAllLocals();
+    Location tailCallArgumentSource(Value);
+
+    // A local either lives in its slot and is cached in an allocator register on demand, or is pinned
+    // to a callee-save register for the whole body. Either way its slot is always current: every write
+    // stores there, since unwinding, catch, OSR and tail calls read it. So a cached local's register
+    // can be dropped without a store, while a temp's register is its only copy until spilled.
+    //
+    // Stack entries may name a local rather than copy it. m_localsOnExpressionStack covers every
+    // local named in the current block; evacuateLocal() turns them into temps before a write.
+    struct PinnedLocal {
+        LocalOrTempIndex index;
+        Location location;
+    };
+
+    static unsigned maxPinnedLocals() { return FunctionIPIntMetadataGenerator::numTrackedHotLocals; }
+
+    void assignPinnedLocals();
+    void loadPinnedLocals();
+    bool isPinnedLocalRegister(Location location) const
+    {
+        return location.isRegister() && m_pinnedLocalRegisters.contains(location.asReg(), IgnoreVectors);
+    }
+#if ASSERT_ENABLED
+    void assertPinnedLocalsAreResident();
+#else
+    void assertPinnedLocalsAreResident() { }
+#endif
+
+    void evacuateLocal(uint32_t localIndex);
+    void assignToLocal(Value local, Value);
 
     const RegisterBinding& bindingFor(JSC::Reg reg) { return reg.isGPR() ? m_gprAllocator.bindingFor(reg.gpr()) : m_fprAllocator.bindingFor(reg.fpr()); }
     RegisterSet validGPRs() const { return m_gprAllocator.validRegisters(); }
     RegisterSet validFPRs() const { return m_fprAllocator.validRegisters(); }
 
-    // We use this to free up specific registers that might get clobbered by an instruction.
-    void clobber(GPRReg gpr) { m_gprAllocator.clobber(*this, gpr); }
-    void clobber(FPRReg fpr) { m_fprAllocator.clobber(*this, fpr); }
+    bool ownsRegister(Location location) const
+    {
+        if (location.isGPR())
+            return validGPRs().contains(location.asGPR(), IgnoreVectors);
+        if (location.isFPR())
+            return validFPRs().contains(location.asFPR(), Width::Width128);
+        return false;
+    }
+
+    void clobber(GPRReg gpr)
+    {
+        ASSERT(!m_pinnedLocalRegisters.contains(gpr));
+        m_gprAllocator.clobber(*this, gpr);
+    }
+    void clobber(FPRReg fpr)
+    {
+        ASSERT(!m_pinnedLocalRegisters.contains(JSC::Reg(fpr), IgnoreVectors));
+        m_fprAllocator.clobber(*this, fpr);
+    }
     void clobber(JSC::Reg reg) { reg.isGPR() ? clobber(reg.gpr()) : clobber(reg.fpr()); }
 
-    Location canonicalSlot(Value value);
+    Location LEGACY_NODELETE canonicalSlot(Value);
 
     Location allocateStack(Value value);
 
@@ -2228,15 +2305,15 @@ private:
     void emitRestoreCalleeSaves();
 
     WasmOrigin origin();
+    void recordOpcodeOrigin();
 
-    CompilationContext& m_context;
     CCallHelpers& m_jit;
     Module& m_module;
     CalleeGroup& m_calleeGroup;
     IPIntCallee& m_profiledCallee;
     BBQCallee& m_callee;
     const FunctionData& m_function;
-    const FunctionSignature* m_functionSignature;
+    const Ref<const RTT> m_functionSignature;
     FunctionCodeIndex m_functionIndex;
     const ModuleInformation& m_info;
     MemoryMode m_mode;
@@ -2252,16 +2329,19 @@ private:
     Vector<Location, 8> m_temps;
     Vector<Location, 8> m_localSlots; // Persistent stack slots for local variables.
     Vector<TypeKind, 8> m_localTypes; // Types of all non-argument locals in this function.
+    BitVector m_localsOnExpressionStack;
+    Vector<PinnedLocal, 4> m_pinnedLocals;
+    RegisterSet m_pinnedLocalRegisters;
+    RegisterAtOffsetList m_calleeSaves;
     GPRAllocator m_gprAllocator; // SimpleRegisterAllocator for GPRs
     FPRAllocator m_fprAllocator; // SimpleRegisterAllocator for FPRs
     SpillHint m_lastUseTimestamp; // Monotonically increasing integer incrementing with each register use.
     Vector<std::tuple<WasmOrigin, Function<void(BBQJIT&, CCallHelpers&)>>, 8> m_latePaths; // Late paths to emit after the rest of the function body.
     Vector<std::tuple<WasmOrigin, MacroAssembler::JumpList, MacroAssembler::Label, RegisterBindings, Function<void(BBQJIT&, CCallHelpers&)>>> m_slowPaths; // Like a late path but for when we need to make a CCall thus need to restore our state.
 
-    // FIXME: All uses of this are to restore sp, so we should emit these as a patchable sub instruction rather than move.
-    Vector<DataLabelPtr, 1> m_frameSizeLabels;
-    int m_frameSize { 0 };
-    int m_maxCalleeStackSize { 0 };
+    uint32_t m_frameSize { 0 };
+    uint32_t m_frameSizeForValidation { 0 };
+    uint32_t m_maxCalleeStackSizeForValidation { 0 };
     int m_localAndCalleeSaveStorage { 0 }; // Stack offset pointing to the local and callee save with the lowest address.
     bool m_usesSIMD { false }; // Whether the function we are compiling uses SIMD instructions or not.
     bool m_usesExceptions { false };
@@ -2303,7 +2383,7 @@ using MinOrMax = BBQJIT::MinOrMax;
 } // namespace JSC::Wasm::BBQJITImpl
 
 using BBQJIT = BBQJITImpl::BBQJIT;
-Expected<std::unique_ptr<InternalFunction>, String> parseAndCompileBBQ(CompilationContext&, IPIntCallee&, BBQCallee&, const FunctionData&, const TypeDefinition&, Vector<UnlinkedWasmToWasmCall>&, Module&, CalleeGroup&, const ModuleInformation&, MemoryMode, FunctionCodeIndex functionIndex);
+std::expected<std::unique_ptr<InternalFunction>, String> parseAndCompileBBQ(CompilationContext&, IPIntCallee&, BBQCallee&, const FunctionData&, const RTT&, Vector<UnlinkedWasmToWasmCall>&, Module&, CalleeGroup&, const ModuleInformation&, MemoryMode, FunctionCodeIndex functionIndex);
 
 } } // namespace JSC::Wasm
 

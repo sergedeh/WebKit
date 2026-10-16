@@ -44,7 +44,7 @@ void PropertyParserResult::addProperty([[maybe_unused]] CSS::PropertyParserState
     int shorthandIndex = 0;
     bool setFromShorthand = false;
 
-    if (currentShorthand) {
+    if (currentShorthand != CSSPropertyID::Invalid) {
         auto shorthands = matchingShorthandsForLonghand(property);
         setFromShorthand = true;
         if (shorthands.size() > 1)
@@ -61,7 +61,7 @@ void PropertyParserResult::addProperty([[maybe_unused]] CSS::PropertyParserState
         addProperty(CSSProperty(property, value.releaseNonNull(), important, setFromShorthand, shorthandIndex, implicit));
     else {
         ASSERT(setFromShorthand);
-        addProperty(CSSProperty(property, Ref { CSSPrimitiveValue::implicitInitialValue() }, important, setFromShorthand, shorthandIndex, IsImplicit::Yes));
+        addProperty(CSSProperty(property, protect(CSSKeywordValue::implicitInitialValue()), important, setFromShorthand, shorthandIndex, IsImplicit::Yes));
     }
 }
 

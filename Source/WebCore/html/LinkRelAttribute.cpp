@@ -36,6 +36,7 @@
 #include "Document.h"
 #include "LinkIconType.h"
 #include "Settings.h"
+#include <wtf/RuntimeApplicationChecks.h>
 #include <wtf/SortedArrayMap.h>
 #include <wtf/text/StringView.h>
 #include <wtf/text/WTFString.h>
@@ -45,15 +46,18 @@ namespace WebCore {
 // https://html.spec.whatwg.org/#linkTypes
 
 struct LinkTypeDetails {
-    bool (*isEnabled)(const Document&);
+    bool (*isEnabled)(const Document*);
     void (*updateRel)(LinkRelAttribute&);
 };
 
-static constexpr SortedArrayMap linkTypes { std::to_array<std::pair<ComparableLettersLiteral, LinkTypeDetails>>({
+static constexpr SortedArrayMap linkTypes { WTF::toArray<std::pair<ComparableLettersLiteral, LinkTypeDetails>>({
     { "alternate"_s, { [](auto) { return true; }, [](auto relAttribute) { relAttribute.isAlternate = true; } } },
     { "apple-touch-icon"_s, { [](auto) { return true; }, [](auto relAttribute) { relAttribute.iconType = LinkIconType::TouchIcon; } } },
     { "apple-touch-icon-precomposed"_s, { [](auto) { return true; }, [](auto relAttribute) { relAttribute.iconType = LinkIconType::TouchPrecomposedIcon; } } },
-    { "dns-prefetch"_s, { [](auto document) { return document.settings().linkDNSPrefetchEnabled(); }, [](auto relAttribute) { relAttribute.isDNSPrefetch = true; } } },
+    { "compression-dictionary"_s, {
+        [](auto* document) { return document && document->settings().compressionDictionaryEnabled(); },
+        [](auto relAttribute) { relAttribute.isCompressionDictionary = true; } } },
+    { "dns-prefetch"_s, { [](auto) { return true; }, [](auto relAttribute) { relAttribute.isDNSPrefetch = true; } } },
     { "expect"_s, { [](auto) { return true; }, [](auto relAttribute) { relAttribute.isInternalResourceLink = true; } } },
     { "icon"_s, { [](auto) { return true; }, [](auto relAttribute) { relAttribute.iconType = LinkIconType::Favicon; } } },
 #if ENABLE(APPLICATION_MANIFEST)
@@ -62,20 +66,30 @@ static constexpr SortedArrayMap linkTypes { std::to_array<std::pair<ComparableLe
     { "manifest"_s, { [](auto) { return false; }, [](auto) { } } },
 #endif
     { "modulepreload"_s, { [](auto) { return true; }, [](auto relAttribute) { relAttribute.isLinkModulePreload = true; } } },
-    { "preconnect"_s, { [](auto document) { return document.settings().linkPreconnectEnabled(); }, [](auto relAttribute) { relAttribute.isLinkPreconnect = true; } } },
-    { "prefetch"_s, { [](auto document) { return document.settings().linkPrefetchEnabled(); }, [](auto relAttribute) { relAttribute.isLinkPrefetch = true; } } },
-    { "preload"_s, { [](auto document) { return document.settings().linkPreloadEnabled(); }, [](auto relAttribute) { relAttribute.isLinkPreload = true; } } },
-#if ENABLE(WEB_PAGE_SPATIAL_BACKDROP)
-    { "spatial-backdrop"_s, {
-        [](auto document) { return document.settings().webPageSpatialBackdropEnabled(); },
-        [](auto relAttribute) { relAttribute.isSpatialBackdrop = true; }
-    } },
-#endif
+    { "preconnect"_s, {
+        [](auto* document) { return document && document->settings().linkPreconnectEnabled(); },
+        [](auto relAttribute) { relAttribute.isLinkPreconnect = true; } } },
+    { "prefetch"_s, {
+        [](auto* document) { return document && document->settings().linkPrefetchEnabled(); },
+        [](auto relAttribute) { relAttribute.isLinkPrefetch = true; } } },
+    { "preload"_s, {
+        [](auto* document) { return document && document->settings().linkPreloadEnabled(); },
+        [](auto relAttribute) { relAttribute.isLinkPreload = true; } } },
     { "stylesheet"_s, { [](auto) { return true; }, [](auto relAttribute) { relAttribute.isStyleSheet = true; } } },
+    { "tls-certificate-binding"_s, {
+        [](auto) { return true; },
+        [](auto relAttribute) { relAttribute.isTLSCertificateBinding = true; } } },
 }) };
 
 LinkRelAttribute::LinkRelAttribute(Document& document, StringView rel)
+    : LinkRelAttribute(&document, rel)
 {
+}
+
+LinkRelAttribute::LinkRelAttribute(Document* document, StringView rel)
+{
+    ASSERT_WITH_MESSAGE(document || isInNetworkProcess(), "Parsing a LinkRelAttribute without a Document should only be done in the network process, and only with types that are always supported. If you're in the web process, find a Document.");
+
     if (auto linkType = linkTypes.tryGet(rel)) {
         if (linkType->isEnabled(document))
             linkType->updateRel(*this);
@@ -110,7 +124,7 @@ LinkRelAttribute::LinkRelAttribute(Document& document, StringView rel)
 bool LinkRelAttribute::isSupported(Document& document, StringView attribute)
 {
     if (auto linkType = linkTypes.tryGet(attribute))
-        return linkType->isEnabled(document);
+        return linkType->isEnabled(&document);
     return false;
 }
 

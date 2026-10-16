@@ -53,17 +53,16 @@ public:
 
     ContainerNode& node() const { return *m_node; }
     Element& element() const { return downcast<Element>(node()); }
-    Ref<Element> protectedElement() const { return element(); }
     Element* elementOrNull() const { return downcast<Element>(m_node.get()); }
 
-    const AtomString& localName() const { return isElement() ? element().localName() : nullAtom(); }
-    const AtomString& namespaceURI() const { return isElement() ? element().namespaceURI() : nullAtom(); }
+    const AtomString& localName() const LIFETIME_BOUND { return isElement() ? element().localName() : nullAtom(); }
+    const AtomString& namespaceURI() const LIFETIME_BOUND { return isElement() ? element().namespaceURI() : nullAtom(); }
 
     ElementName elementName() const { return m_elementName; }
     Namespace nodeNamespace() const { return m_namespace; }
 
-    const Vector<Attribute>& attributes() const;
-    const Attribute* findAttribute(const QualifiedName& attributeName) const;
+    const Vector<Attribute>& attributes() const LIFETIME_BOUND;
+    const Attribute* findAttribute(const QualifiedName& attributeName) const LIFETIME_BOUND;
 
     bool matchesHTMLTag(const AtomString&) const;
 
@@ -218,6 +217,7 @@ inline bool isSpecialNode(const HTMLStackItem& item)
     case HTML::plaintext:
     case HTML::pre:
     case HTML::script:
+    case HTML::search:
     case HTML::section:
     case HTML::select:
     case HTML::style:

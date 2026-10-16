@@ -28,6 +28,35 @@ from webkitcorepy import mocks as wkmocks, OutputCapture
 
 RELATED_BLANK = {'related-to': [], 'blocked-by': [], 'blocking': [], 'parent-of': [], 'subtask-of': [], 'cause-of': [], 'caused-by': [], 'duplicate-of': [], 'original-of': [], 'clone-of': [], 'cloned-to': []}
 
+ATTACHMENT_ISSUES = [
+    dict(
+        id=1,
+        title='Issue with attachments',
+        timestamp=1639536160,
+        modified=1710884407,
+        opened=True,
+        creator=mocks.USERS['Felix Filer'],
+        assignee=mocks.USERS['Tim Contributor'],
+        description='An example issue with attachments',
+        attachments=[
+            dict(fileName='triage-revert.patch', data=b'REVERT PATCH BYTES'),
+            dict(fileName='triage-fix.patch', data=b'FIX PATCH BYTES'),
+            dict(fileName='build-log.txt', data=b'not a patch'),
+            dict(fileName='cve.diff', data=b'DIFF BYTES'),
+            dict(fileName='locked.patch', data=b'SECRET', locked=True),
+        ],
+    ), dict(
+        id=2,
+        title='Issue without attachments',
+        timestamp=1639540010,
+        modified=1710884407,
+        opened=True,
+        creator=mocks.USERS['Felix Filer'],
+        assignee=mocks.USERS['Tim Contributor'],
+        description='An example issue without attachments',
+    ),
+]
+
 
 class TestRadar(unittest.TestCase):
     def test_encoding(self):
@@ -131,6 +160,38 @@ class TestRadar(unittest.TestCase):
                 User.Encoder().default(comments[0].user),
                 dict(name='Felix Filer', username=809, emails=['ffiler@example.com']),
             )
+
+    def test_attachments(self):
+        with mocks.Radar(issues=ATTACHMENT_ISSUES):
+            attachments = radar.Tracker().issue(1).attachments
+            self.assertEqual(
+                [attachment.name for attachment in attachments],
+                ['triage-revert.patch', 'triage-fix.patch', 'build-log.txt', 'cve.diff', 'locked.patch'],
+            )
+
+    def test_patches(self):
+        with mocks.Radar(issues=ATTACHMENT_ISSUES):
+            self.assertEqual(
+                [patch.name for patch in radar.Tracker().issue(1).patches],
+                ['triage-revert.patch', 'triage-fix.patch', 'cve.diff', 'locked.patch'],
+            )
+
+    def test_patch_contents(self):
+        with mocks.Radar(issues=ATTACHMENT_ISSUES):
+            patches = {patch.name: patch for patch in radar.Tracker().issue(1).patches}
+            self.assertEqual(patches['triage-fix.patch'].contents(), b'FIX PATCH BYTES')
+            self.assertEqual(patches['cve.diff'].contents(), b'DIFF BYTES')
+
+    def test_locked_attachment(self):
+        with mocks.Radar(issues=ATTACHMENT_ISSUES), OutputCapture() as captured:
+            patches = {patch.name: patch for patch in radar.Tracker().issue(1).patches}
+            self.assertIsNone(patches['locked.patch'].contents())
+        self.assertIn('is locked', captured.stderr.getvalue())
+
+    def test_no_attachments(self):
+        with mocks.Radar(issues=ATTACHMENT_ISSUES):
+            self.assertEqual(radar.Tracker().issue(2).attachments, [])
+            self.assertEqual(radar.Tracker().issue(2).patches, [])
 
     def test_watchers(self):
         with mocks.Radar(issues=mocks.ISSUES):
@@ -489,6 +550,30 @@ What version of 'WebKit Text' should the bug be associated with?:
                 'An example issue for testing',
             )
 
+    def test_set_component_single_component(self):
+        projects = dict(WebKit=dict(
+            mocks.PROJECTS['WebKit'],
+            components=dict(Tables=mocks.PROJECTS['WebKit']['components']['Tables']),
+        ))
+        with wkmocks.Environment(RADAR_USERNAME='tcontributor'), mocks.Radar(issues=mocks.ISSUES, projects=projects):
+            radar.Tracker(project='WebKit').issue(1).set_component(project='WebKit', version='Safari 15')
+
+            issue = radar.Tracker(project='WebKit').issue(1)
+            self.assertEqual(issue.component, 'Tables')
+            self.assertEqual(issue.version, 'Safari 15')
+
+    def test_clone_no_radar(self):
+        with mocks.NoRadar(), OutputCapture() as captured:
+            self.assertIsNone(radar.Tracker().clone(None, reason='Cloning for merge-back'))
+        self.assertEqual(captured.stderr.getvalue(), 'radarclient inaccessible on this machine\n')
+
+    def test_mock_relationships_unknown_type(self):
+        with wkmocks.Environment(RADAR_USERNAME='tcontributor'), mocks.Radar(issues=mocks.ISSUES):
+            model = radar.Tracker().client.radar_for_id(1)
+            with self.assertRaises(ValueError) as context:
+                model.relationships(['unknown-type'])
+        self.assertEqual(str(context.exception), "Unknown relationship type 'unknown-type'")
+
     def test_set_keywords(self):
         with wkmocks.Environment(RADAR_USERNAME='tcontributor'), mocks.Radar(issues=mocks.ISSUES, projects=mocks.PROJECTS):
             tracker = radar.Tracker()
@@ -534,6 +619,11 @@ What version of 'WebKit Text' should the bug be associated with?:
             tracker.issue(1).relate(blocking=tracker.issue(2))
             self.assertEqual(tracker.issue(1).related['blocking'], [tracker.issue(2)])
             self.assertEqual(tracker.issue(2).related['blocked-by'], [tracker.issue(1)])
+
+            # Removing it removes both ends, as adding it added both
+            tracker.issue(2).unrelate(blocked_by=tracker.issue(1))
+            self.assertEqual(tracker.issue(2).related['blocked-by'], [])
+            self.assertEqual(tracker.issue(1).related['blocking'], [])
 
             tracker.issue(2).relate(parent_of=tracker.issue(3))
             self.assertEqual(tracker.issue(2).related['parent-of'], [tracker.issue(3)])
@@ -590,3 +680,116 @@ What version of 'WebKit Text' should the bug be associated with?:
             captured.stderr.getvalue(),
             'Radar does not support the see_also field at this time\n',
         )
+
+
+class TestRadarParseId(unittest.TestCase):
+    """Tests for radar.Tracker.parse_id() — shared parsing of radar URL strings."""
+
+    # --- Single ID formats (returns an ID string) ---
+
+    def test_rdar_short_url(self):
+        self.assertEqual(radar.Tracker.parse_id('rdar://123456789'), '123456789')
+
+    def test_rdar_problem_url(self):
+        self.assertEqual(radar.Tracker.parse_id('rdar://problem/123456789'), '123456789')
+
+    def test_radar_short_url(self):
+        self.assertEqual(radar.Tracker.parse_id('radar://123456789'), '123456789')
+
+    def test_radar_problem_url(self):
+        self.assertEqual(radar.Tracker.parse_id('radar://problem/123456789'), '123456789')
+
+    def test_https_rdar_url(self):
+        self.assertEqual(radar.Tracker.parse_id('https://rdar.apple.com/123456789'), '123456789')
+
+    def test_rdar_short_url_with_angle_brackets(self):
+        self.assertEqual(radar.Tracker.parse_id('<rdar://123456789>'), '123456789')
+
+    def test_rdar_problem_url_with_angle_brackets(self):
+        self.assertEqual(radar.Tracker.parse_id('<rdar://problem/123456789>'), '123456789')
+
+    def test_https_rdar_url_with_angle_brackets(self):
+        self.assertEqual(radar.Tracker.parse_id('<https://rdar.apple.com/123456789>'), '123456789')
+
+    # --- Multiple IDs (returns a list of ID strings) ---
+
+    def test_rdar_ampersand_two_ids(self):
+        result = radar.Tracker.parse_id('rdar://123456789&987654321')
+        self.assertEqual(result, ['123456789', '987654321'])
+
+    def test_rdar_ampersand_three_ids(self):
+        result = radar.Tracker.parse_id('rdar://123&456&789')
+        self.assertEqual(result, ['123', '456', '789'])
+
+    def test_rdar_problem_ampersand_ids(self):
+        result = radar.Tracker.parse_id('rdar://problem/123456789&987654321&111111111')
+        self.assertEqual(result, ['123456789', '987654321', '111111111'])
+
+    # --- No match (returns None) ---
+
+    def test_bare_integer_returns_none(self):
+        self.assertIsNone(radar.Tracker.parse_id('123456789'))
+
+    def test_invalid_string_returns_none(self):
+        self.assertIsNone(radar.Tracker.parse_id('not-a-radar'))
+
+    def test_empty_string_returns_none(self):
+        self.assertIsNone(radar.Tracker.parse_id(''))
+
+    def test_https_other_url_returns_none(self):
+        self.assertIsNone(radar.Tracker.parse_id('https://example.com/123'))
+
+
+class TestRadarFromString(unittest.TestCase):
+    """Regression tests for radar.Tracker.from_string() after parse_id refactor."""
+
+    def test_rdar_short_url(self):
+        tracker = radar.Tracker()
+        issue = tracker.from_string('rdar://1234')
+        self.assertIsNotNone(issue)
+        self.assertEqual(issue.id, 1234)
+
+    def test_rdar_problem_url(self):
+        tracker = radar.Tracker()
+        issue = tracker.from_string('rdar://problem/5678')
+        self.assertIsNotNone(issue)
+        self.assertEqual(issue.id, 5678)
+
+    def test_radar_short_url(self):
+        tracker = radar.Tracker()
+        issue = tracker.from_string('radar://9999')
+        self.assertIsNotNone(issue)
+        self.assertEqual(issue.id, 9999)
+
+    def test_radar_problem_url(self):
+        tracker = radar.Tracker()
+        issue = tracker.from_string('radar://problem/4444')
+        self.assertIsNotNone(issue)
+        self.assertEqual(issue.id, 4444)
+
+    def test_https_rdar_url(self):
+        tracker = radar.Tracker()
+        issue = tracker.from_string('https://rdar.apple.com/7777')
+        self.assertIsNotNone(issue)
+        self.assertEqual(issue.id, 7777)
+
+    def test_angle_brackets(self):
+        tracker = radar.Tracker()
+        issue = tracker.from_string('<rdar://3333>')
+        self.assertIsNotNone(issue)
+        self.assertEqual(issue.id, 3333)
+
+    def test_ampersand_takes_first(self):
+        """Multi-ID URLs should take the first ID (existing behavior)."""
+        tracker = radar.Tracker()
+        issue = tracker.from_string('rdar://111&222')
+        self.assertIsNotNone(issue)
+        self.assertEqual(issue.id, 111)
+
+    def test_invalid_returns_none(self):
+        tracker = radar.Tracker()
+        self.assertIsNone(tracker.from_string('not-a-radar'))
+
+    def test_empty_returns_none(self):
+        tracker = radar.Tracker()
+        self.assertIsNone(tracker.from_string(''))

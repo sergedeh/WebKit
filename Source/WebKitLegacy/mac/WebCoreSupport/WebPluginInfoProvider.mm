@@ -31,14 +31,14 @@
 #import <WebCore/LocalFrame.h>
 #import <WebCore/Page.h>
 #import <wtf/BlockObjCExceptions.h>
+#import <wtf/NeverDestroyed.h>
 
-using namespace WebCore;
 
 WebPluginInfoProvider& WebPluginInfoProvider::singleton()
 {
-    static WebPluginInfoProvider& pluginInfoProvider = adoptRef(*new WebPluginInfoProvider).leakRef();
+    static NeverDestroyed<Ref<WebPluginInfoProvider>> pluginInfoProvider = adoptRef(*new WebPluginInfoProvider);
 
-    return pluginInfoProvider;
+    return pluginInfoProvider.get();
 }
 
 WebPluginInfoProvider::WebPluginInfoProvider() = default;
@@ -50,7 +50,7 @@ void WebPluginInfoProvider::refreshPlugins()
     [[WebPluginDatabase sharedDatabaseIfExists] refresh];
 }
 
-Vector<WebCore::PluginInfo> WebPluginInfoProvider::pluginInfo(WebCore::Page& page, std::optional<Vector<SupportedPluginIdentifier>>&)
+Vector<WebCore::PluginInfo> WebPluginInfoProvider::pluginInfo(WebCore::Page& page, std::optional<Vector<WebCore::SupportedPluginIdentifier>>&)
 {
     Vector<WebCore::PluginInfo> plugins;
 
@@ -58,7 +58,7 @@ Vector<WebCore::PluginInfo> WebPluginInfoProvider::pluginInfo(WebCore::Page& pag
 
 
     // WebKit1 has no application plug-ins, so we don't need to add them here.
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(page.mainFrame());
+    RefPtr localMainFrame = dynamicDowncast<WebCore::LocalFrame>(page.mainFrame());
     if (!localMainFrame)
         return plugins;
 
@@ -71,6 +71,6 @@ Vector<WebCore::PluginInfo> WebPluginInfoProvider::pluginInfo(WebCore::Page& pag
 
 Vector<WebCore::PluginInfo> WebPluginInfoProvider::webVisiblePluginInfo(WebCore::Page& page, const URL&)
 {
-    std::optional<Vector<SupportedPluginIdentifier>> supportedPluginIdentifiers;
+    std::optional<Vector<WebCore::SupportedPluginIdentifier>> supportedPluginIdentifiers;
     return pluginInfo(page, supportedPluginIdentifiers);
 }

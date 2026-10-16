@@ -60,7 +60,7 @@ IIRProcessor::IIRProcessor(float sampleRate, unsigned numberOfChannels, const Ve
         //   y(n) + a[1]/a[0]*y(n-1) + ... = b[0]/a[0]*x(n) + b[1]/a[0]*x(n-1) + ...
         //
         // Thus, the feedback and feedforward coefficients need to be scaled by 1/a[0].
-        float scale = feedback[0];
+        double scale = feedback[0];
         for (unsigned k = 1; k < feedbackLength; ++k)
             m_feedback[k] /= scale;
 
@@ -71,7 +71,7 @@ IIRProcessor::IIRProcessor(float sampleRate, unsigned numberOfChannels, const Ve
         m_feedback[0] = 1;
     }
 
-    m_responseKernel = makeUnique<IIRDSPKernel>(*this);
+    lazyInitialize(m_responseKernel, makeUnique<IIRDSPKernel>(*this));
 }
 
 IIRProcessor::~IIRProcessor()
@@ -98,9 +98,9 @@ void IIRProcessor::process(const AudioBus& source, AudioBus& destination, size_t
         m_kernels[i]->process(source.channel(i)->span().first(framesToProcess), destination.channel(i)->mutableSpan());
 }
 
-void IIRProcessor::getFrequencyResponse(unsigned length, std::span<const float> frequencyHz, std::span<float> magResponse, std::span<float> phaseResponse)
+void IIRProcessor::getFrequencyResponse(std::span<const float> frequencyHz, std::span<float> magResponse, std::span<float> phaseResponse)
 {
-    m_responseKernel->getFrequencyResponse(length, frequencyHz, magResponse, phaseResponse);
+    m_responseKernel->getFrequencyResponse(frequencyHz, magResponse, phaseResponse);
 }
 
 } // namespace WebCore

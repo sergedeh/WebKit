@@ -27,11 +27,12 @@
 #include "FESpecularLighting.h"
 #include "NodeName.h"
 #include "RenderElement.h"
-#include "RenderStyle+GettersInlines.h"
+#include "SVGElementTypeHelpers.h"
 #include "SVGFELightElement.h"
 #include "SVGNames.h"
 #include "SVGParserUtilities.h"
 #include "SVGPropertyOwnerRegistry.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -39,7 +40,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGFESpecularLightingElement);
 
 inline SVGFESpecularLightingElement::SVGFESpecularLightingElement(const QualifiedName& tagName, Document& document)
-    : SVGFilterPrimitiveStandardAttributes(tagName, document, makeUniqueRef<PropertyRegistry>(*this))
+    : SVGFilterPrimitiveStandardAttributes(tagName, document, PropertyRegistry::singleton())
 {
     ASSERT(hasTagName(SVGNames::feSpecularLightingTag));
     
@@ -47,9 +48,9 @@ inline SVGFESpecularLightingElement::SVGFESpecularLightingElement(const Qualifie
     if (!didRegistration) [[unlikely]] {
         didRegistration = true;
         PropertyRegistry::registerProperty<SVGNames::inAttr, &SVGFESpecularLightingElement::m_in1>();
-        PropertyRegistry::registerProperty<SVGNames::specularConstantAttr, &SVGFESpecularLightingElement::m_specularConstant>();
-        PropertyRegistry::registerProperty<SVGNames::specularExponentAttr, &SVGFESpecularLightingElement::m_specularExponent>();
-        PropertyRegistry::registerProperty<SVGNames::surfaceScaleAttr, &SVGFESpecularLightingElement::m_surfaceScale>();
+        PropertyRegistry::registerProperty<SVGNames::specularConstantAttr, &SVGFESpecularLightingElement::m_specularConstant>(initialSpecularConstantValue);
+        PropertyRegistry::registerProperty<SVGNames::specularExponentAttr, &SVGFESpecularLightingElement::m_specularExponent>(initialSpecularExponentValue);
+        PropertyRegistry::registerProperty<SVGNames::surfaceScaleAttr, &SVGFESpecularLightingElement::m_surfaceScale>(initialSurfaceScaleValue);
         PropertyRegistry::registerProperty<SVGNames::kernelUnitLengthAttr, &SVGFESpecularLightingElement::m_kernelUnitLengthX, &SVGFESpecularLightingElement::m_kernelUnitLengthY>();
     }
 }
@@ -66,18 +67,21 @@ void SVGFESpecularLightingElement::attributeChanged(const QualifiedName& name, c
         Ref { m_in1 }->setBaseValInternal(newValue);
         break;
     case AttributeNames::surfaceScaleAttr:
-        Ref { m_surfaceScale }->setBaseValInternal(newValue.toFloat());
+        m_surfaceScale->setBaseValInternal(parseNumber(newValue));
         break;
     case AttributeNames::specularConstantAttr:
-        Ref { m_specularConstant }->setBaseValInternal(newValue.toFloat());
+        m_specularConstant->setBaseValInternal(parseNumber(newValue));
         break;
     case AttributeNames::specularExponentAttr:
-        Ref { m_specularExponent }->setBaseValInternal(newValue.toFloat());
+        m_specularExponent->setBaseValInternal(parseNumber(newValue));
         break;
     case AttributeNames::kernelUnitLengthAttr:
         if (auto result = parseNumberOptionalNumber(newValue)) {
-            Ref { m_kernelUnitLengthX }->setBaseValInternal(result->first);
-            Ref { m_kernelUnitLengthY }->setBaseValInternal(result->second);
+            m_kernelUnitLengthX->setBaseValInternal(result->first);
+            m_kernelUnitLengthY->setBaseValInternal(result->second);
+        } else {
+            m_kernelUnitLengthX->setBaseValInternal(std::nullopt);
+            m_kernelUnitLengthY->setBaseValInternal(std::nullopt);
         }
         break;
     default:
@@ -96,7 +100,7 @@ bool SVGFESpecularLightingElement::setFilterEffectAttribute(FilterEffect& filter
 
     switch (attrName.nodeName()) {
     case AttributeNames::lighting_colorAttr:
-        return effect.setLightingColor(renderer()->checkedStyle()->lightingColorResolvingCurrentColorApplyingColorFilter());
+        return effect.setLightingColor(protect(renderer()->style())->lightingColorResolvingCurrentColorApplyingColorFilter());
     case AttributeNames::surfaceScaleAttr:
         return effect.setSurfaceScale(surfaceScale());
     case AttributeNames::specularConstantAttr:
@@ -164,7 +168,16 @@ RefPtr<FilterEffect> SVGFESpecularLightingElement::createFilterEffect(const Filt
         return nullptr;
 
     Ref lightSource = lightElement->lightSource();
-    return FESpecularLighting::create(renderer->checkedStyle()->lightingColorResolvingCurrentColorApplyingColorFilter(), surfaceScale(), specularConstant(), specularExponent(), kernelUnitLengthX(), kernelUnitLengthY(), WTF::move(lightSource));
+    return FESpecularLighting::create(protect(renderer->style())->lightingColorResolvingCurrentColorApplyingColorFilter(), surfaceScale(), specularConstant(), specularExponent(), kernelUnitLengthX(), kernelUnitLengthY(), WTF::move(lightSource));
+}
+
+bool SVGFESpecularLightingElement::taintsOrigin() const
+{
+    // §16.3: tainted when lighting-color depends on currentColor.
+    CheckedPtr renderer = this->renderer();
+    if (!renderer)
+        return false;
+    return renderer->style().lightingColor().containsCurrentColor();
 }
 
 } // namespace WebCore

@@ -24,9 +24,10 @@
  */
 
 #import <WebKitLegacy/DOMCSSStyleSheet.h>
+#import <wtf/Compiler.h>
 
 namespace WebCore {
 class CSSStyleSheet;
 }
 
-DOMCSSStyleSheet *kit(WebCore::CSSStyleSheet*);
+DOMCSSStyleSheet * LEGACY_NODELETE kit(WebCore::CSSStyleSheet*);

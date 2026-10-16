@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2024-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,6 +28,11 @@
 #if ENABLE(WK_WEB_EXTENSIONS_SIDEBAR)
 
 namespace WebKit {
+
+enum class WebExtensionSidebarSide : uint8_t {
+    Left,
+    Right,
+};
 
 struct WebExtensionSidebarParameters {
     bool enabled { true };

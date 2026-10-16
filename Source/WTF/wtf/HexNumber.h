@@ -38,6 +38,13 @@ inline std::span<Latin1Character> appendHex(std::array<Latin1Character, arraySiz
     return appendHex(std::span<Latin1Character> { buffer }, unsignedCast(number), minimumDigits, mode);
 }
 
+template<size_t arraySize>
+inline std::span<Latin1Character> appendHex(std::array<Latin1Character, arraySize>& buffer, Latin1Character character, unsigned minimumDigits, HexConversionMode mode)
+{
+    uint8_t number = character;
+    return appendHex(buffer, number, minimumDigits, mode);
+}
+
 } // namespace Internal
 
 struct HexNumberBuffer {
@@ -64,22 +71,7 @@ template<typename NumberType> HexNumberBuffer hex(NumberType number, HexConversi
     return hex(number, 0, mode);
 }
 
-template<> class StringTypeAdapter<HexNumberBuffer> {
-public:
-    explicit StringTypeAdapter(const HexNumberBuffer& buffer)
-        : m_buffer { buffer }
-    {
-    }
-
-    unsigned length() const { return m_buffer.length; }
-    bool is8Bit() const { return true; }
-    template<typename CharacterType> void writeTo(std::span<CharacterType> destination) const { StringImpl::copyCharacters(destination, m_buffer.span()); }
-
-private:
-    const HexNumberBuffer& m_buffer;
-};
-
-WTF_EXPORT_PRIVATE CString toHexCString(std::span<const uint8_t>);
+WTF_EXPORT_PRIVATE ASCIICString toHexCString(std::span<const uint8_t>);
 WTF_EXPORT_PRIVATE String toHexString(std::span<const uint8_t>);
 
 class PrintStream;

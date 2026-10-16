@@ -49,7 +49,7 @@ template<typename> class ExceptionOr;
 class FetchRequest final : public FetchBodyOwner {
 public:
     using Init = FetchRequestInit;
-    using Info = Variant<RefPtr<FetchRequest>, String>;
+    using Info = Variant<Ref<FetchRequest>, String>;
 
     using Cache = FetchOptions::Cache;
     using Credentials = FetchOptions::Credentials;
@@ -60,8 +60,8 @@ public:
     static ExceptionOr<Ref<FetchRequest>> create(ScriptExecutionContext&, Info&&, Init&&);
     static Ref<FetchRequest> create(ScriptExecutionContext&, std::optional<FetchBody>&&, Ref<FetchHeaders>&&, ResourceRequest&&, FetchOptions&&, String&& referrer);
 
-    const String& method() const { return m_request.httpMethod(); }
-    const String& urlString() const;
+    const String& method() const LIFETIME_BOUND { return m_request.httpMethod(); }
+    const String& LEGACY_NODELETE urlString() const;
     FetchHeaders& headers() { return m_headers.get(); }
     const FetchHeaders& headers() const { return m_headers.get(); }
 
@@ -73,16 +73,17 @@ public:
     Cache cache() const { return m_options.cache; }
     Redirect redirect() const { return m_options.redirect; }
     bool keepalive() const { return m_options.keepAlive; };
+    FetchRequestDuplex duplex() const { return m_duplex.value_or(FetchRequestDuplex::Half); }
     AbortSignal& signal() { return m_signal.get(); }
 
-    const String& integrity() const { return m_options.integrity; }
+    const String& integrity() const LIFETIME_BOUND { return m_options.integrity; }
 
     ExceptionOr<Ref<FetchRequest>> clone(JSDOMGlobalObject&);
 
-    const FetchOptions& fetchOptions() const { return m_options; }
-    const ResourceRequest& internalRequest() const { return m_request; }
-    const String& internalRequestReferrer() const { return m_referrer; }
-    const URL& url() const { return m_request.url(); }
+    const FetchOptions& fetchOptions() const LIFETIME_BOUND { return m_options; }
+    const ResourceRequest& internalRequest() const LIFETIME_BOUND { return m_request; }
+    const String& internalRequestReferrer() const LIFETIME_BOUND { return m_referrer; }
+    const URL& url() const LIFETIME_BOUND { return m_request.url(); }
 
     ResourceRequest resourceRequest() const;
     std::optional<FetchIdentifier> navigationPreloadIdentifier() const { return m_navigationPreloadIdentifier.asOptional(); }
@@ -95,6 +96,8 @@ public:
     bool shouldEnableContentExtensionsCheck() const { return m_enableContentExtensionsCheck; }
     void disableContentExtensionsCheck() { m_enableContentExtensionsCheck = false; }
 
+    void markAsUnhandled() { setDisturbed(); }
+
 private:
     FetchRequest(ScriptExecutionContext&, std::optional<FetchBody>&&, Ref<FetchHeaders>&&, ResourceRequest&&, FetchOptions&&, String&& referrer);
 
@@ -105,11 +108,13 @@ private:
     ExceptionOr<void> setBody(FetchRequest&);
 
     void stop() final;
+    void cancel() final;
 
     ResourceRequest m_request;
     URLKeepingBlobAlive m_requestURL;
     FetchOptions m_options;
     RequestPriority m_priority { RequestPriority::Auto };
+    std::optional<FetchRequestDuplex> m_duplex;
     String m_referrer;
     const Ref<AbortSignal> m_signal;
     Markable<FetchIdentifier> m_navigationPreloadIdentifier;
@@ -117,6 +122,6 @@ private:
     IPAddressSpace m_targetAddressSpace { IPAddressSpace::Public };
 };
 
-WebCoreOpaqueRoot root(FetchRequest*);
+WebCoreOpaqueRoot LEGACY_NODELETE root(FetchRequest*);
 
 } // namespace WebCore

@@ -35,7 +35,7 @@
 #include "KeyframeEffect.h"
 #include "Logging.h"
 #include "NodeDocument.h"
-#include "RenderStyle.h"
+#include "StyleComputedStyle.h"
 #include "StyleOriginatedAnimationEvent.h"
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/TextStream.h>
@@ -45,7 +45,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(StyleOriginatedAnimation);
 
 StyleOriginatedAnimation::StyleOriginatedAnimation(const Styleable& styleable)
-    : WebAnimation(styleable.element.document())
+    : WebAnimation(protect(styleable.element.document()))
     , m_owningElement(styleable.element)
     , m_owningPseudoElementIdentifier(styleable.pseudoElementIdentifier)
 {
@@ -60,13 +60,13 @@ const std::optional<const Styleable> StyleOriginatedAnimation::owningElement() c
     return std::nullopt;
 }
 
-void StyleOriginatedAnimation::tick()
+void StyleOriginatedAnimation::tick(WebAnimation::ShouldDispatchProgressEvent shouldDispatchProgressEvent)
 {
     LOG_WITH_STREAM(Animations, stream << "StyleOriginatedAnimation::tick for element " << m_owningElement);
 
     bool wasRelevant = isRelevant();
     
-    WebAnimation::tick();
+    WebAnimation::tick(shouldDispatchProgressEvent);
     invalidateDOMEvents();
 
     // If a style-originated animation transitions from a non-idle state to an idle state, it means it was
@@ -97,7 +97,7 @@ void StyleOriginatedAnimation::disassociateFromOwningElement()
     m_owningElement = nullptr;
 }
 
-void StyleOriginatedAnimation::initialize(const RenderStyle* oldStyle, const RenderStyle& newStyle, const Style::ResolutionContext& resolutionContext)
+void StyleOriginatedAnimation::initialize(const Style::ComputedStyle* oldStyle, const Style::ComputedStyle& newStyle, const Style::ResolutionContext& resolutionContext)
 {
     WebAnimation::initialize();
 
@@ -108,9 +108,10 @@ void StyleOriginatedAnimation::initialize(const RenderStyle* oldStyle, const Ren
 
     ASSERT(m_owningElement);
 
-    Ref effect = KeyframeEffect::create(Ref { *m_owningElement }, m_owningPseudoElementIdentifier);
+    Ref owningElement = *m_owningElement;
+    Ref effect = KeyframeEffect::create(owningElement, m_owningPseudoElementIdentifier);
     setEffect(effect.copyRef());
-    setTimeline(&m_owningElement->document().timeline());
+    setTimeline(&protect(owningElement->document())->timeline());
     effect->computeStyleOriginatedAnimationBlendingKeyframes(oldStyle, newStyle, resolutionContext);
     syncPropertiesWithBackingAnimation();
     if (backingAnimationPlayState() == AnimationPlayState::Running)
@@ -183,7 +184,7 @@ void StyleOriginatedAnimation::flushPendingStyleChanges() const
 {
     if (RefPtr keyframeEffect = this->keyframeEffect()) {
         if (RefPtr target = keyframeEffect->target())
-            target->document().updateStyleIfNeeded();
+            protect(target->document())->updateStyleIfNeeded();
     }
 }
 
@@ -393,7 +394,7 @@ void StyleOriginatedAnimation::enqueueDOMEvent(const AtomString& eventType, WebA
         return;
 
     auto scheduledTimelineTime = [&]() -> std::optional<Seconds> {
-        if (RefPtr documentTimeline = dynamicDowncast<DocumentTimeline>(timeline())) {
+        if (auto* documentTimeline = dynamicDowncast<DocumentTimeline>(timeline())) {
             ASSERT(scheduledEffectTime.time());
             if (auto scheduledAnimationTime = convertAnimationTimeToTimelineTime(*scheduledEffectTime.time()))
                 return documentTimeline->convertTimelineTimeToOriginRelativeTime(*scheduledAnimationTime);

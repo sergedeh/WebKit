@@ -36,21 +36,29 @@
 #include "GraphicsContext.h"
 #include "HTMLNames.h"
 #include "HTMLSelectElement.h"
+#include "InlineIteratorBoxInlines.h"
 #include "InlineIteratorInlineBox.h"
 #include "InlineIteratorLineBox.h"
 #include "LegacyRenderSVGModelObject.h"
 #include "PaintInfo.h"
 #include "PathUtilities.h"
+#include "PlatformRenderTheme.h"
 #include "RenderBlockFlow.h"
 #include "RenderChildIterator.h"
+#include "RenderElementInlines.h"
+#include "RenderElementStyleInlines.h"
 #include "RenderInline.h"
 #include "RenderListBox.h"
 #include "RenderObjectDocument.h"
-#include "RenderStyle+GettersInlines.h"
 #include "RenderSVGModelObject.h"
 #include "RenderTheme.h"
 #include "StyleBorderRadius.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "StylePrimitiveNumericTypes+Evaluation.h"
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+#include <WebKitAdditions/AXCustomColorModeController.h>
+#endif
 
 namespace WebCore {
 
@@ -61,7 +69,17 @@ OutlinePainter::OutlinePainter(const PaintInfo& paintInfo)
 
 static float deviceScaleFactor(const RenderElement& renderer)
 {
-    return renderer.protectedDocument()->deviceScaleFactor();
+    return protect(renderer.document())->deviceScaleFactor();
+}
+
+static Color outlineColor(const RenderElement& renderer, const Style::ComputedStyle& style)
+{
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    return AXCustomColorModeController::adjustedOutlineColor(renderer, style);
+#else
+    UNUSED_PARAM(renderer);
+    return style.visitedDependentOutlineColorApplyingColorFilter();
+#endif
 }
 
 void OutlinePainter::paintOutline(const RenderElement& renderer, const LayoutRect& paintRect) const
@@ -90,8 +108,9 @@ void OutlinePainter::paintOutline(const RenderElement& renderer, const LayoutRec
     if (!borderStyle || *borderStyle == BorderStyle::None)
         return;
 
-    auto outlineWidth = Style::evaluate<LayoutUnit>(styleToUse->usedOutlineWidth(), Style::ZoomNeeded { });
-    auto outlineOffset = Style::evaluate<LayoutUnit>(styleToUse->usedOutlineOffset(), Style::ZoomNeeded { });
+    auto usedStyle = renderer.usedStyle();
+    auto outlineWidth = usedStyle.outlineWidth();
+    auto outlineOffset = usedStyle.outlineOffset();
 
     auto outerRect = paintRect;
     outerRect.inflate(outlineOffset + outlineWidth);
@@ -99,15 +118,15 @@ void OutlinePainter::paintOutline(const RenderElement& renderer, const LayoutRec
     if (outerRect.isEmpty())
         return;
 
-    auto hasBorderRadius = styleToUse->hasBorderRadius();
+    auto hasBorderRadius = styleToUse->border().hasBorderRadius();
     auto closedEdges = RectEdges<bool> { true };
 
     auto outlineEdgeWidths = RectEdges<LayoutUnit> { outlineWidth };
-    auto outlineShape = BorderShape::shapeForOutsetRect(styleToUse.get(), paintRect, outerRect, outlineEdgeWidths, closedEdges);
+    auto outlineShape = BorderShape::shapeForOffsetRect(styleToUse.get(), paintRect, outerRect, outlineEdgeWidths, closedEdges);
 
     auto bleedAvoidance = BleedAvoidance::ShrinkBackground;
     auto appliedClipAlready = false;
-    auto edges = borderEdgesForOutline(styleToUse, *borderStyle, deviceScaleFactor(renderer));
+    auto edges = borderEdgesForOutline(usedStyle, outlineColor(renderer, styleToUse), *borderStyle, deviceScaleFactor(renderer));
     auto haveAllSolidEdges = BorderPainter::decorationHasAllSolidEdges(edges);
 
     BorderPainter { renderer, m_paintInfo }.paintSides(outlineShape, {
@@ -122,7 +141,7 @@ void OutlinePainter::paintOutline(const RenderElement& renderer, const LayoutRec
     });
 }
 
-void OutlinePainter::paintOutline(const RenderInline& renderer, const LayoutPoint& paintOffset) const
+void OutlinePainter::paintOutline(const RenderBoxModelObject& renderer, const LayoutPoint& paintOffset) const
 {
     ASSERT(renderer.hasOutline());
 
@@ -152,23 +171,41 @@ void OutlinePainter::paintOutline(const RenderInline& renderer, const LayoutPoin
     auto isFlipped = containingBlock->writingMode().isBlockFlipped();
     Vector<LayoutRect> rects;
     for (auto box = InlineIterator::lineLeftmostInlineBoxFor(renderer); box; box.traverseInlineBoxLineRightward()) {
-        auto lineBox = box->lineBox();
-        auto logicalTop = std::max(lineBox->contentLogicalTop(), box->logicalTop());
-        auto logicalBottom = std::min(lineBox->contentLogicalBottom(), box->logicalBottom());
-        auto enclosingVisualRect = FloatRect { box->logicalLeftIgnoringInlineDirection(), logicalTop, box->logicalWidth(), logicalBottom - logicalTop };
+        // Start with the inline box's own rect as the base, ensuring the outline
+        // covers margins, paddings and borders of nested inline boxes.
+        auto inlineBoxLogicalTop = box->logicalTop();
+        auto inlineBoxLogicalBottom = box->logicalBottom();
+        auto baseRect = FloatRect { box->logicalLeftIgnoringInlineDirection(), inlineBoxLogicalTop, box->logicalWidth(), inlineBoxLogicalBottom - inlineBoxLogicalTop };
 
         if (!isHorizontalWritingMode)
-            enclosingVisualRect = enclosingVisualRect.transposedRect();
-
+            baseRect = baseRect.transposedRect();
         if (isFlipped)
-            containingBlock->flipForWritingMode(enclosingVisualRect);
+            containingBlock->flipForWritingMode(baseRect);
+        rects.append(LayoutRect { baseRect });
 
-        rects.append(LayoutRect { enclosingVisualRect });
+        // Collect a rect for each leaf box inside this inline box fragment,
+        // so the outline hugs the actual content shape. Each rect expands
+        // beyond the inline box for overflowing content.
+        for (auto leaf = box->firstLeafBox(); leaf && leaf != box->endLeafBox(); ++leaf) {
+            auto logicalTop = std::min(leaf->logicalTop(), inlineBoxLogicalTop);
+            auto logicalBottom = std::max(leaf->logicalBottom(), inlineBoxLogicalBottom);
+            if (logicalTop == inlineBoxLogicalTop && logicalBottom == inlineBoxLogicalBottom)
+                continue; // Already covered by the base rect.
+            auto enclosingVisualRect = FloatRect { leaf->logicalLeftIgnoringInlineDirection(), logicalTop, leaf->logicalWidth(), logicalBottom - logicalTop };
+
+            if (!isHorizontalWritingMode)
+                enclosingVisualRect = enclosingVisualRect.transposedRect();
+
+            if (isFlipped)
+                containingBlock->flipForWritingMode(enclosingVisualRect);
+
+            rects.append(LayoutRect { enclosingVisualRect });
+        }
     }
     paintOutlineWithLineRects(renderer, paintOffset, rects);
 }
 
-void OutlinePainter::paintOutlineWithLineRects(const RenderInline& renderer, const LayoutPoint& paintOffset, const Vector<LayoutRect>& lineRects) const
+void OutlinePainter::paintOutlineWithLineRects(const RenderBoxModelObject& renderer, const LayoutPoint& paintOffset, const Vector<LayoutRect>& lineRects) const
 {
     if (lineRects.size() == 1) {
         auto adjustedPaintRect = lineRects[0];
@@ -179,10 +216,12 @@ void OutlinePainter::paintOutlineWithLineRects(const RenderInline& renderer, con
 
     auto styleToUse = CheckedRef { renderer.style() };
 
-    auto outlineOffset = Style::evaluate<float>(styleToUse->usedOutlineOffset(), Style::ZoomNeeded { });
-    auto outlineWidth = Style::evaluate<float>(styleToUse->usedOutlineWidth(), Style::ZoomNeeded { });
-
+    auto zoom = styleToUse->usedZoomForLength();
     auto deviceScaleFactor = WebCore::deviceScaleFactor(renderer);
+
+    auto usedStyle = renderer.usedStyle();
+    auto outlineOffset = usedStyle.outlineOffset<float>();
+    auto outlineWidth = usedStyle.outlineWidth<float>();
 
     Vector<FloatRect> pixelSnappedRects;
     for (size_t index = 0; index < lineRects.size(); ++index) {
@@ -192,7 +231,7 @@ void OutlinePainter::paintOutlineWithLineRects(const RenderInline& renderer, con
         rect.inflate(outlineOffset + outlineWidth / 2);
         pixelSnappedRects.append(snapRectToDevicePixels(rect, deviceScaleFactor));
     }
-    auto path = pathWithShrinkWrappedRects(pixelSnappedRects, styleToUse->border().radii, outlineOffset, styleToUse->writingMode(), deviceScaleFactor);
+    auto path = pathWithShrinkWrappedRects(pixelSnappedRects, styleToUse->border().radii, outlineOffset, styleToUse->writingMode(), zoom, deviceScaleFactor);
     if (path.isEmpty()) {
         // Disjoint line spanning inline boxes.
         for (auto rect : lineRects) {
@@ -203,7 +242,7 @@ void OutlinePainter::paintOutlineWithLineRects(const RenderInline& renderer, con
     }
 
     auto& graphicsContext = m_paintInfo.context();
-    auto outlineColor = styleToUse->visitedDependentOutlineColorApplyingColorFilter();
+    auto outlineColor = WebCore::outlineColor(renderer, styleToUse);
     auto useTransparencyLayer = !outlineColor.isOpaque();
     if (useTransparencyLayer) {
         graphicsContext.beginTransparencyLayer(outlineColor.alphaAsFloat());
@@ -219,7 +258,7 @@ void OutlinePainter::paintOutlineWithLineRects(const RenderInline& renderer, con
         graphicsContext.endTransparencyLayer();
 }
 
-static bool usePlatformFocusRingColorForOutlineStyleAuto()
+static bool LEGACY_NODELETE usePlatformFocusRingColorForOutlineStyleAuto()
 {
 #if PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE)
     return true;
@@ -228,7 +267,7 @@ static bool usePlatformFocusRingColorForOutlineStyleAuto()
 #endif
 }
 
-static bool useShrinkWrappedFocusRingForOutlineStyleAuto()
+static bool LEGACY_NODELETE useShrinkWrappedFocusRingForOutlineStyleAuto()
 {
 #if PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE)
     return true;
@@ -237,18 +276,14 @@ static bool useShrinkWrappedFocusRingForOutlineStyleAuto()
 #endif
 }
 
-static void drawFocusRing(GraphicsContext& context, const Path& path, const RenderStyle& style, const Color& color)
+static void drawFocusRing(GraphicsContext& context, const Path& path, const UsedStyle& usedStyle, const Color& color)
 {
-    context.drawFocusRing(path, Style::evaluate<float>(style.usedOutlineWidth(), Style::ZoomNeeded { }), color);
+    context.drawFocusRing(path, usedStyle.outlineWidth<float>(), color, usedStyle.computedStyle().usedZoom());
 }
 
-static void drawFocusRing(GraphicsContext& context, Vector<FloatRect> rects, const RenderStyle& style, const Color& color)
+static void drawFocusRing(GraphicsContext& context, Vector<FloatRect> rects, const UsedStyle& usedStyle, const Color& color)
 {
-#if PLATFORM(MAC)
-    context.drawFocusRing(rects, 0, Style::evaluate<float>(style.usedOutlineWidth(), Style::ZoomNeeded { }), color);
-#else
-    context.drawFocusRing(rects, Style::evaluate<float>(style.usedOutlineOffset(), Style::ZoomNeeded { }), Style::evaluate<float>(style.usedOutlineWidth(), Style::ZoomNeeded { }), color);
-#endif
+    context.drawFocusRing(rects, usedStyle.outlineWidth<float>(), color, usedStyle.computedStyle().usedZoom());
 }
 
 void OutlinePainter::paintFocusRing(const RenderElement& renderer, const Vector<LayoutRect>& focusRingRects) const
@@ -258,25 +293,57 @@ void OutlinePainter::paintFocusRing(const RenderElement& renderer, const Vector<
     ASSERT(style->outlineStyle() == OutlineStyle::Auto);
 
     auto deviceScaleFactor = WebCore::deviceScaleFactor(renderer);
-    auto outlineOffset = Style::evaluate<float>(style->usedOutlineOffset(), Style::ZoomNeeded { });
+    auto zoom = style->usedZoomForLength();
+
+    auto usedStyle = renderer.usedStyle();
+    auto outlineOffset = usedStyle.outlineOffset<float>();
 
     Vector<FloatRect> pixelSnappedFocusRingRects;
     for (auto rect : focusRingRects) {
         rect.inflate(outlineOffset);
         pixelSnappedFocusRingRects.append(snapRectToDevicePixels(rect, deviceScaleFactor));
     }
-    auto styleOptions = renderer.styleColorOptions();
+    auto styleOptions = renderer.styleColorOptions(StyleColorOptionsPurpose::Rendering);
     styleOptions.add(StyleColorOptions::UseSystemAppearance);
     auto focusRingColor = usePlatformFocusRingColorForOutlineStyleAuto() ? RenderTheme::singleton().focusRingColor(styleOptions) : style->visitedDependentOutlineColorApplyingColorFilter();
-    if (useShrinkWrappedFocusRingForOutlineStyleAuto() && style->hasBorderRadius()) {
-        auto path = pathWithShrinkWrappedRects(pixelSnappedFocusRingRects, style->border().radii, outlineOffset, style->writingMode(), deviceScaleFactor);
-        if (path.isEmpty()) {
-            for (auto rect : pixelSnappedFocusRingRects)
-                path.addRect(rect);
+
+    if (!useShrinkWrappedFocusRingForOutlineStyleAuto() || !style->border().hasBorderRadius()) {
+        drawFocusRing(m_paintInfo.context(), pixelSnappedFocusRingRects, usedStyle, focusRingColor);
+        return;
+    }
+
+    // When all focus ring rects are contained within the first rect (the
+    // element's own rect for block elements with children), use BorderShape
+    // for correct radii computation. pathWithShrinkWrappedRects resolves radii
+    // against the already-inflated rect then further adjusts them via
+    // adjustedRadiiForHuggingCurve, producing incorrect rounding.
+    auto canUseBorderShape = [&] {
+        if (focusRingRects.isEmpty())
+            return false;
+        for (size_t i = 1; i < focusRingRects.size(); ++i) {
+            if (!focusRingRects[0].contains(focusRingRects[i]))
+                return false;
         }
-        drawFocusRing(m_paintInfo.context(), path, style.get(), focusRingColor);
-    } else
-        drawFocusRing(m_paintInfo.context(), pixelSnappedFocusRingRects, style.get(), focusRingColor);
+        return true;
+    }();
+
+    if (canUseBorderShape) {
+        auto borderRect = focusRingRects[0];
+        auto outlineRect = borderRect;
+        outlineRect.inflate(LayoutUnit(outlineOffset));
+        auto outlineShape = BorderShape::shapeForOffsetRect(style.get(), borderRect, outlineRect, RectEdges<LayoutUnit> { }, RectEdges<bool> { true });
+        auto path = outlineShape.pathForOuterShape(deviceScaleFactor);
+        drawFocusRing(m_paintInfo.context(), path, usedStyle, focusRingColor);
+        return;
+    }
+
+    // Multi-rect (inline spanning lines): shrink-wrap path.
+    auto path = pathWithShrinkWrappedRects(pixelSnappedFocusRingRects, style->border().radii, outlineOffset, style->writingMode(), zoom, deviceScaleFactor);
+    if (path.isEmpty()) {
+        for (auto rect : pixelSnappedFocusRingRects)
+            path.addRect(rect);
+    }
+    drawFocusRing(m_paintInfo.context(), path, usedStyle, focusRingColor);
 }
 
 Vector<LayoutRect> OutlinePainter::collectFocusRingRects(const RenderElement& renderer, const LayoutPoint& additionalOffset, const RenderLayerModelObject* paintContainer)
@@ -316,7 +383,7 @@ void OutlinePainter::collectFocusRingRects(const RenderElement& renderer, Vector
             return;
     }
     if (CheckedPtr box = dynamicDowncast<RenderBox>(renderer))
-        appendIfNotEmpty(rects, { additionalOffset, box->size() });
+        appendIfNotEmpty(rects, { additionalOffset, box->borderBoxSize() });
 }
 
 bool OutlinePainter::collectFocusRingRectsForListBox(const RenderListBox& renderer, Vector<LayoutRect>& rects, const LayoutPoint& additionalOffset, const RenderLayerModelObject*)
@@ -335,8 +402,8 @@ bool OutlinePainter::collectFocusRingRectsForListBox(const RenderListBox& render
 
     // No selected items, find the first non-disabled item.
     int indexOfFirstEnabledOption = 0;
-    for (auto& item : selectElement->listItems()) {
-        if (is<HTMLOptionElement>(item.get()) && !item->isDisabledFormControl()) {
+    for (RefPtr item : selectElement->listItems()) {
+        if (is<HTMLOptionElement>(item) && !item->isDisabledFormControl()) {
             selectElement->setActiveSelectionEndIndex(indexOfFirstEnabledOption);
             rects.append(renderer.itemBoundingBoxRect(additionalOffset, indexOfFirstEnabledOption));
             return true;
@@ -346,12 +413,18 @@ bool OutlinePainter::collectFocusRingRectsForListBox(const RenderListBox& render
     return true;
 }
 
-void OutlinePainter::collectFocusRingRectsForInline(const RenderInline& renderer, Vector<LayoutRect>& rects, const LayoutPoint& additionalOffset, const RenderLayerModelObject* paintContainer)
+void OutlinePainter::collectFocusRingRectsForInline(const RenderBoxModelObject& renderer, Vector<LayoutRect>& rects, const LayoutPoint& additionalOffset, const RenderLayerModelObject* paintContainer)
 {
-    renderer.collectLineBoxRects(rects, additionalOffset);
+    for (auto rect : renderer.localBorderBoxRects()) {
+        if (rect.isEmpty())
+            continue;
+        auto adjustedRect = LayoutRect { rect };
+        adjustedRect.moveBy(additionalOffset);
+        rects.append(adjustedRect);
+    }
 
     for (CheckedRef child : childrenOfType<RenderBoxModelObject>(renderer)) {
-        if (child->isRenderListMarker())
+        if (child->isRenderListOutsideMarker())
             continue;
         FloatPoint pos(additionalOffset);
         // FIXME: This doesn't work correctly with transforms.
@@ -361,13 +434,6 @@ void OutlinePainter::collectFocusRingRectsForInline(const RenderInline& renderer
             pos.move(box->locationOffset());
         collectFocusRingRects(child, rects, flooredIntPoint(pos), paintContainer);
     }
-
-    if (CheckedPtr continuation = renderer.continuation()) {
-        if (CheckedPtr inlineRenderer = dynamicDowncast<RenderInline>(*continuation))
-            collectFocusRingRectsForInline(*inlineRenderer, rects, flooredLayoutPoint(LayoutPoint(additionalOffset + continuation->containingBlock()->location() - renderer.containingBlock()->location())), paintContainer);
-        else
-            collectFocusRingRects(*continuation, rects, flooredLayoutPoint(LayoutPoint(additionalOffset + downcast<RenderBox>(*continuation).location() - renderer.containingBlock()->location())), paintContainer);
-    }
 }
 
 bool OutlinePainter::collectFocusRingRectsForBlock(const RenderBlock& renderer, Vector<LayoutRect>& rects, const LayoutPoint& additionalOffset, const RenderLayerModelObject* paintContainer)
@@ -375,22 +441,13 @@ bool OutlinePainter::collectFocusRingRectsForBlock(const RenderBlock& renderer, 
     if (renderer.isRenderTextControl())
         return false;
 
-    // For blocks inside inlines, we include margins so that we run right up to the inline boxes
-    // above and below us (thus getting merged with them to form a single irregular shape).
-    CheckedPtr inlineContinuation = renderer.inlineContinuation();
-    if (inlineContinuation) {
-        // FIXME: This check really isn't accurate.
-        bool nextInlineHasLineBox = inlineContinuation->firstLegacyInlineBox();
-        // FIXME: This is wrong. The principal renderer may not be the continuation preceding this block.
-        // FIXME: This is wrong for block-flows that are horizontal.
-        // https://bugs.webkit.org/show_bug.cgi?id=46781
-        bool prevInlineHasLineBox = downcast<RenderInline>(*inlineContinuation->element()->renderer()).firstLegacyInlineBox();
-        auto topMargin = prevInlineHasLineBox ? renderer.collapsedMarginBefore() : 0_lu;
-        auto bottomMargin = nextInlineHasLineBox ? renderer.collapsedMarginAfter() : 0_lu;
-        LayoutRect rect(additionalOffset.x(), additionalOffset.y() - topMargin, renderer.width(), renderer.height() + topMargin + bottomMargin);
-        appendIfNotEmpty(rects, WTF::move(rect));
-    } else if (renderer.width() && renderer.height())
-        rects.append(LayoutRect(additionalOffset, renderer.size()));
+    if (renderer.borderBoxWidth() && renderer.borderBoxHeight())
+        rects.append(LayoutRect(additionalOffset, renderer.borderBoxSize()));
+
+    // Table rows share coordinate space with cells; don't recurse into cells
+    // as their bounds may extend beyond the row (e.g. rowspan).
+    if (renderer.isRenderTableRow())
+        return true;
 
     if (!renderer.hasNonVisibleOverflow() && !renderer.hasControlClip()) {
         if (renderer.childrenInline() && is<RenderBlockFlow>(renderer))
@@ -400,14 +457,12 @@ bool OutlinePainter::collectFocusRingRectsForBlock(const RenderBlock& renderer, 
             collectFocusRingRectsForChildBox(box, rects, additionalOffset, paintContainer);
     }
 
-    if (inlineContinuation)
-        collectFocusRingRects(*inlineContinuation, rects, flooredLayoutPoint(LayoutPoint(additionalOffset + inlineContinuation->containingBlock()->location() - renderer.location())), paintContainer);
     return true;
 }
 
 void OutlinePainter::collectFocusRingRectsForChildBox(const RenderBox& box, Vector<LayoutRect>& rects, const LayoutPoint& additionalOffset, const RenderLayerModelObject* paintContainer)
 {
-    if (box.isRenderListMarker() || box.isOutOfFlowPositioned())
+    if (box.style().pseudoElementType() || box.isOutOfFlowPositioned())
         return;
 
     FloatPoint pos;
@@ -472,7 +527,7 @@ static std::pair<FloatPoint, FloatPoint> startAndEndPointsForCorner(const FloatP
 
 enum class PainterCornerType : uint8_t { TopLeft, TopRight, BottomRight, BottomLeft, Other };
 
-static PainterCornerType cornerType(const FloatPointGraph::Edge& fromEdge, const FloatPointGraph::Edge& toEdge)
+static PainterCornerType LEGACY_NODELETE cornerType(const FloatPointGraph::Edge& fromEdge, const FloatPointGraph::Edge& toEdge)
 {
     auto fromEdgeVector = *fromEdge.second - *fromEdge.first;
     auto toEdgeVector = *toEdge.second - *toEdge.first;
@@ -488,7 +543,7 @@ static PainterCornerType cornerType(const FloatPointGraph::Edge& fromEdge, const
     return PainterCornerType::Other;
 }
 
-static PainterCornerType cornerTypeForMultiline(const FloatPointGraph::Edge& fromEdge, const FloatPointGraph::Edge& toEdge, const Vector<FloatPoint>& corners)
+static PainterCornerType LEGACY_NODELETE cornerTypeForMultiline(const FloatPointGraph::Edge& fromEdge, const FloatPointGraph::Edge& toEdge, const Vector<FloatPoint>& corners)
 {
     auto corner = cornerType(fromEdge, toEdge);
     if (corner == PainterCornerType::TopLeft && corners.at(0) == *fromEdge.second)
@@ -502,7 +557,7 @@ static PainterCornerType cornerTypeForMultiline(const FloatPointGraph::Edge& fro
     return PainterCornerType::Other;
 }
 
-static std::pair<FloatPoint, FloatPoint> controlPointsForBezierCurve(PainterCornerType cornerType, const FloatPointGraph::Edge& fromEdge, const FloatPointGraph::Edge& toEdge, const FloatSize& radius)
+static std::pair<FloatPoint, FloatPoint> LEGACY_NODELETE controlPointsForBezierCurve(PainterCornerType cornerType, const FloatPointGraph::Edge& fromEdge, const FloatPointGraph::Edge& toEdge, const FloatSize& radius)
 {
     FloatPoint cp1;
     FloatPoint cp2;
@@ -558,7 +613,7 @@ static CornerRadii adjustedRadiiForHuggingCurve(const CornerRadii& inputRadii, f
     };
 }
 
-static std::optional<FloatRect> rectFromPolygon(const FloatPointGraph::Polygon& poly)
+static std::optional<FloatRect> LEGACY_NODELETE rectFromPolygon(const FloatPointGraph::Polygon& poly)
 {
     if (poly.size() != 4)
         return std::optional<FloatRect>();
@@ -582,10 +637,10 @@ static std::optional<FloatRect> rectFromPolygon(const FloatPointGraph::Polygon& 
     return FloatRect(topLeft.value(), bottomRight.value());
 }
 
-Path OutlinePainter::pathWithShrinkWrappedRects(const Vector<FloatRect>& rects, const Style::BorderRadius& radii, float outlineOffset, WritingMode writingMode, float deviceScaleFactor)
+Path OutlinePainter::pathWithShrinkWrappedRects(const Vector<FloatRect>& rects, const Style::BorderRadius& radii, float outlineOffset, WritingMode writingMode, Style::ZoomFactor zoom, float deviceScaleFactor)
 {
-    auto roundedRect = [radii, outlineOffset, deviceScaleFactor](const FloatRect& rect) {
-        auto adjustedRadii = adjustedRadiiForHuggingCurve(Style::evaluate<CornerRadii>(radii, rect.size(), Style::ZoomNeeded { }), outlineOffset);
+    auto roundedRect = [radii, outlineOffset, zoom, deviceScaleFactor](const FloatRect& rect) {
+        auto adjustedRadii = adjustedRadiiForHuggingCurve(Style::evaluate<CornerRadii>(radii, rect.size(), zoom), outlineOffset);
         adjustedRadii.scale(calcBorderRadiiConstraintScaleFor(rect, adjustedRadii));
 
         LayoutRoundedRect roundedRect(
@@ -622,8 +677,8 @@ Path OutlinePainter::pathWithShrinkWrappedRects(const Vector<FloatRect>& rects, 
     auto firstLineRect = isLeftToRight ? rects.at(0) : rects.at(rects.size() - 1);
     auto lastLineRect = isLeftToRight ? rects.at(rects.size() - 1) : rects.at(0);
     // Adjust radius so that it matches the box border.
-    auto firstLineRadii = Style::evaluate<CornerRadii>(radii, firstLineRect.size(), Style::ZoomNeeded { });
-    auto lastLineRadii = Style::evaluate<CornerRadii>(radii, lastLineRect.size(), Style::ZoomNeeded { });
+    auto firstLineRadii = Style::evaluate<CornerRadii>(radii, firstLineRect.size(), zoom);
+    auto lastLineRadii = Style::evaluate<CornerRadii>(radii, lastLineRect.size(), zoom);
     firstLineRadii.scale(calcBorderRadiiConstraintScaleFor(firstLineRect, firstLineRadii));
     lastLineRadii.scale(calcBorderRadiiConstraintScaleFor(lastLineRect, lastLineRadii));
 
@@ -699,7 +754,7 @@ void OutlinePainter::addPDFURLAnnotationForLink(const RenderElement& renderer, c
             return;
         }
     }
-    m_paintInfo.context().setURLForRect(element->protectedDocument()->completeURL(href), urlRect);
+    m_paintInfo.context().setURLForRect(protect(element->document())->encodingParseURL(href), urlRect);
 }
 
 } // namespace WebCore

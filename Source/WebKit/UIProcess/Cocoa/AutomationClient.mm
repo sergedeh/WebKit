@@ -38,9 +38,8 @@
 #import <wtf/spi/cf/CFBundleSPI.h>
 #import <wtf/text/WTFString.h>
 
-using namespace Inspector;
-
 namespace WebKit {
+using namespace Inspector;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(AutomationClient);
 
@@ -87,6 +86,8 @@ void AutomationClient::requestAutomationSession(const String& sessionIdentifier,
         [configuration setAlwaysAllowAutoplay:sessionCapabilities.alwaysAllowAutoplay.value()];
     if (sessionCapabilities.siteIsolationEnabled)
         [configuration setSiteIsolationEnabled:sessionCapabilities.siteIsolationEnabled.value()];
+    if (sessionCapabilities.controlledByExternalAgent)
+        [configuration setControlledByExternalAgent:sessionCapabilities.controlledByExternalAgent.value()];
 
     // Force clients to create and register a session asynchronously. Otherwise,
     // RemoteInspector will try to acquire its lock to register the new session and
@@ -114,9 +115,9 @@ String AutomationClient::browserName() const
 
     // Fall back to using the unlocalized app name (i.e., 'Safari').
     RetainPtr appBundle = [NSBundle mainBundle];
-    if (RetainPtr<NSString> displayName = appBundle.get().infoDictionary[bridge_cast(_kCFBundleDisplayNameKey)])
+    if (RetainPtr displayName = dynamic_objc_cast<NSString>(appBundle.get().infoDictionary[bridge_cast(_kCFBundleDisplayNameKey)]))
         return displayName.get();
-    return appBundle.get().infoDictionary[bridge_cast(kCFBundleNameKey)];
+    return dynamic_objc_cast<NSString>(appBundle.get().infoDictionary[bridge_cast(kCFBundleNameKey)]);
 }
 
 String AutomationClient::browserVersion() const
@@ -126,7 +127,7 @@ String AutomationClient::browserVersion() const
 
     // Fall back to using the app short version (i.e., '11.1.1').
     RetainPtr appBundle = [NSBundle mainBundle];
-    return appBundle.get().infoDictionary[bridge_cast(_kCFBundleShortVersionStringKey)];
+    return dynamic_objc_cast<NSString>(appBundle.get().infoDictionary[bridge_cast(_kCFBundleShortVersionStringKey)]);
 }
 
 } // namespace WebKit

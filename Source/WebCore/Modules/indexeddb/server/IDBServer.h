@@ -35,7 +35,6 @@
 #include <pal/SessionID.h>
 #include <wtf/CrossThreadTaskHandler.h>
 #include <wtf/HashMap.h>
-#include <wtf/Lock.h>
 #include <wtf/RefPtr.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -54,7 +53,7 @@ class IDBServer final : public UniqueIDBDatabaseManager {
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(IDBServer);
 public:
     using SpaceRequester = Function<bool(const ClientOrigin&, uint64_t spaceRequested)>;
-    WEBCORE_EXPORT IDBServer(const String& databaseDirectoryPath, SpaceRequester&&, Lock&);
+    WEBCORE_EXPORT IDBServer(const String& databaseDirectoryPath, SpaceRequester&&);
     WEBCORE_EXPORT ~IDBServer();
 
     WEBCORE_EXPORT void registerConnection(IDBConnectionToClient&);
@@ -82,7 +81,7 @@ public:
     WEBCORE_EXPORT void iterateCursor(const IDBRequestData&, const IDBIterateCursorData&);
 
     WEBCORE_EXPORT void establishTransaction(IDBDatabaseConnectionIdentifier, const IDBTransactionInfo&);
-    WEBCORE_EXPORT void databaseConnectionPendingClose(IDBDatabaseConnectionIdentifier);
+    WEBCORE_EXPORT void LEGACY_NODELETE databaseConnectionPendingClose(IDBDatabaseConnectionIdentifier);
     WEBCORE_EXPORT void databaseConnectionClosed(IDBDatabaseConnectionIdentifier);
     WEBCORE_EXPORT void abortOpenAndUpgradeNeeded(IDBDatabaseConnectionIdentifier, const std::optional<IDBResourceIdentifier>& transactionIdentifier);
     WEBCORE_EXPORT void didFireVersionChangeEvent(IDBDatabaseConnectionIdentifier, const IDBResourceIdentifier& requestIdentifier, IndexedDB::ConnectionClosedOnBehalfOfServer);
@@ -102,14 +101,14 @@ public:
     WEBCORE_EXPORT HashSet<SecurityOriginData> getOrigins() const;
     WEBCORE_EXPORT void closeAndDeleteDatabasesModifiedSince(WallTime);
     WEBCORE_EXPORT void closeAndDeleteDatabasesForOrigins(const Vector<SecurityOriginData>&);
-    void closeDatabasesForOrigins(const Vector<SecurityOriginData>&, Function<bool(const SecurityOriginData&, const ClientOrigin&)>&&);
+    void closeDatabasesForOrigins(const Vector<SecurityOriginData>&, NOESCAPE const Function<bool(const SecurityOriginData&, const ClientOrigin&)>&);
     WEBCORE_EXPORT void renameOrigin(const WebCore::SecurityOriginData&, const WebCore::SecurityOriginData&);
 
     WEBCORE_EXPORT static uint64_t diskUsage(const String& rootDirectory, const ClientOrigin&);
 
 private:
     UniqueIDBDatabase& getOrCreateUniqueIDBDatabase(const IDBDatabaseIdentifier&);
-    RefPtr<UniqueIDBDatabaseTransaction> idbTransaction(const IDBRequestData&) const;
+    RefPtr<UniqueIDBDatabaseTransaction> LEGACY_NODELETE idbTransaction(const IDBRequestData&) const;
 
     void upgradeFilesIfNecessary();
     String upgradedDatabaseDirectory(const WebCore::IDBDatabaseIdentifier&);
@@ -122,13 +121,9 @@ private:
     HashMap<IDBDatabaseConnectionIdentifier, WeakPtr<UniqueIDBDatabaseConnection>> m_databaseConnections;
     HashMap<IDBResourceIdentifier, WeakPtr<UniqueIDBDatabaseTransaction>> m_transactions;
 
-    HashMap<uint64_t, Function<void ()>> m_deleteDatabaseCompletionHandlers;
-
     String m_databaseDirectoryPath;
 
     SpaceRequester m_spaceRequester;
-
-    Lock& m_lock;
 };
 
 } // namespace IDBServer

@@ -58,6 +58,7 @@ enum class TextOrientation : uint8_t;
 enum class FlowDirection : uint8_t;
 enum class BoxAxis : uint8_t;
 enum class LogicalBoxAxis : uint8_t;
+class FlowMode;
 
 class WritingMode final {
 public:
@@ -117,6 +118,9 @@ public:
     constexpr LogicalBoxAxis horizontalAxis() const;
     constexpr LogicalBoxAxis verticalAxis() const;
 
+    // FIXME: Callers need to be audited to determine which of the "is it LTR?" WritingMode methods is the right one for that instance.
+    constexpr bool deprecatedIsLeftToRightDirection() const { return isBidiLTR(); }
+
     // Computed values. May differ from used values above.
     constexpr StyleWritingMode computedWritingMode() const;
     constexpr TextDirection computedTextDirection() const;
@@ -137,9 +141,10 @@ public:
 
 private:
     Data m_bits { 0 };
+    friend FlowMode;
 
-public: // Private except StyleWritingMode and FlowDirection are friends
-    enum Bits {
+public: // Private except StyleWritingMode, FlowDirection, and FlowMode are friends
+    enum Bits : Data {
         kIsVerticalText  = 1 << 0, // Vertical writing modes.
         kIsFlippedBlock  = 1 << 1, // RL or BT block flow directions.
         kIsVerticalType  = 1 << 2, // Vertical typographic mode.
@@ -151,6 +156,11 @@ public: // Private except StyleWritingMode and FlowDirection are friends
         kWritingModeMask = kBlockFlowMask  | kIsVerticalType,
         kOrientationMask = kIsSidewaysType | kIsUprightType, // Both is an error.
         kOrientationShift = 4,
+
+        kIsMainBlock     = 1 << 5, // Alternate use in FlowMode.
+        kIsMainReverse   = 1 << 6, // Reserved for FlowMode.
+        kIsCrossReverse  = 1 << 7, // Reserved for FlowMode.
+        kFlowModeMask    = kIsMainBlock | kIsMainReverse | kIsCrossReverse,
     };
 };
 

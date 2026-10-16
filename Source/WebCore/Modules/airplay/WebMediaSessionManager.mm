@@ -59,7 +59,7 @@ struct ClientState {
     {
     }
 
-    bool operator==(const ClientState& other) const
+    bool LEGACY_NODELETE operator==(const ClientState& other) const
     {
         return contextId == other.contextId && &client == &other.client;
     }
@@ -75,7 +75,7 @@ struct ClientState {
 
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(ClientState);
 
-static bool flagsAreSet(MediaProducerMediaStateFlags value, MediaProducerMediaStateFlags flags)
+static bool LEGACY_NODELETE flagsAreSet(MediaProducerMediaStateFlags value, MediaProducerMediaStateFlags flags)
 {
     return value.containsAny(flags);
 }
@@ -153,7 +153,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(WebMediaSessionLogger);
 WebMediaSessionLogger& WebMediaSessionManager::logger()
 {
     if (!m_logger)
-        m_logger = WebMediaSessionLogger::create(*this);
+        lazyInitialize(m_logger, WebMediaSessionLogger::create(*this));
 
     return *m_logger;
 }
@@ -177,26 +177,26 @@ void WebMediaSessionManager::setMockMediaPlaybackTargetPickerEnabled(bool enable
 void WebMediaSessionManager::setMockMediaPlaybackTargetPickerState(const String& name, MediaPlaybackTargetMockState state)
 {
     ALWAYS_LOG_MEDIASESSIONMANAGER(__func__);
-    checkedMockPicker()->setState(name, state);
+    protect(mockPicker())->setState(name, state);
 }
 
 void WebMediaSessionManager::mockMediaPlaybackTargetPickerDismissPopup()
 {
     ALWAYS_LOG_MEDIASESSIONMANAGER(__func__);
-    checkedMockPicker()->dismissPopup();
+    protect(mockPicker())->dismissPopup();
+}
+
+FloatRect WebMediaSessionManager::mockMediaPlaybackTargetPickerRect()
+{
+    return mockPicker().lastPickerRect();
 }
 
 MediaPlaybackTargetPickerMock& WebMediaSessionManager::mockPicker()
 {
     if (!m_pickerOverride)
-        m_pickerOverride = makeUnique<MediaPlaybackTargetPickerMock>(*this);
+        lazyInitialize(m_pickerOverride, makeUnique<MediaPlaybackTargetPickerMock>(*this));
 
     return *m_pickerOverride.get();
-}
-
-CheckedRef<WebCore::MediaPlaybackTargetPickerMock> WebMediaSessionManager::checkedMockPicker()
-{
-    return mockPicker();
 }
 
 WebCore::MediaPlaybackTargetPicker& WebMediaSessionManager::targetPicker()
@@ -205,11 +205,6 @@ WebCore::MediaPlaybackTargetPicker& WebMediaSessionManager::targetPicker()
         return mockPicker();
 
     return platformPicker();
-}
-
-CheckedRef<WebCore::MediaPlaybackTargetPicker> WebMediaSessionManager::checkedTargetPicker()
-{
-    return targetPicker();
 }
 
 WebMediaSessionManager::WebMediaSessionManager()
@@ -279,7 +274,7 @@ void WebMediaSessionManager::showPlaybackTargetPicker(WebMediaSessionManagerClie
     ALWAYS_LOG_MEDIASESSIONMANAGER(__func__, m_clientState[index].get());
 
     bool hasActiveRoute = flagsAreSet(m_clientState[index]->flags, MediaProducerMediaState::IsPlayingToExternalDevice);
-    checkedTargetPicker()->showPlaybackTargetPicker(client.platformView().get(), FloatRect(rect), hasActiveRoute, useDarkAppearance);
+    protect(targetPicker())->showPlaybackTargetPicker(client.platformView().get(), FloatRect(rect), hasActiveRoute, useDarkAppearance);
 }
 
 void WebMediaSessionManager::clientStateDidChange(WebMediaSessionManagerClient& client, PlaybackTargetClientContextIdentifier contextId, MediaProducerMediaStateFlags newFlags)
@@ -467,10 +462,10 @@ void WebMediaSessionManager::configurePlaybackTargetMonitoring()
 
     if (monitoringRequired || (hasAvailabilityListener && haveClientWithMedia)) {
         ALWAYS_LOG_MEDIASESSIONMANAGER(__func__, "starting monitoring");
-        checkedTargetPicker()->startingMonitoringPlaybackTargets();
+        protect(targetPicker())->startingMonitoringPlaybackTargets();
     } else {
         ALWAYS_LOG_MEDIASESSIONMANAGER(__func__, "stopping monitoring");
-        checkedTargetPicker()->stopMonitoringPlaybackTargets();
+        protect(targetPicker())->stopMonitoringPlaybackTargets();
     }
 }
 
@@ -552,7 +547,7 @@ void WebMediaSessionManager::watchdogTimerFired()
         return;
 
     ALWAYS_LOG_MEDIASESSIONMANAGER(__func__);
-    checkedTargetPicker()->invalidatePlaybackTargets();
+    protect(targetPicker())->invalidatePlaybackTargets();
 }
 
 } // namespace WebCore

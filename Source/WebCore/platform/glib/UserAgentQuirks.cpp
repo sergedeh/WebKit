@@ -28,19 +28,18 @@
 
 #include "PublicSuffixStore.h"
 #include <wtf/URL.h>
-#include <wtf/glib/ChassisType.h>
 
 namespace WebCore {
 
 // When editing the quirks in this file, be sure to update
-// Tools/TestWebKitAPI/Tests/WebCore/UserAgentQuirks.cpp.
+// Tools/TestWebKitAPI/Tests/WebCore/glib/UserAgentQuirks.cpp.
 //
 // When testing changes, be sure to test with application branding enabled.
 // Otherwise, we will not notice when urlRequiresUnbrandedUserAgent is needed.
 
 // Be careful with this quirk: it's an invitation for sites to use JavaScript
 // that works in Chrome that WebKit cannot handle. Prefer other quirks instead.
-static bool urlRequiresChromeBrowser(const String& domain, const String& baseDomain)
+static bool urlRequiresChromeBrowser(StringView domain, StringView baseDomain)
 {
     // Needed for fonts on many sites to work with WebKit.
     // https://bugs.webkit.org/show_bug.cgi?id=147296
@@ -70,6 +69,15 @@ static bool urlRequiresChromeBrowser(const String& domain, const String& baseDom
     if (domain == "www.apple.com"_s)
         return true;
 
+#if ENABLE(THUNDER)
+    if (baseDomain == "primevideo.com"_s)
+        return true;
+#endif
+
+    // Use Chrome UA for luna.amazon.* otherwise the user gets an error popup when starting a game.
+    if (domain.startsWith("luna."_s) && PublicSuffixStore::singleton().domainWithoutPublicSuffix(baseDomain) == "amazon"_s)
+        return true;
+
     return false;
 }
 
@@ -77,7 +85,7 @@ static bool urlRequiresChromeBrowser(const String& domain, const String& baseDom
 // quirk is good for websites that do macOS-specific things we don't want on
 // other platforms, and when the risk of the website doing Firefox-specific
 // things is relatively low.
-static bool urlRequiresFirefoxBrowser(const String& domain)
+static bool urlRequiresFirefoxBrowser(StringView domain, StringView baseDomain)
 {
     // Red Hat Bugzilla displays a warning page when performing searches with WebKitGTK's standard
     // user agent.
@@ -89,22 +97,33 @@ static bool urlRequiresFirefoxBrowser(const String& domain)
     if (domain == "www.bilibili.com"_s)
         return true;
 
+    // claude.ai blocks all UAs it doesn't like and the macOS platform quirk is not
+    // ideal because it makes the site offer macOS app downloads.
+    if (baseDomain == "claude.ai"_s)
+        return true;
+
 #if ENABLE(THUNDER)
     if (domain == "www.netflix.com"_s)
+        return true;
+
+    if (domain == "www.disneyplus.com"_s)
+        return true;
+
+    if (baseDomain == "hbomax.com"_s)
         return true;
 #endif
 
     return false;
 }
 
-static bool urlRequiresMacintoshPlatform(const String& domain, const String& baseDomain)
+static bool urlRequiresMacintoshPlatform(StringView domain, StringView baseDomain, UserAgentType userAgentType)
 {
     // At least finance.yahoo.com displays a mobile version with WebKitGTK's standard user agent.
-    if (chassisType() != WTF::ChassisType::Mobile && baseDomain == "yahoo.com"_s)
+    if (userAgentType != UserAgentType::Mobile && baseDomain == "yahoo.com"_s)
         return true;
 
     // taobao.com displays a mobile version with WebKitGTK's standard user agent.
-    if (chassisType() != WTF::ChassisType::Mobile && baseDomain == "taobao.com"_s)
+    if (userAgentType != UserAgentType::Mobile && baseDomain == "taobao.com"_s)
         return true;
 
     // web.whatsapp.com completely blocks users with WebKitGTK's standard user agent.
@@ -154,7 +173,18 @@ static bool urlRequiresMacintoshPlatform(const String& domain, const String& bas
     return false;
 }
 
-static bool urlRequiresUnbrandedUserAgent(const String& domain)
+static bool urlRequiresAndroidPlatform([[maybe_unused]] StringView baseDomain)
+{
+#if ENABLE(WEBXR) && PLATFORM(WPE)
+    // When WebXR is available the model viewer support provides a better UX.
+    if (baseDomain == "ikea.com"_s)
+        return true;
+#endif
+
+    return false;
+}
+
+static bool urlRequiresUnbrandedUserAgent(StringView domain)
 {
     // Google uses an ugly fallback login page if application branding is
     // appended to WebKitGTK's standard user agent.
@@ -174,21 +204,23 @@ static bool urlRequiresUnbrandedUserAgent(const String& domain)
     return false;
 }
 
-UserAgentQuirks UserAgentQuirks::quirksForURL(const URL& url)
+UserAgentQuirks UserAgentQuirks::quirksForURL(const URL& url, UserAgentType userAgentType)
 {
     ASSERT(!url.isNull());
 
-    String domain = url.host().toString();
+    auto domain = url.host();
     UserAgentQuirks quirks;
     String baseDomain = PublicSuffixStore::singleton().topPrivatelyControlledDomain(domain);
 
     if (urlRequiresChromeBrowser(domain, baseDomain))
         quirks.add(UserAgentQuirks::NeedsChromeBrowser);
-    else if (urlRequiresFirefoxBrowser(domain))
+    else if (urlRequiresFirefoxBrowser(domain, baseDomain))
         quirks.add(UserAgentQuirks::NeedsFirefoxBrowser);
 
-    if (urlRequiresMacintoshPlatform(domain, baseDomain))
+    if (urlRequiresMacintoshPlatform(domain, baseDomain, userAgentType))
         quirks.add(UserAgentQuirks::NeedsMacintoshPlatform);
+    else if (urlRequiresAndroidPlatform(baseDomain))
+        quirks.add(UserAgentQuirks::NeedsAndroidPlatform);
 
     if (urlRequiresUnbrandedUserAgent(domain))
         quirks.add(UserAgentQuirks::NeedsUnbrandedUserAgent);
@@ -205,11 +237,13 @@ String UserAgentQuirks::stringForQuirk(UserAgentQuirk quirk)
         return "; rv:300.0) Gecko/20100101 Firefox/300.0"_s;
     case NeedsMacintoshPlatform:
         return "Macintosh; Intel Mac OS X 10_15"_s;
+    case NeedsAndroidPlatform:
+        return "Linux; Android 12.0.0"_s;
     case NeedsUnbrandedUserAgent:
     case NumUserAgentQuirks:
         ASSERT_NOT_REACHED();
     }
-    return ""_s;
+    return { };
 }
 
 }

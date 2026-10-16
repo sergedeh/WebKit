@@ -31,6 +31,7 @@
 #include "SharedBuffer.h"
 #include "URLSoup.h"
 #include "WebKitFormDataInputStream.h"
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/WTFString.h>
 
@@ -60,7 +61,11 @@ GRefPtr<SoupMessage> ResourceRequest::createSoupMessage(BlobRegistryImpl& blobRe
     if (!uri)
         return nullptr;
 
-    auto soupMessage = adoptGRef(soup_message_new_from_uri(httpMethod().ascii().data(), uri.get()));
+    auto method = httpMethod().isEmpty() ? "GET"_s : httpMethod();
+    if (!isValidHTTPToken(method))
+        return nullptr;
+
+    GRefPtr soupMessage = adoptGRef(soup_message_new_from_uri(method.ascii().data(), uri.get()));
 
     soup_message_set_priority(soupMessage.get(), toSoupMessagePriority(priority()));
 
@@ -91,7 +96,7 @@ GRefPtr<SoupMessage> ResourceRequest::createSoupMessage(BlobRegistryImpl& blobRe
 
 void ResourceRequest::updateSoupMessageBody(SoupMessage* soupMessage, BlobRegistryImpl& blobRegistry) const
 {
-    auto formData = httpBody();
+    RefPtr formData = httpBody();
     if (!formData || formData->isEmpty())
         return;
 
@@ -99,7 +104,7 @@ void ResourceRequest::updateSoupMessageBody(SoupMessage* soupMessage, BlobRegist
     auto& elements = formData->elements();
     if (elements.size() == 1 && !formData->alwaysStream()) {
         if (auto* vector = std::get_if<Vector<uint8_t>>(&elements[0].data)) {
-            GRefPtr<GBytes> bytes = adoptGRef(g_bytes_new_static(vector->span().data(), vector->size()));
+            GRefPtr bytes = gBytesNewStatic(vector->span());
             soup_message_set_request_body_from_bytes(soupMessage, nullptr, bytes.get());
             return;
         }
@@ -123,7 +128,7 @@ void ResourceRequest::updateSoupMessageBody(SoupMessage* soupMessage, BlobRegist
 
 GRefPtr<GInputStream> ResourceRequest::createBodyStream() const
 {
-    auto formData = httpBody();
+    RefPtr formData = httpBody();
     if (!formData || formData->isEmpty())
         return nullptr;
 
@@ -141,7 +146,7 @@ void ResourceRequest::updateSoupMessageHeaders(SoupMessageHeaders* soupHeaders) 
     if (!headers.isEmpty()) {
         HTTPHeaderMap::const_iterator end = headers.end();
         for (HTTPHeaderMap::const_iterator it = headers.begin(); it != end; ++it)
-            soup_message_headers_append(soupHeaders, it->key.utf8().data(), it->value.utf8().data());
+            soup_message_headers_append(soupHeaders, it->key.utf8().legacyCStringPointer(), it->value.utf8().legacyCStringPointer());
     }
 }
 

@@ -47,15 +47,15 @@ const AtomString& URLInputType::formControlType() const
     return InputTypeNames::url();
 }
 
-bool URLInputType::typeMismatchFor(const String& value) const
+bool URLInputType::typeMismatchFor(StringView value) const
 {
-    return !value.isEmpty() && !URL(value).isValid();
+    return !value.isEmpty() && !URL(value.toStringWithoutCopying()).isValid();
 }
 
 bool URLInputType::typeMismatch() const
 {
     ASSERT(element());
-    return typeMismatchFor(protectedElement()->value());
+    return typeMismatchFor(protect(element())->value());
 }
 
 String URLInputType::typeMismatchText() const

@@ -35,8 +35,11 @@
 #include "AudioWorkletThread.h"
 #include "BaseAudioContext.h"
 #include "CacheStorageConnection.h"
+#include "ContentSecurityPolicy.h"
 #include "DocumentPage.h"
 #include "DocumentSettingsValues.h"
+#include "FileSystemStorageConnection.h"
+#include "IDBConnectionProxy.h"
 #include "LocalFrame.h"
 #include "WebRTCProvider.h"
 #include "WorkletParameters.h"
@@ -50,17 +53,23 @@ static WorkletParameters generateWorkletParameters(AudioWorklet& worklet)
     auto jsRuntimeFlags = document->settings().javaScriptRuntimeFlags();
     RELEASE_ASSERT(document->sessionID());
 
+    RefPtr audioContext = worklet.audioContext();
+
     return {
         document->url(),
         jsRuntimeFlags,
-        worklet.audioContext() ? worklet.audioContext()->sampleRate() : 0.0f,
+        audioContext ? audioContext->sampleRate() : 0.0f,
+        audioContext ? audioContext->currentSampleFrame() : 0,
         worklet.identifier(),
         *document->sessionID(),
         document->settingsValues(),
         document->referrerPolicy(),
-        worklet.audioContext() ? !worklet.audioContext()->isOfflineContext() : false,
+        audioContext ? !audioContext->isOfflineContext() : false,
         document->advancedPrivacyProtections(),
-        document->noiseInjectionHashSalt()
+        document->noiseInjectionHashSalt(),
+        document->agentClusterID(),
+        protect(document->contentSecurityPolicy())->responseHeaders(),
+        document->networkLoadPolicy()
     };
 }
 
@@ -92,6 +101,12 @@ RefPtr<CacheStorageConnection> AudioWorkletMessagingProxy::createCacheStorageCon
     return nullptr;
 }
 
+RefPtr<IDBClient::IDBConnectionProxy> AudioWorkletMessagingProxy::createIDBConnectionProxy()
+{
+    ASSERT_NOT_REACHED();
+    return nullptr;
+}
+
 RefPtr<RTCDataChannelRemoteHandlerConnection> AudioWorkletMessagingProxy::createRTCDataChannelRemoteHandlerConnection()
 {
     ASSERT(isMainThread());
@@ -117,9 +132,14 @@ void AudioWorkletMessagingProxy::postTaskToLoader(ScriptExecutionContext::Task&&
 void AudioWorkletMessagingProxy::postTaskToAudioWorklet(Function<void(AudioWorklet&)>&& task)
 {
     ScriptExecutionContext::postTaskTo(m_documentIdentifier, [protectedThis = Ref { *this }, task = WTF::move(task)](ScriptExecutionContext&) {
-        if (protectedThis->m_worklet)
-            task(*protectedThis->m_worklet);
+        if (RefPtr worklet = protectedThis->m_worklet)
+            task(*worklet);
     });
+}
+
+RefPtr<FileSystemStorageConnection> AudioWorkletMessagingProxy::createFileSystemStorageConnection()
+{
+    return nullptr;
 }
 
 } // namespace WebCore

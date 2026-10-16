@@ -8,7 +8,7 @@
 #ifndef skgpu_graphite_ContextOptionsPriv_DEFINED
 #define skgpu_graphite_ContextOptionsPriv_DEFINED
 
-#include "include/private/base/SkMath.h"
+#include "include/private/SkMath.h"
 
 #include <optional>
 
@@ -28,6 +28,11 @@ struct ContextOptionsPriv {
      * that created it. Used by readPixels() and other methods that normally require a Context.
      */
     bool fStoreContextRefInRecorder = false;
+
+    /**
+     * If true, enables layer based draw ordering.
+     */
+    bool fDrawListLayer = false;
 
     /**
      * Override Caps' default strategy heuristics to prioritize this one if set *and* is supported.

@@ -81,7 +81,7 @@ void ManagedMediaSource::setStreaming(bool streaming)
         return;
     ALWAYS_LOG(LOGIDENTIFIER, streaming);
     m_streaming = streaming;
-    if (RefPtr msp = protectedPrivate())
+    if (auto* msp = mediaSourcePrivate())
         msp->setStreaming(streaming);
     if (streaming) {
         scheduleEvent(eventNames().startstreamingEvent);
@@ -111,7 +111,12 @@ void ManagedMediaSource::ensurePrefsRead()
 
 void ManagedMediaSource::monitorSourceBuffers()
 {
+    if (isClosed())
+        return;
+
     MediaSource::monitorSourceBuffers();
+
+    Ref msp = *mediaSourcePrivate();
 
     if (!activeSourceBuffers()->length()) {
         setStreaming(true);
@@ -123,19 +128,26 @@ void ManagedMediaSource::monitorSourceBuffers()
     auto currentTime = this->currentTime();
     ASSERT(currentTime.isValid());
 
+    // Once the source is ended and the playback position has reached the end of the media, no further data can ever be needed.
+    if (isEnded() && currentTime >= duration()) {
+        setStreaming(false);
+        return;
+    }
+
     auto limitAhead = [&] (double upper) {
         MediaTime aheadTime = currentTime + MediaTime::createWithDouble(upper);
         return isEnded() ? std::min(duration(), aheadTime) : aheadTime;
     };
+
     if (!m_streaming) {
         PlatformTimeRanges neededBufferedRange { currentTime, std::max(currentTime, limitAhead(*m_lowThreshold)) };
-        if (!isBuffered(neededBufferedRange))
+        if (!msp->isBuffered(neededBufferedRange))
             setStreaming(true);
         return;
     }
 
     if (auto ahead = limitAhead(*m_highThreshold); currentTime < ahead) {
-        if (isBuffered({ currentTime,  ahead }))
+        if (msp->isBuffered({ currentTime,  ahead }))
             setStreaming(false);
     } else
         setStreaming(false);
@@ -145,7 +157,7 @@ void ManagedMediaSource::streamingTimerFired()
 {
     ALWAYS_LOG(LOGIDENTIFIER, "Disabling streaming due to policy ", *m_highThreshold);
     m_streamingAllowed = false;
-    if (RefPtr msp = protectedPrivate())
+    if (auto* msp = mediaSourcePrivate())
         msp->setStreamingAllowed(false);
     notifyElementUpdateMediaState();
 }

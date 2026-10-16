@@ -58,11 +58,16 @@ public:
     bool definitelyIsCellOrNull() const { return m_flags.contains(WasmRefTypeCheckFlag::DefinitelyIsCellOrNull); }
     bool definitelyIsWasmGCObjectOrNull() const { return m_flags.contains(WasmRefTypeCheckFlag::DefinitelyIsWasmGCObjectOrNull); }
     bool shouldNegate() const { return m_flags.contains(WasmRefTypeCheckFlag::ShouldNegate); }
-    const Wasm::RTT* targetRTT() const { return m_targetRTT.get(); }
+    RefPtr<const Wasm::RTT> targetRTT() const { return m_targetRTT; }
     OptionSet<WasmRefTypeCheckFlag> flags() const { return m_flags; }
 
-    B3_SPECIALIZE_VALUE_FOR_FIXED_CHILDREN(1)
-    B3_SPECIALIZE_VALUE_FOR_FINAL_SIZE_FIXED_CHILDREN
+    bool hasTargetStructureID() const { return numChildren() > 1; }
+    Value* targetStructureIDValue() const { ASSERT(hasTargetStructureID()); return child(1); }
+
+    B3_SPECIALIZE_VALUE_FOR_NON_VARARGS_CHILDREN
+
+private:
+    void dumpMeta(CommaPrinter&, PrintStream&) const final;
 
 protected:
     friend class Procedure;
@@ -70,16 +75,17 @@ protected:
 
     template<typename... Arguments>
     WasmRefTypeCheckValue(Kind kind, Type type, Origin origin, int32_t targetHeapType, OptionSet<WasmRefTypeCheckFlag> flags, RefPtr<const Wasm::RTT> targetRTT, Arguments... arguments)
-        : Value(CheckedOpcode, kind, type, One, origin, arguments...)
+        : Value(CheckedOpcode, kind, type, static_cast<NumChildren>(sizeof...(arguments)), origin, static_cast<Value*>(arguments)...)
         , m_targetHeapType(targetHeapType)
         , m_flags(flags)
         , m_targetRTT(WTF::move(targetRTT))
     {
+        static_assert(sizeof...(arguments) <= 2);
     }
 
     int32_t m_targetHeapType;
     OptionSet<WasmRefTypeCheckFlag> m_flags;
-    RefPtr<const Wasm::RTT> m_targetRTT;
+    const RefPtr<const Wasm::RTT> m_targetRTT;
 };
 
 } // namespace JSC::B3

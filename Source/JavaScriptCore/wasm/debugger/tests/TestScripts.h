@@ -25,7 +25,7 @@
 
 #pragma once
 
-#if ENABLE(WEBASSEMBLY)
+#if ENABLE(WEBASSEMBLY_DEBUGGER)
 
 #include <span>
 #include <wtf/Forward.h>
@@ -40,16 +40,18 @@ struct TestScript {
     ASCIILiteral description;
     String (*scriptGenerator)(); // Function pointer to generate script
     unsigned expectedVMs;
+    unsigned expectedInstances; // Exceeds expectedVMs when a VM instantiates a module twice
     unsigned expectedFunctions; // For breakpoint tests
 };
 
 // Script generators
 String multiVMSameModuleDifferentFunction();
 String multiVMSameModuleSameFunction();
+String multiVMMultipleInstancesPerModule();
 
 // Get all registered test scripts
-std::span<const TestScript> getTestScripts();
+std::span<const TestScript> LEGACY_NODELETE getTestScripts();
 
 } // namespace TestScripts
 
-#endif // ENABLE(WEBASSEMBLY)
+#endif // ENABLE(WEBASSEMBLY_DEBUGGER)

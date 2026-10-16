@@ -30,10 +30,10 @@
 #include <WebCore/StyleValueTypes.h>
 
 namespace WebCore {
-namespace Style {
 
-struct ClipPath;
-struct OffsetPath;
+struct AcceleratedEffectClipPath;
+
+namespace Style {
 
 // <'clip-path'> = none | <url> | [ <basic-shape> || <geometry-box> ]
 struct ClipPath {
@@ -45,7 +45,7 @@ struct ClipPath {
     ClipPath(BoxPath&& box) : operation { WTF::move(box.operation) } { }
     ClipPath(const BoxPath& box) : operation { box.operation } { }
 
-    explicit ClipPath(RefPtr<PathOperation>&& operation) : operation { WTF::move(operation) } { RELEASE_ASSERT(isValid(operation)); }
+    explicit ClipPath(RefPtr<PathOperation>&& operation) : operation { WTF::move(operation) } { RELEASE_ASSERT(isValid(this->operation)); }
     explicit ClipPath(const RefPtr<PathOperation>& operation) : operation { operation } { RELEASE_ASSERT(isValid(operation)); }
 
     bool isNone() const { return !operation; }
@@ -58,7 +58,7 @@ struct ClipPath {
     std::optional<BoxPath> tryBox() const;
 
     template<typename> bool holdsAlternative() const;
-    template<typename... F> decltype(auto) switchOn(F&&...) const;
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&...) const;
 
     bool operator==(const ClipPath& other) const
     {
@@ -67,8 +67,9 @@ struct ClipPath {
 
 private:
     friend struct Blending<ClipPath>;
+    friend struct ToPlatform<ClipPath>;
     friend CSSBoxType referenceBox(const ClipPath&);
-    friend std::optional<WebCore::Path> tryPath(const ClipPath&, const TransformOperationData&);
+    friend std::optional<WebCore::Path> tryPath(const ClipPath&, const TransformOperationData&, ZoomFactor);
 
     static bool isValid(RefPtr<PathOperation> operation)
     {
@@ -78,12 +79,12 @@ private:
     RefPtr<PathOperation> operation;
 };
 
-inline std::optional<WebCore::Path> tryPath(const ClipPath& clipPath, const TransformOperationData& data)
+inline std::optional<WebCore::Path> tryPath(const ClipPath& clipPath, const TransformOperationData& data, ZoomFactor zoom)
 {
     RefPtr operation = clipPath.operation;
     if (!operation)
         return { };
-    return operation->getPath(data);
+    return operation->getPath(data, zoom);
 }
 
 template<typename T> bool ClipPath::holdsAlternative() const
@@ -94,7 +95,7 @@ template<typename T> bool ClipPath::holdsAlternative() const
     else if constexpr (std::same_as<T, BoxPath>)                            return isBox();
 }
 
-template<typename... F> decltype(auto) ClipPath::switchOn(F&&... f) const
+template<typename... F> decltype(auto) ClipPath::switchOn(NOESCAPE F&&... f) const
 {
     auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
@@ -145,6 +146,14 @@ template<> struct Blending<ClipPath> {
     auto canBlend(const ClipPath&, const ClipPath&) -> bool;
     auto blend(const ClipPath&, const ClipPath&, const BlendingContext&) -> ClipPath;
 };
+
+// MARK: - Evaluation
+
+#if ENABLE(THREADED_ANIMATIONS)
+
+template<> struct Evaluation<ClipPath, AcceleratedEffectClipPath> { AcceleratedEffectClipPath operator()(const ClipPath&, const TransformOperationData&, ZoomFactor); };
+
+#endif
 
 } // namespace Style
 } // namespace WebCore

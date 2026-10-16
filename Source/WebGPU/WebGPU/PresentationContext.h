@@ -25,10 +25,11 @@
 
 #pragma once
 
+#import <WebGPU/WebGPUCpp.h>
 #import <wtf/FastMalloc.h>
 #import <wtf/Ref.h>
-#import <wtf/RefCounted.h>
 #import <wtf/RetainPtr.h>
+#import <wtf/Seconds.h>
 #import <wtf/TZoneMalloc.h>
 #import <wtf/TypeCasts.h>
 
@@ -38,7 +39,7 @@ struct WGPUSurfaceImpl {
 struct WGPUSwapChainImpl {
 };
 
-namespace WebGPU {
+namespace WebGPU::Metal {
 
 class Adapter;
 class Device;
@@ -46,7 +47,7 @@ class Instance;
 class Texture;
 class TextureView;
 
-class PresentationContext : public WGPUSurfaceImpl, public WGPUSwapChainImpl, public RefCounted<PresentationContext> {
+class PresentationContext : public WebGPU::PresentationContext, public WGPUSurfaceImpl, public WGPUSwapChainImpl {
     WTF_MAKE_TZONE_ALLOCATED(PresentationContext);
 public:
     static Ref<PresentationContext> create(const WGPUSurfaceDescriptor&, const Instance&);
@@ -57,27 +58,31 @@ public:
 
     virtual ~PresentationContext();
 
-    WGPUTextureFormat getPreferredFormat(const Adapter&);
+    WebGPU::TextureFormat LEGACY_NODELETE getPreferredFormat(const Adapter&);
 
-    virtual void configure(Device&, const WGPUSwapChainDescriptor&);
+    virtual void configure(const WebGPU::CanvasConfiguration&);
     virtual void unconfigure();
 
     virtual void present(uint32_t);
     virtual Texture* getCurrentTexture(uint32_t);
     virtual TextureView* getCurrentTextureView(); // FIXME: This should return a TextureView&.
 
+    virtual Seconds lastFrameGPUCost() const { return 0_s; }
+    virtual Seconds lastFramePresentStall() const { return 0_s; }
+
     virtual bool isPresentationContextIOSurface() const { return false; }
     virtual bool isPresentationContextCoreAnimation() const { return false; }
     virtual RetainPtr<CGImageRef> getTextureAsNativeImage(uint32_t, bool&) { return nullptr; }
 
-    virtual bool isValid() { return false; }
+    void setLabel(String&&) override { }
+    bool isValid() const override { return false; }
 protected:
     explicit PresentationContext();
 };
 
-} // namespace WebGPU
+} // namespace WebGPU::Metal
 
 #define SPECIALIZE_TYPE_TRAITS_WEBGPU_PRESENTATION_CONTEXT(ToValueTypeName, predicate) \
-SPECIALIZE_TYPE_TRAITS_BEGIN(WebGPU::ToValueTypeName) \
-    static bool isType(const WebGPU::PresentationContext& presentationContext) { return presentationContext.predicate; } \
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebGPU::Metal::ToValueTypeName) \
+    static bool isType(const WebGPU::Metal::PresentationContext& presentationContext) { return presentationContext.predicate; } \
 SPECIALIZE_TYPE_TRAITS_END()

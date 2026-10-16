@@ -39,6 +39,8 @@
 
 namespace WebCore {
 
+WTF_MAKE_TZONE_ALLOCATED_IMPL(PathCairo);
+
 Ref<PathCairo> PathCairo::create(std::span<const PathSegment> segments)
 {
     Ref pathCairo = adoptRef(*new PathCairo);
@@ -350,7 +352,7 @@ void PathCairo::addPath(const PathCairo& path, const AffineTransform& transform)
     m_elementsStream = nullptr;
 }
 
-bool PathCairo::applyElements(const PathElementApplier& applier) const
+bool PathCairo::applyElements(NOESCAPE const PathElementApplier& applier) const
 {
     if (m_elementsStream && m_elementsStream->applyElements(applier))
         return true;

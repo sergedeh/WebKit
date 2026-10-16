@@ -5,7 +5,7 @@ list(APPEND WTF_SOURCES
     generic/WorkQueueGeneric.cpp
 
     glib/Application.cpp
-    glib/ChassisType.cpp
+    glib/FilePathWatcher.cpp
     glib/FileSystemGlib.cpp
     glib/GMallocString.cpp
     glib/GRefPtr.cpp
@@ -14,6 +14,7 @@ list(APPEND WTF_SOURCES
     glib/RunLoopGLib.cpp
     glib/Sandbox.cpp
     glib/SocketConnection.cpp
+    glib/TimeZoneGLib.cpp
     glib/URLGLib.cpp
 
     posix/CPUTimePOSIX.cpp
@@ -31,11 +32,13 @@ list(APPEND WTF_SOURCES
 )
 
 list(APPEND WTF_PUBLIC_HEADERS
+    PlatformEnableGlib.h
+
     glib/ActivityObserver.h
     glib/Application.h
-    glib/ChassisType.h
+    glib/FilePathWatcher.h
+    glib/GLibExtras.h
     glib/GMallocString.h
-    glib/GMutexLocker.h
     glib/GRefPtr.h
     glib/GSocketMonitor.h
     glib/GSpanExtras.h
@@ -50,8 +53,8 @@ list(APPEND WTF_PUBLIC_HEADERS
     glib/WTFGType.h
 
     linux/CurrentProcessMemoryStatus.h
+    linux/HighPriorityThreads.h
     linux/ProcessMemoryFootprint.h
-    linux/RealTimeThreads.h
 
     posix/SocketPOSIX.h
 
@@ -61,8 +64,8 @@ list(APPEND WTF_PUBLIC_HEADERS
 if (CMAKE_SYSTEM_NAME MATCHES "Linux")
     list(APPEND WTF_SOURCES
         linux/CurrentProcessMemoryStatus.cpp
+        linux/HighPriorityThreads.cpp
         linux/MemoryFootprintLinux.cpp
-        linux/RealTimeThreads.cpp
 
         unix/MemoryPressureHandlerUnix.cpp
     )

@@ -51,8 +51,11 @@ end
 
 # Dispatch target bases
 
-if ARM64 or ARM64E
+if ARM64 or ARM64E or X86_64
 const ipint_dispatch_base = _ipint_unreachable
+end
+
+if ARM64 or ARM64E
 const ipint_gc_dispatch_base = _ipint_struct_new
 const ipint_conversion_dispatch_base = _ipint_i32_trunc_sat_f32_s
 const ipint_simd_dispatch_base = _ipint_simd_v128_load_mem
@@ -61,22 +64,34 @@ end
 
 # Tail-call bytecode dispatch
 
-macro nextIPIntInstruction()
-    loadb [PC], t0
+macro dispatchIPIntOpcode(opcode)
 if ARM64 or ARM64E
-    # x0 = opcode
     pcrtoaddr ipint_dispatch_base, t7
-    addlshiftp t7, t0, (constexpr (WTF::fastLog2(JSC::IPInt::alignIPInt))), t0
+    addlshiftp t7, opcode, (constexpr (WTF::fastLog2(JSC::IPInt::alignIPInt))), t0
     jmp t0
 elsif X86_64
-    leap _os_script_config_storage, t1
-    loadp JSC::LLInt::OpcodeConfig::ipint_dispatch_base[t1], t1
-    lshiftq (constexpr (WTF::fastLog2(JSC::IPInt::alignIPInt))), t0
-    addq t1, t0
-    jmp t0
+    pcrtoaddr ipint_dispatch_base, t1
+    lshiftq (constexpr (WTF::fastLog2(JSC::IPInt::alignIPInt))), opcode
+    addq t1, opcode
+    jmp opcode
 else
     error
 end
+end
+
+macro nextIPIntInstruction()
+    loadb [PC], t0
+    dispatchIPIntOpcode(t0)
+end
+
+macro advancePCAndDispatch(amount)
+    if ARM64 or ARM64E
+        loadbpreinc amount[PC], t0
+    else
+        loadb amount[PC], t0
+        advancePC(amount)
+    end
+    dispatchIPIntOpcode(t0)
 end
 
 # Stack operations
@@ -178,15 +193,23 @@ macro ipintEntry()
     end
     mulp LocalSize, argumINTEnd
     mulp LocalSize, argumINTTmp
-    subp argumINTEnd, sp
-    move sp, argumINTEnd
+    # Allocate locals first (closest to CFR)
     subp argumINTTmp, sp
     move sp, argumINTDsp
-    loadp Wasm::IPIntCallee::m_argumINTBytecode + VectorBufferOffset[ws0], MC
+    # Allocate rethrow slots below locals
+    subp argumINTEnd, sp
+    # argumINTEnd = boundary for zero-init loop. Handlers write [argumINTDst] then subp,
+    # so after localSizeToAlloc handlers, argumINTDst = argumINTDsp - LocalSize.
+    move argumINTDsp, argumINTEnd
+    subp LocalSize, argumINTEnd
+    loadp Wasm::IPIntCallee::m_signatureRTT[ws0], MC
+    loadp Wasm::RTT::m_argumINTBytecode[MC], MC
+    addp (constexpr (Wasm::IPIntSharedBytecode::offsetOfData())), MC
 
     push argumINTTmp, argumINTDst, argumINTSrc, argumINTEnd
 
-    move argumINTDsp, argumINTDst
+    # Start writing at local[0] = CFR - IPIntLocalsBaseOffset, going downward
+    leap -IPIntLocalsBaseOffset[cfr], argumINTDst
     leap FirstArgumentOffset[cfr], argumINTSrc
 
     validateOpcodeConfig(argumINTTmp)
@@ -194,16 +217,11 @@ macro ipintEntry()
 end
 
 macro argumINTDispatch()
-    loadb [MC], argumINTTmp
-    addp 1, MC
+    loadbAndAdvance(MC, argumINTTmp)
     bbgteq argumINTTmp, (constexpr IPInt::ArgumINTBytecode::NumOpcodes), _ipint_argument_dispatch_err
     lshiftp (constexpr (WTF::fastLog2(JSC::IPInt::alignArgumInt))), argumINTTmp
-if ARM64 or ARM64E
+if ARM64 or ARM64E or X86_64
     pcrtoaddr _argumINT_begin, argumINTDsp
-    addp argumINTTmp, argumINTDsp
-    jmp argumINTDsp
-elsif X86_64
-    leap (_argumINT_begin - _ipint_entry_relativePCBase)[PL], argumINTDsp
     addp argumINTTmp, argumINTDsp
     jmp argumINTDsp
 else
@@ -212,10 +230,9 @@ end
 end
 
 macro argumINTInitializeDefaultLocals()
-    # zero out remaining locals
+    # zero out remaining locals (argumINTDst moves downward toward argumINTEnd)
     bpeq argumINTDst, argumINTEnd, .ipint_entry_finish_zero
-    loadb [MC], argumINTTmp
-    addp 1, MC
+    loadbAndAdvance(MC, argumINTTmp)
     sxb2p argumINTTmp, argumINTTmp
     andp ValueNull, argumINTTmp
 if ARM64 or ARM64E
@@ -225,7 +242,7 @@ elsif X86_64
     storep argumINTTmp, [argumINTDst]
     storep 0, 8[argumINTDst]
 end
-    addp LocalSize, argumINTDst
+    subp LocalSize, argumINTDst
 end
 
 macro argumINTFinish()
@@ -237,32 +254,12 @@ end
     #############################
 
 ipintOp(_unreachable, macro()
-    # unreachable
-
-    # Push to stack for the handler
-    push PC, MC
-    push PL, ws0
-
-    move cfr, a1
-    move sp, a2
-    operationCall(macro() cCall3(_ipint_extern_unreachable_breakpoint_handler) end)
-
-    # Remove pushed values
-    addq 4 * SlotSize, sp
-
-    bqeq r0, 0, .exception
-
-.continue:
-    nextIPIntInstruction()
-
-.exception:
-    ipintException(Unreachable)
+    jmp _ipint_throw_Unreachable
 end)
 
 ipintOp(_nop, macro()
     # nop
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_block, macro()
@@ -281,14 +278,17 @@ end
     nextIPIntInstruction()
 end)
 
+macro ipintLoopTail()
+    loadbAndAdvance(MC, t0)
+    advancePCByReg(t0)
+    nextIPIntInstruction()
+end
+
 ipintOp(_loop, macro()
     # loop
-    # We already validateOpcodeConfig in ipintLoopOSR.
-    ipintLoopOSR(1)
-    loadb IPInt::InstructionLengthMetadata::length[MC], t0
-    advancePCByReg(t0)
-    advanceMCByReg(constexpr (sizeof(IPInt::InstructionLengthMetadata)))
-    nextIPIntInstruction()
+    # We already validateOpcodeConfig in ipintLoopOSRCheck.
+    ipintLoopOSRCheck(1, _ipint_op_loop_tier_up)
+    ipintLoopTail()
 end)
 
 ipintOp(_if, macro()
@@ -333,9 +333,8 @@ end)
 
 ipintOp(_try, macro()
     validateOpcodeConfig(t0)
-    loadb IPInt::InstructionLengthMetadata::length[MC], t0
+    loadbAndAdvance(MC, t0)
     advancePCByReg(t0)
-    advanceMC(constexpr (sizeof(IPInt::InstructionLengthMetadata)))
     nextIPIntInstruction()
 end)
 
@@ -356,68 +355,24 @@ end
 end)
 
 ipintOp(_throw, macro()
-    saveCallSiteIndex()
-
-    loadp JSWebAssemblyInstance::m_vm[wasmInstance], t0
-    loadp VM::topEntryFrame[t0], t0
-    copyCalleeSavesToEntryFrameCalleeSavesBuffer(t0)
-
-    move cfr, a1
-    move sp, a2
-    loadi IPInt::ThrowMetadata::exceptionIndex[MC], a3
-    operationCall(macro() cCall4(_ipint_extern_throw_exception) end)
-    jumpToException()
+    jmp _ipint_op_throw
 end)
 
 ipintOp(_rethrow, macro()
-    saveCallSiteIndex()
-
-    loadp JSWebAssemblyInstance::m_vm[wasmInstance], t0
-    loadp VM::topEntryFrame[t0], t0
-    copyCalleeSavesToEntryFrameCalleeSavesBuffer(t0)
-
-    move cfr, a1
-    move PL, a2
-    loadi IPInt::RethrowMetadata::tryDepth[MC], a3
-    operationCall(macro() cCall4(_ipint_extern_rethrow_exception) end)
-    jumpToException()
+    jmp _ipint_op_rethrow
 end)
 
 ipintOp(_throw_ref, macro()
-    popQuad(a2)
-    bieq a2, ValueNull, .throw_null_ref
-
-    saveCallSiteIndex()
-
-    loadp JSWebAssemblyInstance::m_vm[wasmInstance], t0
-    loadp VM::topEntryFrame[t0], t0
-    copyCalleeSavesToEntryFrameCalleeSavesBuffer(t0)
-
-    move cfr, a1
-    operationCall(macro() cCall3(_ipint_extern_throw_ref) end)
-    jumpToException()
-
-.throw_null_ref:
-    throwException(NullExnrefReference)
+    jmp _ipint_op_throw_ref
 end)
 
 macro uintDispatch()
-if ARM64 or ARM64E
-    loadb [MC], sc2
-    addq 1, MC
-    bigteq sc2, (constexpr IPInt::UIntBytecode::NumOpcodes), _ipint_uint_dispatch_err
-    lshiftq (constexpr (WTF::fastLog2(JSC::IPInt::alignUInt))), sc2
-    pcrtoaddr _uint_begin, sc3
-    addq sc2, ws3
-    jmp ws3
-elsif X86_64
-    loadb [MC], sc1
-    addq 1, MC
-    bigteq sc1, (constexpr IPInt::UIntBytecode::NumOpcodes), _ipint_uint_dispatch_err
-    lshiftq 6, sc1
-    leap (_uint_begin - _mint_entry_relativePCBase)[PC, sc1], sc1
+    loadbAndAdvance(MC, sc1)
+    bigteq sc1, (constexpr IPInt::UINTBytecode::NumOpcodes), _ipint_uint_dispatch_err
+    lshiftq (constexpr (WTF::fastLog2(JSC::IPInt::alignUInt))), sc1
+    pcrtoaddr _uint_begin, PC
+    addq PC, sc1
     jmp sc1
-end
 end
 
 ipintOp(_end, macro()
@@ -426,25 +381,9 @@ if X86_64
     loadp UnboxedWasmCalleeStackSlot[cfr], ws0
 end
     loadp Wasm::IPIntCallee::m_bytecodeEnd[ws0], t1
-    bqeq PC, t1, .ipint_end_ret
-    advancePC(1)
-    nextIPIntInstruction()
+    bqeq PC, t1, _ipint_end_ret
+    advancePCAndDispatch(1)
 end)
-
-# This implementation is specially defined out of ipintOp scope to make end implementation tight.
-.ipint_end_ret:
-    loadp Wasm::IPIntCallee::m_uINTBytecode + VectorBufferOffset[ws0], MC
-    ipintEpilogueOSR(10)
-if X86_64
-    loadp UnboxedWasmCalleeStackSlot[cfr], ws0
-end
-    loadi Wasm::IPIntCallee::m_topOfReturnStackFPOffset[ws0], sc0
-    addp cfr, sc0
-
-    initPCRelative(mint_entry, PC)
-
-    // We've already validateOpcodeConfig() in all the places that can jump to .ipint_end_ret.
-    uintDispatch()
 
 ipintOp(_br, macro()
     # br
@@ -460,19 +399,15 @@ ipintOp(_br, macro()
     # d  e
     #
     # [sp + k + numToPop] = [sp + k] for k in numToKeep-1 -> 0
-    move t0, t2
-    mulq StackValueSize, t2
+    mulq StackValueSize, t0, t2
     leap [sp, t2], t2
 
 .ipint_br_poploop:
     bqeq t1, 0, .ipint_br_popend
     subq 1, t1
-    move t1, t3
-    mulq StackValueSize, t3
-    loadq [sp, t3], t0
-    storeq t0, [t2, t3]
-    loadq 8[sp, t3], t0
-    storeq t0, 8[t2, t3]
+    mulq StackValueSize, t1, t3
+    loadv [sp, t3], v0
+    storev v0, [t2, t3]
     jmp .ipint_br_poploop
 .ipint_br_popend:
     loadh IPInt::BranchTargetMetadata::toPop[MC], t0
@@ -528,7 +463,7 @@ end
 
     # This is guaranteed going to an end instruction, so skip
     # dispatch and end of program check for speed
-    jmp .ipint_end_ret
+    jmp _ipint_end_ret
 end)
 
 if ARM64 or ARM64E
@@ -548,7 +483,6 @@ ipintOp(_call, macro()
 
     move cfr, a1
     move MC, a2
-    advanceMC(IPInt::CallMetadata::signature)
 
     subq 16, sp
     move sp, a3
@@ -560,16 +494,14 @@ ipintOp(_call, macro()
     loadq 8[sp], IPIntCallFunctionSlot
     addq 16, sp
 
+    advanceMC(constexpr (sizeof(IPInt::CallMetadata)))
+
     # call
     jmp .ipint_call_common
 end)
 
 ipintOp(_call_indirect, macro()
-    // The operationCall below already calls validateOpcodeConfig().
-    saveCallSiteIndex()
-
-    loadb IPInt::CallIndirectMetadata::length[MC], t2
-    advancePCByReg(t2)
+    // The operationCallMayThrow below already calls validateOpcodeConfig() and saveCallSiteIndex().
 
     # Get function index by pointer, use it as a return for callee
     move sp, a2
@@ -577,9 +509,14 @@ ipintOp(_call_indirect, macro()
     # Get callIndirectMetadata
     move cfr, a1
     move MC, a3
-    advanceMC(IPInt::CallIndirectMetadata::signature)
 
     operationCallMayThrow(macro() cCall4(_ipint_extern_prepare_call_indirect) end)
+
+    # operationCallMayThrow saves the call site index, so we have to advance the PC after.
+    # Otherwise, the wrong call site index will be saved.
+    loadb IPInt::CallIndirectMetadata::length[MC], t3
+    advancePCByReg(t3)
+    advanceMC(constexpr (sizeof(IPInt::CallIndirectMetadata)))
 
     loadq [sp], IPIntCallCallee
     loadq 8[sp], IPIntCallFunctionSlot
@@ -602,23 +539,21 @@ ipintOp(_return_call, macro()
 
     # operation returns the entrypoint in r0 and the target instance in r1
     # this operation stores the boxed Callee into *r2
-    operationCall(macro() cCall4(_ipint_extern_prepare_call) end)
+    operationCall(macro() cCall4(_ipint_extern_prepare_tail_call) end)
 
     loadq [sp], IPIntCallCallee
     loadq 8[sp], IPIntCallFunctionSlot
     addq 16, sp
 
     loadi IPInt::TailCallMetadata::callerStackArgSize[MC], t3
-    advanceMC(IPInt::TailCallMetadata::argumentBytecode)
+    loadp IPInt::TailCallMetadata::rtt[MC], t5
+    loadp Wasm::RTT::m_tailCallBytecode[t5], MC
+    addp (constexpr (Wasm::IPIntSharedBytecode::offsetOfData())), MC
     jmp .ipint_tail_call_common
 end)
 
 ipintOp(_return_call_indirect, macro()
-    // The operationCallMayThrow below already calls validateOpcodeConfig().
-    saveCallSiteIndex()
-
-    loadb IPInt::TailCallIndirectMetadata::length[MC], t2
-    advancePCByReg(t2)
+    // The operationCallMayThrow below already calls validateOpcodeConfig() and saveCallSiteIndex().
 
     # Get function index by pointer, use it as a return for callee
     move sp, a2
@@ -626,20 +561,26 @@ ipintOp(_return_call_indirect, macro()
     # Get callIndirectMetadata
     move cfr, a1
     move MC, a3
-    operationCallMayThrow(macro() cCall4(_ipint_extern_prepare_call_indirect) end)
+    operationCallMayThrow(macro() cCall4(_ipint_extern_prepare_tail_call_indirect) end)
+
+    # operationCallMayThrow saves the call site index, so we have to advance the PC after.
+    # Otherwise, the wrong call site index will be saved.
+    loadb IPInt::TailCallIndirectMetadata::length[MC], t3
+    advancePCByReg(t3)
 
     loadq [sp], IPIntCallCallee
     loadq 8[sp], IPIntCallFunctionSlot
     addq 16, sp
 
     loadi IPInt::TailCallIndirectMetadata::callerStackArgSize[MC], t3
-    advanceMC(IPInt::TailCallIndirectMetadata::argumentBytecode)
+    loadp IPInt::TailCallIndirectMetadata::rtt[MC], t5
+    loadp Wasm::RTT::m_tailCallBytecode[t5], MC
+    addp (constexpr (Wasm::IPIntSharedBytecode::offsetOfData())), MC
     jmp .ipint_tail_call_common
 end)
 
 ipintOp(_call_ref, macro()
-    // The operationCall below already calls validateOpcodeConfig().
-    saveCallSiteIndex()
+    // The operationCallMayThrow below already calls validateOpcodeConfig() and saveCallSiteIndex().
 
     move cfr, a1
     move MC, a2
@@ -651,29 +592,33 @@ ipintOp(_call_ref, macro()
     addq 16, sp
 
     loadb IPInt::CallRefMetadata::length[MC], t3
-    advanceMC(IPInt::CallRefMetadata::signature)
+    advanceMC(constexpr (sizeof(IPInt::CallRefMetadata)))
     advancePCByReg(t3)
 
     jmp .ipint_call_common
 end)
 
 ipintOp(_return_call_ref, macro()
-    // The operationCallMayThrow below already calls validateOpcodeConfig().
-    saveCallSiteIndex()
-
-    loadb IPInt::TailCallRefMetadata::length[MC], t2
-    advancePCByReg(t2)
+    // The operationCallMayThrow below already calls validateOpcodeConfig() and saveCallSiteIndex().
 
     move cfr, a1
     move MC, a2
     move sp, a3
-    operationCallMayThrow(macro() cCall4(_ipint_extern_prepare_call_ref) end)
+    operationCallMayThrow(macro() cCall4(_ipint_extern_prepare_tail_call_ref) end)
+
+    # operationCallMayThrow saves the call site index, so we have to advance the PC after.
+    # Otherwise, the wrong call site index will be saved.
+    loadb IPInt::TailCallRefMetadata::length[MC], t3
+    advancePCByReg(t3)
+
     loadq [sp], IPIntCallCallee
     loadq 8[sp], IPIntCallFunctionSlot
     addq 16, sp
 
     loadi IPInt::TailCallRefMetadata::callerStackArgSize[MC], t3
-    advanceMC(IPInt::TailCallRefMetadata::argumentBytecode)
+    loadp IPInt::TailCallRefMetadata::rtt[MC], t5
+    loadp Wasm::RTT::m_tailCallBytecode[t5], MC
+    addp (constexpr (Wasm::IPIntSharedBytecode::offsetOfData())), MC
     jmp .ipint_tail_call_common
 end)
 
@@ -714,41 +659,36 @@ end)
 
 ipintOp(_drop, macro()
     addq StackValueSize, sp
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_select, macro()
     popInt32(t0)
     bieq t0, 0, .ipint_select_val2
     addq StackValueSize, sp
-    advancePC(1)
     advanceMC(constexpr (sizeof(IPInt::InstructionLengthMetadata)))
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 .ipint_select_val2:
     popVec(v1)
     popVec(v0)
     pushVec(v1)
-    advancePC(1)
     advanceMC(constexpr (sizeof(IPInt::InstructionLengthMetadata)))
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_select_t, macro()
     popInt32(t0)
     bieq t0, 0, .ipint_select_t_val2
     addq StackValueSize, sp
-    loadb IPInt::InstructionLengthMetadata::length[MC], t0
+    loadbAndAdvance(MC, t0)
     advancePCByReg(t0)
-    advanceMC(constexpr (sizeof(IPInt::InstructionLengthMetadata)))
     nextIPIntInstruction()
 .ipint_select_t_val2:
     popVec(v1)
     popVec(v0)
     pushVec(v1)
-    loadb IPInt::InstructionLengthMetadata::length[MC], t0
+    loadbAndAdvance(MC, t0)
     advancePCByReg(t0)
-    advanceMC(constexpr (sizeof(IPInt::InstructionLengthMetadata)))
     nextIPIntInstruction()
 end)
 
@@ -774,55 +714,45 @@ end)
     # 0x20 - 0x26: get and set values #
     ###################################
 
-macro localGetPostDecode()
-    # Index into locals
-    mulq LocalSize, t0
-    loadv [PL, t0], v0
-    # Push to stack
-    pushVec(v0)
-    nextIPIntInstruction()
+macro localGet()
+    # Index into locals: local[i] = CFR - IPIntLocalsBaseOffset - i * LocalSize
+    lshiftp (constexpr (WTF::fastLog2(JSC::IPInt::LOCAL_SIZE))), t0
+    subp cfr, t0, t0
+    loadv -IPIntLocalsBaseOffset[t0], v0
+end
+
+macro localSet()
+    # Store to locals: local[i] = CFR - IPIntLocalsBaseOffset - i * LocalSize
+    lshiftp (constexpr (WTF::fastLog2(JSC::IPInt::LOCAL_SIZE))), t0
+    subp cfr, t0, t0
+    storev v0, -IPIntLocalsBaseOffset[t0]
 end
 
 ipintOp(_local_get, macro()
     # local.get
     loadb 1[PC], t0
-    advancePC(2)
-    bbaeq t0, 128, _ipint_local_get_slow_path
-    localGetPostDecode()
+    bbaeq t0, 0x80, .ipint_local_get_slow_path
+    localGet()
+    pushVec(v0)
+    advancePCAndDispatch(2)
 end)
-
-macro localSetPostDecode()
-    # Pop from stack
-    popVec(v0)
-    # Store to locals
-    mulq LocalSize, t0
-    storev v0, [PL, t0]
-    nextIPIntInstruction()
-end
 
 ipintOp(_local_set, macro()
     # local.set
     loadb 1[PC], t0
-    advancePC(2)
-    bbaeq t0, 128, _ipint_local_set_slow_path
-    localSetPostDecode()
+    bbaeq t0, 0x80, .ipint_local_set_slow_path
+    popVec(v0)
+    localSet()
+    advancePCAndDispatch(2)
 end)
-
-macro localTeePostDecode()
-    # Load from stack
-    loadv [sp], v0
-    # Store to locals
-    mulq LocalSize, t0
-    storev v0, [PL, t0]
-    nextIPIntInstruction()
-end
 
 ipintOp(_local_tee, macro()
     # local.tee
     loadb 1[PC], t0
-    advancePC(2)
-    bbaeq t0, 128, _ipint_local_tee_slow_path
-    localTeePostDecode()
+    bbaeq t0, 0x80, .ipint_local_tee_slow_path
+    loadv [sp], v0
+    localSet()
+    advancePCAndDispatch(2)
 end)
 
 ipintOp(_global_get, macro()
@@ -848,10 +778,17 @@ ipintOp(_global_get, macro()
     nextIPIntInstruction()
 end)
 
+macro ipintGlobalSetTail()
+    loadb IPInt::GlobalMetadata::instructionLength[MC], t0
+    advanceMC(constexpr (sizeof(IPInt::GlobalMetadata)))
+    advancePCByReg(t0)
+    nextIPIntInstruction()
+end
+
 ipintOp(_global_set, macro()
     # isRef = 1 => ref, use slowpath
     loadb IPInt::GlobalMetadata::isRef[MC], t0
-    bineq t0, 0, .ipint_global_set_refpath
+    bineq t0, 0, _ipint_op_global_set_ref
     # bindingMode = 1 => portable
     loadb IPInt::GlobalMetadata::bindingMode[MC], t2
     # get global addr
@@ -865,337 +802,341 @@ ipintOp(_global_set, macro()
     # portable: dereference then set
     loadp [t0, t1, 8], t0
     storev v0, [t0]
-    loadb IPInt::GlobalMetadata::instructionLength[MC], t0
-    advancePCByReg(t0)
-    advanceMC(constexpr (sizeof(IPInt::GlobalMetadata)))
-    jmp .ipint_global_set_dispatch
+    ipintGlobalSetTail()
 
 .ipint_global_set_embedded:
     # embedded: set directly
     storev v0, [t0, t1, 8]
-    loadb IPInt::GlobalMetadata::instructionLength[MC], t0
-    advancePCByReg(t0)
-    advanceMC(constexpr (sizeof(IPInt::GlobalMetadata)))
-    jmp .ipint_global_set_dispatch
-
-.ipint_global_set_refpath:
-    loadi IPInt::GlobalMetadata::index[MC], a1
-    # Pop from stack
-    popQuad(a2)
-    operationCall(macro() cCall3(_ipint_extern_set_global_ref) end)
-
-    loadb IPInt::GlobalMetadata::instructionLength[MC], t0
-    advancePCByReg(t0)
-    advanceMC(constexpr (sizeof(IPInt::GlobalMetadata)))
-
-.ipint_global_set_dispatch:
-    nextIPIntInstruction()
+    ipintGlobalSetTail()
 end)
 
 ipintOp(_table_get, macro()
     # Load pre-computed index from metadata
-    loadi IPInt::Const32Metadata::value[MC], a1
+    loadi IPInt::TableAccessMetadata::index[MC], a1
     popInt32(a2)
 
     operationCallMayThrow(macro() cCall3(_ipint_extern_table_get) end)
 
     pushQuad(r0)
 
-    loadb IPInt::Const32Metadata::instructionLength[MC], t0
+    loadb IPInt::TableAccessMetadata::instructionLength[MC], t0
 
     advancePCByReg(t0)
-    advanceMC(constexpr (sizeof(IPInt::Const32Metadata)))
+    advanceMC(constexpr (sizeof(IPInt::TableAccessMetadata)))
     nextIPIntInstruction()
 end)
 
 ipintOp(_table_set, macro()
     # Load pre-computed index from metadata
-    loadi IPInt::Const32Metadata::value[MC], a1
+    loadi IPInt::TableAccessMetadata::index[MC], a1
     popQuad(a3)
     popInt32(a2)
     operationCallMayThrow(macro() cCall4(_ipint_extern_table_set) end)
 
-    loadb IPInt::Const32Metadata::instructionLength[MC], t0
+    loadb IPInt::TableAccessMetadata::instructionLength[MC], t0
 
     advancePCByReg(t0)
-    advanceMC(constexpr (sizeof(IPInt::Const32Metadata)))
+    advanceMC(constexpr (sizeof(IPInt::TableAccessMetadata)))
     nextIPIntInstruction()
 end)
 
 reservedOpcode(0x27)
 
-macro popMemoryIndex(reg, tmp)
-    popInt32(reg)
-    ori 0, reg
+# Pops the address operand of a memory access, leaving it unextended. An i32 address may carry
+# garbage in its upper half, and only the memory being accessed determines how wide the address is,
+# so loadStoreMakePointerFast/Slow do the narrowing once they know which memory that is.
+macro popMemoryAddress(reg)
+    popInt64(reg) # Note that popInt32 and popInt64 are same implementation.
 end
 
-macro ipintCheckMemoryBound(mem, scratch, size)
-    # Memory indices are 32 bit
-    leap size - 1[mem], scratch
-    bpb scratch, boundsCheckingSize, .continuation
-    ipintException(OutOfBoundsMemoryAccess)
-.continuation:
+# Narrows an address to 32 bits unless memory 0, which is bit 0 of the bitset, is 64-bit.
+macro zeroExtendAddressForMemory0(reg)
+    btbnz (constexpr (JSWebAssemblyInstance::offsetOfMemoryIsMemory64Bits()))[wasmInstance], 0x1, .done
+    zxi2q reg, reg
+.done:
 end
 
-macro loadMemoryOffsetAndAdvanceMC(dstReg, tmpReg, instrLenReg)
-	loadb JSWebAssemblyInstance::m_cachedIsMemory64[wasmInstance], tmpReg
-	btiz tmpReg, .memory32
-	loadq IPInt::Const64Metadata::value[MC], dstReg
-    loadb IPInt::Const64Metadata::instructionLength[MC], instrLenReg
-	advanceMC(constexpr (sizeof(IPInt::Const64Metadata)))
-	jmp .done
-.memory32:
-	loadi IPInt::Const32Metadata::value[MC], dstReg
-    loadb IPInt::Const32Metadata::instructionLength[MC], instrLenReg
-	advanceMC(constexpr (sizeof(IPInt::Const32Metadata)))
+# As above, for an arbitrary memory whose index is already in indexReg.
+macro zeroExtendAddressForMemory(indexReg, addrReg, scratch1, scratch2)
+    move indexReg, scratch1
+    urshiftq 6, scratch1
+    lshiftp 3, scratch1
+    loadq (constexpr (JSWebAssemblyInstance::offsetOfMemoryIsMemory64Bits()))[wasmInstance, scratch1], scratch1
+    move indexReg, scratch2
+    andq 63, scratch2
+    urshiftq scratch2, scratch1
+    btqnz scratch1, 0x1, .done
+    zxi2q addrReg, addrReg
+.done:
+end
+
+macro baddpc(src, dst, label)
+    if ARM64 or ARM64E
+        addps src, dst
+    else
+        addp src, dst
+    end
+    bc label # unsigned overflow check
+end
+
+# addrReg += offsetReg and endReg = addrReg + size - 1, trapping at label if either wraps around.
+macro addMemoryOffsetAndSize(offsetReg, size, addrReg, endReg, label)
+    baddpc(offsetReg, addrReg, label)
+    if ARM64 or ARM64E
+        addps (size - 1), addrReg, endReg
+        bc label
+    else
+        move size - 1, endReg
+        baddpc(addrReg, endReg, label)
+    end
+end
+
+macro loadStoreMakePointerFast(memargAccess, wasmAddrReg, size, scratch, scratch2, slowLabel)
+    # overwrites wasmAddrReg with computed pointer.
+    # memargAccess reads the memarg's alignment/flags byte; the offset byte follows it, so both are
+    # taken with one halfword load. For non-SIMD pass 1[PC], for SIMD [t4].
+    # Fast path: alignment byte < 0x40 (single-byte, no multi-memory), and offset byte < 0x80
+    # (single-byte). Memory index is 0.
+    loadh memargAccess, scratch          # alignment/flags byte | offset byte << 8
+    if ARM64 or ARM64E
+        # One test covers all three rejects. Shifting the halfword up by 9 lands the alignment
+        # byte's bit 6 on the offset byte's bit 7 and its bit 7 just above, so bits 15 and 16 of
+        # the result mean "multi-memory, or either field needs more than one byte".
+        orlshifti scratch, scratch, 9, scratch2
+        andi scratch2, 0x18000, scratch2
+        bineq scratch2, 0, slowLabel
+        urshifti 8, scratch              # scratch = offset byte
+    else
+        andi scratch, 0xc0, scratch2
+        bineq scratch2, 0, slowLabel     # alignment is multi-byte, or multi-memory
+        urshifti 8, scratch              # scratch = offset byte
+        bbaeq scratch, 0x80, slowLabel   # offset is multi-byte
+    end
+
+    zeroExtendAddressForMemory0(wasmAddrReg)
+    addMemoryOffsetAndSize(scratch, size, wasmAddrReg, scratch2, _ipint_throw_OutOfBoundsMemoryAccess)
+
+    bpaeq scratch2, boundsCheckingSize, _ipint_throw_OutOfBoundsMemoryAccess # scratch2 contains wasm address + size - 1
+    addp memoryBase, wasmAddrReg
+end
+
+# Note: wasmAddrReg (t0) is set by the handler's popMemoryAddress before branching here.
+# For store ops, the data register (t3 for int, ft0 for float) is also set by the handler.
+macro loadStoreMakePointerSlow(cursor, wasmAddrReg, size, scratch, scratch2, decodeScratch1, decodeScratch2)
+    # 1. Decode flags/alignment, check multi-memory bit
+    decodeLEBVarUInt(scratch, cursor, decodeScratch1, decodeScratch2)
+
+    # 2. If multi-memory, decode memory index; otherwise 0
+    btiz scratch, 0x40, .memoryIndex0
+    decodeLEBVarUInt(scratch, cursor, decodeScratch1, decodeScratch2)
+    jmp .decodeOffset
+.memoryIndex0:
+    move 0, scratch
+
+.decodeOffset:
+    # 3. Decode offset
+    decodeLEBVarUInt(scratch2, cursor, decodeScratch1, decodeScratch2)
+
+    # 4. Narrow the address unless the memory being accessed is 64-bit. This has to happen before the
+    # offset is added, and it consults the accessed memory rather than memory 0.
+    zeroExtendAddressForMemory(scratch, wasmAddrReg, decodeScratch1, decodeScratch2)
+
+    addMemoryOffsetAndSize(scratch2, size, wasmAddrReg, scratch2, _ipint_throw_OutOfBoundsMemoryAccess)
+
+    btinz scratch, .memoryIsNotZero
+    bpaeq scratch2, boundsCheckingSize, _ipint_throw_OutOfBoundsMemoryAccess # scratch2 contains wasm address + size - 1
+    addp memoryBase, wasmAddrReg
+    jmp .done
+
+.memoryIsNotZero:
+    mulp constexpr (sizeof(JSWebAssemblyInstance::WasmMemoryBaseAndSize)), scratch
+    # FIXME: it's probably worth trying to use a loadpair here, but that requires a separate x86 codepath
+    loadp (constexpr (JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0) + sizeof(void*))) [wasmInstance, scratch], decodeScratch1 # bounds checking size
+    bpaeq scratch2, decodeScratch1, _ipint_throw_OutOfBoundsMemoryAccess # scratch2 contains wasm address + size - 1
+    loadp (constexpr (JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0))) [wasmInstance, scratch], scratch2 # memory base
+    addp scratch2, wasmAddrReg
 .done:
 end
 
 ipintOp(_i32_load_mem, macro()
     # i32.load
     # pop index
-    popMemoryIndex(t0, t2)
-	loadMemoryOffsetAndAdvanceMC(t2, t3, t4)
-    addp t2, t0
-    ipintCheckMemoryBound(t0, t2, 4)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast(1[PC], t0, 4, t1, t2, .ipint_i32_load_mem_slow_path)
     # load memory location
-    loadi [memoryBase, t0], t1
+    loadi [t0], t1
     pushInt32(t1)
 
-    advancePCByReg(t4)
-    nextIPIntInstruction()
+    advancePCAndDispatch(3)
 end)
 
 ipintOp(_i64_load_mem, macro()
     # i32.load
     # pop index
-    popMemoryIndex(t0, t2)
-	loadMemoryOffsetAndAdvanceMC(t2, t3, t4)
-    addp t2, t0
-    ipintCheckMemoryBound(t0, t2, 8)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast(1[PC], t0, 8, t1, t2, .ipint_i64_load_mem_slow_path)
     # load memory location
-    loadq [memoryBase, t0], t1
+    loadq [t0], t1
     pushInt64(t1)
 
-    advancePCByReg(t4)
-    nextIPIntInstruction()
+    advancePCAndDispatch(3)
 end)
 
 ipintOp(_f32_load_mem, macro()
     # f32.load
     # pop index
-    popMemoryIndex(t0, t2)
-	loadMemoryOffsetAndAdvanceMC(t2, t3, t4)
-    addp t2, t0
-    ipintCheckMemoryBound(t0, t2, 4)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast(1[PC], t0, 4, t1, t2, .ipint_f32_load_mem_slow_path)
     # load memory location
-    loadf [memoryBase, t0], ft0
+    loadf [t0], ft0
     pushFloat32(ft0)
 
-    advancePCByReg(t4)
-    nextIPIntInstruction()
+    advancePCAndDispatch(3)
 end)
 
 ipintOp(_f64_load_mem, macro()
     # f64.load
     # pop index
-    popMemoryIndex(t0, t2)
-	loadMemoryOffsetAndAdvanceMC(t2, t3, t4)
-    addp t2, t0
-    ipintCheckMemoryBound(t0, t2, 8)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast(1[PC], t0, 8, t1, t2, .ipint_f64_load_mem_slow_path)
     # load memory location
-    loadd [memoryBase, t0], ft0
+    loadd [t0], ft0
     pushFloat64(ft0)
 
-    advancePCByReg(t4)
-    nextIPIntInstruction()
+    advancePCAndDispatch(3)
 end)
 
 ipintOp(_i32_load8s_mem, macro()
     # i32.load8_s
     # pop index
-    popMemoryIndex(t0, t2)
-    loadMemoryOffsetAndAdvanceMC(t2, t3, t4)
-    addp t2, t0
-    ipintCheckMemoryBound(t0, t2, 1)
-    # load memory location
-    loadb [memoryBase, t0], t1
-    sxb2i t1, t1
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast(1[PC], t0, 1, t1, t2, .ipint_i32_load8s_mem_slow_path)
+    loadbsi [t0], t1
     pushInt32(t1)
 
-    advancePCByReg(t4)
-    nextIPIntInstruction()
+    advancePCAndDispatch(3)
 end)
 
 ipintOp(_i32_load8u_mem, macro()
     # i32.load8_u
     # pop index
-    popMemoryIndex(t0, t2)
-	loadMemoryOffsetAndAdvanceMC(t2, t3, t4)
-    addp t2, t0
-    ipintCheckMemoryBound(t0, t2, 1)
-    # load memory location
-    loadb [memoryBase, t0], t1
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast(1[PC], t0, 1, t1, t2, .ipint_i32_load8u_mem_slow_path)
+    loadb [t0], t1
     pushInt32(t1)
 
-    advancePCByReg(t4)
-    nextIPIntInstruction()
+    advancePCAndDispatch(3)
 end)
 
 ipintOp(_i32_load16s_mem, macro()
     # i32.load16_s
     # pop index
-    popMemoryIndex(t0, t2)
-	loadMemoryOffsetAndAdvanceMC(t2, t3, t4)
-    addp t2, t0
-    ipintCheckMemoryBound(t0, t2, 2)
-    # load memory location
-    loadh [memoryBase, t0], t1
-    sxh2i t1, t1
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast(1[PC], t0, 2, t1, t2, .ipint_i32_load16s_mem_slow_path)
+    loadhsi [t0], t1
     pushInt32(t1)
 
-    advancePCByReg(t4)
-    nextIPIntInstruction()
+    advancePCAndDispatch(3)
 end)
 
 ipintOp(_i32_load16u_mem, macro()
     # i32.load16_u
     # pop index
-    popMemoryIndex(t0, t2)
-	loadMemoryOffsetAndAdvanceMC(t2, t3, t4)
-    addp t2, t0
-    ipintCheckMemoryBound(t0, t2, 2)
-    # load memory location
-    loadh [memoryBase, t0], t1
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast(1[PC], t0, 2, t1, t2, .ipint_i32_load16u_mem_slow_path)
+    loadh [t0], t1
     pushInt32(t1)
 
-    advancePCByReg(t4)
-    nextIPIntInstruction()
+    advancePCAndDispatch(3)
 end)
 
 ipintOp(_i64_load8s_mem, macro()
     # i64.load8_s
     # pop index
-    popMemoryIndex(t0, t2)
-	loadMemoryOffsetAndAdvanceMC(t2, t3, t4)
-    addp t2, t0
-    ipintCheckMemoryBound(t0, t2, 1)
-    # load memory location
-    loadb [memoryBase, t0], t1
-    sxb2q t1, t1
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast(1[PC], t0, 1, t1, t2, .ipint_i64_load8s_mem_slow_path)
+    loadbsq [t0], t1
     pushInt64(t1)
 
-    advancePCByReg(t4)
-    nextIPIntInstruction()
+    advancePCAndDispatch(3)
 end)
 
 ipintOp(_i64_load8u_mem, macro()
     # i64.load8_u
     # pop index
-    popMemoryIndex(t0, t2)
-	loadMemoryOffsetAndAdvanceMC(t2, t3, t4)
-    addp t2, t0
-    ipintCheckMemoryBound(t0, t2, 1)
-    # load memory location
-    loadb [memoryBase, t0], t1
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast(1[PC], t0, 1, t1, t2, .ipint_i64_load8u_mem_slow_path)
+    loadb [t0], t1
     pushInt64(t1)
 
-    advancePCByReg(t4)
-    nextIPIntInstruction()
+    advancePCAndDispatch(3)
 end)
 
 ipintOp(_i64_load16s_mem, macro()
     # i64.load16_s
     # pop index
-    popMemoryIndex(t0, t2)
-	loadMemoryOffsetAndAdvanceMC(t2, t3, t4)
-    addp t2, t0
-    ipintCheckMemoryBound(t0, t2, 2)
-    # load memory location
-    loadh [memoryBase, t0], t1
-    sxh2q t1, t1
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast(1[PC], t0, 2, t1, t2, .ipint_i64_load16s_mem_slow_path)
+    loadhsq [t0], t1
     pushInt64(t1)
 
-    advancePCByReg(t4)
-    nextIPIntInstruction()
+    advancePCAndDispatch(3)
 end)
 
 ipintOp(_i64_load16u_mem, macro()
     # i64.load16_u
     # pop index
-    popMemoryIndex(t0, t2)
-	loadMemoryOffsetAndAdvanceMC(t2, t3, t4)
-    addp t2, t0
-    ipintCheckMemoryBound(t0, t2, 2)
-    # load memory location
-    loadh [memoryBase, t0], t1
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast(1[PC], t0, 2, t1, t2, .ipint_i64_load16u_mem_slow_path)
+    loadh [t0], t1
     pushInt64(t1)
 
-    advancePCByReg(t4)
-    nextIPIntInstruction()
+    advancePCAndDispatch(3)
 end)
 
 ipintOp(_i64_load32s_mem, macro()
     # i64.load32_s
     # pop index
-    popMemoryIndex(t0, t2)
-	loadMemoryOffsetAndAdvanceMC(t2, t3, t4)
-    addp t2, t0
-    ipintCheckMemoryBound(t0, t2, 4)
-    # load memory location
-    loadi [memoryBase, t0], t1
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast(1[PC], t0, 4, t1, t2, .ipint_i64_load32s_mem_slow_path)
+    loadi [t0], t1
     sxi2q t1, t1
     pushInt64(t1)
 
-    advancePCByReg(t4)
-    nextIPIntInstruction()
+    advancePCAndDispatch(3)
 end)
 
 ipintOp(_i64_load32u_mem, macro()
     # i64.load8_s
     # pop index
-    popMemoryIndex(t0, t2)
-	loadMemoryOffsetAndAdvanceMC(t2, t3, t4)
-    addp t2, t0
-    ipintCheckMemoryBound(t0, t2, 4)
-    # load memory location
-    loadi [memoryBase, t0], t1
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast(1[PC], t0, 4, t1, t2, .ipint_i64_load32u_mem_slow_path)
+    loadi [t0], t1
     pushInt64(t1)
 
-    advancePCByReg(t4)
-    nextIPIntInstruction()
+    advancePCAndDispatch(3)
 end)
 
 ipintOp(_i32_store_mem, macro()
     # i32.store
     # pop data
-    popInt32(t1)
+    popInt32(t3)
     # pop index
-    popMemoryIndex(t0, t2)
-	loadMemoryOffsetAndAdvanceMC(t2, t3, t4)
-    addp t2, t0
-    ipintCheckMemoryBound(t0, t2, 4)
-    # load memory location
-    storei t1, [memoryBase, t0]
-
-    advancePCByReg(t4)
-    nextIPIntInstruction()
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast(1[PC], t0, 4, t1, t2, .ipint_i32_store_mem_slow_path)
+    storei t3, [t0]
+    advancePCAndDispatch(3)
 end)
 
 ipintOp(_i64_store_mem, macro()
     # i64.store
     # pop data
-    popInt64(t1)
+    popInt64(t3)
     # pop index
-    popMemoryIndex(t0, t2)
-	loadMemoryOffsetAndAdvanceMC(t2, t3, t4)
-    addp t2, t0
-    ipintCheckMemoryBound(t0, t2, 8)
-    # load memory location
-    storeq t1, [memoryBase, t0]
-
-    advancePCByReg(t4)
-    nextIPIntInstruction()
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast(1[PC], t0, 8, t1, t2, .ipint_i64_store_mem_slow_path)
+    storeq t3, [t0]
+    advancePCAndDispatch(3)
 end)
 
 ipintOp(_f32_store_mem, macro()
@@ -1203,15 +1144,10 @@ ipintOp(_f32_store_mem, macro()
     # pop data
     popFloat32(ft0)
     # pop index
-    popMemoryIndex(t0, t2)
-	loadMemoryOffsetAndAdvanceMC(t2, t3, t4)
-    addp t2, t0
-    ipintCheckMemoryBound(t0, t2, 4)
-    # load memory location
-    storef ft0, [memoryBase, t0]
-
-    advancePCByReg(t4)
-    nextIPIntInstruction()
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast(1[PC], t0, 4, t1, t2, .ipint_f32_store_mem_slow_path)
+    storef ft0, [t0]
+    advancePCAndDispatch(3)
 end)
 
 ipintOp(_f64_store_mem, macro()
@@ -1219,113 +1155,88 @@ ipintOp(_f64_store_mem, macro()
     # pop data
     popFloat64(ft0)
     # pop index
-    popMemoryIndex(t0, t2)
-	loadMemoryOffsetAndAdvanceMC(t2, t3, t4)
-    addp t2, t0
-    ipintCheckMemoryBound(t0, t2, 8)
-    # load memory location
-    stored ft0, [memoryBase, t0]
-
-    advancePCByReg(t4)
-    nextIPIntInstruction()
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast(1[PC], t0, 8, t1, t2, .ipint_f64_store_mem_slow_path)
+    stored ft0, [t0]
+    advancePCAndDispatch(3)
 end)
 
 ipintOp(_i32_store8_mem, macro()
     # i32.store8
     # pop data
-    popInt32(t1)
+    popInt32(t3)
     # pop index
-    popMemoryIndex(t0, t2)
-	loadMemoryOffsetAndAdvanceMC(t2, t3, t4)
-    addp t2, t0
-    ipintCheckMemoryBound(t0, t2, 1)
-    # load memory location
-    storeb t1, [memoryBase, t0]
-
-    advancePCByReg(t4)
-    nextIPIntInstruction()
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast(1[PC], t0, 1, t1, t2, .ipint_i32_store8_mem_slow_path)
+    storeb t3, [t0]
+    advancePCAndDispatch(3)
 end)
 
 ipintOp(_i32_store16_mem, macro()
     # i32.store16
     # pop data
-    popInt32(t1)
+    popInt32(t3)
     # pop index
-    popMemoryIndex(t0, t2)
-	loadMemoryOffsetAndAdvanceMC(t2, t3, t4)
-    addp t2, t0
-    ipintCheckMemoryBound(t0, t2, 2)
-    # load memory location
-    storeh t1, [memoryBase, t0]
-
-    advancePCByReg(t4)
-    nextIPIntInstruction()
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast(1[PC], t0, 2, t1, t2, .ipint_i32_store16_mem_slow_path)
+    storeh t3, [t0]
+    advancePCAndDispatch(3)
 end)
 
 ipintOp(_i64_store8_mem, macro()
     # i64.store8
     # pop data
-    popInt64(t1)
+    popInt64(t3)
     # pop index
-    popMemoryIndex(t0, t2)
-	loadMemoryOffsetAndAdvanceMC(t2, t3, t4)
-    addp t2, t0
-    ipintCheckMemoryBound(t0, t2, 1)
-    # load memory location
-    storeb t1, [memoryBase, t0]
-
-    advancePCByReg(t4)
-    nextIPIntInstruction()
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast(1[PC], t0, 1, t1, t2, .ipint_i64_store8_mem_slow_path)
+    storeb t3, [t0]
+    advancePCAndDispatch(3)
 end)
 
 ipintOp(_i64_store16_mem, macro()
     # i64.store16
     # pop data
-    popInt64(t1)
+    popInt64(t3)
     # pop index
-    popMemoryIndex(t0, t2)
-	loadMemoryOffsetAndAdvanceMC(t2, t3, t4)
-    addp t2, t0
-    ipintCheckMemoryBound(t0, t2, 2)
-    # load memory location
-    storeh t1, [memoryBase, t0]
-
-    advancePCByReg(t4)
-    nextIPIntInstruction()
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast(1[PC], t0, 2, t1, t2, .ipint_i64_store16_mem_slow_path)
+    storeh t3, [t0]
+    advancePCAndDispatch(3)
 end)
 
 ipintOp(_i64_store32_mem, macro()
     # i64.store32
     # pop data
-    popInt64(t1)
+    popInt64(t3)
     # pop index
-    popMemoryIndex(t0, t2)
-	loadMemoryOffsetAndAdvanceMC(t2, t3, t4)
-    addp t2, t0
-    ipintCheckMemoryBound(t0, t2, 4)
-    # load memory location
-    storei t1, [memoryBase, t0]
-
-    advancePCByReg(t4)
-    nextIPIntInstruction()
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast(1[PC], t0, 4, t1, t2, .ipint_i64_store32_mem_slow_path)
+    storei t3, [t0]
+    advancePCAndDispatch(3)
 end)
 
 ipintOp(_memory_size, macro()
-    loadp JSWebAssemblyInstance::m_cachedMemorySize[wasmInstance], t0
+    loadb IPInt::MemorySizeMetadata::memoryIndex[MC], t0
+    btinz t0, .callMemorySize
+    loadp constexpr (JSWebAssemblyInstance::offsetOfCachedMemory0Size())[wasmInstance], t0 # size of memory 0
+    jmp .doneLoadingMemorySize
+.callMemorySize:
+    move t0, a1
+    operationCall(macro() cCall2(_ipint_extern_memory_size) end)
+    move r0, t0
+.doneLoadingMemorySize:
     urshiftp 16, t0
     zxi2q t0, t0
     pushInt32(t0)
-    advancePC(2)
+    loadb IPInt::MemorySizeMetadata::instructionLength[MC], t0
+    advancePCByReg(t0)
+    advanceMC(constexpr (sizeof(IPInt::MemorySizeMetadata)))
     nextIPIntInstruction()
 end)
 
 ipintOp(_memory_grow, macro()
-    popInt32(a1)
-    operationCall(macro() cCall2(_ipint_extern_memory_grow) end)
-    pushInt32(r0)
-    ipintReloadMemory()
-    advancePC(2)
-    nextIPIntInstruction()
+    jmp _ipint_op_memory_grow
 end)
 
     ################################
@@ -1333,39 +1244,25 @@ end)
     ################################
 
 ipintOp(_i32_const, macro()
-    # i32.const
-    loadb IPInt::InstructionLengthMetadata::length[MC], t1
-    bigteq t1, 2, .ipint_i32_const_slowpath
+    # i32.const - decode signed LEB128 from bytecode
     loadb 1[PC], t0
-    lshiftq 7, t1
-    orq t1, t0
-    sxb2i t0, t0
+    bbaeq t0, 0x80, .ipint_i32_const_slow_path
+    # single byte: sign extend from 7 bits
+    lshifti 25, t0
+    rshifti 25, t0
     pushInt32(t0)
-    advancePC(2)
-    advanceMC(constexpr (sizeof(IPInt::InstructionLengthMetadata)))
-    nextIPIntInstruction()
-.ipint_i32_const_slowpath:
-    # Load pre-computed value from metadata
-    loadi IPInt::Const32Metadata::value[MC], t0
-    # Push to stack
-    pushInt32(t0)
-
-    advancePCByReg(t1)
-    advanceMC(constexpr (sizeof(IPInt::Const32Metadata)))
-    nextIPIntInstruction()
+    advancePCAndDispatch(2)
 end)
 
 ipintOp(_i64_const, macro()
-    # i64.const
-    # Load pre-computed value from metadata
-    loadq IPInt::Const64Metadata::value[MC], t0
-    # Push to stack
+    # i64.const - decode signed LEB128 from bytecode
+    loadb 1[PC], t0
+    bbaeq t0, 0x80, .ipint_i64_const_slow_path
+    # single byte: sign extend from 7 bits
+    lshiftq 57, t0
+    rshiftq 57, t0
     pushInt64(t0)
-    loadb IPInt::Const64Metadata::instructionLength[MC], t0
-
-    advancePCByReg(t0)
-    advanceMC(constexpr (sizeof(IPInt::Const64Metadata)))
-    nextIPIntInstruction()
+    advancePCAndDispatch(2)
 end)
 
 ipintOp(_f32_const, macro()
@@ -1374,8 +1271,7 @@ ipintOp(_f32_const, macro()
     loadf 1[PC], ft0
     pushFloat32(ft0)
 
-    advancePC(5)
-    nextIPIntInstruction()
+    advancePCAndDispatch(5)
 end)
 
 ipintOp(_f64_const, macro()
@@ -1384,8 +1280,7 @@ ipintOp(_f64_const, macro()
     loadd 1[PC], ft0
     pushFloat64(ft0)
 
-    advancePC(9)
-    nextIPIntInstruction()
+    advancePCAndDispatch(9)
 end)
 
     ###############################
@@ -1397,8 +1292,7 @@ ipintOp(_i32_eqz, macro()
     popInt32(t0)
     cieq t0, 0, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i32_eq, macro()
@@ -1407,8 +1301,7 @@ ipintOp(_i32_eq, macro()
     popInt32(t0)
     cieq t0, t1, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i32_ne, macro()
@@ -1417,8 +1310,7 @@ ipintOp(_i32_ne, macro()
     popInt32(t0)
     cineq t0, t1, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i32_lt_s, macro()
@@ -1427,8 +1319,7 @@ ipintOp(_i32_lt_s, macro()
     popInt32(t0)
     cilt t0, t1, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i32_lt_u, macro()
@@ -1437,8 +1328,7 @@ ipintOp(_i32_lt_u, macro()
     popInt32(t0)
     cib t0, t1, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i32_gt_s, macro()
@@ -1447,8 +1337,7 @@ ipintOp(_i32_gt_s, macro()
     popInt32(t0)
     cigt t0, t1, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i32_gt_u, macro()
@@ -1457,8 +1346,7 @@ ipintOp(_i32_gt_u, macro()
     popInt32(t0)
     cia t0, t1, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i32_le_s, macro()
@@ -1467,8 +1355,7 @@ ipintOp(_i32_le_s, macro()
     popInt32(t0)
     cilteq t0, t1, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i32_le_u, macro()
@@ -1477,8 +1364,7 @@ ipintOp(_i32_le_u, macro()
     popInt32(t0)
     cibeq t0, t1, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i32_ge_s, macro()
@@ -1487,8 +1373,7 @@ ipintOp(_i32_ge_s, macro()
     popInt32(t0)
     cigteq t0, t1, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i32_ge_u, macro()
@@ -1497,8 +1382,7 @@ ipintOp(_i32_ge_u, macro()
     popInt32(t0)
     ciaeq t0, t1, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
     ###############################
@@ -1510,8 +1394,7 @@ ipintOp(_i64_eqz, macro()
     popInt64(t0)
     cqeq t0, 0, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i64_eq, macro()
@@ -1520,8 +1403,7 @@ ipintOp(_i64_eq, macro()
     popInt64(t0)
     cqeq t0, t1, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i64_ne, macro()
@@ -1530,8 +1412,7 @@ ipintOp(_i64_ne, macro()
     popInt64(t0)
     cqneq t0, t1, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i64_lt_s, macro()
@@ -1540,8 +1421,7 @@ ipintOp(_i64_lt_s, macro()
     popInt64(t0)
     cqlt t0, t1, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i64_lt_u, macro()
@@ -1550,8 +1430,7 @@ ipintOp(_i64_lt_u, macro()
     popInt64(t0)
     cqb t0, t1, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i64_gt_s, macro()
@@ -1560,8 +1439,7 @@ ipintOp(_i64_gt_s, macro()
     popInt64(t0)
     cqgt t0, t1, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i64_gt_u, macro()
@@ -1570,8 +1448,7 @@ ipintOp(_i64_gt_u, macro()
     popInt64(t0)
     cqa t0, t1, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i64_le_s, macro()
@@ -1580,8 +1457,7 @@ ipintOp(_i64_le_s, macro()
     popInt64(t0)
     cqlteq t0, t1, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i64_le_u, macro()
@@ -1590,8 +1466,7 @@ ipintOp(_i64_le_u, macro()
     popInt64(t0)
     cqbeq t0, t1, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i64_ge_s, macro()
@@ -1600,8 +1475,7 @@ ipintOp(_i64_ge_s, macro()
     popInt64(t0)
     cqgteq t0, t1, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i64_ge_u, macro()
@@ -1610,8 +1484,7 @@ ipintOp(_i64_ge_u, macro()
     popInt64(t0)
     cqaeq t0, t1, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
     ###############################
@@ -1624,8 +1497,7 @@ ipintOp(_f32_eq, macro()
     popFloat32(ft0)
     cfeq ft0, ft1, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f32_ne, macro()
@@ -1634,8 +1506,7 @@ ipintOp(_f32_ne, macro()
     popFloat32(ft0)
     cfnequn ft0, ft1, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f32_lt, macro()
@@ -1644,8 +1515,7 @@ ipintOp(_f32_lt, macro()
     popFloat32(ft0)
     cflt ft0, ft1, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f32_gt, macro()
@@ -1654,8 +1524,7 @@ ipintOp(_f32_gt, macro()
     popFloat32(ft0)
     cfgt ft0, ft1, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f32_le, macro()
@@ -1664,8 +1533,7 @@ ipintOp(_f32_le, macro()
     popFloat32(ft0)
     cflteq ft0, ft1, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f32_ge, macro()
@@ -1674,8 +1542,7 @@ ipintOp(_f32_ge, macro()
     popFloat32(ft0)
     cfgteq ft0, ft1, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
     ###############################
@@ -1688,8 +1555,7 @@ ipintOp(_f64_eq, macro()
     popFloat64(ft0)
     cdeq ft0, ft1, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f64_ne, macro()
@@ -1698,8 +1564,7 @@ ipintOp(_f64_ne, macro()
     popFloat64(ft0)
     cdnequn ft0, ft1, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f64_lt, macro()
@@ -1708,8 +1573,7 @@ ipintOp(_f64_lt, macro()
     popFloat64(ft0)
     cdlt ft0, ft1, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f64_gt, macro()
@@ -1718,8 +1582,7 @@ ipintOp(_f64_gt, macro()
     popFloat64(ft0)
     cdgt ft0, ft1, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f64_le, macro()
@@ -1728,8 +1591,7 @@ ipintOp(_f64_le, macro()
     popFloat64(ft0)
     cdlteq ft0, ft1, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f64_ge, macro()
@@ -1738,8 +1600,7 @@ ipintOp(_f64_ge, macro()
     popFloat64(ft0)
     cdgteq ft0, ft1, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
     ###############################
@@ -1752,8 +1613,7 @@ ipintOp(_i32_clz, macro()
     lzcnti t0, t1
     pushInt32(t1)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i32_ctz, macro()
@@ -1762,8 +1622,7 @@ ipintOp(_i32_ctz, macro()
     tzcnti t0, t1
     pushInt32(t1)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i32_popcnt, macro()
@@ -1772,8 +1631,7 @@ ipintOp(_i32_popcnt, macro()
     operationCall(macro() cCall2(_slow_path_wasm_popcount) end)
     pushInt32(r1)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i32_add, macro()
@@ -1783,8 +1641,7 @@ ipintOp(_i32_add, macro()
     addi t1, t0
     pushInt32(t0)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i32_sub, macro()
@@ -1794,8 +1651,7 @@ ipintOp(_i32_sub, macro()
     subi t1, t0
     pushInt32(t0)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i32_mul, macro()
@@ -1805,18 +1661,17 @@ ipintOp(_i32_mul, macro()
     muli t1, t0
     pushInt32(t0)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i32_div_s, macro()
     # i32.div_s
     popInt32(t1)
     popInt32(t0)
-    btiz t1, .ipint_i32_div_s_throwDivisionByZero
+    btiz t1, _ipint_throw_DivisionByZero
 
     bineq t1, -1, .ipint_i32_div_s_safe
-    bieq t0, constexpr INT32_MIN, .ipint_i32_div_s_throwIntegerOverflow
+    bieq t0, constexpr INT32_MIN, _ipint_throw_IntegerOverflow
 
 .ipint_i32_div_s_safe:
     if X86_64
@@ -1830,21 +1685,14 @@ ipintOp(_i32_div_s, macro()
         error
     end
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
-
-.ipint_i32_div_s_throwDivisionByZero:
-    ipintException(DivisionByZero)
-
-.ipint_i32_div_s_throwIntegerOverflow:
-    ipintException(IntegerOverflow)
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i32_div_u, macro()
     # i32.div_u
     popInt32(t1)
     popInt32(t0)
-    btiz t1, .ipint_i32_div_u_throwDivisionByZero
+    btiz t1, _ipint_throw_DivisionByZero
 
     if X86_64
         xori t2, t2
@@ -1855,11 +1703,7 @@ ipintOp(_i32_div_u, macro()
         error
     end
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
-
-.ipint_i32_div_u_throwDivisionByZero:
-    ipintException(DivisionByZero)
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i32_rem_s, macro()
@@ -1867,7 +1711,7 @@ ipintOp(_i32_rem_s, macro()
     popInt32(t1)
     popInt32(t0)
 
-    btiz t1, .ipint_i32_rem_s_throwDivisionByZero
+    btiz t1, _ipint_throw_DivisionByZero
 
     bineq t1, -1, .ipint_i32_rem_s_safe
     bineq t0, constexpr INT32_MIN, .ipint_i32_rem_s_safe
@@ -1893,18 +1737,14 @@ ipintOp(_i32_rem_s, macro()
 
 .ipint_i32_rem_s_return:
     pushInt32(t2)
-    advancePC(1)
-    nextIPIntInstruction()
-
-.ipint_i32_rem_s_throwDivisionByZero:
-    ipintException(DivisionByZero)
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i32_rem_u, macro()
     # i32.rem_u
     popInt32(t1)
     popInt32(t0)
-    btiz t1, .ipint_i32_rem_u_throwDivisionByZero
+    btiz t1, _ipint_throw_DivisionByZero
 
     if X86_64
         xori t2, t2
@@ -1919,11 +1759,7 @@ ipintOp(_i32_rem_u, macro()
         error
     end
     pushInt32(t2)
-    advancePC(1)
-    nextIPIntInstruction()
-
-.ipint_i32_rem_u_throwDivisionByZero:
-    ipintException(DivisionByZero)
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i32_and, macro()
@@ -1933,8 +1769,7 @@ ipintOp(_i32_and, macro()
     andi t1, t0
     pushInt32(t0)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i32_or, macro()
@@ -1944,8 +1779,7 @@ ipintOp(_i32_or, macro()
     ori t1, t0
     pushInt32(t0)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i32_xor, macro()
@@ -1955,8 +1789,7 @@ ipintOp(_i32_xor, macro()
     xori t1, t0
     pushInt32(t0)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i32_shl, macro()
@@ -1966,8 +1799,7 @@ ipintOp(_i32_shl, macro()
     lshifti t1, t0
     pushInt32(t0)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i32_shr_s, macro()
@@ -1977,8 +1809,7 @@ ipintOp(_i32_shr_s, macro()
     rshifti t1, t0
     pushInt32(t0)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i32_shr_u, macro()
@@ -1988,8 +1819,7 @@ ipintOp(_i32_shr_u, macro()
     urshifti t1, t0
     pushInt32(t0)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i32_rotl, macro()
@@ -1999,8 +1829,7 @@ ipintOp(_i32_rotl, macro()
     lrotatei t1, t0
     pushInt32(t0)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i32_rotr, macro()
@@ -2010,8 +1839,7 @@ ipintOp(_i32_rotr, macro()
     rrotatei t1, t0
     pushInt32(t0)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
     ###############################
@@ -2024,8 +1852,7 @@ ipintOp(_i64_clz, macro()
     lzcntq t0, t1
     pushInt64(t1)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i64_ctz, macro()
@@ -2034,8 +1861,7 @@ ipintOp(_i64_ctz, macro()
     tzcntq t0, t1
     pushInt64(t1)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i64_popcnt, macro()
@@ -2044,8 +1870,7 @@ ipintOp(_i64_popcnt, macro()
     operationCall(macro() cCall2(_slow_path_wasm_popcountll) end)
     pushInt64(r1)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i64_add, macro()
@@ -2055,8 +1880,7 @@ ipintOp(_i64_add, macro()
     addq t1, t0
     pushInt64(t0)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i64_sub, macro()
@@ -2066,8 +1890,7 @@ ipintOp(_i64_sub, macro()
     subq t1, t0
     pushInt64(t0)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i64_mul, macro()
@@ -2077,18 +1900,17 @@ ipintOp(_i64_mul, macro()
     mulq t1, t0
     pushInt64(t0)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i64_div_s, macro()
     # i64.div_s
     popInt64(t1)
     popInt64(t0)
-    btqz t1, .ipint_i64_div_s_throwDivisionByZero
+    btqz t1, _ipint_throw_DivisionByZero
 
     bqneq t1, -1, .ipint_i64_div_s_safe
-    bqeq t0, constexpr INT64_MIN, .ipint_i64_div_s_throwIntegerOverflow
+    bqeq t0, constexpr INT64_MIN, _ipint_throw_IntegerOverflow
 
 .ipint_i64_div_s_safe:
     if X86_64
@@ -2102,21 +1924,14 @@ ipintOp(_i64_div_s, macro()
         error
     end
     pushInt64(t0)
-    advancePC(1)
-    nextIPIntInstruction()
-
-.ipint_i64_div_s_throwDivisionByZero:
-    ipintException(DivisionByZero)
-
-.ipint_i64_div_s_throwIntegerOverflow:
-    ipintException(IntegerOverflow)
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i64_div_u, macro()
     # i64.div_u
     popInt64(t1)
     popInt64(t0)
-    btqz t1, .ipint_i64_div_u_throwDivisionByZero
+    btqz t1, _ipint_throw_DivisionByZero
 
     if X86_64
         xorq t2, t2
@@ -2127,11 +1942,7 @@ ipintOp(_i64_div_u, macro()
         error
     end
     pushInt64(t0)
-    advancePC(1)
-    nextIPIntInstruction()
-
-.ipint_i64_div_u_throwDivisionByZero:
-    ipintException(DivisionByZero)
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i64_rem_s, macro()
@@ -2139,7 +1950,7 @@ ipintOp(_i64_rem_s, macro()
     popInt64(t1)
     popInt64(t0)
 
-    btqz t1, .ipint_i64_rem_s_throwDivisionByZero
+    btqz t1, _ipint_throw_DivisionByZero
 
     bqneq t1, -1, .ipint_i64_rem_s_safe
     bqneq t0, constexpr INT64_MIN, .ipint_i64_rem_s_safe
@@ -2165,18 +1976,14 @@ ipintOp(_i64_rem_s, macro()
 
 .ipint_i64_rem_s_return:
     pushInt64(t2)
-    advancePC(1)
-    nextIPIntInstruction()
-
-.ipint_i64_rem_s_throwDivisionByZero:
-    ipintException(DivisionByZero)
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i64_rem_u, macro()
     # i64.rem_u
     popInt64(t1)
     popInt64(t0)
-    btqz t1, .ipint_i64_rem_u_throwDivisionByZero
+    btqz t1, _ipint_throw_DivisionByZero
 
     if X86_64
         xorq t2, t2
@@ -2191,11 +1998,7 @@ ipintOp(_i64_rem_u, macro()
         error
     end
     pushInt64(t2)
-    advancePC(1)
-    nextIPIntInstruction()
-
-.ipint_i64_rem_u_throwDivisionByZero:
-    ipintException(DivisionByZero)
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i64_and, macro()
@@ -2205,8 +2008,7 @@ ipintOp(_i64_and, macro()
     andq t1, t0
     pushInt64(t0)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i64_or, macro()
@@ -2216,8 +2018,7 @@ ipintOp(_i64_or, macro()
     orq t1, t0
     pushInt64(t0)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i64_xor, macro()
@@ -2227,8 +2028,7 @@ ipintOp(_i64_xor, macro()
     xorq t1, t0
     pushInt64(t0)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i64_shl, macro()
@@ -2238,8 +2038,7 @@ ipintOp(_i64_shl, macro()
     lshiftq t1, t0
     pushInt64(t0)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i64_shr_s, macro()
@@ -2249,8 +2048,7 @@ ipintOp(_i64_shr_s, macro()
     rshiftq t1, t0
     pushInt64(t0)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i64_shr_u, macro()
@@ -2260,8 +2058,7 @@ ipintOp(_i64_shr_u, macro()
     urshiftq t1, t0
     pushInt64(t0)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i64_rotl, macro()
@@ -2271,8 +2068,7 @@ ipintOp(_i64_rotl, macro()
     lrotateq t1, t0
     pushInt64(t0)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i64_rotr, macro()
@@ -2282,8 +2078,7 @@ ipintOp(_i64_rotr, macro()
     rrotateq t1, t0
     pushInt64(t0)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
     ###############################
@@ -2296,8 +2091,7 @@ ipintOp(_f32_abs, macro()
     absf ft0, ft1
     pushFloat32(ft1)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f32_neg, macro()
@@ -2306,8 +2100,7 @@ ipintOp(_f32_neg, macro()
     negf ft0, ft1
     pushFloat32(ft1)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f32_ceil, macro()
@@ -2316,8 +2109,7 @@ ipintOp(_f32_ceil, macro()
     ceilf ft0, ft1
     pushFloat32(ft1)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f32_floor, macro()
@@ -2326,8 +2118,7 @@ ipintOp(_f32_floor, macro()
     floorf ft0, ft1
     pushFloat32(ft1)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f32_trunc, macro()
@@ -2336,8 +2127,7 @@ ipintOp(_f32_trunc, macro()
     truncatef ft0, ft1
     pushFloat32(ft1)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f32_nearest, macro()
@@ -2346,8 +2136,7 @@ ipintOp(_f32_nearest, macro()
     roundf ft0, ft1
     pushFloat32(ft1)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f32_sqrt, macro()
@@ -2356,8 +2145,7 @@ ipintOp(_f32_sqrt, macro()
     sqrtf ft0, ft1
     pushFloat32(ft1)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f32_add, macro()
@@ -2367,8 +2155,7 @@ ipintOp(_f32_add, macro()
     addf ft1, ft0
     pushFloat32(ft0)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f32_sub, macro()
@@ -2378,8 +2165,7 @@ ipintOp(_f32_sub, macro()
     subf ft1, ft0
     pushFloat32(ft0)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f32_mul, macro()
@@ -2389,8 +2175,7 @@ ipintOp(_f32_mul, macro()
     mulf ft1, ft0
     pushFloat32(ft0)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f32_div, macro()
@@ -2400,8 +2185,7 @@ ipintOp(_f32_div, macro()
     divf ft1, ft0
     pushFloat32(ft0)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f32_min, macro()
@@ -2414,59 +2198,42 @@ ipintOp(_f32_min, macro()
 
 .ipint_f32_min_NaN:
     addf ft0, ft1
-    pushFloat32(ft1)
-    advancePC(1)
-    nextIPIntInstruction()
+    jmp .ipint_f32_min_return
 
 .ipint_f32_min_equal:
     orf ft0, ft1
-    pushFloat32(ft1)
-    advancePC(1)
-    nextIPIntInstruction()
+    jmp .ipint_f32_min_return
 
 .ipint_f32_min_lt:
     moved ft0, ft1
-    pushFloat32(ft1)
-    advancePC(1)
-    nextIPIntInstruction()
 
 .ipint_f32_min_return:
     pushFloat32(ft1)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f32_max, macro()
     # f32.max
     popFloat32(ft1)
     popFloat32(ft0)
-
     bfeq ft1, ft0, .ipint_f32_max_equal
     bflt ft1, ft0, .ipint_f32_max_lt
     bfgt ft1, ft0, .ipint_f32_max_return
 
 .ipint_f32_max_NaN:
     addf ft0, ft1
-    pushFloat32(ft1)
-    advancePC(1)
-    nextIPIntInstruction()
+    jmp .ipint_f32_max_return
 
 .ipint_f32_max_equal:
     andf ft0, ft1
-    pushFloat32(ft1)
-    advancePC(1)
-    nextIPIntInstruction()
+    jmp .ipint_f32_max_return
 
 .ipint_f32_max_lt:
     moved ft0, ft1
-    pushFloat32(ft1)
-    advancePC(1)
-    nextIPIntInstruction()
 
 .ipint_f32_max_return:
     pushFloat32(ft1)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f32_copysign, macro()
@@ -2487,8 +2254,7 @@ ipintOp(_f32_copysign, macro()
 
     pushFloat32(ft0)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
     ###############################
@@ -2501,8 +2267,7 @@ ipintOp(_f64_abs, macro()
     absd ft0, ft1
     pushFloat64(ft1)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f64_neg, macro()
@@ -2511,8 +2276,7 @@ ipintOp(_f64_neg, macro()
     negd ft0, ft1
     pushFloat64(ft1)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f64_ceil, macro()
@@ -2521,8 +2285,7 @@ ipintOp(_f64_ceil, macro()
     ceild ft0, ft1
     pushFloat64(ft1)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f64_floor, macro()
@@ -2531,8 +2294,7 @@ ipintOp(_f64_floor, macro()
     floord ft0, ft1
     pushFloat64(ft1)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f64_trunc, macro()
@@ -2541,8 +2303,7 @@ ipintOp(_f64_trunc, macro()
     truncated ft0, ft1
     pushFloat64(ft1)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f64_nearest, macro()
@@ -2551,8 +2312,7 @@ ipintOp(_f64_nearest, macro()
     roundd ft0, ft1
     pushFloat64(ft1)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f64_sqrt, macro()
@@ -2561,8 +2321,7 @@ ipintOp(_f64_sqrt, macro()
     sqrtd ft0, ft1
     pushFloat64(ft1)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f64_add, macro()
@@ -2572,8 +2331,7 @@ ipintOp(_f64_add, macro()
     addd ft1, ft0
     pushFloat64(ft0)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f64_sub, macro()
@@ -2583,8 +2341,7 @@ ipintOp(_f64_sub, macro()
     subd ft1, ft0
     pushFloat64(ft0)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f64_mul, macro()
@@ -2594,8 +2351,7 @@ ipintOp(_f64_mul, macro()
     muld ft1, ft0
     pushFloat64(ft0)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f64_div, macro()
@@ -2605,8 +2361,7 @@ ipintOp(_f64_div, macro()
     divd ft1, ft0
     pushFloat64(ft0)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f64_min, macro()
@@ -2619,59 +2374,42 @@ ipintOp(_f64_min, macro()
 
 .ipint_f64_min_NaN:
     addd ft0, ft1
-    pushFloat64(ft1)
-    advancePC(1)
-    nextIPIntInstruction()
+    jmp .ipint_f64_min_return
 
 .ipint_f64_min_equal:
     ord ft0, ft1
-    pushFloat64(ft1)
-    advancePC(1)
-    nextIPIntInstruction()
+    jmp .ipint_f64_min_return
 
 .ipint_f64_min_lt:
     moved ft0, ft1
-    pushFloat64(ft1)
-    advancePC(1)
-    nextIPIntInstruction()
 
 .ipint_f64_min_return:
     pushFloat64(ft1)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f64_max, macro()
     # f64.max
     popFloat64(ft1)
     popFloat64(ft0)
-
     bdeq ft1, ft0, .ipint_f64_max_equal
     bdlt ft1, ft0, .ipint_f64_max_lt
     bdgt ft1, ft0, .ipint_f64_max_return
 
 .ipint_f64_max_NaN:
     addd ft0, ft1
-    pushFloat64(ft1)
-    advancePC(1)
-    nextIPIntInstruction()
+    jmp .ipint_f64_max_return
 
 .ipint_f64_max_equal:
     andd ft0, ft1
-    pushFloat64(ft1)
-    advancePC(1)
-    nextIPIntInstruction()
+    jmp .ipint_f64_max_return
 
 .ipint_f64_max_lt:
     moved ft0, ft1
-    pushFloat64(ft1)
-    advancePC(1)
-    nextIPIntInstruction()
 
 .ipint_f64_max_return:
     pushFloat64(ft1)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f64_copysign, macro()
@@ -2692,8 +2430,7 @@ ipintOp(_f64_copysign, macro()
 
     pushFloat64(ft0)
 
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
     ############################
@@ -2702,8 +2439,7 @@ end)
 
 ipintOp(_i32_wrap_i64, macro()
     # because of how we store values on stack, do nothing
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 
@@ -2711,84 +2447,70 @@ ipintOp(_i32_trunc_f32_s, macro()
     popFloat32(ft0)
     move 0xcf000000, t0 # INT32_MIN (Note that INT32_MIN - 1.0 in float is the same as INT32_MIN in float).
     fi2f t0, ft1
-    bfltun ft0, ft1, .ipint_trunc_i32_f32_s_outOfBoundsTrunc
+    bfltun ft0, ft1, _ipint_throw_OutOfBoundsTrunc
 
     move 0x4f000000, t0 # -INT32_MIN
     fi2f t0, ft1
-    bfgtequn ft0, ft1, .ipint_trunc_i32_f32_s_outOfBoundsTrunc
+    bfgtequn ft0, ft1, _ipint_throw_OutOfBoundsTrunc
 
     truncatef2is ft0, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 
-.ipint_trunc_i32_f32_s_outOfBoundsTrunc:
-    ipintException(OutOfBoundsTrunc)
 end)
 
 ipintOp(_i32_trunc_f32_u, macro()
     popFloat32(ft0)
     move 0xbf800000, t0 # -1.0
     fi2f t0, ft1
-    bfltequn ft0, ft1, .ipint_trunc_i32_f32_u_outOfBoundsTrunc
+    bfltequn ft0, ft1, _ipint_throw_OutOfBoundsTrunc
 
     move 0x4f800000, t0 # INT32_MIN * -2.0
     fi2f t0, ft1
-    bfgtequn ft0, ft1, .ipint_trunc_i32_f32_u_outOfBoundsTrunc
+    bfgtequn ft0, ft1, _ipint_throw_OutOfBoundsTrunc
 
     truncatef2i ft0, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 
-.ipint_trunc_i32_f32_u_outOfBoundsTrunc:
-    ipintException(OutOfBoundsTrunc)
 end)
 
 ipintOp(_i32_trunc_f64_s, macro()
     popFloat64(ft0)
     move 0xc1e0000000200000, t0 # INT32_MIN - 1.0
     fq2d t0, ft1
-    bdltequn ft0, ft1, .ipint_trunc_i32_f64_s_outOfBoundsTrunc
+    bdltequn ft0, ft1, _ipint_throw_OutOfBoundsTrunc
 
     move 0x41e0000000000000, t0 # -INT32_MIN
     fq2d t0, ft1
-    bdgtequn ft0, ft1, .ipint_trunc_i32_f64_s_outOfBoundsTrunc
+    bdgtequn ft0, ft1, _ipint_throw_OutOfBoundsTrunc
 
     truncated2is ft0, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 
-.ipint_trunc_i32_f64_s_outOfBoundsTrunc:
-    ipintException(OutOfBoundsTrunc)
 end)
 
 ipintOp(_i32_trunc_f64_u, macro()
     popFloat64(ft0)
     move 0xbff0000000000000, t0 # -1.0
     fq2d t0, ft1
-    bdltequn ft0, ft1, .ipint_trunc_i32_f64_u_outOfBoundsTrunc
+    bdltequn ft0, ft1, _ipint_throw_OutOfBoundsTrunc
 
     move 0x41f0000000000000, t0 # INT32_MIN * -2.0
     fq2d t0, ft1
-    bdgtequn ft0, ft1, .ipint_trunc_i32_f64_u_outOfBoundsTrunc
+    bdgtequn ft0, ft1, _ipint_throw_OutOfBoundsTrunc
 
     truncated2i ft0, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
-
-.ipint_trunc_i32_f64_u_outOfBoundsTrunc:
-    ipintException(OutOfBoundsTrunc)
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i64_extend_i32_s, macro()
     popInt32(t0)
     sxi2q t0, t0
     pushInt64(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i64_extend_i32_u, macro()
@@ -2797,110 +2519,94 @@ ipintOp(_i64_extend_i32_u, macro()
     noti t1
     andq t1, t0
     pushInt64(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i64_trunc_f32_s, macro()
     popFloat32(ft0)
     move 0xdf000000, t0 # INT64_MIN
     fi2f t0, ft1
-    bfltun ft0, ft1, .ipint_trunc_i64_f32_s_outOfBoundsTrunc
+    bfltun ft0, ft1, _ipint_throw_OutOfBoundsTrunc
 
     move 0x5f000000, t0 # -INT64_MIN
     fi2f t0, ft1
-    bfgtequn ft0, ft1, .ipint_trunc_i64_f32_s_outOfBoundsTrunc
+    bfgtequn ft0, ft1, _ipint_throw_OutOfBoundsTrunc
 
     truncatef2qs ft0, t0
     pushInt64(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 
-.ipint_trunc_i64_f32_s_outOfBoundsTrunc:
-    ipintException(OutOfBoundsTrunc)
 end)
 
 ipintOp(_i64_trunc_f32_u, macro()
     popFloat32(ft0)
     move 0xbf800000, t0 # -1.0
     fi2f t0, ft1
-    bfltequn ft0, ft1, .ipint_i64_f32_u_outOfBoundsTrunc
+    bfltequn ft0, ft1, _ipint_throw_OutOfBoundsTrunc
 
     move 0x5f800000, t0 # INT64_MIN * -2.0
     fi2f t0, ft1
-    bfgtequn ft0, ft1, .ipint_i64_f32_u_outOfBoundsTrunc
+    bfgtequn ft0, ft1, _ipint_throw_OutOfBoundsTrunc
 
     truncatef2q ft0, t0
     pushInt64(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 
-.ipint_i64_f32_u_outOfBoundsTrunc:
-    ipintException(OutOfBoundsTrunc)
 end)
 
 ipintOp(_i64_trunc_f64_s, macro()
     popFloat64(ft0)
     move 0xc3e0000000000000, t0 # INT64_MIN
     fq2d t0, ft1
-    bdltun ft0, ft1, .ipint_i64_f64_s_outOfBoundsTrunc
+    bdltun ft0, ft1, _ipint_throw_OutOfBoundsTrunc
 
     move 0x43e0000000000000, t0 # -INT64_MIN
     fq2d t0, ft1
-    bdgtequn ft0, ft1, .ipint_i64_f64_s_outOfBoundsTrunc
+    bdgtequn ft0, ft1, _ipint_throw_OutOfBoundsTrunc
 
     truncated2qs ft0, t0
     pushInt64(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 
-.ipint_i64_f64_s_outOfBoundsTrunc:
-    ipintException(OutOfBoundsTrunc)
 end)
 
 ipintOp(_i64_trunc_f64_u, macro()
     popFloat64(ft0)
     move 0xbff0000000000000, t0 # -1.0
     fq2d t0, ft1
-    bdltequn ft0, ft1, .ipint_i64_f64_u_outOfBoundsTrunc
+    bdltequn ft0, ft1, _ipint_throw_OutOfBoundsTrunc
 
     move 0x43f0000000000000, t0 # INT64_MIN * -2.0
     fq2d t0, ft1
-    bdgtequn ft0, ft1, .ipint_i64_f64_u_outOfBoundsTrunc
+    bdgtequn ft0, ft1, _ipint_throw_OutOfBoundsTrunc
 
     truncated2q ft0, t0
     pushInt64(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 
-.ipint_i64_f64_u_outOfBoundsTrunc:
-    ipintException(OutOfBoundsTrunc)
 end)
 
 ipintOp(_f32_convert_i32_s, macro()
     popInt32(t0)
-    andq 0xffffffff, t0
+    zxi2q t0, t0
     ci2fs t0, ft0
     pushFloat32(ft0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f32_convert_i32_u, macro()
     popInt32(t0)
-    andq 0xffffffff, t0
+    zxi2q t0, t0
     ci2f t0, ft0
     pushFloat32(ft0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f32_convert_i64_s, macro()
     popInt64(t0)
     cq2fs t0, ft0
     pushFloat32(ft0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f32_convert_i64_u, macro()
@@ -2911,42 +2617,37 @@ ipintOp(_f32_convert_i64_u, macro()
         cq2f t0, ft0
     end
     pushFloat32(ft0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f32_demote_f64, macro()
     popFloat64(ft0)
     cd2f ft0, ft0
     pushFloat32(ft0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f64_convert_i32_s, macro()
     popInt32(t0)
-    andq 0xffffffff, t0
+    zxi2q t0, t0
     ci2ds t0, ft0
     pushFloat64(ft0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f64_convert_i32_u, macro()
     popInt32(t0)
-    andq 0xffffffff, t0
+    zxi2q t0, t0
     ci2d t0, ft0
     pushFloat64(ft0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f64_convert_i64_s, macro()
     popInt64(t0)
     cq2ds t0, ft0
     pushFloat64(ft0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f64_convert_i64_u, macro()
@@ -2957,44 +2658,38 @@ ipintOp(_f64_convert_i64_u, macro()
         cq2d t0, ft0
     end
     pushFloat64(ft0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f64_promote_f32, macro()
     popFloat32(ft0)
     cf2d ft0, ft0
     pushFloat64(ft0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i32_reinterpret_f32, macro()
     popFloat32(ft0)
     ff2i ft0, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i64_reinterpret_f64, macro()
     popFloat64(ft0)
     fd2q ft0, t0
     pushInt64(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f32_reinterpret_i32, macro()
     # nop because of stack layout
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_f64_reinterpret_i64, macro()
     # nop because of stack layout
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i32_extend8_s, macro()
@@ -3002,8 +2697,7 @@ ipintOp(_i32_extend8_s, macro()
     popInt32(t0)
     sxb2i t0, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i32_extend16_s, macro()
@@ -3011,8 +2705,7 @@ ipintOp(_i32_extend16_s, macro()
     popInt32(t0)
     sxh2i t0, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i64_extend8_s, macro()
@@ -3020,8 +2713,7 @@ ipintOp(_i64_extend8_s, macro()
     popInt64(t0)
     sxb2q t0, t0
     pushInt64(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i64_extend16_s, macro()
@@ -3029,8 +2721,7 @@ ipintOp(_i64_extend16_s, macro()
     popInt64(t0)
     sxh2q t0, t0
     pushInt64(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_i64_extend32_s, macro()
@@ -3038,8 +2729,7 @@ ipintOp(_i64_extend32_s, macro()
     popInt64(t0)
     sxi2q t0, t0
     pushInt64(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 reservedOpcode(0xc5)
@@ -3059,11 +2749,11 @@ reservedOpcode(0xcf)
     #####################
 
 ipintOp(_ref_null_t, macro()
-    loadi IPInt::Const32Metadata::value[MC], t0
+    # Push null value, skip heap type LEB128 in bytecode
+    move ValueNull, t0
     pushQuad(t0)
-    loadb IPInt::Const32Metadata::instructionLength[MC], t0
-    advancePC(t0)
-    advanceMC(constexpr (sizeof(IPInt::Const32Metadata)))
+    leap 1[PC], PC
+    skipLEB128(PC, t0)
     nextIPIntInstruction()
 end)
 
@@ -3071,17 +2761,16 @@ ipintOp(_ref_is_null, macro()
     popQuad(t0)
     cqeq t0, ValueNull, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_ref_func, macro()
-    loadi IPInt::Const32Metadata::value[MC], a1
+    loadi IPInt::RefFuncMetadata::index[MC], a1
     operationCall(macro() cCall2(_ipint_extern_ref_func) end)
     pushQuad(r0)
-    loadb IPInt::Const32Metadata::instructionLength[MC], t0
+    loadb IPInt::RefFuncMetadata::instructionLength[MC], t0
     advancePC(t0)
-    advanceMC(constexpr (sizeof(IPInt::Const32Metadata)))
+    advanceMC(constexpr (sizeof(IPInt::RefFuncMetadata)))
     nextIPIntInstruction()
 end)
 
@@ -3090,17 +2779,13 @@ ipintOp(_ref_eq, macro()
     popQuad(t1)
     cqeq t0, t1, t0
     pushInt32(t0)
-    advancePC(1)
-    nextIPIntInstruction()
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_ref_as_non_null, macro()
     loadq [sp], t0
-    bqeq t0, ValueNull, .ref_as_non_null_nullRef
-    advancePC(1)
-    nextIPIntInstruction()
-.ref_as_non_null_nullRef:
-    throwException(NullRefAsNonNull)
+    bqeq t0, ValueNull, _ipint_throw_NullRefAsNonNull
+    advancePCAndDispatch(1)
 end)
 
 ipintOp(_br_on_null, macro()
@@ -3170,16 +2855,17 @@ reservedOpcode(0xfa)
 # the changes should be matched in IPINT_INSTRUCTIONS in Tools/lldb/debug_ipint.py
 
 ipintOp(_gc_prefix, macro()
-    decodeLEBVarUInt32(1, t0, t1, t2, t3, t4)
+    leap 1[PC], t4
+    decodeLEBVarUInt(t0, t4, t1, t2)
     # Security guarantee: always less than 30 (0x00 -> 0x1e)
     biaeq t0, 0x1f, .ipint_gc_nonexistent
     leap _os_script_config_storage, t1
     loadp JSC::LLInt::OpcodeConfig::ipint_gc_dispatch_base[t1], t1
     if ARM64 or ARM64E
-        addlshiftp t1, t0, 8, t0
+        addlshiftp t1, t0, (constexpr (WTF::fastLog2(JSC::IPInt::alignIPInt))), t0
         jmp t0
     elsif X86_64
-        lshiftq 8, t0
+        lshiftq (constexpr (WTF::fastLog2(JSC::IPInt::alignIPInt))), t0
         addq t1, t0
         jmp t0
     end
@@ -3189,16 +2875,17 @@ ipintOp(_gc_prefix, macro()
 end)
 
 ipintOp(_conversion_prefix, macro()
-    decodeLEBVarUInt32(1, t0, t1, t2, t3, t4)
-    # Security guarantee: always less than 18 (0x00 -> 0x11)
-    biaeq t0, 0x12, .ipint_conversion_nonexistent
+    leap 1[PC], t4
+    decodeLEBVarUInt(t0, t4, t1, t2)
+    # Security guarantee: always less than 23 (0x00 -> 0x16)
+    biaeq t0, 0x17, .ipint_conversion_nonexistent
     leap _os_script_config_storage, t1
     loadp JSC::LLInt::OpcodeConfig::ipint_conversion_dispatch_base[t1], t1
     if ARM64 or ARM64E
-        addlshiftp t1, t0, 8, t0
+        addlshiftp t1, t0, (constexpr (WTF::fastLog2(JSC::IPInt::alignIPInt))), t0
         jmp t0
     elsif X86_64
-        lshiftq 8, t0
+        lshiftq (constexpr (WTF::fastLog2(JSC::IPInt::alignIPInt))), t0
         addq t1, t0
         jmp t0
     end
@@ -3208,16 +2895,17 @@ ipintOp(_conversion_prefix, macro()
 end)
 
 ipintOp(_simd_prefix, macro()
-    decodeLEBVarUInt32(1, t0, t1, t2, t3, t4)
-    # Security guarantee: always less than 256 (0x00 -> 0xff)
-    biaeq t0, 0x100, .ipint_simd_nonexistent
+    leap 1[PC], t4
+    decodeLEBVarUInt(t0, t4, t1, t2)
+    # Security guarantee: always less than 276 (0x00 -> 0x113, including relaxed SIMD)
+    biaeq t0, 0x114, .ipint_simd_nonexistent
     leap _os_script_config_storage, t1
     loadp JSC::LLInt::OpcodeConfig::ipint_simd_dispatch_base[t1], t1
     if ARM64 or ARM64E
-        addlshiftp t1, t0, 8, t0
+        addlshiftp t1, t0, (constexpr (WTF::fastLog2(JSC::IPInt::alignIPInt))), t0
         jmp t0
     elsif X86_64
-        lshiftq 8, t0
+        lshiftq (constexpr (WTF::fastLog2(JSC::IPInt::alignIPInt))), t0
         addq t1, t0
         jmp t0
     end
@@ -3227,16 +2915,17 @@ ipintOp(_simd_prefix, macro()
 end)
 
 ipintOp(_atomic_prefix, macro()
-    decodeLEBVarUInt32(1, t0, t1, t2, t3, t4)
+    leap 1[PC], t4
+    decodeLEBVarUInt(t0, t4, t1, t2)
     # Security guarantee: always less than 78 (0x00 -> 0x4e)
     biaeq t0, 0x4f, .ipint_atomic_nonexistent
     leap _os_script_config_storage, t1
     loadp JSC::LLInt::OpcodeConfig::ipint_atomic_dispatch_base[t1], t1
     if ARM64 or ARM64E
-        addlshiftp t1, t0, 8, t0
+        addlshiftp t1, t0, (constexpr (WTF::fastLog2(JSC::IPInt::alignIPInt))), t0
         jmp t0
     elsif X86_64
-        lshiftq 8, t0
+        lshiftq (constexpr (WTF::fastLog2(JSC::IPInt::alignIPInt))), t0
         addq t1, t0
         jmp t0
     end
@@ -3457,14 +3146,12 @@ end)
 
 ipintOp(_array_len, macro()
     popQuad(t0)  # array into t0
-    bqeq t0, ValueNull, .nullArray
+    bqeq t0, ValueNull, _ipint_throw_NullAccess
     loadi JSWebAssemblyArray::m_size[t0], t0
     pushInt32(t0)
-    advancePC(2)
+    loadbAndAdvance(MC, t0)
+    advancePCByReg(t0)
     nextIPIntInstruction()
-
-.nullArray:
-    throwException(NullAccess)
 end)
 
 ipintOp(_array_fill, macro()
@@ -3473,9 +3160,8 @@ ipintOp(_array_fill, macro()
 
     addp StackValueSize * 4, sp
 
-    loadb IPInt::ArrayFillMetadata::length[MC], t0
+    loadbAndAdvance(MC, t0)
     advancePCByReg(t0)
-    advanceMC(constexpr (sizeof(IPInt::ArrayFillMetadata)))
     nextIPIntInstruction()
 end)
 
@@ -3485,9 +3171,8 @@ ipintOp(_array_copy, macro()
 
     addp StackValueSize * 5, sp
 
-    loadb IPInt::ArrayFillMetadata::length[MC], t0
+    loadbAndAdvance(MC, t0)
     advancePCByReg(t0)
-    advanceMC(constexpr (sizeof(IPInt::ArrayCopyMetadata)))
     nextIPIntInstruction()
 end)
 
@@ -3576,9 +3261,7 @@ end)
 ipintOp(_br_on_cast, macro()
     validateOpcodeConfig(a1)
     loadi IPInt::RefTestCastMetadata::toHeapType[MC], a1
-    # fb 18 FLAGS
-    loadb 2[PC], a2
-    rshifti 1, a2  # bit 1 = null2
+    loadb IPInt::RefTestCastMetadata::allowNull[MC], a2
     loadq [sp], a3
     operationCall(macro() cCall3(_ipint_extern_ref_test) end)
 
@@ -3594,9 +3277,7 @@ end)
 ipintOp(_br_on_cast_fail, macro()
     validateOpcodeConfig(a1)
     loadi IPInt::RefTestCastMetadata::toHeapType[MC], a1
-    loadb 2[PC], a2
-    # fb 19 FLAGS
-    rshifti 1, a2  # bit 1 = null2
+    loadb IPInt::RefTestCastMetadata::allowNull[MC], a2
     loadq [sp], a3
     operationCall(macro() cCall3(_ipint_extern_ref_test) end)
 
@@ -3613,13 +3294,15 @@ ipintOp(_any_convert_extern, macro()
     popQuad(a1)
     operationCall(macro() cCall2(_ipint_extern_any_convert_extern) end)
     pushQuad(r0)
-    advancePC(2)
+    loadbAndAdvance(MC, t0)
+    advancePCByReg(t0)
     nextIPIntInstruction()
 end)
 
 ipintOp(_extern_convert_any, macro()
     # do nothing
-    advancePC(2)
+    loadbAndAdvance(MC, t0)
+    advancePCByReg(t0)
     nextIPIntInstruction()
 end)
 
@@ -3630,31 +3313,30 @@ ipintOp(_ref_i31, macro()
     orq TagNumber, t0
     pushQuad(t0)
 
-    advancePC(2)
+    loadbAndAdvance(MC, t0)
+    advancePCByReg(t0)
     nextIPIntInstruction()
 end)
 
 ipintOp(_i31_get_s, macro()
     popQuad(t0)
-    bqeq t0, ValueNull, .i31_get_throw
+    bqeq t0, ValueNull, _ipint_throw_NullI31Get
     pushInt32(t0)
 
-    advancePC(2)
+    loadbAndAdvance(MC, t0)
+    advancePCByReg(t0)
     nextIPIntInstruction()
-.i31_get_throw:
-    throwException(NullI31Get)
 end)
 
 ipintOp(_i31_get_u, macro()
     popQuad(t0)
-    bqeq t0, ValueNull, .i31_get_throw
+    bqeq t0, ValueNull, _ipint_throw_NullI31Get
     andq 0x7fffffff, t0
     pushInt32(t0)
 
-    advancePC(2)
+    loadbAndAdvance(MC, t0)
+    advancePCByReg(t0)
     nextIPIntInstruction()
-.i31_get_throw:
-    throwException(NullI31Get)
 end)
 
     #############################
@@ -3673,28 +3355,24 @@ ipintOp(_i32_trunc_sat_f32_s, macro()
     bfgtequn ft0, ft1, .ipint_i32_trunc_sat_f32_s_outOfBoundsTruncSatMax
 
     truncatef2is ft0, t0
-    pushInt32(t0)
 
 .end:
-    loadb IPInt::InstructionLengthMetadata::length[MC], t0
-    advancePCByReg(t0)
-    advanceMC(constexpr (sizeof(IPInt::InstructionLengthMetadata)))
+    pushInt32(t0)
+    loadbAndAdvance(MC, t1)
+    advancePCByReg(t1)
     nextIPIntInstruction()
 
 .ipint_i32_trunc_sat_f32_s_outOfBoundsTruncSatMinOrNaN:
     bfeq ft0, ft0, .ipint_i32_trunc_sat_f32_s_outOfBoundsTruncSatMin
     move 0, t0
-    pushInt32(t0)
     jmp .end
 
 .ipint_i32_trunc_sat_f32_s_outOfBoundsTruncSatMax:
     move (constexpr INT32_MAX), t0
-    pushInt32(t0)
     jmp .end
 
 .ipint_i32_trunc_sat_f32_s_outOfBoundsTruncSatMin:
     move (constexpr INT32_MIN), t0
-    pushInt32(t0)
     jmp .end
 end)
 
@@ -3710,22 +3388,19 @@ ipintOp(_i32_trunc_sat_f32_u, macro()
     bfgtequn ft0, ft1, .ipint_i32_trunc_sat_f32_u_outOfBoundsTruncSatMax
 
     truncatef2i ft0, t0
-    pushInt32(t0)
 
 .end:
-    loadb IPInt::InstructionLengthMetadata::length[MC], t0
-    advancePCByReg(t0)
-    advanceMC(constexpr (sizeof(IPInt::InstructionLengthMetadata)))
+    pushInt32(t0)
+    loadbAndAdvance(MC, t1)
+    advancePCByReg(t1)
     nextIPIntInstruction()
 
 .ipint_i32_trunc_sat_f32_u_outOfBoundsTruncSatMin:
     move 0, t0
-    pushInt32(t0)
     jmp .end
 
 .ipint_i32_trunc_sat_f32_u_outOfBoundsTruncSatMax:
     move (constexpr UINT32_MAX), t0
-    pushInt32(t0)
     jmp .end
 end)
 
@@ -3741,28 +3416,24 @@ ipintOp(_i32_trunc_sat_f64_s, macro()
     bdgtequn ft0, ft1, .ipint_i32_trunc_sat_f64_s_outOfBoundsTruncSatMax
 
     truncated2is ft0, t0
-    pushInt32(t0)
 
 .end:
-    loadb IPInt::InstructionLengthMetadata::length[MC], t0
-    advancePCByReg(t0)
-    advanceMC(constexpr (sizeof(IPInt::InstructionLengthMetadata)))
+    pushInt32(t0)
+    loadbAndAdvance(MC, t1)
+    advancePCByReg(t1)
     nextIPIntInstruction()
 
 .ipint_i32_trunc_sat_f64_s_outOfBoundsTruncSatMinOrNaN:
     bdeq ft0, ft0, .ipint_i32_trunc_sat_f64_s_outOfBoundsTruncSatMin
     move 0, t0
-    pushInt32(t0)
     jmp .end
 
 .ipint_i32_trunc_sat_f64_s_outOfBoundsTruncSatMax:
     move (constexpr INT32_MAX), t0
-    pushInt32(t0)
     jmp .end
 
 .ipint_i32_trunc_sat_f64_s_outOfBoundsTruncSatMin:
     move (constexpr INT32_MIN), t0
-    pushInt32(t0)
     jmp .end
 end)
 
@@ -3778,22 +3449,19 @@ ipintOp(_i32_trunc_sat_f64_u, macro()
     bdgtequn ft0, ft1, .ipint_i32_trunc_sat_f64_u_outOfBoundsTruncSatMax
 
     truncated2i ft0, t0
-    pushInt32(t0)
 
 .end:
-    loadb IPInt::InstructionLengthMetadata::length[MC], t0
-    advancePCByReg(t0)
-    advanceMC(constexpr (sizeof(IPInt::InstructionLengthMetadata)))
+    pushInt32(t0)
+    loadbAndAdvance(MC, t1)
+    advancePCByReg(t1)
     nextIPIntInstruction()
 
 .ipint_i32_trunc_sat_f64_u_outOfBoundsTruncSatMin:
     move 0, t0
-    pushInt32(t0)
     jmp .end
 
 .ipint_i32_trunc_sat_f64_u_outOfBoundsTruncSatMax:
     move (constexpr UINT32_MAX), t0
-    pushInt32(t0)
     jmp .end
 end)
 
@@ -3809,28 +3477,24 @@ ipintOp(_i64_trunc_sat_f32_s, macro()
     bfgtequn ft0, ft1, .ipint_i64_trunc_sat_f32_s_outOfBoundsTruncSatMax
 
     truncatef2qs ft0, t0
-    pushInt64(t0)
 
 .end:
-    loadb IPInt::InstructionLengthMetadata::length[MC], t0
-    advancePCByReg(t0)
-    advanceMC(constexpr (sizeof(IPInt::InstructionLengthMetadata)))
+    pushInt64(t0)
+    loadbAndAdvance(MC, t1)
+    advancePCByReg(t1)
     nextIPIntInstruction()
 
 .ipint_i64_trunc_sat_f32_s_outOfBoundsTruncSatMinOrNaN:
     bfeq ft0, ft0, .ipint_i64_trunc_sat_f32_s_outOfBoundsTruncSatMin
     move 0, t0
-    pushInt64(t0)
     jmp .end
 
 .ipint_i64_trunc_sat_f32_s_outOfBoundsTruncSatMax:
     move (constexpr INT64_MAX), t0
-    pushInt64(t0)
     jmp .end
 
 .ipint_i64_trunc_sat_f32_s_outOfBoundsTruncSatMin:
     move (constexpr INT64_MIN), t0
-    pushInt64(t0)
     jmp .end
 end)
 
@@ -3846,22 +3510,19 @@ ipintOp(_i64_trunc_sat_f32_u, macro()
     bfgtequn ft0, ft1, .ipint_i64_trunc_sat_f32_u_outOfBoundsTruncSatMax
 
     truncatef2q ft0, t0
-    pushInt64(t0)
 
 .end:
-    loadb IPInt::InstructionLengthMetadata::length[MC], t0
-    advancePCByReg(t0)
-    advanceMC(constexpr (sizeof(IPInt::InstructionLengthMetadata)))
+    pushInt64(t0)
+    loadbAndAdvance(MC, t1)
+    advancePCByReg(t1)
     nextIPIntInstruction()
 
 .ipint_i64_trunc_sat_f32_u_outOfBoundsTruncSatMin:
     move 0, t0
-    pushInt64(t0)
     jmp .end
 
 .ipint_i64_trunc_sat_f32_u_outOfBoundsTruncSatMax:
     move (constexpr UINT64_MAX), t0
-    pushInt64(t0)
     jmp .end
 end)
 
@@ -3876,28 +3537,24 @@ ipintOp(_i64_trunc_sat_f64_s, macro()
     bdgtequn ft0, ft1, .ipint_i64_trunc_sat_f64_s_outOfBoundsTruncSatMax
 
     truncated2qs ft0, t0
-    pushInt64(t0)
 
 .end:
-    loadb IPInt::InstructionLengthMetadata::length[MC], t0
-    advancePCByReg(t0)
-    advanceMC(constexpr (sizeof(IPInt::InstructionLengthMetadata)))
+    pushInt64(t0)
+    loadbAndAdvance(MC, t1)
+    advancePCByReg(t1)
     nextIPIntInstruction()
 
 .ipint_i64_trunc_sat_f64_s_outOfBoundsTruncSatMinOrNaN:
     bdeq ft0, ft0, .ipint_i64_trunc_sat_f64_s_outOfBoundsTruncSatMin
     move 0, t0
-    pushInt64(t0)
     jmp .end
 
 .ipint_i64_trunc_sat_f64_s_outOfBoundsTruncSatMax:
     move (constexpr INT64_MAX), t0
-    pushInt64(t0)
     jmp .end
 
 .ipint_i64_trunc_sat_f64_s_outOfBoundsTruncSatMin:
     move (constexpr INT64_MIN), t0
-    pushInt64(t0)
     jmp .end
 end)
 
@@ -3913,70 +3570,74 @@ ipintOp(_i64_trunc_sat_f64_u, macro()
     bdgtequn ft0, ft1, .ipint_i64_trunc_sat_f64_u_outOfBoundsTruncSatMax
 
     truncated2q ft0, t0
-    pushInt64(t0)
 
 .end:
-    loadb IPInt::InstructionLengthMetadata::length[MC], t0
-    advancePCByReg(t0)
-    advanceMC(constexpr (sizeof(IPInt::InstructionLengthMetadata)))
+    pushInt64(t0)
+    loadbAndAdvance(MC, t1)
+    advancePCByReg(t1)
     nextIPIntInstruction()
 
 .ipint_i64_trunc_sat_f64_u_outOfBoundsTruncSatMin:
     move 0, t0
-    pushInt64(t0)
     jmp .end
 
 .ipint_i64_trunc_sat_f64_u_outOfBoundsTruncSatMax:
     move (constexpr UINT64_MAX), t0
-    pushInt64(t0)
     jmp .end
 end)
 
 ipintOp(_memory_init, macro()
     # memory.init
+    loadb IPInt::MemoryInitMetadata::memoryIndex[MC], a3
     move sp, a2
-    loadi 1[MC], a1
-    operationCallMayThrow(macro() cCall3(_ipint_extern_memory_init) end)
+    loadi IPInt::MemoryInitMetadata::dataIndex[MC], a1
+    operationCallMayThrow(macro() cCall4(_ipint_extern_memory_init) end)
     addq 3 * StackValueSize, sp
-    loadb [MC], t0
+    loadb IPInt::MemoryInitMetadata::instructionLength[MC], t0
     advancePCByReg(t0)
-    advanceMC(constexpr (sizeof(IPInt::Const32Metadata))) # xxx check
+    advanceMC(constexpr (sizeof(IPInt::MemoryInitMetadata)))
     nextIPIntInstruction()
 end)
 
 ipintOp(_data_drop, macro()
     # data.drop
-    loadi 1[MC], a1
+    loadi IPInt::DataAccessMetadata::index[MC], a1
     operationCall(macro() cCall2(_ipint_extern_data_drop) end)
-    loadb [MC], t0
+    loadb IPInt::DataAccessMetadata::instructionLength[MC], t0
     advancePCByReg(t0)
-    advanceMC(constexpr (sizeof(IPInt::Const32Metadata))) # xxx check
+    advanceMC(constexpr (sizeof(IPInt::DataAccessMetadata)))
     nextIPIntInstruction()
 end)
 
 ipintOp(_memory_copy, macro()
     # memory.copy
-    popQuad(a3) # n
-    popQuad(a2) # s
-    popQuad(a1) # d
-    operationCallMayThrow(macro() cCall4(_ipint_extern_memory_copy) end)
+    loadb IPInt::MemoryCopyMetadata::dstMemoryIndex[MC], a1
+    pushQuad(a1)
+    loadb IPInt::MemoryCopyMetadata::srcMemoryIndex[MC], a1
+    pushQuad(a1)
+    move sp, a1
+    # starting at top of stack: src memory index, dst memory index, n, s, d
+    operationCallMayThrow(macro() cCall2(_ipint_extern_memory_copy) end)
+    addq 5 * StackValueSize, sp
 
-    loadb IPInt::InstructionLengthMetadata::length[MC], t0
+    loadb IPInt::MemoryCopyMetadata::instructionLength[MC], t0
     advancePCByReg(t0)
-    advanceMC(constexpr (sizeof(IPInt::InstructionLengthMetadata)))
+    advanceMC(constexpr (sizeof(IPInt::MemoryCopyMetadata)))
     nextIPIntInstruction()
 end)
 
 ipintOp(_memory_fill, macro()
     # memory.fill
-    popQuad(a3) # n
-    popQuad(a2) # val
-    popQuad(a1) # d
-    operationCallMayThrow(macro() cCall4(_ipint_extern_memory_fill) end)
+    loadb IPInt::MemoryFillMetadata::memoryIndex[MC], a1
+    pushQuad(a1)
+    move sp, a1
+    # starting at top of stack: memory index, n, val, d
+    operationCallMayThrow(macro() cCall2(_ipint_extern_memory_fill) end)
+    addq 4 * StackValueSize, sp
 
-    loadb IPInt::InstructionLengthMetadata::length[MC], t0
+    loadb IPInt::MemoryFillMetadata::instructionLength[MC], t0
     advancePCByReg(t0)
-    advanceMC(constexpr (sizeof(IPInt::InstructionLengthMetadata)))
+    advanceMC(constexpr (sizeof(IPInt::MemoryFillMetadata)))
     nextIPIntInstruction()
 end)
 
@@ -3994,11 +3655,11 @@ end)
 
 ipintOp(_elem_drop, macro()
     # elem.drop
-    loadi IPInt::Const32Metadata::value[MC], a1
+    loadi IPInt::ElemDropMetadata::index[MC], a1
     operationCall(macro() cCall2(_ipint_extern_elem_drop) end)
-    loadb IPInt::Const32Metadata::instructionLength[MC], t0
+    loadb IPInt::ElemDropMetadata::instructionLength[MC], t0
     advancePCByReg(t0)
-    advanceMC(constexpr (sizeof(IPInt::Const32Metadata)))
+    advanceMC(constexpr (sizeof(IPInt::ElemDropMetadata)))
     nextIPIntInstruction()
 end)
 
@@ -4029,12 +3690,12 @@ end)
 
 ipintOp(_table_size, macro()
     # table.size
-    loadi IPInt::Const32Metadata::value[MC], a1
+    loadi IPInt::TableAccessMetadata::index[MC], a1
     operationCall(macro() cCall2(_ipint_extern_table_size) end)
     pushQuad(r0)
-    loadb IPInt::Const32Metadata::instructionLength[MC], t0
+    loadb IPInt::TableAccessMetadata::instructionLength[MC], t0
     advancePCByReg(t0)
-    advanceMC(constexpr (sizeof(IPInt::Const32Metadata)))
+    advanceMC(constexpr (sizeof(IPInt::TableAccessMetadata)))
     nextIPIntInstruction()
 end)
 
@@ -4050,233 +3711,347 @@ ipintOp(_table_fill, macro()
     nextIPIntInstruction()
 end)
 
+reservedOpcode(misc_0x12)
+    break
+
+##################################
+## Wide Arithmetic Instructions ##
+##################################
+
+ipintOp(_i64_add128, macro()
+    # i64.add128: [lhsLo lhsHi rhsLo rhsHi] -> [resultLo resultHi]
+    # Stack layout (top first): sp[0]=rhsHi, sp[1]=rhsLo, sp[2]=lhsHi, sp[3]=lhsLo
+    popQuad(t3) # rhsHi
+    popQuad(t2) # rhsLo
+    popQuad(t1) # lhsHi
+    popQuad(t0) # lhsLo
+    if ARM64 or ARM64E
+        addqs t0, t2, t0   # resultLo = lhsLo + rhsLo, sets carry flag
+        adcq t1, t3, t1    # resultHi = lhsHi + rhsHi + carry flag
+    elsif X86_64
+        addq t2, t0        # resultLo = lhsLo + rhsLo, sets carry flag
+        adcq t3, t1        # resultHi = lhsHi + rhsHi + carry flag
+    end
+    pushQuad(t0)
+    pushQuad(t1)
+    move t4, PC
+    nextIPIntInstruction()
+end)
+
+ipintOp(_i64_sub128, macro()
+    # i64.sub128: [lhsLo lhsHi rhsLo rhsHi] -> [resultLo resultHi]
+    # Stack layout (top first): sp[0]=rhsHi, sp[1]=rhsLo, sp[2]=lhsHi, sp[3]=lhsLo
+    popQuad(t3) # rhsHi
+    popQuad(t2) # rhsLo
+    popQuad(t1) # lhsHi
+    popQuad(t0) # lhsLo
+    if ARM64 or ARM64E
+        subqs t0, t2, t0   # resultLo = lhsLo - rhsLo, sets carry flag (borrow)
+        sbcq t1, t3, t1    # resultHi = lhsHi - rhsHi - carry flag
+    elsif X86_64
+        subq t2, t0        # resultLo = lhsLo - rhsLo, sets carry flag (borrow)
+        sbcq t3, t1        # resultHi = lhsHi - rhsHi - carry flag
+    end
+    pushQuad(t0)
+    pushQuad(t1)
+    move t4, PC
+    nextIPIntInstruction()
+end)
+
+ipintOp(_i64_mul_wide_s, macro()
+    # i64.mul_wide_s: [lhs rhs] -> [resultLo resultHi]
+    # Stack layout (top first): sp[0]=rhs, sp[1]=lhs
+    popQuad(t1) # rhs
+    popQuad(t0) # lhs
+    if ARM64 or ARM64E
+        smulhq t0, t1, t2  # resultHi = smulh(lhs, rhs) - must precede mulq
+        mulq t1, t0        # resultLo = lhs * rhs
+    elsif X86_64
+        # t0 = rax
+        # t2 = rdx
+        smulhq t1          # imulq %rsi: rdx:rax = rax * rsi -> t0=resultLo, t2=resultHi
+    end
+    pushQuad(t0)
+    pushQuad(t2)
+    move t4, PC
+    nextIPIntInstruction()
+end)
+
+ipintOp(_i64_mul_wide_u, macro()
+    # i64.mul_wide_u: [lhs rhs] -> [resultLo resultHi]
+    # Stack layout (top first): sp[0]=rhs, sp[1]=lhs
+    popQuad(t1) # rhs
+    popQuad(t0) # lhs
+    if ARM64 or ARM64E
+        umulhq t0, t1, t2  # resultHi = umulh(lhs, rhs) - must precede mulq
+        mulq t1, t0        # resultLo = lhs * rhs
+    elsif X86_64
+        # t0 = rax
+        # t2 = rdx
+        umulhq t1          # mulq %rsi: rdx:rax = rax * rsi -> t0=resultLo, t2=resultHi
+    end
+    pushQuad(t0)
+    pushQuad(t2)
+    move t4, PC
+    nextIPIntInstruction()
+end)
+
     #######################
     ## SIMD Instructions ##
     #######################
 
-const ImmLaneIdxOffset = 2 # Offset in bytecode
+const ImmLaneIdxOffset = 0 # Offset from t4 (points past the decoded SIMD opcode)
 const ImmLaneIdx16Mask = 0xf
 const ImmLaneIdx8Mask = 0x7
 const ImmLaneIdx4Mask = 0x3
 const ImmLaneIdx2Mask = 0x1
 
-# 0xFD 0x00 - 0xFD 0x0B: memory
+# Platform-specific SIMD load macros (shared between fast and slow paths).
+# Input: t0 = host pointer (rax on x86_64). Output: v0 = loaded vector.
+# Clobbers: ft0 (ARM64), t1 (splat ops on ARM64).
 
-# Wrapper for SIMD load/store operations. Places linear address in t0 for memOp()
-macro simdMemoryOp(accessSize, memOp)
-    popMemoryIndex(t0, t2)
-    loadi IPInt::Const32Metadata::value[MC], t2
-    addp t2, t0
-    ipintCheckMemoryBound(t0, t2, accessSize)
-
-    memOp()
-
-    loadb IPInt::Const32Metadata::instructionLength[MC], t0
-    advancePCByReg(t0)
-    advanceMC(constexpr (sizeof(IPInt::Const32Metadata)))
-    nextIPIntInstruction()
+macro simdLoad8x8s()
+    if ARM64 or ARM64E
+        loadd [t0], ft0
+        emit "sxtl v16.8h, v0.8b"
+    elsif X86_64
+        emit "pmovsxbw (%rax), %xmm0"
+    else
+        break
+    end
 end
+
+macro simdLoad8x8u()
+    if ARM64 or ARM64E
+        loadd [t0], ft0
+        emit "uxtl v16.8h, v0.8b"
+    elsif X86_64
+        emit "pmovzxbw (%rax), %xmm0"
+    else
+        break
+    end
+end
+
+macro simdLoad16x4s()
+    if ARM64 or ARM64E
+        loadd [t0], ft0
+        emit "sxtl v16.4s, v0.4h"
+    elsif X86_64
+        emit "pmovsxwd (%rax), %xmm0"
+    else
+        break
+    end
+end
+
+macro simdLoad16x4u()
+    if ARM64 or ARM64E
+        loadd [t0], ft0
+        emit "uxtl v16.4s, v0.4h"
+    elsif X86_64
+        emit "pmovzxwd (%rax), %xmm0"
+    else
+        break
+    end
+end
+
+macro simdLoad32x2s()
+    if ARM64 or ARM64E
+        loadd [t0], ft0
+        emit "sxtl v16.2d, v0.2s"
+    elsif X86_64
+        emit "pmovsxdq (%rax), %xmm0"
+    else
+        break
+    end
+end
+
+macro simdLoad32x2u()
+    if ARM64 or ARM64E
+        loadd [t0], ft0
+        emit "uxtl v16.2d, v0.2s"
+    elsif X86_64
+        emit "pmovzxdq (%rax), %xmm0"
+    else
+        break
+    end
+end
+
+macro simdLoadSplat8()
+    if ARM64 or ARM64E
+        loadb [t0], t1
+        emit "dup v16.16b, w1"
+    elsif X86_64
+        emit "vpinsrb $0, (%rax), %xmm0, %xmm0"
+        emit "vpxor %xmm1, %xmm1, %xmm1"
+        emit "vpshufb %xmm1, %xmm0, %xmm0"
+    else
+        break
+    end
+end
+
+macro simdLoadSplat16()
+    if ARM64 or ARM64E
+        loadh [t0], t1
+        emit "dup v16.8h, w1"
+    elsif X86_64
+        emit "vpinsrw $0, (%rax), %xmm0, %xmm0"
+        emit "vpshuflw $0, %xmm0, %xmm0"
+        emit "vpunpcklqdq %xmm0, %xmm0, %xmm0"
+    else
+        break
+    end
+end
+
+macro simdLoadSplat32()
+    if ARM64 or ARM64E
+        loadi [t0], t1
+        emit "dup v16.4s, w1"
+    elsif X86_64
+        emit "vbroadcastss (%rax), %xmm0"
+    else
+        break
+    end
+end
+
+macro simdLoadSplat64()
+    if ARM64 or ARM64E
+        loadq [t0], t1
+        emit "dup v16.2d, x1"
+    elsif X86_64
+        emit "vmovddup (%rax), %xmm0"
+    else
+        break
+    end
+end
+
+# 0xFD 0x00 - 0xFD 0x0B: memory
 
 ipintOp(_simd_v128_load_mem, macro()
     # v128.load
-    simdMemoryOp(16, macro()
-        loadv [memoryBase, t0], v0
-        pushVec(v0)
-    end)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 16, t1, t2, .simd_v128_load_slow_path)
+    loadv [t0], v0
+    pushVec(v0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
 end)
 
 ipintOp(_simd_v128_load_8x8s_mem, macro()
-    # v128.load8x8_s - load 8 8-bit values, sign-extend each to i16
-    simdMemoryOp(8, macro()
-        if ARM64 or ARM64E
-            loadd [memoryBase, t0], ft0
-            # offlineasm ft0 = ARM v0
-            # offlineasm v0 = ARM v16
-            emit "sxtl v16.8h, v0.8b"
-        elsif X86_64
-            # memoryBase is r14, t0 is eax
-            emit "pmovsxbw (%r14,%rax), %xmm0"
-        else
-            break # Not implemented
-        end
-        pushVec(v0)
-    end)
+    # v128.load8x8_s
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 8, t1, t2, .simd_v128_load_8x8s_slow_path)
+    simdLoad8x8s()
+    pushVec(v0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
 end)
 
 ipintOp(_simd_v128_load_8x8u_mem, macro()
-    # v128.load8x8_u - load 8 8-bit values, zero-extend each to i16
-    simdMemoryOp(8, macro()
-        if ARM64 or ARM64E
-            loadd [memoryBase, t0], ft0
-            # offlineasm ft0 = ARM v0
-            # offlineasm v0 = ARM v16
-            emit "uxtl v16.8h, v0.8b"
-        elsif X86_64
-            # memoryBase is r14, t0 is eax
-            emit "pmovzxbw (%r14,%rax), %xmm0"
-        else
-            break # Not implemented
-        end
-        pushVec(v0)
-    end)
+    # v128.load8x8_u
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 8, t1, t2, .simd_v128_load_8x8u_slow_path)
+    simdLoad8x8u()
+    pushVec(v0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
 end)
 
 ipintOp(_simd_v128_load_16x4s_mem, macro()
-    # v128.load16x4_s - load 4 16-bit values, sign-extend each to i32
-    simdMemoryOp(8, macro()
-        if ARM64 or ARM64E
-            loadd [memoryBase, t0], ft0
-            # offlineasm ft0 = ARM v0
-            # offlineasm v0 = ARM v16
-            emit "sxtl v16.4s, v0.4h"
-        elsif X86_64
-            # memoryBase is r14, t0 is eax
-            emit "pmovsxwd (%r14,%rax), %xmm0"
-        else
-            break # Not implemented
-        end
-        pushVec(v0)
-    end)
+    # v128.load16x4_s
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 8, t1, t2, .simd_v128_load_16x4s_slow_path)
+    simdLoad16x4s()
+    pushVec(v0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
 end)
 
 ipintOp(_simd_v128_load_16x4u_mem, macro()
-    # v128.load16x4_u - load 4 16-bit values, zero-extend each to i32
-    simdMemoryOp(8, macro()
-        if ARM64 or ARM64E
-            loadd [memoryBase, t0], ft0
-            # offlineasm ft0 = ARM v0
-            # offlineasm v0 = ARM v16
-            emit "uxtl v16.4s, v0.4h"
-        elsif X86_64
-            # memoryBase is r14, t0 is eax
-            emit "pmovzxwd (%r14,%rax), %xmm0"
-        else
-            break # Not implemented
-        end
-        pushVec(v0)
-    end)
+    # v128.load16x4_u
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 8, t1, t2, .simd_v128_load_16x4u_slow_path)
+    simdLoad16x4u()
+    pushVec(v0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
 end)
 
 ipintOp(_simd_v128_load_32x2s_mem, macro()
-    # v128.load32x2_s - load 2 32-bit values, sign-extend each to i64
-    simdMemoryOp(8, macro()
-        if ARM64 or ARM64E
-            loadd [memoryBase, t0], ft0
-            # offlineasm ft0 = ARM v0
-            # offlineasm v0 = ARM v16
-            emit "sxtl v16.2d, v0.2s"
-        elsif X86_64
-            # memoryBase is r14, t0 is eax
-            emit "pmovsxdq (%r14,%rax), %xmm0"
-        else
-            break # Not implemented
-        end
-        pushVec(v0)
-    end)
+    # v128.load32x2_s
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 8, t1, t2, .simd_v128_load_32x2s_slow_path)
+    simdLoad32x2s()
+    pushVec(v0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
 end)
 
 ipintOp(_simd_v128_load_32x2u_mem, macro()
-    # v128.load32x2_u - load 2 32-bit values, zero-extend each to i64
-    simdMemoryOp(8, macro()
-        if ARM64 or ARM64E
-            loadd [memoryBase, t0], ft0
-            # offlineasm ft0 = ARM v0
-            # offlineasm v0 = ARM v16
-            emit "uxtl v16.2d, v0.2s"
-        elsif X86_64
-            # memoryBase is r14, t0 is eax
-            emit "pmovzxdq (%r14,%rax), %xmm0"
-        else
-            break # Not implemented
-        end
-        pushVec(v0)
-    end)
+    # v128.load32x2_u
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 8, t1, t2, .simd_v128_load_32x2u_slow_path)
+    simdLoad32x2u()
+    pushVec(v0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
 end)
 
 ipintOp(_simd_v128_load8_splat_mem, macro()
-    # v128.load8_splat - load 1 8-bit value and splat to all 16 lanes
-    simdMemoryOp(1, macro()
-        if ARM64 or ARM64E
-            loadb [memoryBase, t0], t1
-            emit "dup v16.16b, w1"
-        elsif X86_64
-            # memoryBase is r14, t0 is eax
-            emit "vpinsrb $0, (%r14,%rax), %xmm0, %xmm0"
-            emit "vpxor %xmm1, %xmm1, %xmm1"
-            emit "vpshufb %xmm1, %xmm0, %xmm0"
-        else
-            break # Not implemented
-        end
-        pushVec(v0)
-    end)
+    # v128.load8_splat
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 1, t1, t2, .simd_v128_load8_splat_slow_path)
+    simdLoadSplat8()
+    pushVec(v0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
 end)
 
 ipintOp(_simd_v128_load16_splat_mem, macro()
-    # v128.load16_splat - load 1 16-bit value and splat to all 8 lanes
-    simdMemoryOp(2, macro()
-        if ARM64 or ARM64E
-            loadh [memoryBase, t0], t1
-            emit "dup v16.8h, w1"
-        elsif X86_64
-            # memoryBase is r14, t0 is eax
-            emit "vpinsrw $0, (%r14,%rax), %xmm0, %xmm0"
-            emit "vpshuflw $0, %xmm0, %xmm0"
-            emit "vpunpcklqdq %xmm0, %xmm0, %xmm0"
-        else
-            break # Not implemented
-        end
-        pushVec(v0)
-    end)
+    # v128.load16_splat
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 2, t1, t2, .simd_v128_load16_splat_slow_path)
+    simdLoadSplat16()
+    pushVec(v0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
 end)
 
 ipintOp(_simd_v128_load32_splat_mem, macro()
-    # v128.load32_splat - load 1 32-bit value and splat to all 4 lanes
-    simdMemoryOp(4, macro()
-        if ARM64 or ARM64E
-            loadi [memoryBase, t0], t1
-            emit "dup v16.4s, w1"
-        elsif X86_64
-            # Load and broadcast 32-bit value directly from memory to all 4 dwords
-            # memoryBase is r14, t0 is eax
-            emit "vbroadcastss (%r14,%rax), %xmm0"
-        else
-            break # Not implemented
-        end
-        pushVec(v0)
-    end)
+    # v128.load32_splat
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 4, t1, t2, .simd_v128_load32_splat_slow_path)
+    simdLoadSplat32()
+    pushVec(v0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
 end)
 
 ipintOp(_simd_v128_load64_splat_mem, macro()
-    # v128.load64_splat - load 1 64-bit value and splat to all 2 lanes
-    simdMemoryOp(8, macro()
-        if ARM64 or ARM64E
-            loadq [memoryBase, t0], t1
-            emit "dup v16.2d, x1"
-        elsif X86_64
-            # Load and broadcast 64-bit value directly from memory to both qwords
-            # memoryBase is r14, t0 is eax
-            emit "vmovddup (%r14,%rax), %xmm0"
-        else
-            break # Not implemented
-        end
-        pushVec(v0)
-    end)
+    # v128.load64_splat
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 8, t1, t2, .simd_v128_load64_splat_slow_path)
+    simdLoadSplat64()
+    pushVec(v0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
 end)
 
 ipintOp(_simd_v128_store_mem, macro()
     # v128.store
     popVec(v0)
-    simdMemoryOp(16, macro()
-        storev v0, [memoryBase, t0]
-    end)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 16, t1, t2, .simd_v128_store_slow_path)
+    storev v0, [t0]
+    leap 2[t4], PC
+    nextIPIntInstruction()
 end)
 
 # 0xFD 0x0C: v128.const
 ipintOp(_simd_v128_const, macro()
     # v128.const
-    loadv 2[PC], v0
+    loadv [t4], v0
     pushVec(v0)
-    advancePC(18)
+    leap 16[t4], PC
     nextIPIntInstruction()
 end)
 
@@ -4287,7 +4062,7 @@ ipintOp(_simd_i8x16_shuffle, macro()
     if ARM64 or ARM64E
         popVec(v1)
         popVec(v0)
-        loadv ImmLaneIdxOffset[PC], v2
+        loadv [t4], v2
         emit "tbl v16.16b, {v16.16b, v17.16b}, v18.16b"
         pushVec(v0)
     else
@@ -4298,7 +4073,7 @@ ipintOp(_simd_i8x16_shuffle, macro()
         move 0, t0
 
     .shuffleLoop:
-        loadb ImmLaneIdxOffset[PC, t0, 1], t1
+        loadb [t4, t0, 1], t1
 
         bigt t1, 31, .outOfBounds
         bigt t1, 15, .useRightVector
@@ -4329,7 +4104,7 @@ ipintOp(_simd_i8x16_shuffle, macro()
         addp 2 * V128ISize, sp            # Pop temp result and right vector
     end
 
-    advancePC(18)  # 2 bytes opcode + 16 bytes immediate
+    leap 16[t4], PC
     nextIPIntInstruction()
 end)
 
@@ -4356,7 +4131,7 @@ ipintOp(_simd_i8x16_swizzle, macro()
     end
 
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -4377,7 +4152,7 @@ ipintOp(_simd_i8x16_splat, macro()
     end
 
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -4397,7 +4172,7 @@ ipintOp(_simd_i16x8_splat, macro()
     end
 
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -4416,7 +4191,7 @@ ipintOp(_simd_i32x4_splat, macro()
     end
 
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -4435,7 +4210,7 @@ ipintOp(_simd_i64x2_splat, macro()
     end
 
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -4453,7 +4228,7 @@ ipintOp(_simd_f32x4_splat, macro()
     end
 
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -4471,156 +4246,156 @@ ipintOp(_simd_f64x2_splat, macro()
     end
 
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
 # 0xFD 0x15 - 0xFD 0x22: extract and replace lanes
 ipintOp(_simd_i8x16_extract_lane_s, macro()
     # i8x16.extract_lane_s (lane)
-    loadb ImmLaneIdxOffset[PC], t0
+    loadb ImmLaneIdxOffset[t4], t0
     andi ImmLaneIdx16Mask, t0
     loadbsi [sp, t0], t0
     addp V128ISize, sp
     pushInt32(t0)
-    advancePC(3)
+    leap 1[t4], PC
     nextIPIntInstruction()
 end)
 
 ipintOp(_simd_i8x16_extract_lane_u, macro()
     # i8x16.extract_lane_u (lane)
-    loadb ImmLaneIdxOffset[PC], t0
+    loadb ImmLaneIdxOffset[t4], t0
     andi ImmLaneIdx16Mask, t0
     loadb [sp, t0], t0
     addp V128ISize, sp
     pushInt32(t0)
-    advancePC(3)
+    leap 1[t4], PC
     nextIPIntInstruction()
 end)
 
 ipintOp(_simd_i8x16_replace_lane, macro()
     # i8x16.replace_lane (lane)
-    loadb ImmLaneIdxOffset[PC], t0
+    loadb ImmLaneIdxOffset[t4], t0
     andi ImmLaneIdx16Mask, t0
     popInt32(t1)  # value to replace with
     storeb t1, [sp, t0]  # replace the byte at lane index
-    advancePC(3)
+    leap 1[t4], PC
     nextIPIntInstruction()
 end)
 
 ipintOp(_simd_i16x8_extract_lane_s, macro()
     # i16x8.extract_lane_s (lane)
-    loadb ImmLaneIdxOffset[PC], t0
+    loadb ImmLaneIdxOffset[t4], t0
     andi ImmLaneIdx8Mask, t0
     loadhsi [sp, t0, 2], t0
     addp V128ISize, sp
     pushInt32(t0)
-    advancePC(3)
+    leap 1[t4], PC
     nextIPIntInstruction()
 end)
 
 ipintOp(_simd_i16x8_extract_lane_u, macro()
     # i16x8.extract_lane_u (lane)
-    loadb ImmLaneIdxOffset[PC], t0
+    loadb ImmLaneIdxOffset[t4], t0
     andi ImmLaneIdx8Mask, t0
     loadh [sp, t0, 2], t0
     addp V128ISize, sp
     pushInt32(t0)
-    advancePC(3)
+    leap 1[t4], PC
     nextIPIntInstruction()
 end)
 
 ipintOp(_simd_i16x8_replace_lane, macro()
     # i16x8.replace_lane (lane)
-    loadb ImmLaneIdxOffset[PC], t0
+    loadb ImmLaneIdxOffset[t4], t0
     andi ImmLaneIdx8Mask, t0
     popInt32(t1)  # value to replace with
     storeh t1, [sp, t0, 2]  # replace the 16-bit value at lane index
-    advancePC(3)
+    leap 1[t4], PC
     nextIPIntInstruction()
 end)
 
 ipintOp(_simd_i32x4_extract_lane, macro()
     # i32x4.extract_lane (lane)
-    loadb ImmLaneIdxOffset[PC], t0
+    loadb ImmLaneIdxOffset[t4], t0
     andi ImmLaneIdx4Mask, t0
     loadi [sp, t0, 4], t0
     addp V128ISize, sp
     pushInt32(t0)
-    advancePC(3)
+    leap 1[t4], PC
     nextIPIntInstruction()
 end)
 
 ipintOp(_simd_i32x4_replace_lane, macro()
     # i32x4.replace_lane (lane)
-    loadb ImmLaneIdxOffset[PC], t0
+    loadb ImmLaneIdxOffset[t4], t0
     andi ImmLaneIdx4Mask, t0
     popInt32(t1)  # value to replace with
     storei t1, [sp, t0, 4]  # replace the 32-bit value at lane index
-    advancePC(3)
+    leap 1[t4], PC
     nextIPIntInstruction()
 end)
 
 ipintOp(_simd_i64x2_extract_lane, macro()
     # i64x2.extract_lane (lane)
-    loadb ImmLaneIdxOffset[PC], t0
+    loadb ImmLaneIdxOffset[t4], t0
     andi ImmLaneIdx2Mask, t0
     loadq [sp, t0, 8], t0
     addp V128ISize, sp
     pushInt64(t0)
-    advancePC(3)
+    leap 1[t4], PC
     nextIPIntInstruction()
 end)
 
 ipintOp(_simd_i64x2_replace_lane, macro()
     # i64x2.replace_lane (lane)
-    loadb ImmLaneIdxOffset[PC], t0
+    loadb ImmLaneIdxOffset[t4], t0
     andi ImmLaneIdx2Mask, t0
     popInt64(t1)  # value to replace with
     storeq t1, [sp, t0, 8]  # replace the 64-bit value at lane index
-    advancePC(3)
+    leap 1[t4], PC
     nextIPIntInstruction()
 end)
 
 ipintOp(_simd_f32x4_extract_lane, macro()
     # f32x4.extract_lane (lane)
-    loadb ImmLaneIdxOffset[PC], t0
+    loadb ImmLaneIdxOffset[t4], t0
     andi ImmLaneIdx4Mask, t0
     loadf [sp, t0, 4], ft0
     addp V128ISize, sp
     pushFloat32(ft0)
-    advancePC(3)
+    leap 1[t4], PC
     nextIPIntInstruction()
 end)
 
 ipintOp(_simd_f32x4_replace_lane, macro()
     # f32x4.replace_lane (lane)
-    loadb ImmLaneIdxOffset[PC], t0
+    loadb ImmLaneIdxOffset[t4], t0
     andi ImmLaneIdx4Mask, t0
     popFloat32(ft0)  # value to replace with
     storef ft0, [sp, t0, 4]  # replace the 32-bit float at lane index
-    advancePC(3)
+    leap 1[t4], PC
     nextIPIntInstruction()
 end)
 
 ipintOp(_simd_f64x2_extract_lane, macro()
     # f64x2.extract_lane (lane)
-    loadb ImmLaneIdxOffset[PC], t0
+    loadb ImmLaneIdxOffset[t4], t0
     andi ImmLaneIdx2Mask, t0
     loadd [sp, t0, 8], ft0
     addp V128ISize, sp
     pushFloat64(ft0)
-    advancePC(3)
+    leap 1[t4], PC
     nextIPIntInstruction()
 end)
 
 ipintOp(_simd_f64x2_replace_lane, macro()
     # f64x2.replace_lane (lane)
-    loadb ImmLaneIdxOffset[PC], t0
+    loadb ImmLaneIdxOffset[t4], t0
     andi ImmLaneIdx2Mask, t0
     popFloat64(ft0)  # value to replace with
     stored ft0, [sp, t0, 8]  # replace the 64-bit float at lane index
-    advancePC(3)
+    leap 1[t4], PC
     nextIPIntInstruction()
 end)
 
@@ -4637,7 +4412,7 @@ ipintOp(_simd_i8x16_eq, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -4658,7 +4433,7 @@ ipintOp(_simd_i8x16_ne, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -4676,7 +4451,7 @@ ipintOp(_simd_i8x16_lt_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -4697,7 +4472,7 @@ ipintOp(_simd_i8x16_lt_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -4713,7 +4488,7 @@ ipintOp(_simd_i8x16_gt_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -4733,7 +4508,7 @@ ipintOp(_simd_i8x16_gt_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -4753,7 +4528,7 @@ ipintOp(_simd_i8x16_le_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -4772,7 +4547,7 @@ ipintOp(_simd_i8x16_le_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -4791,7 +4566,7 @@ ipintOp(_simd_i8x16_ge_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -4809,7 +4584,7 @@ ipintOp(_simd_i8x16_ge_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -4827,7 +4602,7 @@ ipintOp(_simd_i16x8_eq, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -4847,7 +4622,7 @@ ipintOp(_simd_i16x8_ne, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -4865,7 +4640,7 @@ ipintOp(_simd_i16x8_lt_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -4886,7 +4661,7 @@ ipintOp(_simd_i16x8_lt_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -4902,7 +4677,7 @@ ipintOp(_simd_i16x8_gt_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -4922,7 +4697,7 @@ ipintOp(_simd_i16x8_gt_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -4942,7 +4717,7 @@ ipintOp(_simd_i16x8_le_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -4961,7 +4736,7 @@ ipintOp(_simd_i16x8_le_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -4980,7 +4755,7 @@ ipintOp(_simd_i16x8_ge_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -4998,7 +4773,7 @@ ipintOp(_simd_i16x8_ge_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5015,7 +4790,7 @@ ipintOp(_simd_i32x4_eq, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5035,7 +4810,7 @@ ipintOp(_simd_i32x4_ne, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5053,7 +4828,7 @@ ipintOp(_simd_i32x4_lt_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5074,7 +4849,7 @@ ipintOp(_simd_i32x4_lt_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5090,7 +4865,7 @@ ipintOp(_simd_i32x4_gt_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5110,7 +4885,7 @@ ipintOp(_simd_i32x4_gt_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5130,7 +4905,7 @@ ipintOp(_simd_i32x4_le_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5149,7 +4924,7 @@ ipintOp(_simd_i32x4_le_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5168,7 +4943,7 @@ ipintOp(_simd_i32x4_ge_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5186,7 +4961,7 @@ ipintOp(_simd_i32x4_ge_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5203,7 +4978,7 @@ ipintOp(_simd_f32x4_eq, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5220,7 +4995,7 @@ ipintOp(_simd_f32x4_ne, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5237,7 +5012,7 @@ ipintOp(_simd_f32x4_lt, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5253,7 +5028,7 @@ ipintOp(_simd_f32x4_gt, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5270,7 +5045,7 @@ ipintOp(_simd_f32x4_le, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5286,7 +5061,7 @@ ipintOp(_simd_f32x4_ge, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5303,7 +5078,7 @@ ipintOp(_simd_f64x2_eq, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5320,7 +5095,7 @@ ipintOp(_simd_f64x2_ne, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5337,7 +5112,7 @@ ipintOp(_simd_f64x2_lt, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5353,7 +5128,7 @@ ipintOp(_simd_f64x2_gt, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5370,7 +5145,7 @@ ipintOp(_simd_f64x2_le, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5386,7 +5161,7 @@ ipintOp(_simd_f64x2_ge, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5404,7 +5179,7 @@ ipintOp(_simd_v128_not, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5420,7 +5195,7 @@ ipintOp(_simd_v128_and, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5436,7 +5211,7 @@ ipintOp(_simd_v128_andnot, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5452,7 +5227,7 @@ ipintOp(_simd_v128_or, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5468,7 +5243,7 @@ ipintOp(_simd_v128_xor, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5493,7 +5268,7 @@ ipintOp(_simd_v128_bitselect, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5516,236 +5291,150 @@ ipintOp(_simd_v128_any_true, macro()
         break # Not implemented
     end
     pushInt32(t0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
 # 0xFD 0x54 - 0xFD 0x5D: v128 load/store lane
+# For load_lane: stack is [v128, i32_addr]. Pop addr, do memarg, load from memory,
+# read lane index, replace lane in the v128 still on stack.
+# For store_lane: stack is [v128, i32_addr]. Pop addr, do memarg, read lane index,
+# extract value from v128 on stack, pop v128, store to memory.
+# Lane index is the last byte of the instruction, right after the memarg.
 
 ipintOp(_simd_v128_load8_lane_mem, macro()
-    # v128.load8_lane - load 8-bit value from memory and replace lane in existing vector
-
     popVec(v0)
-    popMemoryIndex(t0, t2)
-
-    loadi IPInt::Const32Metadata::value[MC], t2
-    addp t2, t0
-    ipintCheckMemoryBound(t0, t2, 1)
-    loadb [memoryBase, t0], t0
-
-    # The lane index comes after the variable length memory offset, so find it by
-    # advancing the PC and loading the byte before the next instruction.
-    loadb IPInt::Const32Metadata::instructionLength[MC], t1
-    advancePCByReg(t1)
-    loadb -1[PC], t1
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 1, t1, t2, .simd_v128_load8_lane_slow_path)
+    loadb [t0], t0
+    loadb 2[t4], t1
     andi ImmLaneIdx16Mask, t1
-
-    # Push the result and then replace one lane of the result with the loaded value
     pushVec(v0)
     storeb t0, [sp, t1]
-
-    advanceMC(constexpr (sizeof(IPInt::Const32Metadata)))
+    leap 3[t4], PC
     nextIPIntInstruction()
 end)
 
 ipintOp(_simd_v128_load16_lane_mem, macro()
-    # v128.load16_lane - load 16-bit value from memory and replace lane in existing vector
-
     popVec(v0)
-    popMemoryIndex(t0, t2)
-
-    loadi IPInt::Const32Metadata::value[MC], t2
-    addp t2, t0
-    ipintCheckMemoryBound(t0, t2, 2)
-    loadh [memoryBase, t0], t0
-
-    # The lane index comes after the variable length memory offset, so find it by
-    # advancing the PC and loading the byte before the next instruction.
-    loadb IPInt::Const32Metadata::instructionLength[MC], t1
-    advancePCByReg(t1)
-    loadb -1[PC], t1
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 2, t1, t2, .simd_v128_load16_lane_slow_path)
+    loadh [t0], t0
+    loadb 2[t4], t1
     andi ImmLaneIdx8Mask, t1
-
-    # Push the result and then replace one lane of the result with the loaded value
     pushVec(v0)
     storeh t0, [sp, t1, 2]
-
-    advanceMC(constexpr (sizeof(IPInt::Const32Metadata)))
+    leap 3[t4], PC
     nextIPIntInstruction()
 end)
 
 ipintOp(_simd_v128_load32_lane_mem, macro()
-    # v128.load32_lane - load 32-bit value from memory and replace lane in existing vector
-
     popVec(v0)
-    popMemoryIndex(t0, t2)
-
-    loadi IPInt::Const32Metadata::value[MC], t2
-    addp t2, t0
-    ipintCheckMemoryBound(t0, t2, 4)
-    loadi [memoryBase, t0], t0
-
-    # The lane index comes after the variable length memory offset, so find it by
-    # advancing the PC and loading the byte before the next instruction.
-    loadb IPInt::Const32Metadata::instructionLength[MC], t1
-    advancePCByReg(t1)
-    loadb -1[PC], t1
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 4, t1, t2, .simd_v128_load32_lane_slow_path)
+    loadi [t0], t0
+    loadb 2[t4], t1
     andi ImmLaneIdx4Mask, t1
-
-    # Push the result and then replace one lane of the result with the loaded value
     pushVec(v0)
     storei t0, [sp, t1, 4]
-
-    advanceMC(constexpr (sizeof(IPInt::Const32Metadata)))
+    leap 3[t4], PC
     nextIPIntInstruction()
 end)
 
 ipintOp(_simd_v128_load64_lane_mem, macro()
-    # v128.load64_lane - load 64-bit value from memory and replace lane in existing vector
-
     popVec(v0)
-    popMemoryIndex(t0, t2)
-
-    loadi IPInt::Const32Metadata::value[MC], t2
-    addp t2, t0
-    ipintCheckMemoryBound(t0, t2, 8)
-    loadq [memoryBase, t0], t0
-
-    # The lane index comes after the variable length memory offset, so find it by
-    # advancing the PC and loading the byte before the next instruction.
-    loadb IPInt::Const32Metadata::instructionLength[MC], t1
-    advancePCByReg(t1)
-    loadb -1[PC], t1
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 8, t1, t2, .simd_v128_load64_lane_slow_path)
+    loadq [t0], t0
+    loadb 2[t4], t1
     andi ImmLaneIdx2Mask, t1
-
-    # Push the result and then replace one lane of the result with the loaded value
     pushVec(v0)
     storeq t0, [sp, t1, 8]
-
-    advanceMC(constexpr (sizeof(IPInt::Const32Metadata)))
+    leap 3[t4], PC
     nextIPIntInstruction()
 end)
 
 ipintOp(_simd_v128_store8_lane_mem, macro()
-    # v128.store8_lane - extract 8-bit value from lane and store to memory
-
-    # The lane index comes after the variable length memory offset, so find it by
-    # advancing the PC and loading the byte before the next instruction.
-    loadb IPInt::Const32Metadata::instructionLength[MC], t0
-    advancePCByReg(t0)
-    loadb -1[PC], t1
+    # Stack: [addr, v128] with v128 on top. Pop both, parse memarg, extract lane, store.
+    popVec(v0)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 1, t1, t2, .simd_v128_store8_lane_slow_path)
+    loadb 2[t4], t1
     andi ImmLaneIdx16Mask, t1
-
-    loadb [sp, t1], t1  # Load value from lane in vector on stack
-    addp V128ISize, sp  # Pop the vector
-
-    popMemoryIndex(t0, t2)
-
-    loadi IPInt::Const32Metadata::value[MC], t2
-    addp t2, t0
-    ipintCheckMemoryBound(t0, t2, 1)
-
-    storeb t1, [memoryBase, t0]
-
-    advanceMC(constexpr (sizeof(IPInt::Const32Metadata)))
+    # Extract byte from v0 via temp push
+    pushVec(v0)
+    loadb [sp, t1], t1
+    addp V128ISize, sp
+    storeb t1, [t0]
+    leap 3[t4], PC
     nextIPIntInstruction()
 end)
 
 ipintOp(_simd_v128_store16_lane_mem, macro()
-    # v128.store16_lane - extract 16-bit value from lane and store to memory
-
-    # The lane index comes after the variable length memory offset, so find it by
-    # advancing the PC and loading the byte before the next instruction.
-    loadb IPInt::Const32Metadata::instructionLength[MC], t0
-    advancePCByReg(t0)
-    loadb -1[PC], t1
+    popVec(v0)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 2, t1, t2, .simd_v128_store16_lane_slow_path)
+    loadb 2[t4], t1
     andi ImmLaneIdx8Mask, t1
-
-    loadh [sp, t1, 2], t1   # Load value from lane in vector on stack
-    addp V128ISize, sp      # Pop the vector
-
-    popMemoryIndex(t0, t2)
-
-    loadi IPInt::Const32Metadata::value[MC], t2
-    addp t2, t0
-    ipintCheckMemoryBound(t0, t2, 2)
-
-    storeh t1, [memoryBase, t0]
-
-    advanceMC(constexpr (sizeof(IPInt::Const32Metadata)))
+    pushVec(v0)
+    loadh [sp, t1, 2], t1
+    addp V128ISize, sp
+    storeh t1, [t0]
+    leap 3[t4], PC
     nextIPIntInstruction()
 end)
 
 ipintOp(_simd_v128_store32_lane_mem, macro()
-    # v128.store32_lane - extract 32-bit value from lane and store to memory
-
-    # The lane index comes after the variable length memory offset, so find it by
-    # advancing the PC and loading the byte before the next instruction.
-    loadb IPInt::Const32Metadata::instructionLength[MC], t0
-    advancePCByReg(t0)
-    loadb -1[PC], t1
+    popVec(v0)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 4, t1, t2, .simd_v128_store32_lane_slow_path)
+    loadb 2[t4], t1
     andi ImmLaneIdx4Mask, t1
-
-    loadi [sp, t1, 4], t1   # Load value from lane in vector on stack
-    addp V128ISize, sp      # Pop the vector
-
-    popMemoryIndex(t0, t2)
-
-    loadi IPInt::Const32Metadata::value[MC], t2
-    addp t2, t0
-    ipintCheckMemoryBound(t0, t2, 4)
-
-    storei t1, [memoryBase, t0]
-
-    advanceMC(constexpr (sizeof(IPInt::Const32Metadata)))
+    pushVec(v0)
+    loadi [sp, t1, 4], t1
+    addp V128ISize, sp
+    storei t1, [t0]
+    leap 3[t4], PC
     nextIPIntInstruction()
 end)
 
 ipintOp(_simd_v128_store64_lane_mem, macro()
-    # v128.store64_lane - extract 64-bit value from lane and store to memory
-
-    # The lane index comes after the variable length memory offset, so find it by
-    # advancing the PC and loading the byte before the next instruction.
-    loadb IPInt::Const32Metadata::instructionLength[MC], t0
-    advancePCByReg(t0)
-    loadb -1[PC], t1
+    popVec(v0)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 8, t1, t2, .simd_v128_store64_lane_slow_path)
+    loadb 2[t4], t1
     andi ImmLaneIdx2Mask, t1
-
-    loadq [sp, t1, 8], t1   # Load value from lane in vector on stack
-    addp V128ISize, sp      # Pop the vector
-
-    popMemoryIndex(t0, t2)
-    loadi IPInt::Const32Metadata::value[MC], t2
-    addp t2, t0
-    ipintCheckMemoryBound(t0, t2, 8)
-
-    storeq t1, [memoryBase, t0]
-
-    advanceMC(constexpr (sizeof(IPInt::Const32Metadata)))
+    pushVec(v0)
+    loadq [sp, t1, 8], t1
+    addp V128ISize, sp
+    storeq t1, [t0]
+    leap 3[t4], PC
     nextIPIntInstruction()
 end)
 
 ipintOp(_simd_v128_load32_zero_mem, macro()
     # v128.load32_zero - load 32-bit value from memory and zero-pad to 128 bits
-    simdMemoryOp(4, macro()
-        loadi [memoryBase, t0], t0
-
-        subp V128ISize, sp
-        storei t0, [sp]
-        storei 0, 4[sp]
-        storeq 0, 8[sp]
-    end)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 4, t1, t2, .simd_v128_load32_zero_slow_path)
+    loadi [t0], t0
+    subp V128ISize, sp
+    storei t0, [sp]
+    storei 0, 4[sp]
+    storeq 0, 8[sp]
+    leap 2[t4], PC
+    nextIPIntInstruction()
 end)
 
 ipintOp(_simd_v128_load64_zero_mem, macro()
     # v128.load64_zero - load 64-bit value from memory and zero-pad to 128 bits
-    simdMemoryOp(8, macro()
-        loadq [memoryBase, t0], t0
-
-        subp V128ISize, sp
-        storeq t0, [sp]
-        storeq 0, 8[sp]
-    end)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 8, t1, t2, .simd_v128_load64_zero_slow_path)
+    loadq [t0], t0
+    subp V128ISize, sp
+    storeq t0, [sp]
+    storeq 0, 8[sp]
+    leap 2[t4], PC
+    nextIPIntInstruction()
 end)
 
 # 0xFD 0x5E - 0xFD 0x5F: f32x4/f64x2 conversion
@@ -5764,7 +5453,7 @@ ipintOp(_simd_f32x4_demote_f64x2_zero, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5779,7 +5468,7 @@ ipintOp(_simd_f64x2_promote_low_f32x4, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5796,7 +5485,7 @@ ipintOp(_simd_i8x16_abs, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5813,7 +5502,7 @@ ipintOp(_simd_i8x16_neg, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5855,7 +5544,7 @@ ipintOp(_simd_i8x16_popcnt, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5880,7 +5569,7 @@ ipintOp(_simd_i8x16_all_true, macro()
         break # Not implemented
     end
     pushInt32(t0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5908,7 +5597,7 @@ ipintOp(_simd_i8x16_bitmask, macro()
 
     addp V128ISize, sp  # Pop the vector
     pushInt32(t0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5926,7 +5615,7 @@ ipintOp(_simd_i8x16_narrow_i16x8_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5944,7 +5633,7 @@ ipintOp(_simd_i8x16_narrow_i16x8_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5961,7 +5650,7 @@ ipintOp(_simd_f32x4_ceil, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5976,7 +5665,7 @@ ipintOp(_simd_f32x4_floor, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -5991,7 +5680,7 @@ ipintOp(_simd_f32x4_trunc, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6006,7 +5695,7 @@ ipintOp(_simd_f32x4_nearest, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6054,7 +5743,7 @@ ipintOp(_simd_i8x16_shl, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6096,7 +5785,7 @@ ipintOp(_simd_i8x16_shr_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6138,7 +5827,7 @@ ipintOp(_simd_i8x16_shr_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6154,7 +5843,7 @@ ipintOp(_simd_i8x16_add, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6170,7 +5859,7 @@ ipintOp(_simd_i8x16_add_sat_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6186,7 +5875,7 @@ ipintOp(_simd_i8x16_add_sat_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6202,7 +5891,7 @@ ipintOp(_simd_i8x16_sub, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6218,7 +5907,7 @@ ipintOp(_simd_i8x16_sub_sat_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6234,7 +5923,7 @@ ipintOp(_simd_i8x16_sub_sat_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6251,7 +5940,7 @@ ipintOp(_simd_f64x2_ceil, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6266,7 +5955,7 @@ ipintOp(_simd_f64x2_floor, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6283,7 +5972,7 @@ ipintOp(_simd_i8x16_min_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6299,7 +5988,7 @@ ipintOp(_simd_i8x16_min_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6315,7 +6004,7 @@ ipintOp(_simd_i8x16_max_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6331,7 +6020,7 @@ ipintOp(_simd_i8x16_max_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6348,7 +6037,7 @@ ipintOp(_simd_f64x2_trunc, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6366,7 +6055,7 @@ ipintOp(_simd_i8x16_avgr_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6386,7 +6075,7 @@ ipintOp(_simd_i16x8_extadd_pairwise_i8x16_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6404,7 +6093,7 @@ ipintOp(_simd_i16x8_extadd_pairwise_i8x16_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6422,7 +6111,7 @@ ipintOp(_simd_i32x4_extadd_pairwise_i16x8_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6439,7 +6128,7 @@ ipintOp(_simd_i32x4_extadd_pairwise_i16x8_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6456,7 +6145,7 @@ ipintOp(_simd_i16x8_abs, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6473,7 +6162,7 @@ ipintOp(_simd_i16x8_neg, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6497,7 +6186,7 @@ ipintOp(_simd_i16x8_q15mulr_sat_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6524,7 +6213,7 @@ ipintOp(_simd_i16x8_all_true, macro()
         break # Not implemented
     end
     pushInt32(t0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6552,7 +6241,7 @@ ipintOp(_simd_i16x8_bitmask, macro()
 
     addp V128ISize, sp  # Pop the vector
     pushInt32(t0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6570,7 +6259,7 @@ ipintOp(_simd_i16x8_narrow_i32x4_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6588,7 +6277,7 @@ ipintOp(_simd_i16x8_narrow_i32x4_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6603,7 +6292,7 @@ ipintOp(_simd_i16x8_extend_low_i8x16_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6620,7 +6309,7 @@ ipintOp(_simd_i16x8_extend_high_i8x16_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6635,7 +6324,7 @@ ipintOp(_simd_i16x8_extend_low_i8x16_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6652,7 +6341,7 @@ ipintOp(_simd_i16x8_extend_high_i8x16_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6677,7 +6366,7 @@ ipintOp(_simd_i16x8_shl, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6704,7 +6393,7 @@ ipintOp(_simd_i16x8_shr_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6729,7 +6418,7 @@ ipintOp(_simd_i16x8_shr_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6745,7 +6434,7 @@ ipintOp(_simd_i16x8_add, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6761,7 +6450,7 @@ ipintOp(_simd_i16x8_add_sat_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6777,7 +6466,7 @@ ipintOp(_simd_i16x8_add_sat_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6793,7 +6482,7 @@ ipintOp(_simd_i16x8_sub, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6809,7 +6498,7 @@ ipintOp(_simd_i16x8_sub_sat_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6825,7 +6514,7 @@ ipintOp(_simd_i16x8_sub_sat_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6842,7 +6531,7 @@ ipintOp(_simd_f64x2_nearest, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6860,7 +6549,7 @@ ipintOp(_simd_i16x8_mul, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6876,7 +6565,7 @@ ipintOp(_simd_i16x8_min_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6892,7 +6581,7 @@ ipintOp(_simd_i16x8_min_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6908,7 +6597,7 @@ ipintOp(_simd_i16x8_max_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6924,11 +6613,12 @@ ipintOp(_simd_i16x8_max_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
 reservedOpcode(0xfd9a01)
+
 ipintOp(_simd_i16x8_avgr_u, macro()
     # i16x8.avgr_u - average of 8 16-bit unsigned integers with rounding
     popVec(v1)
@@ -6941,7 +6631,7 @@ ipintOp(_simd_i16x8_avgr_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6960,7 +6650,7 @@ ipintOp(_simd_i16x8_extmul_low_i8x16_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -6981,7 +6671,7 @@ ipintOp(_simd_i16x8_extmul_high_i8x16_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7000,7 +6690,7 @@ ipintOp(_simd_i16x8_extmul_low_i8x16_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7020,7 +6710,7 @@ ipintOp(_simd_i16x8_extmul_high_i8x16_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7037,7 +6727,7 @@ ipintOp(_simd_i32x4_abs, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7054,7 +6744,7 @@ ipintOp(_simd_i32x4_neg, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7083,7 +6773,7 @@ ipintOp(_simd_i32x4_all_true, macro()
         break # Not implemented
     end
     pushInt32(t0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7111,7 +6801,7 @@ ipintOp(_simd_i32x4_bitmask, macro()
 
     addp V128ISize, sp  # Pop the vector
     pushInt32(t0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7129,7 +6819,7 @@ ipintOp(_simd_i32x4_extend_low_i16x8_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7146,7 +6836,7 @@ ipintOp(_simd_i32x4_extend_high_i16x8_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7161,7 +6851,7 @@ ipintOp(_simd_i32x4_extend_low_i16x8_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7178,7 +6868,7 @@ ipintOp(_simd_i32x4_extend_high_i16x8_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7201,7 +6891,7 @@ ipintOp(_simd_i32x4_shl, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7226,7 +6916,7 @@ ipintOp(_simd_i32x4_shr_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7251,7 +6941,7 @@ ipintOp(_simd_i32x4_shr_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7267,7 +6957,7 @@ ipintOp(_simd_i32x4_add, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7286,7 +6976,7 @@ ipintOp(_simd_i32x4_sub, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7306,7 +6996,7 @@ ipintOp(_simd_i32x4_mul, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7322,7 +7012,7 @@ ipintOp(_simd_i32x4_min_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7338,7 +7028,7 @@ ipintOp(_simd_i32x4_min_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7354,7 +7044,7 @@ ipintOp(_simd_i32x4_max_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7370,7 +7060,7 @@ ipintOp(_simd_i32x4_max_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7391,7 +7081,7 @@ ipintOp(_simd_i32x4_dot_i16x8_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 reservedOpcode(0xfdbb01)
@@ -7411,7 +7101,7 @@ ipintOp(_simd_i32x4_extmul_low_i16x8_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7430,7 +7120,7 @@ ipintOp(_simd_i32x4_extmul_high_i16x8_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7449,7 +7139,7 @@ ipintOp(_simd_i32x4_extmul_low_i16x8_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7468,7 +7158,7 @@ ipintOp(_simd_i32x4_extmul_high_i16x8_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7490,7 +7180,7 @@ ipintOp(_simd_i64x2_abs, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7507,7 +7197,7 @@ ipintOp(_simd_i64x2_neg, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7536,7 +7226,7 @@ ipintOp(_simd_i64x2_all_true, macro()
         break # Not implemented
     end
     pushInt32(t0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7566,7 +7256,7 @@ ipintOp(_simd_i64x2_bitmask, macro()
 
 .bitmask_i64x2_done:
     pushInt32(t2)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7584,7 +7274,7 @@ ipintOp(_simd_i64x2_extend_low_i32x4_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7601,7 +7291,7 @@ ipintOp(_simd_i64x2_extend_high_i32x4_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7616,7 +7306,7 @@ ipintOp(_simd_i64x2_extend_low_i32x4_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7633,7 +7323,7 @@ ipintOp(_simd_i64x2_extend_high_i32x4_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7656,7 +7346,7 @@ ipintOp(_simd_i64x2_shl, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7674,7 +7364,7 @@ ipintOp(_simd_i64x2_shr_s, macro()
     rshiftq t0, t1
     storeq t1, [sp]
 
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7699,7 +7389,7 @@ ipintOp(_simd_i64x2_shr_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7715,7 +7405,7 @@ ipintOp(_simd_i64x2_add, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7734,7 +7424,7 @@ ipintOp(_simd_i64x2_sub, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7759,7 +7449,7 @@ ipintOp(_simd_i64x2_mul, macro()
 
     # Pop vector1, result in vector0
     addp V128ISize, sp        # Remove first vector from stack, leaving result
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7775,7 +7465,7 @@ ipintOp(_simd_i64x2_eq, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7795,7 +7485,7 @@ ipintOp(_simd_i64x2_ne, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7813,7 +7503,7 @@ ipintOp(_simd_i64x2_lt_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7829,7 +7519,7 @@ ipintOp(_simd_i64x2_gt_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7849,7 +7539,7 @@ ipintOp(_simd_i64x2_le_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7868,7 +7558,7 @@ ipintOp(_simd_i64x2_ge_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7887,7 +7577,7 @@ ipintOp(_simd_i64x2_extmul_low_i32x4_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7906,7 +7596,7 @@ ipintOp(_simd_i64x2_extmul_high_i32x4_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7925,7 +7615,7 @@ ipintOp(_simd_i64x2_extmul_low_i32x4_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7944,7 +7634,7 @@ ipintOp(_simd_i64x2_extmul_high_i32x4_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7965,7 +7655,7 @@ ipintOp(_simd_f32x4_abs, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -7984,7 +7674,7 @@ ipintOp(_simd_f32x4_neg, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -8001,7 +7691,7 @@ ipintOp(_simd_f32x4_sqrt, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -8017,7 +7707,7 @@ ipintOp(_simd_f32x4_add, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -8033,7 +7723,7 @@ ipintOp(_simd_f32x4_sub, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -8049,7 +7739,7 @@ ipintOp(_simd_f32x4_mul, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -8065,7 +7755,7 @@ ipintOp(_simd_f32x4_div, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -8094,7 +7784,7 @@ ipintOp(_simd_f32x4_min, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -8128,7 +7818,7 @@ ipintOp(_simd_f32x4_max, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -8148,7 +7838,7 @@ ipintOp(_simd_f32x4_pmin, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -8168,7 +7858,7 @@ ipintOp(_simd_f32x4_pmax, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -8189,7 +7879,7 @@ ipintOp(_simd_f64x2_abs, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -8208,7 +7898,7 @@ ipintOp(_simd_f64x2_neg, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -8225,7 +7915,7 @@ ipintOp(_simd_f64x2_sqrt, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -8241,7 +7931,7 @@ ipintOp(_simd_f64x2_add, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -8257,7 +7947,7 @@ ipintOp(_simd_f64x2_sub, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -8273,7 +7963,7 @@ ipintOp(_simd_f64x2_mul, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -8289,7 +7979,7 @@ ipintOp(_simd_f64x2_div, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -8318,7 +8008,7 @@ ipintOp(_simd_f64x2_min, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -8352,7 +8042,7 @@ ipintOp(_simd_f64x2_max, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -8372,7 +8062,7 @@ ipintOp(_simd_f64x2_pmin, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -8392,7 +8082,7 @@ ipintOp(_simd_f64x2_pmax, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -8421,7 +8111,7 @@ ipintOp(_simd_i32x4_trunc_sat_f32x4_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -8455,7 +8145,7 @@ ipintOp(_simd_i32x4_trunc_sat_f32x4_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -8470,7 +8160,7 @@ ipintOp(_simd_f32x4_convert_i32x4_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -8493,7 +8183,7 @@ ipintOp(_simd_f32x4_convert_i32x4_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -8522,7 +8212,7 @@ ipintOp(_simd_i32x4_trunc_sat_f64x2_s_zero, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -8557,7 +8247,7 @@ ipintOp(_simd_i32x4_trunc_sat_f64x2_u_zero, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -8574,7 +8264,7 @@ ipintOp(_simd_f64x2_convert_low_i32x4_s, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -8606,7 +8296,399 @@ ipintOp(_simd_f64x2_convert_low_i32x4_u, macro()
         break # Not implemented
     end
     pushVec(v0)
-    advancePC(2)
+    move t4, PC
+    nextIPIntInstruction()
+end)
+
+    ###################################
+    ## Relaxed SIMD instructions     ##
+    ## Opcodes 0x100 - 0x113         ##
+    ###################################
+
+ipintOp(_simd_i8x16_relaxed_swizzle, macro()
+    # i8x16.relaxed_swizzle - swizzle bytes (relaxed semantics: out-of-range indices are implementation defined)
+    popVec(v1)  # indices
+    popVec(v0)  # table
+    if ARM64 or ARM64E
+        # ARM64 tbl instruction returns 0 for out-of-range indices
+        emit "tbl v16.16b, {v16.16b}, v17.16b"
+    elsif X86_64
+        # x86-64 vpshufb returns 0 for indices with bit 7 set
+        # For relaxed semantics, we can use it directly
+        emit "vpshufb %xmm1, %xmm0, %xmm0"
+    else
+        break # Not implemented
+    end
+    pushVec(v0)
+    move t4, PC
+    nextIPIntInstruction()
+end)
+
+ipintOp(_simd_i32x4_relaxed_trunc_f32x4_s, macro()
+    # i32x4.relaxed_trunc_f32x4_s - truncate f32 to signed i32 (relaxed: NaN/overflow is implementation defined)
+    popVec(v0)
+    if ARM64 or ARM64E
+        emit "fcvtzs v16.4s, v16.4s"
+    elsif X86_64
+        emit "vcvttps2dq %xmm0, %xmm0"
+    else
+        break # Not implemented
+    end
+    pushVec(v0)
+    move t4, PC
+    nextIPIntInstruction()
+end)
+
+ipintOp(_simd_i32x4_relaxed_trunc_f32x4_u, macro()
+    # i32x4.relaxed_trunc_f32x4_u - truncate f32 to unsigned i32 (relaxed semantics)
+    popVec(v0)
+    if ARM64 or ARM64E
+        emit "fcvtzu v16.4s, v16.4s"
+    elsif X86_64
+        # Relaxed semantics: vcvttps2dq converts to signed i32, so values >= 2^31
+        # produce 0x80000000 (implementation-defined under relaxed spec).
+        emit "vxorps %xmm1, %xmm1, %xmm1"
+        emit "vmaxps %xmm1, %xmm0, %xmm0"
+        emit "vcvttps2dq %xmm0, %xmm0"
+    else
+        break # Not implemented
+    end
+    pushVec(v0)
+    move t4, PC
+    nextIPIntInstruction()
+end)
+
+ipintOp(_simd_i32x4_relaxed_trunc_f64x2_s_zero, macro()
+    # i32x4.relaxed_trunc_f64x2_s_zero - truncate 2 f64 to signed i32, zero upper lanes
+    popVec(v0)
+    if ARM64 or ARM64E
+        emit "fcvtzs v16.2d, v16.2d"
+        emit "sqxtn v16.2s, v16.2d"
+    elsif X86_64
+        emit "vcvttpd2dq %xmm0, %xmm0"
+    else
+        break # Not implemented
+    end
+    pushVec(v0)
+    move t4, PC
+    nextIPIntInstruction()
+end)
+
+ipintOp(_simd_i32x4_relaxed_trunc_f64x2_u_zero, macro()
+    # i32x4.relaxed_trunc_f64x2_u_zero - truncate 2 f64 to unsigned i32, zero upper lanes
+    popVec(v0)
+    if ARM64 or ARM64E
+        emit "fcvtzu v16.2d, v16.2d"
+        emit "uqxtn v16.2s, v16.2d"
+    elsif X86_64
+        # Relaxed semantics: simpler unsigned conversion
+        emit "vxorpd %xmm1, %xmm1, %xmm1"
+        emit "vmaxpd %xmm1, %xmm0, %xmm0"
+        # Use magic number conversion
+        emit "movabsq $0x4330000000000000, %rax"
+        emit "vmovq %rax, %xmm1"
+        emit "vpunpcklqdq %xmm1, %xmm1, %xmm1"
+        emit "vroundpd $3, %xmm0, %xmm0"
+        emit "vaddpd %xmm1, %xmm0, %xmm0"
+        emit "vshufps $0x88, %xmm1, %xmm0, %xmm0"
+    else
+        break # Not implemented
+    end
+    pushVec(v0)
+    move t4, PC
+    nextIPIntInstruction()
+end)
+
+ipintOp(_simd_f32x4_relaxed_madd, macro()
+    # f32x4.relaxed_madd - fused multiply-add: a * b + c (or unfused)
+    popVec(v2)  # c (addend)
+    popVec(v1)  # b
+    popVec(v0)  # a
+    if ARM64 or ARM64E
+        # fmla vd, vn, vm performs: vd = vd + vn * vm
+        # We want: a * b + c = v16 * v17 + v18
+        emit "fmla v18.4s, v16.4s, v17.4s"
+        emit "mov v16.16b, v18.16b"
+    elsif X86_64
+        # Use FMA if available, otherwise mul+add
+        # vfmadd213ps does: dest = (dest * src1) + src2
+        # We have: xmm0=a, xmm1=b, xmm2=c, want: a*b+c
+        emit "vmulps %xmm1, %xmm0, %xmm0"
+        emit "vaddps %xmm2, %xmm0, %xmm0"
+    else
+        break # Not implemented
+    end
+    pushVec(v0)
+    move t4, PC
+    nextIPIntInstruction()
+end)
+
+ipintOp(_simd_f32x4_relaxed_nmadd, macro()
+    # f32x4.relaxed_nmadd - fused negative multiply-add: -(a * b) + c (or unfused)
+    popVec(v2)  # c (addend)
+    popVec(v1)  # b
+    popVec(v0)  # a
+    if ARM64 or ARM64E
+        # fmls vd, vn, vm performs: vd = vd - vn * vm
+        # We want: -(a * b) + c = c - (a * b) = v18 - v16 * v17
+        emit "fmls v18.4s, v16.4s, v17.4s"
+        emit "mov v16.16b, v18.16b"
+    elsif X86_64
+        # vfnmadd213ps does: dest = -(dest * src1) + src2
+        emit "vmulps %xmm1, %xmm0, %xmm0"
+        emit "vsubps %xmm0, %xmm2, %xmm0"
+    else
+        break # Not implemented
+    end
+    pushVec(v0)
+    move t4, PC
+    nextIPIntInstruction()
+end)
+
+ipintOp(_simd_f64x2_relaxed_madd, macro()
+    # f64x2.relaxed_madd - fused multiply-add for f64
+    popVec(v2)  # c (addend)
+    popVec(v1)  # b
+    popVec(v0)  # a
+    if ARM64 or ARM64E
+        emit "fmla v18.2d, v16.2d, v17.2d"
+        emit "mov v16.16b, v18.16b"
+    elsif X86_64
+        emit "vmulpd %xmm1, %xmm0, %xmm0"
+        emit "vaddpd %xmm2, %xmm0, %xmm0"
+    else
+        break # Not implemented
+    end
+    pushVec(v0)
+    move t4, PC
+    nextIPIntInstruction()
+end)
+
+ipintOp(_simd_f64x2_relaxed_nmadd, macro()
+    # f64x2.relaxed_nmadd - fused negative multiply-add for f64
+    popVec(v2)  # c (addend)
+    popVec(v1)  # b
+    popVec(v0)  # a
+    if ARM64 or ARM64E
+        emit "fmls v18.2d, v16.2d, v17.2d"
+        emit "mov v16.16b, v18.16b"
+    elsif X86_64
+        emit "vmulpd %xmm1, %xmm0, %xmm0"
+        emit "vsubpd %xmm0, %xmm2, %xmm0"
+    else
+        break # Not implemented
+    end
+    pushVec(v0)
+    move t4, PC
+    nextIPIntInstruction()
+end)
+
+ipintOp(_simd_i8x16_relaxed_laneselect, macro()
+    # i8x16.relaxed_laneselect - select lanes based on mask (relaxed: may use top bit only)
+    popVec(v2)  # mask (c)
+    popVec(v1)  # b (false lanes)
+    popVec(v0)  # a (true lanes)
+    if ARM64 or ARM64E
+        # bsl: dest = (dest & src1) | (~dest & src2)
+        # We want: (mask & a) | (~mask & b) = (c & a) | (~c & b)
+        # Put mask in dest, then bsl with a, b
+        emit "bsl v18.16b, v16.16b, v17.16b"
+        emit "mov v16.16b, v18.16b"
+    elsif X86_64
+        # vpblendvb uses high bit of each byte in mask
+        emit "vpblendvb %xmm2, %xmm0, %xmm1, %xmm0"
+    else
+        break # Not implemented
+    end
+    pushVec(v0)
+    move t4, PC
+    nextIPIntInstruction()
+end)
+
+ipintOp(_simd_i16x8_relaxed_laneselect, macro()
+    # i16x8.relaxed_laneselect - same as i8x16 (works on bits)
+    popVec(v2)  # mask
+    popVec(v1)  # b
+    popVec(v0)  # a
+    if ARM64 or ARM64E
+        emit "bsl v18.16b, v16.16b, v17.16b"
+        emit "mov v16.16b, v18.16b"
+    elsif X86_64
+        emit "vpblendvb %xmm2, %xmm0, %xmm1, %xmm0"
+    else
+        break # Not implemented
+    end
+    pushVec(v0)
+    move t4, PC
+    nextIPIntInstruction()
+end)
+
+ipintOp(_simd_i32x4_relaxed_laneselect, macro()
+    # i32x4.relaxed_laneselect - same as i8x16 (works on bits)
+    popVec(v2)  # mask
+    popVec(v1)  # b
+    popVec(v0)  # a
+    if ARM64 or ARM64E
+        emit "bsl v18.16b, v16.16b, v17.16b"
+        emit "mov v16.16b, v18.16b"
+    elsif X86_64
+        emit "vpblendvb %xmm2, %xmm0, %xmm1, %xmm0"
+    else
+        break # Not implemented
+    end
+    pushVec(v0)
+    move t4, PC
+    nextIPIntInstruction()
+end)
+
+ipintOp(_simd_i64x2_relaxed_laneselect, macro()
+    # i64x2.relaxed_laneselect - same as i8x16 (works on bits)
+    popVec(v2)  # mask
+    popVec(v1)  # b
+    popVec(v0)  # a
+    if ARM64 or ARM64E
+        emit "bsl v18.16b, v16.16b, v17.16b"
+        emit "mov v16.16b, v18.16b"
+    elsif X86_64
+        emit "vpblendvb %xmm2, %xmm0, %xmm1, %xmm0"
+    else
+        break # Not implemented
+    end
+    pushVec(v0)
+    move t4, PC
+    nextIPIntInstruction()
+end)
+
+ipintOp(_simd_f32x4_relaxed_min, macro()
+    # f32x4.relaxed_min - minimum (relaxed: NaN behavior is implementation defined)
+    popVec(v1)
+    popVec(v0)
+    if ARM64 or ARM64E
+        emit "fmin v16.4s, v16.4s, v17.4s"
+    elsif X86_64
+        emit "vminps %xmm1, %xmm0, %xmm0"
+    else
+        break # Not implemented
+    end
+    pushVec(v0)
+    move t4, PC
+    nextIPIntInstruction()
+end)
+
+ipintOp(_simd_f32x4_relaxed_max, macro()
+    # f32x4.relaxed_max - maximum (relaxed: NaN behavior is implementation defined)
+    popVec(v1)
+    popVec(v0)
+    if ARM64 or ARM64E
+        emit "fmax v16.4s, v16.4s, v17.4s"
+    elsif X86_64
+        emit "vmaxps %xmm1, %xmm0, %xmm0"
+    else
+        break # Not implemented
+    end
+    pushVec(v0)
+    move t4, PC
+    nextIPIntInstruction()
+end)
+
+ipintOp(_simd_f64x2_relaxed_min, macro()
+    # f64x2.relaxed_min - minimum for f64
+    popVec(v1)
+    popVec(v0)
+    if ARM64 or ARM64E
+        emit "fmin v16.2d, v16.2d, v17.2d"
+    elsif X86_64
+        emit "vminpd %xmm1, %xmm0, %xmm0"
+    else
+        break # Not implemented
+    end
+    pushVec(v0)
+    move t4, PC
+    nextIPIntInstruction()
+end)
+
+ipintOp(_simd_f64x2_relaxed_max, macro()
+    # f64x2.relaxed_max - maximum for f64
+    popVec(v1)
+    popVec(v0)
+    if ARM64 or ARM64E
+        emit "fmax v16.2d, v16.2d, v17.2d"
+    elsif X86_64
+        emit "vmaxpd %xmm1, %xmm0, %xmm0"
+    else
+        break # Not implemented
+    end
+    pushVec(v0)
+    move t4, PC
+    nextIPIntInstruction()
+end)
+
+ipintOp(_simd_i16x8_relaxed_q15mulr_s, macro()
+    # i16x8.relaxed_q15mulr_s - Q15 multiply with rounding (relaxed: saturation behavior is implementation defined)
+    popVec(v1)
+    popVec(v0)
+    if ARM64 or ARM64E
+        emit "sqrdmulh v16.8h, v16.8h, v17.8h"
+    elsif X86_64
+        emit "vpmulhrsw %xmm1, %xmm0, %xmm0"
+    else
+        break # Not implemented
+    end
+    pushVec(v0)
+    move t4, PC
+    nextIPIntInstruction()
+end)
+
+ipintOp(_simd_i16x8_relaxed_dot_i8x16_i7x16_s, macro()
+    # i16x8.relaxed_dot_i8x16_i7x16_s - dot product of signed i8 and unsigned i7, producing i16
+    popVec(v1)  # b (interpreted as i7x16, which fits in unsigned byte)
+    popVec(v0)  # a (signed i8x16)
+    if ARM64 or ARM64E
+        # ARM64 doesn't have a direct equivalent, use multiply-add sequence
+        # smull: signed multiply long (lower half)
+        # smull2: signed multiply long (upper half)
+        # addp: pairwise add
+        emit "smull v18.8h, v16.8b, v17.8b"
+        emit "smull2 v19.8h, v16.16b, v17.16b"
+        emit "addp v16.8h, v18.8h, v19.8h"
+    elsif X86_64
+        # vpmaddubsw: treats first operand as unsigned, second as signed
+        # Swapped order: xmm0=signed, xmm1=unsigned-like
+        emit "vpmaddubsw %xmm0, %xmm1, %xmm0"
+    else
+        break # Not implemented
+    end
+    pushVec(v0)
+    move t4, PC
+    nextIPIntInstruction()
+end)
+
+ipintOp(_simd_i32x4_relaxed_dot_i8x16_i7x16_add_s, macro()
+    # i32x4.relaxed_dot_i8x16_i7x16_add_s - dot product + add
+    # Computes: sum of (a[i] * b[i]) for groups of 4, then adds c
+    popVec(v2)  # c (addend)
+    popVec(v1)  # b
+    popVec(v0)  # a
+    if ARM64E or ARM64
+        # Fallback for generic ARM64 without guaranteed DotProd
+        emit "smull v19.8h, v16.8b, v17.8b"
+        emit "smull2 v20.8h, v16.16b, v17.16b"
+        emit "addp v19.8h, v19.8h, v20.8h"
+        emit "saddlp v19.4s, v19.8h"
+        emit "add v16.4s, v19.4s, v18.4s"
+    elsif X86_64
+        # vpmaddubsw + vpmaddwd + vpaddd
+        emit "vpmaddubsw %xmm0, %xmm1, %xmm0"
+        # vpmaddwd to extend i16 pairs to i32
+        emit "vpcmpeqd %xmm3, %xmm3, %xmm3"
+        emit "vpsrlw $15, %xmm3, %xmm3"
+        emit "vpmaddwd %xmm3, %xmm0, %xmm0"
+        emit "vpaddd %xmm2, %xmm0, %xmm0"
+    else
+        break # Not implemented
+    end
+    pushVec(v0)
+    move t4, PC
     nextIPIntInstruction()
 end)
 
@@ -8614,220 +8696,20 @@ end)
     ## Atomic instructions ##
     #########################
 
-macro ipintCheckMemoryBoundWithAlignmentCheck(mem, scratch, size)
-    leap size - 1[mem], scratch
-    bpb scratch, boundsCheckingSize, .continuationInBounds
-.throwOOB:
-    ipintException(OutOfBoundsMemoryAccess)
-.continuationInBounds:
-    btpz mem, (size - 1), .continuationAligned
-.throwUnaligned:
-    throwException(UnalignedMemoryAccess)
-.continuationAligned:
+macro noAlignmentCheck(mem, label)
 end
 
-macro ipintCheckMemoryBoundWithAlignmentCheck1(mem, scratch)
-    ipintCheckMemoryBound(mem, scratch, 1)
+macro checkAlignment2(mem, label)
+    btpnz mem, 1, label
 end
 
-macro ipintCheckMemoryBoundWithAlignmentCheck2(mem, scratch)
-    ipintCheckMemoryBoundWithAlignmentCheck(mem, scratch, 2)
+macro checkAlignment4(mem, label)
+    btpnz mem, 3, label
 end
 
-macro ipintCheckMemoryBoundWithAlignmentCheck4(mem, scratch)
-    ipintCheckMemoryBoundWithAlignmentCheck(mem, scratch, 4)
+macro checkAlignment8(mem, label)
+    btpnz mem, 7, label
 end
-
-macro ipintCheckMemoryBoundWithAlignmentCheck8(mem, scratch)
-    ipintCheckMemoryBoundWithAlignmentCheck(mem, scratch, 8)
-end
-
-ipintOp(_memory_atomic_notify, macro()
-    # pop count
-    popInt32(a3)
-    # pop pointer
-    popInt32(a1)
-    # load offset
-    loadi IPInt::Const32Metadata::value[MC], a2
-
-    operationCall(macro() cCall4(_ipint_extern_memory_atomic_notify) end)
-    bilt r0, 0, .atomic_notify_throw
-
-    pushInt32(r0)
-    loadb IPInt::Const32Metadata::instructionLength[MC], t0
-    advancePCByReg(t0)
-    advanceMC(constexpr (sizeof(IPInt::Const32Metadata)))
-    nextIPIntInstruction()
-
-.atomic_notify_throw:
-    ipintException(OutOfBoundsMemoryAccess)
-end)
-
-ipintOp(_memory_atomic_wait32, macro()
-    # pop timeout
-    popInt32(a3)
-    # pop value
-    popInt32(a2)
-    # pop pointer
-    popInt32(a1)
-    # load offset
-    loadi IPInt::Const32Metadata::value[MC], t0
-    # merge them since the slow path takes the combined pointer + offset.
-    addq t0, a1
-
-    operationCall(macro() cCall4(_ipint_extern_memory_atomic_wait32) end)
-    bilt r0, 0, .atomic_wait32_throw
-
-    pushInt32(r0)
-    loadb IPInt::Const32Metadata::instructionLength[MC], t0
-    advancePCByReg(t0)
-    advanceMC(constexpr (sizeof(IPInt::Const32Metadata)))
-    nextIPIntInstruction()
-
-.atomic_wait32_throw:
-    ipintException(OutOfBoundsMemoryAccess)
-end)
-
-ipintOp(_memory_atomic_wait64, macro()
-    # pop timeout
-    popInt32(a3)
-    # pop value
-    popInt64(a2)
-    # pop pointer
-    popInt32(a1)
-    # load offset
-    loadi IPInt::Const32Metadata::value[MC], t0
-    # merge them since the slow path takes the combined pointer + offset.
-    addq t0, a1
-
-    operationCall(macro() cCall4(_ipint_extern_memory_atomic_wait64) end)
-    bilt r0, 0, .atomic_wait64_throw
-
-    pushInt32(r0)
-    loadb IPInt::Const32Metadata::instructionLength[MC], t0
-    advancePCByReg(t0)
-    advanceMC(constexpr (sizeof(IPInt::Const32Metadata)))
-    nextIPIntInstruction()
-
-.atomic_wait64_throw:
-    ipintException(OutOfBoundsMemoryAccess)
-end)
-
-ipintOp(_atomic_fence, macro()
-    fence
-
-    loadb IPInt::InstructionLengthMetadata::length[MC], t0
-    advancePCByReg(t0)
-    advanceMC(constexpr (sizeof(IPInt::InstructionLengthMetadata)))
-    nextIPIntInstruction()
-end)
-
-reservedOpcode(atomic_0x4)
-reservedOpcode(atomic_0x5)
-reservedOpcode(atomic_0x6)
-reservedOpcode(atomic_0x7)
-reservedOpcode(atomic_0x8)
-reservedOpcode(atomic_0x9)
-reservedOpcode(atomic_0xa)
-reservedOpcode(atomic_0xb)
-reservedOpcode(atomic_0xc)
-reservedOpcode(atomic_0xd)
-reservedOpcode(atomic_0xe)
-reservedOpcode(atomic_0xf)
-
-macro atomicLoadOp(boundsAndAlignmentCheck, loadAndPush)
-    # pop index
-    popInt32(t0)
-    ori 0, t0
-    # load offset
-    loadi IPInt::Const32Metadata::value[MC], t2
-    addp t2, t0
-    boundsAndAlignmentCheck(t0,  t3)
-    addq memoryBase, t0
-    loadAndPush(t0, t2)
-
-    loadb IPInt::Const32Metadata::instructionLength[MC], t0
-    advancePCByReg(t0)
-    advanceMC(constexpr (sizeof(IPInt::Const32Metadata)))
-    nextIPIntInstruction()
-end
-
-ipintOp(_i32_atomic_load, macro()
-    atomicLoadOp(ipintCheckMemoryBoundWithAlignmentCheck4, macro(mem, scratch)
-        if ARM64 or ARM64E or X86_64
-            atomicloadi [mem], scratch
-        else
-            error
-        end
-        pushInt32(scratch)
-    end)
-end)
-
-ipintOp(_i64_atomic_load, macro()
-    atomicLoadOp(ipintCheckMemoryBoundWithAlignmentCheck8, macro(mem, scratch)
-        if ARM64 or ARM64E or X86_64
-            atomicloadq [mem], scratch
-        else
-            error
-        end
-        pushInt64(scratch)
-    end)
-end)
-
-ipintOp(_i32_atomic_load8_u, macro()
-    atomicLoadOp(ipintCheckMemoryBoundWithAlignmentCheck1, macro(mem, scratch)
-        if ARM64 or ARM64E or X86_64
-            atomicloadb [mem], scratch
-        else
-            error
-        end
-        pushInt32(scratch)
-    end)
-end)
-
-ipintOp(_i32_atomic_load16_u, macro()
-    atomicLoadOp(ipintCheckMemoryBoundWithAlignmentCheck2, macro(mem, scratch)
-        if ARM64 or ARM64E or X86_64
-            atomicloadh [mem], scratch
-        else
-            error
-        end
-        pushInt32(scratch)
-    end)
-end)
-
-ipintOp(_i64_atomic_load8_u, macro()
-    atomicLoadOp(ipintCheckMemoryBoundWithAlignmentCheck1, macro(mem, scratch)
-        if ARM64 or ARM64E or X86_64
-            atomicloadb [mem], scratch
-        else
-            error
-        end
-        pushInt64(scratch)
-    end)
-end)
-
-ipintOp(_i64_atomic_load16_u, macro()
-    atomicLoadOp(ipintCheckMemoryBoundWithAlignmentCheck2, macro(mem, scratch)
-        if ARM64 or ARM64E or X86_64
-            atomicloadh [mem], scratch
-        else
-            error
-        end
-        pushInt64(scratch)
-    end)
-end)
-
-ipintOp(_i64_atomic_load32_u, macro()
-    atomicLoadOp(ipintCheckMemoryBoundWithAlignmentCheck4, macro(mem, scratch)
-        if ARM64 or ARM64E or X86_64
-            atomicloadi [mem], scratch
-        else
-            error
-        end
-        pushInt64(scratch)
-    end)
-end)
 
 macro weakCASLoopByte(mem, value, scratch1AndOldValue, scratch2, fn)
     validateOpcodeConfig(scratch1AndOldValue)
@@ -8897,1199 +8779,2829 @@ macro weakCASLoopQuad(mem, value, scratch1AndOldValue, scratch2, fn)
     end
 end
 
-macro atomicStoreOp(boundsAndAlignmentCheck, popAndStore)
-    # pop value
-    popInt64(t1)
-    # pop index
-    popInt32(t2)
-    ori 0, t2
-    # load offset
-    loadi IPInt::Const32Metadata::value[MC], t0
-    addp t0, t2
-    boundsAndAlignmentCheck(t2, t3)
-    addq memoryBase, t2
-    popAndStore(t2, t1, t0, t3)
+macro doI32AtomicLoad(mem, dst)
+    checkAlignment4(mem, _ipint_throw_UnalignedMemoryAccess)
+    if ARM64 or ARM64E or X86_64
+        atomicloadi [mem], dst
+    else
+        error
+    end
+end
 
-    loadb IPInt::Const32Metadata::instructionLength[MC], t0
+macro doI64AtomicLoad(mem, dst)
+    checkAlignment8(mem, _ipint_throw_UnalignedMemoryAccess)
+    if ARM64 or ARM64E or X86_64
+        atomicloadq [mem], dst
+    else
+        error
+    end
+end
+
+macro doI32AtomicLoad8(mem, dst)
+    noAlignmentCheck(mem, _ipint_throw_UnalignedMemoryAccess)
+    if ARM64 or ARM64E or X86_64
+        atomicloadb [mem], dst
+    else
+        error
+    end
+end
+
+macro doI32AtomicLoad16(mem, dst)
+    checkAlignment2(mem, _ipint_throw_UnalignedMemoryAccess)
+    if ARM64 or ARM64E or X86_64
+        atomicloadh [mem], dst
+    else
+        error
+    end
+end
+
+macro doI64AtomicLoad8(mem, dst)
+    noAlignmentCheck(mem, _ipint_throw_UnalignedMemoryAccess)
+    if ARM64 or ARM64E or X86_64
+        atomicloadb [mem], dst
+    else
+        error
+    end
+end
+
+macro doI64AtomicLoad16(mem, dst)
+    checkAlignment2(mem, _ipint_throw_UnalignedMemoryAccess)
+    if ARM64 or ARM64E or X86_64
+        atomicloadh [mem], dst
+    else
+        error
+    end
+end
+
+macro doI64AtomicLoad32(mem, dst)
+    checkAlignment4(mem, _ipint_throw_UnalignedMemoryAccess)
+    if ARM64 or ARM64E or X86_64
+        atomicloadi [mem], dst
+    else
+        error
+    end
+end
+
+macro doI32AtomicStore(mem, val, memCopy, scratch)
+    checkAlignment4(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        atomicxchgi val, [memCopy], val
+    elsif X86_64
+        atomicxchgi val, [memCopy]
+    elsif ARM64
+        weakCASLoopInt(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            move value, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI64AtomicStore(mem, val, memCopy, scratch)
+    checkAlignment8(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        atomicxchgq val, [memCopy], val
+    elsif X86_64
+        atomicxchgq val, [memCopy]
+    elsif ARM64
+        weakCASLoopQuad(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            move value, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI32AtomicStore8(mem, val, memCopy, scratch)
+    noAlignmentCheck(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        atomicxchgb val, [memCopy], val
+    elsif X86_64
+        atomicxchgb val, [memCopy]
+    elsif ARM64
+        weakCASLoopByte(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            move value, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI32AtomicStore16(mem, val, memCopy, scratch)
+    checkAlignment2(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        atomicxchgh val, [memCopy], val
+    elsif X86_64
+        atomicxchgh val, [memCopy]
+    elsif ARM64
+        weakCASLoopHalf(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            move value, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI64AtomicStore8(mem, val, memCopy, scratch)
+    noAlignmentCheck(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        atomicxchgb val, [memCopy], val
+    elsif X86_64
+        atomicxchgb val, [memCopy]
+    elsif ARM64
+        weakCASLoopByte(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            move value, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI64AtomicStore16(mem, val, memCopy, scratch)
+    checkAlignment2(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        atomicxchgh val, [memCopy], val
+    elsif X86_64
+        atomicxchgh val, [memCopy]
+    elsif ARM64
+        weakCASLoopHalf(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            move value, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI64AtomicStore32(mem, val, memCopy, scratch)
+    checkAlignment4(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        atomicxchgi val, [memCopy], val
+    elsif X86_64
+        atomicxchgi val, [memCopy]
+    elsif ARM64
+        weakCASLoopInt(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            move value, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI32AtomicRmwAdd(mem, val, memCopy, scratch)
+    checkAlignment4(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        atomicxchgaddi val, [memCopy], mem
+    elsif X86_64
+        atomicxchgaddi val, [memCopy]
+        move val, mem
+    elsif ARM64
+        weakCASLoopInt(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            addi value, oldValue, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI64AtomicRmwAdd(mem, val, memCopy, scratch)
+    checkAlignment8(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        atomicxchgaddq val, [memCopy], mem
+    elsif X86_64
+        atomicxchgaddq val, [memCopy]
+        move val, mem
+    elsif ARM64
+        weakCASLoopQuad(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            addq value, oldValue, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI32AtomicRmwAdd8(mem, val, memCopy, scratch)
+    noAlignmentCheck(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        atomicxchgaddb val, [memCopy], mem
+    elsif X86_64
+        atomicxchgaddb val, [memCopy]
+        move val, mem
+        andi 0xff, mem
+    elsif ARM64
+        weakCASLoopByte(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            addi value, oldValue, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI32AtomicRmwAdd16(mem, val, memCopy, scratch)
+    checkAlignment2(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        atomicxchgaddh val, [memCopy], mem
+    elsif X86_64
+        atomicxchgaddh val, [memCopy]
+        move val, mem
+        andi 0xffff, mem
+    elsif ARM64
+        weakCASLoopHalf(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            addi value, oldValue, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI64AtomicRmwAdd8(mem, val, memCopy, scratch)
+    noAlignmentCheck(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        atomicxchgaddb val, [memCopy], mem
+    elsif X86_64
+        atomicxchgaddb val, [memCopy]
+        move val, mem
+        andi 0xff, mem
+    elsif ARM64
+        weakCASLoopByte(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            addi value, oldValue, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI64AtomicRmwAdd16(mem, val, memCopy, scratch)
+    checkAlignment2(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        atomicxchgaddh val, [memCopy], mem
+    elsif X86_64
+        atomicxchgaddh val, [memCopy]
+        move val, mem
+        andi 0xffff, mem
+    elsif ARM64
+        weakCASLoopHalf(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            addi value, oldValue, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI64AtomicRmwAdd32(mem, val, memCopy, scratch)
+    checkAlignment4(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        atomicxchgaddi val, [memCopy], mem
+    elsif X86_64
+        atomicxchgaddi val, [memCopy]
+        move val, mem
+        ori 0, mem
+    elsif ARM64
+        weakCASLoopInt(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            addi value, oldValue, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI32AtomicRmwSub(mem, val, memCopy, scratch)
+    checkAlignment4(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        negi val
+        atomicxchgaddi val, [memCopy], mem
+    elsif X86_64
+        negi val
+        atomicxchgaddi val, [memCopy]
+        move val, mem
+    elsif ARM64
+        weakCASLoopInt(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            subi oldValue, value, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI64AtomicRmwSub(mem, val, memCopy, scratch)
+    checkAlignment8(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        negq val
+        atomicxchgaddq val, [memCopy], mem
+    elsif X86_64
+        negq val
+        atomicxchgaddq val, [memCopy]
+        move val, mem
+    elsif ARM64
+        weakCASLoopQuad(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            subq oldValue, value, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI32AtomicRmwSub8(mem, val, memCopy, scratch)
+    noAlignmentCheck(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        negi val
+        atomicxchgaddb val, [memCopy], mem
+    elsif X86_64
+        negi val
+        atomicxchgaddb val, [memCopy]
+        move val, mem
+        andi 0xff, mem
+    elsif ARM64
+        weakCASLoopByte(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            subi oldValue, value, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI32AtomicRmwSub16(mem, val, memCopy, scratch)
+    checkAlignment2(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        negi val
+        atomicxchgaddh val, [memCopy], mem
+    elsif X86_64
+        negi val
+        atomicxchgaddh val, [memCopy]
+        move val, mem
+        andi 0xffff, mem
+    elsif ARM64
+        weakCASLoopHalf(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            subi oldValue, value, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI64AtomicRmwSub8(mem, val, memCopy, scratch)
+    noAlignmentCheck(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        negq val
+        atomicxchgaddb val, [memCopy], mem
+    elsif X86_64
+        negq val
+        atomicxchgaddb val, [memCopy]
+        move val, mem
+        andi 0xff, mem
+    elsif ARM64
+        weakCASLoopByte(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            subi oldValue, value, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI64AtomicRmwSub16(mem, val, memCopy, scratch)
+    checkAlignment2(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        negq val
+        atomicxchgaddh val, [memCopy], mem
+    elsif X86_64
+        negq val
+        atomicxchgaddh val, [memCopy]
+        move val, mem
+        andi 0xffff, mem
+    elsif ARM64
+        weakCASLoopHalf(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            subi oldValue, value, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI64AtomicRmwSub32(mem, val, memCopy, scratch)
+    checkAlignment4(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        negq val
+        atomicxchgaddi val, [memCopy], mem
+    elsif X86_64
+        negq val
+        atomicxchgaddi val, [memCopy]
+        move val, mem
+        ori 0, mem
+    elsif ARM64
+        weakCASLoopInt(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            subi oldValue, value, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI32AtomicRmwAnd(mem, val, memCopy, scratch)
+    checkAlignment4(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        noti val
+        atomicxchgcleari val, [memCopy], mem
+    elsif X86_64
+        weakCASLoopInt(memCopy, val, mem, scratch, macro (value, dst)
+            andq value, dst
+        end)
+    elsif ARM64
+        weakCASLoopInt(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            andi value, oldValue, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI64AtomicRmwAnd(mem, val, memCopy, scratch)
+    checkAlignment8(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        notq val
+        atomicxchgclearq val, [memCopy], mem
+    elsif X86_64
+        weakCASLoopQuad(memCopy, val, mem, scratch, macro (value, dst)
+            andq value, dst
+        end)
+    elsif ARM64
+        weakCASLoopQuad(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            andq value, oldValue, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI32AtomicRmwAnd8(mem, val, memCopy, scratch)
+    noAlignmentCheck(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        noti val
+        atomicxchgclearb val, [memCopy], mem
+    elsif X86_64
+        weakCASLoopByte(memCopy, val, mem, scratch, macro (value, dst)
+            andq value, dst
+        end)
+    elsif ARM64
+        weakCASLoopByte(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            andi value, oldValue, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI32AtomicRmwAnd16(mem, val, memCopy, scratch)
+    checkAlignment2(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        noti val
+        atomicxchgclearh val, [memCopy], mem
+    elsif X86_64
+        weakCASLoopHalf(memCopy, val, mem, scratch, macro (value, dst)
+            andq value, dst
+        end)
+    elsif ARM64
+        weakCASLoopHalf(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            andi value, oldValue, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI64AtomicRmwAnd8(mem, val, memCopy, scratch)
+    noAlignmentCheck(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        notq val
+        atomicxchgclearb val, [memCopy], mem
+    elsif X86_64
+        weakCASLoopByte(memCopy, val, mem, scratch, macro (value, dst)
+            andq value, dst
+        end)
+    elsif ARM64
+        weakCASLoopByte(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            andi value, oldValue, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI64AtomicRmwAnd16(mem, val, memCopy, scratch)
+    checkAlignment2(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        notq val
+        atomicxchgclearh val, [memCopy], mem
+    elsif X86_64
+        weakCASLoopHalf(memCopy, val, mem, scratch, macro (value, dst)
+            andq value, dst
+        end)
+    elsif ARM64
+        weakCASLoopHalf(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            andi value, oldValue, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI64AtomicRmwAnd32(mem, val, memCopy, scratch)
+    checkAlignment4(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        notq val
+        atomicxchgcleari val, [memCopy], mem
+    elsif X86_64
+        weakCASLoopInt(memCopy, val, mem, scratch, macro (value, dst)
+            andq value, dst
+        end)
+    elsif ARM64
+        weakCASLoopInt(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            andi value, oldValue, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI32AtomicRmwOr(mem, val, memCopy, scratch)
+    checkAlignment4(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        atomicxchgori val, [memCopy], mem
+    elsif X86_64
+        weakCASLoopInt(memCopy, val, mem, scratch, macro (value, dst)
+            ori value, dst
+        end)
+    elsif ARM64
+        weakCASLoopInt(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            ori value, oldValue, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI64AtomicRmwOr(mem, val, memCopy, scratch)
+    checkAlignment8(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        atomicxchgorq val, [memCopy], mem
+    elsif X86_64
+        weakCASLoopQuad(memCopy, val, mem, scratch, macro (value, dst)
+            orq value, dst
+        end)
+    elsif ARM64
+        weakCASLoopQuad(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            orq value, oldValue, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI32AtomicRmwOr8(mem, val, memCopy, scratch)
+    noAlignmentCheck(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        atomicxchgorb val, [memCopy], mem
+    elsif X86_64
+        weakCASLoopByte(memCopy, val, mem, scratch, macro (value, dst)
+            orq value, dst
+        end)
+    elsif ARM64
+        weakCASLoopByte(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            ori value, oldValue, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI32AtomicRmwOr16(mem, val, memCopy, scratch)
+    checkAlignment2(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        atomicxchgorh val, [memCopy], mem
+    elsif X86_64
+        weakCASLoopHalf(memCopy, val, mem, scratch, macro (value, dst)
+            orq value, dst
+        end)
+    elsif ARM64
+        weakCASLoopHalf(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            ori value, oldValue, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI64AtomicRmwOr8(mem, val, memCopy, scratch)
+    noAlignmentCheck(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        atomicxchgorb val, [memCopy], mem
+    elsif X86_64
+        weakCASLoopByte(memCopy, val, mem, scratch, macro (value, dst)
+            orq value, dst
+        end)
+    elsif ARM64
+        weakCASLoopByte(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            ori value, oldValue, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI64AtomicRmwOr16(mem, val, memCopy, scratch)
+    checkAlignment2(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        atomicxchgorh val, [memCopy], mem
+    elsif X86_64
+        weakCASLoopHalf(memCopy, val, mem, scratch, macro (value, dst)
+            orq value, dst
+        end)
+    elsif ARM64
+        weakCASLoopHalf(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            ori value, oldValue, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI64AtomicRmwOr32(mem, val, memCopy, scratch)
+    checkAlignment4(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        atomicxchgori val, [memCopy], mem
+    elsif X86_64
+        weakCASLoopInt(memCopy, val, mem, scratch, macro (value, dst)
+            orq value, dst
+        end)
+    elsif ARM64
+        weakCASLoopInt(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            ori value, oldValue, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI32AtomicRmwXor(mem, val, memCopy, scratch)
+    checkAlignment4(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        atomicxchgxori val, [memCopy], mem
+    elsif X86_64
+        weakCASLoopInt(memCopy, val, mem, scratch, macro (value, dst)
+            xorq value, dst
+        end)
+    elsif ARM64
+        weakCASLoopInt(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            xori value, oldValue, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI64AtomicRmwXor(mem, val, memCopy, scratch)
+    checkAlignment8(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        atomicxchgxorq val, [memCopy], mem
+    elsif X86_64
+        weakCASLoopQuad(memCopy, val, mem, scratch, macro (value, dst)
+            xorq value, dst
+        end)
+    elsif ARM64
+        weakCASLoopQuad(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            xorq value, oldValue, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI32AtomicRmwXor8(mem, val, memCopy, scratch)
+    noAlignmentCheck(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        atomicxchgxorb val, [memCopy], mem
+    elsif X86_64
+        weakCASLoopByte(memCopy, val, mem, scratch, macro (value, dst)
+            xorq value, dst
+        end)
+    elsif ARM64
+        weakCASLoopByte(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            xori value, oldValue, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI32AtomicRmwXor16(mem, val, memCopy, scratch)
+    checkAlignment2(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        atomicxchgxorh val, [memCopy], mem
+    elsif X86_64
+        weakCASLoopHalf(memCopy, val, mem, scratch, macro (value, dst)
+            xorq value, dst
+        end)
+    elsif ARM64
+        weakCASLoopHalf(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            xori value, oldValue, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI64AtomicRmwXor8(mem, val, memCopy, scratch)
+    noAlignmentCheck(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        atomicxchgxorb val, [memCopy], mem
+    elsif X86_64
+        weakCASLoopByte(memCopy, val, mem, scratch, macro (value, dst)
+            xorq value, dst
+        end)
+    elsif ARM64
+        weakCASLoopByte(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            xori value, oldValue, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI64AtomicRmwXor16(mem, val, memCopy, scratch)
+    checkAlignment2(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        atomicxchgxorh val, [memCopy], mem
+    elsif X86_64
+        weakCASLoopHalf(memCopy, val, mem, scratch, macro (value, dst)
+            xorq value, dst
+        end)
+    elsif ARM64
+        weakCASLoopHalf(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            xori value, oldValue, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI64AtomicRmwXor32(mem, val, memCopy, scratch)
+    checkAlignment4(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        atomicxchgxori val, [memCopy], mem
+    elsif X86_64
+        weakCASLoopInt(memCopy, val, mem, scratch, macro (value, dst)
+            xorq value, dst
+        end)
+    elsif ARM64
+        weakCASLoopInt(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            xori value, oldValue, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI32AtomicRmwXchg(mem, val, memCopy, scratch)
+    checkAlignment4(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        atomicxchgi val, [memCopy], mem
+    elsif X86_64
+        weakCASLoopInt(memCopy, val, mem, scratch, macro (value, dst)
+            move value, dst
+        end)
+    elsif ARM64
+        weakCASLoopInt(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            move value, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI64AtomicRmwXchg(mem, val, memCopy, scratch)
+    checkAlignment8(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        atomicxchgq val, [memCopy], mem
+    elsif X86_64
+        weakCASLoopQuad(memCopy, val, mem, scratch, macro (value, dst)
+            move value, dst
+        end)
+    elsif ARM64
+        weakCASLoopQuad(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            move value, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI32AtomicRmwXchg8(mem, val, memCopy, scratch)
+    noAlignmentCheck(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        atomicxchgb val, [memCopy], mem
+    elsif X86_64
+        weakCASLoopByte(memCopy, val, mem, scratch, macro (value, dst)
+            move value, dst
+        end)
+    elsif ARM64
+        weakCASLoopByte(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            move value, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI32AtomicRmwXchg16(mem, val, memCopy, scratch)
+    checkAlignment2(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        atomicxchgh val, [memCopy], mem
+    elsif X86_64
+        weakCASLoopHalf(memCopy, val, mem, scratch, macro (value, dst)
+            move value, dst
+        end)
+    elsif ARM64
+        weakCASLoopHalf(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            move value, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI64AtomicRmwXchg8(mem, val, memCopy, scratch)
+    noAlignmentCheck(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        atomicxchgb val, [memCopy], mem
+    elsif X86_64
+        weakCASLoopByte(memCopy, val, mem, scratch, macro (value, dst)
+            move value, dst
+        end)
+    elsif ARM64
+        weakCASLoopByte(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            move value, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI64AtomicRmwXchg16(mem, val, memCopy, scratch)
+    checkAlignment2(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        atomicxchgh val, [memCopy], mem
+    elsif X86_64
+        weakCASLoopHalf(memCopy, val, mem, scratch, macro (value, dst)
+            move value, dst
+        end)
+    elsif ARM64
+        weakCASLoopHalf(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            move value, newValue
+        end)
+    else
+        error
+    end
+end
+
+macro doI64AtomicRmwXchg32(mem, val, memCopy, scratch)
+    checkAlignment4(mem, _ipint_throw_UnalignedMemoryAccess)
+    move mem, memCopy
+    if ARM64E
+        atomicxchgi val, [memCopy], mem
+    elsif X86_64
+        weakCASLoopInt(memCopy, val, mem, scratch, macro (value, dst)
+            move value, dst
+        end)
+    elsif ARM64
+        weakCASLoopInt(memCopy, val, mem, scratch, macro(value, oldValue, newValue)
+            move value, newValue
+        end)
+    else
+        error
+    end
+end
+
+# On plain ARM64 the CAS retry loop lives out of line (_ipint_weak_cas_exchange_* below) and is
+# reached by `call`, so it cannot take its operands as macro parameters. Both it and the cmpxchg
+# opcode bodies take their registers from here so that the two cannot drift apart.
+macro withCmpxchgRegisters(fn)
+    # mem carries the address in and the loaded value out; expected is dead once the opcode
+    # prologue has narrowed it into mem, so the retry loop reuses it as a second scratch.
+    fn(t0, t3, t7, t2, t1)
+end
+
+macro doI32AtomicCmpxchg()
+    withCmpxchgRegisters(macro (mem, expected, newVal, memCopy, scratch)
+        checkAlignment4(mem, _ipint_throw_UnalignedMemoryAccess)
+        move mem, memCopy
+        zxi2q expected, mem
+        if ARM64E or X86_64
+            atomicweakcasi mem, newVal, [memCopy]
+        elsif ARM64
+            call _ipint_weak_cas_exchange_int
+        else
+            error
+        end
+    end)
+end
+
+macro doI64AtomicCmpxchg()
+    withCmpxchgRegisters(macro (mem, expected, newVal, memCopy, scratch)
+        checkAlignment8(mem, _ipint_throw_UnalignedMemoryAccess)
+        move mem, memCopy
+        move expected, mem
+        if ARM64E or X86_64
+            atomicweakcasq mem, newVal, [memCopy]
+        elsif ARM64
+            call _ipint_weak_cas_exchange_quad
+        else
+            error
+        end
+    end)
+end
+
+macro doI32AtomicCmpxchg8()
+    withCmpxchgRegisters(macro (mem, expected, newVal, memCopy, scratch)
+        noAlignmentCheck(mem, _ipint_throw_UnalignedMemoryAccess)
+        move mem, memCopy
+        andi expected, 0xff, mem
+        if ARM64E or X86_64
+            atomicweakcasb mem, newVal, [memCopy]
+        elsif ARM64
+            call _ipint_weak_cas_exchange_byte
+        else
+            error
+        end
+    end)
+end
+
+macro doI32AtomicCmpxchg16()
+    withCmpxchgRegisters(macro (mem, expected, newVal, memCopy, scratch)
+        checkAlignment2(mem, _ipint_throw_UnalignedMemoryAccess)
+        move mem, memCopy
+        andi expected, 0xffff, mem
+        if ARM64E or X86_64
+            atomicweakcash mem, newVal, [memCopy]
+        elsif ARM64
+            call _ipint_weak_cas_exchange_half
+        else
+            error
+        end
+    end)
+end
+
+macro doI64AtomicCmpxchg8()
+    withCmpxchgRegisters(macro (mem, expected, newVal, memCopy, scratch)
+        noAlignmentCheck(mem, _ipint_throw_UnalignedMemoryAccess)
+        move mem, memCopy
+        andi expected, 0xff, mem
+        if ARM64E or X86_64
+            atomicweakcasb mem, newVal, [memCopy]
+        elsif ARM64
+            call _ipint_weak_cas_exchange_byte
+        else
+            error
+        end
+    end)
+end
+
+macro doI64AtomicCmpxchg16()
+    withCmpxchgRegisters(macro (mem, expected, newVal, memCopy, scratch)
+        checkAlignment2(mem, _ipint_throw_UnalignedMemoryAccess)
+        move mem, memCopy
+        andi expected, 0xffff, mem
+        if ARM64E or X86_64
+            atomicweakcash mem, newVal, [memCopy]
+        elsif ARM64
+            call _ipint_weak_cas_exchange_half
+        else
+            error
+        end
+    end)
+end
+
+macro doI64AtomicCmpxchg32()
+    withCmpxchgRegisters(macro (mem, expected, newVal, memCopy, scratch)
+        checkAlignment4(mem, _ipint_throw_UnalignedMemoryAccess)
+        move mem, memCopy
+        zxi2q expected, mem
+        if ARM64E or X86_64
+            atomicweakcasi mem, newVal, [memCopy]
+        elsif ARM64
+            call _ipint_weak_cas_exchange_int
+        else
+            error
+        end
+    end)
+end
+
+ipintAtomicOp(_memory_atomic_notify, macro()
+    # starting at sp: count, pointer
+    loadb IPInt::AtomicMemoryAccessMetadata::memoryIndex[MC], t0
+    pushInt32(t0)
+    loadq IPInt::AtomicMemoryAccessMetadata::offset[MC], t0
+    pushInt32(t0) # offset
+
+    move sp, a1
+
+    operationCall(macro() cCall2(_ipint_extern_memory_atomic_notify) end)
+    bilt r0, 0, _ipint_throw_OutOfBoundsMemoryAccess
+
+    addq (StackValueSize * 4), sp
+
+    pushInt32(r0)
+    loadb IPInt::AtomicMemoryAccessMetadata::instructionLength[MC], t0
     advancePCByReg(t0)
-    advanceMC(constexpr (sizeof(IPInt::Const32Metadata)))
+    advanceMC(constexpr (sizeof(IPInt::AtomicMemoryAccessMetadata)))
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_memory_atomic_wait32, macro()
+    jmp _ipint_op_memory_atomic_wait32
+end)
+
+ipintAtomicOp(_memory_atomic_wait64, macro()
+    jmp _ipint_op_memory_atomic_wait64
+end)
+
+ipintAtomicOp(_atomic_fence, macro()
+    fence
+    leap 1[t4], PC
+    nextIPIntInstruction()
+end)
+
+reservedAtomicOpcode(atomic_0x4)
+reservedAtomicOpcode(atomic_0x5)
+reservedAtomicOpcode(atomic_0x6)
+reservedAtomicOpcode(atomic_0x7)
+reservedAtomicOpcode(atomic_0x8)
+reservedAtomicOpcode(atomic_0x9)
+reservedAtomicOpcode(atomic_0xa)
+reservedAtomicOpcode(atomic_0xb)
+reservedAtomicOpcode(atomic_0xc)
+reservedAtomicOpcode(atomic_0xd)
+reservedAtomicOpcode(atomic_0xe)
+reservedAtomicOpcode(atomic_0xf)
+
+ipintAtomicOp(_i32_atomic_load, macro()
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 4, t1, t2, .ipint_i32_atomic_load_slow_path)
+    doI32AtomicLoad(t0, t2)
+    pushInt32(t2)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_load, macro()
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 8, t1, t2, .ipint_i64_atomic_load_slow_path)
+    doI64AtomicLoad(t0, t2)
+    pushInt64(t2)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i32_atomic_load8_u, macro()
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 1, t1, t2, .ipint_i32_atomic_load8_u_slow_path)
+    doI32AtomicLoad8(t0, t2)
+    pushInt32(t2)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i32_atomic_load16_u, macro()
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 2, t1, t2, .ipint_i32_atomic_load16_u_slow_path)
+    doI32AtomicLoad16(t0, t2)
+    pushInt32(t2)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_load8_u, macro()
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 1, t1, t2, .ipint_i64_atomic_load8_u_slow_path)
+    doI64AtomicLoad8(t0, t2)
+    pushInt64(t2)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_load16_u, macro()
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 2, t1, t2, .ipint_i64_atomic_load16_u_slow_path)
+    doI64AtomicLoad16(t0, t2)
+    pushInt64(t2)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_load32_u, macro()
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 4, t1, t2, .ipint_i64_atomic_load32_u_slow_path)
+    doI64AtomicLoad32(t0, t2)
+    pushInt64(t2)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i32_atomic_store, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 4, t1, t2, .ipint_i32_atomic_store_slow_path)
+    doI32AtomicStore(t0, t3, t2, t1)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_store, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 8, t1, t2, .ipint_i64_atomic_store_slow_path)
+    doI64AtomicStore(t0, t3, t2, t1)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i32_atomic_store8_u, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 1, t1, t2, .ipint_i32_atomic_store8_u_slow_path)
+    doI32AtomicStore8(t0, t3, t2, t1)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i32_atomic_store16_u, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 2, t1, t2, .ipint_i32_atomic_store16_u_slow_path)
+    doI32AtomicStore16(t0, t3, t2, t1)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_store8_u, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 1, t1, t2, .ipint_i64_atomic_store8_u_slow_path)
+    doI64AtomicStore8(t0, t3, t2, t1)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_store16_u, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 2, t1, t2, .ipint_i64_atomic_store16_u_slow_path)
+    doI64AtomicStore16(t0, t3, t2, t1)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_store32_u, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 4, t1, t2, .ipint_i64_atomic_store32_u_slow_path)
+    doI64AtomicStore32(t0, t3, t2, t1)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i32_atomic_rmw_add, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 4, t1, t2, .ipint_i32_atomic_rmw_add_slow_path)
+    doI32AtomicRmwAdd(t0, t3, t2, t1)
+    pushInt32(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_rmw_add, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 8, t1, t2, .ipint_i64_atomic_rmw_add_slow_path)
+    doI64AtomicRmwAdd(t0, t3, t2, t1)
+    pushInt64(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i32_atomic_rmw8_add_u, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 1, t1, t2, .ipint_i32_atomic_rmw8_add_u_slow_path)
+    doI32AtomicRmwAdd8(t0, t3, t2, t1)
+    pushInt32(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i32_atomic_rmw16_add_u, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 2, t1, t2, .ipint_i32_atomic_rmw16_add_u_slow_path)
+    doI32AtomicRmwAdd16(t0, t3, t2, t1)
+    pushInt32(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_rmw8_add_u, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 1, t1, t2, .ipint_i64_atomic_rmw8_add_u_slow_path)
+    doI64AtomicRmwAdd8(t0, t3, t2, t1)
+    pushInt64(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_rmw16_add_u, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 2, t1, t2, .ipint_i64_atomic_rmw16_add_u_slow_path)
+    doI64AtomicRmwAdd16(t0, t3, t2, t1)
+    pushInt64(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_rmw32_add_u, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 4, t1, t2, .ipint_i64_atomic_rmw32_add_u_slow_path)
+    doI64AtomicRmwAdd32(t0, t3, t2, t1)
+    pushInt64(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i32_atomic_rmw_sub, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 4, t1, t2, .ipint_i32_atomic_rmw_sub_slow_path)
+    doI32AtomicRmwSub(t0, t3, t2, t1)
+    pushInt32(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_rmw_sub, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 8, t1, t2, .ipint_i64_atomic_rmw_sub_slow_path)
+    doI64AtomicRmwSub(t0, t3, t2, t1)
+    pushInt64(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i32_atomic_rmw8_sub_u, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 1, t1, t2, .ipint_i32_atomic_rmw8_sub_u_slow_path)
+    doI32AtomicRmwSub8(t0, t3, t2, t1)
+    pushInt32(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i32_atomic_rmw16_sub_u, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 2, t1, t2, .ipint_i32_atomic_rmw16_sub_u_slow_path)
+    doI32AtomicRmwSub16(t0, t3, t2, t1)
+    pushInt32(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_rmw8_sub_u, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 1, t1, t2, .ipint_i64_atomic_rmw8_sub_u_slow_path)
+    doI64AtomicRmwSub8(t0, t3, t2, t1)
+    pushInt64(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_rmw16_sub_u, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 2, t1, t2, .ipint_i64_atomic_rmw16_sub_u_slow_path)
+    doI64AtomicRmwSub16(t0, t3, t2, t1)
+    pushInt64(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_rmw32_sub_u, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 4, t1, t2, .ipint_i64_atomic_rmw32_sub_u_slow_path)
+    doI64AtomicRmwSub32(t0, t3, t2, t1)
+    pushInt64(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i32_atomic_rmw_and, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 4, t1, t2, .ipint_i32_atomic_rmw_and_slow_path)
+    doI32AtomicRmwAnd(t0, t3, t2, t1)
+    pushInt32(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_rmw_and, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 8, t1, t2, .ipint_i64_atomic_rmw_and_slow_path)
+    doI64AtomicRmwAnd(t0, t3, t2, t1)
+    pushInt64(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i32_atomic_rmw8_and_u, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 1, t1, t2, .ipint_i32_atomic_rmw8_and_u_slow_path)
+    doI32AtomicRmwAnd8(t0, t3, t2, t1)
+    pushInt32(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i32_atomic_rmw16_and_u, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 2, t1, t2, .ipint_i32_atomic_rmw16_and_u_slow_path)
+    doI32AtomicRmwAnd16(t0, t3, t2, t1)
+    pushInt32(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_rmw8_and_u, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 1, t1, t2, .ipint_i64_atomic_rmw8_and_u_slow_path)
+    doI64AtomicRmwAnd8(t0, t3, t2, t1)
+    pushInt64(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_rmw16_and_u, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 2, t1, t2, .ipint_i64_atomic_rmw16_and_u_slow_path)
+    doI64AtomicRmwAnd16(t0, t3, t2, t1)
+    pushInt64(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_rmw32_and_u, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 4, t1, t2, .ipint_i64_atomic_rmw32_and_u_slow_path)
+    doI64AtomicRmwAnd32(t0, t3, t2, t1)
+    pushInt64(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i32_atomic_rmw_or, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 4, t1, t2, .ipint_i32_atomic_rmw_or_slow_path)
+    doI32AtomicRmwOr(t0, t3, t2, t1)
+    pushInt32(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_rmw_or, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 8, t1, t2, .ipint_i64_atomic_rmw_or_slow_path)
+    doI64AtomicRmwOr(t0, t3, t2, t1)
+    pushInt64(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i32_atomic_rmw8_or_u, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 1, t1, t2, .ipint_i32_atomic_rmw8_or_u_slow_path)
+    doI32AtomicRmwOr8(t0, t3, t2, t1)
+    pushInt32(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i32_atomic_rmw16_or_u, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 2, t1, t2, .ipint_i32_atomic_rmw16_or_u_slow_path)
+    doI32AtomicRmwOr16(t0, t3, t2, t1)
+    pushInt32(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_rmw8_or_u, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 1, t1, t2, .ipint_i64_atomic_rmw8_or_u_slow_path)
+    doI64AtomicRmwOr8(t0, t3, t2, t1)
+    pushInt64(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_rmw16_or_u, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 2, t1, t2, .ipint_i64_atomic_rmw16_or_u_slow_path)
+    doI64AtomicRmwOr16(t0, t3, t2, t1)
+    pushInt64(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_rmw32_or_u, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 4, t1, t2, .ipint_i64_atomic_rmw32_or_u_slow_path)
+    doI64AtomicRmwOr32(t0, t3, t2, t1)
+    pushInt64(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i32_atomic_rmw_xor, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 4, t1, t2, .ipint_i32_atomic_rmw_xor_slow_path)
+    doI32AtomicRmwXor(t0, t3, t2, t1)
+    pushInt32(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_rmw_xor, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 8, t1, t2, .ipint_i64_atomic_rmw_xor_slow_path)
+    doI64AtomicRmwXor(t0, t3, t2, t1)
+    pushInt64(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i32_atomic_rmw8_xor_u, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 1, t1, t2, .ipint_i32_atomic_rmw8_xor_u_slow_path)
+    doI32AtomicRmwXor8(t0, t3, t2, t1)
+    pushInt32(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i32_atomic_rmw16_xor_u, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 2, t1, t2, .ipint_i32_atomic_rmw16_xor_u_slow_path)
+    doI32AtomicRmwXor16(t0, t3, t2, t1)
+    pushInt32(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_rmw8_xor_u, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 1, t1, t2, .ipint_i64_atomic_rmw8_xor_u_slow_path)
+    doI64AtomicRmwXor8(t0, t3, t2, t1)
+    pushInt64(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_rmw16_xor_u, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 2, t1, t2, .ipint_i64_atomic_rmw16_xor_u_slow_path)
+    doI64AtomicRmwXor16(t0, t3, t2, t1)
+    pushInt64(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_rmw32_xor_u, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 4, t1, t2, .ipint_i64_atomic_rmw32_xor_u_slow_path)
+    doI64AtomicRmwXor32(t0, t3, t2, t1)
+    pushInt64(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i32_atomic_rmw_xchg, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 4, t1, t2, .ipint_i32_atomic_rmw_xchg_slow_path)
+    doI32AtomicRmwXchg(t0, t3, t2, t1)
+    pushInt32(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_rmw_xchg, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 8, t1, t2, .ipint_i64_atomic_rmw_xchg_slow_path)
+    doI64AtomicRmwXchg(t0, t3, t2, t1)
+    pushInt64(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i32_atomic_rmw8_xchg_u, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 1, t1, t2, .ipint_i32_atomic_rmw8_xchg_u_slow_path)
+    doI32AtomicRmwXchg8(t0, t3, t2, t1)
+    pushInt32(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i32_atomic_rmw16_xchg_u, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 2, t1, t2, .ipint_i32_atomic_rmw16_xchg_u_slow_path)
+    doI32AtomicRmwXchg16(t0, t3, t2, t1)
+    pushInt32(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_rmw8_xchg_u, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 1, t1, t2, .ipint_i64_atomic_rmw8_xchg_u_slow_path)
+    doI64AtomicRmwXchg8(t0, t3, t2, t1)
+    pushInt64(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_rmw16_xchg_u, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 2, t1, t2, .ipint_i64_atomic_rmw16_xchg_u_slow_path)
+    doI64AtomicRmwXchg16(t0, t3, t2, t1)
+    pushInt64(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_rmw32_xchg_u, macro()
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 4, t1, t2, .ipint_i64_atomic_rmw32_xchg_u_slow_path)
+    doI64AtomicRmwXchg32(t0, t3, t2, t1)
+    pushInt64(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+macro weakCASExchangeByteImpl(mem, value, expected, scratch, scratch2)
+    validateOpcodeConfig(scratch2)
+.loop:
+    loadlinkacqb [mem], scratch2
+    bqneq expected, scratch2, .fail
+    storecondrelb scratch, value, [mem]
+    bieq scratch, 0, .done
+    jmp .loop
+.fail:
+    storecondrelb scratch, scratch2, [mem]
+    bieq scratch, 0, .done
+    jmp .loop
+.done:
+    move scratch2, expected
+end
+
+macro weakCASExchangeHalfImpl(mem, value, expected, scratch, scratch2)
+    validateOpcodeConfig(scratch2)
+.loop:
+    loadlinkacqh [mem], scratch2
+    bqneq expected, scratch2, .fail
+    storecondrelh scratch, value, [mem]
+    bieq scratch, 0, .done
+    jmp .loop
+.fail:
+    storecondrelh scratch, scratch2, [mem]
+    bieq scratch, 0, .done
+    jmp .loop
+.done:
+    move scratch2, expected
+end
+
+macro weakCASExchangeIntImpl(mem, value, expected, scratch, scratch2)
+    validateOpcodeConfig(scratch2)
+.loop:
+    loadlinkacqi [mem], scratch2
+    bqneq expected, scratch2, .fail
+    storecondreli scratch, value, [mem]
+    bieq scratch, 0, .done
+    jmp .loop
+.fail:
+    storecondreli scratch, scratch2, [mem]
+    bieq scratch, 0, .done
+    jmp .loop
+.done:
+    move scratch2, expected
+end
+
+macro weakCASExchangeQuadImpl(mem, value, expected, scratch, scratch2)
+    validateOpcodeConfig(scratch2)
+.loop:
+    loadlinkacqq [mem], scratch2
+    bqneq expected, scratch2, .fail
+    storecondrelq scratch, value, [mem]
+    bieq scratch, 0, .done
+    jmp .loop
+.fail:
+    storecondrelq scratch, scratch2, [mem]
+    bieq scratch, 0, .done
+    jmp .loop
+.done:
+    move scratch2, expected
+end
+
+ipintAtomicOp(_i32_atomic_rmw_cmpxchg, macro()
+    popInt64(t7)
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 4, t1, t2, .ipint_i32_atomic_rmw_cmpxchg_slow_path)
+    doI32AtomicCmpxchg()
+    pushInt32(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_rmw_cmpxchg, macro()
+    popInt64(t7)
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 8, t1, t2, .ipint_i64_atomic_rmw_cmpxchg_slow_path)
+    doI64AtomicCmpxchg()
+    pushInt64(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i32_atomic_rmw8_cmpxchg_u, macro()
+    popInt64(t7)
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 1, t1, t2, .ipint_i32_atomic_rmw8_cmpxchg_u_slow_path)
+    doI32AtomicCmpxchg8()
+    pushInt32(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i32_atomic_rmw16_cmpxchg_u, macro()
+    popInt64(t7)
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 2, t1, t2, .ipint_i32_atomic_rmw16_cmpxchg_u_slow_path)
+    doI32AtomicCmpxchg16()
+    pushInt32(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_rmw8_cmpxchg_u, macro()
+    popInt64(t7)
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 1, t1, t2, .ipint_i64_atomic_rmw8_cmpxchg_u_slow_path)
+    doI64AtomicCmpxchg8()
+    pushInt64(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_rmw16_cmpxchg_u, macro()
+    popInt64(t7)
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 2, t1, t2, .ipint_i64_atomic_rmw16_cmpxchg_u_slow_path)
+    doI64AtomicCmpxchg16()
+    pushInt64(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+ipintAtomicOp(_i64_atomic_rmw32_cmpxchg_u, macro()
+    popInt64(t7)
+    popInt64(t3)
+    popMemoryAddress(t0)
+    loadStoreMakePointerFast([t4], t0, 4, t1, t2, .ipint_i64_atomic_rmw32_cmpxchg_u_slow_path)
+    doI64AtomicCmpxchg32()
+    pushInt64(t0)
+    leap 2[t4], PC
+    nextIPIntInstruction()
+end)
+
+################################################################
+## Out-of-line bodies for opcodes too large for an IPInt slot ##
+################################################################
+
+if ARM64
+_ipint_weak_cas_exchange_byte:
+    tagReturnAddress sp
+    withCmpxchgRegisters(macro (mem, expected, newVal, memCopy, scratch)
+        weakCASExchangeByteImpl(memCopy, newVal, mem, scratch, expected)
+    end)
+    ret
+
+_ipint_weak_cas_exchange_half:
+    tagReturnAddress sp
+    withCmpxchgRegisters(macro (mem, expected, newVal, memCopy, scratch)
+        weakCASExchangeHalfImpl(memCopy, newVal, mem, scratch, expected)
+    end)
+    ret
+
+_ipint_weak_cas_exchange_int:
+    tagReturnAddress sp
+    withCmpxchgRegisters(macro (mem, expected, newVal, memCopy, scratch)
+        weakCASExchangeIntImpl(memCopy, newVal, mem, scratch, expected)
+    end)
+    ret
+
+_ipint_weak_cas_exchange_quad:
+    tagReturnAddress sp
+    withCmpxchgRegisters(macro (mem, expected, newVal, memCopy, scratch)
+        weakCASExchangeQuadImpl(memCopy, newVal, mem, scratch, expected)
+    end)
+    ret
+end
+
+_ipint_end_ret:
+    ipintEpilogueOSR(10)
+if X86_64
+    loadp UnboxedWasmCalleeStackSlot[cfr], ws0
+end
+    # uINT buffer lives on the signature RTT. The stack-return FP offset is
+    # embedded as a u32 at the head of the buffer.
+    loadp Wasm::IPIntCallee::m_signatureRTT[ws0], MC
+    loadp Wasm::RTT::m_uINTBytecode[MC], MC
+    addp (constexpr (Wasm::IPIntSharedBytecode::offsetOfData())), MC
+    loadi [MC], sc0
+    addp cfr, sc0
+    addp 4, MC
+
+    // We've already validateOpcodeConfig() in all the places that can jump to _ipint_end_ret.
+    uintDispatch()
+
+_ipint_op_global_set_ref:
+    loadi IPInt::GlobalMetadata::index[MC], a1
+    # Pop from stack
+    popQuad(a2)
+    operationCall(macro() cCall3(_ipint_extern_set_global_ref) end)
+    ipintGlobalSetTail()
+
+_ipint_op_loop_tier_up:
+    ipintLoopOSRTierUp()
+    ipintLoopTail()
+
+_ipint_op_throw:
+    saveCallSiteIndex()
+
+    loadp JSWebAssemblyInstance::m_vm[wasmInstance], t0
+    loadp VM::topEntryFrame[t0], t0
+    copyCalleeSavesToEntryFrameCalleeSavesBuffer(t0)
+
+    move cfr, a1
+    move sp, a2
+    loadi IPInt::ThrowMetadata::exceptionIndex[MC], a3
+    operationCall(macro() cCall4(_ipint_extern_throw_exception) end)
+    jumpToException()
+
+_ipint_op_rethrow:
+    saveCallSiteIndex()
+
+    loadp JSWebAssemblyInstance::m_vm[wasmInstance], t0
+    loadp VM::topEntryFrame[t0], t0
+    copyCalleeSavesToEntryFrameCalleeSavesBuffer(t0)
+
+    move cfr, a1
+    loadi IPInt::RethrowMetadata::tryDepth[MC], a2
+    operationCall(macro() cCall3(_ipint_extern_rethrow_exception) end)
+    jumpToException()
+
+_ipint_op_throw_ref:
+    popQuad(a2)
+    bieq a2, ValueNull, _ipint_throw_NullExnrefReference
+
+    saveCallSiteIndex()
+
+    loadp JSWebAssemblyInstance::m_vm[wasmInstance], t0
+    loadp VM::topEntryFrame[t0], t0
+    copyCalleeSavesToEntryFrameCalleeSavesBuffer(t0)
+
+    move cfr, a1
+    operationCall(macro() cCall3(_ipint_extern_throw_ref) end)
+    jumpToException()
+
+_ipint_op_memory_grow:
+    popInt32(a1)
+    loadb IPInt::MemoryGrowMetadata::memoryIndex[MC], a2
+    operationCall(macro() cCall3(_ipint_extern_memory_grow) end)
+    pushInt32(r0)
+    ipintReloadMemory(t2)
+    loadb IPInt::MemoryGrowMetadata::instructionLength[MC], t0
+    advancePCByReg(t0)
+    advanceMC(constexpr (sizeof(IPInt::MemoryGrowMetadata)))
+    nextIPIntInstruction()
+
+macro ipintMemoryAtomicWaitImpl(operation)
+    # starting at sp: timeout, value, pointer
+    loadb IPInt::AtomicMemoryAccessMetadata::memoryIndex[MC], t2
+    pushInt32(t2)
+    loadq (StackValueSize * 3)[sp], t0
+    zeroExtendAddressForMemory(t2, t0, t3, t5)
+    loadq IPInt::AtomicMemoryAccessMetadata::offset[MC], t1
+    baddpc(t1, t0, _ipint_throw_OutOfBoundsMemoryAccess)
+    storeq t0, (StackValueSize * 3)[sp] # replace pointer with pointer + offset
+
+    # Push callee/cfr/PC/MC for debugger; operands shift to args[4..7].
+    subq (StackValueSize * 4), sp
+if X86_64
+    loadp UnboxedWasmCalleeStackSlot[cfr], ws0
+end
+    storeq ws0, (StackValueSize * 0)[sp]  # args[0] = IPIntCallee*
+    storeq cfr, (StackValueSize * 1)[sp]  # args[1] = cfr
+    storeq PC,  (StackValueSize * 2)[sp]  # args[2] = PC
+    storeq MC,  (StackValueSize * 3)[sp]  # args[3] = MC
+
+    move sp, a1
+
+    operationCall(macro() cCall2(operation) end)
+    bilt r0, 0, _ipint_throw_OutOfBoundsMemoryAccess
+
+    addq (StackValueSize * 8), sp
+
+    pushInt32(r0)
+    loadb IPInt::AtomicMemoryAccessMetadata::instructionLength[MC], t0
+    advancePCByReg(t0)
+    advanceMC(constexpr (sizeof(IPInt::AtomicMemoryAccessMetadata)))
     nextIPIntInstruction()
 end
 
-ipintOp(_i32_atomic_store, macro()
-    atomicStoreOp(ipintCheckMemoryBoundWithAlignmentCheck4, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            atomicxchgi value, [mem], value
-        elsif X86_64
-            atomicxchgi value, [mem]
-        elsif ARM64
-            weakCASLoopInt(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                move value, newValue
-            end)
-        else
-            error
-        end
-    end)
-end)
+_ipint_op_memory_atomic_wait32:
+    ipintMemoryAtomicWaitImpl(_ipint_extern_memory_atomic_wait32)
 
-ipintOp(_i64_atomic_store, macro()
-    atomicStoreOp(ipintCheckMemoryBoundWithAlignmentCheck8, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            atomicxchgq value, [mem], value
-        elsif X86_64
-            atomicxchgq value, [mem]
-        elsif ARM64
-            weakCASLoopQuad(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                move value, newValue
-            end)
-        else
-            error
-        end
-    end)
-end)
-
-ipintOp(_i32_atomic_store8_u, macro()
-    atomicStoreOp(ipintCheckMemoryBoundWithAlignmentCheck1, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            atomicxchgb value, [mem], value
-        elsif X86_64
-            atomicxchgb value, [mem]
-        elsif ARM64
-            weakCASLoopByte(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                move value, newValue
-            end)
-        else
-            error
-        end
-    end)
-end)
-
-ipintOp(_i32_atomic_store16_u, macro()
-    atomicStoreOp(ipintCheckMemoryBoundWithAlignmentCheck2, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            atomicxchgh value, [mem], value
-        elsif X86_64
-            atomicxchgh value, [mem]
-        elsif ARM64
-            weakCASLoopHalf(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                move value, newValue
-            end)
-        else
-            error
-        end
-    end)
-end)
-
-ipintOp(_i64_atomic_store8_u, macro()
-    atomicStoreOp(ipintCheckMemoryBoundWithAlignmentCheck1, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            atomicxchgb value, [mem], value
-        elsif X86_64
-            atomicxchgb value, [mem]
-        elsif ARM64
-            weakCASLoopByte(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                move value, newValue
-            end)
-        else
-            error
-        end
-    end)
-end)
-
-ipintOp(_i64_atomic_store16_u, macro()
-    atomicStoreOp(ipintCheckMemoryBoundWithAlignmentCheck2, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            atomicxchgh value, [mem], value
-        elsif X86_64
-            atomicxchgh value, [mem]
-        elsif ARM64
-            weakCASLoopHalf(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                move value, newValue
-            end)
-        else
-            error
-        end
-    end)
-end)
-
-ipintOp(_i64_atomic_store32_u, macro()
-    atomicStoreOp(ipintCheckMemoryBoundWithAlignmentCheck4, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            atomicxchgi value, [mem], value
-        elsif X86_64
-            atomicxchgi value, [mem]
-        elsif ARM64
-            weakCASLoopInt(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                move value, newValue
-            end)
-        else
-            error
-        end
-    end)
-end)
-
-macro atomicRMWOp(boundsAndAlignmentCheck, rmw)
-    # pop value
-    popInt64(t1)
-    # pop index
-    popInt32(t2)
-    ori 0, t2
-    # load offset
-    loadi IPInt::Const32Metadata::value[MC], t0
-    addp t0, t2
-    boundsAndAlignmentCheck(t2, t3)
-    addq memoryBase, t2
-    rmw(t2, t1, t0, t3)
-
-    loadb IPInt::Const32Metadata::instructionLength[MC], t0
-    advancePCByReg(t0)
-    advanceMC(constexpr (sizeof(IPInt::Const32Metadata)))
-    nextIPIntInstruction()
-end
-
-ipintOp(_i32_atomic_rmw_add, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck4, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            atomicxchgaddi value, [mem], scratch1
-        elsif X86_64
-            atomicxchgaddi value, [mem]
-            move value, scratch1
-        elsif ARM64
-            weakCASLoopInt(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                addi value, oldValue, newValue
-            end)
-        else
-            error
-        end
-        pushInt32(scratch1)
-    end)
-end)
-
-ipintOp(_i64_atomic_rmw_add, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck8, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            atomicxchgaddq value, [mem], scratch1
-        elsif X86_64
-            atomicxchgaddq value, [mem]
-            move value, scratch1
-        elsif ARM64
-            weakCASLoopQuad(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                addq value, oldValue, newValue
-            end)
-        else
-            error
-        end
-        pushInt64(scratch1)
-    end)
-end)
-
-ipintOp(_i32_atomic_rmw8_add_u, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck1, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            atomicxchgaddb value, [mem], scratch1
-        elsif X86_64
-            atomicxchgaddb value, [mem]
-            move value, scratch1
-            andi 0xff, scratch1
-        elsif ARM64
-            weakCASLoopByte(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                addi value, oldValue, newValue
-            end)
-        else
-            error
-        end
-        pushInt32(scratch1)
-    end)
-end)
-
-ipintOp(_i32_atomic_rmw16_add_u, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck2, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            atomicxchgaddh value, [mem], scratch1
-        elsif X86_64
-            atomicxchgaddh value, [mem]
-            move value, scratch1
-            andi 0xffff, scratch1
-        elsif ARM64
-            weakCASLoopHalf(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                addi value, oldValue, newValue
-            end)
-        else
-            error
-        end
-        pushInt32(scratch1)
-    end)
-end)
-
-ipintOp(_i64_atomic_rmw8_add_u, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck1, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            atomicxchgaddb value, [mem], scratch1
-        elsif X86_64
-            atomicxchgaddb value, [mem]
-            move value, scratch1
-            andi 0xff, scratch1
-        elsif ARM64
-            weakCASLoopByte(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                addi value, oldValue, newValue
-            end)
-        else
-            error
-        end
-        pushInt64(scratch1)
-    end)
-end)
-
-ipintOp(_i64_atomic_rmw16_add_u, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck2, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            atomicxchgaddh value, [mem], scratch1
-        elsif X86_64
-            atomicxchgaddh value, [mem]
-            move value, scratch1
-            andi 0xffff, scratch1
-        elsif ARM64
-            weakCASLoopHalf(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                addi value, oldValue, newValue
-            end)
-        else
-            error
-        end
-        pushInt64(scratch1)
-    end)
-end)
-
-ipintOp(_i64_atomic_rmw32_add_u, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck4, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            atomicxchgaddi value, [mem], scratch1
-        elsif X86_64
-            atomicxchgaddi value, [mem]
-            move value, scratch1
-            ori 0, scratch1
-        elsif ARM64
-            weakCASLoopInt(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                addi value, oldValue, newValue
-            end)
-        else
-            error
-        end
-        pushInt64(scratch1)
-    end)
-end)
-
-ipintOp(_i32_atomic_rmw_sub, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck4, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            negi value
-            atomicxchgaddi value, [mem], scratch1
-        elsif X86_64
-            negi value
-            atomicxchgaddi value, [mem]
-            move value, scratch1
-        elsif ARM64
-            weakCASLoopInt(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                subi oldValue, value, newValue
-            end)
-        else
-            error
-        end
-        pushInt32(scratch1)
-    end)
-end)
-
-ipintOp(_i64_atomic_rmw_sub, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck8, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            negq value
-            atomicxchgaddq value, [mem], scratch1
-        elsif X86_64
-            negq value
-            atomicxchgaddq value, [mem]
-            move value, scratch1
-        elsif ARM64
-            weakCASLoopQuad(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                subq oldValue, value, newValue
-            end)
-        else
-            error
-        end
-        pushInt64(scratch1)
-    end)
-end)
-
-ipintOp(_i32_atomic_rmw8_sub_u, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck1, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            negi value
-            atomicxchgaddb value, [mem], scratch1
-        elsif X86_64
-            negi value
-            atomicxchgaddb value, [mem]
-            move value, scratch1
-            andi 0xff, scratch1
-        elsif ARM64
-            weakCASLoopByte(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                subi oldValue, value, newValue
-            end)
-        else
-            error
-        end
-        pushInt32(scratch1)
-    end)
-end)
-
-ipintOp(_i32_atomic_rmw16_sub_u, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck2, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            negi value
-            atomicxchgaddh value, [mem], scratch1
-        elsif X86_64
-            negi value
-            atomicxchgaddh value, [mem]
-            move value, scratch1
-            andi 0xffff, scratch1
-        elsif ARM64
-            weakCASLoopHalf(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                subi oldValue, value, newValue
-            end)
-        else
-            error
-        end
-        pushInt32(scratch1)
-    end)
-end)
-
-ipintOp(_i64_atomic_rmw8_sub_u, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck1, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            negq value
-            atomicxchgaddb value, [mem], scratch1
-        elsif X86_64
-            negq value
-            atomicxchgaddb value, [mem]
-            move value, scratch1
-            andi 0xff, scratch1
-        elsif ARM64
-            weakCASLoopByte(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                subi oldValue, value, newValue
-            end)
-        else
-            error
-        end
-        pushInt64(scratch1)
-    end)
-end)
-
-ipintOp(_i64_atomic_rmw16_sub_u, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck2, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            negq value
-            atomicxchgaddh value, [mem], scratch1
-        elsif X86_64
-            negq value
-            atomicxchgaddh value, [mem]
-            move value, scratch1
-            andi 0xffff, scratch1
-        elsif ARM64
-            weakCASLoopHalf(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                subi oldValue, value, newValue
-            end)
-        else
-            error
-        end
-        pushInt64(scratch1)
-    end)
-end)
-
-ipintOp(_i64_atomic_rmw32_sub_u, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck4, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            negq value
-            atomicxchgaddi value, [mem], scratch1
-        elsif X86_64
-            negq value
-            atomicxchgaddi value, [mem]
-            move value, scratch1
-            ori 0, scratch1
-        elsif ARM64
-            weakCASLoopInt(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                subi oldValue, value, newValue
-            end)
-        else
-            error
-        end
-        pushInt64(scratch1)
-    end)
-end)
-
-ipintOp(_i32_atomic_rmw_and, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck4, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            noti value
-            atomicxchgcleari value, [mem], scratch1
-        elsif X86_64
-            weakCASLoopInt(mem, value, scratch1, scratch2, macro (value, dst)
-                andq value, dst
-            end)
-        elsif ARM64
-            weakCASLoopInt(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                andi value, oldValue, newValue
-            end)
-        else
-            error
-        end
-        pushInt32(scratch1)
-    end)
-end)
-
-ipintOp(_i64_atomic_rmw_and, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck8, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            notq value
-            atomicxchgclearq value, [mem], scratch1
-        elsif X86_64
-            weakCASLoopQuad(mem, value, scratch1, scratch2, macro (value, dst)
-                andq value, dst
-            end)
-        elsif ARM64
-            weakCASLoopQuad(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                andq value, oldValue, newValue
-            end)
-        else
-            error
-        end
-        pushInt64(scratch1)
-    end)
-end)
-
-ipintOp(_i32_atomic_rmw8_and_u, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck1, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            noti value
-            atomicxchgclearb value, [mem], scratch1
-        elsif X86_64
-            weakCASLoopByte(mem, value, scratch1, scratch2, macro (value, dst)
-                andq value, dst
-            end)
-        elsif ARM64
-            weakCASLoopByte(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                andi value, oldValue, newValue
-            end)
-        else
-            error
-        end
-        pushInt32(scratch1)
-    end)
-end)
-
-ipintOp(_i32_atomic_rmw16_and_u, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck2, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            noti value
-            atomicxchgclearh value, [mem], scratch1
-        elsif X86_64
-            weakCASLoopHalf(mem, value, scratch1, scratch2, macro (value, dst)
-                andq value, dst
-            end)
-        elsif ARM64
-            weakCASLoopHalf(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                andi value, oldValue, newValue
-            end)
-        else
-            error
-        end
-        pushInt32(scratch1)
-    end)
-end)
-
-ipintOp(_i64_atomic_rmw8_and_u, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck1, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            notq value
-            atomicxchgclearb value, [mem], scratch1
-        elsif X86_64
-            weakCASLoopByte(mem, value, scratch1, scratch2, macro (value, dst)
-                andq value, dst
-            end)
-        elsif ARM64
-            weakCASLoopByte(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                andi value, oldValue, newValue
-            end)
-        else
-            error
-        end
-        pushInt64(scratch1)
-    end)
-end)
-
-ipintOp(_i64_atomic_rmw16_and_u, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck2, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            notq value
-            atomicxchgclearh value, [mem], scratch1
-        elsif X86_64
-            weakCASLoopHalf(mem, value, scratch1, scratch2, macro (value, dst)
-                andq value, dst
-            end)
-        elsif ARM64
-            weakCASLoopHalf(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                andi value, oldValue, newValue
-            end)
-        else
-            error
-        end
-        pushInt64(scratch1)
-    end)
-end)
-
-ipintOp(_i64_atomic_rmw32_and_u, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck4, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            notq value
-            atomicxchgcleari value, [mem], scratch1
-        elsif X86_64
-            weakCASLoopInt(mem, value, scratch1, scratch2, macro (value, dst)
-                andq value, dst
-            end)
-        elsif ARM64
-            weakCASLoopInt(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                andi value, oldValue, newValue
-            end)
-        else
-            error
-        end
-        pushInt64(scratch1)
-    end)
-end)
-
-ipintOp(_i32_atomic_rmw_or, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck4, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            atomicxchgori value, [mem], scratch1
-        elsif X86_64
-            weakCASLoopInt(mem, value, scratch1, scratch2, macro (value, dst)
-                ori value, dst
-            end)
-        elsif ARM64
-            weakCASLoopInt(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                ori value, oldValue, newValue
-            end)
-        else
-            error
-        end
-        pushInt32(scratch1)
-    end)
-end)
-
-ipintOp(_i64_atomic_rmw_or, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck8, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            atomicxchgorq value, [mem], scratch1
-        elsif X86_64
-            weakCASLoopQuad(mem, value, scratch1, scratch2, macro (value, dst)
-                orq value, dst
-            end)
-        elsif ARM64
-            weakCASLoopQuad(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                orq value, oldValue, newValue
-            end)
-        else
-            error
-        end
-        pushInt64(scratch1)
-    end)
-end)
-
-ipintOp(_i32_atomic_rmw8_or_u, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck1, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            atomicxchgorb value, [mem], scratch1
-        elsif X86_64
-            weakCASLoopByte(mem, value, scratch1, scratch2, macro (value, dst)
-                orq value, dst
-            end)
-        elsif ARM64
-            weakCASLoopByte(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                ori value, oldValue, newValue
-            end)
-        else
-            error
-        end
-        pushInt32(scratch1)
-    end)
-end)
-
-ipintOp(_i32_atomic_rmw16_or_u, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck2, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            atomicxchgorh value, [mem], scratch1
-        elsif X86_64
-            weakCASLoopHalf(mem, value, scratch1, scratch2, macro (value, dst)
-                orq value, dst
-            end)
-        elsif ARM64
-            weakCASLoopHalf(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                ori value, oldValue, newValue
-            end)
-        else
-            error
-        end
-        pushInt32(scratch1)
-    end)
-end)
-
-ipintOp(_i64_atomic_rmw8_or_u, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck1, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            atomicxchgorb value, [mem], scratch1
-        elsif X86_64
-            weakCASLoopByte(mem, value, scratch1, scratch2, macro (value, dst)
-                orq value, dst
-            end)
-        elsif ARM64
-            weakCASLoopByte(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                ori value, oldValue, newValue
-            end)
-        else
-            error
-        end
-        pushInt64(scratch1)
-    end)
-end)
-
-ipintOp(_i64_atomic_rmw16_or_u, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck2, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            atomicxchgorh value, [mem], scratch1
-        elsif X86_64
-            weakCASLoopHalf(mem, value, scratch1, scratch2, macro (value, dst)
-                orq value, dst
-            end)
-        elsif ARM64
-            weakCASLoopHalf(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                ori value, oldValue, newValue
-            end)
-        else
-            error
-        end
-        pushInt64(scratch1)
-    end)
-end)
-
-ipintOp(_i64_atomic_rmw32_or_u, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck4, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            atomicxchgori value, [mem], scratch1
-        elsif X86_64
-            weakCASLoopInt(mem, value, scratch1, scratch2, macro (value, dst)
-                orq value, dst
-            end)
-        elsif ARM64
-            weakCASLoopInt(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                ori value, oldValue, newValue
-            end)
-        else
-            error
-        end
-        pushInt64(scratch1)
-    end)
-end)
-
-ipintOp(_i32_atomic_rmw_xor, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck4, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            atomicxchgxori value, [mem], scratch1
-        elsif X86_64
-            weakCASLoopInt(mem, value, scratch1, scratch2, macro (value, dst)
-                xorq value, dst
-            end)
-        elsif ARM64
-            weakCASLoopInt(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                xori value, oldValue, newValue
-            end)
-        else
-            error
-        end
-        pushInt32(scratch1)
-    end)
-end)
-
-ipintOp(_i64_atomic_rmw_xor, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck8, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            atomicxchgxorq value, [mem], scratch1
-        elsif X86_64
-            weakCASLoopQuad(mem, value, scratch1, scratch2, macro (value, dst)
-                xorq value, dst
-            end)
-        elsif ARM64
-            weakCASLoopQuad(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                xorq value, oldValue, newValue
-            end)
-        else
-            error
-        end
-        pushInt64(scratch1)
-    end)
-end)
-
-ipintOp(_i32_atomic_rmw8_xor_u, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck1, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            atomicxchgxorb value, [mem], scratch1
-        elsif X86_64
-            weakCASLoopByte(mem, value, scratch1, scratch2, macro (value, dst)
-                xorq value, dst
-            end)
-        elsif ARM64
-            weakCASLoopByte(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                xori value, oldValue, newValue
-            end)
-        else
-            error
-        end
-        pushInt32(scratch1)
-    end)
-end)
-
-ipintOp(_i32_atomic_rmw16_xor_u, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck2, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            atomicxchgxorh value, [mem], scratch1
-        elsif X86_64
-            weakCASLoopHalf(mem, value, scratch1, scratch2, macro (value, dst)
-                xorq value, dst
-            end)
-        elsif ARM64
-            weakCASLoopHalf(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                xori value, oldValue, newValue
-            end)
-        else
-            error
-        end
-        pushInt32(scratch1)
-    end)
-end)
-
-ipintOp(_i64_atomic_rmw8_xor_u, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck1, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            atomicxchgxorb value, [mem], scratch1
-        elsif X86_64
-            weakCASLoopByte(mem, value, scratch1, scratch2, macro (value, dst)
-                xorq value, dst
-            end)
-        elsif ARM64
-            weakCASLoopByte(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                xori value, oldValue, newValue
-            end)
-        else
-            error
-        end
-        pushInt64(scratch1)
-    end)
-end)
-
-ipintOp(_i64_atomic_rmw16_xor_u, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck2, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            atomicxchgxorh value, [mem], scratch1
-        elsif X86_64
-            weakCASLoopHalf(mem, value, scratch1, scratch2, macro (value, dst)
-                xorq value, dst
-            end)
-        elsif ARM64
-            weakCASLoopHalf(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                xori value, oldValue, newValue
-            end)
-        else
-            error
-        end
-        pushInt64(scratch1)
-    end)
-end)
-
-ipintOp(_i64_atomic_rmw32_xor_u, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck4, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            atomicxchgxori value, [mem], scratch1
-        elsif X86_64
-            weakCASLoopInt(mem, value, scratch1, scratch2, macro (value, dst)
-                xorq value, dst
-            end)
-        elsif ARM64
-            weakCASLoopInt(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                xori value, oldValue, newValue
-            end)
-        else
-            error
-        end
-        pushInt64(scratch1)
-    end)
-end)
-
-ipintOp(_i32_atomic_rmw_xchg, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck4, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            atomicxchgi value, [mem], scratch1
-        elsif X86_64
-            weakCASLoopInt(mem, value, scratch1, scratch2, macro (value, dst)
-                move value, dst
-            end)
-        elsif ARM64
-            weakCASLoopInt(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                move value, newValue
-            end)
-        else
-            error
-        end
-        pushInt32(scratch1)
-    end)
-end)
-
-ipintOp(_i64_atomic_rmw_xchg, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck8, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            atomicxchgq value, [mem], scratch1
-        elsif X86_64
-            weakCASLoopQuad(mem, value, scratch1, scratch2, macro (value, dst)
-                move value, dst
-            end)
-        elsif ARM64
-            weakCASLoopQuad(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                move value, newValue
-            end)
-        else
-            error
-        end
-        pushInt64(scratch1)
-    end)
-end)
-
-ipintOp(_i32_atomic_rmw8_xchg_u, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck1, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            atomicxchgb value, [mem], scratch1
-        elsif X86_64
-            weakCASLoopByte(mem, value, scratch1, scratch2, macro (value, dst)
-                move value, dst
-            end)
-        elsif ARM64
-            weakCASLoopByte(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                move value, newValue
-            end)
-        else
-            error
-        end
-        pushInt32(scratch1)
-    end)
-end)
-
-ipintOp(_i32_atomic_rmw16_xchg_u, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck2, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            atomicxchgh value, [mem], scratch1
-        elsif X86_64
-            weakCASLoopHalf(mem, value, scratch1, scratch2, macro (value, dst)
-                move value, dst
-            end)
-        elsif ARM64
-            weakCASLoopHalf(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                move value, newValue
-            end)
-        else
-            error
-        end
-        pushInt32(scratch1)
-    end)
-end)
-
-ipintOp(_i64_atomic_rmw8_xchg_u, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck1, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            atomicxchgb value, [mem], scratch1
-        elsif X86_64
-            weakCASLoopByte(mem, value, scratch1, scratch2, macro (value, dst)
-                move value, dst
-            end)
-        elsif ARM64
-            weakCASLoopByte(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                move value, newValue
-            end)
-        else
-            error
-        end
-        pushInt64(scratch1)
-    end)
-end)
-
-ipintOp(_i64_atomic_rmw16_xchg_u, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck2, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            atomicxchgh value, [mem], scratch1
-        elsif X86_64
-            weakCASLoopHalf(mem, value, scratch1, scratch2, macro (value, dst)
-                move value, dst
-            end)
-        elsif ARM64
-            weakCASLoopHalf(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                move value, newValue
-            end)
-        else
-            error
-        end
-        pushInt64(scratch1)
-    end)
-end)
-
-ipintOp(_i64_atomic_rmw32_xchg_u, macro()
-    atomicRMWOp(ipintCheckMemoryBoundWithAlignmentCheck4, macro(mem, value, scratch1, scratch2)
-        if ARM64E
-            atomicxchgi value, [mem], scratch1
-        elsif X86_64
-            weakCASLoopInt(mem, value, scratch1, scratch2, macro (value, dst)
-                move value, dst
-            end)
-        elsif ARM64
-            weakCASLoopInt(mem, value, scratch1, scratch2, macro(value, oldValue, newValue)
-                move value, newValue
-            end)
-        else
-            error
-        end
-        pushInt64(scratch1)
-    end)
-end)
-
-macro atomicCmpxchgOp(boundsAndAlignmentCheck, cmpxchg)
-    # pop value
-    popInt64(t1)
-    # pop expected
-    popInt64(t0)
-    # pop index
-    popInt32(t3)
-    ori 0, t3
-    # load offset
-    loadi IPInt::Const32Metadata::value[MC], t2
-    addp t2, t3
-    boundsAndAlignmentCheck(t3, t2)
-    addq memoryBase, t3
-    cmpxchg(t3, t1, t0, t2, t4)
-
-    loadb IPInt::Const32Metadata::instructionLength[MC], t0
-    advancePCByReg(t0)
-    advanceMC(constexpr (sizeof(IPInt::Const32Metadata)))
-    nextIPIntInstruction()
-end
-
-macro weakCASExchangeByte(mem, value, expected, scratch, scratch2)
-    if ARM64
-    validateOpcodeConfig(scratch2)
-    .loop:
-        loadlinkacqb [mem], scratch2
-        bqneq expected, scratch2, .fail
-        storecondrelb scratch, value, [mem]
-        bieq scratch, 0, .done
-        jmp .loop
-    .fail:
-        storecondrelb scratch, scratch2, [mem]
-        bieq scratch, 0, .done
-        jmp .loop
-    .done:
-        move scratch2, expected
-    else
-        error
-    end
-end
-
-macro weakCASExchangeHalf(mem, value, expected, scratch, scratch2)
-    if ARM64
-    validateOpcodeConfig(scratch2)
-    .loop:
-        loadlinkacqh [mem], scratch2
-        bqneq expected, scratch2, .fail
-        storecondrelh scratch, value, [mem]
-        bieq scratch, 0, .done
-        jmp .loop
-    .fail:
-        storecondrelh scratch, scratch2, [mem]
-        bieq scratch, 0, .done
-        jmp .loop
-    .done:
-        move scratch2, expected
-    else
-        error
-    end
-end
-
-macro weakCASExchangeInt(mem, value, expected, scratch, scratch2)
-    if ARM64
-    validateOpcodeConfig(scratch2)
-    .loop:
-        loadlinkacqi [mem], scratch2
-        bqneq expected, scratch2, .fail
-        storecondreli scratch, value, [mem]
-        bieq scratch, 0, .done
-        jmp .loop
-    .fail:
-        storecondreli scratch, scratch2, [mem]
-        bieq scratch, 0, .done
-        jmp .loop
-    .done:
-        move scratch2, expected
-    else
-        error
-    end
-end
-
-macro weakCASExchangeQuad(mem, value, expected, scratch, scratch2)
-    if ARM64
-    validateOpcodeConfig(scratch2)
-    .loop:
-        loadlinkacqq [mem], scratch2
-        bqneq expected, scratch2, .fail
-        storecondrelq scratch, value, [mem]
-        bieq scratch, 0, .done
-        jmp .loop
-    .fail:
-        storecondrelq scratch, scratch2, [mem]
-        bieq scratch, 0, .done
-        jmp .loop
-    .done:
-        move scratch2, expected
-    else
-        error
-    end
-end
-
-ipintOp(_i32_atomic_rmw_cmpxchg, macro()
-    atomicCmpxchgOp(ipintCheckMemoryBoundWithAlignmentCheck4, macro(mem, value, expected, scratch, scratch2)
-        andq 0xffffffff, expected
-        if ARM64E or X86_64
-            atomicweakcasi expected, value, [mem]
-        elsif ARM64
-            weakCASExchangeInt(mem, value, expected, scratch, scratch2)
-        else
-            error
-        end
-        pushInt32(expected)
-    end)
-end)
-
-ipintOp(_i64_atomic_rmw_cmpxchg, macro()
-    atomicCmpxchgOp(ipintCheckMemoryBoundWithAlignmentCheck8, macro(mem, value, expected, scratch, scratch2)
-        if ARM64E or X86_64
-            atomicweakcasq expected, value, [mem]
-        elsif ARM64
-            weakCASExchangeQuad(mem, value, expected, scratch, scratch2)
-        else
-            error
-        end
-        pushInt64(expected)
-    end)
-end)
-
-ipintOp(_i32_atomic_rmw8_cmpxchg_u, macro()
-    atomicCmpxchgOp(ipintCheckMemoryBoundWithAlignmentCheck1, macro(mem, value, expected, scratch, scratch2)
-        andq 0xff, expected
-        if ARM64E or X86_64
-            atomicweakcasb expected, value, [mem]
-        elsif ARM64
-            weakCASExchangeByte(mem, value, expected, scratch, scratch2)
-        else
-            error
-        end
-        pushInt32(expected)
-    end)
-end)
-
-ipintOp(_i32_atomic_rmw16_cmpxchg_u, macro()
-    atomicCmpxchgOp(ipintCheckMemoryBoundWithAlignmentCheck2, macro(mem, value, expected, scratch, scratch2)
-        andq 0xffff, expected
-        if ARM64E or X86_64
-            atomicweakcash expected, value, [mem]
-        elsif ARM64
-            weakCASExchangeHalf(mem, value, expected, scratch, scratch2)
-        else
-            error
-        end
-        pushInt32(expected)
-    end)
-end)
-
-ipintOp(_i64_atomic_rmw8_cmpxchg_u, macro()
-    atomicCmpxchgOp(ipintCheckMemoryBoundWithAlignmentCheck1, macro(mem, value, expected, scratch, scratch2)
-        andq 0xff, expected
-        if ARM64E or X86_64
-            atomicweakcasb expected, value, [mem]
-        elsif ARM64
-            weakCASExchangeByte(mem, value, expected, scratch, scratch2)
-        else
-            error
-        end
-        pushInt64(expected)
-    end)
-end)
-
-ipintOp(_i64_atomic_rmw16_cmpxchg_u, macro()
-    atomicCmpxchgOp(ipintCheckMemoryBoundWithAlignmentCheck2, macro(mem, value, expected, scratch, scratch2)
-        andq 0xffff, expected
-        if ARM64E or X86_64
-            atomicweakcash expected, value, [mem]
-        elsif ARM64
-            weakCASExchangeHalf(mem, value, expected, scratch, scratch2)
-        else
-            error
-        end
-        pushInt64(expected)
-    end)
-end)
-
-ipintOp(_i64_atomic_rmw32_cmpxchg_u, macro()
-    atomicCmpxchgOp(ipintCheckMemoryBoundWithAlignmentCheck4, macro(mem, value, expected, scratch, scratch2)
-        andq 0xffffffff, expected
-        if ARM64E or X86_64
-            atomicweakcasi expected, value, [mem]
-        elsif ARM64
-            weakCASExchangeInt(mem, value, expected, scratch, scratch2)
-        else
-            error
-        end
-        pushInt64(expected)
-    end)
-end)
+_ipint_op_memory_atomic_wait64:
+    ipintMemoryAtomicWaitImpl(_ipint_extern_memory_atomic_wait64)
 
 #######################################
 ## ULEB128 decoding logic for locals ##
 #######################################
 
-macro decodeULEB128(result)
-    # result should already be the first byte.
-    andq 0x7f, result
-    move 7, t2 # t1 holds the shift.
-    validateOpcodeConfig(t3)
-.loop:
-    loadb [PC], t3
-    andq t3, 0x7f, t1
-    lshiftq t2, t1
-    orq t1, result
-    addq 7, t2
-    advancePC(1)
-    bbaeq t3, 128, .loop
-end
+.ipint_local_get_slow_path:
+    leap 1[PC], t4
+    decodeLEBVarUInt(t0, t4, t1, t2)
+    localGet()
+    pushVec(v0)
+    move t4, PC
+    nextIPIntInstruction()
 
-slowPathLabel(_local_get)
-    decodeULEB128(t0)
-    localGetPostDecode()
+.ipint_local_set_slow_path:
+    leap 1[PC], t4
+    decodeLEBVarUInt(t0, t4, t1, t2)
+    popVec(v0)
+    localSet()
+    move t4, PC
+    nextIPIntInstruction()
 
-slowPathLabel(_local_set)
-    decodeULEB128(t0)
-    localSetPostDecode()
+.ipint_local_tee_slow_path:
+    leap 1[PC], t4
+    decodeLEBVarUInt(t0, t4, t1, t2)
+    loadv [sp], v0
+    localSet()
+    move t4, PC
+    nextIPIntInstruction()
 
-slowPathLabel(_local_tee)
-    decodeULEB128(t0)
-    localTeePostDecode()
+##########################################
+## Out-of-line LEB128 decode slow paths ##
+##########################################
+
+.ipint_i32_const_slow_path:
+    leap 1[PC], t4
+    decodeLEBVarSInt32(t0, t4, t1, t2)
+    pushInt32(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_const_slow_path:
+    leap 1[PC], t4
+    decodeLEBVarSInt64(t0, t4, t1, t2)
+    pushInt64(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+##################################################
+## Out-of-line slow paths for memory load/store ##
+##################################################
+
+# The handler's fast path pops values and branches here on multi-byte memarg.
+# t0 = wasm address (from popMemoryAddress), t3 = data value (for int stores),
+# ft0 = data value (for float stores). These must survive loadStoreMakePointerSlow.
+# For int stores, t3 is saved/restored around the macro since t3 is used as scratch.
+
+.ipint_i32_load_mem_slow_path:
+    leap 1[PC], t4
+    loadStoreMakePointerSlow(t4, t0, 4, t1, t2, t5, t6)
+    loadi [t0], t1
+    pushInt32(t1)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_load_mem_slow_path:
+    leap 1[PC], t4
+    loadStoreMakePointerSlow(t4, t0, 8, t1, t2, t5, t6)
+    loadq [t0], t1
+    pushInt64(t1)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_f32_load_mem_slow_path:
+    leap 1[PC], t4
+    loadStoreMakePointerSlow(t4, t0, 4, t1, t2, t5, t6)
+    loadf [t0], ft0
+    pushFloat32(ft0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_f64_load_mem_slow_path:
+    leap 1[PC], t4
+    loadStoreMakePointerSlow(t4, t0, 8, t1, t2, t5, t6)
+    loadd [t0], ft0
+    pushFloat64(ft0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i32_load8s_mem_slow_path:
+    leap 1[PC], t4
+    loadStoreMakePointerSlow(t4, t0, 1, t1, t2, t5, t6)
+    loadbsi [t0], t1
+    pushInt32(t1)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i32_load8u_mem_slow_path:
+    leap 1[PC], t4
+    loadStoreMakePointerSlow(t4, t0, 1, t1, t2, t5, t6)
+    loadb [t0], t1
+    pushInt32(t1)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i32_load16s_mem_slow_path:
+    leap 1[PC], t4
+    loadStoreMakePointerSlow(t4, t0, 2, t1, t2, t5, t6)
+    loadhsi [t0], t1
+    pushInt32(t1)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i32_load16u_mem_slow_path:
+    leap 1[PC], t4
+    loadStoreMakePointerSlow(t4, t0, 2, t1, t2, t5, t6)
+    loadh [t0], t1
+    pushInt32(t1)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_load8s_mem_slow_path:
+    leap 1[PC], t4
+    loadStoreMakePointerSlow(t4, t0, 1, t1, t2, t5, t6)
+    loadbsq [t0], t1
+    pushInt64(t1)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_load8u_mem_slow_path:
+    leap 1[PC], t4
+    loadStoreMakePointerSlow(t4, t0, 1, t1, t2, t5, t6)
+    loadb [t0], t1
+    pushInt64(t1)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_load16s_mem_slow_path:
+    leap 1[PC], t4
+    loadStoreMakePointerSlow(t4, t0, 2, t1, t2, t5, t6)
+    loadhsq [t0], t1
+    pushInt64(t1)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_load16u_mem_slow_path:
+    leap 1[PC], t4
+    loadStoreMakePointerSlow(t4, t0, 2, t1, t2, t5, t6)
+    loadh [t0], t1
+    pushInt64(t1)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_load32s_mem_slow_path:
+    leap 1[PC], t4
+    loadStoreMakePointerSlow(t4, t0, 4, t1, t2, t5, t6)
+    loadi [t0], t1
+    sxi2q t1, t1
+    pushInt64(t1)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_load32u_mem_slow_path:
+    leap 1[PC], t4
+    loadStoreMakePointerSlow(t4, t0, 4, t1, t2, t5, t6)
+    loadi [t0], t1
+    pushInt64(t1)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i32_store_mem_slow_path:
+    leap 1[PC], t4
+    loadStoreMakePointerSlow(t4, t0, 4, t1, t2, t5, t6)
+    storei t3, [t0]
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_store_mem_slow_path:
+    leap 1[PC], t4
+    loadStoreMakePointerSlow(t4, t0, 8, t1, t2, t5, t6)
+    storeq t3, [t0]
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_f32_store_mem_slow_path:
+    leap 1[PC], t4
+    loadStoreMakePointerSlow(t4, t0, 4, t1, t2, t5, t6)
+    storef ft0, [t0]
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_f64_store_mem_slow_path:
+    leap 1[PC], t4
+    loadStoreMakePointerSlow(t4, t0, 8, t1, t2, t5, t6)
+    stored ft0, [t0]
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i32_store8_mem_slow_path:
+    leap 1[PC], t4
+    loadStoreMakePointerSlow(t4, t0, 1, t1, t2, t5, t6)
+    storeb t3, [t0]
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i32_store16_mem_slow_path:
+    leap 1[PC], t4
+    loadStoreMakePointerSlow(t4, t0, 2, t1, t2, t5, t6)
+    storeh t3, [t0]
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_store8_mem_slow_path:
+    leap 1[PC], t4
+    loadStoreMakePointerSlow(t4, t0, 1, t1, t2, t5, t6)
+    storeb t3, [t0]
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_store16_mem_slow_path:
+    leap 1[PC], t4
+    loadStoreMakePointerSlow(t4, t0, 2, t1, t2, t5, t6)
+    storeh t3, [t0]
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_store32_mem_slow_path:
+    leap 1[PC], t4
+    loadStoreMakePointerSlow(t4, t0, 4, t1, t2, t5, t6)
+    storei t3, [t0]
+    move t4, PC
+    nextIPIntInstruction()
+
+###################################################
+## Out-of-line slow paths for SIMD memory access ##
+###################################################
+
+# t0 = wasm address (from popMemoryAddress before branching).
+# t4 = cursor pointing to start of memarg (past SIMD opcode, set by simd_prefix).
+# After loadStoreMakePointerSlow, t4 points past the memarg.
+
+.simd_v128_load_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 16, t1, t2, t5, t6)
+    loadv [t0], v0
+    pushVec(v0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.simd_v128_load_8x8s_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 8, t1, t2, t5, t6)
+    simdLoad8x8s()
+    pushVec(v0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.simd_v128_load_8x8u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 8, t1, t2, t5, t6)
+    simdLoad8x8u()
+    pushVec(v0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.simd_v128_load_16x4s_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 8, t1, t2, t5, t6)
+    simdLoad16x4s()
+    pushVec(v0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.simd_v128_load_16x4u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 8, t1, t2, t5, t6)
+    simdLoad16x4u()
+    pushVec(v0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.simd_v128_load_32x2s_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 8, t1, t2, t5, t6)
+    simdLoad32x2s()
+    pushVec(v0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.simd_v128_load_32x2u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 8, t1, t2, t5, t6)
+    simdLoad32x2u()
+    pushVec(v0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.simd_v128_load8_splat_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 1, t1, t2, t5, t6)
+    simdLoadSplat8()
+    pushVec(v0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.simd_v128_load16_splat_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 2, t1, t2, t5, t6)
+    simdLoadSplat16()
+    pushVec(v0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.simd_v128_load32_splat_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 4, t1, t2, t5, t6)
+    simdLoadSplat32()
+    pushVec(v0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.simd_v128_load64_splat_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 8, t1, t2, t5, t6)
+    simdLoadSplat64()
+    pushVec(v0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.simd_v128_store_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 16, t1, t2, t5, t6)
+    storev v0, [t0]
+    move t4, PC
+    nextIPIntInstruction()
+
+.simd_v128_load32_zero_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 4, t1, t2, t5, t6)
+    loadi [t0], t0
+    subp V128ISize, sp
+    storei t0, [sp]
+    storei 0, 4[sp]
+    storeq 0, 8[sp]
+    move t4, PC
+    nextIPIntInstruction()
+
+.simd_v128_load64_zero_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 8, t1, t2, t5, t6)
+    loadq [t0], t0
+    subp V128ISize, sp
+    storeq t0, [sp]
+    storeq 0, 8[sp]
+    move t4, PC
+    nextIPIntInstruction()
+
+# Load lane slow paths: v0 = vector (already popped), t0 = wasm addr.
+# t4 points past memarg after loadStoreMakePointerSlow. Lane index is at [t4].
+
+.simd_v128_load8_lane_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 1, t1, t2, t5, t6)
+    loadb [t0], t0
+    loadb [t4], t1
+    andi ImmLaneIdx16Mask, t1
+    pushVec(v0)
+    storeb t0, [sp, t1]
+    leap 1[t4], PC
+    nextIPIntInstruction()
+
+.simd_v128_load16_lane_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 2, t1, t2, t5, t6)
+    loadh [t0], t0
+    loadb [t4], t1
+    andi ImmLaneIdx8Mask, t1
+    pushVec(v0)
+    storeh t0, [sp, t1, 2]
+    leap 1[t4], PC
+    nextIPIntInstruction()
+
+.simd_v128_load32_lane_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 4, t1, t2, t5, t6)
+    loadi [t0], t0
+    loadb [t4], t1
+    andi ImmLaneIdx4Mask, t1
+    pushVec(v0)
+    storei t0, [sp, t1, 4]
+    leap 1[t4], PC
+    nextIPIntInstruction()
+
+.simd_v128_load64_lane_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 8, t1, t2, t5, t6)
+    loadq [t0], t0
+    loadb [t4], t1
+    andi ImmLaneIdx2Mask, t1
+    pushVec(v0)
+    storeq t0, [sp, t1, 8]
+    leap 1[t4], PC
+    nextIPIntInstruction()
+
+# Store lane slow paths: v0 = vector (already popped), t0 = wasm addr.
+# t4 points past memarg. Lane index is at [t4].
+
+.simd_v128_store8_lane_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 1, t1, t2, t5, t6)
+    loadb [t4], t1
+    andi ImmLaneIdx16Mask, t1
+    pushVec(v0)
+    loadb [sp, t1], t1
+    addp V128ISize, sp
+    storeb t1, [t0]
+    leap 1[t4], PC
+    nextIPIntInstruction()
+
+.simd_v128_store16_lane_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 2, t1, t2, t5, t6)
+    loadb [t4], t1
+    andi ImmLaneIdx8Mask, t1
+    pushVec(v0)
+    loadh [sp, t1, 2], t1
+    addp V128ISize, sp
+    storeh t1, [t0]
+    leap 1[t4], PC
+    nextIPIntInstruction()
+
+.simd_v128_store32_lane_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 4, t1, t2, t5, t6)
+    loadb [t4], t1
+    andi ImmLaneIdx4Mask, t1
+    pushVec(v0)
+    loadi [sp, t1, 4], t1
+    addp V128ISize, sp
+    storei t1, [t0]
+    leap 1[t4], PC
+    nextIPIntInstruction()
+
+.simd_v128_store64_lane_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 8, t1, t2, t5, t6)
+    loadb [t4], t1
+    andi ImmLaneIdx2Mask, t1
+    pushVec(v0)
+    loadq [sp, t1, 8], t1
+    addp V128ISize, sp
+    storeq t1, [t0]
+    leap 1[t4], PC
+    nextIPIntInstruction()
+
+#########################################################
+## Out-of-line slow paths for atomic memory operations ##
+#########################################################
+
+# t0 = wasm address (from popMemoryAddress before branching).
+# t4 = cursor pointing to start of memarg (past atomic sub-opcode, set by atomic_prefix).
+# t3 = data value (for store/RMW ops, survives loadStoreMakePointerSlow).
+# t7 = new value for CAS (must be push/popped around loadStoreMakePointerSlow).
+# After loadStoreMakePointerSlow, t4 points past the memarg.
+
+.ipint_i32_atomic_load_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 4, t1, t2, t5, t6)
+    doI32AtomicLoad(t0, t2)
+    pushInt32(t2)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_load_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 8, t1, t2, t5, t6)
+    doI64AtomicLoad(t0, t2)
+    pushInt64(t2)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i32_atomic_load8_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 1, t1, t2, t5, t6)
+    doI32AtomicLoad8(t0, t2)
+    pushInt32(t2)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i32_atomic_load16_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 2, t1, t2, t5, t6)
+    doI32AtomicLoad16(t0, t2)
+    pushInt32(t2)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_load8_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 1, t1, t2, t5, t6)
+    doI64AtomicLoad8(t0, t2)
+    pushInt64(t2)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_load16_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 2, t1, t2, t5, t6)
+    doI64AtomicLoad16(t0, t2)
+    pushInt64(t2)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_load32_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 4, t1, t2, t5, t6)
+    doI64AtomicLoad32(t0, t2)
+    pushInt64(t2)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i32_atomic_store_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 4, t1, t2, t5, t6)
+    doI32AtomicStore(t0, t3, t2, t1)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_store_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 8, t1, t2, t5, t6)
+    doI64AtomicStore(t0, t3, t2, t1)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i32_atomic_store8_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 1, t1, t2, t5, t6)
+    doI32AtomicStore8(t0, t3, t2, t1)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i32_atomic_store16_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 2, t1, t2, t5, t6)
+    doI32AtomicStore16(t0, t3, t2, t1)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_store8_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 1, t1, t2, t5, t6)
+    doI64AtomicStore8(t0, t3, t2, t1)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_store16_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 2, t1, t2, t5, t6)
+    doI64AtomicStore16(t0, t3, t2, t1)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_store32_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 4, t1, t2, t5, t6)
+    doI64AtomicStore32(t0, t3, t2, t1)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i32_atomic_rmw_add_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 4, t1, t2, t5, t6)
+    doI32AtomicRmwAdd(t0, t3, t2, t1)
+    pushInt32(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_rmw_add_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 8, t1, t2, t5, t6)
+    doI64AtomicRmwAdd(t0, t3, t2, t1)
+    pushInt64(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i32_atomic_rmw8_add_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 1, t1, t2, t5, t6)
+    doI32AtomicRmwAdd8(t0, t3, t2, t1)
+    pushInt32(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i32_atomic_rmw16_add_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 2, t1, t2, t5, t6)
+    doI32AtomicRmwAdd16(t0, t3, t2, t1)
+    pushInt32(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_rmw8_add_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 1, t1, t2, t5, t6)
+    doI64AtomicRmwAdd8(t0, t3, t2, t1)
+    pushInt64(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_rmw16_add_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 2, t1, t2, t5, t6)
+    doI64AtomicRmwAdd16(t0, t3, t2, t1)
+    pushInt64(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_rmw32_add_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 4, t1, t2, t5, t6)
+    doI64AtomicRmwAdd32(t0, t3, t2, t1)
+    pushInt64(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i32_atomic_rmw_sub_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 4, t1, t2, t5, t6)
+    doI32AtomicRmwSub(t0, t3, t2, t1)
+    pushInt32(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_rmw_sub_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 8, t1, t2, t5, t6)
+    doI64AtomicRmwSub(t0, t3, t2, t1)
+    pushInt64(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i32_atomic_rmw8_sub_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 1, t1, t2, t5, t6)
+    doI32AtomicRmwSub8(t0, t3, t2, t1)
+    pushInt32(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i32_atomic_rmw16_sub_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 2, t1, t2, t5, t6)
+    doI32AtomicRmwSub16(t0, t3, t2, t1)
+    pushInt32(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_rmw8_sub_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 1, t1, t2, t5, t6)
+    doI64AtomicRmwSub8(t0, t3, t2, t1)
+    pushInt64(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_rmw16_sub_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 2, t1, t2, t5, t6)
+    doI64AtomicRmwSub16(t0, t3, t2, t1)
+    pushInt64(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_rmw32_sub_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 4, t1, t2, t5, t6)
+    doI64AtomicRmwSub32(t0, t3, t2, t1)
+    pushInt64(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i32_atomic_rmw_and_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 4, t1, t2, t5, t6)
+    doI32AtomicRmwAnd(t0, t3, t2, t1)
+    pushInt32(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_rmw_and_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 8, t1, t2, t5, t6)
+    doI64AtomicRmwAnd(t0, t3, t2, t1)
+    pushInt64(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i32_atomic_rmw8_and_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 1, t1, t2, t5, t6)
+    doI32AtomicRmwAnd8(t0, t3, t2, t1)
+    pushInt32(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i32_atomic_rmw16_and_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 2, t1, t2, t5, t6)
+    doI32AtomicRmwAnd16(t0, t3, t2, t1)
+    pushInt32(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_rmw8_and_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 1, t1, t2, t5, t6)
+    doI64AtomicRmwAnd8(t0, t3, t2, t1)
+    pushInt64(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_rmw16_and_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 2, t1, t2, t5, t6)
+    doI64AtomicRmwAnd16(t0, t3, t2, t1)
+    pushInt64(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_rmw32_and_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 4, t1, t2, t5, t6)
+    doI64AtomicRmwAnd32(t0, t3, t2, t1)
+    pushInt64(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i32_atomic_rmw_or_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 4, t1, t2, t5, t6)
+    doI32AtomicRmwOr(t0, t3, t2, t1)
+    pushInt32(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_rmw_or_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 8, t1, t2, t5, t6)
+    doI64AtomicRmwOr(t0, t3, t2, t1)
+    pushInt64(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i32_atomic_rmw8_or_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 1, t1, t2, t5, t6)
+    doI32AtomicRmwOr8(t0, t3, t2, t1)
+    pushInt32(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i32_atomic_rmw16_or_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 2, t1, t2, t5, t6)
+    doI32AtomicRmwOr16(t0, t3, t2, t1)
+    pushInt32(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_rmw8_or_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 1, t1, t2, t5, t6)
+    doI64AtomicRmwOr8(t0, t3, t2, t1)
+    pushInt64(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_rmw16_or_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 2, t1, t2, t5, t6)
+    doI64AtomicRmwOr16(t0, t3, t2, t1)
+    pushInt64(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_rmw32_or_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 4, t1, t2, t5, t6)
+    doI64AtomicRmwOr32(t0, t3, t2, t1)
+    pushInt64(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i32_atomic_rmw_xor_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 4, t1, t2, t5, t6)
+    doI32AtomicRmwXor(t0, t3, t2, t1)
+    pushInt32(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_rmw_xor_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 8, t1, t2, t5, t6)
+    doI64AtomicRmwXor(t0, t3, t2, t1)
+    pushInt64(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i32_atomic_rmw8_xor_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 1, t1, t2, t5, t6)
+    doI32AtomicRmwXor8(t0, t3, t2, t1)
+    pushInt32(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i32_atomic_rmw16_xor_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 2, t1, t2, t5, t6)
+    doI32AtomicRmwXor16(t0, t3, t2, t1)
+    pushInt32(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_rmw8_xor_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 1, t1, t2, t5, t6)
+    doI64AtomicRmwXor8(t0, t3, t2, t1)
+    pushInt64(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_rmw16_xor_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 2, t1, t2, t5, t6)
+    doI64AtomicRmwXor16(t0, t3, t2, t1)
+    pushInt64(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_rmw32_xor_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 4, t1, t2, t5, t6)
+    doI64AtomicRmwXor32(t0, t3, t2, t1)
+    pushInt64(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i32_atomic_rmw_xchg_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 4, t1, t2, t5, t6)
+    doI32AtomicRmwXchg(t0, t3, t2, t1)
+    pushInt32(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_rmw_xchg_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 8, t1, t2, t5, t6)
+    doI64AtomicRmwXchg(t0, t3, t2, t1)
+    pushInt64(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i32_atomic_rmw8_xchg_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 1, t1, t2, t5, t6)
+    doI32AtomicRmwXchg8(t0, t3, t2, t1)
+    pushInt32(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i32_atomic_rmw16_xchg_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 2, t1, t2, t5, t6)
+    doI32AtomicRmwXchg16(t0, t3, t2, t1)
+    pushInt32(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_rmw8_xchg_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 1, t1, t2, t5, t6)
+    doI64AtomicRmwXchg8(t0, t3, t2, t1)
+    pushInt64(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_rmw16_xchg_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 2, t1, t2, t5, t6)
+    doI64AtomicRmwXchg16(t0, t3, t2, t1)
+    pushInt64(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_rmw32_xchg_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 4, t1, t2, t5, t6)
+    doI64AtomicRmwXchg32(t0, t3, t2, t1)
+    pushInt64(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i32_atomic_rmw_cmpxchg_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 4, t1, t2, t5, t6)
+    doI32AtomicCmpxchg()
+    pushInt32(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_rmw_cmpxchg_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 8, t1, t2, t5, t6)
+    doI64AtomicCmpxchg()
+    pushInt64(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i32_atomic_rmw8_cmpxchg_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 1, t1, t2, t5, t6)
+    doI32AtomicCmpxchg8()
+    pushInt32(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i32_atomic_rmw16_cmpxchg_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 2, t1, t2, t5, t6)
+    doI32AtomicCmpxchg16()
+    pushInt32(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_rmw8_cmpxchg_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 1, t1, t2, t5, t6)
+    doI64AtomicCmpxchg8()
+    pushInt64(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_rmw16_cmpxchg_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 2, t1, t2, t5, t6)
+    doI64AtomicCmpxchg16()
+    pushInt64(t0)
+    move t4, PC
+    nextIPIntInstruction()
+
+.ipint_i64_atomic_rmw32_cmpxchg_u_slow_path:
+    loadStoreMakePointerSlow(t4, t0, 4, t1, t2, t5, t6)
+    doI64AtomicCmpxchg32()
+    pushInt64(t0)
+    move t4, PC
+    nextIPIntInstruction()
 
 ##################################
 ## "Out of line" logic for call ##
@@ -10108,8 +11620,7 @@ macro mintPopV(reg)
 end
 
 macro mintArgDispatch()
-    loadb [MC], sc0
-    addq 1, MC
+    loadbAndAdvance(MC, sc0)
     bigteq sc0, (constexpr IPInt::CallArgumentBytecode::NumOpcodes), _ipint_mint_arg_dispatch_err
     lshiftq (constexpr (WTF::fastLog2(JSC::IPInt::alignMInt))), sc0
 if ARM64 or ARM64E
@@ -10117,14 +11628,14 @@ if ARM64 or ARM64E
     addq sc0, csr4
     jmp csr4
 elsif X86_64
-    leap (_mint_begin - _mint_arg_relativePCBase)[PC, sc0], sc0
+    pcrtoaddr _mint_begin, PC
+    addq PC, sc0
     jmp sc0
 end
 end
 
 macro mintRetDispatch()
-    loadb [MC], sc0
-    addq 1, MC
+    loadbAndAdvance(MC, sc0)
     bigteq sc0, (constexpr IPInt::CallResultBytecode::NumOpcodes), _ipint_mint_ret_dispatch_err
     lshiftq (constexpr (WTF::fastLog2(JSC::IPInt::alignMInt))), sc0
 if ARM64 or ARM64E
@@ -10132,7 +11643,8 @@ if ARM64 or ARM64E
     addq sc0, csr4
     jmp csr4
 elsif X86_64
-    leap (_mint_begin_return - _mint_ret_relativePCBase)[PC, sc0], sc0
+    pcrtoaddr _mint_begin_return, PC
+    addq PC, sc0
     jmp sc0
 end
 end
@@ -10161,16 +11673,19 @@ end
     move r0, targetEntrypoint
     move r1, targetInstance
 
+    # MC points at the metadata for the next instruction. We can access to CallSignatureMetadata
+    # via negative offset as Call Metadata family is guaranteed to end with CallSignatureMetadata
+    loadp (-1 * constexpr (sizeof(IPInt::CallSignatureMetadata)) + IPInt::CallSignatureMetadata::rtt)[MC], t5
+
     const extraSpaceForReturns = t0
     const stackFrameSize = t1
     const numArguments = t2
 
-    loadi IPInt::CallSignatureMetadata::stackFrameSize[MC], stackFrameSize
-    loadh IPInt::CallSignatureMetadata::numExtraResults[MC], extraSpaceForReturns
+    loadi (-1 * constexpr (sizeof(IPInt::CallSignatureMetadata)) + IPInt::CallSignatureMetadata::stackFrameSize)[MC], stackFrameSize
+    loadh (-1 * constexpr (sizeof(IPInt::CallSignatureMetadata)) + IPInt::CallSignatureMetadata::numExtraResults)[MC], extraSpaceForReturns
     mulq StackValueSize, extraSpaceForReturns
-    loadh IPInt::CallSignatureMetadata::numArguments[MC], numArguments
+    loadh (-1 * constexpr (sizeof(IPInt::CallSignatureMetadata)) + IPInt::CallSignatureMetadata::numArguments)[MC], numArguments
     mulq StackValueSize, numArguments
-    advanceMC(constexpr (sizeof(IPInt::CallSignatureMetadata)))
 
     # calculate the SP after popping all arguments
     move sp, t3
@@ -10200,9 +11715,7 @@ end
     # t3 is not used after this
     subp cfr, t3
     push t3, PC
-    # ditto for PL, t3 is okay to use as scratch
-    subp PL, cfr, t3
-    push t3, wasmInstance
+    push MC, wasmInstance
 
     # set up the call frame
     move sp, t2
@@ -10216,7 +11729,7 @@ end
     # reserved
     # reserved
     # (first_non_arg_addr - cfr), PC
-    # (PL - cfr), wasmInstance <- t2 = native argument stack (pushed by mINT)
+    # MC, wasmInstance <- t2 = native argument stack (pushed by mINT)
     # call frame
     # call frame
     # call frame
@@ -10231,12 +11744,103 @@ end
     push targetEntrypoint, targetInstance
 
     move t2, sc3
+    # Use MC for shared bytecode cursor.
+    loadp Wasm::RTT::m_callBytecode[t5], MC
+    addp (constexpr (Wasm::IPIntSharedBytecode::offsetOfData())), MC
     move t4, mintSS
 
     # need a common entrypoint because of x86 PC base
     jmp .ipint_mint_arg_dispatch
 
 .ipint_tail_call_common:
+    # Check if we need to insert a restore frame for cross-instance tail calls.
+    # Registers on entry:
+    #   r0 = entrypoint, r1 = targetInstance, wasmInstance = current instance,
+    #   t3 = callerStackArgSize, IPIntCallCallee = callee, IPIntCallFunctionSlot = func info
+    # Scratch: t4, t5. Do not clobber anything else.
+    # On x86_64 r1==t2 (both rdx) and on ARM64 r1==t1, so neither t2 nor t1
+    # may be used freely. The ARM64 copy loop uses t2 for pair loads; that is
+    # safe because r1==t1 there (t2 is a distinct register).
+    bpeq r1, wasmInstance, .ipint_tail_call_no_restore_frame
+
+    loadp ReturnPC[cfr], t4
+    removeCodePtrTag t4
+if ARM64E
+    leap _g_config, t5
+    loadp JSCConfigGateMapOffset + (constexpr Gate::wasmRestoreFrame) * PtrSize[t5], t5
+    removeCodePtrTag t5
+else
+    pcrtoaddr _wasm_restore_frame_return, t5
+end
+    bpeq t4, t5, .ipint_tail_call_no_restore_frame
+
+    const RestoreFrameSize = constexpr Wasm::RestoreFrameCallee::restoreFrameSizeInBytes
+
+    # Step 1: Write the restore frame at cfr + 16 + t3.
+    # cfr hasn't shifted yet, so this is cfr_old + (FirstArgumentOffset - RestoreFrameSize) + t3.
+    leap (FirstArgumentOffset - RestoreFrameSize)[cfr, t3], t4   # t4 = restore_cfr
+
+    loadp [cfr], t5
+    storep t5, [t4]                         # originalCallerFrame
+if ARM64E
+    loadp ReturnPC[cfr], lr
+    addp CallerFrameAndPCSize, cfr, t5
+    untagReturnAddress t5
+    addp CallerFrameAndPCSize, t4, t5
+    tagReturnAddress t5
+    storep lr, ReturnPC[t4]                 # originalReturnPC (resigned for restore_cfr)
+else
+    loadp ReturnPC[cfr], t5
+    storep t5, ReturnPC[t4]                 # originalReturnPC
+end
+    storep wasmInstance, CodeBlock[t4]       # saved instance
+    leap _g_restoreFrameCalleeBoxed, t5
+    loadp [t5], t5
+    storep t5, Callee[t4]                   # RestoreFrameCallee
+
+    # Step 2: Copy [sp, cfr) down by RestoreFrameSize bytes.
+    move sp, t4
+
+    # Move sp down now so don't write below it in the copy loop.
+    subp RestoreFrameSize, sp
+
+.ipint_restore_frame_copy_loop:
+    bpaeq t4, cfr, .ipint_restore_frame_copy_loop_done
+if ARM64 or ARM64E
+    # t2 is safe here because r1==t1 on ARM64 (t2 is x2, a distinct register).
+    loadpairq [t4], t2, t5
+    storepairq t2, t5, -RestoreFrameSize[t4]
+elsif X86_64
+    loadp [t4], t5
+    storep t5, -RestoreFrameSize[t4]
+    loadp 8[t4], t5
+    storep t5, (8 - RestoreFrameSize)[t4]
+end
+    addp 16, t4
+    jmp .ipint_restore_frame_copy_loop
+
+.ipint_restore_frame_copy_loop_done:
+
+    # Step 3: Shift cfr down by 32, sp was handled before the copy loop.
+    subp RestoreFrameSize, cfr
+
+    # Step 4: Write redirect at cfr_new.
+    # restore_cfr = cfr_new + FirstArgumentOffset + t3
+    leap FirstArgumentOffset[cfr, t3], t4   # t4 = restore_cfr
+    storep t4, [cfr]                        # CallerFrame = restore_cfr
+
+if ARM64E
+    leap _g_config, t4
+    loadp JSCConfigGateMapOffset + (constexpr Gate::wasmRestoreFrame) * PtrSize[t4], t4
+    removeCodePtrTag t4
+    addp CallerFrameAndPCSize, cfr, t5
+    tagCodePtr t4, t5
+else
+    pcrtoaddr _wasm_restore_frame_return, t4
+end
+    storep t4, ReturnPC[cfr]                # ReturnPC = wasmRestoreFrame gate
+
+.ipint_tail_call_no_restore_frame:
     # Free up r0 to be used as argument register
 
     #  <caller frame>
@@ -10346,9 +11950,6 @@ end
     #  return address, saved CFR   <- sp
 
 .ipint_mint_arg_dispatch:
-    # on x86, we'll use PC for our PC base
-    initPCRelative(mint_arg, PC)
-
     // We've already validateOpcodeConfig() in all the Wasm call opcodes.
     mintArgDispatch()
 
@@ -10455,34 +12056,34 @@ mintAlign(_call_argument_dec_sp)
 
 # CallArgumentBytecode::CallArgStore0 (0x11)
 mintAlign(_call_argument_store_0)
-    mintPop(sc2)
-    storeq sc2, [sc3]
+    mintPop(sc0)
+    storeq sc0, [sc3]
     mintArgDispatch()
 
 # CallArgumentBytecode::CallArgDecSPStore8 (0x12)
 mintAlign(_call_argument_dec_sp_store_8)
-    mintPop(sc2)
+    mintPop(sc0)
     subp 2 * SlotSize, sc3
-    storeq sc2, 8[sc3]
+    storeq sc0, 8[sc3]
     mintArgDispatch()
 
 # CallArgumentBytecode::CallArgDecSPStoreVector0 (0x13)
 mintAlign(_call_argument_dec_sp_store_vector_0)
     subp 2 * SlotSize, sc3
-    loadq [mintSS], sc2
-    storeq sc2, [sc3]
-    loadq 8[mintSS], sc2
-    storeq sc2, 8[sc3]
+    loadq [mintSS], sc0
+    storeq sc0, [sc3]
+    loadq 8[mintSS], sc0
+    storeq sc0, 8[sc3]
     addq StackValueSize, mintSS
     mintArgDispatch()
 
 # CallArgumentBytecode::TailCallArgDecSPStoreVector8 (0x14)
 mintAlign(_call_argument_dec_sp_store_vector_8)
     subp 2 * SlotSize, sc3
-    loadq [mintSS], sc2
-    storeq sc2, 8[sc3]
-    loadq 8[mintSS], sc2
-    storeq sc2, 16[sc3]
+    loadq [mintSS], sc0
+    storeq sc0, 8[sc3]
+    loadq 8[mintSS], sc0
+    storeq sc0, 16[sc3]
     addq StackValueSize, mintSS
     mintArgDispatch()
 
@@ -10497,34 +12098,34 @@ mintAlign(_tail_call_argument_dec_sp)
 
 # CallArgumentBytecode::TailCallArgStore0 (0x16)
 mintAlign(_tail_call_argument_store_0)
-    mintPop(sc3)
-    storeq sc3, [sp]
+    mintPop(sc0)
+    storeq sc0, [sp]
     mintArgDispatch()
 
 # CallArgumentBytecode::TailCallArgDecSPStore8 (0x17)
 mintAlign(_tail_call_argument_dec_sp_store_8)
-    mintPop(sc3)
+    mintPop(sc0)
     subp 2 * SlotSize, sp
-    storeq sc3, 8[sp]
+    storeq sc0, 8[sp]
     mintArgDispatch()
 
 # CallArgumentBytecode::TailCallArgDecSPStoreVector0 (0x18)
 mintAlign(_tail_call_argument_dec_sp_store_vector_0)
     subp 2 * SlotSize, sp
-    loadq [mintSS], sc3
-    storeq sc3, [sp]
-    loadq 8[mintSS], sc3
-    storeq sc3, 8[sp]
+    loadq [mintSS], sc0
+    storeq sc0, [sp]
+    loadq 8[mintSS], sc0
+    storeq sc0, 8[sp]
     addq StackValueSize, mintSS
     mintArgDispatch()
 
 # CallArgumentBytecode::TailCallArgDecSPStoreVector8 (0x19)
 mintAlign(_tail_call_argument_dec_sp_store_vector_8)
     subp 2 * SlotSize, sp
-    loadq [mintSS], sc3
-    storeq sc3, 8[sp]
-    loadq 8[mintSS], sc3
-    storeq sc3, 16[sp]
+    loadq [mintSS], sc0
+    storeq sc0, 8[sp]
+    loadq 8[mintSS], sc0
+    storeq sc0, 16[sp]
     addq StackValueSize, mintSS
     mintArgDispatch()
 
@@ -10535,7 +12136,6 @@ mintAlign(_tail_call)
 # CallArgumentBytecode::Call (0x1b)
 mintAlign(_call)
     pop wasmInstance, ws0
-    # pop targetInstance, targetEntrypoint
 
     # Save stack pointer, if we tail call someone who changes the frame above's stack argument size.
     # Store its value relative to cfp so stack frames can be easily relocated for JSPI.
@@ -10543,15 +12143,8 @@ mintAlign(_call)
     subp cfr, sc1
     storep sc1, ThisArgumentOffset[cfr]
 
-    # Swap instances
-    # move targetInstance, wasmInstance
-
     # Set up memory
-    push t2, t3
-    ipintReloadMemory()
-    pop t3, t2
-
-    # move targetEntrypoint, ws0
+    ipintReloadMemory(ws1)
 
     # Make the call
 if ARM64E
@@ -10567,35 +12160,20 @@ _wasm_trampoline_wasm_ipint_call_wide32:
 _wasm_ipint_call_return_location:
 _wasm_ipint_call_return_location_wide16:
 _wasm_ipint_call_return_location_wide32:
-    # Restore the stack pointer
+    # Compute sc3 (pointing to saved caller info) using the saved SP value,
+    # without restoring SP yet. We need callee's SP to read stack results
+    # which are at the bottom of the arg/result area (SP + headerSize).
+    loadi IPInt::CallReturnMetadata::stackFrameSize[MC], sc3
     loadp ThisArgumentOffset[cfr], sc0
     addp cfr, sc0
-    move sc0, sp
-
-    # <first non-arg>   <- first_non_arg_addr
-    # arg
-    # ...
-    # arg
-    # arg
-    # reserved
-    # reserved
-    # (first_non_arg_addr - cfr), PC
-    # (PL - cfr), wasmInstance  <- sc3
-    # call frame return
-    # call frame return
-    # call frame
-    # call frame
-    # call frame
-    # call frame        <- sp
-
-    loadi IPInt::CallReturnMetadata::stackFrameSize[MC], sc3
-    leap [sp, sc3], sc3
+    addp sc0, sc3
 
     const mintRetSrc = sc1
     const mintRetDst = sc2
 
+    # mintRetSrc: read stack results from the callee's SP (current SP)
     loadi IPInt::CallReturnMetadata::firstStackResultSPOffset[MC], mintRetSrc
-    advanceMC(IPInt::CallReturnMetadata::resultBytecode)
+    advanceMC(constexpr (sizeof(IPInt::CallReturnMetadata)))
     leap [sp, mintRetSrc], mintRetSrc
 
     # load (first_non_arg_addr - cfr) from the stack and make it absolute
@@ -10605,9 +12183,6 @@ elsif X86_64
     loadp (3 * SlotSize)[sc3], mintRetDst
 end
     addp cfr, mintRetDst
-
-    # on x86, we'll use PC again for our PC base
-    initPCRelative(mint_ret, PC)
 
     // We've already validateOpcodeConfig() in all the Wasm call opcodes, and
     // that is the only way to get here.
@@ -10746,40 +12321,28 @@ mintAlign(_end)
     # return result
     # return result     <- mintRetDst => new SP
     # (first_non_arg_addr - cfr), PC
-    # (PL - cfr), wasmInstance  <- sc3
-    # call frame return <- mintRetSrc
-    # call frame return
+    # MC, wasmInstance  <- sc3
     # call frame
     # call frame
     # call frame
-    # call frame        <- sp
+    # call frame        <- callee's SP (not yet restored)
 
-    # note: we don't care about t3 anymore
 if ARM64 or ARM64E
-    loadpairq [sc3], t3, wasmInstance
-    addp t3, cfr, PL
-else
+    loadpairq [sc3], MC, wasmInstance
+elsif X86_64
     loadq [sc3], wasmInstance
+    loadq 8[sc3], MC
+    loadp (2 * SlotSize)[sc3], PC
 end
     move mintRetDst, sp
-
-if X86_64
-    move wasmInstance, sc2
-end
 
     # Restore PC / MC
     loadp Callee[cfr], ws0
     unboxWasmCallee(ws0, ws1)
     storep ws0, UnboxedWasmCalleeStackSlot[cfr]
-if X86_64
-    move sc2, wasmInstance
-    loadq 8[sc3], t3
-    addp t3, cfr, PL
-    loadp (2 * SlotSize)[sc3], PC
-end
 
     # Restore memory
-    ipintReloadMemory()
+    ipintReloadMemory(t2)
     nextIPIntInstruction()
 
 .ipint_perform_tail_call:
@@ -10841,7 +12404,7 @@ end
 if X86_64
     pop sc1, sc0
     storep sc0, ReturnPC[sc2]
-elsif ARM64 or ARM64E or ARMv7 or RISCV64
+elsif ARM64 or ARM64E or RISCV64
     pop sc1, lr
 end
 
@@ -10889,9 +12452,7 @@ end
     move targetInstance, wasmInstance
 
     # set up memory
-    push t2, t3
-    ipintReloadMemory()
-    pop t3, t2
+    ipintReloadMemory(ws1)
 
     addp CallerFrameAndPCSize, sp
 
@@ -10922,6 +12483,41 @@ _ipint_mint_arg_dispatch_err:
 _ipint_mint_ret_dispatch_err:
     move 0x88, a0
     break
+
+_ipint_operation_call_exception:
+    operationCallMayThrowExceptionTail(0)
+
+_ipint_operation_call_exception_preserving_volatile_registers:
+    operationCallMayThrowExceptionTail((NumberOfVolatileGPRs * MachineRegisterSize) + (NumberOfWasmArgumentFPRs * VectorRegisterSize))
+
+_ipint_throw_Unreachable:
+    handleDebuggerTrapIfNeededAndThrowWasmTrap(Unreachable)
+_ipint_throw_NullExnrefReference:
+    handleDebuggerTrapIfNeededAndThrowWasmTrap(NullExnrefReference)
+
+_ipint_throw_OutOfBoundsMemoryAccess:
+    handleDebuggerTrapIfNeededAndThrowWasmTrap(OutOfBoundsMemoryAccess)
+
+_ipint_throw_DivisionByZero:
+    handleDebuggerTrapIfNeededAndThrowWasmTrap(DivisionByZero)
+
+_ipint_throw_IntegerOverflow:
+    handleDebuggerTrapIfNeededAndThrowWasmTrap(IntegerOverflow)
+
+_ipint_throw_OutOfBoundsTrunc:
+    handleDebuggerTrapIfNeededAndThrowWasmTrap(OutOfBoundsTrunc)
+
+_ipint_throw_NullRefAsNonNull:
+    handleDebuggerTrapIfNeededAndThrowWasmTrap(NullRefAsNonNull)
+
+_ipint_throw_NullAccess:
+    handleDebuggerTrapIfNeededAndThrowWasmTrap(NullAccess)
+
+_ipint_throw_NullI31Get:
+    handleDebuggerTrapIfNeededAndThrowWasmTrap(NullI31Get)
+
+_ipint_throw_UnalignedMemoryAccess:
+    handleDebuggerTrapIfNeededAndThrowWasmTrap(UnalignedMemoryAccess)
 
 ###########################################
 # uINT: function return value interpreter #
@@ -11033,18 +12629,18 @@ uintAlign(_ret)
 argumINTAlign(_a0)
 _argumINT_begin:
     storeq wa0, [argumINTDst]
-    addp LocalSize, argumINTDst
+    subp LocalSize, argumINTDst
     argumINTDispatch()
 
 argumINTAlign(_a1)
     storeq wa1, [argumINTDst]
-    addp LocalSize, argumINTDst
+    subp LocalSize, argumINTDst
     argumINTDispatch()
 
 argumINTAlign(_a2)
 if ARM64 or ARM64E or X86_64
     storeq wa2, [argumINTDst]
-    addp LocalSize, argumINTDst
+    subp LocalSize, argumINTDst
     argumINTDispatch()
 else
     break
@@ -11054,7 +12650,7 @@ end
 argumINTAlign(_a3)
 if ARM64 or ARM64E or X86_64
     storeq wa3, [argumINTDst]
-    addp LocalSize, argumINTDst
+    subp LocalSize, argumINTDst
     argumINTDispatch()
 else
     break
@@ -11063,7 +12659,7 @@ end
 argumINTAlign(_a4)
 if ARM64 or ARM64E or X86_64
     storeq wa4, [argumINTDst]
-    addp LocalSize, argumINTDst
+    subp LocalSize, argumINTDst
     argumINTDispatch()
 else
     break
@@ -11072,7 +12668,7 @@ end
 argumINTAlign(_a5)
 if ARM64 or ARM64E or X86_64
     storeq wa5, [argumINTDst]
-    addp LocalSize, argumINTDst
+    subp LocalSize, argumINTDst
     argumINTDispatch()
 else
     break
@@ -11081,7 +12677,7 @@ end
 argumINTAlign(_a6)
 if ARM64 or ARM64E
     storeq wa6, [argumINTDst]
-    addp LocalSize, argumINTDst
+    subp LocalSize, argumINTDst
     argumINTDispatch()
 else
     break
@@ -11090,7 +12686,7 @@ end
 argumINTAlign(_a7)
 if ARM64 or ARM64E
     storeq wa7, [argumINTDst]
-    addp LocalSize, argumINTDst
+    subp LocalSize, argumINTDst
     argumINTDispatch()
 else
     break
@@ -11098,49 +12694,49 @@ end
 
 argumINTAlign(_fa0)
     storev wfa0, [argumINTDst]
-    addp LocalSize, argumINTDst
+    subp LocalSize, argumINTDst
     argumINTDispatch()
 
 argumINTAlign(_fa1)
     storev wfa1, [argumINTDst]
-    addp LocalSize, argumINTDst
+    subp LocalSize, argumINTDst
     argumINTDispatch()
 
 argumINTAlign(_fa2)
     storev wfa2, [argumINTDst]
-    addp LocalSize, argumINTDst
+    subp LocalSize, argumINTDst
     argumINTDispatch()
 
 argumINTAlign(_fa3)
     storev wfa3, [argumINTDst]
-    addp LocalSize, argumINTDst
+    subp LocalSize, argumINTDst
     argumINTDispatch()
 
 argumINTAlign(_fa4)
     storev wfa4, [argumINTDst]
-    addp LocalSize, argumINTDst
+    subp LocalSize, argumINTDst
     argumINTDispatch()
 
 argumINTAlign(_fa5)
     storev wfa5, [argumINTDst]
-    addp LocalSize, argumINTDst
+    subp LocalSize, argumINTDst
     argumINTDispatch()
 
 argumINTAlign(_fa6)
     storev wfa6, [argumINTDst]
-    addp LocalSize, argumINTDst
+    subp LocalSize, argumINTDst
     argumINTDispatch()
 
 argumINTAlign(_fa7)
     storev wfa7, [argumINTDst]
-    addp LocalSize, argumINTDst
+    subp LocalSize, argumINTDst
     argumINTDispatch()
 
 argumINTAlign(_stack)
     loadq [argumINTSrc], csr0
     addp SlotSize, argumINTSrc
     storeq csr0, [argumINTDst]
-    addp LocalSize, argumINTDst
+    subp LocalSize, argumINTDst
     argumINTDispatch()
 
 argumINTAlign(_stack_vector)
@@ -11149,7 +12745,7 @@ argumINTAlign(_stack_vector)
     loadq 8[argumINTSrc], csr0
     storeq csr0, 8[argumINTDst]
     addp 2 * SlotSize, argumINTSrc
-    addp LocalSize, argumINTDst
+    subp LocalSize, argumINTDst
     argumINTDispatch()
 
 argumINTAlign(_end)
@@ -11160,4 +12756,28 @@ if ARM64E
     _wasmTailCallTrampoline:
         untagReturnAddress ws2
         jmp ws0, WasmEntryPtrTag
+end
+
+# Restore frame return stub: only used when JIT cage is disabled.
+# When JIT cage is enabled, the wasmRestoreFrame gate thunk handles this.
+# At entry: return values in wa/wfa registers and at sp (don't change these)
+global _wasm_restore_frame_return
+_wasm_restore_frame_return:
+    loadp CodeBlock[cfr], wasmInstance
+    ipintReloadMemory(ws0)
+
+if ARM64E
+    loadp ReturnPC[cfr], lr
+    addp CallerFrameAndPCSize, cfr, ws0
+    untagReturnAddress ws0
+    loadp [cfr], cfr
+    tagReturnAddress sp
+    ret
+elsif ARM64
+    loadpairq [cfr], cfr, lr
+    ret
+elsif X86_64
+    loadp ReturnPC[cfr], ws1
+    loadp [cfr], cfr
+    jmp ws1
 end

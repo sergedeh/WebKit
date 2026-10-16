@@ -114,7 +114,7 @@ WI.SourceMapResource = class SourceMapResource extends WI.Resource
             // Force inline content to be asynchronous to match the expected load pattern.
             // FIXME: We don't know the MIME-type for inline content. Guess by analyzing the content?
             // Returns a promise.
-            return Promise.resolve().then(sourceMapResourceLoaded.bind(this, {content: this._inlineContent, mimeType: this.mimeType, statusCode: 200}));
+            return Promise.resolve().then(sourceMapResourceLoaded.bind(this, {content: this._inlineContent, mimeType: this.mimeType, status: 200}));
         }
 
         function sourceMapResourceNotAvailable(error, content, mimeType, statusCode)
@@ -137,12 +137,12 @@ WI.SourceMapResource = class SourceMapResource extends WI.Resource
 
         function sourceMapResourceLoaded(parameters)
         {
-            var {error, content, mimeType, statusCode} = parameters;
+            let {error, content, mimeType, status: statusCode} = parameters;
 
             var base64encoded = false;
 
             if (statusCode >= 400 || error)
-                return sourceMapResourceNotAvailable(error, content, mimeType, statusCode);
+                return sourceMapResourceNotAvailable.call(this, error, content, mimeType, statusCode);
 
             // FIXME: Add support for picking the best MIME-type. Right now the file extension is the best bet.
             // The constructor set MIME-type based on the file extension and we ignore mimeType here.
@@ -157,7 +157,15 @@ WI.SourceMapResource = class SourceMapResource extends WI.Resource
             });
         }
 
-        if (!this._target.hasCommand("Network.loadResource"))
+        // Under Site Isolation, ProxyingNetworkAgent implements Network.loadResource on the backend
+        // (web-page) target, fanning the load out to the frame's owning process. Route there when
+        // Network is enabled on the backend target; otherwise this resource's target handles it.
+        // Mirrors Resource.requestContentFromBackend.
+        let target = this._target;
+        if (WI.networkManager.networkEnabledOnBackendTarget && WI.backendTarget && WI.backendTarget !== target && WI.backendTarget.hasCommand("Network.loadResource"))
+            target = WI.backendTarget;
+
+        if (!target.hasCommand("Network.loadResource"))
             return sourceMapResourceLoadError.call(this);
 
         var frameIdentifier = null;
@@ -167,7 +175,7 @@ WI.SourceMapResource = class SourceMapResource extends WI.Resource
         if (!frameIdentifier)
             frameIdentifier = WI.networkManager.mainFrame ? WI.networkManager.mainFrame.id : "";
 
-        return this._target.NetworkAgent.loadResource(frameIdentifier, this.url).then(sourceMapResourceLoaded.bind(this)).catch(sourceMapResourceLoadError.bind(this));
+        return target.NetworkAgent.loadResource(frameIdentifier, this.url).then(sourceMapResourceLoaded.bind(this)).catch(sourceMapResourceLoadError.bind(this));
     }
 
     createSourceCodeLocation(lineNumber, columnNumber)
@@ -175,7 +183,7 @@ WI.SourceMapResource = class SourceMapResource extends WI.Resource
         // SourceCodeLocations are always constructed with raw resources and raw locations. Lookup the raw location.
         let [generatedLine, generatedColumn] = this._sourceMap.findGeneratedPosition(this.url, lineNumber);
 
-        // If the raw location is an inline script we need to include that offset.
+        // Keep in sync with `WI.SourceCodeLocation.prototype.resolveMappedLocation`.
         var originalSourceCode = this._sourceMap.originalSourceCode;
         if (originalSourceCode instanceof WI.Script) {
             if (!generatedLine)
@@ -184,7 +192,7 @@ WI.SourceMapResource = class SourceMapResource extends WI.Resource
         }
 
         // Create the SourceCodeLocation and since we already know the the mapped location set it directly.
-        let location = originalSourceCode.createSourceCodeLocation(generatedLine, generatedColumn);
+        let location = originalSourceCode.createSourceMapSourceCodeLocation(generatedLine, generatedColumn);
         location._setMappedLocation(this, lineNumber, columnNumber);
         return location;
     }

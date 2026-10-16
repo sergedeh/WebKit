@@ -143,14 +143,9 @@ Vector<AtomString> Storage::supportedPropertyNames() const
     });
 }
 
-Ref<StorageArea> Storage::protectedArea() const
-{
-    return m_storageArea;
-}
-
 bool Storage::requiresScriptTrackingPrivacyProtection() const
 {
-    RefPtr document = window() ? protectedWindow()->document() : nullptr;
+    RefPtr document = window() ? window()->document() : nullptr;
     return document && document->requiresScriptTrackingPrivacyProtection(ScriptTrackingPrivacyCategory::LocalStorage);
 }
 

@@ -27,7 +27,7 @@
 #include "CSSValueKeywords.h"
 #include "HTMLNames.h"
 #include "RenderLineBreak.h"
-#include "RenderStyle+GettersInlines.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -66,15 +66,15 @@ void HTMLBRElement::collectPresentationalHintsForAttribute(const QualifiedName& 
         // <br clear> and <br clear=""> are just treated like <br> by Gecko, Mac IE, etc. -dwh
         if (!value.isEmpty()) {
             if (equalLettersIgnoringASCIICase(value, "all"_s))
-                addPropertyToPresentationalHintStyle(style, CSSPropertyClear, CSSValueBoth);
+                addPropertyToPresentationalHintStyle(style, CSSPropertyID::Clear, CSSValueID::Both);
             else
-                addPropertyToPresentationalHintStyle(style, CSSPropertyClear, value);
+                addPropertyToPresentationalHintStyle(style, CSSPropertyID::Clear, value);
         }
     } else
         HTMLElement::collectPresentationalHintsForAttribute(name, value, style);
 }
 
-RenderPtr<RenderElement> HTMLBRElement::createElementRenderer(RenderStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> HTMLBRElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
 {
     if (RenderElement::isContentDataSupported(style.content()))
         return RenderElement::createFor(*this, WTF::move(style));

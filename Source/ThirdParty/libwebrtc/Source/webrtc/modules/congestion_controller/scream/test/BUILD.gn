@@ -29,11 +29,11 @@ if (rtc_include_tests) {
       "../../../../system_wrappers",
       "../../../../test:test_support",
       "../../../../test/network:simulated_network",
+      "//third_party/abseil-cpp/absl/functional:any_invocable",
     ]
   }
 
-  rtc_library("cc_feedback_generator_unittests") {
-    testonly = true
+  rtc_cc_test("cc_feedback_generator_unittests") {
     sources = [ "cc_feedback_generator_unittest.cc" ]
     deps = [
       ":cc_feedback_generator",

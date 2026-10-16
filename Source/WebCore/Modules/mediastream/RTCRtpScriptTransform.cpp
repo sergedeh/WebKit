@@ -35,7 +35,9 @@
 #include "MessageChannel.h"
 #include "RTCRtpScriptTransformer.h"
 #include "RTCRtpTransformBackend.h"
+#include "ScriptExecutionContext.h"
 #include "Worker.h"
+#include <JavaScriptCore/HeapCellInlines.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/WeakPtr.h>
 
@@ -48,12 +50,12 @@ ExceptionOr<Ref<RTCRtpScriptTransform>> RTCRtpScriptTransform::create(JSC::JSGlo
     if (!worker.scriptExecutionContext())
         return Exception { ExceptionCode::InvalidStateError, "Worker frame is detached"_s };
 
-    RefPtr context = JSC::jsCast<JSDOMGlobalObject*>(&state)->scriptExecutionContext();
+    RefPtr context = downcast<JSDOMGlobalObject>(&state)->scriptExecutionContext();
     if (!context)
         return Exception { ExceptionCode::InvalidStateError, "Invalid context"_s };
 
     Vector<Ref<MessagePort>> transferredPorts;
-    auto serializedOptions = SerializedScriptValue::create(state, options, WTF::move(transfer), transferredPorts);
+    auto serializedOptions = SerializedScriptValue::create(state, options, WTF::move(transfer), transferredPorts, SerializationForStorage::No);
     if (serializedOptions.hasException())
         return serializedOptions.releaseException();
 
@@ -125,8 +127,8 @@ bool RTCRtpScriptTransform::setupTransformer(Ref<RTCRtpTransformBackend>&& backe
         return false;
 
     m_worker->postTaskToWorkerGlobalScope([transformer = m_transformer, backend = WTF::move(backend)](auto&) mutable {
-        if (transformer)
-            transformer->start(WTF::move(backend));
+        if (RefPtr protectedTransformer = transformer)
+            protectedTransformer->start(WTF::move(backend));
     });
     return true;
 }
@@ -136,8 +138,8 @@ void RTCRtpScriptTransform::clear(RTCRtpScriptTransformer::ClearCallback clearCa
     Locker locker { m_transformerLock };
     m_isTransformerInitialized = false;
     m_worker->postTaskToWorkerGlobalScope([transformer = WTF::move(m_transformer), clearCallback](auto&) mutable {
-        if (transformer)
-            transformer->clear(clearCallback);
+        if (RefPtr protectedTransformer = transformer)
+            protectedTransformer->clear(clearCallback);
     });
 }
 

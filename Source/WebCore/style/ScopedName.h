@@ -24,7 +24,9 @@
 
 #pragma once
 
+#include <WebCore/StyleCustomIdent.h>
 #include <WebCore/StyleScopeOrdinal.h>
+#include <WebCore/StyleString.h>
 #include <WebCore/StyleValueTypes.h>
 #include <wtf/text/AtomString.h>
 
@@ -36,12 +38,12 @@ struct ScopedName {
     ScopeOrdinal scopeOrdinal { ScopeOrdinal::Element };
     bool isIdentifier { true };
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
         if (isIdentifier)
-            return visitor(CustomIdentifier { name });
-        return visitor(name);
+            return visitor(CustomIdent { name });
+        return visitor(String { name });
     }
 
     bool operator==(const ScopedName&) const = default;
@@ -50,7 +52,6 @@ struct ScopedName {
 // MARK: - Conversion
 
 template<> struct CSSValueConversion<ScopedName> {
-    ScopedName operator()(BuilderState&, const CSSPrimitiveValue&);
     ScopedName operator()(BuilderState&, const CSSValue&);
 };
 

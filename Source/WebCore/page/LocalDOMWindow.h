@@ -27,13 +27,16 @@
 #pragma once
 
 #include <JavaScriptCore/HandleForward.h>
+#include <JavaScriptCore/Weak.h>
 #include <WebCore/ContextDestructionObserver.h>
 #include <WebCore/DOMHighResTimeStamp.h>
 #include <WebCore/DOMWindow.h>
 #include <WebCore/EventTargetInterfaces.h>
+#include <WebCore/LocalFrame.h>
 #include <WebCore/PerformanceEventTimingCandidate.h>
 #include <WebCore/PushSubscriptionOwner.h>
 #include <WebCore/Supplementable.h>
+#include <WebCore/UserGestureTokenIdentifier.h>
 #include <WebCore/WindowOrWorkerGlobalScope.h>
 #include <wtf/AbstractRefCountedAndCanMakeWeakPtr.h>
 #include <wtf/FixedVector.h>
@@ -41,6 +44,7 @@
 #include <wtf/HashSet.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/Platform.h>
+#include <wtf/ReducedResolutionSeconds.h>
 #include <wtf/WeakHashSet.h>
 
 namespace JSC {
@@ -53,13 +57,15 @@ template <typename, ShouldStrongDestructorGrabLock> class Strong;
 namespace WebCore {
 
 class CloseWatcherManager;
-class LocalFrame;
+class JSDOMGlobalObject;
 class SecurityOriginData;
+class Viewport;
 struct ScrollToOptions;
+class UserGestureToken;
+struct UserGestureTokenData;
 struct WindowPostMessageOptions;
 
 enum class PlatformEventModifier : uint8_t;
-using ReducedResolutionSeconds = Seconds;
 
 template<typename> class ExceptionOr;
 
@@ -110,9 +116,7 @@ public:
     void suspendForBackForwardCache();
     void resumeFromBackForwardCache();
 
-    WEBCORE_EXPORT Frame* frame() const final;
-    WEBCORE_EXPORT LocalFrame* localFrame() const;
-    RefPtr<LocalFrame> protectedFrame() const;
+    WEBCORE_EXPORT LocalFrame* LEGACY_NODELETE frame() const final;
 
     RefPtr<WebCore::MediaQueryList> matchMedia(const String&);
 
@@ -126,7 +130,7 @@ public:
     bool allowPopUp(); // Call on first window, not target window.
     static bool allowPopUp(LocalFrame& firstFrame);
     static bool canShowModalDialog(const LocalFrame&);
-    WEBCORE_EXPORT void setCanShowModalDialogOverride(bool);
+    WEBCORE_EXPORT void LEGACY_NODELETE setCanShowModalDialogOverride(bool);
 
     Screen& screen();
     WEBCORE_EXPORT History& history();
@@ -138,32 +142,34 @@ public:
     BarProp& statusbar();
     BarProp& toolbar();
     WEBCORE_EXPORT Navigator& navigator();
-    WEBCORE_EXPORT Ref<Navigator> protectedNavigator();
     Navigator* optionalNavigator() const { return m_navigator.get(); }
 
-    WEBCORE_EXPORT static void overrideTransientActivationDurationForTesting(std::optional<Seconds>&&);
-    void setLastActivationTimestamp(MonotonicTime lastActivationTimestamp) { m_lastActivationTimestamp = lastActivationTimestamp; }
-    void consumeLastActivationIfNecessary();
-    MonotonicTime lastActivationTimestamp() const { return m_lastActivationTimestamp; }
-    void notifyActivated(MonotonicTime);
+    WEBCORE_EXPORT static void LEGACY_NODELETE overrideTransientActivationDurationForTesting(std::optional<Seconds>&&);
+    // If forcedActivationToken is set, the activation was granted by the forced user gesture (e.g. evaluateJavaScript:)
+    // with that token, and is taken back once that gesture ends.
+    WEBCORE_EXPORT void updateActivation(MonotonicTime activationTime, std::optional<UserGestureTokenIdentifier> forcedActivationToken = std::nullopt);
+    WEBCORE_EXPORT void consumeLastActivationIfNecessary();
+    void consumeHistoryActionActivation() { m_hasHistoryActionActivation = false; }
+    MonotonicTime lastActivationTimestamp() const;
+    WEBCORE_EXPORT void revokeForcedActivation(UserGestureTokenIdentifier);
+    void notifyActivated(UserGestureToken&);
     WEBCORE_EXPORT bool hasTransientActivation() const;
     bool hasStickyActivation() const;
     WEBCORE_EXPORT bool consumeTransientActivation();
-    WEBCORE_EXPORT bool hasHistoryActionActivation() const;
-    WEBCORE_EXPORT bool consumeHistoryActionUserActivation();
-    WEBCORE_EXPORT static Seconds transientActivationDuration();
+    WEBCORE_EXPORT bool LEGACY_NODELETE hasHistoryActionActivation() const;
+    WEBCORE_EXPORT bool LEGACY_NODELETE consumeHistoryActionUserActivation();
+    WEBCORE_EXPORT static Seconds LEGACY_NODELETE transientActivationDuration();
 
     struct ClickEventData {
         MonotonicTime time;
         OptionSet<PlatformEventModifier> modifiers;
     };
     void updateLastUserClickEvent(OptionSet<PlatformEventModifier>);
-    WEBCORE_EXPORT std::optional<ClickEventData> consumeLastUserClickEvent();
+    WEBCORE_EXPORT std::optional<ClickEventData> LEGACY_NODELETE consumeLastUserClickEvent();
 
     DOMSelection* getSelection();
 
-    HTMLFrameOwnerElement* frameElement() const;
-    RefPtr<HTMLFrameOwnerElement> protectedFrameElement() const;
+    HTMLFrameOwnerElement* LEGACY_NODELETE frameElement() const;
 
     WEBCORE_EXPORT void focus(bool allowFocus = false);
     void focus(LocalDOMWindow& incumbentWindow);
@@ -184,7 +190,7 @@ public:
 
     bool find(const String&, bool caseSensitive, bool backwards, bool wrap, bool wholeWord, bool searchInFrames, bool showDialog) const;
 
-    bool offscreenBuffering() const;
+    bool LEGACY_NODELETE offscreenBuffering() const;
 
     int outerHeight() const;
     int outerWidth() const;
@@ -199,7 +205,7 @@ public:
 
     unsigned length() const;
 
-    AtomString name() const;
+    AtomString LEGACY_NODELETE name() const;
     void setName(const AtomString&);
 
     String status() const;
@@ -212,8 +218,7 @@ public:
 
     // DOM Level 2 AbstractView Interface
 
-    WEBCORE_EXPORT Document* document() const;
-    WEBCORE_EXPORT RefPtr<Document> protectedDocument() const;
+    WEBCORE_EXPORT Document* LEGACY_NODELETE document() const;
 
     // CSSOM View Module
 
@@ -232,7 +237,7 @@ public:
     RefPtr<WebKitPoint> webkitConvertPointFromNodeToPage(Node*, const WebKitPoint*) const;
 
     ExceptionOr<void> postMessage(JSC::JSGlobalObject&, LocalDOMWindow& incumbentWindow, JSC::JSValue message, WindowPostMessageOptions&&);
-    WEBCORE_EXPORT void postMessageFromRemoteFrame(JSC::JSGlobalObject&, RefPtr<WindowProxy>&& source, const SecurityOriginData& sourceOrigin, std::optional<WebCore::SecurityOriginData>&& targetOrigin, const WebCore::MessageWithMessagePorts&);
+    WEBCORE_EXPORT void postMessageFromRemoteFrame(JSC::JSGlobalObject&, RefPtr<WindowProxy>&& source, const SecurityOriginData& sourceOrigin, std::optional<WebCore::SecurityOriginData>&& targetOrigin, const WebCore::MessageWithMessagePorts&, std::optional<UserGestureTokenData>&&);
 
     void languagesChanged();
 
@@ -247,6 +252,7 @@ public:
     void resizeBy(int x, int y) const;
     void resizeTo(int width, int height) const;
 
+    Viewport& viewport();
     VisualViewport& visualViewport();
 
     // Timers
@@ -255,12 +261,12 @@ public:
     ExceptionOr<int> setInterval(std::unique_ptr<ScheduledAction>, int timeout, FixedVector<JSC::Strong<JSC::Unknown>>&& arguments);
     void clearInterval(int timeoutId);
 
-    int requestAnimationFrame(Ref<RequestAnimationFrameCallback>&&);
-    int webkitRequestAnimationFrame(Ref<RequestAnimationFrameCallback>&&);
-    void cancelAnimationFrame(int id);
+    unsigned requestAnimationFrame(Ref<RequestAnimationFrameCallback>&&);
+    unsigned webkitRequestAnimationFrame(Ref<RequestAnimationFrameCallback>&&);
+    void cancelAnimationFrame(unsigned id);
 
-    int requestIdleCallback(Ref<IdleRequestCallback>&&, const IdleRequestOptions&);
-    void cancelIdleCallback(int id);
+    unsigned requestIdleCallback(Ref<IdleRequestCallback>&&, const IdleRequestOptions&);
+    void cancelIdleCallback(unsigned id);
 
     // ImageBitmap
     void createImageBitmap(ImageBitmap::Source&&, ImageBitmapOptions&&, ImageBitmap::Promise&&);
@@ -270,10 +276,12 @@ public:
     bool isSecureContext() const;
 
     bool crossOriginIsolated() const;
+    bool originAgentCluster() const;
 
     // Events
     // EventTarget API
     WEBCORE_EXPORT bool addEventListener(const AtomString& eventType, Ref<EventListener>&&, const AddEventListenerOptions&) final;
+    using EventTarget::addEventListener;
     WEBCORE_EXPORT bool removeEventListener(const AtomString& eventType, EventListener&, const EventListenerOptions&) final;
     void removeAllEventListeners() final;
 
@@ -282,15 +290,15 @@ public:
 
     void dispatchLoadEvent();
 
-    void captureEvents();
-    void releaseEvents();
+    void LEGACY_NODELETE captureEvents();
+    void LEGACY_NODELETE releaseEvents();
 
     void finishedLoading();
 
     // EventTiming API
-    PerformanceEventTimingCandidate initializeEventTimingEntry(Event&, EventType);
-    void finalizeEventTimingEntry(PerformanceEventTimingCandidate&, const Event&, EventType);
-    void dispatchPendingEventTimingEntries();
+    PerformanceEventTimingCandidate initializeEventTiming(Event&, EventType);
+    void markEndOfProcessingForEventTiming(PerformanceEventTimingCandidate&, const Event&, EventType);
+    void finalizeAndQueueEventTimingEntries();
     uint64_t interactionCount() { return m_interactionCount; }
     // Misleading function names that mirror the spec; see https://github.com/w3c/event-timing/issues/158 :
     bool hasDispatchedInputEvent() const { return m_hasDispatchedInputEvent; }
@@ -308,6 +316,8 @@ public:
     ExceptionOr<Ref<NodeList>> collectMatchingElementsInFlatTree(Node&, const String& selectors);
     ExceptionOr<RefPtr<Element>> matchingElementInFlatTree(Node&, const String& selectors);
 
+    ExceptionOr<Ref<DOMRect>> convertRectToMainFrameCoordinates(const DOMRectInit&);
+
 #if ENABLE(ORIENTATION_EVENTS)
     // This is the interface orientation in degrees. Some examples are:
     //  0 is straight up; -90 is when the device is rotated 90 clockwise;
@@ -316,16 +326,15 @@ public:
 #endif
 
     Performance& performance() const;
-    Ref<Performance> protectedPerformance() const;
 
     WEBCORE_EXPORT ReducedResolutionSeconds nowTimestamp() const;
     void freezeNowTimestamp();
-    void unfreezeNowTimestamp();
+    void LEGACY_NODELETE unfreezeNowTimestamp();
     ReducedResolutionSeconds frozenNowTimestamp() const;
 
 #if PLATFORM(IOS_FAMILY)
     void incrementScrollEventListenersCount();
-    void decrementScrollEventListenersCount();
+    void decrementScrollEventListenersCount(unsigned count = 1);
     unsigned scrollEventListenerCount() const { return m_scrollEventListenerCount; }
 #endif
 
@@ -354,11 +363,13 @@ public:
 #endif
 
     // Navigation API
-    WEBCORE_EXPORT Navigation& navigation();
-    Ref<Navigation> protectedNavigation();
+    WEBCORE_EXPORT Navigation& LEGACY_NODELETE navigation();
 
     void willDetachDocumentFromFrame();
     void willDestroyCachedFrame();
+
+    JSDOMGlobalObject* cachedMainWorldGlobalObject() const;
+    void setCachedMainWorldGlobalObject(JSDOMGlobalObject*);
 
     void enableSuddenTermination();
     void disableSuddenTermination();
@@ -372,8 +383,7 @@ public:
     void setMayReuseForNavigation(bool mayReuseForNavigation) { m_mayReuseForNavigation = mayReuseForNavigation; }
     bool mayReuseForNavigation() const { return m_mayReuseForNavigation; }
 
-    Page* page() const;
-    RefPtr<Page> protectedPage() const;
+    Page* LEGACY_NODELETE page() const;
 
     WEBCORE_EXPORT static void forEachWindowInterestedInStorageEvents(NOESCAPE const Function<void(LocalDOMWindow&)>&);
 
@@ -388,14 +398,13 @@ public:
 private:
     explicit LocalDOMWindow(Document&);
 
-    ScriptExecutionContext* scriptExecutionContext() const final;
-    using ContextDestructionObserver::protectedScriptExecutionContext;
+    ScriptExecutionContext* LEGACY_NODELETE scriptExecutionContext() const final;
 
     void closePage() final;
     void eventListenersDidChange() final;
     void setLocation(LocalDOMWindow& activeWindow, const URL& completedURL, NavigationHistoryBehavior, SetLocationLocking, CanNavigateState) final;
 
-    bool allowedToChangeWindowGeometry() const;
+    bool LEGACY_NODELETE allowedToChangeWindowGeometry() const;
 
     static ExceptionOr<RefPtr<Frame>> createWindow(const String& urlString, const AtomString& frameName, const WindowFeatures&, LocalDOMWindow& activeWindow, LocalFrame& firstFrame, LocalFrame& openerFrame, NOESCAPE const Function<void(LocalDOMWindow&)>& prepareDialogFunction = nullptr);
 
@@ -449,6 +458,7 @@ private:
     mutable RefPtr<DOMSelection> m_selection;
     mutable RefPtr<BarProp> m_statusbar;
     mutable RefPtr<BarProp> m_toolbar;
+    mutable RefPtr<Viewport> m_viewport;
     mutable RefPtr<VisualViewport> m_visualViewport;
     mutable RefPtr<Navigation> m_navigation;
     mutable RefPtr<CloseWatcherManager> m_closeWatcherManager;
@@ -464,7 +474,7 @@ private:
     bool m_contextMenuTriggered { false };
 
     // Workaround for https://webkit.org/b/301443 causing very old timestamps to be produced:
-    Seconds m_lastInputEventStartTime;
+    ReducedResolutionSeconds m_lastInputEventStartTime;
 
     struct PendingKeyDownState {
         PerformanceEventTimingCandidate keyDown;
@@ -499,15 +509,23 @@ private:
 
     std::optional<ReducedResolutionSeconds> m_frozenNowTimestamp;
 
-    // For the purpose of tracking user activation, each Window W has a last activation timestamp. This is a number indicating the last time W got
-    // an activation notification. It corresponds to a DOMHighResTimeStamp value except for two cases: positive infinity indicates that W has never
-    // been activated, while negative infinity indicates that a user activation-gated API has consumed the last user activation of W. The initial
-    // value is positive infinity.
+    // User activation data model. lastActivationTimestamp() drives transient
+    // activation only. m_hasStickyActivation and m_hasHistoryActionActivation
+    // replace the published spec's timestamp-derived states per the proposed
+    // whatwg/html#11454 (https://github.com/whatwg/html/pull/11454): sticky is
+    // monotonic (set once, never cleared), history-action is consumable.
     MonotonicTime m_lastActivationTimestamp { MonotonicTime::infinity() };
-    MonotonicTime m_lastHistoryActionActivationTimestamp { MonotonicTime::infinity() };
+
+    struct ForcedActivation {
+        UserGestureTokenIdentifier grantingToken;
+        MonotonicTime timestamp;
+    };
+    Vector<ForcedActivation> m_forcedActivations;
 
     std::optional<ClickEventData> m_lastUserClickEvent;
 
+    bool m_hasStickyActivation { false };
+    bool m_hasHistoryActionActivation { false };
     bool m_wasWrappedWithoutInitializedSecurityOrigin { false };
     bool m_mayReuseForNavigation { true };
     bool m_isStopping { false };
@@ -515,11 +533,13 @@ private:
     mutable RefPtr<WebKitNamespace> m_webkitNamespace;
 #endif
 
-    RefPtr<CookieStore> m_cookieStore;
+    const RefPtr<CookieStore> m_cookieStore;
 
 #if ENABLE(DECLARATIVE_WEB_PUSH)
     const std::unique_ptr<PushManager> m_pushManager;
 #endif
+
+    JSC::Weak<JSDOMGlobalObject> m_cachedMainWorldGlobalObject;
 };
 
 inline String LocalDOMWindow::status() const

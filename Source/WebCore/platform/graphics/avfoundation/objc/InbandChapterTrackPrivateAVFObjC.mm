@@ -58,7 +58,7 @@ void InbandChapterTrackPrivateAVFObjC::processChapters(RetainPtr<NSArray<AVTimed
         return;
 
     auto identifier = LOGIDENTIFIER;
-    auto createChapterCue = ([this, identifier] (AVMetadataItem *item, int chapterNumber) mutable {
+    auto createChapterCue = ([this, protectedThis = Ref { *this }, identifier] (AVMetadataItem *item, int chapterNumber) mutable {
         if (!hasClients())
             return;
         ASSERT(hasOneClient());
@@ -75,8 +75,10 @@ void InbandChapterTrackPrivateAVFObjC::processChapters(RetainPtr<NSArray<AVTimed
     });
 
     int chapterNumber = 0;
-    for (AVTimedMetadataGroup *chapter in chapters.get()) {
-        for (AVMetadataItem *item in [chapter items]) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL AVTimedMetadataGroup *chapter in chapters.get()) {
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL AVMetadataItem *item in [chapter items]) {
             ++chapterNumber;
             if ([item statusOfValueForKey:@"value" error:nil] == AVKeyValueStatusLoaded)
                 createChapterCue(item, chapterNumber);

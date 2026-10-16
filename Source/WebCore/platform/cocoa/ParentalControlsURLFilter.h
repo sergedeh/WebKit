@@ -27,7 +27,13 @@
 
 #if HAVE(WEBCONTENTRESTRICTIONS)
 
+#include <WebCore/ParentalControlsContentFilter.h>
+#include <WebCore/ParentalControlsURLFilterParameters.h>
 #include <wtf/ThreadSafeRefCounted.h>
+
+#if HAVE(BROWSERENGINEKIT_WEBCONTENTFILTER)
+#include <WebCore/CocoaView.h>
+#endif
 
 OBJC_CLASS WCRBrowserEngineClient;
 
@@ -37,7 +43,6 @@ class WorkQueue;
 
 namespace WebCore {
 
-struct ParentalControlsURLFilterParameters;
 class ParentalControlsContentFilter;
 
 class ParentalControlsURLFilter : public ThreadSafeRefCounted<ParentalControlsURLFilter, WTF::DestructionThread::Main> {
@@ -47,17 +52,26 @@ public:
 #else
     WEBCORE_EXPORT static ParentalControlsURLFilter& singleton();
     WEBCORE_EXPORT static void setGlobalFilter(Ref<ParentalControlsURLFilter>&&);
+    WEBCORE_EXPORT static bool hasGlobalFilter();
 #endif
+    WEBCORE_EXPORT static void setFilterForTesting(Ref<ParentalControlsURLFilter>&&);
     WEBCORE_EXPORT static void allowURL(const ParentalControlsURLFilterParameters&, CompletionHandler<void(bool)>&&);
     WEBCORE_EXPORT static WorkQueue& workQueueSingleton();
     WEBCORE_EXPORT bool isEnabled() const;
-    void resetIsEnabled();
+    void LEGACY_NODELETE resetIsEnabled();
 
     WEBCORE_EXPORT virtual ~ParentalControlsURLFilter();
     virtual bool isEnabledImpl() const;
-    void isURLAllowed(const URL& mainDocumentURL, const URL&, ParentalControlsContentFilter&);
-    WEBCORE_EXPORT void isURLAllowed(const URL&, CompletionHandler<void(bool, NSData *)>&&);
+    void isURLAllowed(IsMainFrameLoad, const URL& mainDocumentURL, const URL&, ParentalControlsContentFilter&);
+    WEBCORE_EXPORT void isURLAllowed(IsMainFrameLoad, const URL& mainDocumentURL, const URL&, CompletionHandler<void(bool, NSData *)>&&);
     virtual void allowURL(const URL&, CompletionHandler<void(bool)>&&);
+#if HAVE(WEBCONTENTRESTRICTIONS_ASK_TO)
+#if HAVE(BROWSERENGINEKIT_WEBCONTENTFILTER)
+    virtual void requestPermissionForURL(const URL&, const URL& referrerURL, CompletionHandler<void(bool)>&&, CocoaView* presentingView = nullptr);
+#else
+    WEBCORE_EXPORT void requestPermissionForURL(const URL&, const URL& referrerURL, CompletionHandler<void(bool)>&&);
+#endif
+#endif
 
 protected:
 #if HAVE(WEBCONTENTRESTRICTIONS_PATH_SPI)
@@ -65,7 +79,7 @@ protected:
 #endif
     WEBCORE_EXPORT ParentalControlsURLFilter();
 
-    virtual void isURLAllowedImpl(const URL&, CompletionHandler<void(bool, NSData *)>&&);
+    virtual void isURLAllowedImpl(IsMainFrameLoad, const URL& mainDocumentURL, const URL&, CompletionHandler<void(bool, NSData *)>&&);
 
 private:
     WCRBrowserEngineClient* effectiveWCRBrowserEngineClient();

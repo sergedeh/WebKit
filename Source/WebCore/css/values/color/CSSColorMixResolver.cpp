@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2026 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,85 +27,25 @@
 #include "config.h"
 #include "CSSColorMixResolver.h"
 
+#include "CSSNormalizedMixPercentages.h"
 #include "ColorInterpolation.h"
+#include <wtf/ZippedRange.h>
 
 namespace WebCore {
 namespace CSS {
 
-namespace {
-
-struct ColorMixPercentages {
-    double p1;
-    double p2;
-    std::optional<double> alphaMultiplier = std::nullopt;
-};
-
-}
-
-static std::optional<ColorMixPercentages> normalizedMixPercentages(std::optional<ColorMixResolver::Component::Percentage> mixComponents1Percentage, std::optional<ColorMixResolver::Component::Percentage> mixComponents2Percentage)
-{
-    // The percentages are normalized as follows:
-
-    // 1. Let p1 be the first percentage and p2 the second one.
-
-    // 2. If both percentages are omitted, they each default to 50% (an equal mix of the two colors).
-    if (!mixComponents1Percentage && !mixComponents2Percentage)
-        return {{ 50.0, 50.0 }};
-
-    ColorMixPercentages result;
-
-    if (!mixComponents2Percentage) {
-        // 3. Otherwise, if p2 is omitted, it becomes 100% - p1
-        result.p1 = mixComponents1Percentage->value;
-        result.p2 = 100.0 - result.p1;
-    } else if (!mixComponents1Percentage) {
-        // 4. Otherwise, if p1 is omitted, it becomes 100% - p2
-        result.p2 = mixComponents2Percentage->value;
-        result.p1 = 100.0 - result.p2;
-    } else {
-        result.p1 = mixComponents1Percentage->value;
-        result.p2 = mixComponents2Percentage->value;
-    }
-
-    auto sum = result.p1 + result.p2;
-
-    // 5.If the percentages sum to zero, the function is invalid.
-    if (sum == 0)
-        return { };
-
-    if (sum > 100.0) {
-        // 6. Otherwise, if both are provided but do not add up to 100%, they are scaled accordingly so that they
-        //    add up to 100%.
-        result.p1 *= 100.0 / sum;
-        result.p2 *= 100.0 / sum;
-    } else if (sum < 100.0) {
-        // 7. Otherwise, if both are provided and add up to less than 100%, the sum is saved as an alpha multiplier.
-        //    They are then scaled accordingly so that they add up to 100%.
-        result.p1 *= 100.0 / sum;
-        result.p2 *= 100.0 / sum;
-        result.alphaMultiplier = sum;
-    }
-
-    return result;
-}
-
-template<typename InterpolationMethod> static WebCore::Color mixColorComponentsUsingColorInterpolationMethod(InterpolationMethod interpolationMethod, ColorMixPercentages mixPercentages, const WebCore::Color& color1, const WebCore::Color& color2)
+template<typename InterpolationMethod>
+static WebCore::Color mixColorComponentsUsingColorInterpolationMethod(InterpolationMethod interpolationMethod, double progress, const WebCore::Color& color1, const WebCore::Color& color2)
 {
     using ColorType = typename InterpolationMethod::ColorType;
 
-    // 1. Both colors are converted to the specified <color-space>. If the specified color space has a smaller gamut than
-    //    the one in which the color to be adjusted is specified, gamut mapping will occur.
     auto convertedColor1 = color1.template toColorTypeLossyCarryingForwardMissing<ColorType>();
     auto convertedColor2 = color2.template toColorTypeLossyCarryingForwardMissing<ColorType>();
 
-    // 2. Colors are then interpolated in the specified color space, as described in CSS Color 4 § 13 Interpolation. [...]
-    auto mixedColor = interpolateColorComponents<AlphaPremultiplication::Premultiplied>(interpolationMethod, convertedColor1, mixPercentages.p1 / 100.0, convertedColor2, mixPercentages.p2 / 100.0).unresolved();
+    auto mixedColor = interpolateColorComponents<AlphaPremultiplication::Premultiplied>(interpolationMethod, convertedColor1, 1.0 - progress, convertedColor2, progress).unresolved();
 
-    // 3. If an alpha multiplier was produced during percentage normalization, the alpha component of the interpolated result
-    //    is multiplied by the alpha multiplier.
-    if (mixPercentages.alphaMultiplier && !std::isnan(mixedColor.alpha))
-        mixedColor.alpha *= (*mixPercentages.alphaMultiplier / 100.0);
-
+    // `UseColorFunctionSerialization` is set unconditionally due to `color-mix()` serialization
+    // always using the modern serialization formats.
     auto flags = OptionSet { WebCore::Color::Flags::UseColorFunctionSerialization };
     if (color1.isSemantic() || color2.isSemantic())
         flags.add(WebCore::Color::Flags::Semantic);
@@ -112,22 +53,88 @@ template<typename InterpolationMethod> static WebCore::Color mixColorComponentsU
     return { mixedColor, flags };
 }
 
-WebCore::Color mix(const ColorMixResolver& colorMix)
+static WebCore::Color convertToColorMixResultRepresentation(const ColorInterpolationMethod& method, const WebCore::Color& color)
 {
-    auto mixPercentages = normalizedMixPercentages(colorMix.mixComponents1.percentage, colorMix.mixComponents2.percentage);
-    if (!mixPercentages)
-        return { };
+    // `UseColorFunctionSerialization` is set unconditionally due to `color-mix()` serialization
+    // always using the modern serialization formats.
+    auto flags = OptionSet { WebCore::Color::Flags::UseColorFunctionSerialization };
+    if (color.isSemantic())
+        flags.add(WebCore::Color::Flags::Semantic);
 
-    return WTF::switchOn(colorMix.colorInterpolationMethod.colorSpace,
-        [&](const auto& methodColorSpace) {
-            return mixColorComponentsUsingColorInterpolationMethod(
-                methodColorSpace,
-                *mixPercentages,
-                colorMix.mixComponents1.color,
-                colorMix.mixComponents2.color
-            );
+    return WTF::switchOn(method.value.colorSpace,
+        [&]<typename MethodColorSpace>(const MethodColorSpace&) -> WebCore::Color {
+            using ColorType = typename MethodColorSpace::ColorType;
+
+            return { color.template toColorTypeLossyCarryingForwardMissing<ColorType>(), flags };
         }
     );
+}
+
+WebCore::Color mix(const ColorMixResolver& colorMix)
+{
+    // https://drafts.csswg.org/css-color-5/#color-mix-result
+
+    // 1. Normalize mix percentages from the list of mix items passed to the function, with the "forced normalization" flag set to true, letting items and leftover be the result.
+
+    auto [percentages, leftover] = normalizedMixPercentages<ForceNormalization::Yes>(colorMix.components);
+
+    // 2. Let alpha mult be 1 - leftover, interpreting leftover as a number between 0 and 1.
+    // NOTE: Not calculated until it is used below.
+
+    auto color = [&] -> WebCore::Color {
+        // 3. If items is length 1, set color to the color of that sole item, converted to the specified interpolation <color-space>.
+        if (colorMix.components.size() == 1)
+            return convertToColorMixResultRepresentation(colorMix.colorInterpolationMethod, colorMix.components[0].color);
+
+        // Otherwise:
+        //
+        // 1. Let item stack be a stack made by reversing items. (Thus, with the first item at the top of the stack.)
+
+        // FIXME: When std::ranges::fold_left_first is available to use, this can be implemented a bit more clearly using that.
+
+        struct Item {
+            WebCore::Color color;
+            double percentage;
+        };
+
+        auto result = Item { colorMix.components[0].color, percentages[0] };
+        for (auto [b, bPercentage] : zippedRange(colorMix.components.subspan(1), percentages.subspan(1))) {
+            // 1. Pop from item stack twice, letting a and b be the two results in order. Let combined percentage be the sum of a and b’s percentages.
+
+            auto& a = result;
+
+            auto combinedPercentage = a.percentage + bPercentage;
+
+            // 2. Interpolate a and b’s colors as described in CSS Color 4 §  13. Color Interpolation, with a progress percentage equal to (b’s percentage) / combined percentage), if combined percentage is greater than 0, and 0.5 otherwise. If the specified color space is a cylindrical polar color space, then the <hue-interpolation-method> controls the interpolation of hue, as described in CSS Color 4 § 13.4 Hue Interpolation. If no <hue-interpolation-method> is specified, assume shorter.
+
+            auto progressPercentage = combinedPercentage > 0 ? bPercentage / combinedPercentage : 0.5;
+            auto mixedColor = WTF::switchOn(colorMix.colorInterpolationMethod.value.colorSpace,
+                [&](const auto& methodColorSpace) {
+                    return mixColorComponentsUsingColorInterpolationMethod(
+                        methodColorSpace,
+                        progressPercentage,
+                        a.color,
+                        b.color
+                    );
+                }
+            );
+
+            // 3. Create a new mix item with the resulting color and a percentage of combined percentage, and push it onto item stack.
+            result = Item { WTF::move(mixedColor), combinedPercentage };
+        }
+
+        // 3. Set color to the color of the sole remaining item in item stack.
+        return result.color;
+    }();
+
+    // 4. Multiply the alpha component of color by alpha mult.
+
+    if (leftover != 0)
+        color = color.colorWithUnresolvedAlphaMultipliedBy(1.0 - (leftover / 100.0));
+
+    // 5. Return color.
+
+    return color;
 }
 
 } // namespace CSS

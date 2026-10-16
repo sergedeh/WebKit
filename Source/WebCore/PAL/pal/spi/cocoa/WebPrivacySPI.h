@@ -144,23 +144,17 @@ typedef void (^WPStorageAccessUserAgentStringQuirksDataCompletionHandler)(WPStor
 @end
 #endif
 
-#if !defined(HAS_WEB_PRIVACY_RESTRICTED_OPENER_DOMAIN_CLASS)
-constexpr NSInteger WPResourceTypeRestrictedOpenerDomains = 8;
+#if !defined(HAS_WEB_PRIVACY_HIGH_VALUE_FRAUD_TARGET_DOMAIN_CLASS)
+constexpr NSInteger WPResourceTypeHighValueFraudTargetDomains = 11;
 
-typedef NS_ENUM(NSInteger, WPRestrictedOpenerType) {
-    WPRestrictedOpenerTypeNoOpener = 1,
-    WPRestrictedOpenerTypePostMessageAndClose,
-};
-
-@interface WPRestrictedOpenerDomain : NSObject
+@interface WPHighValueFraudTargetDomain : NSObject
 @property (nonatomic, readonly) NSString *domain;
-@property (nonatomic, readonly) WPRestrictedOpenerType openerType;
 @end
 
-typedef void (^WPRestrictedOpenerDomainsCompletionHandler)(NSArray<WPRestrictedOpenerDomain *> *, NSError *);
+typedef void (^WPHighValueFraudTargetDomainsCompletionHandler)(NSArray<WPHighValueFraudTargetDomain *> *, NSError *);
 
-@interface WPResources (Staging_118208263)
-- (void)requestRestrictedOpenerDomains:(WPResourceRequestOptions *)options completionHandler:(WPRestrictedOpenerDomainsCompletionHandler)completion;
+@interface WPResources (Staging_183971390)
+- (void)requestHighValueFraudTargetDomains:(WPResourceRequestOptions *)options completionHandler:(WPHighValueFraudTargetDomainsCompletionHandler)completion;
 @end
 #endif
 
@@ -186,6 +180,18 @@ typedef void (^WKWPResourcesGetSourceCompletionHandler)(NSString *, NSError *);
 - (void)requestResourceMonitorRulesSource:(WPResourceRequestOptions *)options completionHandler:(WKWPResourcesGetSourceCompletionHandler)completion;
 @end
 
+typedef void (^WKWPResourcesRuleListCompletionHandler)(WKContentRuleList *, NSError *);
+
+#if !defined(HAS_WEB_PRIVACY_DEFAULT_CONTENT_RULE_LIST_API)
+
+#define WPResourceTypeDefaultTrackerBlockRules ((WPResourceType)12)
+
+#endif
+
+@interface WPResources (Staging_DefaultContentRuleList)
+- (void)loadDefaultContentRuleListForStore:(WKContentRuleListStore *)store completionHandler:(WKWPResourcesRuleListCompletionHandler)completionHandler;
+@end
+
 #if !__has_include(<WebPrivacy/WPFingerprintingScript.h>) || __has_feature(modules)
 
 #define WPResourceTypeFingerprintingScripts ((WPResourceType)9)
@@ -205,6 +211,7 @@ using WPFingerprintingScriptCompletionHandler = void (^)(NSArray<WPFingerprintin
 
 #endif // !__has_include(<WebPrivacy/WPFingerprintingScript.h>) || __has_feature(modules)
 
+#define WPResourceTypeConsistentPrivacyQuirk ((WPResourceType)10)
 #if !defined(WP_SUPPORTS_SCRIPT_ACCESS_CATEGORY)
 
 typedef NS_OPTIONS(NSUInteger, WPScriptAccessCategories) {
@@ -220,11 +227,16 @@ typedef NS_OPTIONS(NSUInteger, WPScriptAccessCategories) {
     WPScriptAccessCategoryScreenOrViewport      = 1 << 8,
     WPScriptAccessCategorySpeech                = 1 << 9,
     WPScriptAccessCategoryFormControls          = 1 << 10,
+    WPScriptAccessCategoryNetworkRequests       = 1 << 11,
 };
 
 @interface WPFingerprintingScript (Staging_155749047)
 @property (nonatomic, readonly) WPScriptAccessCategories allowedCategories;
 @end
+
+#elif !defined(WP_SUPPORTS_SCRIPT_ACCESS_CATEGORY_NETWORK)
+
+#define WPScriptAccessCategoryNetworkRequests (1 << 11)
 
 #endif // !defined(WP_SUPPORTS_SCRIPT_ACCESS_CATEGORY)
 

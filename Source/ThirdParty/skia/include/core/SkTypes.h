@@ -11,16 +11,16 @@
 // All of these files should be independent of things users can set via the user config file.
 // They should also be able to be included in any order.
 // IWYU pragma: begin_exports
-#include "include/private/base/SkFeatures.h"
+#include "include/private/SkFeatures.h"
 
 // Load and verify defines from the user config file.
-#include "include/private/base/SkLoadUserConfig.h"
+#include "include/private/SkLoadUserConfig.h"
 
 // Any includes or defines below can be configured by the user config file.
-#include "include/private/base/SkAPI.h"
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkAttributes.h"
-#include "include/private/base/SkDebug.h"
+#include "include/private/SkAPI.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkAttributes.h"
+#include "include/private/SkDebug.h"
 // IWYU pragma: end_exports
 
 #include <cstdint>
@@ -143,14 +143,6 @@
         #define SK_FORCE_RASTER_PIPELINE_BLITTER
     #endif
     #define SK_DISABLE_SDF_TEXT
-#endif
-
-#ifndef SK_DISABLE_LEGACY_SHADERCONTEXT
-#   define SK_ENABLE_LEGACY_SHADERCONTEXT
-#endif
-
-#ifndef SK_SUPPORT_MUTABLE_PATHEFFECT
-#   define SK_SUPPORT_MUTABLE_PATHEFFECT
 #endif
 
 #if defined(SK_BUILD_FOR_LIBFUZZER) || defined(SK_BUILD_FOR_AFL_FUZZ)

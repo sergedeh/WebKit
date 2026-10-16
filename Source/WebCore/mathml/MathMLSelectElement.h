@@ -38,11 +38,11 @@ public:
     static Ref<MathMLSelectElement> create(const QualifiedName& tagName, Document&);
     static bool isMathMLEncoding(const AtomString& value);
     static bool isSVGEncoding(const AtomString& value);
-    static bool isHTMLEncoding(const AtomString& value);
+    static bool LEGACY_NODELETE isHTMLEncoding(const AtomString& value);
 
 private:
     MathMLSelectElement(const QualifiedName& tagName, Document&);
-    RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) final;
+    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
 
     bool childShouldCreateRenderer(const Node&) const final;
 
@@ -53,7 +53,7 @@ private:
     bool willRespondToMouseClickEventsWithEditability(Editability) const final;
 
     void toggle();
-    int getSelectedActionChildAndIndex(Element*& selectedChild);
+    int getSelectedActionChildAndIndex(RefPtr<Element>& selectedChild);
     RefPtr<Element> getSelectedActionChild();
     RefPtr<Element> getSelectedSemanticsChild();
 

@@ -38,7 +38,8 @@ class WebAssemblyScriptBufferSourceProvider final : public JSC::BaseWebAssemblyS
 public:
     static Ref<WebAssemblyScriptBufferSourceProvider> create(const ScriptBuffer& scriptBuffer, URL&& sourceURL, Ref<JSC::ScriptFetcher>&& scriptFetcher)
     {
-        return adoptRef(*new WebAssemblyScriptBufferSourceProvider(scriptBuffer, JSC::SourceOrigin { WTF::move(sourceURL), WTF::move(scriptFetcher) }, sourceURL.string()));
+        String sourceURLString = sourceURL.string();
+        return adoptRef(*new WebAssemblyScriptBufferSourceProvider(scriptBuffer, JSC::SourceOrigin { WTF::move(sourceURL), WTF::move(scriptFetcher) }, WTF::move(sourceURLString)));
     }
 
     unsigned hash() const final
@@ -58,7 +59,8 @@ public:
         if (!m_buffer)
             return nullptr;
 
-        return m_buffer->span().data();
+        // m_buffer keeps the returned data alive.
+        SUPPRESS_UNCOUNTED_ARG return m_buffer->span().data();
     }
 
     void lockUnderlyingBufferImpl() final

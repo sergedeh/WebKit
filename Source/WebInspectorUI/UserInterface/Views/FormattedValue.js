@@ -82,14 +82,15 @@ WI.FormattedValue.createElementForNode = function(object)
     span.className = "formatted-node";
 
     object.pushNodeToFrontend(function(nodeId) {
-        if (!nodeId) {
+        let domNode = WI.domManager.nodeForId(nodeId);
+        if (!domNode) {
             span.textContent = object.description;
             return;
         }
 
         var treeOutline = new WI.DOMTreeOutline;
         treeOutline.setVisible(true);
-        treeOutline.rootDOMNode = WI.domManager.nodeForId(nodeId);
+        treeOutline.rootDOMNode = domNode;
         if (!treeOutline.children[0].hasChildren)
             treeOutline.element.classList.add("single-node");
         span.appendChild(treeOutline.element);
@@ -141,6 +142,8 @@ WI.FormattedValue.createElementForNodePreview = function(preview, {remoteObjectA
             }
 
             remoteObjectAccessor((remoteObject) => {
+                if (!remoteObject)
+                    return;
                 remoteObject.pushNodeToFrontend((nodeId) => {
                     domNode = WI.domManager.nodeForId(nodeId);
                     if (domNode)

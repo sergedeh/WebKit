@@ -68,7 +68,7 @@ public:
 
     WEBCORE_EXPORT IDBConnectionIdentifier identifier() const;
 
-    IDBConnectionProxy& proxy() { return m_proxy; }
+    IDBConnectionProxy& proxy() LIFETIME_BOUND { return m_proxy; }
 
     void deleteDatabase(const IDBOpenRequestData&);
     WEBCORE_EXPORT void didDeleteDatabase(const IDBResultData&);
@@ -159,10 +159,11 @@ private:
     typedef void (IDBConnectionToServer::*ResultFunction)(const IDBResultData&);
     void callResultFunctionWithErrorLater(ResultFunction, const IDBResourceIdentifier& requestIdentifier);
 
-    Ref<IDBConnectionToServerDelegate> protectedDelegate() const { return m_delegate; }
-
     WeakRef<IDBConnectionToServerDelegate> m_delegate;
     bool m_serverConnectionIsValid { true };
+public:
+    bool isValid() const { return m_serverConnectionIsValid; }
+private:
 
     const UniqueRef<IDBConnectionProxy> m_proxy;
 };

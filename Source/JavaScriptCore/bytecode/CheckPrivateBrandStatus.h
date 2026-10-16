@@ -33,14 +33,14 @@
 #include "ConcurrentJSLock.h"
 #include "ExitFlag.h"
 #include "ICStatusMap.h"
-#include "StubInfoSummary.h"
+#include "PropertyInlineCacheSummary.h"
 #include <wtf/TZoneMalloc.h>
 
 namespace JSC {
 
 class AccessCase;
 class CodeBlock;
-class StructureStubInfo;
+class PropertyInlineCache;
 
 class CheckPrivateBrandStatus final {
     WTF_MAKE_TZONE_ALLOCATED(CheckPrivateBrandStatus);
@@ -75,17 +75,17 @@ public:
     bool operator!() const { return !isSet(); }
     bool observedSlowPath() const { return m_state == ObservedTakesSlowPath; }
     bool isSimple() const { return m_state == Simple; }
-    const Vector<CheckPrivateBrandVariant, 1>& variants() { return m_variants; }
-    CacheableIdentifier singleIdentifier() const;
+    const Vector<CheckPrivateBrandVariant, 1>& variants() LIFETIME_BOUND { return m_variants; }
+    CacheableIdentifier LEGACY_NODELETE singleIdentifier() const;
 
-    CheckPrivateBrandStatus slowVersion() const;
+    CheckPrivateBrandStatus LEGACY_NODELETE slowVersion() const;
 
     // Attempts to reduce the set of variants to fit the given structure set. This may be approximate.
     void filter(const StructureSet&);
 
     DECLARE_VISIT_AGGREGATE;
     template<typename Visitor> void markIfCheap(Visitor&);
-    bool finalize(VM&);
+    bool isStillLive(VM&);
 
     bool appendVariant(const CheckPrivateBrandVariant&);
     void shrinkToFit();
@@ -93,13 +93,12 @@ public:
     void dump(PrintStream&) const;
 
 private:
-    explicit CheckPrivateBrandStatus(StubInfoSummary, StructureStubInfo&);
+    explicit CheckPrivateBrandStatus(PropertyInlineCacheSummary, PropertyInlineCache&);
     void merge(const CheckPrivateBrandStatus&);
 
     static CheckPrivateBrandStatus computeForBaseline(CodeBlock*, ICStatusMap&, BytecodeIndex, ExitFlag);
 #if ENABLE(JIT)
-    static CheckPrivateBrandStatus computeForStubInfoWithoutExitSiteFeedback(
-        const ConcurrentJSLocker&, CodeBlock* profiledBlock, StructureStubInfo*);
+    static CheckPrivateBrandStatus computeForPropertyInlineCacheWithoutExitSiteFeedback(const ConcurrentJSLocker&, CodeBlock* profiledBlock, PropertyInlineCache*);
 #endif
 
     Vector<CheckPrivateBrandVariant, 1> m_variants;

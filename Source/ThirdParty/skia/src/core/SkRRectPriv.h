@@ -1,5 +1,5 @@
 /*
- * Copyright 2018 Google Inc.
+ * Copyright 2018 Google LLC
  *
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
@@ -51,11 +51,6 @@ public:
     static bool ReadFromBuffer(SkRBuffer* buffer, SkRRect* rr);
 
     static void WriteToBuffer(const SkRRect& rr, SkWBuffer* buffer);
-
-    // Test if a point is in the rrect, if it were a closed set.
-    static bool ContainsPoint(const SkRRect& rr, const SkPoint& p) {
-        return rr.getBounds().contains(p.fX, p.fY) && rr.checkCornerContainment(p.fX, p.fY);
-    }
 
     // Compute an approximate largest inscribed bounding box of the rounded rect. For empty,
     // rect, oval, and simple types this will be the largest inscribed rectangle. Otherwise it may

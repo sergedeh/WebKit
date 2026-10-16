@@ -9,11 +9,16 @@
 
 INDENT TABS: conformance-checkers/*
 INDENT TABS: encoding/legacy*/*
+INDENT TABS: *w3c-import.log
 
 TRAILING WHITESPACE: html/canvas/tools/current-work-canvas.xhtml
 TRAILING WHITESPACE: conformance-checkers/*
 TRAILING WHITESPACE: html/syntax/xmldecl/support/no-version-or-space-or-trailing-question-trailing-body-single-quotes-spaces-and-line-breaks-around-equals.htm
 TRAILING WHITESPACE: html/syntax/xmldecl/support/no-version-or-space-or-trailing-question-trailing-body-single-quotes-spaces-and-line-breaks-around-equals-trail.htm
+
+# html5lib-tests .dat files contain trailing whitespace and CR characters as
+# part of literal test inputs.
+TRAILING WHITESPACE, CR AT EOL: html/syntax/parsing/resources/*.dat
 
 ## File types that should never be checked ##
 
@@ -50,6 +55,8 @@ TRAILING WHITESPACE, INDENT TABS, CR AT EOL: *.sxg
 TRAILING WHITESPACE, INDENT TABS, CR AT EOL: *.wbn
 TRAILING WHITESPACE, INDENT TABS, CR AT EOL: *.avif
 TRAILING WHITESPACE, INDENT TABS, CR AT EOL: *.annexb
+TRAILING WHITESPACE, INDENT TABS, CR AT EOL: *.dcb
+TRAILING WHITESPACE, INDENT TABS, CR AT EOL: *.dcz
 
 ## .gitignore
 W3C-TEST.ORG: .gitignore
@@ -100,6 +107,7 @@ TRAILING WHITESPACE: webvtt/parsing/file-parsing/support/*.vtt
 TRAILING WHITESPACE: webvtt/parsing/file-parsing/tests/support/*.vtt
 TRAILING WHITESPACE: xhr/resources/headers-some-are-empty.asis
 TRAILING WHITESPACE: content-security-policy/support/manifest.json
+TRAILING WHITESPACE: xml/xslt/resources/testu1LINE.xml
 
 # Intentional use of print statements
 PRINT STATEMENT: dom/nodes/Document-createElement-namespace-tests/generate.py
@@ -183,6 +191,15 @@ SET TIMEOUT: html/browsers/history/the-location-interface/*
 SET TIMEOUT: html/browsers/history/the-session-history-of-browsing-contexts/*
 SET TIMEOUT: html/browsers/offline/*
 SET TIMEOUT: html/browsers/the-window-object/*
+SET TIMEOUT: html/canvas/resources/draw-element-image-utils.js
+SET TIMEOUT: html/canvas/element/manual/draw-element-image/intersection-observer-visibility.tentative.html
+SET TIMEOUT: html/canvas/element/manual/draw-element-image/onpaint.tentative.html
+SET TIMEOUT: html/canvas/element/manual/draw-element-image/onpaint-css-animation.tentative.html
+SET TIMEOUT: html/canvas/element/manual/draw-element-image/onpaint-display-none.tentative.html
+SET TIMEOUT: html/canvas/element/manual/draw-element-image/onpaint-iframe-nested-invalidation.tentative.html
+SET TIMEOUT: html/canvas/element/manual/draw-element-image/onpaint-post-tree-order-shadow-dom.tentative.html
+SET TIMEOUT: html/canvas/element/manual/draw-element-image/onpaint-post-tree-order.tentative.html
+SET TIMEOUT: html/canvas/element/manual/draw-element-image/requestPaint.tentative.html
 SET TIMEOUT: html/cross-origin-opener-policy/resources/fully-loaded.js
 SET TIMEOUT: html/editing/dnd/*
 SET TIMEOUT: html/semantics/embedded-content/media-elements/track/track-element/crashtests/*
@@ -389,7 +406,11 @@ SET TIMEOUT: html/webappapis/dynamic-markup-insertion/opening-the-input-stream/c
 SET TIMEOUT: html/webappapis/timers/*
 SET TIMEOUT: orientation-event/resources/orientation-event-helpers.js
 SET TIMEOUT: portals/history/resources/portal-harness.js
+SET TIMEOUT: requestidlecallback/callback-after-removed-frame-with-pending-timeout.html
 SET TIMEOUT: requestidlecallback/deadline-after-expired-timer.html
+SET TIMEOUT: resource-timing/tentative/initiator-url/module-script-from-document.html
+SET TIMEOUT: resource-timing/tentative/initiator-url/set-timeout.html
+SET TIMEOUT: resource-timing/tentative/initiator-url/set-timeout.any.js
 SET TIMEOUT: resources/*
 SET TIMEOUT: scheduler/tentative/current-task-signal-async-abort.any.js
 SET TIMEOUT: scheduler/tentative/current-task-signal-async-priority.any.js
@@ -403,6 +424,7 @@ SET TIMEOUT: speculation-rules/prerender/resources/media-autoplay-attribute.html
 SET TIMEOUT: speculation-rules/prerender/resources/media-play.html
 SET TIMEOUT: html/browsers/browsing-the-web/back-forward-cache/timers.html
 SET TIMEOUT: dom/abort/crashtests/timeout-close.html
+SET TIMEOUT: xml/xslt/xslt-mutation-crash.xhtml
 SET TIMEOUT: storage-access-api/storage-access-beyond-cookies.locks.tentative.sub.https.window.js
 
 # setTimeout use in reftests
@@ -712,6 +734,16 @@ DUPLICATE-BASENAME-PATH: dom/nodes/ParentNode-querySelector-All-content.xht
 DUPLICATE-BASENAME-PATH: svg/struct/reftests/reference/green-100x100.html
 DUPLICATE-BASENAME-PATH: svg/struct/reftests/reference/green-100x100.svg
 
+# WebKit's import process materializes stub .window.html files for templated
+# (.window.js) tests so WebKit's test runner can find them. WPT lint flags the
+# pair as duplicate basenames; the stubs are required and intentional.
+DUPLICATE-BASENAME-PATH: navigation-timing/buffered-flag.window.html
+DUPLICATE-BASENAME-PATH: navigation-timing/buffered-flag.window.js
+DUPLICATE-BASENAME-PATH: navigation-timing/idlharness.window.html
+DUPLICATE-BASENAME-PATH: navigation-timing/idlharness.window.js
+DUPLICATE-BASENAME-PATH: navigation-timing/supported-navigation-type.window.html
+DUPLICATE-BASENAME-PATH: navigation-timing/supported-navigation-type.window.js
+
 SET TIMEOUT: mediacapture-insertable-streams/MediaStreamTrackProcessor-video.https.html
 
 # This is a subresource which cannot use step_timeout without becoming a test
@@ -736,7 +768,7 @@ PARSE-FAILED: mathml/crashtests/mozilla/289180-1.xml
 # Invalid HTML syntax /> on non-void elements
 HTML INVALID SYNTAX: acid/*
 HTML INVALID SYNTAX: conformance-checkers/*
-HTML INVALID SYNTAX: css/css-scoping/shadow-cascade-order-001.html
+HTML INVALID SYNTAX: css/css-shadow/shadow-cascade-order-001.html
 HTML INVALID SYNTAX: dom/nodes/Document-createElement-namespace.html
 HTML INVALID SYNTAX: dom/nodes/Node-lookupNamespaceURI.html
 HTML INVALID SYNTAX: dom/nodes/Node-normalize.html
@@ -746,3 +778,8 @@ HTML INVALID SYNTAX: domparsing/XMLSerializer-serializeToString.html
 HTML INVALID SYNTAX: html/canvas/element/manual/unclosed-canvas-4.htm
 HTML INVALID SYNTAX: quirks/percentage-height-calculation.html
 HTML INVALID SYNTAX: trusted-types/TrustedTypePolicyFactory-getAttributeType-namespace.html
+
+# Legitimate use of test_driver_internal
+TEST DRIVER INTERNAL: resources/testdriver.js
+
+INDENT TABS: fetch/compression-dictionary/resources/static/Makefile

@@ -28,6 +28,7 @@
 
 #include "Logging.h"
 #include "WebExtensionSQLiteHelpers.h"
+#include <wtf/Borrow.h>
 #include <wtf/CrossThreadCopier.h>
 #include <wtf/JSONValues.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -45,7 +46,7 @@ WebExtensionDeclarativeNetRequestSQLiteStore::WebExtensionDeclarativeNetRequestS
     : WebExtensionSQLiteStore(uniqueIdentifier, directory, static_cast<bool>(useInMemoryDatabase))
     , m_storageType(storageType)
 {
-    m_tableName = makeString(storageType == WebExtensionDeclarativeNetRequestStorageType::Dynamic ? "dynamic"_s : "session"_s, "_rules"_s);
+    m_tableName = makeString(toString(m_storageType), "_rules"_s);
 }
 
 static Vector<String> ruleIdMapToString(Vector<double> ruleIDs)
@@ -76,10 +77,25 @@ void WebExtensionDeclarativeNetRequestSQLiteStore::addRules(Ref<JSON::Array> rul
         return;
     }
 
-    queue().dispatch([weakThis = ThreadSafeWeakPtr { *this }, rules = WTF::move(rules), completionHandler = WTF::move(completionHandler)]() mutable {
+    Vector<std::pair<double, String>> serializedRules;
+    for (Ref ruleValue : rules.get()) {
+        RefPtr rule = ruleValue->asObject();
+        if (!rule || !rule->size()) {
+            ASSERT_NOT_REACHED();
+            continue;
+        }
+
+        auto ruleID = rule->getInteger("id"_s);
+        ASSERT(ruleID);
+        serializedRules.append({ *ruleID, rule->toJSONString() });
+    }
+
+    queue().dispatch([weakThis = ThreadSafeWeakPtr { *this }, serializedRules = crossThreadCopy(serializedRules), completionHandler = WTF::move(completionHandler)]() mutable {
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis) {
-            completionHandler({ });
+            WorkQueue::mainSingleton().dispatch([completionHandler = WTF::move(completionHandler)]() mutable {
+                completionHandler({ });
+            });
             return;
         }
 
@@ -93,18 +109,11 @@ void WebExtensionDeclarativeNetRequestSQLiteStore::addRules(Ref<JSON::Array> rul
 
         ASSERT(errorMessage.isEmpty());
 
-        Vector<double> rulesIDs;
-        for (Ref ruleValue : rules.get()) {
-            RefPtr rule = ruleValue->asObject();
-            if (!rule || !rule->size()) {
-                ASSERT_NOT_REACHED();
-                continue;
-            }
+        Borrow borrowedSerializedRules = serializedRules;
 
-            auto ruleID = rule->getInteger("id"_s);
-            ASSERT(ruleID);
-            rulesIDs.append(*ruleID);
-        }
+        Vector<double> rulesIDs;
+        for (auto& [ruleID, ruleData] : borrowedSerializedRules)
+            rulesIDs.append(ruleID);
 
         ASSERT(rulesIDs.size());
 
@@ -118,9 +127,9 @@ void WebExtensionDeclarativeNetRequestSQLiteStore::addRules(Ref<JSON::Array> rul
             }
 
             if (existingRuleIDs.size() == 1)
-                errorMessage = makeString("Failed to add "_s, protectedThis->m_storageType, " rules. Rule "_s, existingRuleIDs.first(), " does not have a unique ID."_s);
+                errorMessage = makeString("Failed to add "_s, toString(protectedThis->m_storageType), " rules. Rule "_s, existingRuleIDs.first(), " does not have a unique ID."_s);
             else if (existingRuleIDs.size() >= 2)
-                errorMessage = makeString("Failed to add "_s, protectedThis->m_storageType, " rules. Some rules do not have unique IDs ("_s, makeStringByJoining(ruleIdMapToString(rulesIDs).span(), ", "_s), ")"_s);
+                errorMessage = makeString("Failed to add "_s, toString(protectedThis->m_storageType), " rules. Some rules do not have unique IDs ("_s, makeStringByJoining(ruleIdMapToString(rulesIDs).span(), ", "_s), ")"_s);
 
             if (!errorMessage.isEmpty()) {
                 WorkQueue::mainSingleton().dispatch([errorMessage = crossThreadCopy(errorMessage), completionHandler = WTF::move(completionHandler)]() mutable {
@@ -130,14 +139,8 @@ void WebExtensionDeclarativeNetRequestSQLiteStore::addRules(Ref<JSON::Array> rul
             }
         }
 
-        for (Ref ruleValue : rules.get()) {
-            RefPtr rule = ruleValue->asObject();
-            if (!rule || !rule->size()) {
-                ASSERT_NOT_REACHED();
-                continue;
-            }
-
-            errorMessage = protectedThis->insertRule(*rule, *(protectedThis->database()));
+        for (auto& [ruleID, ruleData] : borrowedSerializedRules) {
+            errorMessage = protectedThis->insertRule(ruleID, ruleData, *(protectedThis->database()));
             if (!errorMessage.isEmpty())
                 break;
         }
@@ -158,7 +161,9 @@ void WebExtensionDeclarativeNetRequestSQLiteStore::deleteRules(Vector<double> ru
     queue().dispatch([weakThis = ThreadSafeWeakPtr { *this }, ruleIDs = crossThreadCopy(ruleIDs), completionHandler = WTF::move(completionHandler)]() mutable {
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis) {
-            completionHandler({ });
+            WorkQueue::mainSingleton().dispatch([completionHandler = WTF::move(completionHandler)]() mutable {
+                completionHandler({ });
+            });
             return;
         }
 
@@ -175,8 +180,8 @@ void WebExtensionDeclarativeNetRequestSQLiteStore::deleteRules(Vector<double> ru
 
         DatabaseResult result = SQLiteDatabaseExecute(*(protectedThis->database()), makeString("DELETE FROM "_s, protectedThis->m_tableName, " WHERE id IN ("_s, makeStringByJoining(ruleIdMapToString(ruleIDs).span(), ", "_s), ")"_s));
         if (result != SQLITE_DONE) {
-            RELEASE_LOG_ERROR(Extensions, "Failed to delete rules for extension %s.", protectedThis->uniqueIdentifier().utf8().data());
-            errorMessage = makeString("Failed to delete rules from "_s, protectedThis->m_storageType, " rules storage."_s);
+            RELEASE_LOG_ERROR(Extensions, "Failed to delete rules for extension %s.", protectedThis->uniqueIdentifier().utf8());
+            errorMessage = makeString("Failed to delete rules from "_s, toString(protectedThis->m_storageType), " rules storage."_s);
         }
 
         String deleteDatabaseErrorMessage = protectedThis->deleteDatabaseIfEmpty();
@@ -192,7 +197,9 @@ void WebExtensionDeclarativeNetRequestSQLiteStore::getRulesWithRuleIDs(Vector<do
     queue().dispatch([weakThis = ThreadSafeWeakPtr { *this }, ruleIDs = crossThreadCopy(ruleIDs), completionHandler = WTF::move(completionHandler)]() mutable {
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis) {
-            completionHandler({ }, nullString());
+            WorkQueue::mainSingleton().dispatch([completionHandler = WTF::move(completionHandler)]() mutable {
+                completionHandler({ }, nullString());
+            });
             return;
         }
 
@@ -217,9 +224,12 @@ RefPtr<JSON::Array> WebExtensionDeclarativeNetRequestSQLiteStore::getRulesWithRu
     RefPtr<WebExtensionSQLiteRowEnumerator> rows;
 
     if (ruleIDs.size()) {
-        Vector<String> bindings;
-        for (size_t i = 0; i < ruleIDs.size(); i++)
-            bindings.append("?"_s);
+        const Vector bindings = [&] {
+            Vector<String> bindings;
+            for (size_t i = 0; i < ruleIDs.size(); i++)
+                bindings.append("?"_s);
+            return bindings;
+        }();
 
         auto joinedBindings = makeStringByJoining(bindings.span(), ", "_s);
         auto query = makeString("SELECT * FROM "_s, m_tableName, " WHERE id IN ("_s, joinedBindings, ")"_s);
@@ -228,8 +238,9 @@ RefPtr<JSON::Array> WebExtensionDeclarativeNetRequestSQLiteStore::getRulesWithRu
         if (!statement || statementError)
             return { };
 
+        Borrow borrowedRuleIDs = ruleIDs;
         for (size_t i = 0; i < ruleIDs.size(); i++)
-            statement->bind(ruleIDs[i], i + 1);
+            statement->bind(borrowedRuleIDs[i], i + 1);
 
         rows = statement->fetch();
     } else
@@ -259,18 +270,14 @@ Ref<JSON::Array> WebExtensionDeclarativeNetRequestSQLiteStore::getKeysAndValuesF
     return results;
 }
 
-String WebExtensionDeclarativeNetRequestSQLiteStore::insertRule(const JSON::Object& rule, Ref<WebExtensionSQLiteDatabase> database)
+String WebExtensionDeclarativeNetRequestSQLiteStore::insertRule(double ruleID, const String& ruleData, Ref<WebExtensionSQLiteDatabase> database)
 {
     assertIsCurrent(queue());
 
-    auto ruleData = rule.toJSONString();
-    auto ruleID = rule.getInteger("id"_s);
-    ASSERT(ruleID);
-
-    DatabaseResult result = SQLiteDatabaseExecute(database, makeString("INSERT INTO "_s, m_tableName, " (id, rule) VALUES (?, ?)"_s), *ruleID, ruleData);
+    DatabaseResult result = SQLiteDatabaseExecute(database, makeString("INSERT INTO "_s, m_tableName, " (id, rule) VALUES (?, ?)"_s), ruleID, ruleData);
     if (result != SQLITE_DONE) {
-        RELEASE_LOG_ERROR(Extensions, "Failed to insert dynamic declarative net request rule for extension %s", uniqueIdentifier().utf8().data());
-        return makeString("Failed to add "_s, m_storageType, " rule."_s);
+        RELEASE_LOG_ERROR(Extensions, "Failed to insert %s rule for extension %s", toString(m_storageType).utf8(), uniqueIdentifier().utf8());
+        return makeString("Failed to add "_s, toString(m_storageType), " rule."_s);
     }
 
     return nullString();
@@ -304,7 +311,7 @@ DatabaseResult WebExtensionDeclarativeNetRequestSQLiteStore::createFreshDatabase
 
     DatabaseResult result = SQLiteDatabaseExecute(*database(), makeString("CREATE TABLE "_s, m_tableName, " (id INTEGER PRIMARY KEY NOT NULL, rule BLOB NOT NULL)"_s));
     if (result != SQLITE_DONE)
-        RELEASE_LOG_ERROR(Extensions, "Failed to create %s database for extension %s: %s (%d)", m_tableName.utf8().data(), uniqueIdentifier().utf8().data(), lastErrorMessage().data(), result);
+        RELEASE_LOG_ERROR(Extensions, "Failed to create %s database for extension %s: %s (%d)", m_tableName.utf8(), uniqueIdentifier().utf8(), lastErrorMessage(), result);
     return result;
 }
 
@@ -334,7 +341,7 @@ DatabaseResult WebExtensionDeclarativeNetRequestSQLiteStore::resetDatabaseSchema
 
     DatabaseResult result = SQLiteDatabaseExecute(*database(), makeString("DROP TABLE IF EXISTS "_s, m_tableName));
     if (result != SQLITE_DONE)
-        RELEASE_LOG_ERROR(Extensions, "Failed to reset %s database schema for extension %s: %s (%d)", m_tableName.utf8().data(), uniqueIdentifier().utf8().data(), lastErrorMessage().data(), result);
+        RELEASE_LOG_ERROR(Extensions, "Failed to reset %s database schema for extension %s: %s (%d)", m_tableName.utf8(), uniqueIdentifier().utf8(), lastErrorMessage(), result);
 
     return result;
 }

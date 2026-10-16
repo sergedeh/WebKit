@@ -48,13 +48,13 @@ bool WebSocketExtensionParser::parsedSuccessfully()
     return m_data.empty() && !m_didFailParsing;
 }
 
-static bool isSeparator(char character)
+static bool LEGACY_NODELETE isSeparator(char character)
 {
     static constexpr auto separatorCharacters = "()<>@,;:\\\"/[]?={} \t"_span;
     return WTF::contains(separatorCharacters, character);
 }
 
-static bool isSpaceOrTab(Latin1Character character)
+static bool LEGACY_NODELETE isSpaceOrTab(Latin1Character character)
 {
     return character == ' ' || character == '\t';
 }
@@ -72,7 +72,7 @@ bool WebSocketExtensionParser::consumeToken()
     while (tokenLength < m_data.size() && isASCIIPrintable(m_data[tokenLength]) && !isSeparator(m_data[tokenLength]))
         ++tokenLength;
     if (tokenLength) {
-        m_currentToken = String(consumeSpan(start, tokenLength));
+        m_currentToken = String(byteCast<Latin1Character>(consumeSpan(start, tokenLength)));
         return true;
     }
     return false;

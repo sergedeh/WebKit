@@ -43,9 +43,13 @@ public:
     virtual bool isAnimatedProperty() const { return false; }
     virtual bool isAnimatedLength() const { return false; }
 
+    // Asserts rather than doing nothing: a silent no-op here is indistinguishable from the bug
+    // that resetting exists to fix.
+    virtual void resetBaseVal(const OwnerType&) const { ASSERT_NOT_REACHED(); }
+
     virtual bool matches(const OwnerType&, const SVGProperty&) const { return false; }
-    virtual bool matches(const OwnerType&, const SVGAnimatedProperty&) const { return false; }
-    virtual void setDirty(const OwnerType&, SVGAnimatedProperty& animatedProperty) const { animatedProperty.setDirty(); }
+    virtual bool matches(const OwnerType&, const SVGAnimatedPropertyBase&) const { return false; }
+    virtual void setDirty(const OwnerType&, SVGAnimatedPropertyBase& animatedProperty) const { animatedProperty.setDirty(); }
     virtual std::optional<String> synchronize(const OwnerType&) const { return std::nullopt; }
 
     virtual RefPtr<SVGAttributeAnimator> createAnimator(OwnerType&, const QualifiedName&, AnimationMode, CalcMode, bool, bool) const { return nullptr; }

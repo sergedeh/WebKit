@@ -46,6 +46,19 @@
 /**
  * WPEView:
  *
+ * A view that renders the contents of a WebKitWebView.
+ *
+ * [class@View] is an abstract class that platform implementations derive to
+ * represent the surface where web content is rendered. A [class@View] always
+ * belongs to a [class@Display] and is normally created automatically by a
+ * WebKitWebView when it is constructed with a [class@Display].
+ *
+ * The view receives the buffers produced by the web engine through
+ * [method@View.render_buffer] and notifies their state with the
+ * [signal@View::buffer-rendered] and [signal@View::buffer-released]
+ * signals. It also delivers input to the web content: platform
+ * implementations dispatch events with [method@View.event], which a
+ * browser application can observe through the [signal@View::event] signal.
  */
 struct _WPEViewPrivate {
     GRefPtr<WPEDisplay> display;
@@ -303,7 +316,7 @@ static void wpe_view_class_init(WPEViewClass* viewClass)
      * Whether the view should be visible or not. This property
      * can be used to show or hide a view, but setting to %TRUE (which
      * is the default) doesn't mean it will always be shown, because
-     * the visbility also depends on the status of its toplevel (for
+     * the visibility also depends on the status of its toplevel (for
      * example if the toplevel is minimized the view will be hidden).
      * To know whether the view is actually visible, you can check
      * #WPEView:mapped property.
@@ -380,7 +393,7 @@ static void wpe_view_class_init(WPEViewClass* viewClass)
      * @n_buffers: the amount of buffers in the @buffers array
      *
      * Emitted to notify that the set of graphics buffers used to render
-     * the view have changged.
+     * the view has changed.
      *
      * When buffers are about to be released, @n_buffers will be zero
      * and @buffers will be %NULL.
@@ -389,7 +402,7 @@ static void wpe_view_class_init(WPEViewClass* viewClass)
      * after buffer configuration and before buffers get released, buffers
      * used for rendered content will be among those from the @buffers array.
      *
-     * Platform implementations may use this to inspect the @buffers and
+     * Platform implementations may use this to inspect the @buffers
      * prior to their usage.
      *
      * See also [id@wpe_view_buffers_changed].
@@ -439,7 +452,7 @@ static void wpe_view_class_init(WPEViewClass* viewClass)
         WPE_TYPE_BUFFER);
 
     /**
-     * WPEView::event
+     * WPEView::event:
      * @view: a #WPEView
      * @event: a #WPEEvent
      *
@@ -748,7 +761,7 @@ void wpe_view_set_visible(WPEView* view, gboolean visible)
  * wpe_view_get_mapped:
  * @view: a #WPEView
  *
- * Get whether @view is mapped. A #WPEView isa mapped if
+ * Get whether @view is mapped. A #WPEView is mapped if
  * #WPEView:visible is %TRUE and it's not hidden for other
  * reasons, like for example when its toplevel is minimized.
  * You can connect to notify::mapped signal of @view to
@@ -767,8 +780,8 @@ gboolean wpe_view_get_mapped(WPEView* view)
  * wpe_view_map:
  * @view: a #WPEView
  *
- * Make @view to be mapped. If #WPEView:visible is %TRUE and
- * the view can be shown (determined by #WPEViewClass::can_be_mapped)
+ * Make @view mapped. If #WPEView:visible is %TRUE and
+ * the view can be shown (determined by [vfunc@View.can_be_mapped])
  * #WPEView:mapped will be set to %TRUE.
  *
  * This function should only be called by #WPEView derived classes
@@ -793,7 +806,7 @@ void wpe_view_map(WPEView* view)
  * wpe_view_unmap:
  * @view: a #WPEView
  *
- * Make @view to be unmapped. This always sets the #WPEView:mapped
+ * Make @view unmapped. This always sets the #WPEView:mapped
  * property to %FALSE and the @view is considered to be hidden even
  * if #WPEView:visible is %TRUE.
  *
@@ -946,12 +959,12 @@ gboolean wpe_view_render_buffer(WPEView* view, WPEBuffer* buffer, const WPERecta
 /**
  * wpe_view_buffers_changed:
  * @view: a #WPEView
- * @buffers: (nullable) (array length=n_buffers):
+ * @buffers: (nullable) (array length=n_buffers): array of buffers
  * @n_buffers: the number of buffers in @buffers
  *
- * Notify that the set of graphics buffers used to render the view have changed.
+ * Notify that the set of graphics buffers used to render the view has changed.
  *
- * The [signal@View::buffers_changed] signal will be emitted.
+ * The [signal@View::buffers-changed] signal will be emitted.
  */
 void wpe_view_buffers_changed(WPEView* view, WPEBuffer** buffers, guint nBuffers)
 {

@@ -26,14 +26,16 @@
 #include "config.h"
 #include "WebPreferencesStore.h"
 
+#include "Logging.h"
 #include "WebPreferencesKeys.h"
 #include <wtf/NeverDestroyed.h>
+#include <wtf/text/StringBuilder.h>
 
 namespace WebKit {
 
 typedef HashMap<String, bool> BoolOverridesMap;
 
-static BoolOverridesMap& boolTestRunnerOverridesMap()
+static BoolOverridesMap& LEGACY_NODELETE boolTestRunnerOverridesMap()
 {
     static NeverDestroyed<BoolOverridesMap> map;
     return map;
@@ -50,7 +52,7 @@ void WebPreferencesStore::removeTestRunnerOverrides()
 }
 
 template<typename MappedType>
-static MappedType valueForKey(const WebPreferencesStore::ValueMap& values, const WebPreferencesStore::ValueMap& overriddenDefaults, const String& key)
+SUPPRESS_NODELETE static MappedType LEGACY_NODELETE valueForKey(const WebPreferencesStore::ValueMap& values, const WebPreferencesStore::ValueMap& overriddenDefaults, const String& key)
 {
     auto valuesIt = values.find(key);
     if (valuesIt != values.end() && std::holds_alternative<MappedType>(valuesIt->value))
@@ -94,7 +96,7 @@ bool WebPreferencesStore::setBoolValueForKey(const String& key, bool value)
     return setValueForKey<bool>(m_values, m_overriddenDefaults, key, value);
 }
 
-bool WebPreferencesStore::getBoolValueForKey(const String& key) const
+SUPPRESS_NODELETE bool WebPreferencesStore::getBoolValueForKey(const String& key) const
 {
     // FIXME: Extend overriding to other key types used from TestRunner.
     auto it = boolTestRunnerOverridesMap().find(key);
@@ -150,6 +152,51 @@ void WebPreferencesStore::deleteKey(const String& key)
 {
     m_values.remove(key);
     m_overriddenDefaults.remove(key);
+}
+
+#if !RELEASE_LOG_DISABLED
+static void appendValueToStringBuilder(StringBuilder& builder, const WebPreferencesStore::Value& value)
+{
+    WTF::switchOn(value,
+        [&](bool b) { builder.append(b ? "true"_s : "false"_s); },
+        [&](uint32_t u) { builder.append(u); },
+        [&](double d) { builder.append(d); },
+        [&](const String& s) { builder.append('"', s, '"'); }
+    );
+}
+#endif
+
+void WebPreferencesStore::logNonDefaultValues() const
+{
+#if !RELEASE_LOG_DISABLED
+    if (m_values.isEmpty() && m_overriddenDefaults.isEmpty())
+        return;
+
+    auto& defaultsMap = defaults();
+
+    StringBuilder nonDefaultPrefs;
+
+    auto checkEntry = [&](const String& key, const Value& value) {
+        auto it = defaultsMap.find(key);
+        if (it != defaultsMap.end() && it->value == value)
+            return;
+        if (!nonDefaultPrefs.isEmpty())
+            nonDefaultPrefs.append(", "_s);
+        nonDefaultPrefs.append(key, '=');
+        appendValueToStringBuilder(nonDefaultPrefs, value);
+    };
+
+    for (auto& [key, value] : m_overriddenDefaults) {
+        if (!m_values.contains(key))
+            checkEntry(key, value);
+    }
+
+    for (auto& [key, value] : m_values)
+        checkEntry(key, value);
+
+    if (!nonDefaultPrefs.isEmpty())
+        RELEASE_LOG(Loading, "WebPreferencesStore: non-default preferences: %" PUBLIC_LOG_STRING, nonDefaultPrefs.toString().utf8());
+#endif
 }
 
 } // namespace WebKit

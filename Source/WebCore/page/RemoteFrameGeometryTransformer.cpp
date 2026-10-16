@@ -26,7 +26,9 @@
 #include "config.h"
 #include "RemoteFrameGeometryTransformer.h"
 
+#include "DoublePoint.h"
 #include "LocalFrameView.h"
+#include "RemoteFrame.h"
 #include "RemoteFrameView.h"
 
 namespace WebCore {
@@ -42,19 +44,19 @@ RemoteFrameGeometryTransformer::RemoteFrameGeometryTransformer(RemoteFrameGeomet
 
 RemoteFrameGeometryTransformer& RemoteFrameGeometryTransformer::operator=(RemoteFrameGeometryTransformer&&) = default;
 
-IntPoint RemoteFrameGeometryTransformer::transformToRemoteFrameCoordinates(IntPoint pointInContents) const
+FloatPoint RemoteFrameGeometryTransformer::transformToRemoteFrameCoordinates(FloatPoint pointInLocalRootView) const
 {
-    return Ref { m_remoteView }->rootViewToContents(Ref { m_localView }->contentsToRootView(pointInContents));
+    return Ref { m_remoteView }->convertFromRootView(pointInLocalRootView);
 }
 
-FloatPoint RemoteFrameGeometryTransformer::transformToRemoteFrameCoordinates(FloatPoint pointInContents) const
+IntPoint RemoteFrameGeometryTransformer::transformToRemoteFrameCoordinates(IntPoint pointInLocalRootView) const
 {
-    return Ref { m_remoteView }->rootViewToContents(Ref { m_localView }->contentsToRootView(pointInContents));
+    return roundedIntPoint(transformToRemoteFrameCoordinates(FloatPoint { pointInLocalRootView }));
 }
 
-DoublePoint RemoteFrameGeometryTransformer::transformToRemoteFrameCoordinates(DoublePoint pointInContents) const
+DoublePoint RemoteFrameGeometryTransformer::transformToRemoteFrameCoordinates(DoublePoint pointInLocalRootView) const
 {
-    return Ref { m_remoteView }->rootViewToContents(Ref { m_localView }->contentsToRootView(pointInContents));
+    return Ref { m_remoteView }->convertFromRootView(pointInLocalRootView);
 }
 
 } // namespace WebCore

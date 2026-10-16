@@ -38,25 +38,61 @@
 #import <pal/spi/cocoa/FoundationSPI.h>
 #import <pal/spi/mac/NSPasteboardSPI.h>
 #import <wtf/HashCountedSet.h>
-#import <wtf/ListHashSet.h>
+#import <wtf/OrderedHashSet.h>
 #import <wtf/URL.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/cocoa/VectorCocoa.h>
 #import <wtf/text/StringHash.h>
+#import <wtf/text/StringToIntegerConversion.h>
 
 namespace WebCore {
 
-static bool isFilePasteboardType(const String& type)
+static NSString * const pasteboardTypeTagClass = @"com.apple.nspboard-type";
+static NSString * const osTypeTagClass = @"com.apple.ostype";
+
+static bool typeConformsToFilePasteboardType(UTType *utType)
 {
+    if (!utType)
+        return false;
+    if ([utType conformsToType:UTTypeFileURL])
+        return true;
+    NSArray<NSString *> *pasteboardTypeTags = [utType.tags objectForKey:pasteboardTypeTagClass];
+    return [pasteboardTypeTags containsObject:legacyFilenamesPasteboardTypeSingleton()]
+        || [pasteboardTypeTags containsObject:legacyFilesPromisePasteboardTypeSingleton()];
+}
+
+bool PlatformPasteboard::isFilePasteboardType(const String& type)
+{
+    if (type.isEmpty())
+        return false;
+
     RetainPtr nsType = type.createNSString();
-    return [legacyFilenamesPasteboardTypeSingleton() isEqualToString:nsType.get()]
-        || [legacyFilesPromisePasteboardTypeSingleton() isEqualToString:nsType.get()]
-        || [UTTypeFileURL.identifier isEqualToString:nsType.get()];
+    if (![legacyFilenamesPasteboardTypeSingleton() caseInsensitiveCompare:nsType.get()]
+        || ![legacyFilesPromisePasteboardTypeSingleton() caseInsensitiveCompare:nsType.get()]
+        || ![UTTypeFileURL.identifier caseInsensitiveCompare:nsType.get()])
+        return true;
+
+    if (typeConformsToFilePasteboardType([UTType typeWithIdentifier:nsType.get()]))
+        return true;
+
+    if (typeConformsToFilePasteboardType([UTType typeWithTag:nsType.get() tagClass:pasteboardTypeTagClass conformingToType:nil]))
+        return true;
+
+    static constexpr auto osTypePrefix = "CorePasteboardFlavorType 0x"_s;
+    if (type.length() == osTypePrefix.length() + 8 && type.startsWithIgnoringASCIICase(osTypePrefix)) {
+        if (auto osTypeCode = parseInteger<uint32_t>(StringView { type }.substring(osTypePrefix.length()), 16)) {
+            std::array<uint8_t, 4> bytes { static_cast<uint8_t>(*osTypeCode >> 24), static_cast<uint8_t>(*osTypeCode >> 16), static_cast<uint8_t>(*osTypeCode >> 8), static_cast<uint8_t>(*osTypeCode) };
+            if (RetainPtr osTypeTag = adoptNS([[NSString alloc] initWithBytes:bytes.data() length:bytes.size() encoding:NSMacOSRomanStringEncoding]))
+                return typeConformsToFilePasteboardType([UTType typeWithTag:osTypeTag.get() tagClass:osTypeTagClass conformingToType:nil]);
+        }
+    }
+
+    return false;
 }
 
 static bool canWritePasteboardType(const String& type)
 {
-    if (isFilePasteboardType(type))
+    if (PlatformPasteboard::isFilePasteboardType(type))
         return false;
 
     RetainPtr nsString = type.createNSString();
@@ -74,7 +110,7 @@ static bool canWriteAllPasteboardTypes(const Vector<String>& types)
     });
 }
 
-void PlatformPasteboard::performAsDataOwner(DataOwnerType, NOESCAPE Function<void()>&& actions)
+void PlatformPasteboard::performAsDataOwner(DataOwnerType, NOESCAPE const Function<void()>& actions)
 {
     actions();
 }
@@ -105,7 +141,8 @@ PasteboardBuffer PlatformPasteboard::bufferForType(const String& pasteboardType)
                 return nil;
             }();
 
-            for (NSString *sourceType in sourceTypes.get().get()) {
+            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+            for (SUPPRESS_UNRETAINED_LOCAL NSString *sourceType in sourceTypes.get().get()) {
                 data = [m_pasteboard _dataWithoutConversionForType:sourceType securityScoped:NO];
                 if (data) {
                     bufferType = sourceType;
@@ -122,7 +159,7 @@ PasteboardBuffer PlatformPasteboard::bufferForType(const String& pasteboardType)
     if (!data)
         return pasteboardBuffer;
 
-    pasteboardBuffer.data = SharedBuffer::create(adoptNS([data copy]).get());
+    pasteboardBuffer.data = SharedBuffer::create(checked_objc_cast<NSData>(adoptNS([data copy]).get()));
     return pasteboardBuffer;
 }
 
@@ -157,12 +194,13 @@ void PlatformPasteboard::getPathnamesForType(Vector<String>& pathnames, const St
         pathnames.append(pathsString.get());
         return;
     }
-    pathnames = makeVector<String>(paths.get());
+    pathnames = makeVector<String>(dynamic_objc_cast<NSArray>(paths.get()));
 }
 
 static bool pasteboardMayContainFilePaths(NSPasteboard *pasteboard)
 {
-    for (NSString *type in pasteboard.types) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSString *type in pasteboard.types) {
         if ([type isEqualToString:legacyFilenamesPasteboardTypeSingleton()] || [type isEqualToString:legacyFilesPromisePasteboardTypeSingleton()] || Pasteboard::shouldTreatCocoaTypeAsFile(type))
             return true;
     }
@@ -188,7 +226,8 @@ static Vector<String> urlStringsFromPasteboard(NSPasteboard *pasteboard)
     Vector<String> urlStrings;
     urlStrings.reserveInitialCapacity(items.get().count);
     if (items.get().count > 1) {
-        for (NSPasteboardItem *item in items.get()) {
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL NSPasteboardItem *item in items.get()) {
             if (RetainPtr<id> propertyList = [item propertyListForType:UTTypeURL.identifier]) {
                 if (auto urlFromItem = adoptNS([[NSURL alloc] initWithPasteboardPropertyList:propertyList.get() ofType:UTTypeURL.identifier]))
                     urlStrings.append([urlFromItem absoluteString]);
@@ -235,7 +274,8 @@ Vector<String> PlatformPasteboard::allStringsForType(const String& pasteboardTyp
     Vector<String> strings;
     strings.reserveInitialCapacity(items.get().count);
     if (items.get().count > 1 && !typeIdentifier.isNull()) {
-        for (NSPasteboardItem *item in items.get()) {
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL NSPasteboardItem *item in items.get()) {
             if (RetainPtr stringFromItem = [item stringForType:typeIdentifier.createNSString().get()])
                 strings.append(stringFromItem.get());
         }
@@ -266,7 +306,7 @@ static ASCIILiteral safeTypeForDOMToReadAndWriteForPlatformType(NSString *platfo
 
 Vector<String> PlatformPasteboard::typesSafeForDOMToReadAndWrite(const String& origin) const
 {
-    ListHashSet<String> domPasteboardTypes;
+    OrderedHashSet<String> domPasteboardTypes;
     if (RetainPtr serializedCustomData = [m_pasteboard dataForType:RetainPtr { @(PasteboardCustomData::cocoaType().characters()) }.get()]) {
         auto data = PasteboardCustomData::fromSharedBuffer(SharedBuffer::create(serializedCustomData.get()).get());
         if (data.origin() == origin) {
@@ -276,7 +316,8 @@ Vector<String> PlatformPasteboard::typesSafeForDOMToReadAndWrite(const String& o
     }
 
     RetainPtr<NSArray<NSString *>> allTypes = [m_pasteboard types];
-    for (NSString *type in allTypes.get()) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSString *type in allTypes.get()) {
         if ([type isEqualToString:RetainPtr { @(PasteboardCustomData::cocoaType().characters()) }.get()])
             continue;
 
@@ -350,6 +391,9 @@ String PlatformPasteboard::platformPasteboardTypeForSafeTypeForDOMToReadAndWrite
     if (includeImageTypes == IncludeImageTypes::Yes && domType == "image/png"_s)
         return legacyPNGPasteboardTypeSingleton();
 
+    if (includeImageTypes == IncludeImageTypes::Yes && domType == "image/svg+xml"_s)
+        return UTTypeSVG.identifier;
+
     return { };
 }
 
@@ -366,7 +410,7 @@ URL PlatformPasteboard::url()
 int64_t PlatformPasteboard::copy(const String& fromPasteboard)
 {
     RetainPtr pasteboard = [NSPasteboard pasteboardWithName:fromPasteboard.createNSString().get()];
-    RetainPtr<NSArray> types = [pasteboard types];
+    RetainPtr<NSArray<NSPasteboardType>> types = [pasteboard types];
 
     [m_pasteboard addTypes:types.get() owner:nil];
     for (NSUInteger i = 0; i < [types count]; i++) {
@@ -456,12 +500,6 @@ int64_t PlatformPasteboard::setStringForType(const String& string, const String&
                 return 0;
         }
 
-        if ([retainPtr([m_pasteboard types]) containsObject:UTTypeFileURL.identifier] && [url isFileURL]) {
-            didWriteData = [m_pasteboard setString:retainPtr([url absoluteString]).get() forType:UTTypeFileURL.identifier];
-            if (!didWriteData)
-                return 0;
-        }
-
     } else {
         didWriteData = [m_pasteboard setString:string.createNSString().get() forType:pasteboardType.createNSString().get()];
         if (!didWriteData)
@@ -495,6 +533,8 @@ static String webSafeMIMETypeForModernPasteboardType(NSPasteboardType platformTy
         return "text/uri-list"_s;
     if ([platformType isEqual:NSPasteboardTypePNG] || [platformType isEqual:NSPasteboardTypeTIFF])
         return "image/png"_s;
+    if ([platformType isEqual:UTTypeSVG.identifier])
+        return "image/svg+xml"_s;
     return { };
 }
 
@@ -508,7 +548,7 @@ RefPtr<SharedBuffer> PlatformPasteboard::readBuffer(std::optional<size_t> index,
         return { };
 
     if (RetainPtr data = [item dataForType:type.createNSString().get()]) {
-        RetainPtr nsData = adoptNS([data copy]);
+        RetainPtr<NSData> nsData = adoptNS([data copy]);
         return SharedBuffer::create(nsData.get());
     }
 
@@ -598,9 +638,10 @@ std::optional<PasteboardItemInfo> PlatformPasteboard::informationForItemAtIndex(
     PasteboardItemInfo info;
     RetainPtr<NSArray<NSPasteboardType>> platformTypes = [item types];
     auto containsFileURL = [platformTypes containsObject:NSPasteboardTypeFileURL] ? ContainsFileURL::Yes : ContainsFileURL::No;
-    ListHashSet<String> webSafeTypes;
+    OrderedHashSet<String> webSafeTypes;
     info.platformTypesByFidelity.reserveInitialCapacity(platformTypes.get().count);
-    for (NSPasteboardType type in platformTypes.get()) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSPasteboardType type in platformTypes.get()) {
         info.platformTypesByFidelity.append(type);
         auto webSafeType = webSafeMIMETypeForModernPasteboardType(type, containsFileURL);
         if (webSafeType.isEmpty())

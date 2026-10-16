@@ -31,11 +31,10 @@ class LegacyRenderSVGResourceRadialGradient final : public LegacyRenderSVGResour
     WTF_MAKE_TZONE_ALLOCATED(LegacyRenderSVGResourceRadialGradient);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(LegacyRenderSVGResourceRadialGradient);
 public:
-    LegacyRenderSVGResourceRadialGradient(SVGRadialGradientElement&, RenderStyle&&);
+    LegacyRenderSVGResourceRadialGradient(SVGRadialGradientElement&, Style::ComputedStyle&&);
     virtual ~LegacyRenderSVGResourceRadialGradient();
 
     inline SVGRadialGradientElement& radialGradientElement() const;
-    inline Ref<SVGRadialGradientElement> protectedRadialGradientElement() const;
 
     FloatPoint centerPoint(const RadialGradientAttributes&) const;
     FloatPoint focalPoint(const RadialGradientAttributes&) const;
@@ -47,7 +46,7 @@ private:
 
     SVGUnitTypes::SVGUnitType gradientUnits() const final { return m_attributes.gradientUnits(); }
     AffineTransform gradientTransform() const final { return m_attributes.gradientTransform(); }
-    Ref<Gradient> buildGradient(const RenderStyle&) const final;
+    Ref<Gradient> buildGradient(const Style::ComputedStyle&) const final;
 
     void gradientElement() const = delete;
 

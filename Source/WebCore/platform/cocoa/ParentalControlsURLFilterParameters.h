@@ -26,6 +26,7 @@
 #pragma once
 
 #if HAVE(WEBCONTENTRESTRICTIONS)
+#include <wtf/URL.h>
 
 namespace WebCore {
 
@@ -33,6 +34,9 @@ struct ParentalControlsURLFilterParameters {
     URL urlToAllow;
 #if HAVE(WEBCONTENTRESTRICTIONS_PATH_SPI)
     String configurationPath;
+#endif
+#if HAVE(WEBCONTENTRESTRICTIONS_ASK_TO)
+    std::optional<URL> referrerURL;
 #endif
 };
 

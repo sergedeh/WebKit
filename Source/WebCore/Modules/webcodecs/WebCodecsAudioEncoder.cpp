@@ -34,6 +34,7 @@
 #include "DOMException.h"
 #include "ExceptionOr.h"
 #include "FlacEncoderConfig.h"
+#include "JSDOMConvertDictionary.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JSWebCodecsAudioEncoderSupport.h"
 #include "Logging.h"
@@ -50,6 +51,7 @@
 #include "WebCodecsUtilities.h"
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/ConsoleTypes.h>
+#include <wtf/Scope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
@@ -135,7 +137,7 @@ static bool isValidEncoderConfig(const WebCodecsAudioEncoderConfig& config)
 
 static ExceptionOr<AudioEncoder::Config> createAudioEncoderConfig(const WebCodecsAudioEncoderConfig& config)
 {
-    std::optional<AudioEncoder::OpusConfig> opusConfig = std::nullopt;
+    std::optional<AudioEncoder::OpusConfig> opusConfig;
     if (config.opus) {
         opusConfig = {
             .isOggBitStream = config.opus->format == OpusBitstreamFormat::Ogg,
@@ -147,11 +149,11 @@ static ExceptionOr<AudioEncoder::Config> createAudioEncoderConfig(const WebCodec
         };
     }
 
-    std::optional<bool> isAacADTS = std::nullopt;
+    std::optional<bool> isAacADTS;
     if (config.aac)
         isAacADTS = config.aac->format == AacBitstreamFormat::Adts;
 
-    std::optional<AudioEncoder::FlacConfig> flacConfig = std::nullopt;
+    std::optional<AudioEncoder::FlacConfig> flacConfig;
     if (config.flac)
         flacConfig = { config.flac->blockSize, config.flac->compressLevel };
 
@@ -178,31 +180,33 @@ ExceptionOr<void> WebCodecsAudioEncoder::configure(ScriptExecutionContext&, WebC
     m_isKeyChunkRequired = true;
 
     if (m_internalEncoder) {
-        queueControlMessageAndProcess({ *this, [this, config]() mutable {
+        queueControlMessageAndProcess({ *this, [this, protectedThis = Ref { *this }, config]() mutable {
             blockControlMessageQueue();
 
-            protectedScriptExecutionContext()->enqueueTaskWhenSettled(Ref { *m_internalEncoder }->flush(), TaskSource::MediaElement, [weakThis = ThreadSafeWeakPtr { *this }, config = WTF::move(config)] (auto&&) mutable {
+            protect(scriptExecutionContext())->enqueueTaskWhenSettled(protect(*m_internalEncoder)->flush(), TaskSource::MediaElement, [weakThis = ThreadSafeWeakPtr { *this }, config = WTF::move(config)] (auto&&) mutable {
                 RefPtr protectedThis = weakThis.get();
                 if (!protectedThis)
                     return;
+                auto scopeExit = makeScopeExit([protectedThis] {
+                    protectedThis->unblockControlMessageQueue();
+                });
 
                 if (protectedThis->state() == WebCodecsCodecState::Closed || !protectedThis->scriptExecutionContext())
                     return;
-
-                protectedThis->unblockControlMessageQueue();
             });
             return WebCodecsControlMessageOutcome::Processed;
         } });
     }
 
     bool isSupportedCodec = isSupportedEncoderCodec(config);
-    queueControlMessageAndProcess({ *this, [this, config = WTF::move(config), isSupportedCodec, identifier = scriptExecutionContext()->identifier()]() mutable {
+    queueControlMessageAndProcess({ *this, [this, protectedThis = Ref { *this }, config = WTF::move(config), isSupportedCodec, identifier = scriptExecutionContext()->identifier()]() mutable {
         RefPtr context = scriptExecutionContext();
 
         blockControlMessageQueue();
         if (!isSupportedCodec) {
             postTaskToCodec<WebCodecsAudioEncoder>(identifier, *this, [] (auto& encoder) {
                 encoder.closeEncoder(Exception { ExceptionCode::NotSupportedError, "Codec is not supported"_s });
+                encoder.unblockControlMessageQueue();
             });
             return WebCodecsControlMessageOutcome::Processed;
         }
@@ -211,6 +215,7 @@ ExceptionOr<void> WebCodecsAudioEncoder::configure(ScriptExecutionContext&, WebC
         if (encoderConfig.hasException()) {
             postTaskToCodec<WebCodecsAudioEncoder>(identifier, *this, [message = encoderConfig.releaseException().message()] (auto& encoder) mutable {
                 encoder.closeEncoder(Exception { ExceptionCode::NotSupportedError, WTF::move(message) });
+                encoder.unblockControlMessageQueue();
             });
             return WebCodecsControlMessageOutcome::Processed;
         }
@@ -227,13 +232,11 @@ ExceptionOr<void> WebCodecsAudioEncoder::configure(ScriptExecutionContext&, WebC
                 if (encoder.state() != WebCodecsCodecState::Configured || encoder.m_encoderCount != encoderCount)
                     return;
 
-                RefPtr buffer = JSC::ArrayBuffer::create(result.data);
-                auto chunk = WebCodecsEncodedAudioChunk::create(WebCodecsEncodedAudioChunk::Init {
+                auto chunk = WebCodecsEncodedAudioChunk::create(
                     result.isKeyFrame ? WebCodecsEncodedAudioChunkType::Key : WebCodecsEncodedAudioChunkType::Delta,
                     result.timestamp,
                     result.duration,
-                    BufferSource { WTF::move(buffer) }
-                });
+                    SharedBuffer::create(WTF::move(result.data)));
                 encoder.m_output->invoke(WTF::move(chunk), encoder.createEncodedChunkMetadata());
             });
         });
@@ -242,6 +245,9 @@ ExceptionOr<void> WebCodecsAudioEncoder::configure(ScriptExecutionContext&, WebC
             RefPtr protectedThis = weakThis.get();
             if (!protectedThis)
                 return;
+            auto scopeExit = makeScopeExit([protectedThis] {
+                protectedThis->unblockControlMessageQueue();
+            });
 
             if (!result) {
                 protectedThis->closeEncoder(Exception { ExceptionCode::NotSupportedError, WTF::move(result.error()) });
@@ -249,7 +255,6 @@ ExceptionOr<void> WebCodecsAudioEncoder::configure(ScriptExecutionContext&, WebC
             }
             protectedThis->setInternalEncoder(WTF::move(*result));
             protectedThis->m_hasNewActiveConfiguration = true;
-            protectedThis->unblockControlMessageQueue();
         });
 
         return WebCodecsControlMessageOutcome::Processed;
@@ -275,10 +280,10 @@ WebCodecsEncodedAudioChunkMetadata WebCodecsAudioEncoder::createEncodedChunkMeta
 
         if (m_activeConfiguration.description && m_activeConfiguration.description->size()) {
             auto arrayBuffer = ArrayBuffer::tryCreateUninitialized(m_activeConfiguration.description->size(), 1);
-            RELEASE_LOG_ERROR_IF(!!arrayBuffer, Media, "Cannot create array buffer for WebCodecs encoder description");
+            RELEASE_LOG_ERROR_IF(!arrayBuffer, Media, "Cannot create array buffer for WebCodecs encoder description");
             if (arrayBuffer) {
                 memcpySpan(arrayBuffer->mutableSpan(), m_activeConfiguration.description->span());
-                metadata.decoderConfig->description = WTF::move(arrayBuffer);
+                metadata.decoderConfig->description = arrayBuffer.releaseNonNull();
             }
         }
     }
@@ -298,7 +303,7 @@ ExceptionOr<void> WebCodecsAudioEncoder::encode(Ref<WebCodecsAudioData>&& frame)
     if (state() != WebCodecsCodecState::Configured)
         return Exception { ExceptionCode::InvalidStateError, "AudioEncoder is not configured"_s };
 
-    queueCodecControlMessageAndProcess({ *this, [this, audioData = WTF::move(audioData), timestamp = frame->timestamp(), duration = frame->duration()]() mutable {
+    queueCodecControlMessageAndProcess({ *this, [this, protectedThis = Ref { *this }, audioData = WTF::move(audioData), timestamp = frame->timestamp(), duration = frame->duration()]() mutable {
         // FIXME: These checks are not yet spec-compliant. See also https://github.com/w3c/webcodecs/issues/716
         if (m_baseConfiguration.numberOfChannels != audioData->numberOfChannels()
             || m_baseConfiguration.sampleRate != audioData->sampleRate()) {
@@ -309,7 +314,7 @@ ExceptionOr<void> WebCodecsAudioEncoder::encode(Ref<WebCodecsAudioData>&& frame)
         }
 
         incrementCodecOperationCount();
-        protectedScriptExecutionContext()->enqueueTaskWhenSettled(Ref { *m_internalEncoder }->encode({ WTF::move(audioData), timestamp, duration }), TaskSource::MediaElement, [weakThis = ThreadSafeWeakPtr { *this }, pendingActivity = makePendingActivity(*this)] (auto&& result) {
+        protect(scriptExecutionContext())->enqueueTaskWhenSettled(protect(*m_internalEncoder)->encode({ WTF::move(audioData), timestamp, duration }), TaskSource::MediaElement, [weakThis = ThreadSafeWeakPtr { *this }, pendingActivity = makePendingActivity(*this)] (auto&& result) {
             RefPtr protectedThis = weakThis.get();
             if (!protectedThis)
                 return;
@@ -335,8 +340,8 @@ void WebCodecsAudioEncoder::flush(Ref<DeferredPromise>&& promise)
     }
 
     m_pendingFlushPromises.append(promise);
-    queueControlMessageAndProcess({ *this, [this, promise = WTF::move(promise)]() mutable {
-        protectedScriptExecutionContext()->enqueueTaskWhenSettled(Ref { *m_internalEncoder }->flush(), TaskSource::MediaElement, [weakThis = ThreadSafeWeakPtr { *this }, pendingActivity = makePendingActivity(*this), promise = WTF::move(promise)] (auto&&) {
+    queueControlMessageAndProcess({ *this, [this, protectedThis = Ref { *this }, promise = WTF::move(promise)]() mutable {
+        protect(scriptExecutionContext())->enqueueTaskWhenSettled(protect(*m_internalEncoder)->flush(), TaskSource::MediaElement, [weakThis = ThreadSafeWeakPtr { *this }, pendingActivity = makePendingActivity(*this), promise = WTF::move(promise)] (auto&&) {
             promise->resolve();
             if (RefPtr protectedThis = weakThis.get())
                 protectedThis->m_pendingFlushPromises.removeFirstMatching([&](auto& flushPromise) { return promise.ptr() == flushPromise.ptr(); });

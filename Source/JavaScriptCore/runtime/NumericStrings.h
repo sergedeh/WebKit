@@ -52,6 +52,9 @@ public:
         T key;
         String value;
         JSString* jsString { nullptr };
+
+        static constexpr ptrdiff_t offsetOfKey() { return OBJECT_OFFSETOF(CacheEntryWithJSString, key); }
+        static constexpr ptrdiff_t offsetOfJSString() { return OBJECT_OFFSETOF(CacheEntryWithJSString, jsString); }
     };
 
     struct StringWithJSString {
@@ -135,7 +138,8 @@ public:
             visitor.appendUnbarriered(m_smallIntCache[i].jsString);
     }
 
-    const StringWithJSString* smallIntCache() { return m_smallIntCache.data(); }
+    const StringWithJSString* smallIntCache() LIFETIME_BOUND { return m_smallIntCache.data(); }
+    const CacheEntryWithJSString<int>* intCache() LIFETIME_BOUND { return m_intCache.data(); }
 
     void initializeSmallIntCache(VM&);
 
@@ -157,7 +161,7 @@ private:
         return m_smallIntCache[i];
     }
 
-    void initializeDoubleCache();
+    JS_EXPORT_PRIVATE void initializeDoubleCache();
 
     std::array<StringWithJSString, cacheSize> m_smallIntCache { };
     std::array<CacheEntryWithJSString<int>, cacheSize> m_intCache { };

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 Samuel Weinig <sam@webkit.org>
+ * Copyright (C) 2025-2026 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,16 +25,37 @@
 #pragma once
 
 namespace WebCore {
+
+class RenderElement;
+
 namespace Style {
 
-// Token passed around to indicate that the evaluation will need zoom passed in the future.
-struct ZoomNeeded { };
+class ComputedStyle;
 
 struct ZoomFactor {
     float value;
 
-    constexpr explicit ZoomFactor(float v) : value(v) { }
+    constexpr explicit ZoomFactor(float v) : value { v } { }
+
+    // Special zoom factor to use when zoom has already been applied to a value.
+    static constexpr ZoomFactor none() { return ZoomFactor { 1 }; }
+
+    constexpr bool operator==(const ZoomFactor&) const = default;
 };
+
+// Map from values with zoom applied to values which are zoom-independent.
+template<typename T>
+T unapplyingZoom(T, const ComputedStyle&);
+
+template<typename T>
+T unapplyingZoom(T, const RenderElement&);
+
+// Map from values which are zoom-independent to values with zoom applied.
+template<typename T>
+T applyingZoom(T, const ComputedStyle&);
+
+template<typename T>
+T applyingZoom(T, const RenderElement&);
 
 } // namespace Style
 } // namespace WebCore

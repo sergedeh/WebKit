@@ -434,11 +434,6 @@ framework module WebKit_Private [system] {
     export *
   }
 
-  explicit module WKCrashReporter {
-    header "WKCrashReporter.h"
-    export *
-  }
-
   explicit module WKCredential {
     header "WKCredential.h"
     export *
@@ -609,8 +604,8 @@ framework module WebKit_Private [system] {
     export *
   }
 
-  explicit module WKHitTestResult {
-    header "WKHitTestResult.h"
+  explicit module WKHitTestResultRef {
+    header "WKHitTestResultRef.h"
     export *
   }
 
@@ -731,6 +726,11 @@ framework module WebKit_Private [system] {
 
   explicit module WKNavigationRef {
     header "WKNavigationRef.h"
+    export *
+  }
+
+  explicit module WKNavigationPrivateForTesting {
+    header "WKNavigationPrivateForTesting.h"
     export *
   }
 
@@ -884,6 +884,11 @@ framework module WebKit_Private [system] {
     export *
   }
 
+  explicit module WKPageResourceLoadClient {
+    header "WKPageResourceLoadClient.h"
+    export *
+  }
+
   explicit module WKPageUIClient {
     header "WKPageUIClient.h"
     export *
@@ -994,11 +999,6 @@ framework module WebKit_Private [system] {
     export *
   }
 
-  explicit module WKSpeechRecognitionPermissionCallback {
-    header "WKSpeechRecognitionPermissionCallback.h"
-    export *
-  }
-
   explicit module WKString {
     header "WKString.h"
     export *
@@ -1089,11 +1089,6 @@ framework module WebKit_Private [system] {
     export *
   }
 
-  explicit module WKUserMediaPermissionCheck {
-    header "WKUserMediaPermissionCheck.h"
-    export *
-  }
-
   explicit module WKUserMediaPermissionRequest {
     header "WKUserMediaPermissionRequest.h"
     export *
@@ -1166,11 +1161,6 @@ framework module WebKit_Private [system] {
 
   explicit module WKWebProcessPlugInEditingDelegate {
     header "WKWebProcessPlugInEditingDelegate.h"
-    export *
-  }
-
-  explicit module WKWebProcessPlugInFormDelegatePrivate {
-    header "WKWebProcessPlugInFormDelegatePrivate.h"
     export *
   }
 
@@ -1719,6 +1709,11 @@ framework module WebKit_Private [system] {
     export *
   }
 
+  explicit module _WKAutomationSessionPrivateForTesting {
+    header "_WKAutomationSessionPrivateForTesting.h"
+    export *
+  }
+
   explicit module _WKContentRuleListAction {
     header "_WKContentRuleListAction.h"
     export *
@@ -1994,18 +1989,8 @@ framework module WebKit_Private [system] {
     export *
   }
 
-  explicit module _WKSerializedNode {
-    header "_WKSerializedNode.h"
-    export *
-  }
-
   explicit module _WKSessionState {
     header "_WKSessionState.h"
-    export *
-  }
-
-  explicit module _WKJSBuffer {
-    header "_WKJSBuffer.h"
     export *
   }
 
@@ -2046,6 +2031,11 @@ framework module WebKit_Private [system] {
 
   explicit module _WKTouchEventGenerator {
     header "_WKTouchEventGenerator.h"
+    export *
+  }
+
+  explicit module _WKTranslationDelegate {
+    header "_WKTranslationDelegate.h"
     export *
   }
 
@@ -2251,6 +2241,11 @@ framework module WebKit_Private [system] {
 
   explicit module _WKWebExtensionMessagePortPrivate {
     header "_WKWebExtensionMessagePortPrivate.h"
+    export *
+  }
+
+  explicit module _WKWebExtensionNotification {
+    header "_WKWebExtensionNotification.h"
     export *
   }
 

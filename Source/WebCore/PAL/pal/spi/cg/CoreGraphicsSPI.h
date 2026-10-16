@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -49,12 +49,16 @@ DECLARE_SYSTEM_HEADER
 
 #include <CoreGraphics/CGContextDelegatePrivate.h>
 #include <CoreGraphics/CGFontCache.h>
+#if HAVE(IOSURFACE)
+#include <CoreGraphics/CGImageProvider.h>
+#endif
 #if ENABLE(UNIFIED_PDF) && HAVE(COREGRAPHICS_WITH_PDF_AREA_OF_INTEREST_SUPPORT)
 #include <CoreGraphics/CGPDFPageLayout.h>
 #endif // ENABLE(UNIFIED_PDF) && HAVE(COREGRAPHICS_WITH_PDF_AREA_OF_INTEREST_SUPPORT)
 #include <CoreGraphics/CGPathPrivate.h>
 #include <CoreGraphics/CGShadingPrivate.h>
 #include <CoreGraphics/CGStylePrivate.h>
+#include <CoreGraphics/CGToneMappingPrivate.h>
 #include <CoreGraphics/CoreGraphicsPrivate.h>
 
 #if PLATFORM(MAC)
@@ -85,6 +89,7 @@ typedef CF_ENUM (int32_t, CGContextDelegateCallbackName)
     deDrawGlyphs = 8,
     deBeginLayer = 17,
     deEndLayer = 18,
+    deGetColorSpace = 30,
 };
 
 typedef const struct CGColorTransform* CGColorTransformRef;
@@ -131,6 +136,77 @@ enum {
     kCGImageCachingTemporary = 3,
 };
 typedef uint32_t CGImageCachingFlags;
+
+#if HAVE(IOSURFACE)
+typedef struct CGImageProvider *CGImageProviderRef;
+typedef struct CGImageBlock *CGImageBlockRef;
+typedef struct CGImageBlockSet *CGImageBlockSetRef;
+
+typedef CF_ENUM(int32_t, CGImageComponentType)
+{
+    kCGImageComponentUnknown = 0,
+    kCGImageComponent8BitInteger = 1,
+    kCGImageComponent16BitInteger = 2,
+    kCGImageComponent32BitInteger = 3,
+    kCGImageComponent32BitFloat = 4,
+    kCGImageComponent16BitFloat = 5,
+    kCGImageComponent10BitOf32Integer = 6,
+};
+
+typedef void (*CGImageBlockReleaseCallback)(void* info, CGImageBlockRef);
+
+struct CGImageBlockCallbacks {
+    unsigned version;
+    CGImageBlockReleaseCallback release;
+};
+typedef struct CGImageBlockCallbacks CGImageBlockCallbacks;
+
+typedef CGImageBlockSetRef (*CGImageProviderCopyImageBlockSetWithOptionsCallback)(void* info, CGImageProviderRef, CGRect sourceRect, CGSize destinationSize, CFDictionaryRef options);
+typedef IOSurfaceRef (*CGImageProviderCopyIOSurfaceCallback)(void* info, CGImageProviderRef, CFDictionaryRef options);
+typedef void (*CGImageProviderReleaseInfoCallback)(void* info);
+
+struct CGImageProviderCallbacksVersion1 {
+    unsigned version;
+    CGImageProviderCopyImageBlockSetWithOptionsCallback copyImageBlockSet;
+    CGImageProviderReleaseInfoCallback releaseInfo;
+};
+typedef struct CGImageProviderCallbacksVersion1 CGImageProviderCallbacksVersion1;
+
+struct CGImageProviderCallbacksVersion2 {
+    unsigned version;
+    CGImageProviderCopyImageBlockSetWithOptionsCallback copyImageBlockSet;
+    CGImageProviderCopyIOSurfaceCallback copyIOSurface;
+    CGImageProviderReleaseInfoCallback releaseInfo;
+};
+typedef struct CGImageProviderCallbacksVersion2 CGImageProviderCallbacksVersion2;
+
+typedef void (*CGImageBlockSetReleaseInfoCallback)(void* info);
+
+struct CGImageBlockSetCallbacks {
+    unsigned version;
+    CGImageBlockSetReleaseInfoCallback releaseInfo;
+};
+typedef struct CGImageBlockSetCallbacks CGImageBlockSetCallbacks;
+
+WTF_EXTERN_C_BEGIN
+
+CGImageProviderRef CGImageProviderCreate(CGSize, CGImageComponentType, CGColorSpaceRef, void* info, const void* callbacks, CFDictionaryRef auxiliaryInfo);
+CGSize CGImageProviderGetSize(CGImageProviderRef);
+CGImageBlockRef CGImageBlockCreate(const void* data, CGRect, size_t bytesPerRow, void* info, const CGImageBlockCallbacks*);
+// Image blocks are not CF types: they must be released with CGImageBlockRelease, not CFRelease.
+void CGImageBlockRelease(CGImageBlockRef);
+// Takes ownership of the passed blocks on success; they must not be released by the caller.
+// On failure the caller retains ownership and must release the blocks itself.
+CGImageBlockSetRef CGImageBlockSetCreate(CGImageProviderRef, CGSize, CGRect, size_t count, const CGImageBlockRef blocks[], void* info, const CGImageBlockSetCallbacks*);
+CGImageRef CGImageCreateWithImageProvider(CGImageProviderRef, const CGFloat* decode, bool shouldInterpolate, CGColorRenderingIntent);
+
+extern const CFStringRef kCGImageProviderBitmapInfo;
+extern const CFStringRef kCGImageBlockSingletonRequest;
+extern const CFStringRef kCGImageBlockMarkAsReadOnlyRequest;
+extern const CFStringRef kCGImagePropertyIOSurface;
+
+WTF_EXTERN_C_END
+#endif // HAVE(IOSURFACE)
 
 #if PLATFORM(COCOA)
 typedef struct CGSRegionEnumeratorObject* CGSRegionEnumeratorObj;
@@ -228,6 +304,9 @@ typedef CF_ENUM (int32_t, CGStyleType)
     kCGStyleColorMatrix = 4,
 #endif
 };
+
+extern const const CFStringRef kCGConstrainedDynamicRange;
+extern const const CFStringRef kCGContentEDRStrength;
 
 #if PLATFORM(MAC)
 
@@ -334,7 +413,6 @@ void CGContextSetBaseCTM(CGContextRef, CGAffineTransform);
 void CGContextSetCTM(CGContextRef, CGAffineTransform);
 void CGContextSetCompositeOperation(CGContextRef, CGCompositeOperation);
 void CGContextSetShouldAntialiasFonts(CGContextRef, bool shouldAntialiasFonts);
-void CGContextResetClip(CGContextRef);
 CGContextType CGContextGetType(CGContextRef);
 
 CFStringRef CGFontCopyFamilyName(CGFontRef);
@@ -379,6 +457,7 @@ CFStringRef CGColorSpaceCopyICCProfileDescription(CGColorSpaceRef);
 
 #if HAVE(IOSURFACE)
 CGContextRef CGIOSurfaceContextCreate(IOSurfaceRef, size_t, size_t, size_t, size_t, CGColorSpaceRef, CGBitmapInfo);
+CGContextRef CGIOSurfaceContextCreateWithOptions(IOSurfaceRef, size_t, size_t, size_t, size_t, CGColorSpaceRef, CGBitmapInfo, CFDictionaryRef);
 CGImageRef CGIOSurfaceContextCreateImage(CGContextRef);
 CGImageRef CGIOSurfaceContextCreateImageReference(CGContextRef);
 CGColorSpaceRef CGIOSurfaceContextGetColorSpace(CGContextRef);
@@ -386,6 +465,7 @@ size_t CGIOSurfaceContextGetBitmapInfo(CGContextRef);
 void CGIOSurfaceContextSetDisplayMask(CGContextRef, uint32_t mask);
 IOSurfaceRef CGIOSurfaceContextGetSurface(CGContextRef);
 void CGIOSurfaceContextInvalidateSurface(CGContextRef);
+void CGIOSurfaceContextFlushQueue(CGContextRef);
 #endif // HAVE(IOSURFACE)
 
 #if PLATFORM(COCOA)
@@ -396,8 +476,7 @@ typedef bool (^CGPDFAnnotationDrawCallbackType)(CGContextRef context, CGPDFPageR
 void CGContextDrawPDFPageWithAnnotations(CGContextRef, CGPDFPageRef, CGPDFAnnotationDrawCallbackType);
 void CGContextDrawPathDirect(CGContextRef, CGPathDrawingMode, CGPathRef, const CGRect* boundingBox);
 
-CGColorSpaceRef CGContextCopyDeviceColorSpace(CGContextRef);
-CFPropertyListRef CGColorSpaceCopyPropertyList(CGColorSpaceRef);
+CGColorSpaceRef CGContextGetColorSpace(CGContextRef);
 CGError CGSNewRegionWithRect(const CGRect*, CGRegionRef*);
 CGError CGSPackagesEnableConnectionOcclusionNotifications(CGSConnectionID, bool flag, bool* outCurrentVisibilityState);
 CGError CGSPackagesEnableConnectionWindowModificationNotifications(CGSConnectionID, bool flag, bool* outConnectionIsCurrentlyIdle);
@@ -413,10 +492,14 @@ void CGContextSetStyle(CGContextRef, CGStyleRef);
 void CGContextDrawConicGradient(CGContextRef, CGGradientRef, CGPoint center, CGFloat angle);
 void CGPathAddUnevenCornersRoundedRect(CGMutablePathRef, const CGAffineTransform *, CGRect, const CGSize corners[4]);
 bool CGFontRenderingGetFontSmoothingDisabled(void);
-CGShadingRef CGShadingCreateConic(CGColorSpaceRef, CGPoint center, CGFloat angle, CGFunctionRef);
 
 CGGradientRef CGGradientCreateWithColorComponentsAndOptions(CGColorSpaceRef, const CGFloat*, const CGFloat*, size_t, CFDictionaryRef);
 CGGradientRef CGGradientCreateWithColorsAndOptions(CGColorSpaceRef, CFArrayRef, const CGFloat*, CFDictionaryRef);
+
+#if HAVE(CGPATTERN_CREATE_WITH_IMAGE_TRANSFORM_STEP)
+CGPatternRef CGPatternCreateWithImageTransformStep(CGImageRef, CGAffineTransform,
+    CGFloat xStep, CGFloat yStep, CGPatternTiling);
+#endif
 
 extern const CFStringRef kCGGradientInterpolatesPremultiplied;
 
@@ -464,6 +547,12 @@ CGError CGSSetDenyWindowServerConnections(bool);
 CG_EXTERN void CGEnterLockdownModeForPDF();
 CG_LOCAL bool CGIsInLockdownModeForPDF();
 CG_EXTERN void CGEnterLockdownModeForFonts();
+#endif
+
+#if HAVE(CGCONTEXT_STROKE_ARC)
+void CGContextStrokeArc(CGContextRef cg_nullable,
+    CGFloat x, CGFloat y, CGFloat radius, CGFloat startAngle, CGFloat endAngle,
+    bool clockwise);
 #endif
 
 extern CGDataProviderRef __nullable CGDataProviderCreateWithCopyOfData(const void *, size_t);

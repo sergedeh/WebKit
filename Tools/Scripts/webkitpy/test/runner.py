@@ -22,7 +22,6 @@
 
 """code to actually run a list of python tests."""
 
-import re
 import time
 import unittest
 
@@ -35,6 +34,8 @@ class Runner(object):
         self.tests_run = []
         self.errors = []
         self.failures = []
+        self.expected_failures = []
+        self.unexpected_successes = []
         self.worker_factory = lambda caller: _Worker(caller, self.loader)
 
     def run(self, test_names, num_workers):
@@ -44,7 +45,8 @@ class Runner(object):
         with message_pool.get(self, self.worker_factory, num_workers) as pool:
             pool.run(('test', test_name) for test_name in test_names)
 
-    def handle(self, message_name, source, test_name=None, delay=None, failures=None, errors=None):
+    def handle(self, message_name, source, test_name=None, delay=None, failures=None, errors=None,
+               expected_failures=None, unexpected_successes=None):
         if message_name == 'did_spawn_worker':
             return
 
@@ -53,14 +55,19 @@ class Runner(object):
             return
 
         if message_name != 'finished_test':
-            raise ValueError("unknown message: %r" % message_type)
+            raise ValueError("unknown message: %r" % message_name)
 
         self.tests_run.append(test_name)
         if failures:
             self.failures.append((test_name, failures))
         if errors:
             self.errors.append((test_name, errors))
-        self.printer.print_finished_test(source, test_name, delay, failures, errors)
+        if expected_failures:
+            self.expected_failures.extend(expected_failures)
+        if unexpected_successes:
+            self.unexpected_successes.extend(unexpected_successes)
+        self.printer.print_finished_test(source, test_name, delay, failures, errors,
+                                         expected_failures, unexpected_successes)
 
 
 class _Worker(object):
@@ -70,28 +77,20 @@ class _Worker(object):
 
     def handle(self, message_name, source, test_name):
         assert message_name == 'test'
-        result = TestResult()
+        result = unittest.TestResult()
         start = time.time()
         self._caller.post('started_test', test_name)
 
         # We will need to rework this if a test_name results in multiple tests.
         self._loader.loadTestsFromName(test_name, None).run(result)
 
-        assert(len(result.errors) + len(result.failures) +
-               len(result.skipped) + len(result.expectedFailures) +
-               len(result.unexpectedSuccesses) + result.successes) == result.testsRun
+        failures = ['%s\n%s' % (test, err_string) for test, err_string in result.failures]
+        errors = ['%s\n%s' % (test, err_string) for test, err_string in result.errors]
+        expected_failures = [failure[0].id() for failure in result.expectedFailures]
+        unexpected_successes = [test.id() for test in result.unexpectedSuccesses]
 
-        failures = ([failure[1] for failure in result.failures]
-                    + ["UNEXPECTED SUCCESS" for _ in result.unexpectedSuccesses])
+        assert result.wasSuccessful() == (not failures and not errors and not unexpected_successes)
 
         self._caller.post('finished_test', test_name, time.time() - start,
-                          failures, [error[1] for error in result.errors])
-
-
-class TestResult(unittest.TestResult):
-    def __init__(self, *args, **kwargs):
-        super(TestResult, self).__init__(*args, **kwargs)
-        self.successes = 0
-
-    def addSuccess(self, test):
-        self.successes += 1
+                          failures, errors,
+                          expected_failures, unexpected_successes)

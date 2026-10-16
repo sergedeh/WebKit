@@ -28,10 +28,10 @@
 #include "StyleColorLayers.h"
 
 #include "CSSColorLayersResolver.h"
-#include "CSSPrimitiveValueMappings.h"
 #include "ColorSerialization.h"
 #include "StyleBuilderState.h"
 #include "StyleColorResolutionState.h"
+#include "StyleKeyword+CSSValueConversion.h"
 #include <wtf/text/TextStream.h>
 
 namespace WebCore {
@@ -71,13 +71,13 @@ Color toStyleColor(const CSS::ColorLayers& unresolved, ColorResolutionState& sta
 
 // MARK: Resolve
 
-WebCore::Color resolveColor(const ColorLayers& colorLayers, const WebCore::Color& currentColor)
+WebCore::Color resolveColor(const ColorLayers& colorLayers, const ResolvedColors& resolvedColors)
 {
     return blendSourceOver(
         CSS::ColorLayersResolver {
             .blendMode = colorLayers.blendMode,
             .colors = colorLayers.colors.map([&](auto& color) {
-                return color.resolveColor(currentColor);
+                return color.resolveColor(resolvedColors);
             })
         }
     );
@@ -108,7 +108,7 @@ void serializationForCSSTokenization(StringBuilder& builder, const CSS::Serializ
     builder.append(')');
 }
 
-String serializationForCSSTokenization(const CSS::SerializationContext& context, const ColorLayers& colorLayers)
+WTF::String serializationForCSSTokenization(const CSS::SerializationContext& context, const ColorLayers& colorLayers)
 {
     StringBuilder builder;
     serializationForCSSTokenization(builder, context, colorLayers);

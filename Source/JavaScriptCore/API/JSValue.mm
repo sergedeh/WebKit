@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2024, 2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -36,13 +36,12 @@
 #import "JSValueInternal.h"
 #import "JSValuePrivate.h"
 #import "JSWrapperMap.h"
-#import "MarkedJSValueRefArray.h"
+#import "MarkedVector.h"
 #import "ObjcRuntimeExtras.h"
 #import "JSCInlines.h"
 #import "JSCJSValue.h"
 #import "Strong.h"
 #import "StrongInlines.h"
-#import <wtf/Expected.h>
 #import <wtf/HashMap.h>
 #import <wtf/HashSet.h>
 #import <wtf/Lock.h>
@@ -399,13 +398,13 @@ NSString * const JSPropertyDescriptorSetKey = @"set";
 }
 
 template<typename Result, typename NSStringFunction, typename JSValueFunction, typename... Types>
-inline Expected<Result, JSValueRef> performPropertyOperation(NSStringFunction stringFunction, JSValueFunction jsFunction, JSValue* value, id propertyKey, Types... arguments)
+inline std::expected<Result, JSValueRef> performPropertyOperation(NSStringFunction stringFunction, JSValueFunction jsFunction, JSValue* value, id propertyKey, Types... arguments)
 {
     JSContext* context = [value context];
     JSValueRef exception = nullptr;
     JSObjectRef object = JSValueToObject([context JSGlobalContextRef], [value JSValueRef], &exception);
     if (exception)
-        return Unexpected<JSValueRef>(exception);
+        return std::unexpected<JSValueRef>(exception);
 
     Result result;
     // If it's a NSString already, reduce indirection and just pass the NSString.
@@ -414,7 +413,7 @@ inline Expected<Result, JSValueRef> performPropertyOperation(NSStringFunction st
         result = stringFunction([context JSGlobalContextRef], object, name.get(), arguments..., &exception);
     } else
         result = jsFunction([context JSGlobalContextRef], object, [[JSValue valueWithObject:propertyKey inContext:context] JSValueRef], arguments..., &exception);
-    return Expected<Result, JSValueRef>(result);
+    return std::expected<Result, JSValueRef>(result);
 }
 
 - (JSValue *)valueForProperty:(id)key
@@ -450,7 +449,7 @@ inline Expected<Result, JSValueRef> performPropertyOperation(NSStringFunction st
 
 - (BOOL)deleteProperty:(JSValueProperty)key
 {
-    Expected<BOOL, JSValueRef> result = performPropertyOperation<BOOL>(JSObjectDeleteProperty, JSObjectDeletePropertyForKey, self, key);
+    std::expected<BOOL, JSValueRef> result = performPropertyOperation<BOOL>(JSObjectDeleteProperty, JSObjectDeletePropertyForKey, self, key);
     if (!result)
         return [_context boolFromNotifyException:result.error()];
     return result.value();
@@ -463,7 +462,7 @@ inline Expected<Result, JSValueRef> performPropertyOperation(NSStringFunction st
         return JSObjectHasProperty(ctx, object, propertyName);
     };
 
-    Expected<BOOL, JSValueRef> result = performPropertyOperation<BOOL>(stringHasProperty, JSObjectHasPropertyForKey, self, key);
+    std::expected<BOOL, JSValueRef> result = performPropertyOperation<BOOL>(stringHasProperty, JSObjectHasPropertyForKey, self, key);
     if (!result)
         return [_context boolFromNotifyException:result.error()];
     return result.value();
@@ -632,16 +631,17 @@ inline Expected<Result, JSValueRef> performPropertyOperation(NSStringFunction st
     JSC::JSLockHolder locker(vm);
 
     NSUInteger argumentCount = [argumentArray count];
-    JSC::MarkedJSValueRefArray arguments([_context JSGlobalContextRef], argumentCount);
-    for (unsigned i = 0; i < argumentCount; ++i)
-        arguments[i] = objectToValue(_context, [argumentArray objectAtIndex:i]);
+    JSC::MarkedVector<JSValueRef> arguments;
+    SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE arguments.fillWith(vm, std::views::iota(0uz, argumentCount), [self, argumentArray] (size_t i) ALWAYS_INLINE_LAMBDA {
+        return objectToValue(_context, [argumentArray objectAtIndex:i]);
+    });
 
     JSValueRef exception = 0;
     JSObjectRef object = JSValueToObject([_context JSGlobalContextRef], m_value, &exception);
     if (exception)
         return [_context valueFromNotifyException:exception];
 
-    JSValueRef result = JSObjectCallAsFunction([_context JSGlobalContextRef], object, 0, argumentCount, arguments.data(), &exception);
+    JSValueRef result = JSObjectCallAsFunction([_context JSGlobalContextRef], object, 0, argumentCount, arguments.span().data(), &exception);
     if (exception)
         return [_context valueFromNotifyException:exception];
 
@@ -655,16 +655,17 @@ inline Expected<Result, JSValueRef> performPropertyOperation(NSStringFunction st
     JSC::JSLockHolder locker(vm);
 
     NSUInteger argumentCount = [argumentArray count];
-    JSC::MarkedJSValueRefArray arguments([_context JSGlobalContextRef], argumentCount);
-    for (unsigned i = 0; i < argumentCount; ++i)
-        arguments[i] = objectToValue(_context, [argumentArray objectAtIndex:i]);
+    JSC::MarkedVector<JSValueRef> arguments;
+    SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE arguments.fillWith(vm, std::views::iota(0uz, argumentCount), [self, argumentArray] (size_t i) ALWAYS_INLINE_LAMBDA {
+        return objectToValue(_context, [argumentArray objectAtIndex:i]);
+    });
 
     JSValueRef exception = 0;
     JSObjectRef object = JSValueToObject([_context JSGlobalContextRef], m_value, &exception);
     if (exception)
         return [_context valueFromNotifyException:exception];
 
-    JSObjectRef result = JSObjectCallAsConstructor([_context JSGlobalContextRef], object, argumentCount, arguments.data(), &exception);
+    JSObjectRef result = JSObjectCallAsConstructor([_context JSGlobalContextRef], object, argumentCount, arguments.span().data(), &exception);
     if (exception)
         return [_context valueFromNotifyException:exception];
 
@@ -678,9 +679,10 @@ inline Expected<Result, JSValueRef> performPropertyOperation(NSStringFunction st
     JSC::JSLockHolder locker(vm);
 
     NSUInteger argumentCount = [arguments count];
-    JSC::MarkedJSValueRefArray argumentArray([_context JSGlobalContextRef], argumentCount);
-    for (unsigned i = 0; i < argumentCount; ++i)
-        argumentArray[i] = objectToValue(_context, [arguments objectAtIndex:i]);
+    JSC::MarkedVector<JSValueRef> argumentArray;
+    SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE argumentArray.fillWith(vm, std::views::iota(0uz, argumentCount), [self, arguments] (size_t i) ALWAYS_INLINE_LAMBDA {
+        return objectToValue(_context, [arguments objectAtIndex:i]);
+    });
 
     JSValueRef exception = 0;
     JSObjectRef thisObject = JSValueToObject([_context JSGlobalContextRef], m_value, &exception);
@@ -696,7 +698,7 @@ inline Expected<Result, JSValueRef> performPropertyOperation(NSStringFunction st
     if (exception)
         return [_context valueFromNotifyException:exception];
 
-    JSValueRef result = JSObjectCallAsFunction([_context JSGlobalContextRef], object, thisObject, argumentCount, argumentArray.data(), &exception);
+    JSValueRef result = JSObjectCallAsFunction([_context JSGlobalContextRef], object, thisObject, argumentCount, argumentArray.span().data(), &exception);
     if (exception)
         return [_context valueFromNotifyException:exception];
 
@@ -882,7 +884,7 @@ static void reportExceptionToInspector(JSGlobalContextRef context, JSC::JSValue 
     JSC::JSGlobalObject* globalObject = toJS(context);
     JSC::VM& vm = globalObject->vm();
     JSC::Exception* exception = JSC::Exception::create(vm, exceptionValue);
-    globalObject->checkedInspectorController()->reportAPIException(globalObject, exception);
+    protect(globalObject->inspectorController())->reportAPIException(globalObject, exception);
 }
 #endif
 

@@ -25,6 +25,8 @@
 
 #pragma once
 
+#include <wtf/BitVector.h>
+
 namespace WTF {
 template <typename T>
 class Range;
@@ -36,25 +38,34 @@ class LayoutUnit;
 
 namespace Layout {
 
+class ElementBox;
 class PlacedGridItem;
 class UnplacedGridItem;
 
+struct ComputedSizes;
+struct FlexTrack;
 struct GridAreaLines;
 struct GridItemRect;
 struct TrackSizingFunctions;
+struct TrackSizingItem;
 struct UnsizedTrack;
-struct FlexTrack;
+
 
 using BorderBoxPositions = Vector<LayoutUnit>;
 using FlexTracks = Vector<FlexTrack>;
-using GridAreas = HashMap<UnplacedGridItem, GridAreaLines>;
-using GridCell = Vector<UnplacedGridItem, 1>;
+using GridAreas = Vector<std::pair<UnplacedGridItem, GridAreaLines>>;
+using GridItemIndexes = Vector<size_t>;
 using GridItemRects = Vector<GridItemRect>;
-using GridMatrix = Vector<Vector<GridCell>>;
+// One row of the implicit grid: the bit is set where a grid item covers the cell.
+using GridRow = BitVector;
+using GridMatrix = Vector<GridRow>;
+using LogicalGridItems = Vector<WTF::CheckedRef<const ElementBox>>;
 using PlacedGridItems = Vector<PlacedGridItem>;
 using PlacedGridItemSpanList = Vector<WTF::Range<size_t>>;
+using TrackIndexes = Vector<size_t>;
 using TrackSizes = Vector<LayoutUnit>;
 using TrackSizingFunctionsList = Vector<TrackSizingFunctions>;
+using TrackSizingItemList = Vector<TrackSizingItem>;
 using UnsizedTracks = Vector<UnsizedTrack>;
 using UsedBlockSizes = Vector<LayoutUnit>;
 using UsedInlineSizes = Vector<LayoutUnit>;

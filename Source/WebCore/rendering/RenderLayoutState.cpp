@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007, 2013 Apple Inc. All rights reserved.
+ * Copyright (C) 2007-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,14 +26,17 @@
 #include "config.h"
 #include "RenderLayoutState.h"
 
+#include "PositionedLayoutConstraints.h"
 #include "RenderBoxModelObjectInlines.h"
+#include "RenderElementInlines.h"
+#include "RenderElementStyleInlines.h"
 #include "RenderFragmentedFlow.h"
 #include "RenderInline.h"
 #include "RenderLayer.h"
 #include "RenderMultiColumnFlow.h"
 #include "RenderObjectInlines.h"
-#include "RenderStyle+GettersInlines.h"
 #include "RenderView.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/WeakPtr.h>
 
@@ -42,18 +45,12 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderLayoutState);
 
 RenderLayoutState::RenderLayoutState(RenderElement& renderer)
-    : m_clipped(false)
-    , m_isPaginated(false)
-    , m_pageLogicalHeightChanged(false)
 #if ASSERT_ENABLED
-    , m_layoutDeltaXSaturated(false)
-    , m_layoutDeltaYSaturated(false)
-    , m_marginTrimBlockStart(false)
-    , m_renderer(&renderer)
+    : m_renderer(&renderer)
 #endif
 {
     if (RenderElement* container = renderer.container()) {
-        FloatPoint absContentPoint = container->localToAbsolute(FloatPoint(), UseTransforms);
+        FloatPoint absContentPoint = container->localToAbsolute(FloatPoint(), MapCoordinatesMode::UseTransforms);
         m_paintOffset = LayoutSize(absContentPoint.x(), absContentPoint.y());
 
         if (container->hasNonVisibleOverflow()) {
@@ -70,15 +67,7 @@ RenderLayoutState::RenderLayoutState(RenderElement& renderer)
 }
 
 RenderLayoutState::RenderLayoutState(const LocalFrameViewLayoutContext::LayoutStateStack& layoutStateStack, RenderBox& renderer, const LayoutSize& offset, LayoutUnit pageLogicalHeight, bool pageLogicalHeightChanged, std::optional<LineClamp> lineClamp, std::optional<LegacyLineClamp> legacyLineClamp)
-    : m_clipped(false)
-    , m_isPaginated(false)
-    , m_pageLogicalHeightChanged(false)
-#if ASSERT_ENABLED
-    , m_layoutDeltaXSaturated(false)
-    , m_layoutDeltaYSaturated(false)
-#endif
-    , m_marginTrimBlockStart(false)
-    , m_lineClamp(lineClamp)
+    : m_lineClamp(lineClamp)
     , m_legacyLineClamp(legacyLineClamp)
 #if ASSERT_ENABLED
     , m_renderer(&renderer)
@@ -96,16 +85,14 @@ void RenderLayoutState::computeOffsets(const RenderLayoutState& ancestor, Render
 {
     bool fixed = renderer.isFixedPositioned();
     if (fixed) {
-        FloatPoint fixedOffset = renderer.view().localToAbsolute(FloatPoint(), IsFixed);
+        FloatPoint fixedOffset = renderer.view().localToAbsolute(FloatPoint(), MapCoordinatesMode::IsFixed);
         m_paintOffset = LayoutSize(fixedOffset.x(), fixedOffset.y()) + offset;
     } else
         m_paintOffset = ancestor.paintOffset() + offset;
 
     if (renderer.isOutOfFlowPositioned() && !fixed) {
-        if (CheckedPtr container = dynamicDowncast<RenderInline>(renderer.container())) {
-            if (container && container->isInFlowPositioned())
-                m_paintOffset += container->offsetForInFlowPositionedInline(&renderer);
-        }
+        if (CheckedPtr container = renderer.container(); container && container->isInlineBox() && container->canContainAbsolutelyPositionedObjects())
+            m_paintOffset += PositionedLayoutConstraints::containingBlockOffsetForNonStaticAxes(downcast<RenderBoxModelObject>(*container), renderer.style());
     }
 
     m_layoutOffset = m_paintOffset;
@@ -116,10 +103,18 @@ void RenderLayoutState::computeOffsets(const RenderLayoutState& ancestor, Render
     if (renderer.hasNonVisibleOverflow())
         m_paintOffset -= toLayoutSize(renderer.scrollPosition());
 
-    m_layoutDelta = ancestor.layoutDelta();
+    // A repaint container (own backing store, a full-layer filter, or a fragmented flow) is the origin
+    // of its own repaint coordinate space, so a delta accumulated in the ancestor space must not leak
+    // into the subtree; reset it here and let in-container repositions accumulate onto the fresh value.
+    auto isRepaintContainer = [&] {
+        if (CheckedPtr layer = renderer.layer())
+            return compositedWithOwnBackingStore(*layer) || layer->requiresFullLayerImageForFilters();
+        return renderer.isRenderFragmentedFlow();
+    }();
+    m_layoutDeltaForRepaint = isRepaintContainer ? LayoutSize() : ancestor.layoutDelta();
 #if ASSERT_ENABLED
-    m_layoutDeltaXSaturated = ancestor.m_layoutDeltaXSaturated;
-    m_layoutDeltaYSaturated = ancestor.m_layoutDeltaYSaturated;
+    m_layoutDeltaForRepaintXSaturated = !isRepaintContainer && ancestor.m_layoutDeltaForRepaintXSaturated;
+    m_layoutDeltaForRepaintYSaturated = !isRepaintContainer && ancestor.m_layoutDeltaForRepaintYSaturated;
 #endif
 }
 
@@ -177,7 +172,7 @@ void RenderLayoutState::computePaginationInformation(const LocalFrameViewLayoutC
 
     // If we have a new grid to track, then add it to our set.
     if (!renderer.style().lineGrid().isNone()) {
-        if (CheckedPtr blockFlow = dynamicDowncast<RenderBlockFlow>(renderer))
+        if (auto* blockFlow = dynamicDowncast<RenderBlockFlow>(renderer))
             establishLineGrid(layoutStateStack, *blockFlow);
     }
 }
@@ -214,7 +209,7 @@ void RenderLayoutState::computeLineGridPaginationOrigin(const RenderMultiColumnF
 
     // Shift to the next highest line grid multiple past the page logical top. Cache the delta
     // between this new value and the page logical top as the pagination origin.
-    auto lineBoxHeight = LayoutUnit::fromFloatCeil(m_lineGrid->style().computedLineHeight());
+    auto lineBoxHeight = LayoutUnit::fromFloatCeil(m_lineGrid->style().usedLineHeight());
     if (!roundToInt(lineBoxHeight))
         return;
     LayoutUnit remainder = roundToInt(pageLogicalTop - firstLineTop) % roundToInt(lineBoxHeight);
@@ -266,17 +261,17 @@ void RenderLayoutState::establishLineGrid(const LocalFrameViewLayoutContext::Lay
 
 void RenderLayoutState::addLayoutDelta(LayoutSize delta)
 {
-    m_layoutDelta += delta;
+    m_layoutDeltaForRepaint += delta;
 #if ASSERT_ENABLED
-    m_layoutDeltaXSaturated |= m_layoutDelta.width() == LayoutUnit::max() || m_layoutDelta.width() == LayoutUnit::min();
-    m_layoutDeltaYSaturated |= m_layoutDelta.height() == LayoutUnit::max() || m_layoutDelta.height() == LayoutUnit::min();
+    m_layoutDeltaForRepaintXSaturated |= m_layoutDeltaForRepaint.width() == LayoutUnit::max() || m_layoutDeltaForRepaint.width() == LayoutUnit::min();
+    m_layoutDeltaForRepaintYSaturated |= m_layoutDeltaForRepaint.height() == LayoutUnit::max() || m_layoutDeltaForRepaint.height() == LayoutUnit::min();
 #endif
 }
 
 #if ASSERT_ENABLED
 bool RenderLayoutState::layoutDeltaMatches(LayoutSize delta) const
 {
-    return (delta.width() == m_layoutDelta.width() || m_layoutDeltaXSaturated) && (delta.height() == m_layoutDelta.height() || m_layoutDeltaYSaturated);
+    return (delta.width() == m_layoutDeltaForRepaint.width() || m_layoutDeltaForRepaintXSaturated) && (delta.height() == m_layoutDeltaForRepaint.height() || m_layoutDeltaForRepaintYSaturated);
 }
 #endif
 
@@ -349,6 +344,30 @@ FlexPercentResolveDisabler::FlexPercentResolveDisabler(LocalFrameViewLayoutConte
 FlexPercentResolveDisabler::~FlexPercentResolveDisabler()
 {
     m_layoutContext->enablePercentHeightResolveFor(m_flexItem);
+}
+
+OrthogonalIntrinsicContributionLayoutScope::OrthogonalIntrinsicContributionLayoutScope(LocalFrameViewLayoutContext& layoutContext, const RenderBox& box)
+    : m_layoutContext(layoutContext)
+    , m_box(box)
+{
+    m_layoutContext->addOrthogonalIntrinsicContributionLayout(box);
+}
+
+OrthogonalIntrinsicContributionLayoutScope::~OrthogonalIntrinsicContributionLayoutScope()
+{
+    m_layoutContext->removeOrthogonalIntrinsicContributionLayout(m_box);
+}
+
+IntrinsicLogicalWidthComputationScope::IntrinsicLogicalWidthComputationScope(LocalFrameViewLayoutContext& layoutContext, const RenderBox& box)
+    : m_layoutContext(layoutContext)
+    , m_box(box)
+{
+    m_layoutContext->addIntrinsicLogicalWidthComputationFor(box);
+}
+
+IntrinsicLogicalWidthComputationScope::~IntrinsicLogicalWidthComputationScope()
+{
+    m_layoutContext->removeIntrinsicLogicalWidthComputationFor(m_box);
 }
 
 ContentVisibilityOverrideScope::ContentVisibilityOverrideScope(LocalFrameViewLayoutContext& layoutContext, OptionSet<OverrideType> overrideTypes)

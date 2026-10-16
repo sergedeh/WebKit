@@ -30,6 +30,7 @@
 #include "CookieJar.h"
 #include "ElementChildIteratorInlines.h"
 #include "FontCreationContext.h"
+#include "FontCustomPlatformData.h"
 #include "FontDescription.h"
 #include "FontPlatformData.h"
 #include "ParserContentPolicy.h"
@@ -53,23 +54,23 @@ CachedSVGFont::CachedSVGFont(CachedResourceRequest&& request, PAL::SessionID ses
 }
 
 CachedSVGFont::CachedSVGFont(CachedResourceRequest&& request, CachedSVGFont& resource)
-    : CachedSVGFont(WTF::move(request), resource.sessionID(), resource.protectedCookieJar().get(), resource.m_settings.copyRef())
+    : CachedSVGFont(WTF::move(request), resource.sessionID(), protect(resource.cookieJar()).get(), resource.m_settings.copyRef())
 {
 }
 
 CachedSVGFont::~CachedSVGFont() = default;
 
-RefPtr<Font> CachedSVGFont::createFont(const FontDescription& fontDescription, bool syntheticBold, bool syntheticItalic, const FontCreationContext& fontCreationContext)
+RefPtr<Font> CachedSVGFont::createFont(const FontDescription& fontDescription, const FontCreationContext& fontCreationContext)
 {
     ASSERT(firstFontFace());
-    return CachedFont::createFont(fontDescription, syntheticBold, syntheticItalic, fontCreationContext);
+    return CachedFont::createFont(fontDescription, fontCreationContext);
 }
 
-FontPlatformData CachedSVGFont::platformDataFromCustomData(const FontDescription& fontDescription, bool bold, bool italic, const FontCreationContext& fontCreationContext)
+FontPlatformData CachedSVGFont::platformDataFromCustomData(const FontDescription& fontDescription, const FontCreationContext& fontCreationContext)
 {
     if (m_externalSVGDocument)
-        return FontPlatformData(fontDescription.computedSize(), bold, italic); // FIXME: Why are we creating a bogus font here?
-    return CachedFont::platformDataFromCustomData(fontDescription, bold, italic, fontCreationContext);
+        return FontPlatformData(fontDescription.usedSize(), computeSyntheticBold(false, fontDescription, fontCreationContext), computeSyntheticItalic(false, fontDescription, fontCreationContext)); // FIXME: Why are we creating a bogus font here?
+    return CachedFont::platformDataFromCustomData(fontDescription, fontCreationContext);
 }
 
 bool CachedSVGFont::ensureCustomFontData()
@@ -88,7 +89,7 @@ bool CachedSVGFont::ensureCustomFontData()
 
             ScriptDisallowedScope::DisableAssertionsInScope disabledScope;
 
-            externalSVGDocument->setMarkupUnsafe(decoder->decodeAndFlush(m_data->makeContiguous()->span()), { ParserContentPolicy::AllowDeclarativeShadowRoots });
+            externalSVGDocument->setMarkupUnsafe(decoder->decodeAndFlush(protect(m_data)->makeContiguous()->span()), { ParserContentPolicy::AllowDeclarativeShadowRoots });
             sawError = decoder->sawError();
             m_externalSVGDocument = WTF::move(externalSVGDocument);
         }
@@ -100,7 +101,7 @@ bool CachedSVGFont::ensureCustomFontData()
         if (!m_externalSVGFontElement || !firstFontFace())
             return false;
         if (auto convertedFont = convertSVGToOTFFont(Ref { *m_externalSVGFontElement }))
-            m_convertedFont = SharedBuffer::create(WTF::move(convertedFont.value()));
+            lazyInitialize(m_convertedFont, SharedBuffer::create(WTF::move(convertedFont.value())));
         else {
             m_externalSVGDocument = nullptr;
             m_externalSVGFontElement = nullptr;
@@ -119,9 +120,9 @@ SVGFontElement* CachedSVGFont::getSVGFontById(const AtomString& fontName) const
     if (fontName.isEmpty())
         return elements.first();
 
-    for (Ref element : elements) {
-        if (element->getIdAttribute() == fontName)
-            return element.unsafePtr();
+    for (auto& element : elements) {
+        if (element.getIdAttribute() == fontName)
+            return &element;
     }
     return nullptr;
 }

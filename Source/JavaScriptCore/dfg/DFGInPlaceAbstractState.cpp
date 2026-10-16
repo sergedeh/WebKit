@@ -150,7 +150,7 @@ void InPlaceAbstractState::initialize()
                     entrypoint->valuesAtHead.argument(i).makeBytecodeTop();
                     break;
                 default:
-                    DFG_CRASH(m_graph, nullptr, "Bad flush format for argument");
+                    DFG_CRASH(m_graph, nullptr, "Bad flush format for argument"_s);
                     break;
                 }
             }
@@ -225,7 +225,7 @@ bool InPlaceAbstractState::endBasicBlock()
             
             if (!m_activeVariables[index]) {
                 destination = block->valuesAtHead[index];
-                destination.fastForwardFromTo(epochAtHead, currentEpoch);
+                destination.fastForwardFromTo(m_graph, epochAtHead, currentEpoch);
                 continue;
             }
             
@@ -297,7 +297,7 @@ bool InPlaceAbstractState::endBasicBlock()
 
             if (!m_activeVariables[i]) {
                 destination = block->valuesAtHead[i];
-                destination.fastForwardFromTo(epochAtHead, currentEpoch);
+                destination.fastForwardFromTo(m_graph, epochAtHead, currentEpoch);
                 continue;
             }
             

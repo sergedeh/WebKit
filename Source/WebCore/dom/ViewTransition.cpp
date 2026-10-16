@@ -26,6 +26,7 @@
 #include "config.h"
 #include "ViewTransition.h"
 
+#include "CSSCustomIdentValue.h"
 #include "CSSFunctionValue.h"
 #include "CSSKeyframeRule.h"
 #include "CSSKeyframesRule.h"
@@ -44,25 +45,29 @@
 #include "JSDOMPromiseDeferred.h"
 #include "LayoutRect.h"
 #include "Logging.h"
-#include "RenderElementInlines.h"
+#include "PlatformScreen.h"
 #include "PseudoElementRequest.h"
 #include "RenderBoxInlines.h"
+#include "RenderElementInlines.h"
 #include "RenderFragmentedFlow.h"
 #include "RenderInline.h"
 #include "RenderLayer.h"
 #include "RenderLayerModelObject.h"
 #include "RenderObjectInlines.h"
-#include "RenderStyle+GettersInlines.h"
 #include "RenderView.h"
 #include "RenderViewTransitionCapture.h"
+#include "StyleComputedStyle+GettersInlines.h"
+#include "StyleDocumentScope.h"
 #include "StyleExtractor.h"
 #include "StyleResolver.h"
-#include "StyleScope.h"
 #include "StyleTransformFunction.h"
+#include "StyleZoomPrimitivesInlines.h"
 #include "Styleable.h"
 #include "TransformState.h"
 #include "ViewTransitionTypeSet.h"
 #include "WebAnimation.h"
+#include <wtf/OrderedHashSet.h>
+#include <wtf/Scope.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/TextStream.h>
@@ -116,6 +121,12 @@ RefPtr<ViewTransition> ViewTransition::resolveInboundCrossDocumentViewTransition
     if (MonotonicTime::now() - inboundViewTransitionParams->startTime > defaultTimeout)
         return nullptr;
 
+    // Re-check against the new document's final origin, which may differ from the URL-derived
+    // origin used by DocumentLoader::navigationCanTriggerCrossDocumentViewTransition.
+    if (!inboundViewTransitionParams->oldDocumentOrigin
+        || !protect(inboundViewTransitionParams->oldDocumentOrigin)->isSameOriginAs(protect(document.securityOrigin())))
+        return nullptr;
+
     if (document.activeViewTransition())
         return nullptr;
 
@@ -130,16 +141,16 @@ RefPtr<ViewTransition> ViewTransition::resolveInboundCrossDocumentViewTransition
     viewTransition->m_initialLargeViewportSize = inboundViewTransitionParams->initialLargeViewportSize;
     viewTransition->m_initialPageZoom = inboundViewTransitionParams->initialPageZoom;
 
-    document.setActiveViewTransition(RefPtr { viewTransition });
+    document.setActiveViewTransition(protect(viewTransition));
 
-    Ref { viewTransition->m_updateCallbackDone.second }->resolve();
+    protect(viewTransition->m_updateCallbackDone.second)->resolve();
     viewTransition->m_phase = ViewTransitionPhase::UpdateCallbackCalled;
 
     return viewTransition;
 }
 
 // https://drafts.csswg.org/css-view-transitions-2/#setup-cross-document-view-transition
-Ref<ViewTransition> ViewTransition::setupCrossDocumentViewTransition(Document& document)
+Ref<ViewTransition> ViewTransition::setupCrossDocumentViewTransition(Document& document, OutboundPostCaptureSteps&& outboundPostCaptureSteps)
 {
     auto types = document.resolveViewTransitionRule();
     ASSERT(!std::holds_alternative<Document::SkipTransition>(types));
@@ -150,7 +161,9 @@ Ref<ViewTransition> ViewTransition::setupCrossDocumentViewTransition(Document& d
     Ref viewTransition = adoptRef(*new ViewTransition(document, WTF::move(std::get<Vector<AtomString>>(types))));
     viewTransition->suspendIfNeeded();
 
-    document.setActiveViewTransition(RefPtr { viewTransition.ptr() });
+    document.setActiveViewTransition(protect(viewTransition.ptr()));
+
+    viewTransition->m_outboundPostCaptureSteps = WTF::move(outboundPostCaptureSteps);
 
     return viewTransition;
 }
@@ -180,43 +193,48 @@ void ViewTransition::skipViewTransition(ExceptionOr<JSC::JSValue>&& reason)
 
     ASSERT(m_phase != ViewTransitionPhase::Done);
 
+    // https://drafts.csswg.org/css-view-transitions-2/#skip-the-view-transition
+    // The navigation proceeds without the transition.
+    auto outboundPostCaptureSteps = std::exchange(m_outboundPostCaptureSteps, nullptr);
+    auto runOutboundPostCaptureSteps = makeScopeExit([&] {
+        if (outboundPostCaptureSteps)
+            outboundPostCaptureSteps(nullptr);
+    });
+
+    Ref document = *this->document();
     if (m_phase < ViewTransitionPhase::UpdateCallbackCalled) {
-        protectedDocument()->checkedEventLoop()->queueTask(TaskSource::DOMManipulation, [weakThis = WeakPtr { *this }] {
-            RefPtr protectedThis = weakThis.get();
-            if (protectedThis && protectedThis->protectedDocument()->globalObject())
-                protectedThis->callUpdateCallback();
-        });
+        scheduleUpdateCallback();
 
         if (m_isCrossDocument)
-            Ref { m_updateCallbackDone.second }->resolve();
+            protect(m_updateCallbackDone.second)->resolve();
     }
 
-    protectedDocument()->clearRenderingIsSuppressedForViewTransition();
+    document->clearRenderingIsSuppressedForViewTransition();
 
-    if (protectedDocument()->activeViewTransition() == this)
+    if (document->activeViewTransition() == this)
         clearViewTransition();
 
     m_phase = ViewTransitionPhase::Done;
 
     if (reason.hasException())
-        Ref { m_ready.second }->reject(reason.releaseException());
+        protect(m_ready.second)->reject(reason.releaseException());
     else {
-        Ref { m_ready.second }->rejectWithCallback([&] (auto&) {
+        protect(m_ready.second)->rejectWithCallback([&] (auto&) {
             return reason.releaseReturnValue();
         }, RejectAsHandled::Yes);
     }
 
-    Ref { m_updateCallbackDone.first }->whenSettled([this, protectedThis = Ref { *this }] {
+    protect(m_updateCallbackDone.first)->whenSettled([this, protectedThis = Ref { *this }] {
         if (isContextStopped())
             return;
 
-        switch (Ref { m_updateCallbackDone.first }->status()) {
+        switch (protect(m_updateCallbackDone.first)->status()) {
         case DOMPromise::Status::Fulfilled:
-            Ref { m_finished.second }->resolve();
+            protect(m_finished.second)->resolve();
             break;
         case DOMPromise::Status::Rejected:
-            Ref { m_finished.second }->rejectWithCallback([this, protectedThis = Ref { *this }] (auto&) {
-                return Ref { m_updateCallbackDone.first }->result();
+            protect(m_finished.second)->rejectWithCallback([this, protectedThis = Ref { *this }] (auto&) {
+            return m_updateCallbackDone.first->result();
             }, RejectAsHandled::Yes);
             break;
         case DOMPromise::Status::Pending:
@@ -258,18 +276,18 @@ void ViewTransition::callUpdateCallback()
     Ref callbackPromise = [&] -> Ref<DOMPromise> {
         if (!m_updateCallback) {
             auto promiseAndWrapper = createPromiseAndWrapper(document);
-            Ref { promiseAndWrapper.second }->resolve();
+            protect(promiseAndWrapper.second)->resolve();
             return WTF::move(promiseAndWrapper.first);
         }
 
-        auto result = RefPtr { m_updateCallback }->invoke();
+        auto result = m_updateCallback->invoke();
         if (result.type() != CallbackResultType::Success || result.returnValue()->isSuspended()) {
             auto promiseAndWrapper = createPromiseAndWrapper(document);
             // FIXME: First case should reject with `ExceptionCode::ExistingExceptionError`.
             if (result.type() == CallbackResultType::ExceptionThrown)
-                Ref { promiseAndWrapper.second }->reject(ExceptionCode::TypeError);
+                protect(promiseAndWrapper.second)->reject(ExceptionCode::TypeError);
             else
-                Ref { promiseAndWrapper.second }->reject();
+                protect(promiseAndWrapper.second)->reject();
             return WTF::move(promiseAndWrapper.first);
         }
 
@@ -282,21 +300,21 @@ void ViewTransition::callUpdateCallback()
             return;
         protectedThis->m_updateCallbackTimeout = nullptr;
         if (isFulfilled) {
-            Ref { protectedThis->m_updateCallbackDone.second }->resolve();
+            protect(protectedThis->m_updateCallbackDone.second)->resolve();
             protectedThis->activateViewTransition();
             return;
         }
 
-        Ref { protectedThis->m_updateCallbackDone.second }->rejectWithCallback([&result] (auto&) {
+        protect(protectedThis->m_updateCallbackDone.second)->rejectWithCallback([&result] (auto&) {
             return result;
         }, RejectAsHandled::No);
         if (protectedThis->m_phase == ViewTransitionPhase::Done)
             return;
-        Ref { protectedThis->m_ready.second }->markAsHandled();
+        protectedThis->m_ready.second->markAsHandled();
         protectedThis->skipViewTransition(WTF::move(result));
     });
 
-    m_updateCallbackTimeout = document->checkedEventLoop()->scheduleTask(defaultTimeout, TaskSource::DOMManipulation, [weakThis = WeakPtr { *this }] {
+    m_updateCallbackTimeout = protect(document->eventLoop())->scheduleTask(defaultTimeout, TaskSource::DOMManipulation, [weakThis = WeakPtr { *this }] {
         RefPtr protectedThis = weakThis.get();
         LOG_WITH_STREAM(ViewTransitions, stream << "ViewTransition " << protectedThis.get() << " update callback timed out");
         if (!protectedThis)
@@ -307,10 +325,36 @@ void ViewTransition::callUpdateCallback()
     });
 }
 
+// https://drafts.csswg.org/css-view-transitions/#schedule-the-update-callback
+void ViewTransition::scheduleUpdateCallback()
+{
+    Ref document = *this->document();
+    document->viewTransitionUpdateCallbackQueue().append(*this);
+    protect(document->eventLoop())->queueTask(TaskSource::DOMManipulation, [weakDocument = WeakPtr<Document, WeakPtrImplWithEventTargetData> { document.get() }] {
+        if (RefPtr document = weakDocument.get())
+            flushUpdateCallbackQueue(*document);
+    });
+}
+
+// https://drafts.csswg.org/css-view-transitions/#flush-the-update-callback-queue
+void ViewTransition::flushUpdateCallbackQueue(Document& document)
+{
+    auto queue = std::exchange(document.viewTransitionUpdateCallbackQueue(), { });
+    if (!document.globalObject())
+        return;
+    for (Ref transition : queue)
+        transition->callUpdateCallback();
+}
+
 // https://drafts.csswg.org/css-view-transitions/#setup-view-transition-algorithm
 void ViewTransition::setupViewTransition()
 {
     if (!document())
+        return;
+
+    flushUpdateCallbackQueue(*protect(document()));
+
+    if (m_phase == ViewTransitionPhase::Done)
         return;
 
     ASSERT(m_phase == ViewTransitionPhase::PendingCapture);
@@ -323,19 +367,31 @@ void ViewTransition::setupViewTransition()
         return;
     }
 
-    if (m_isCrossDocument)
-        protectedDocument()->setRenderingIsSuppressedForViewTransitionImmediately();
-    else
-        protectedDocument()->setRenderingIsSuppressedForViewTransitionAfterUpdateRendering();
+    Ref document = *this->document();
+    if (m_outboundPostCaptureSteps) {
+        document->setRenderingIsSuppressedForViewTransitionImmediately();
+        runOutboundPostCaptureSteps();
+        return;
+    }
 
-    protectedDocument()->checkedEventLoop()->queueTask(TaskSource::DOMManipulation, [weakThis = WeakPtr { *this }] {
+    if (m_isCrossDocument)
+        document->setRenderingIsSuppressedForViewTransitionImmediately();
+    else
+        document->setRenderingIsSuppressedForViewTransitionAfterUpdateRendering();
+
+    protect(document->eventLoop())->queueTask(TaskSource::DOMManipulation, [weakThis = WeakPtr { *this }] {
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis)
             return;
         if (protectedThis->m_phase == ViewTransitionPhase::Done)
             return;
 
-        protectedThis->callUpdateCallback();
+        RefPtr document = protectedThis->document();
+        if (!document)
+            return;
+
+        document->viewTransitionUpdateCallbackQueue().append(*protectedThis);
+        flushUpdateCallbackQueue(*document);
     });
 }
 
@@ -364,12 +420,12 @@ static AtomString effectiveViewTransitionName(RenderLayerModelObject& renderer, 
 
             Ref element = *renderer.element();
             if (scope == &Style::Scope::forNode(element) && element->hasID())
-                return makeAtomString("-ua-id-"_s, renderer.protectedElement()->getIdAttribute());
+                return makeAtomString("-ua-id-"_s, renderer.element()->getIdAttribute());
 
             if (isCrossDocument)
                 return nullAtom();
 
-            return makeAtomString("-ua-auto-"_s, String::number(element->nodeIdentifier().toRawValue()));
+            return makeAtomString("-ua-auto-"_s, String::number(element->nodeIdentifier().toUInt64()));
         },
         [&](const CSS::Keyword::MatchElement&) {
             SUPPRESS_UNCHECKED_LOCAL auto scope = computeScope();
@@ -377,19 +433,19 @@ static AtomString effectiveViewTransitionName(RenderLayerModelObject& renderer, 
                 return nullAtom();
 
             Ref element = *renderer.element();
-            return makeAtomString("-ua-auto-"_s, String::number(element->nodeIdentifier().toRawValue()));
+            return makeAtomString("-ua-auto-"_s, String::number(element->nodeIdentifier().toUInt64()));
         },
-        [&](const CustomIdentifier& customIdentifier) {
+        [&](const Style::CustomIdent& customIdent) {
             SUPPRESS_UNCHECKED_LOCAL auto scope = computeScope();
             if (!scope)
                 return nullAtom();
 
-            return customIdentifier.value;
+            return customIdent.value;
         }
     );
 }
 
-static ExceptionOr<void> checkDuplicateViewTransitionName(const AtomString& name, ListHashSet<AtomString>& usedTransitionNames)
+static ExceptionOr<void> checkDuplicateViewTransitionName(const AtomString& name, OrderedHashSet<AtomString>& usedTransitionNames)
 {
     if (usedTransitionNames.contains(name))
         return Exception { ExceptionCode::InvalidStateError, makeString("Multiple elements found with view-transition-name: "_s, name) };
@@ -404,7 +460,7 @@ static Vector<AtomString> effectiveViewTransitionClassList(RenderLayerModelObjec
             return { };
         },
         [&](const auto& list) -> Vector<AtomString> {
-            auto scope = Style::Scope::forOrdinal(originatingElement, list[0].scopeOrdinal);
+            CheckedPtr scope = Style::Scope::forOrdinal(originatingElement, list[0].scopeOrdinal);
             if (!scope || scope != &documentScope)
                 return { };
 
@@ -423,8 +479,9 @@ LayoutRect ViewTransition::captureOverflowRect(RenderLayerModelObject& renderer)
     if (renderer.isDocumentElementRenderer())
         return containingBlockRect();
 
-    auto bounds = renderer.layer()->calculateLayerBounds(renderer.layer(), LayoutSize(), { RenderLayer::IncludeFilterOutsets, RenderLayer::ExcludeHiddenDescendants, RenderLayer::IncludeCompositedDescendants, RenderLayer::PreserveAncestorFlags, RenderLayer::ExcludeViewTransitionCapturedDescendants });
-    return LayoutRect(encloseRectToDevicePixels(bounds, renderer.protectedDocument()->deviceScaleFactor()));
+    CheckedPtr layer = renderer.layer();
+    auto bounds = layer->calculateLayerBounds(layer, LayoutSize(), { RenderLayer::IncludeFilterOutsets, RenderLayer::ExcludeHiddenDescendants, RenderLayer::IncludeCompositedDescendants, RenderLayer::PreserveAncestorFlags, RenderLayer::ExcludeViewTransitionCapturedDescendants });
+    return LayoutRect(encloseRectToDevicePixels(bounds, protect(renderer.document())->deviceScaleFactor()));
 }
 
 // The computed local-to-absolute transform, and layer bounds don't include the position
@@ -432,7 +489,7 @@ LayoutRect ViewTransition::captureOverflowRect(RenderLayerModelObject& renderer)
 static LayoutPoint layerToLayoutOffset(const RenderLayerModelObject& renderer)
 {
     if (const auto* renderInline = dynamicDowncast<RenderInline>(renderer)) {
-        auto boundingBox = renderInline->linesBoundingBox();
+        auto boundingBox = renderInline->borderBoxRectInContainer();
         return LayoutPoint { boundingBox.x(), boundingBox.y() };
     }
     return { };
@@ -449,7 +506,7 @@ static RefPtr<ImageBuffer> snapshotElementVisualOverflowClippedToViewport(LocalF
         CheckedRef view = layerRenderer->view();
         layerRenderer = view.get();
 
-        auto scrollPosition = CheckedRef { view->frameView() }->scrollPosition();
+        auto scrollPosition = protect(view->frameView())->scrollPosition();
         paintRect.moveBy(scrollPosition);
     }
 
@@ -460,9 +517,14 @@ static RefPtr<ImageBuffer> snapshotElementVisualOverflowClippedToViewport(LocalF
     RefPtr frameView = frame.document()->view();
     if (!frameView)
         return nullptr;
-    auto hostWindow = frameView->root() ? RefPtr { frameView->root() }->hostWindow() : nullptr;
 
-    auto buffer = ImageBuffer::create(paintRect.size(), RenderingMode::Accelerated, RenderingPurpose::Snapshot, scaleFactor, DestinationColorSpace::SRGB(), PixelFormat::BGRA8, hostWindow);
+    auto hostWindow = frameView->root() ? protect(frameView->root())->hostWindow() : nullptr;
+    auto colorSpace = screenColorSpace(frameView);
+#if PLATFORM(IOS_FAMILY)
+    colorSpace = ColorSpace::SRGB(); // FIXME: We should use the screen colorspace on iOS too, but that has blending issues: webkit.org/b/318764.
+#endif
+
+    auto buffer = ImageBuffer::create(paintRect.size(), RenderingMode::Accelerated, RenderingPurpose::Snapshot, scaleFactor, colorSpace, PixelFormat::BGRA8, hostWindow);
     if (!buffer)
         return nullptr;
 
@@ -475,7 +537,7 @@ static RefPtr<ImageBuffer> snapshotElementVisualOverflowClippedToViewport(LocalF
     paintFlags.add(RenderLayer::PaintLayerFlag::TemporaryClipRects);
     paintFlags.add(RenderLayer::PaintLayerFlag::AppliedTransform);
     paintFlags.add(RenderLayer::PaintLayerFlag::PaintingSkipDescendantViewTransition);
-    layerRenderer->layer()->paint(buffer->context(), paintRect, subpixelOffset, frameView->paintBehavior(), nullptr, paintFlags);
+    protect(layerRenderer->layer())->paint(buffer->context(), paintRect, subpixelOffset, frameView->paintBehavior(), nullptr, paintFlags);
 
     frameView->setPaintBehavior(oldPaintBehavior);
     return buffer;
@@ -538,14 +600,14 @@ ExceptionOr<void> ViewTransition::captureOldState()
 {
     if (!document())
         return { };
-    ListHashSet<AtomString> usedTransitionNames;
+    OrderedHashSet<AtomString> usedTransitionNames;
     Vector<CheckedRef<RenderLayerModelObject>> captureRenderers;
 
     // Ensure style & layout are up-to-date.
-    protectedDocument()->updateLayoutIgnorePendingStylesheets();
+    protect(document())->updateLayoutIgnorePendingStylesheets();
 
     if (CheckedPtr view = document()->renderView()) {
-        Ref frame = CheckedRef { view->frameView() }->frame();
+        Ref frame = view->frameView().frame();
         m_initialLargeViewportSize = view->sizeForCSSLargeViewportUnits();
         m_initialPageZoom = frame->pageZoomFactor() * frame->frameScaleFactor();
 
@@ -557,7 +619,7 @@ ExceptionOr<void> ViewTransition::captureOldState()
             if (rendererIsFragmented(renderer))
                 return { };
 
-            if (auto name = effectiveViewTransitionName(renderer, Ref { styleable->element }, document()->styleScope(), isCrossDocument()); !name.isNull()) {
+            if (auto name = effectiveViewTransitionName(renderer, protect(styleable->element), document()->styleScope(), isCrossDocument()); !name.isNull()) {
                 if (auto check = checkDuplicateViewTransitionName(name, usedTransitionNames); check.hasException())
                     return check.releaseException();
 
@@ -565,7 +627,7 @@ ExceptionOr<void> ViewTransition::captureOldState()
                 captureRenderers.append(renderer);
             }
             return { };
-        }, *view->layer());
+        }, *protect(view->layer()));
         if (result.hasException()) {
             for (auto& renderer : captureRenderers)
                 renderer->setCapturedInViewTransition(false);
@@ -609,10 +671,10 @@ bool ViewTransition::updatePropertiesForGroupPseudo(CapturedElement& capturedEle
         // group styles rule
         if (!capturedElement.groupStyleProperties) {
             capturedElement.groupStyleProperties = properties;
-            protectedDocument()->styleScope(). protectedResolver()->setViewTransitionStyles(CSSSelector::PseudoElement::ViewTransitionGroup, name, *properties);
+            protect(document()->styleScope().resolver())->setViewTransitionStyles(CSSSelector::PseudoElement::ViewTransitionGroup, name, *properties);
             return true;
         }
-        return Ref { *capturedElement.groupStyleProperties }->mergeAndOverrideOnConflict(*properties);
+        return protect(*capturedElement.groupStyleProperties)->mergeAndOverrideOnConflict(*properties);
     }
     return false;
 }
@@ -622,7 +684,7 @@ ExceptionOr<void> ViewTransition::captureNewState()
 {
     if (!document())
         return { };
-    ListHashSet<AtomString> usedTransitionNames;
+    OrderedHashSet<AtomString> usedTransitionNames;
     if (CheckedPtr view = document()->renderView()) {
         auto result = forEachRendererInPaintOrder([&](RenderLayerModelObject& renderer) -> ExceptionOr<void> {
             auto styleable = Styleable::fromRenderer(renderer);
@@ -651,7 +713,7 @@ ExceptionOr<void> ViewTransition::captureNewState()
                     copyElementBaseProperties(*box, namedElement->newState);
             }
             return { };
-        }, *view->layer());
+        }, *protect(view->layer()));
         if (result.hasException())
             return result.releaseException();
     }
@@ -660,29 +722,29 @@ ExceptionOr<void> ViewTransition::captureNewState()
 
 void ViewTransition::setupDynamicStyleSheet(const AtomString& name, const CapturedElement& capturedElement)
 {
-    Ref resolver = protectedDocument()->styleScope().resolver();
+    Ref resolver = document()->styleScope().resolver();
 
     // image animation name rule
     if (capturedElement.oldImage) {
         CSSValueListBuilder list;
-        list.append(CSSPrimitiveValue::createCustomIdent("-ua-view-transition-fade-out"_s));
+        list.append(CSSCustomIdentValue::create(CSS::CustomIdent { "-ua-view-transition-fade-out"_s }));
         if (capturedElement.newElement)
-            list.append(CSSPrimitiveValue::createCustomIdent("-ua-mix-blend-mode-plus-lighter"_s));
+            list.append(CSSCustomIdentValue::create(CSS::CustomIdent { "-ua-mix-blend-mode-plus-lighter"_s }));
         Ref valueList = CSSValueList::createCommaSeparated(WTF::move(list));
         Ref props = MutableStyleProperties::create();
-        props->setProperty(CSSPropertyAnimationName, WTF::move(valueList));
+        props->setProperty(CSSPropertyID::AnimationName, WTF::move(valueList));
 
         resolver->setViewTransitionStyles(CSSSelector::PseudoElement::ViewTransitionOld, name, props);
     }
 
     if (capturedElement.newElement) {
         CSSValueListBuilder list;
-        list.append(CSSPrimitiveValue::createCustomIdent("-ua-view-transition-fade-in"_s));
+        list.append(CSSCustomIdentValue::create(CSS::CustomIdent { "-ua-view-transition-fade-in"_s }));
         if (capturedElement.oldImage)
-            list.append(CSSPrimitiveValue::createCustomIdent("-ua-mix-blend-mode-plus-lighter"_s));
+            list.append(CSSCustomIdentValue::create(CSS::CustomIdent { "-ua-mix-blend-mode-plus-lighter"_s }));
         Ref valueList = CSSValueList::createCommaSeparated(WTF::move(list));
         Ref props = MutableStyleProperties::create();
-        props->setProperty(CSSPropertyAnimationName, WTF::move(valueList));
+        props->setProperty(CSSPropertyID::AnimationName, WTF::move(valueList));
 
         resolver->setViewTransitionStyles(CSSSelector::PseudoElement::ViewTransitionNew, name, props);
     }
@@ -692,9 +754,9 @@ void ViewTransition::setupDynamicStyleSheet(const AtomString& name, const Captur
 
     // group animation name rule
     {
-        Ref list = CSSValueList::createCommaSeparated(CSSPrimitiveValue::createCustomIdent(makeString("-ua-view-transition-group-anim-"_s, name)));
+        Ref list = CSSValueList::createCommaSeparated(CSSCustomIdentValue::create(CSS::CustomIdent { makeAtomString("-ua-view-transition-group-anim-"_s, name) }));
         Ref props = MutableStyleProperties::create();
-        props->setProperty(CSSPropertyAnimationName, WTF::move(list));
+        props->setProperty(CSSPropertyID::AnimationName, WTF::move(list));
 
         resolver->setViewTransitionStyles(CSSSelector::PseudoElement::ViewTransitionGroup, name, props);
     }
@@ -702,7 +764,7 @@ void ViewTransition::setupDynamicStyleSheet(const AtomString& name, const Captur
     // image pair isolation rule
     {
         Ref props = MutableStyleProperties::create();
-        props->setProperty(CSSPropertyIsolation, CSSPrimitiveValue::create(CSSValueID::CSSValueIsolate));
+        props->setProperty(CSSPropertyID::Isolation, CSSKeywordValue::create(CSSValueID::Isolate));
 
         resolver->setViewTransitionStyles(CSSSelector::PseudoElement::ViewTransitionImagePair, name, props);
     }
@@ -711,26 +773,28 @@ void ViewTransition::setupDynamicStyleSheet(const AtomString& name, const Captur
         return;
 
     // group keyframes
-    static constexpr auto keyframeProperties = std::to_array<CSSPropertyID>({
-        CSSPropertyWidth,
-        CSSPropertyHeight,
-        CSSPropertyTransform,
-        CSSPropertyBackdropFilter,
+    static constexpr auto keyframeProperties = WTF::toArray<CSSPropertyID>({
+        CSSPropertyID::Width,
+        CSSPropertyID::Height,
+        CSSPropertyID::Transform,
+        CSSPropertyID::BackdropFilter,
     });
-    Ref keyframe = StyleRuleKeyframe::create(RefPtr { capturedElement.oldState.properties }->copyProperties(keyframeProperties));
+    Ref keyframe = StyleRuleKeyframe::create(protect(capturedElement.oldState.properties)->copyProperties(keyframeProperties));
     keyframe->setKeyText("from"_s);
 
     Ref keyframes = StyleRuleKeyframes::create(AtomString(makeString("-ua-view-transition-group-anim-"_s, name)));
     keyframes->wrapperAppendKeyframe(WTF::move(keyframe));
 
-    // We can add this to the normal namespace, since we recreate the resolver when the view-transition ends.
-    resolver->addKeyframeStyle(WTF::move(keyframes));
+    // Register through the document scope so the keyframes are re-established if the resolver
+    // is recreated (e.g. by a stylesheet mutation) during the transition. The keyframes are
+    // discarded when the transition ends and the view transition styles are cleared.
+    document()->styleScope().addViewTransitionKeyframes(WTF::move(keyframes));
 }
 
 // https://drafts.csswg.org/css-view-transitions/#setup-transition-pseudo-elements
 void ViewTransition::setupTransitionPseudoElements()
 {
-    protectedDocument()->setHasViewTransitionPseudoElementTree(true);
+    document()->setHasViewTransitionPseudoElementTree(true);
 
     for (auto& [name, capturedElement] : m_namedElements.map())
         setupDynamicStyleSheet(name, capturedElement);
@@ -738,11 +802,11 @@ void ViewTransition::setupTransitionPseudoElements()
 
 ExceptionOr<void> ViewTransition::checkForViewportSizeChange()
 {
-    CheckedPtr view = protectedDocument()->renderView();
+    CheckedPtr view = document()->renderView();
     if (!view)
         return Exception { ExceptionCode::InvalidStateError, "Skipping view transition because viewport size changed."_s };
 
-    Ref frame = CheckedRef { view->frameView() }->frame();
+    Ref frame = view->frameView().frame();
     if (view->sizeForCSSLargeViewportUnits() != m_initialLargeViewportSize || m_initialPageZoom != (frame->pageZoomFactor() * frame->frameScaleFactor()))
         return Exception { ExceptionCode::InvalidStateError, "Skipping view transition because viewport size changed."_s };
     return { };
@@ -754,10 +818,10 @@ void ViewTransition::activateViewTransition()
     if (m_phase == ViewTransitionPhase::Done)
         return;
 
-    protectedDocument()->clearRenderingIsSuppressedForViewTransition();
+    protect(document())->clearRenderingIsSuppressedForViewTransition();
 
     // Ensure style & layout are up-to-date.
-    protectedDocument()->updateLayoutIgnorePendingStylesheets();
+    protect(document())->updateLayoutIgnorePendingStylesheets();
 
     auto checkSize = checkForViewportSizeChange();
     if (checkSize.hasException()) {
@@ -779,7 +843,7 @@ void ViewTransition::activateViewTransition()
     }
 
     if (RefPtr documentElement = document()->documentElement())
-        documentElement->invalidateStyleInternal();
+        documentElement->invalidateStyle();
 
     m_phase = ViewTransitionPhase::Animating;
 
@@ -788,7 +852,7 @@ void ViewTransition::activateViewTransition()
     updatePseudoElementStylesWrite();
     updatePseudoElementRenderers();
 
-    Ref { m_ready.second }->resolve();
+    protect(m_ready.second)->resolve();
 }
 
 // https://drafts.csswg.org/css-view-transitions/#handle-transition-frame-algorithm
@@ -805,7 +869,7 @@ void ViewTransition::handleTransitionFrame()
         if (!documentElement->animations(pseudoElementIdentifier))
             return false;
 
-        Ref timeline = protectedDocument()->timeline();
+        Ref timeline = protect(document())->timeline();
         for (auto& animation : *documentElement->animations(pseudoElementIdentifier)) {
             auto playState = animation->playState();
             if (playState == WebAnimation::PlayState::Paused || playState == WebAnimation::PlayState::Running)
@@ -830,7 +894,7 @@ void ViewTransition::handleTransitionFrame()
     if (!hasActiveAnimations) {
         m_phase = ViewTransitionPhase::Done;
         clearViewTransition();
-        Ref { m_finished.second }->resolve();
+        protect(m_finished.second)->resolve();
         return;
     }
 
@@ -869,7 +933,7 @@ void ViewTransition::clearViewTransition()
     document->setActiveViewTransition(nullptr);
 
     if (RefPtr documentElement = document->documentElement())
-        documentElement->invalidateStyleInternal();
+        documentElement->invalidateStyle();
 }
 
 // https://drafts.csswg.org/css-view-transitions-1/#snapshot-containing-block
@@ -906,14 +970,14 @@ void ViewTransition::copyElementBaseProperties(RenderLayerModelObject& renderer,
     ASSERT(styleable);
     Style::Extractor styleExtractor { &styleable->element, false, styleable->pseudoElementIdentifier };
 
-    static constexpr auto transitionProperties = std::to_array<CSSPropertyID>({
-        CSSPropertyWritingMode,
-        CSSPropertyDirection,
-        CSSPropertyTextOrientation,
-        CSSPropertyMixBlendMode,
-        CSSPropertyBackdropFilter,
+    static constexpr auto transitionProperties = WTF::toArray<CSSPropertyID>({
+        CSSPropertyID::WritingMode,
+        CSSPropertyID::Direction,
+        CSSPropertyID::TextOrientation,
+        CSSPropertyID::MixBlendMode,
+        CSSPropertyID::BackdropFilter,
 #if ENABLE(DARK_MODE_CSS)
-        CSSPropertyColorScheme,
+        CSSPropertyID::ColorScheme,
 #endif
     });
 
@@ -944,7 +1008,7 @@ void ViewTransition::copyElementBaseProperties(RenderLayerModelObject& renderer,
             output.subpixelOffset = { };
         } else {
             transform.translate(transformState.accumulatedOffset().width(), transformState.accumulatedOffset().height());
-            output.subpixelOffset = snapTransformationTranslationToDevicePixels(transform, renderer.protectedDocument()->deviceScaleFactor());
+            output.subpixelOffset = snapTransformationTranslationToDevicePixels(transform, protect(renderer.document())->deviceScaleFactor());
         }
 
         output.layerToLayoutOffset = layerToLayoutOffset(renderer);
@@ -961,16 +1025,21 @@ void ViewTransition::copyElementBaseProperties(RenderLayerModelObject& renderer,
         transform.translate(output.size.width() / 2, output.size.height() / 2);
         transform.translateRight(-output.size.width() / 2, -output.size.height() / 2);
 
-        Ref transformListValue = CSSTransformListValue::create(Style::createCSSValue(CSSValuePool::singleton(), documentElementRenderer->style(), transform));
-        RefPtr { output.properties }->setProperty(CSSPropertyTransform, WTF::move(transformListValue));
+        // Factor out the zoom from the nearest common ancestor of the captured element and the view transition
+        // pseudo tree (the document element), so that it doesn't get applied a second time when rendering the
+        // snapshots.
+        transform.unzoom(documentElementRenderer->style().usedZoom());
+
+        Ref transformListValue = CSSTransformListValue::create(Style::createCSSValue(CSSValuePool::singleton(), protect(documentElementRenderer->style()), transform));
+        protect(output.properties)->setProperty(CSSPropertyID::Transform, WTF::move(transformListValue));
     }
 
     // Factor out the zoom from the nearest common ancestor of the captured element and the view transition
     // pseudo tree (the document element), so that it doesn't get applied a second time when rendering the
     // snapshots.
-    LayoutSize cssSize = adjustLayoutSizeForAbsoluteZoom(output.size, documentElementRenderer->style());
-    RefPtr { output.properties }->setProperty(CSSPropertyWidth, CSSPrimitiveValue::create(cssSize.width(), CSSUnitType::CSS_PX));
-    RefPtr { output.properties }->setProperty(CSSPropertyHeight, CSSPrimitiveValue::create(cssSize.height(), CSSUnitType::CSS_PX));
+    auto cssSize = Style::unapplyingZoom<LayoutSize>(output.size, documentElementRenderer->style());
+    protect(output.properties)->setProperty(CSSPropertyID::Width, CSSPrimitiveValue::create(cssSize.width(), CSSUnitType::Px));
+    protect(output.properties)->setProperty(CSSPropertyID::Height, CSSPrimitiveValue::create(cssSize.height(), CSSUnitType::Px));
 }
 
 // https://drafts.csswg.org/css-view-transitions-1/#update-pseudo-element-styles
@@ -1009,7 +1078,7 @@ void ViewTransition::updatePseudoElementStylesWrite()
 
     if (changed) {
         if (RefPtr documentElement = document->documentElement())
-            documentElement->invalidateStyleInternal();
+            documentElement->invalidateStyle();
     }
 }
 
@@ -1041,7 +1110,7 @@ ExceptionOr<void> ViewTransition::updatePseudoElementRenderers()
                 if (RefPtr frame = document->frame(); !viewTransitionCapture->canUseExistingLayers()) {
                     document->updateLayoutIgnorePendingStylesheets();
                     image = snapshotElementVisualOverflowClippedToViewport(*frame, *renderer, capturedElement->newState.overflowRect);
-                } else if (CheckedPtr layer = renderer->isDocumentElementRenderer() ? renderer->view().layer() : renderer->layer())
+                } else if (auto* layer = renderer->isDocumentElementRenderer() ? renderer->view().layer() : renderer->layer())
                     layer->setNeedsCompositingGeometryUpdate();
                 viewTransitionCapture->setImage(image);
             }
@@ -1061,7 +1130,7 @@ RenderViewTransitionCapture* ViewTransition::viewTransitionNewPseudoForCapturedE
     auto styleable = Styleable::fromRenderer(renderer);
     if (!styleable)
         return nullptr;
-    auto capturedName = Ref { styleable->element }->viewTransitionCapturedName(styleable->pseudoElementIdentifier);
+    auto capturedName = styleable->element.viewTransitionCapturedName(styleable->pseudoElementIdentifier);
     if (capturedName.isNull())
         return nullptr;
 
@@ -1075,11 +1144,12 @@ void ViewTransition::visibilityStateChanged()
     if (!document())
         return;
 
-    if (protectedDocument()->hidden()) {
-        if (protectedDocument()->activeViewTransition() == this)
+    Ref document = *this->document();
+    if (document->hidden()) {
+        if (document->activeViewTransition() == this)
             skipViewTransition(Exception { ExceptionCode::InvalidStateError, "Skipping view transition because document visibility state has become hidden."_s });
     } else
-        ASSERT(!protectedDocument()->activeViewTransition());
+        ASSERT(!document->activeViewTransition());
 }
 
 void ViewTransition::stop()
@@ -1088,10 +1158,25 @@ void ViewTransition::stop()
         return;
 
     m_phase = ViewTransitionPhase::Done;
-    protectedDocument()->unregisterForVisibilityStateChangedCallbacks(*this);
 
-    if (protectedDocument()->activeViewTransition() == this)
+    // The document is going away before it could capture, so the navigation proceeds without it.
+    if (auto outboundPostCaptureSteps = std::exchange(m_outboundPostCaptureSteps, nullptr))
+        outboundPostCaptureSteps(nullptr);
+
+    Ref document = *this->document();
+    document->unregisterForVisibilityStateChangedCallbacks(*this);
+
+    if (document->activeViewTransition() == this)
         clearViewTransition();
+}
+
+// https://drafts.csswg.org/css-view-transitions-2/#perform-pending-transition-operations
+void ViewTransition::runOutboundPostCaptureSteps()
+{
+    auto params = takeViewTransitionParams();
+    // Left capturing, with rendering suppressed, until the navigation replaces this document and
+    // skips it, as when the capture was made just before the navigation committed.
+    std::exchange(m_outboundPostCaptureSteps, nullptr)(params.moveToUniquePtr());
 }
 
 Document* ViewTransition::document() const
@@ -1101,15 +1186,15 @@ Document* ViewTransition::document() const
 
 bool ViewTransition::documentElementIsCaptured() const
 {
-    RefPtr document = this->document();
+    auto* document = this->document();
     if (!document)
         return false;
 
-    RefPtr documentElement = document->documentElement();
+    auto* documentElement = document->documentElement();
     if (!documentElement)
         return false;
 
-    CheckedPtr renderer = documentElement->renderer();
+    auto* renderer = documentElement->renderer();
     if (!renderer)
         return false;
 

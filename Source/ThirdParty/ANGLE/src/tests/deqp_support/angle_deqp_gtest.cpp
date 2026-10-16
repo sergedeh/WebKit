@@ -23,6 +23,7 @@
 #include "common/base/anglebase/no_destructor.h"
 #include "common/debug.h"
 #include "common/platform.h"
+#include "common/platform_helpers.h"
 #include "common/string_utils.h"
 #include "common/system_utils.h"
 #include "platform/PlatformMethods.h"
@@ -67,7 +68,7 @@ constexpr char kSupportPath[] = "src/tests/deqp_support/";
 #define GL_CTS_DIR(PATH) "external/openglcts/data/gl_cts/data/mustpass/gl/" PATH
 #define EGL_CTS_DIR(PATH) "external/openglcts/data/gl_cts/data/mustpass/egl/" PATH
 
-const char *gCaseListFiles[] = {
+constexpr std::array<const char *, 22> gCaseListFiles = {
     EGL_CTS_DIR("aosp_mustpass/main/egl-main.txt"),
     GLES_CTS_DIR("aosp_mustpass/main/gles2-main.txt"),
     GLES_CTS_DIR("aosp_mustpass/main/gles3-main.txt"),
@@ -92,7 +93,7 @@ const char *gCaseListFiles[] = {
     GLES_CTS_DIR("aosp_mustpass/main/gles31-565-no-depth-no-stencil.txt"),
 };
 
-const std::vector<const char *> gTestSuiteConfigParameters[] = {
+const std::array<std::vector<const char *>, 22> gTestSuiteConfigParameters = {{
     {"--deqp-gl-config-name=rgba8888d24s8ms0"},  // egl
     {"--deqp-gl-config-name=rgba8888d24s8ms0"},  // gles2
     {"--deqp-gl-config-name=rgba8888d24s8ms0"},  // gles3
@@ -115,12 +116,12 @@ const std::vector<const char *> gTestSuiteConfigParameters[] = {
     {"--deqp-gl-config-name=rgb565d0s0ms0"},     // gles3_rgb565_no_depth_no_stencil
     {"--deqp-gl-config-name=rgba8888d24s8ms4"},  // gles31_multisample
     {"--deqp-gl-config-name=rgb565d0s0ms0"},     // gles31_rgb565_no_depth_no_stencil
-};
+}};
 
 #undef GLES_CTS_DIR
 #undef GL_CTS_DIR
 
-const char *gTestExpectationsFiles[] = {
+constexpr std::array<const char *, 22> gTestExpectationsFiles = {
     "deqp_egl_test_expectations.txt",
     "deqp_gles2_test_expectations.txt",
     "deqp_gles3_test_expectations.txt",
@@ -151,7 +152,6 @@ constexpr APIInfo kEGLDisplayAPIs[] = {
 #if defined(ANGLE_PLATFORM_ANDROID)
     {"native-gles", GPUTestConfig::kAPIGLES},
 #endif
-    {"angle-d3d9", GPUTestConfig::kAPID3D9},
     {"angle-d3d11", GPUTestConfig::kAPID3D11},
     {"angle-d3d11-ref", GPUTestConfig::kAPID3D11},
     {"angle-gl", GPUTestConfig::kAPIGLDesktop},
@@ -178,6 +178,7 @@ constexpr char kGTestFilter[]               = "--gtest_filter=";
 constexpr char kdEQPSurfaceWidth[]          = "--deqp-surface-width=";
 constexpr char kdEQPSurfaceHeight[]         = "--deqp-surface-height=";
 constexpr char kdEQPBaseSeed[]              = "--deqp-base-seed";
+constexpr char kdEQPVisibility[]            = "--deqp-visibility";
 constexpr const char gdEQPLogImagesString[] = "--deqp-log-images=";
 
 // Use the config name defined in gTestSuiteConfigParameters by default
@@ -228,7 +229,7 @@ const char *GetDefaultAPIName()
     defined(ANGLE_PLATFORM_WINDOWS)
     return "angle-vulkan";
 #elif defined(ANGLE_PLATFORM_APPLE)
-    return "angle-gl";
+    return "angle-metal";
 #else
 #    error Unknown platform.
 #endif
@@ -672,8 +673,18 @@ void dEQPTest::SetUpTestSuite()
         argv.push_back(configParam);
     }
 
+    // Hide the test windows on Mac to avoid stealing focus during the long test runs. Skipped when
+    // --deqp-visibility was already given since dEQP rejects a repeated option.
+    bool visibilitySpecifiedFromCmdLine = false;
+    for (const char *flag : gdEQPForwardFlags)
+    {
+        visibilitySpecifiedFromCmdLine |=
+            strncmp(flag, kdEQPVisibility, strlen(kdEQPVisibility)) == 0;
+    }
+
     // Hide SwiftShader window to prevent a race with Xvfb causing hangs on test bots
-    if (gInitAPI && gInitAPI->second == GPUTestConfig::kAPISwiftShader)
+    const bool isSwiftShader = (gInitAPI && gInitAPI->second == GPUTestConfig::kAPISwiftShader);
+    if (!visibilitySpecifiedFromCmdLine && (IsMac() || isSwiftShader))
     {
         argv.push_back("--deqp-visibility=hidden");
     }

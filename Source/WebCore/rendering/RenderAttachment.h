@@ -36,13 +36,13 @@ class RenderAttachment final : public RenderReplaced {
     WTF_MAKE_TZONE_ALLOCATED(RenderAttachment);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderAttachment);
 public:
-    RenderAttachment(HTMLAttachmentElement&, RenderStyle&&);
+    RenderAttachment(HTMLAttachmentElement&, Style::ComputedStyle&&);
     virtual ~RenderAttachment();
 
-    HTMLAttachmentElement& attachmentElement() const;
+    HTMLAttachmentElement& LEGACY_NODELETE attachmentElement() const;
 
     void setShouldDrawBorder(bool drawBorder) { m_shouldDrawBorder = drawBorder; }
-    bool shouldDrawBorder() const;
+    bool LEGACY_NODELETE shouldDrawBorder() const;
 
     void setHasShadowControls(bool hasShadowControls) { m_hasShadowControls = hasShadowControls; }
     bool hasShadowControls() const { return m_hasShadowControls; }
@@ -56,6 +56,9 @@ public:
 private:
     void element() const = delete;
     ASCIILiteral renderName() const override { return "RenderAttachment"_s; }
+
+    NaturalDimensions zoomedNaturalDimensions() const final;
+
     LayoutSize layoutWideLayoutAttachmentOnly();
     void layoutShadowContent(const LayoutSize&) override;
 

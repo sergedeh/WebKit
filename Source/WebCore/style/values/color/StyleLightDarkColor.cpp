@@ -28,10 +28,10 @@
 
 #include "CSSLightDarkColor.h"
 #include "Document.h"
-#include "RenderStyle.h"
 #include "StyleBuilderState.h"
 #include "StyleColor.h"
 #include "StyleColorResolutionState.h"
+#include "StyleComputedStyle.h"
 
 namespace WebCore {
 namespace Style {
@@ -41,7 +41,7 @@ Color toStyleColor(const CSS::LightDarkColor& unresolved, ColorResolutionState& 
     ColorResolutionStateNester nester { state };
 
     Ref<const Document> document = state.document;
-    if (document->useDarkAppearance(CheckedRef { state.style }.ptr()))
+    if (document->useDarkAppearance(state.style.ptr()))
         return toStyleColor(unresolved.darkColor, state);
     return toStyleColor(unresolved.lightColor, state);
 }

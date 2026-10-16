@@ -25,7 +25,7 @@
 
 //# sourceURL=__InjectedScript_WebAutomationSessionProxy.js
 
-(function (sessionIdentifier, evaluate, createUUID, isValidNodeIdentifier) {
+(function (sessionIdentifier, currentFrameIdentifier, evaluate, createUUID, isValidNodeIdentifier, isKnownReference, addKnownReference) {
 
 const sessionNodePropertyName = "session-node-" + sessionIdentifier;
 
@@ -35,6 +35,7 @@ let AutomationSessionProxy = class AutomationSessionProxy
     {
         this._nodeToIdMap = new Map;
         this._idToNodeMap = new Map;
+        this._staleIdentifiers = new Set;
     }
 
     // Public
@@ -46,14 +47,17 @@ let AutomationSessionProxy = class AutomationSessionProxy
             .catch(error => { resultCallback(frameID, callbackID, error); });
     }
 
+    evaluateBidiScript(expression, awaitPromise, maxObjectDepth, frameID, callbackID, resultCallback, callbackTimeout)
+    {
+        this._executeBidiScript(expression, awaitPromise, maxObjectDepth, callbackTimeout)
+            .then(result => { resultCallback(frameID, callbackID, JSON.stringify(result)); })
+            .catch(error => { resultCallback(frameID, callbackID, error); });
+    }
+
     nodeForIdentifier(identifier)
     {
         this._clearStaleNodes();
-        try {
-            return this._nodeForIdentifier(identifier);
-        } catch (error) {
-            return null;
-        }
+        return this._nodeForIdentifier(identifier);
     }
 
     // Private
@@ -65,7 +69,7 @@ let AutomationSessionProxy = class AutomationSessionProxy
         if (callbackTimeout >= 0) {
             timeoutPromise = new Promise((resolve, reject) => {
                 timeoutIdentifier = setTimeout(() => {
-                    reject({ name: "JavaScriptTimeout", message: "script timed out after " + callbackTimeout + "ms" });
+                    reject({ name: "JavaScriptTimeout", message: `script timed out after ${callbackTimeout}ms` });
                 }, callbackTimeout);
             });
         }
@@ -112,6 +116,55 @@ let AutomationSessionProxy = class AutomationSessionProxy
         // Async scripts can call Promise.resolve() in the function script, generating a new promise that is resolved in a
         // timer (see w3c test execute_async_script/promise.py::test_promise_resolve_timeout). In that case, the internal race
         // finishes resolved, so we need to start a new one here to wait for the second promise to be resolved or the timeout.
+        let promises = [promise];
+        if (timeoutPromise)
+            promises.push(timeoutPromise);
+        return Promise.race(promises)
+            .finally(() => {
+                if (timeoutIdentifier) {
+                    clearTimeout(timeoutIdentifier);
+                }
+            });
+    }
+
+    _executeBidiScript(expression, awaitPromise, maxObjectDepth, callbackTimeout)
+    {
+        let timeoutPromise;
+        let timeoutIdentifier = 0;
+        if (callbackTimeout >= 0) {
+            timeoutPromise = new Promise((resolve, reject) => {
+                timeoutIdentifier = setTimeout(() => {
+                    reject({ name: "JavaScriptTimeout", message: `script timed out after ${callbackTimeout}ms` });
+                }, callbackTimeout);
+            });
+        }
+
+        let promise = new Promise((resolve, reject) => {
+            try {
+                // Execute expression using globalThis.eval pattern (like original implementation).
+                let result = globalThis.eval(expression);
+
+                if (awaitPromise && result && typeof result.then === "function") {
+                    // Handle promises for awaitPromise: true.
+                    result.then(
+                        value => {
+                            let serializedValue = this.serializeBidiRemoteValue(value, maxObjectDepth);
+                            resolve({ success: true, result: serializedValue });
+                        },
+                        error => {
+                            reject({ success: false, error: { name: error.name, message: error.message, stack: error.stack } });
+                        }
+                    );
+                } else {
+                    // Handle synchronous results or non-promises.
+                    let serializedValue = this.serializeBidiRemoteValue(result, maxObjectDepth);
+                    resolve({ success: true, result: serializedValue });
+                }
+            } catch (error) {
+                reject({ success: false, error: { name: error.name, message: error.message, stack: error.stack } });
+            }
+        });
+
         let promises = [promise];
         if (timeoutPromise)
             promises.push(timeoutPromise);
@@ -230,8 +283,12 @@ let AutomationSessionProxy = class AutomationSessionProxy
 
     _createNodeHandle(node)
     {
-        if (node.ownerDocument !== window.document || !node.isConnected)
-            throw {name: "NodeNotFound", message: "Stale element found when trying to create the node handle"};
+        if (node.ownerDocument !== window.document || !node.isConnected) {
+            // https://w3c.github.io/webdriver/#dfn-internal-json-clone
+            if (node instanceof Element)
+                throw {name: "StaleNode", message: "Stale element found when trying to create the node handle"};
+            throw {name: "NodeNotFound", message: "Stale node found when trying to create the node handle"};
+        }
 
         return {[sessionNodePropertyName]: this._identifierForNode(node)};
     }
@@ -244,6 +301,11 @@ let AutomationSessionProxy = class AutomationSessionProxy
         let node = this._idToNodeMap.get(identifier);
         if (node)
             return node;
+
+        // A node this frame knew about and then evicted is stale. One it never knew about
+        // belongs to a different browsing context, which callers must distinguish.
+        if (this._staleIdentifiers.has(identifier) || isKnownReference(currentFrameIdentifier, identifier))
+            throw {name: "StaleNode", message: "Node with identifier '" + identifier + "' is stale"};
         throw {name: "NodeNotFound", message: "Node with identifier '" + identifier + "' was not found"};
     }
 
@@ -257,6 +319,7 @@ let AutomationSessionProxy = class AutomationSessionProxy
 
         this._nodeToIdMap.set(node, identifier);
         this._idToNodeMap.set(identifier, node);
+        addKnownReference(currentFrameIdentifier, identifier);
 
         return identifier;
     }
@@ -268,8 +331,108 @@ let AutomationSessionProxy = class AutomationSessionProxy
             if (rootNode !== document) {
                 this._nodeToIdMap.delete(node);
                 this._idToNodeMap.delete(identifier);
+                this._staleIdentifiers.add(identifier);
             }
         }
+    }
+
+    // BiDi Script utilities for W3C WebDriver BiDi specification.
+    serializeBidiRemoteValue(value, maxObjectDepth = 1, depth = 0, visitedObjects = new Set())
+    {
+        // Handle primitives.
+        if (value === null) return { type: "null" };
+        if (value === undefined) return { type: "undefined" };
+        if (typeof value === "boolean") return { type: "boolean", value: value };
+        if (typeof value === "string") return { type: "string", value: value };
+        if (typeof value === "number") {
+            if (isNaN(value)) return { type: "number", value: "NaN" };
+            if (value === Infinity) return { type: "number", value: "Infinity" };
+            if (value === -Infinity) return { type: "number", value: "-Infinity" };
+            if (Object.is(value, -0)) return { type: "number", value: "-0" };
+            return { type: "number", value: value };
+        }
+        if (typeof value === "bigint") return { type: "bigint", value: value.toString() };
+        if (typeof value === "symbol") return { type: "symbol" };
+        if (typeof value === "function") return { type: "function" };
+
+        // Handle non-primitive types.
+        if (typeof value === "object" || typeof value === "function") {
+            // Special handling for window object.
+            if (value === window)
+                return { type: "window", value: { context: "context-id-placeholder" } };
+
+            // Handle Date, RegExp, Error, Promise.
+            if (value instanceof Date)
+                return { type: "date", value: value.toISOString() };
+            if (value instanceof RegExp)
+                return { type: "regexp", value: { pattern: value.source, flags: value.flags } };
+            if (value instanceof Error)
+                return { type: "error" };
+            if (value instanceof Promise)
+                return { type: "promise" };
+
+            // Handle collection types with serialization.
+            if (value instanceof Map) {
+                let entries = [];
+                for (let [k, v] of value.entries()) {
+                    entries.push({
+                        key: this.serializeBidiRemoteValue(k, maxObjectDepth, depth + 1, visitedObjects),
+                        value: this.serializeBidiRemoteValue(v, maxObjectDepth, depth + 1, visitedObjects)
+                    });
+                }
+                return { type: "map", value: entries };
+            }
+            if (value instanceof Set) {
+                let items = [];
+                for (let v of value.values())
+                    items.push(this.serializeBidiRemoteValue(v, maxObjectDepth, depth + 1, visitedObjects));
+                return { type: "set", value: items };
+            }
+
+            // Handle weak collections and ArrayBuffer types.
+            if (value instanceof WeakMap)
+                return { type: "weakmap" };
+            if (value instanceof WeakSet)
+                return { type: "weakset" };
+            if (value instanceof ArrayBuffer)
+                return { type: "arraybuffer" };
+            if (ArrayBuffer.isView(value))
+                return { type: "typedarray" };
+
+            // Check for cyclic references.
+            if (visitedObjects.has(value))
+                return { type: "object", value: {} };
+
+            // Check depth limit.
+            if (depth >= maxObjectDepth)
+                return { type: "object", value: {} };
+
+            visitedObjects.add(value);
+
+            try {
+                if (Array.isArray(value)) {
+                    let serializedArray = [];
+                    for (let i = 0; i < value.length; i++) {
+                        serializedArray[i] = this.serializeBidiRemoteValue(value[i], maxObjectDepth, depth + 1, visitedObjects);
+                    }
+                    return { type: "array", value: serializedArray };
+                } else {
+                    // Deterministic key ordering for plain objects.
+                    let serializedObject = {};
+                    let keys = Object.keys(value).sort();
+                    for (let i = 0; i < keys.length; ++i) {
+                        let key = keys[i];
+                        serializedObject[key] = this.serializeBidiRemoteValue(value[key], maxObjectDepth, depth + 1, visitedObjects);
+                    }
+                    return { type: "object", value: serializedObject };
+                }
+            } finally {
+                visitedObjects.delete(value);
+            }
+        }
+
+        // Fallback for unknown types.
+        return { type: "undefined" };
     }
 };
 

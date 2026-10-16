@@ -45,15 +45,14 @@ public:
     ScratchRegisterAllocator(const RegisterSet& usedRegisters);
     ~ScratchRegisterAllocator();
 
-    void lock(GPRReg);
+    void LEGACY_NODELETE lock(GPRReg);
     void lock(FPRReg);
-    void lock(JSValueRegs);
     
     template<typename BankInfo>
-    typename BankInfo::RegisterType allocateScratch();
+    typename BankInfo::RegisterType LEGACY_NODELETE allocateScratch();
     
-    GPRReg allocateScratchGPR();
-    FPRReg allocateScratchFPR();
+    GPRReg LEGACY_NODELETE allocateScratchGPR();
+    FPRReg LEGACY_NODELETE allocateScratchFPR();
     
     bool didReuseRegisters() const
     {

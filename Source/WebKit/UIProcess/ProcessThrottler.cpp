@@ -47,7 +47,7 @@
 namespace WebKit {
     
 static constexpr Seconds processSuspensionTimeout { 20_s };
-static constexpr Seconds removeAllAssertionsTimeout { 8_min };
+static constexpr Seconds removeAllAssertionsTimeout { 4_min };
 static constexpr Seconds processAssertionCacheLifetime { 1_s };
 
 Ref<ProcessThrottlerActivity> ProcessThrottlerActivity::create(ProcessThrottler& throttler, ASCIILiteral name, ProcessThrottlerActivityType type, IsQuietActivity isQuietActivity)
@@ -98,7 +98,7 @@ private:
             return adoptRef(*new CachedAssertion(cache, WTF::move(assertion)));
         }
 
-        bool isValid() const { return m_assertion->isValid(); }
+        bool LEGACY_NODELETE isValid() const { return m_assertion->isValid(); }
         Ref<ProcessAssertion> release() { return m_assertion.releaseNonNull(); }
 
     private:
@@ -132,7 +132,7 @@ namespace WebKit {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ProcessThrottler::ProcessAssertionCache);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ProcessThrottler::ProcessAssertionCache::CachedAssertion);
 
-static uint64_t generatePrepareToSuspendRequestID()
+static uint64_t LEGACY_NODELETE generatePrepareToSuspendRequestID()
 {
     static uint64_t prepareToSuspendRequestID = 0;
     return ++prepareToSuspendRequestID;
@@ -262,6 +262,8 @@ String ProcessThrottler::assertionName(ProcessAssertionType type) const
             return "Foreground"_s;
         case ProcessAssertionType::Background:
             return "Background"_s;
+        case ProcessAssertionType::BackgroundIdleJetsam:
+            return "BackgroundIdleJetsam"_s;
         case ProcessAssertionType::NearSuspended:
             return "NearSuspended"_s;
         case ProcessAssertionType::UnboundedNetworking:
@@ -284,7 +286,7 @@ ProcessAssertionType ProcessThrottler::assertionTypeForState(ProcessThrottleStat
     case ProcessThrottleState::Foreground:
         return ProcessAssertionType::Foreground;
     case ProcessThrottleState::Background:
-        return ProcessAssertionType::Background;
+        return m_shouldBackgroundActivitiesUseIdleJetsamBand ? ProcessAssertionType::BackgroundIdleJetsam : ProcessAssertionType::Background;
     case ProcessThrottleState::Suspended:
         return ProcessAssertionType::NearSuspended;
     }
@@ -292,14 +294,30 @@ ProcessAssertionType ProcessThrottler::assertionTypeForState(ProcessThrottleStat
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+#if !USE(RUNNINGBOARD)
+NO_RETURN_DUE_TO_ASSERT
+#endif
 void ProcessThrottler::setThrottleState(ProcessThrottleState newState)
 {
+#if !USE(RUNNINGBOARD)
+    ASSERT_NOT_REACHED();
+#endif
+
     assertIfCalledFromBackgroundThread();
 
+    bool didChange = m_state != newState;
     m_state = newState;
 
-    ProcessAssertionType newType = assertionTypeForState(newState);
+    // It's possible for the throttle state to be unchanged but the assertion type to change due to
+    // m_shouldBackgroundActivitiesUseIdleJetsamBand, so this has to be called unconditionally.
+    acquireAssertion(assertionTypeForState(newState));
 
+    if (didChange && m_isConnectedToProcess)
+        protect(m_process)->didChangeThrottleState(newState);
+}
+
+void ProcessThrottler::acquireAssertion(ProcessAssertionType newType)
+{
     if (m_assertion && m_assertion->isValid() && m_assertion->type() == newType)
         return;
 
@@ -307,7 +325,7 @@ void ProcessThrottler::setThrottleState(ProcessThrottleState newState)
         return;
 
     Ref process = m_process.get();
-    PROCESSTHROTTLER_RELEASE_LOG("setThrottleState: Updating process assertion type to %u (foregroundActivities=%u, backgroundActivities=%u)", WTF::enumToUnderlyingType(newType), m_foregroundActivities.computeSize(), m_backgroundActivities.computeSize());
+    PROCESSTHROTTLER_RELEASE_LOG("setThrottleState: Updating process assertion type to %u (foregroundActivities=%u, backgroundActivities=%u)", std::to_underlying(newType), m_foregroundActivities.computeSize(), m_backgroundActivities.computeSize());
 
     // Keep the previous assertion active until the new assertion is taken asynchronously.
     RefPtr previousAssertion = std::exchange(m_assertion, nullptr);
@@ -319,15 +337,15 @@ void ProcessThrottler::setThrottleState(ProcessThrottleState newState)
         if (m_shouldTakeUIBackgroundAssertion) {
             Ref assertion = ProcessAndUIAssertion::create(process, assertionName(newType), newType, ProcessAssertion::Mode::Async, [previousAssertion = WTF::move(previousAssertion)] { });
             assertion->setUIAssertionExpirationHandler([weakThis = WeakPtr { *this }] {
-                if (weakThis)
-                    weakThis->uiAssertionWillExpireImminently();
+                if (RefPtr protectedThis = weakThis)
+                    protectedThis->uiAssertionWillExpireImminently();
             });
             m_assertion = WTF::move(assertion);
         } else
             m_assertion = ProcessAssertion::create(process, assertionName(newType), newType, ProcessAssertion::Mode::Async, [previousAssertion = WTF::move(previousAssertion)] { });
     }
     RefPtr { m_assertion }->setInvalidationHandler([weakThis = WeakPtr { *this }] {
-        if (RefPtr protectedThis = weakThis.get())
+        if (RefPtr protectedThis = weakThis)
             protectedThis->assertionWasInvalidated();
     });
 
@@ -338,8 +356,6 @@ void ProcessThrottler::setThrottleState(ProcessThrottleState newState)
             m_dropNearSuspendedAssertionTimer.startOneShot(removeAllAssertionsTimeout);
     } else
         m_dropNearSuspendedAssertionTimer.stop();
-
-    process->didChangeThrottleState(newState);
 }
 
 void ProcessThrottler::ref() const
@@ -502,6 +518,17 @@ void ProcessThrottler::setAllowsActivities(bool allow)
     ASSERT(m_foregroundActivities.isEmptyIgnoringNullReferences());
     ASSERT(m_backgroundActivities.isEmptyIgnoringNullReferences());
     m_allowsActivities = allow;
+}
+
+void ProcessThrottler::setShouldBackgroundActivitiesUseIdleJetsamBand(bool shouldBackgroundActivitiesUseIdleJetsamBand)
+{
+    if (m_shouldBackgroundActivitiesUseIdleJetsamBand == shouldBackgroundActivitiesUseIdleJetsamBand)
+        return;
+    m_shouldBackgroundActivitiesUseIdleJetsamBand = shouldBackgroundActivitiesUseIdleJetsamBand;
+
+    // This looks redundant, but forces a throttle state => process assertion type recomputation.
+    if (m_state == ProcessThrottleState::Background)
+        setThrottleState(ProcessThrottleState::Background);
 }
 
 void ProcessThrottler::setShouldTakeNearSuspendedAssertion(bool shouldTakeNearSuspendedAssertion)

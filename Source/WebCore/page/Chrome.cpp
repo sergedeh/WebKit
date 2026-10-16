@@ -69,9 +69,11 @@
 #include "WindowFeatures.h"
 #include "WorkerClient.h"
 #include <JavaScriptCore/VM.h>
+#include <wtf/NativePromise.h>
 #include <wtf/SetForScope.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Vector.h>
+#include "LocalFrameInlines.h"
 
 namespace WebCore {
 
@@ -88,11 +90,6 @@ Chrome::Chrome(Page& page, UniqueRef<ChromeClient>&& client)
 Chrome::~Chrome()
 {
     m_client->chromeDestroyed();
-}
-
-Ref<Page> Chrome::protectedPage() const
-{
-    return m_page;
 }
 
 void Chrome::invalidateRootView(const IntRect& updateRect)
@@ -113,7 +110,7 @@ void Chrome::invalidateContentsForSlowScroll(const IntRect& updateRect)
 void Chrome::scroll(const IntSize& scrollDelta, const IntRect& rectToScroll, const IntRect& clipRect)
 {
     m_client->scroll(scrollDelta, rectToScroll, clipRect);
-    InspectorInstrumentation::didScroll(protectedPage());
+    InspectorInstrumentation::didScroll(protect(m_page));
 }
 
 IntPoint Chrome::screenToRootView(const IntPoint& point) const
@@ -176,6 +173,11 @@ void Chrome::scrollContainingScrollViewsToRevealRect(const IntRect& rect) const
 void Chrome::scrollMainFrameToRevealRect(const IntRect& rect) const
 {
     m_client->scrollMainFrameToRevealRect(rect);
+}
+
+void Chrome::scrollOriginDidChange(const LocalFrame& frame) const
+{
+    m_client->scrollOriginDidChange(frame);
 }
 
 void Chrome::setWindowRect(const FloatRect& rect)
@@ -246,12 +248,12 @@ void Chrome::runModal()
 {
     // Defer callbacks in all the other pages in this group, so we don't try to run JavaScript
     // in a way that could interact with this view.
-    PageGroupLoadDeferrer deferrer(m_page, false);
+    PageGroupLoadDeferrer deferrer(protect(m_page), false);
 
     // JavaScript that runs within the nested event loop must not be run in the context of the
     // script that called showModalDialog. Null out entryScope to break the connection.
 
-    RefPtr localTopDocument = m_page->localTopDocument();
+    RefPtr localTopDocument = protect(m_page)->localTopDocument();
     if (!localTopDocument)
         return;
 
@@ -261,24 +263,9 @@ void Chrome::runModal()
     m_client->runModal();
 }
 
-bool Chrome::toolbarsVisible() const
+bool Chrome::isPopup() const
 {
-    return m_client->toolbarsVisible();
-}
-
-bool Chrome::statusbarVisible() const
-{
-    return m_client->statusbarVisible();
-}
-
-bool Chrome::scrollbarsVisible() const
-{
-    return m_client->scrollbarsVisible();
-}
-
-bool Chrome::menubarVisible() const
-{
-    return m_client->menubarVisible();
+    return m_client->isPopup();
 }
 
 void Chrome::setResizable(bool b)
@@ -295,7 +282,7 @@ bool Chrome::runBeforeUnloadConfirmPanel(String&& message, LocalFrame& frame)
 {
     // Defer loads in case the client method runs a new event loop that would
     // otherwise cause the load to continue while we're in the middle of executing JavaScript.
-    PageGroupLoadDeferrer deferrer(m_page, true);
+    PageGroupLoadDeferrer deferrer(protect(m_page), true);
 
     return m_client->runBeforeUnloadConfirmPanel(WTF::move(message), frame);
 }
@@ -309,7 +296,7 @@ void Chrome::runJavaScriptAlert(LocalFrame& frame, const String& message)
 {
     // Defer loads in case the client method runs a new event loop that would
     // otherwise cause the load to continue while we're in the middle of executing JavaScript.
-    PageGroupLoadDeferrer deferrer(m_page, true);
+    PageGroupLoadDeferrer deferrer(protect(m_page), true);
 
     notifyPopupOpeningObservers();
     String displayMessage = frame.displayStringModifiedByEncoding(message);
@@ -321,7 +308,7 @@ bool Chrome::runJavaScriptConfirm(LocalFrame& frame, const String& message)
 {
     // Defer loads in case the client method runs a new event loop that would
     // otherwise cause the load to continue while we're in the middle of executing JavaScript.
-    PageGroupLoadDeferrer deferrer(protectedPage(), true);
+    PageGroupLoadDeferrer deferrer(protect(m_page), true);
 
     notifyPopupOpeningObservers();
     return m_client->runJavaScriptConfirm(frame, frame.displayStringModifiedByEncoding(message));
@@ -331,7 +318,7 @@ bool Chrome::runJavaScriptPrompt(LocalFrame& frame, const String& prompt, const 
 {
     // Defer loads in case the client method runs a new event loop that would
     // otherwise cause the load to continue while we're in the middle of executing JavaScript.
-    PageGroupLoadDeferrer deferrer(protectedPage(), true);
+    PageGroupLoadDeferrer deferrer(protect(m_page), true);
 
     notifyPopupOpeningObservers();
     String displayPrompt = frame.displayStringModifiedByEncoding(prompt);
@@ -350,7 +337,7 @@ void Chrome::mouseDidMoveOverElement(const HitTestResult& result, OptionSet<Plat
     getToolTip(result, toolTip, toolTipDirection);
     m_client->mouseDidMoveOverElement(result, modifiers, toolTip, toolTipDirection);
 
-    InspectorInstrumentation::mouseDidMoveOverElement(protectedPage(), result, modifiers);
+    InspectorInstrumentation::mouseDidMoveOverElement(protect(m_page), result, modifiers);
 }
 
 void Chrome::getToolTip(const HitTestResult& result, String& toolTip, TextDirection& toolTipDirection)
@@ -413,7 +400,7 @@ bool Chrome::print(LocalFrame& frame)
     // FIXME: This should have PageGroupLoadDeferrer, like runModal() or runJavaScriptAlert(), because it's no different from those.
 
     if (frame.document()->isSandboxed(SandboxFlag::Modals)) {
-        frame.document()->protectedWindow()->printErrorMessage("Use of window.print is not allowed in a sandboxed frame when the allow-modals flag is not set."_s);
+        protect(frame.document()->window())->printErrorMessage("Use of window.print is not allowed in a sandboxed frame when the allow-modals flag is not set."_s);
         return false;
     }
 
@@ -466,6 +453,11 @@ void Chrome::runOpenPanel(LocalFrame& frame, FileChooser& fileChooser)
     m_client->runOpenPanel(frame, fileChooser);
 }
 
+void Chrome::transcodeChosenFiles(Vector<String>&& transcodingPaths, String&& destinationUTI, String&& destinationExtension, CompletionHandler<void(Vector<String>&&)>&& completion)
+{
+    m_client->transcodeChosenFiles(WTF::move(transcodingPaths), WTF::move(destinationUTI), WTF::move(destinationExtension), WTF::move(completion));
+}
+
 void Chrome::showShareSheet(ShareDataWithParsedURL&& shareData, CompletionHandler<void(bool)>&& callback)
 {
     m_client->showShareSheet(WTF::move(shareData), WTF::move(callback));
@@ -477,14 +469,14 @@ void Chrome::showContactPicker(ContactsRequestData&& requestData, CompletionHand
 }
 
 #if ENABLE(WEB_AUTHN)
-void Chrome::showDigitalCredentialsPicker(const DigitalCredentialsRequestData& requestData, WTF::CompletionHandler<void(Expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData>&&)>&& callback)
+void Chrome::showDigitalCredentialsChooser(const DigitalCredentialsRequestData& requestData, WTF::CompletionHandler<void(std::expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData>&&)>&& callback)
 {
-    m_client->showDigitalCredentialsPicker(requestData, WTF::move(callback));
+    m_client->showDigitalCredentialsChooser(requestData, WTF::move(callback));
 }
 
-void Chrome::dismissDigitalCredentialsPicker(CompletionHandler<void(bool)>&& callback)
+void Chrome::dismissDigitalCredentialsChooser(CompletionHandler<void(bool)>&& callback)
 {
-    m_client->dismissDigitalCredentialsPicker(WTF::move(callback));
+    m_client->dismissDigitalCredentialsChooser(WTF::move(callback));
 }
 #endif
 
@@ -537,7 +529,7 @@ void Chrome::setCursorHiddenUntilMouseMoves(bool hiddenUntilMouseMoves)
     m_client->setCursorHiddenUntilMouseMoves(hiddenUntilMouseMoves);
 }
 
-RefPtr<ImageBuffer> Chrome::createImageBuffer(const FloatSize& size, RenderingMode renderingMode, RenderingPurpose purpose, float resolutionScale, const DestinationColorSpace& colorSpace, ImageBufferFormat pixelFormat) const
+RefPtr<ImageBuffer> Chrome::createImageBuffer(const FloatSize& size, RenderingMode renderingMode, RenderingPurpose purpose, float resolutionScale, const ColorSpace& colorSpace, ImageBufferFormat pixelFormat) const
 {
     return m_client->createImageBuffer(size, renderingMode, purpose, resolutionScale, colorSpace, pixelFormat);
 }
@@ -545,6 +537,23 @@ RefPtr<ImageBuffer> Chrome::createImageBuffer(const FloatSize& size, RenderingMo
 RefPtr<ImageBuffer> Chrome::sinkIntoImageBuffer(std::unique_ptr<SerializedImageBuffer> imageBuffer)
 {
     return m_client->sinkIntoImageBuffer(WTF::move(imageBuffer));
+}
+
+RefPtr<ImageBuffer> Chrome::createImageBufferFromTransferHandle(const ImageBufferTransferHandle& handle)
+{
+    return m_client->createImageBufferFromTransferHandle(handle);
+}
+
+#if ENABLE(OFFSCREEN_CANVAS)
+RefPtr<PlaceholderRenderingContextSource> Chrome::createPlaceholderRenderingContextSource(const RemotePlaceholderRenderingContextIdentifier& identifier)
+{
+    return m_client->createPlaceholderRenderingContextSource(identifier);
+}
+#endif
+
+RefPtr<NativePromise<Ref<NativeImage>, void>> Chrome::createDisplayOnlyImage(FrameIdentifier rootFrameIdentifier, const FloatSize& size, float scale, const ColorSpace& colorSpace, NOESCAPE const Function<void(GraphicsContext&)>& paint)
+{
+    return m_client->createDisplayOnlyImage(rootFrameIdentifier, size, scale, colorSpace, paint);
 }
 
 std::unique_ptr<WorkerClient> Chrome::createWorkerClient(SerialFunctionDispatcher& dispatcher)
@@ -590,9 +599,16 @@ PlatformDisplayID Chrome::displayID() const
     return m_page->displayID();
 }
 
+#if HAVE(IOSURFACE)
+bool Chrome::useIOSurfaceWebKitBehavior() const
+{
+    return m_client->useIOSurfaceWebKitBehavior();
+}
+#endif
+
 void Chrome::windowScreenDidChange(PlatformDisplayID displayID, std::optional<FramesPerSecond> nominalFrameInterval)
 {
-    protectedPage()->windowScreenDidChange(displayID, nominalFrameInterval);
+    protect(m_page)->windowScreenDidChange(displayID, nominalFrameInterval);
 }
 
 RefPtr<PopupMenu> Chrome::createPopupMenu(PopupMenuClient& client) const
@@ -620,7 +636,7 @@ void Chrome::didReceiveDocType(LocalFrame& frame)
     if (!frame.isMainFrame())
         return;
 
-    auto* doctype = frame.document()->doctype();
+    RefPtr doctype = protect(frame.document())->doctype();
     m_client->didReceiveMobileDocType(doctype && doctype->publicId().containsIgnoringASCIICase("xhtml mobile"_s));
 #endif
 }

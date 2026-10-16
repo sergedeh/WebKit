@@ -57,11 +57,11 @@ public:
     void dropNetworkActivity();
     void dropTextExtractionAssertion();
 
-    bool hasValidVisibleActivity() const;
-    bool hasValidAudibleActivity() const;
-    bool hasValidCapturingActivity() const;
-    bool hasValidMutedCaptureAssertion() const;
-    bool hasValidNetworkActivity() const;
+    bool LEGACY_NODELETE hasValidVisibleActivity() const;
+    bool LEGACY_NODELETE hasValidAudibleActivity() const;
+    bool LEGACY_NODELETE hasValidCapturingActivity() const;
+    bool LEGACY_NODELETE hasValidMutedCaptureAssertion() const;
+    bool LEGACY_NODELETE hasValidNetworkActivity() const;
 
 #if PLATFORM(IOS_FAMILY)
     void takeOpeningAppLinkActivity();
@@ -73,14 +73,13 @@ public:
     void updateWebProcessSuspensionDelay();
     void takeAccessibilityActivityWhenInWindow();
     void takeAccessibilityActivity();
-    bool hasAccessibilityActivityForTesting() const;
+    bool LEGACY_NODELETE hasAccessibilityActivityForTesting() const;
     void viewDidEnterWindow();
     void viewDidLeaveWindow();
 #endif
 
 private:
     WebProcessProxy& process() const;
-    Ref<WebProcessProxy> protectedProcess() const;
 
     Variant<WeakRef<WebPageProxy>, WeakRef<RemotePageProxy>> m_page;
 

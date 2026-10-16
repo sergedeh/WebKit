@@ -23,11 +23,11 @@
 
 #if ENABLE_SWIFTUI
 
-public import SwiftUI
-@_spi(CrossImportOverlay) public import WebKit
+import SwiftUI
+@_spi(CrossImportOverlay) import WebKit
 
 extension EdgeInsets {
-    #if canImport(UIKit)
+    #if WTF_PLATFORM_IOS_FAMILY
     init(_ edgeInsets: UIEdgeInsets) {
         self = EdgeInsets(top: edgeInsets.top, leading: edgeInsets.left, bottom: edgeInsets.bottom, trailing: edgeInsets.right)
     }
@@ -37,6 +37,16 @@ extension EdgeInsets {
     }
     #endif
 }
+
+#if WTF_PLATFORM_MAC
+extension NSEdgeInsets {
+    init(_ edgeInsets: EdgeInsets, layoutDirection: LayoutDirection) {
+        let left = layoutDirection == .rightToLeft ? edgeInsets.trailing : edgeInsets.leading
+        let right = layoutDirection == .rightToLeft ? edgeInsets.leading : edgeInsets.trailing
+        self.init(top: edgeInsets.top, left: left, bottom: edgeInsets.bottom, right: right)
+    }
+}
+#endif
 
 extension ScrollGeometry {
     init(_ geometry: WKScrollGeometryAdapter) {
@@ -56,7 +66,7 @@ extension Transaction {
 }
 
 extension EventModifiers {
-    #if canImport(UIKit)
+    #if WTF_PLATFORM_IOS_FAMILY
     init(_ wrapped: UIKeyModifierFlags) {
         self =
             switch wrapped {

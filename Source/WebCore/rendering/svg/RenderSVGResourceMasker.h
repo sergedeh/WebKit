@@ -34,11 +34,10 @@ class RenderSVGResourceMasker final : public RenderSVGResourceContainer {
     WTF_MAKE_TZONE_ALLOCATED(RenderSVGResourceMasker);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderSVGResourceMasker);
 public:
-    RenderSVGResourceMasker(SVGMaskElement&, RenderStyle&&);
+    RenderSVGResourceMasker(SVGMaskElement&, Style::ComputedStyle&&);
     virtual ~RenderSVGResourceMasker();
 
     inline SVGMaskElement& maskElement() const;
-    inline Ref<SVGMaskElement> protectedMaskElement() const;
 
     void applyMask(PaintInfo&, const RenderLayerModelObject& targetRenderer, const LayoutPoint& adjustedPaintOffset);
 
@@ -60,6 +59,11 @@ public:
 private:
     void element() const = delete;
 
+    FloatRect maskBoundsInLocalCoordinates(const FloatRect& targetBoundingBox, RepaintRectCalculation);
+
+    void clearCacheBeforeLayout() final { invalidateMask(); }
+
+    bool requiresLayer() const final { return true; }
     ASCIILiteral renderName() const final { return "RenderSVGResourceMasker"_s; }
     HashMap<SingleThreadWeakRef<const RenderLayerModelObject>, RefPtr<ImageBuffer>> m_masker;
 };

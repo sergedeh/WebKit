@@ -65,6 +65,16 @@ public:
         return m_functionForConstruct;
     }
 
+    void setNativeFunctionForDebugger(CodeSpecializationKind kind, TaggedNativeFunction function)
+    {
+        if (kind == CodeSpecializationKind::CodeForCall)
+            m_functionForCall = function;
+        else {
+            ASSERT(kind == CodeSpecializationKind::CodeForConstruct);
+            m_functionForConstruct = function;
+        }
+    }
+
     static constexpr ptrdiff_t offsetOfNativeFunctionFor(CodeSpecializationKind kind)
     {
         if (kind == CodeSpecializationKind::CodeForCall)
@@ -78,7 +88,7 @@ public:
         return OBJECT_OFFSETOF(InternalFunction, m_globalObject);
     }
 
-    JSGlobalObject* globalObject() const { return m_globalObject.get(); }
+    JSGlobalObject* globalObject() const LIFETIME_BOUND { return m_globalObject.get(); }
 
 protected:
     JS_EXPORT_PRIVATE InternalFunction(VM&, Structure*, NativeFunction functionForCall, NativeFunction functionForConstruct = nullptr);
@@ -87,8 +97,8 @@ protected:
     JS_EXPORT_PRIVATE void finishCreation(VM&, unsigned length, const String& name, PropertyAdditionMode = PropertyAdditionMode::WithStructureTransition);
     DECLARE_DEFAULT_FINISH_CREATION;
 
-    JS_EXPORT_PRIVATE static CallData getConstructData(JSCell*);
-    JS_EXPORT_PRIVATE static CallData getCallData(JSCell*);
+    JS_EXPORT_PRIVATE static CallData LEGACY_NODELETE getConstructData(JSCell*);
+    JS_EXPORT_PRIVATE static CallData LEGACY_NODELETE getCallData(JSCell*);
 
     TaggedNativeFunction m_functionForCall;
     TaggedNativeFunction m_functionForConstruct;
@@ -97,14 +107,16 @@ protected:
 };
 
 JS_EXPORT_PRIVATE JSGlobalObject* getFunctionRealm(JSGlobalObject*, JSObject*);
+JS_EXPORT_PRIVATE JSGlobalObject* tryGetFunctionRealm(JSObject*);
 
 #define JSC_GET_DERIVED_STRUCTURE(vm, structureMemberFunctionName, newTarget, constructor) \
     ((newTarget) == (constructor) \
         ? globalObject->structureMemberFunctionName() \
         : ([&]() -> Structure* { \
             auto scope = DECLARE_THROW_SCOPE((vm)); \
-            auto* functionGlobalObject = getFunctionRealm(globalObject, (newTarget)); \
-            RETURN_IF_EXCEPTION(scope, nullptr); \
+            auto* functionGlobalObject = tryGetFunctionRealm((newTarget)); \
+            if (!functionGlobalObject) \
+                functionGlobalObject = globalObject; \
             RELEASE_AND_RETURN(scope, InternalFunction::createSubclassStructure(globalObject, (newTarget), functionGlobalObject->structureMemberFunctionName())); \
         }()))
 

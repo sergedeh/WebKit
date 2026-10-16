@@ -64,8 +64,14 @@ void NetworkStateNotifier::updateStateWithoutNotifying()
         if (CFStringHasPrefix(interfaceName.get(), CFSTR("vmnet")))
             continue;
 
-        auto key = adoptCF(SCDynamicStoreKeyCreateNetworkInterfaceEntity(0, kSCDynamicStoreDomainState, interfaceName.get(), kSCEntNetIPv4));
-        if (auto value = adoptCF(SCDynamicStoreCopyValue(m_store.get(), key.get()))) {
+        RetainPtr ipv4Key = adoptCF(SCDynamicStoreKeyCreateNetworkInterfaceEntity(0, kSCDynamicStoreDomainState, interfaceName.get(), kSCEntNetIPv4));
+        if (RetainPtr value = adoptCF(SCDynamicStoreCopyValue(m_store.get(), ipv4Key.get()))) {
+            m_isOnLine = true;
+            return;
+        }
+
+        RetainPtr ipv6Key = adoptCF(SCDynamicStoreKeyCreateNetworkInterfaceEntity(0, kSCDynamicStoreDomainState, interfaceName.get(), kSCEntNetIPv6));
+        if (RetainPtr value = adoptCF(SCDynamicStoreCopyValue(m_store.get(), ipv6Key.get()))) {
             m_isOnLine = true;
             return;
         }
@@ -77,10 +83,10 @@ void NetworkStateNotifier::updateStateWithoutNotifying()
 void NetworkStateNotifier::startObserving()
 {
     SCDynamicStoreContext context = { 0, this, 0, 0, 0 };
-    m_store = adoptCF(SCDynamicStoreCreate(0, CFSTR("com.apple.WebCore"), [] (SCDynamicStoreRef, CFArrayRef, void*) {
+    lazyInitialize(m_store, adoptCF(SCDynamicStoreCreate(0, CFSTR("com.apple.WebCore"), [] (SCDynamicStoreRef, CFArrayRef, void*) {
         // Calling updateState() could be expensive so we coalesce calls with a timer.
         singleton().updateStateSoon();
-    }, &context));
+    }, &context)));
     if (!m_store)
         return;
 
@@ -92,10 +98,12 @@ void NetworkStateNotifier::startObserving()
 
     auto keys = adoptCF(CFArrayCreateMutable(0, 0, &kCFTypeArrayCallBacks));
     CFArrayAppendValue(keys.get(), adoptCF(SCDynamicStoreKeyCreateNetworkGlobalEntity(0, kSCDynamicStoreDomainState, kSCEntNetIPv4)).get());
+    CFArrayAppendValue(keys.get(), adoptCF(SCDynamicStoreKeyCreateNetworkGlobalEntity(0, kSCDynamicStoreDomainState, kSCEntNetIPv6)).get());
     CFArrayAppendValue(keys.get(), adoptCF(SCDynamicStoreKeyCreateNetworkGlobalEntity(0, kSCDynamicStoreDomainState, kSCEntNetDNS)).get());
 
     auto patterns = adoptCF(CFArrayCreateMutable(0, 0, &kCFTypeArrayCallBacks));
     CFArrayAppendValue(patterns.get(), adoptCF(SCDynamicStoreKeyCreateNetworkInterfaceEntity(0, kSCDynamicStoreDomainState, kSCCompAnyRegex, kSCEntNetIPv4)).get());
+    CFArrayAppendValue(patterns.get(), adoptCF(SCDynamicStoreKeyCreateNetworkInterfaceEntity(0, kSCDynamicStoreDomainState, kSCCompAnyRegex, kSCEntNetIPv6)).get());
 
     SCDynamicStoreSetNotificationKeys(m_store.get(), keys.get(), patterns.get());
 }

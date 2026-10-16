@@ -1,3 +1,4 @@
+<!-- webkit-test-runner [ SearchInputResultsAttributeEnabled=true ] -->
 <html>
 <head>
 <script src="../../../resources/js-test.js"></script>
@@ -10,8 +11,7 @@
 <input type="submit" value="search">
 </form>
 <script>
-if (window.testRunner)
-    testRunner.waitUntilDone();
+window.jsTestIsAsync = true;
 
 window.onload = function() {
     if (window.location.href.indexOf('searchName') == -1) {
@@ -32,7 +32,7 @@ window.onload = function() {
         shouldBe('recentSearches.length', '1');
         shouldBeEqualToString('recentSearches[0]', 'searchValue');
     }
-    testRunner.notifyDone(); 
+    finishJSTest();
 }
 </script>
 </body>

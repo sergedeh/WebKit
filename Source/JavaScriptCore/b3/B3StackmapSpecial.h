@@ -54,21 +54,21 @@ public:
     };
 
 protected:
-    void reportUsedRegisters(Air::Inst&, const RegisterSetBuilder&) final;
-    RegisterSetBuilder extraEarlyClobberedRegs(Air::Inst&) final;
-    RegisterSetBuilder extraClobberedRegs(Air::Inst&) final;
+    void reportUsedRegisters(Air::Inst&, const RegisterSet&) final;
+    RegisterSet extraEarlyClobberedRegs(Air::Inst&) final;
+    RegisterSet extraClobberedRegs(Air::Inst&) final;
 
     // Note that this does not override generate() or dumpImpl()/deepDumpImpl(). We have many
     // subclasses that implement that.
     void forEachArgImpl(
         unsigned numIgnoredB3Args, unsigned numIgnoredAirArgs,
         Air::Inst&, RoleMode, std::optional<unsigned> firstRecoverableIndex,
-        const ScopedLambda<Air::Inst::EachArgCallback>&, std::optional<Width> optionalDefArgWidth);
+        NOESCAPE const ScopedLambda<Air::Inst::EachArgCallback>&, std::optional<Width> optionalDefArgWidth);
 
     bool isValidImpl(
         unsigned numIgnoredB3Args, unsigned numIgnoredAirArgs,
         Air::Inst&);
-    bool admitsStackImpl(
+    bool LEGACY_NODELETE admitsStackImpl(
         unsigned numIgnoredB3Args, unsigned numIgnoredAirArgs,
         Air::Inst&, unsigned argIndex);
 
@@ -77,7 +77,7 @@ protected:
         Air::GenerationContext&, unsigned numIgnoredB3Args, unsigned numIgnoredAirArgs, Air::Inst&);
 
     static bool isArgValidForType(const Air::Arg&, Type);
-    static bool isArgValidForRep(Air::Code&, const Air::Arg&, const ValueRep&);
+    static bool LEGACY_NODELETE isArgValidForRep(Air::Code&, const Air::Arg&, const ValueRep&);
     static ValueRep repForArg(Air::Code&, const Air::Arg&);
 };
 

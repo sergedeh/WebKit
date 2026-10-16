@@ -46,10 +46,13 @@ class Page;
 class SecurityOrigin;
 class Storage;
 
-class InspectorDOMStorageAgent final : public InspectorAgentBase, public Inspector::DOMStorageBackendDispatcherHandler {
+class InspectorDOMStorageAgent final : public InspectorAgentBase, public Inspector::DOMStorageBackendDispatcherHandler, public CanMakeCheckedPtr<InspectorDOMStorageAgent> {
     WTF_MAKE_NONCOPYABLE(InspectorDOMStorageAgent);
     WTF_MAKE_TZONE_ALLOCATED(InspectorDOMStorageAgent);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(InspectorDOMStorageAgent);
 public:
+    OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeCheckedPtr);
+
     explicit InspectorDOMStorageAgent(PageAgentContext&);
     ~InspectorDOMStorageAgent();
 
@@ -73,7 +76,7 @@ public:
     static Ref<Inspector::Protocol::DOMStorage::StorageId> storageId(const SecurityOrigin&, bool isLocalStorage);
 
 private:
-    RefPtr<StorageArea> findStorageArea(Inspector::Protocol::ErrorString&, Ref<JSON::Object>&& storageId, LocalFrame*&);
+    RefPtr<StorageArea> findStorageArea(Inspector::Protocol::ErrorString&, Ref<JSON::Object>&& storageId, RefPtr<LocalFrame>& targetFrame);
 
     const UniqueRef<Inspector::DOMStorageFrontendDispatcher> m_frontendDispatcher;
     const Ref<Inspector::DOMStorageBackendDispatcher> m_backendDispatcher;

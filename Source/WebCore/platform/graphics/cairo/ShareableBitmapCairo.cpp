@@ -38,23 +38,33 @@ namespace WebCore {
 
 static const cairo_format_t cairoFormat = CAIRO_FORMAT_ARGB32;
 
-std::optional<DestinationColorSpace> ShareableBitmapConfiguration::validateColorSpace(std::optional<DestinationColorSpace> colorSpace)
+ColorSpace ShareableBitmapConfiguration::validateColorSpace(const ColorSpace& colorSpace)
 {
     return colorSpace;
 }
 
-CheckedUint32 ShareableBitmapConfiguration::calculateBitsPerComponent(const DestinationColorSpace& colorSpace)
+CheckedUint32 ShareableBitmapConfiguration::calculateBitsPerComponent(PixelFormat pixelFormat, const ColorSpace& colorSpace)
 {
-    return (calculateBytesPerPixel(colorSpace) / 4) * 8;
+    return (calculateBytesPerPixel(pixelFormat, colorSpace) / 4) * 8;
 }
 
-CheckedUint32 ShareableBitmapConfiguration::calculateBytesPerPixel(const DestinationColorSpace&)
+CheckedUint32 ShareableBitmapConfiguration::calculateBytesPerPixel(PixelFormat pixelFormat, const ColorSpace&)
 {
+#if ENABLE(PIXEL_FORMAT_RGBA16F)
+    RELEASE_ASSERT(pixelFormat != PixelFormat::RGBA16F);
+#else
+    UNUSED_PARAM(pixelFormat);
+#endif
     return 4;
 }
 
-CheckedUint32 ShareableBitmapConfiguration::calculateBytesPerRow(const IntSize& size, const DestinationColorSpace&)
+CheckedUint32 ShareableBitmapConfiguration::calculateBytesPerRow(const IntSize& size, PixelFormat pixelFormat, const ColorSpace&)
 {
+#if ENABLE(PIXEL_FORMAT_RGBA16F)
+    RELEASE_ASSERT(pixelFormat != PixelFormat::RGBA16F);
+#else
+    UNUSED_PARAM(pixelFormat);
+#endif
     return cairo_format_stride_for_width(cairoFormat, size.width());
 }
 
@@ -86,11 +96,16 @@ void ShareableBitmap::paint(GraphicsContext& context, float scaleFactor, const I
     Cairo::drawSurface(*context.platformContext(), surface.get(), destRect, srcRect, state.imageInterpolationQuality(), state.alpha(), Cairo::ShadowState(state));
 }
 
-PlatformImagePtr ShareableBitmap::createPlatformImage(BackingStoreCopy, ShouldInterpolate)
+PlatformImagePtr ShareableBitmap::createBasePlatformImage(BackingStoreCopy, ShouldInterpolate)
 {
     // FIXME: Implement and remove createPersistentCairoSurface(), createCairoSurface().
     ASSERT_NOT_REACHED();
     return nullptr;
+}
+
+PlatformImagePtr ShareableBitmap::createPlatformImage(BackingStoreCopy copyBehavior, ShouldInterpolate shouldInterpolate)
+{
+    return createBasePlatformImage(copyBehavior, shouldInterpolate);
 }
 
 RefPtr<cairo_surface_t> ShareableBitmap::createPersistentCairoSurface()
@@ -113,7 +128,7 @@ void ShareableBitmap::releaseSurfaceData(void* typelessBitmap)
     static_cast<ShareableBitmap*>(typelessBitmap)->deref(); // Balanced by ref in createCairoSurface.
 }
 
-RefPtr<Image> ShareableBitmap::createImage()
+RefPtr<BitmapImage> ShareableBitmap::createImage()
 {
     RefPtr<cairo_surface_t> surface = createCairoSurface();
     if (!surface)

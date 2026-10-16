@@ -37,11 +37,10 @@ class RenderSVGResourceFilter final : public RenderSVGResourcePaintServer {
     WTF_MAKE_TZONE_ALLOCATED(RenderSVGResourceFilter);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderSVGResourceFilter);
 public:
-    RenderSVGResourceFilter(SVGElement&, RenderStyle&&);
+    RenderSVGResourceFilter(SVGElement&, Style::ComputedStyle&&);
     virtual ~RenderSVGResourceFilter();
 
     inline SVGFilterElement& filterElement() const;
-    inline Ref<SVGFilterElement> protectedFilterElement() const;
 
     inline SVGUnitTypes::SVGUnitType filterUnits() const;
     inline SVGUnitTypes::SVGUnitType primitiveUnits() const;

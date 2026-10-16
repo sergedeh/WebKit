@@ -25,10 +25,13 @@
 
 #pragma once
 
-#if ENABLE(WEBASSEMBLY)
+#if ENABLE(WEBASSEMBLY_DEBUGGER)
 #include "WasmVirtualAddress.h"
 
 namespace JSC {
+
+class JSWebAssemblyInstance;
+
 namespace Wasm {
 
 class DebugServer;
@@ -56,16 +59,18 @@ public:
     void handleLibrariesRead(StringView packet);
     void handleWasmCallStack(StringView packet);
     void handleWasmLocal(StringView packet);
+    void handleWasmGlobal(StringView packet);
+    void handleWasmStackValue(StringView packet);
 
 private:
     DebugServer& m_debugServer;
 
     bool parseLibrariesReadPacket(StringView packet, size_t& offset, size_t& maxSize);
     bool handleChunkedLibrariesResponse(size_t offset, size_t maxSize, String& response);
-    String buildWasmCallStackResponse();
+    JSWebAssemblyInstance* instanceForFrame(uint32_t frameIndex);
 };
 
 } // namespace Wasm
 } // namespace JSC
 
-#endif // ENABLE(WEBASSEMBLY)
+#endif // ENABLE(WEBASSEMBLY_DEBUGGER)

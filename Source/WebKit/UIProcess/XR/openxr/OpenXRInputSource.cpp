@@ -1,24 +1,32 @@
 /*
- * Copyright (C) 2025 Igalia, S.L.
+ * Copyright (C) 2025-2026 Igalia, S.L.
  *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Library General Public
- * License as published by the Free Software Foundation; either
- * version 2 of the License, or (at your option) any later version.
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
  *
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Library General Public License for more details.
- *
- * You should have received a copy of the GNU Library General Public License
- * aint with this library; see the file COPYING.LIB.  If not, write to
- * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
- * Boston, MA 02110-1301, USA.
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+ * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 #include "config.h"
 #include "OpenXRInputSource.h"
+
+#include <wtf/text/TextStream.h>
 
 #if ENABLE(WEBXR) && USE(OPENXR)
 
@@ -73,13 +81,13 @@ XrResult OpenXRInputSource::initialize(OpenXRSystemProperties&& systemProperties
 {
     String handednessName = handednessToString(m_handedness);
     m_subactionPathName = makeString(s_userHandPath, handednessName);
-    RETURN_RESULT_IF_FAILED(xrStringToPath(m_instance, m_subactionPathName.utf8().data(), &m_subactionPath));
+    RETURN_RESULT_IF_FAILED(xrStringToPath(m_instance, m_subactionPathName.utf8().legacyCStringPointer(), &m_subactionPath));
 
     auto prefix = makeString("input_"_s, handednessName);
     auto actionSetName = makeString(prefix, "_action_set"_s);
     auto createInfo = createOpenXRStruct<XrActionSetCreateInfo, XR_TYPE_ACTION_SET_CREATE_INFO>();
-    std::strncpy(createInfo.actionSetName, actionSetName.utf8().data(), XR_MAX_ACTION_SET_NAME_SIZE - 1);
-    std::strncpy(createInfo.localizedActionSetName, actionSetName.utf8().data(), XR_MAX_ACTION_SET_NAME_SIZE - 1);
+    std::strncpy(createInfo.actionSetName, actionSetName.utf8().legacyCStringPointer(), XR_MAX_ACTION_SET_NAME_SIZE - 1);
+    std::strncpy(createInfo.localizedActionSetName, actionSetName.utf8().legacyCStringPointer(), XR_MAX_ACTION_SET_NAME_SIZE - 1);
 
     RETURN_RESULT_IF_FAILED(xrCreateActionSet(m_instance, &createInfo, &m_actionSet));
 
@@ -321,7 +329,7 @@ XrResult OpenXRInputSource::updateInteractionProfile()
     for (auto& profile : openXRInteractionProfiles) {
         if (equalSpans(profile.path.span(), unsafeSpan(buffer))) {
             m_usingHandInteractionProfile = equalSpans(profile.path.span(), handInteractionProfilePath.span());
-            LOG(XR, "Input source %s using interaction profile %s", m_subactionPathName.utf8().data(), profile.path.span().data());
+            LOG_WITH_STREAM(XR, stream << "Input source "_s << m_subactionPathName << " using interaction profile "_s << profile.path.span().data());
             for (const auto& id : profile.profileIds)
                 m_profiles.append(String::fromUTF8(id));
             break;
@@ -349,8 +357,8 @@ XrResult OpenXRInputSource::createAction(XrActionType actionType, const String& 
     createInfo.actionType = actionType;
     createInfo.countSubactionPaths = 1;
     createInfo.subactionPaths = &m_subactionPath;
-    std::strncpy(createInfo.actionName, name.utf8().data(), XR_MAX_ACTION_SET_NAME_SIZE - 1);
-    std::strncpy(createInfo.localizedActionName, name.utf8().data(), XR_MAX_ACTION_SET_NAME_SIZE - 1);
+    std::strncpy(createInfo.actionName, name.utf8().legacyCStringPointer(), XR_MAX_ACTION_SET_NAME_SIZE - 1);
+    std::strncpy(createInfo.localizedActionName, name.utf8().legacyCStringPointer(), XR_MAX_ACTION_SET_NAME_SIZE - 1);
 
     return xrCreateAction(m_actionSet, &createInfo, &action);
 }
@@ -374,7 +382,7 @@ XrResult OpenXRInputSource::createBinding(const char* profilePath, XrAction acti
     ASSERT(!bindingPath.isEmpty());
 
     XrPath path = XR_NULL_PATH;
-    RETURN_RESULT_IF_FAILED(xrStringToPath(m_instance, bindingPath.utf8().data(), &path));
+    RETURN_RESULT_IF_FAILED(xrStringToPath(m_instance, bindingPath.utf8().legacyCStringPointer(), &path));
 
     XrActionSuggestedBinding binding { action, path };
     if (auto it = bindings.find(profilePath); it != bindings.end())

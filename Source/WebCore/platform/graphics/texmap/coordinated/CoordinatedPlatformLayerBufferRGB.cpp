@@ -26,7 +26,7 @@
 #include "config.h"
 #include "CoordinatedPlatformLayerBufferRGB.h"
 
-#if USE(COORDINATED_GRAPHICS)
+#if USE(COORDINATED_GRAPHICS) && USE(TEXTURE_MAPPER)
 #include "BitmapTexture.h"
 #include "TextureMapper.h"
 
@@ -56,6 +56,11 @@ CoordinatedPlatformLayerBufferRGB::CoordinatedPlatformLayerBufferRGB(unsigned te
 
 CoordinatedPlatformLayerBufferRGB::~CoordinatedPlatformLayerBufferRGB() = default;
 
+unsigned CoordinatedPlatformLayerBufferRGB::textureID() const
+{
+    return m_texture ? m_texture->id() : m_textureID;
+}
+
 void CoordinatedPlatformLayerBufferRGB::paintToTextureMapper(TextureMapper& textureMapper, const FloatRect& targetRect, const TransformationMatrix& modelViewMatrix, float opacity)
 {
     waitForContentsIfNeeded();
@@ -68,4 +73,4 @@ void CoordinatedPlatformLayerBufferRGB::paintToTextureMapper(TextureMapper& text
 
 } // namespace WebCore
 
-#endif // USE(COORDINATED_GRAPHICS)
+#endif // USE(COORDINATED_GRAPHICS) && USE(TEXTURE_MAPPER)

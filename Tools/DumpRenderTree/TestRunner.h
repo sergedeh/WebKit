@@ -36,6 +36,7 @@
 #include <string>
 #include <vector>
 #include <wtf/RefCounted.h>
+#include <wtf/text/UTF8CStringView.h>
 #include <wtf/text/WTFString.h>
 
 #if PLATFORM(COCOA)
@@ -79,8 +80,8 @@ public:
     void clearBackForwardList();
     void clearPersistentUserStyleSheet();
     bool callShouldCloseOnWebView();
-    JSRetainPtr<JSStringRef> copyDecodedHostName(JSStringRef name);
-    JSRetainPtr<JSStringRef> copyEncodedHostName(JSStringRef name);
+    RefPtr<OpaqueJSString> copyDecodedHostName(JSStringRef name);
+    RefPtr<OpaqueJSString> copyEncodedHostName(JSStringRef name);
     void dispatchPendingLoadRequests();
     void display();
     void displayAndTrackRepaints();
@@ -97,7 +98,7 @@ public:
     int numberOfPendingGeolocationPermissionRequests();
     bool isGeolocationProviderActive();
     void overridePreference(JSStringRef key, JSStringRef value);
-    JSRetainPtr<JSStringRef> pathToLocalResource(JSContextRef, JSStringRef url);
+    RefPtr<OpaqueJSString> pathToLocalResource(JSContextRef, JSStringRef url);
     void queueBackNavigation(int howFarBackward);
     void queueForwardNavigation(int howFarForward);
     void queueLoad(JSStringRef url, JSStringRef target);
@@ -139,7 +140,7 @@ public:
     void setShouldInvertColors(bool);
 #endif
 
-    void setPageVisibility(const char*);
+    void setPageVisibility(UTF8CStringView);
     void resetPageVisibility();
 
     static void setAllowsAnySSLCertificate(bool);
@@ -213,11 +214,13 @@ public:
     bool dumpHistoryDelegateCallbacks() const { return m_dumpHistoryDelegateCallbacks; }
     void setDumpHistoryDelegateCallbacks(bool dumpHistoryDelegateCallbacks) { m_dumpHistoryDelegateCallbacks = dumpHistoryDelegateCallbacks; }
     
-    bool dumpResourceLoadCallbacks() const { return m_dumpResourceLoadCallbacks; }
+    bool shouldDumpResourceLoadCallbacks() const { return m_dumpResourceLoadCallbacks; }
     void setDumpResourceLoadCallbacks(bool dumpResourceLoadCallbacks) { m_dumpResourceLoadCallbacks = dumpResourceLoadCallbacks; }
+    void addResourceLoadCallback(std::string);
+    void dumpResourceLoadCallbacks();
     
-    bool dumpResourceResponseMIMETypes() const { return m_dumpResourceResponseMIMETypes; }
-    void setDumpResourceResponseMIMETypes(bool dumpResourceResponseMIMETypes) { m_dumpResourceResponseMIMETypes = dumpResourceResponseMIMETypes; }
+    std::string resourceResponseMIMETypesToDump() const { return m_resourceResponseMIMETypesToDump; }
+    void dumpResourceResponseMIMETypes(std::string dumpResourceResponseMIMETypes) { m_resourceResponseMIMETypesToDump = dumpResourceResponseMIMETypes; }
 
     bool dumpSelectionRect() const { return m_dumpSelectionRect; }
     void setDumpSelectionRect(bool dumpSelectionRect) { m_dumpSelectionRect = dumpSelectionRect; }
@@ -326,7 +329,7 @@ public:
     void showWebInspector();
     void closeWebInspector();
     void evaluateInWebInspector(JSStringRef script);
-    JSRetainPtr<JSStringRef> inspectorTestStubURL();
+    RefPtr<OpaqueJSString> inspectorTestStubURL();
 
     void evaluateScriptInIsolatedWorld(unsigned worldID, JSObjectRef globalObject, JSStringRef script);
     void evaluateScriptInIsolatedWorldAndReturnValue(unsigned worldID, JSObjectRef globalObject, JSStringRef script);
@@ -439,7 +442,7 @@ private:
     bool m_dumpUserGestureInFrameLoadCallbacks { false };
     bool m_dumpHistoryDelegateCallbacks { false };
     bool m_dumpResourceLoadCallbacks { false };
-    bool m_dumpResourceResponseMIMETypes { false };
+    std::string m_resourceResponseMIMETypesToDump;
     bool m_dumpSelectionRect { false };
     bool m_dumpSourceAsWebArchive { false };
     bool m_dumpStatusCallbacks { false };
@@ -487,6 +490,7 @@ private:
     std::string m_testURL;
     std::string m_expectedPixelHash; // empty string if no hash
     std::string m_titleTextDirection;
+    std::vector<std::string> m_resourceLoadCallbacks;
 
     std::set<std::string> m_willSendRequestClearHeaders;
     std::set<std::string> m_allowedHosts;

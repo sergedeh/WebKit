@@ -28,21 +28,11 @@
 #include <JavaScriptCore/ExecutableMemoryHandle.h>
 #include <JavaScriptCore/JSCPtrTag.h>
 #include <wtf/CodePtr.h>
-#include <wtf/DataLog.h>
 #include <wtf/PrintStream.h>
 #include <wtf/RefPtr.h>
 #include <wtf/text/CString.h>
 
-#if CPU(ARM_THUMB2) && ENABLE(JIT)
-// ARM instructions must be 16-bit aligned. Thumb2 code pointers to be loaded into
-// into the processor are decorated with the bottom bit set, while traditional ARM has
-// the lower bit clear. Since we don't know what kind of pointer, we check for both
-// decorated and undecorated null.
-#define ASSERT_VALID_CODE_OFFSET(offset) \
-    ASSERT(!(offset & 1)) // Must be multiple of 2.
-#else
 #define ASSERT_VALID_CODE_OFFSET(offset) // Anything goes!
-#endif
 
 namespace JSC {
 
@@ -63,7 +53,7 @@ class MacroAssemblerCodeRefBase {
 protected:
     static bool tryToDisassemble(CodePtr<DisassemblyPtrTag>, size_t, const char* prefix, PrintStream& out);
     static bool tryToDisassemble(CodePtr<DisassemblyPtrTag>, size_t, const char* prefix);
-    JS_EXPORT_PRIVATE static CString disassembly(CodePtr<DisassemblyPtrTag>, size_t);
+    JS_EXPORT_PRIVATE static UTF8CString disassembly(CodePtr<DisassemblyPtrTag>, size_t);
 };
 
 template<PtrTag tag>
@@ -143,7 +133,7 @@ public:
         return tryToDisassemble(retaggedCode<DisassemblyPtrTag>(), size(), prefix);
     }
     
-    CString disassembly() const
+    UTF8CString disassembly() const
     {
         return MacroAssemblerCodeRefBase::disassembly(retaggedCode<DisassemblyPtrTag>(), size());
     }
@@ -170,7 +160,7 @@ private:
     template<PtrTag> friend class MacroAssemblerCodeRef;
 };
 
-bool shouldDumpDisassemblyFor(CodeBlock*);
+bool LEGACY_NODELETE shouldDumpDisassemblyFor(CodeBlock*);
 bool shouldDumpDisassemblyFor(Wasm::CompilationMode);
 
 } // namespace JSC

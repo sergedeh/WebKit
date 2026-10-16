@@ -24,9 +24,10 @@
  */
 
 #import <WebKitLegacy/DOMTimeRanges.h>
+#import <wtf/Compiler.h>
 
 namespace WebCore {
 class TimeRanges;
 }
 
-DOMTimeRanges *kit(WebCore::TimeRanges*);
+DOMTimeRanges * LEGACY_NODELETE kit(WebCore::TimeRanges*);

@@ -1,23 +1,20 @@
 diagnostic(off, derivative_uniformity);
 diagnostic(off, chromium.unreachable_code);
+enable f16;
 struct FSOut {
-  @location(0) sk_FragColor: vec4<f32>,
+  @location(0) sk_FragColor: vec4<f16>,
 };
 struct _GlobalUniforms {
-  colorGreen: vec4<f32>,
-  colorRed: vec4<f32>,
-  unknownInput: f32,
+  colorGreen: vec4<f16>,
+  colorRed: vec4<f16>,
+  unknownInput: f16,
 };
 @group(0) @binding(0) var<uniform> _globalUniforms : _GlobalUniforms;
 fn inside_while_loop_b() -> bool {
   {
-    loop {
-      if _globalUniforms.unknownInput == 123.0 {
-        {
-          return false;
-        }
-      } else {
-        break;
+    for (; _globalUniforms.unknownInput == 123.0h; ) {
+      {
+        return false;
       }
     }
     return true;
@@ -38,13 +35,9 @@ fn inside_infinite_do_loop_b() -> bool {
 }
 fn inside_infinite_while_loop_b() -> bool {
   {
-    loop {
-      if true {
-        {
-          return true;
-        }
-      } else {
-        break;
+    for (; true; ) {
+      {
+        return true;
       }
     }
   }
@@ -65,12 +58,8 @@ fn after_do_loop_b() -> bool {
 }
 fn after_while_loop_b() -> bool {
   {
-    loop {
-      if true {
-        {
-          break;
-        }
-      } else {
+    for (; true; ) {
+      {
         break;
       }
     }
@@ -125,13 +114,9 @@ fn switch_with_break_in_loop_b() -> bool {
         if _skTemp3 == 1 {
           {
             var x: i32 = 0;
-            loop {
+            for (; x <= 10; x = x + i32(1)) {
               {
                 break;
-              }
-              continuing {
-                x = x + i32(1);
-                break if x > 10;
               }
             }
           }
@@ -150,13 +135,9 @@ fn switch_with_continue_in_loop_b() -> bool {
         if _skTemp5 == 1 {
           {
             var x: i32 = 0;
-            loop {
+            for (; x <= 10; x = x + i32(1)) {
               {
                 continue;
-              }
-              continuing {
-                x = x + i32(1);
-                break if x > 10;
               }
             }
           }
@@ -173,7 +154,7 @@ fn switch_with_if_that_returns_b() -> bool {
       case 1, default {
         var _skTemp8: bool = false;
         if _skTemp7 == 1 {
-          if _globalUniforms.unknownInput == 123.0 {
+          if _globalUniforms.unknownInput == 123.0h {
             return false;
           } else {
             return true;
@@ -191,7 +172,7 @@ fn switch_with_one_sided_if_then_fallthrough_b() -> bool {
       case 1, default {
         var _skTemp10: bool = false;
         if _skTemp9 == 1 {
-          if _globalUniforms.unknownInput == 123.0 {
+          if _globalUniforms.unknownInput == 123.0h {
             return false;
           }
         }
@@ -200,9 +181,9 @@ fn switch_with_one_sided_if_then_fallthrough_b() -> bool {
     }
   }
 }
-fn _skslMain(coords: vec2<f32>) -> vec4<f32> {
+fn _skslMain(coords: vec2<f32>) -> vec4<f16> {
   {
-    var _skTemp11: vec4<f32>;
+    var _skTemp11: vec4<f16>;
     var _skTemp12: bool;
     var _skTemp13: bool;
     var _skTemp14: bool;

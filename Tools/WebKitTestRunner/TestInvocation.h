@@ -37,6 +37,7 @@
 #include <wtf/Seconds.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/StringBuilder.h>
+#include <wtf/text/UTF8CStringView.h>
 
 namespace WTR {
 
@@ -65,10 +66,11 @@ public:
 
     void invoke();
     void didReceiveMessageFromInjectedBundle(WKStringRef messageName, WKTypeRef messageBody);
-    WKRetainPtr<WKTypeRef> didReceiveSynchronousMessageFromInjectedBundle(WKStringRef messageName, WKTypeRef messageBody);
+    WKRetainPtr<WKTypeRef> didReceiveSynchronousMessageFromInjectedBundle(WKStringRef messageName, WKTypeRef messageBody, bool fromMainFrameProcess);
 
-    static void dumpWebProcessUnresponsiveness(const char* errorMessage);
+    static void dumpWebProcessUnresponsiveness(ASCIILiteral errorMessage);
     void outputText(const String&);
+    void outputResourceLoadCallback(const String&);
 
     void notifyDownloadDone();
 
@@ -106,20 +108,24 @@ private:
     void done();
     void setWaitUntilDone(bool);
 
-    // Returns true if the caller bundle should proceed with dumping.
-    // Returns false if the WKTR invokes dumping through page, asynchronously.
-    // Resets waitUntilDone.
-    bool resolveNotifyDone();
-    bool resolveForceImmediateCompletion();
+    // Returns true if the caller bundle should complete the dump locally (as without site isolation), false if
+    // the WKTR routes it to the main-frame process. Resets waitUntilDone. canCompleteSynchronously reflects
+    // whether the message came from the main-frame process.
+    bool resolveNotifyDone(bool canCompleteSynchronously);
+    bool resolveForceImmediateCompletion(bool canCompleteSynchronously);
 
     void dumpResults();
-    static void dump(const char* textToStdout, const char* textToStderr = 0, bool seenError = false);
+    static void dump(UTF8CStringView textToStdout, UTF8CStringView textToStderr = { }, bool seenError = false);
     enum class SnapshotResultType { WebView, WebContents };
     void dumpPixelsAndCompareWithExpected(SnapshotResultType, WKArrayRef repaintRects, WKImageRef = nullptr);
     void dumpAudio(WKDataRef);
     bool compareActualHashToExpectedAndDumpResults(const std::string&);
 
     static void forceRepaintDoneCallback(WKErrorRef, void* context);
+#if PLATFORM(GTK) || PLATFORM(WPE)
+    static void presentationUpdateDoneCallback(WKErrorRef, void* context);
+#endif
+    void waitForPresentationUpdate();
 
     bool shouldLogHistoryClientCallbacks() const;
 
@@ -144,9 +150,14 @@ private:
     bool m_gotInitialResponse { false };
     bool m_gotFinalMessage { false };
     bool m_gotRepaint { false };
+#if PLATFORM(GTK) || PLATFORM(WPE)
+    bool m_gotPresentationUpdate { false };
+#endif
     bool m_error { false };
 
     bool m_waitUntilDone { false };
+    bool m_notifyDoneMessageSent { false };
+    bool m_notifyDoneDeferredForWorkQueue { false };
     bool m_dumpFrameLoadCallbacks { false };
     bool m_globalFlag { false };
     bool m_dumpPixels { false };
@@ -163,6 +174,7 @@ private:
 
     StringBuilder m_textOutput;
     String m_savedResourceLoadStatistics;
+    StringBuilder m_savedResourceLoadCallbacks;
     WKRetainPtr<WKDataRef> m_audioResult;
     WKRetainPtr<WKImageRef> m_pixelResult;
     WKRetainPtr<WKArrayRef> m_repaintRects;

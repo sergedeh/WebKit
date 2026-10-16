@@ -34,7 +34,8 @@
 #include "DocumentInlines.h"
 #include "FontCascade.h"
 #include "NodeDocument.h"
-#include "RenderStyle+GettersInlines.h"
+#include "PseudoElementIdentifier.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "StyleComputedStyle+InitialInlines.h"
 #include "StyleLengthResolution.h"
 #include "StyleResolver.h"
@@ -65,7 +66,7 @@ void MatchedDeclarationsCache::deref() const
     m_owner->deref();
 }
 
-bool MatchedDeclarationsCache::isCacheable(const Element& element, const RenderStyle& style, const RenderStyle& parentStyle)
+bool MatchedDeclarationsCache::isCacheable(const Element& element, const Style::ComputedStyle& style, const Style::ComputedStyle& parentStyle)
 {
     // FIXME: Writing mode and direction properties modify state when applying to document element by calling
     // Document::setWritingMode/DirectionSetOnDocumentElement. We can't skip the applying by caching.
@@ -76,15 +77,20 @@ bool MatchedDeclarationsCache::isCacheable(const Element& element, const RenderS
     // PseudoElementIdentifier-aware might be a possible solution.
     if (!style.pseudoElementNameArgument().isNull())
         return false;
-    // content:attr() value depends on the element it is being applied to.
-    if (style.hasAttrContent() || (style.pseudoElementType() && parentStyle.hasAttrContent()))
+    auto pseudoElementType = style.pseudoElementType();
+    // Highlight pseudo-element styles inherit from the parent element's highlight pseudo-element
+    // style, which is not part of the cache key.
+    if (pseudoElementType && isHighlightPseudoElement(*pseudoElementType))
+        return false;
+    // attr() value depends on the element it is being applied to.
+    if (style.hasAttrContent())
         return false;
     if (style.zoom() != Style::ComputedStyle::initialZoom())
         return false;
     if (style.writingMode().computedWritingMode() != Style::ComputedStyle::initialWritingMode()
         || style.writingMode().computedTextDirection() != Style::ComputedStyle::initialDirection())
         return false;
-    if (style.usesContainerUnits())
+    if (style.isContainerDependent())
         return false;
     if (style.useTreeCountingFunctions())
         return false;
@@ -93,7 +99,7 @@ bool MatchedDeclarationsCache::isCacheable(const Element& element, const RenderS
 
     // Getting computed style after a font environment change but before full style resolution may involve styles with non-current fonts.
     // Avoid caching them.
-    Ref fontSelector = element.document().fontSelector();
+    SUPPRESS_UNCOUNTED_ARG Ref fontSelector = element.document().fontSelector();
     if (!style.fontCascade().isCurrent(fontSelector.get()))
         return false;
     if (!parentStyle.fontCascade().isCurrent(fontSelector.get()))
@@ -107,7 +113,7 @@ bool MatchedDeclarationsCache::isCacheable(const Element& element, const RenderS
     return true;
 }
 
-bool MatchedDeclarationsCache::Entry::isUsableAfterHighPriorityProperties(const RenderStyle& style) const
+bool MatchedDeclarationsCache::Entry::isUsableAfterHighPriorityProperties(const Style::ComputedStyle& style) const
 {
     if (style.usedZoom() != renderStyle->usedZoom())
         return false;
@@ -136,7 +142,7 @@ unsigned MatchedDeclarationsCache::computeHash(const MatchResult& matchResult, c
     return AlreadyHashed::avoidDeletedValue(WTF::computeHash(matchResult, &inheritedCustomProperties));
 }
 
-std::optional<MatchedDeclarationsCache::Result> MatchedDeclarationsCache::find(unsigned hash, const MatchResult& matchResult, const Style::CustomPropertyData& inheritedCustomProperties, const RenderStyle& parentStyle)
+std::optional<MatchedDeclarationsCache::Result> MatchedDeclarationsCache::find(unsigned hash, const MatchResult& matchResult, const Style::CustomPropertyData& inheritedCustomProperties, const Style::ComputedStyle& parentStyle)
 {
     if (!hash)
         return std::nullopt;
@@ -147,10 +153,13 @@ std::optional<MatchedDeclarationsCache::Result> MatchedDeclarationsCache::find(u
 
     const Entry* partiallyMatchingEntry = nullptr;
     for (auto& entry : it->value) {
-        if (!matchResult.cacheablePropertiesEqual(*entry.matchResult))
+        SUPPRESS_UNCOUNTED_ARG if (!matchResult.cacheablePropertiesEqual(*entry.matchResult))
             continue;
 
         if (&entry.parentRenderStyle->inheritedCustomProperties() != &inheritedCustomProperties)
+            continue;
+
+        if (entry.parentRenderStyle->inBaseAppearanceSubtree() != parentStyle.inBaseAppearanceSubtree())
             continue;
 
         if (parentStyle.inheritedEqual(*entry.parentRenderStyle))
@@ -162,7 +171,7 @@ std::optional<MatchedDeclarationsCache::Result> MatchedDeclarationsCache::find(u
     return std::nullopt;
 }
 
-void MatchedDeclarationsCache::add(const RenderStyle& style, const RenderStyle& parentStyle, unsigned hash, const MatchResult& matchResult)
+void MatchedDeclarationsCache::add(const Style::ComputedStyle& style, const Style::ComputedStyle& parentStyle, unsigned hash, const MatchResult& matchResult)
 {
     constexpr unsigned additionsBetweenSweeps = 100;
     if (++m_additionsSinceLastSweep >= additionsBetweenSweeps && !m_sweepTimer.isActive()) {
@@ -171,8 +180,8 @@ void MatchedDeclarationsCache::add(const RenderStyle& style, const RenderStyle& 
     }
 
     ASSERT(hash);
-    // Note that we don't cache the original RenderStyle instance. It may be further modified.
-    // The RenderStyle in the cache is really just a holder for the substructures and never used as-is.
+    // Note that we don't cache the original ComputedStyle instance. It may be further modified.
+    // The ComputedStyle in the cache is really just a holder for the substructures and never used as-is.
     constexpr unsigned maxEntriesPerHash = 4;
     auto addResult = m_entries.ensure(hash, [&] {
         Vector<Entry> newBucket;
@@ -180,7 +189,16 @@ void MatchedDeclarationsCache::add(const RenderStyle& style, const RenderStyle& 
         return newBucket;
     });
     if (addResult.iterator->value.size() < maxEntriesPerHash)
-        addResult.iterator->value.append(Entry { &matchResult, RenderStyle::clonePtr(style), RenderStyle::clonePtr(parentStyle) });
+        addResult.iterator->value.append(Entry { &matchResult, Style::ComputedStyle::clonePtr(style), Style::ComputedStyle::clonePtr(parentStyle) });
+
+    // Protect against unlimited growth.
+#if PLATFORM(WPE)
+    constexpr size_t maximumSize = 1024;
+#else
+    constexpr size_t maximumSize = 16 * 1024;
+#endif
+    if (m_entries.size() > maximumSize)
+        m_entries.remove(m_entries.random());
 }
 
 void MatchedDeclarationsCache::remove(unsigned hash)
@@ -194,12 +212,11 @@ void MatchedDeclarationsCache::invalidate()
 }
 
 template<typename Callback>
-void MatchedDeclarationsCache::removeAllMatching(const Callback& matches)
+void MatchedDeclarationsCache::removeAllMatching(NOESCAPE const Callback& matches)
 {
-    for (auto& [key, bucket] : m_entries)
-        bucket.removeAllMatching(matches);
-    m_entries.removeIf([](auto& keyValue) {
-        return !keyValue.value.size();
+    m_entries.removeIf([&](auto& keyValue) {
+        keyValue.value.removeAllMatching(matches);
+        return keyValue.value.isEmpty();
     });
 }
 

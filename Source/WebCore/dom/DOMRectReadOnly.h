@@ -76,6 +76,6 @@ protected:
     double m_height { 0 }; // Can be negative.
 };
 
-WebCoreOpaqueRoot root(DOMRectReadOnly*);
+WebCoreOpaqueRoot LEGACY_NODELETE root(DOMRectReadOnly*);
 
 } // namespace WebCore

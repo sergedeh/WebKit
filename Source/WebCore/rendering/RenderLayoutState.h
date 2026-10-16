@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2007-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -48,6 +48,12 @@ public:
     struct LineClamp {
         size_t maximumLines { 0 };
         bool shouldDiscardOverflow { false };
+        // A clamp point between this block and its next sibling, which no line box precedes (see the auto clamp point).
+        SingleThreadWeakPtr<const RenderBox> clampAfterBox;
+        // While looking for the auto clamp point, "layout must first be computed as if 'text-wrap-style' were set to 'stable'".
+        // https://drafts.csswg.org/css-overflow-4/#line-clamp
+        bool isStableTextWrap { false };
+        bool hasConstrainedTextWrapContent { false };
     };
 
     struct LegacyLineClamp {
@@ -57,17 +63,7 @@ public:
         SingleThreadWeakPtr<const RenderBlockFlow> clampedRenderer;
     };
 
-    RenderLayoutState()
-        : m_clipped(false)
-        , m_isPaginated(false)
-        , m_pageLogicalHeightChanged(false)
-#if ASSERT_ENABLED
-        , m_layoutDeltaXSaturated(false)
-        , m_layoutDeltaYSaturated(false)
-#endif
-        , m_marginTrimBlockStart(false)
-    {
-    }
+    RenderLayoutState() = default;
     RenderLayoutState(const LocalFrameViewLayoutContext::LayoutStateStack&, RenderBox&, const LayoutSize& offset, LayoutUnit pageHeight, bool pageHeightChanged, std::optional<LineClamp>, std::optional<LegacyLineClamp>);
     explicit RenderLayoutState(RenderElement&);
 
@@ -75,7 +71,7 @@ public:
 
     // The page logical offset is the object's offset from the top of the page in the page progression
     // direction (so an x-offset in vertical text and a y-offset for horizontal text).
-    LayoutUnit pageLogicalOffset(RenderBox*, LayoutUnit childLogicalOffset) const;
+    LayoutUnit LEGACY_NODELETE pageLogicalOffset(RenderBox*, LayoutUnit childLogicalOffset) const;
     
     LayoutUnit pageLogicalHeight() const { return m_pageLogicalHeight; }
     bool pageLogicalHeightChanged() const { return m_pageLogicalHeightChanged; }
@@ -97,8 +93,8 @@ public:
     LayoutRect clipRect() const { return m_clipRect; }
     bool isClipped() const { return m_clipped; }
 
-    void addLayoutDelta(LayoutSize);
-    LayoutSize layoutDelta() const { return m_layoutDelta; }
+    void LEGACY_NODELETE addLayoutDelta(LayoutSize);
+    LayoutSize layoutDelta() const { return m_layoutDeltaForRepaint; }
 #if ASSERT_ENABLED
     bool layoutDeltaMatches(LayoutSize) const;
 #endif
@@ -118,17 +114,17 @@ private:
     // FIXME: webkit.org/b/179440 these functions should be part of the pagination code/LocalFrameViewLayoutContext.
     void computePaginationInformation(const LocalFrameViewLayoutContext::LayoutStateStack&, RenderBox&, LayoutUnit pageLogicalHeight, bool pageLogicalHeightChanged);
     void propagateLineGridInfo(const RenderLayoutState& ancestor, RenderBox&);
-    void establishLineGrid(const LocalFrameViewLayoutContext::LayoutStateStack&, RenderBlockFlow&);
+    void LEGACY_NODELETE establishLineGrid(const LocalFrameViewLayoutContext::LayoutStateStack&, RenderBlockFlow&);
     void computeLineGridPaginationOrigin(const RenderMultiColumnFlow&);
 
     // Do not add anything apart from bitfields. See https://bugs.webkit.org/show_bug.cgi?id=100173
-    bool m_clipped : 1;
-    bool m_isPaginated : 1;
+    bool m_clipped : 1 { false };
+    bool m_isPaginated : 1 { false };
     // If our page height has changed, this will force all blocks to relayout.
-    bool m_pageLogicalHeightChanged : 1;
+    bool m_pageLogicalHeightChanged : 1 { false };
 #if ASSERT_ENABLED
-    bool m_layoutDeltaXSaturated : 1;
-    bool m_layoutDeltaYSaturated : 1;
+    bool m_layoutDeltaForRepaintXSaturated : 1 { false };
+    bool m_layoutDeltaForRepaintYSaturated : 1 { false };
 #endif
     bool m_marginTrimBlockStart : 1 { false };
 
@@ -143,10 +139,14 @@ private:
     LayoutSize m_paintOffset;
     // x/y offset from layout root. Does not include in-flow positioning or scroll offsets.
     LayoutSize m_layoutOffset;
-    // Transient offset from the final position of the object
-    // used to ensure that repaints happen in the correct place.
-    // This is a total delta accumulated from the root. 
-    LayoutSize m_layoutDelta;
+
+    // As boxes move during layout, we must invalidate both their _old_ position (where they were painted as of the last layout) and their _new_ one.
+    // Repaint needs those positions relative to the repaint container (e.g. the RenderView), and a repaint rect is built by walking up
+    // the containing-block chain to that container, accumulating each ancestor's position.
+    // During layout, though, some of those ancestors may have already moved, so their current positions can no longer be used to recover the _old_ rect.
+    // (We don't retain previous paint positions; the closest we have is each renderer's m_borderBoxRectInContainer, and that is overwritten during layout.)
+    // This delta helps to recover the last layout's (paint) position by keeping track of position changes during _this_ layout.
+    LayoutSize m_layoutDeltaForRepaint;
 
     // The current page height for the pagination model that encloses us.
     LayoutUnit m_pageLogicalHeight;
@@ -202,6 +202,29 @@ public:
 private:
     const CheckedRef<LocalFrameViewLayoutContext> m_layoutContext;
     const CheckedRef<const RenderBox> m_flexItem;
+};
+
+// Marks an orthogonal box that is being laid out only to supply its container's intrinsic inline-size contribution
+// (its own block size), so its own percentage min/max-height follows CSS Sizing 3 "Intrinsic Contributions of
+// Percentage-Sized Boxes". See RenderBox::computeIntrinsicLogicalHeight and RenderBox::computeLogicalHeight.
+class OrthogonalIntrinsicContributionLayoutScope {
+public:
+    OrthogonalIntrinsicContributionLayoutScope(LocalFrameViewLayoutContext&, const RenderBox&);
+    ~OrthogonalIntrinsicContributionLayoutScope();
+
+private:
+    const CheckedRef<LocalFrameViewLayoutContext> m_layoutContext;
+    const CheckedRef<const RenderBox> m_box;
+};
+
+class IntrinsicLogicalWidthComputationScope {
+public:
+    IntrinsicLogicalWidthComputationScope(LocalFrameViewLayoutContext&, const RenderBox&);
+    ~IntrinsicLogicalWidthComputationScope();
+
+private:
+    const CheckedRef<LocalFrameViewLayoutContext> m_layoutContext;
+    const CheckedRef<const RenderBox> m_box;
 };
 
 class ContentVisibilityOverrideScope {

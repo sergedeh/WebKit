@@ -31,6 +31,7 @@
 #include <WebCore/MediaPlaybackTarget.h>
 #include <wtf/AbstractRefCountedAndCanMakeWeakPtr.h>
 #include <wtf/ProcessID.h>
+#include <wtf/ThreadSafeWeakPtr.h>
 #include <wtf/WeakHashSet.h>
 
 namespace WebCore {
@@ -40,8 +41,6 @@ enum class HasAvailableTargets : bool { No, Yes };
 enum class PlayingToAutomotiveHeadUnit : bool { No, Yes };
 enum class ShouldPause : bool { No, Yes };
 enum class SupportsAirPlayVideo : bool { No, Yes };
-enum class SupportsSpatialAudioPlayback : bool { No, Yes };
-
 class MediaSessionHelperClient : public AbstractRefCountedAndCanMakeWeakPtr<MediaSessionHelperClient> {
 public:
     virtual ~MediaSessionHelperClient() = default;
@@ -63,13 +62,10 @@ public:
 
     using SupportsAirPlayVideo = WebCore::SupportsAirPlayVideo;
     virtual void activeVideoRouteDidChange(SupportsAirPlayVideo, Ref<MediaPlaybackTarget>&&) = 0;
-
-    using SupportsSpatialAudioPlayback = WebCore::SupportsSpatialAudioPlayback;
-    virtual void activeAudioRouteSupportsSpatialPlaybackDidChange(SupportsSpatialAudioPlayback) = 0;
 };
 
 class WEBCORE_EXPORT MediaSessionHelper
-#if HAVE(AVROUTING_FRAMEWORK)
+#if ENABLE(WIRELESS_PLAYBACK_MEDIA_PLAYER)
     : public MediaDeviceRouteControllerClient
 #else
     : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<MediaSessionHelper>
@@ -77,7 +73,6 @@ class WEBCORE_EXPORT MediaSessionHelper
 {
 public:
     static MediaSessionHelper& sharedHelper();
-    static Ref<MediaSessionHelper> protectedSharedHelper();
     static void setSharedHelper(Ref<MediaSessionHelper>&&);
     static void resetSharedHelper();
 
@@ -90,6 +85,10 @@ public:
 
     void startMonitoringWirelessRoutes();
     void stopMonitoringWirelessRoutes();
+
+#if ENABLE(WIRELESS_PLAYBACK_MEDIA_PLAYER)
+    virtual void ensureMediaDeviceRouteControllerMonitoring() { }
+#endif
 
     virtual std::optional<ProcessID> presentedApplicationPID() const;
     virtual void providePresentingApplicationPID(ProcessID);
@@ -108,7 +107,6 @@ public:
     using ShouldPause = MediaSessionHelperClient::ShouldPause;
     using SupportsAirPlayVideo = MediaSessionHelperClient::SupportsAirPlayVideo;
     using SuspendedUnderLock = MediaSessionHelperClient::SuspendedUnderLock;
-    using SupportsSpatialAudioPlayback = MediaSessionHelperClient::SupportsSpatialAudioPlayback;
 
     void activeAudioRouteDidChange(ShouldPause);
     void applicationWillEnterForeground(SuspendedUnderLock);
@@ -116,10 +114,7 @@ public:
     void applicationWillBecomeInactive();
     void applicationDidBecomeActive();
 
-    void setActiveAudioRouteSupportsSpatialPlayback(bool);
-    void updateActiveAudioRouteSupportsSpatialPlayback();
-
-#if HAVE(AVROUTING_FRAMEWORK)
+#if ENABLE(WIRELESS_PLAYBACK_MEDIA_PLAYER)
     void activeRoutesDidChange(MediaDeviceRouteController&) final;
 #endif
 
@@ -127,7 +122,6 @@ protected:
     void externalOutputDeviceAvailableDidChange(HasAvailableTargets);
     void isPlayingToAutomotiveHeadUnitDidChange(PlayingToAutomotiveHeadUnit);
     void activeVideoRouteDidChange(SupportsAirPlayVideo, Ref<MediaPlaybackTarget>&&);
-    void activeAudioRouteSupportsSpatialPlaybackDidChange(SupportsSpatialAudioPlayback);
 
 private:
     virtual void startMonitoringWirelessRoutesInternal() = 0;
@@ -138,7 +132,6 @@ private:
     uint32_t m_monitoringWirelessRoutesCount { 0 };
     bool m_activeVideoRouteSupportsAirPlayVideo { false };
     bool m_isPlayingToAutomotiveHeadUnit { false };
-    SupportsSpatialAudioPlayback m_activeAudioRouteSupportsSpatialPlayback { SupportsSpatialAudioPlayback::No };
     RefPtr<MediaPlaybackTarget> m_playbackTarget;
 };
 

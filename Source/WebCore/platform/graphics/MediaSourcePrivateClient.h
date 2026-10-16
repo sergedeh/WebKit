@@ -35,6 +35,10 @@
 #include <wtf/ThreadSafeWeakPtr.h>
 
 namespace WebCore {
+struct SeekTarget;
+} // namespace WebCore
+
+namespace WebCore {
 
 class MediaSourcePrivate;
 
@@ -44,8 +48,8 @@ public:
 
     virtual void setPrivateAndOpen(Ref<MediaSourcePrivate>&&) = 0;
     virtual void reOpen() = 0;
-    virtual Ref<MediaTimePromise> waitForTarget(const SeekTarget&) = 0;
     virtual RefPtr<MediaSourcePrivate> mediaSourcePrivate() const = 0;
+    virtual void monitorSourceBuffers() = 0;
 
 #if !RELEASE_LOG_DISABLED
     virtual void setLogIdentifier(uint64_t) = 0;

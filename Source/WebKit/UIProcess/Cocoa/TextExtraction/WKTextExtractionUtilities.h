@@ -25,8 +25,6 @@
 
 #pragma once
 
-#if USE(APPLE_INTERNAL_SDK) || (!PLATFORM(WATCHOS) && !PLATFORM(APPLETV))
-
 #import <wtf/Function.h>
 #import <wtf/RetainPtr.h>
 
@@ -48,10 +46,11 @@ namespace WebKit {
 using RootViewToWebViewConverter = Function<WebCore::FloatRect(const WebCore::FloatRect&)>;
 RetainPtr<WKTextExtractionItem> createItem(const WebCore::TextExtraction::Item&, RootViewToWebViewConverter&&);
 
-std::optional<double> computeSimilarity(NSString *a, NSString *b, unsigned minimumLength = 1);
-
 void requestTextExtractionFilterRuleData(CompletionHandler<void(Vector<WebCore::TextExtraction::FilterRuleData>&&)>&&);
+
+#if ENABLE(TEXT_EXTRACTION_FILTER)
+std::optional<double> computeSimilarity(NSString *a, NSString *b, unsigned minimumLength = 1);
+#endif
 
 } // namespace WebKit
 
-#endif // USE(APPLE_INTERNAL_SDK) || (!PLATFORM(WATCHOS) && !PLATFORM(APPLETV))

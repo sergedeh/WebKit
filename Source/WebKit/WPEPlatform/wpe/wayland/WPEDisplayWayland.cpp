@@ -55,8 +55,7 @@
 #include <wtf/glib/GRefPtr.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/glib/WTFGType.h>
-#include <wtf/text/CString.h>
-#include <wtf/text/StringView.h>
+#include <wtf/text/UTF8CStringView.h>
 
 // These includes need to be in this order because wayland-egl.h defines WL_EGL_PLATFORM
 // and egl.h checks that to decide whether it's Wayland platform.
@@ -74,6 +73,16 @@
 /**
  * WPEDisplayWayland:
  *
+ * A [class@WPEPlatform.Display] implementation for Wayland.
+ *
+ * [class@DisplayWayland] is the built-in [class@WPEPlatform.Display]
+ * implementation for the Wayland windowing system. Use
+ * [ctor@DisplayWayland.new] to create a new instance and
+ * [method@DisplayWayland.connect] to connect to a particular Wayland display
+ * by name. The underlying Wayland objects can be accessed with
+ * [method@DisplayWayland.get_wl_display],
+ * [method@DisplayWayland.get_wl_compositor] and
+ * [method@DisplayWayland.get_wl_shm].
  */
 struct _WPEDisplayWaylandPrivate {
     struct wl_display* wlDisplay;
@@ -108,7 +117,7 @@ struct _WPEDisplayWaylandPrivate {
 };
 WEBKIT_DEFINE_FINAL_TYPE_WITH_CODE(WPEDisplayWayland, wpe_display_wayland, WPE_TYPE_DISPLAY, WPEDisplay,
     wpeEnsureExtensionPointsRegistered();
-    g_io_extension_point_implement(WPE_DISPLAY_EXTENSION_POINT_NAME, g_define_type_id, "wpe-display-wayland", 0))
+    g_io_extension_point_implement(WPE_DISPLAY_EXTENSION_POINT_NAME, g_define_type_id, "wayland", 0))
 
 struct EventSource {
     static GSourceFuncs sourceFuncs;
@@ -260,7 +269,7 @@ const struct wl_registry_listener registryListener = {
         auto* display = WPE_DISPLAY_WAYLAND(data);
         auto* priv = display->priv;
 
-        const auto interfaceName = StringView::fromLatin1(interface);
+        const auto interfaceName = UTF8CStringView::unsafeFromUTF8(interface);
 
         if (interfaceName == "wl_compositor"_s)
             priv->wlCompositor = static_cast<struct wl_compositor*>(wl_registry_bind(registry, name, &wl_compositor_interface, std::min<uint32_t>(version, 5)));
@@ -338,7 +347,9 @@ static const struct zwp_linux_dmabuf_feedback_v1_listener linuxDMABufFeedbackLis
     [](void* data, struct zwp_linux_dmabuf_feedback_v1*, struct wl_array* device)
     {
         dev_t deviceID;
+        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
         memcpy(&deviceID, device->data, sizeof(dev_t));
+        WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
         drmDevicePtr drmDevice;
         if (drmGetDeviceFromDevId(deviceID, 0, &drmDevice))
@@ -346,8 +357,10 @@ static const struct zwp_linux_dmabuf_feedback_v1_listener linuxDMABufFeedbackLis
 
         auto* priv = WPE_DISPLAY_WAYLAND(data)->priv;
         if (drmDevice->available_nodes & (1 << DRM_NODE_PRIMARY)) {
+            WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
             priv->drmDevice = adoptGRef(wpe_drm_device_new(drmDevice->nodes[DRM_NODE_PRIMARY],
                 drmDevice->available_nodes & (1 << DRM_NODE_RENDER) ? drmDevice->nodes[DRM_NODE_RENDER] : nullptr));
+            WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         }
         drmFreeDevice(&drmDevice);
     },

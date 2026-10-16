@@ -9,6 +9,8 @@
 #ifndef COMPILER_TRANSLATOR_SPIRV_BUILDSPIRV_H_
 #define COMPILER_TRANSLATOR_SPIRV_BUILDSPIRV_H_
 
+#include <array>
+
 #include "common/FixedVector.h"
 #include "common/PackedEnums.h"
 #include "common/bitset_utils.h"
@@ -56,6 +58,10 @@ class SpirvTypeSpec
     // different ArrayStride decorations.  As such, the block storage is part of the SPIR-V type
     // except for non-block non-array types.
     TLayoutBlockStorage blockStorage = EbsUnspecified;
+
+    // The encoder ANGLE uses to calculate the member offsets within the default uniform block is
+    // different from encoder used to calculate the member offsets in other interface blocks.
+    bool isDefaultUniform = false;
 
     // If a structure is used in two I/O blocks or output varyings with and without the invariant
     // qualifier, it would also have to generate two SPIR-V types, as its fields' Invariant
@@ -181,13 +187,12 @@ struct SpirvTypeHash
 
         if (!type.arraySizes.empty())
         {
-            result = angle::ComputeGenericHash(type.arraySizes.data(),
-                                               type.arraySizes.size() * sizeof(type.arraySizes[0]));
+            result = angle::ComputeGenericHash(angle::as_byte_span(type.arraySizes));
         }
 
         if (type.block != nullptr)
         {
-            return result ^ angle::ComputeGenericHash(&type.block, sizeof(type.block)) ^
+            return result ^ angle::ComputeGenericHash(angle::byte_span_from_ref(type.block)) ^
                    static_cast<size_t>(type.typeSpec.isInvariantBlock) ^
                    (static_cast<size_t>(type.typeSpec.isRowMajorQualifiedBlock) << 1) ^
                    (static_cast<size_t>(type.typeSpec.isRowMajorQualifiedArray) << 2) ^
@@ -209,7 +214,7 @@ struct SpirvTypeHash
             // Padding because ComputeGenericHash expects a key size divisible by 4
         };
 
-        return result ^ angle::ComputeGenericHash(properties, sizeof(properties));
+        return result ^ angle::ComputeGenericHash(properties);
     }
 };
 
@@ -217,9 +222,7 @@ struct SpirvIdAndIdListHash
 {
     size_t operator()(const SpirvIdAndIdList &key) const
     {
-        return angle::ComputeGenericHash(key.idList.data(),
-                                         key.idList.size() * sizeof(key.idList[0])) ^
-               key.id;
+        return angle::ComputeGenericHash(angle::as_byte_span(key.idList)) ^ key.id;
     }
 };
 
@@ -319,8 +322,11 @@ enum class SPIRVExtensions
     // GL_EXT_fragment_shading_rate / SPV_KHR_fragment_shading_rate
     FragmentShadingRate = 2,
 
-    InvalidEnum = 3,
-    EnumCount   = 3,
+    // SPV_EXT_demote_to_helper_invocation
+    DemoteToHelperInvocation = 3,
+
+    InvalidEnum = 4,
+    EnumCount   = 4,
 };
 
 // Helper class to construct SPIR-V
@@ -420,6 +426,30 @@ class SPIRVBuilder : angle::NonCopyable
     spirv::IdRef getCompositeConstant(spirv::IdRef typeId, const spirv::IdRefList &values);
     spirv::IdRef getNullConstant(spirv::IdRef typeId);
 
+    // Test whether |id| was emitted via getCompositeConstant (i.e. it's the
+    // result of an OpConstantComposite instruction in this module).  Lets
+    // OutputSPIRV's indexable-temp path detect when an rvalue being indexed
+    // is itself a compile-time constant; in that case the temp can be
+    // hoisted to module scope as Private with a constant Initializer
+    // instead of being emitted as a Function-storage local that needs a
+    // per-invocation OpStore.  See the comment at the call site in
+    // OutputSPIRV.cpp's accessChainLoad for why this matters.
+    bool isCompositeConstantId(spirv::IdRef id) const;
+
+    // Get-or-declare a module-scope Private OpVariable whose Initializer is
+    // |constantId| and whose storage type is |typeId|.  Memoised by
+    // |constantId| (which already implies the type) so multiple dynamic-
+    // indexed reads of the same const T[N] expression share a single
+    // backing variable instead of each emitting their own.  Drivers tend
+    // to dedupe these in memory anyway, but the IR-level dedup keeps the
+    // disassembly tidy and makes it easier on less-aggressive
+    // SPIR-V->native compilers (mobile Vulkan, lower-spec backends) that
+    // may not coalesce.
+    spirv::IdRef getOrDeclarePrivateConstantVar(spirv::IdRef typeId,
+                                                spirv::IdRef constantId,
+                                                const SpirvDecorations &decorations,
+                                                const char *name);
+
     // Helpers to start and end a function.
     void startNewFunction(spirv::IdRef functionId, const TFunction *func);
     void assembleSpirvFunctionBlocks();
@@ -510,9 +540,6 @@ class SPIRVBuilder : angle::NonCopyable
     // With SPIR-V 1.4, this list includes all global variables.
     spirv::IdRefList mEntryPointInterfaceList;
 
-    // Id of imported instructions, if used.
-    spirv::IdRef mExtInstImportIdStd;
-
     // Current ID bound, used to allocate new ids.
     spirv::IdRef mNextAvailableId;
 
@@ -540,13 +567,18 @@ class SPIRVBuilder : angle::NonCopyable
     std::vector<SpirvBlock> mSpirvCurrentFunctionBlocks;
 
     // List of constants that are already defined (for reuse).
-    spirv::IdRef mBoolConstants[2];
+    std::array<spirv::IdRef, 2> mBoolConstants;
     angle::HashMap<uint32_t, spirv::IdRef> mUintConstants;
     angle::HashMap<uint32_t, spirv::IdRef> mIntConstants;
     angle::HashMap<uint32_t, spirv::IdRef> mFloatConstants;
     angle::HashMap<SpirvIdAndIdList, spirv::IdRef, SpirvIdAndIdListHash> mCompositeConstants;
     // Keyed by typeId, returns the null constant corresponding to that type.
     std::vector<spirv::IdRef> mNullConstants;
+
+    // Memoisation for getOrDeclarePrivateConstantVar: constantId -> Private
+    // OpVariable id.  Keyed on the constant alone since a SPIR-V constant id
+    // already implies its type.  See the method's comment for rationale.
+    angle::HashMap<uint32_t, spirv::IdRef> mPrivateConstantVars;
 
     // List of type pointers that are already defined.
     // TODO: if all users call getTypeData(), move to SpirvTypeData.  http://anglebug.com/40096715

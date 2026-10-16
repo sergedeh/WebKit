@@ -30,6 +30,7 @@
 #include "ScriptWrappable.h"
 #include "WebCoreOpaqueRoot.h"
 #include <JavaScriptCore/Strong.h>
+#include <wtf/Lock.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakPtr.h>
@@ -50,7 +51,7 @@ public:
 
     ~ReadableStreamDefaultReader();
 
-    DOMPromise& closedPromise() const;
+    DOMPromise& LEGACY_NODELETE closedPromise() const;
     void readForBindings(JSDOMGlobalObject&, Ref<DeferredPromise>&&);
     void read(JSDOMGlobalObject&, Ref<ReadableStreamReadRequest>&&);
 
@@ -72,10 +73,10 @@ public:
     void onClosedPromiseRejection(ClosedRejectionCallback&&);
     void onClosedPromiseResolution(Function<void()>&&);
 
-    bool isReachableFromOpaqueRoots() const;
-    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    bool LEGACY_NODELETE isReachableFromOpaqueRoots() const;
+    template<typename Visitor> void visitAdditionalChildrenInGCThread(Visitor&);
 
-    ReadableStream* stream() { return m_stream.get(); }
+    ReadableStream* stream();
 
 private:
     ReadableStreamDefaultReader(Ref<ReadableStream>&&, RefPtr<InternalReadableStreamDefaultReader>&&, Ref<DOMPromise>&&, Ref<DeferredPromise>&&);
@@ -86,7 +87,8 @@ private:
 
     Ref<DOMPromise> m_closedPromise;
     Ref<DeferredPromise> m_closedDeferred;
-    RefPtr<ReadableStream> m_stream;
+    mutable Lock m_streamLock;
+    RefPtr<ReadableStream> m_stream WTF_GUARDED_BY_LOCK(m_streamLock);
     Deque<Ref<ReadableStreamReadRequest>> m_readRequests;
 
     const RefPtr<InternalReadableStreamDefaultReader> m_internalDefaultReader;
@@ -94,6 +96,6 @@ private:
     Function<void()> m_closedResolutionCallback;
 };
 
-WebCoreOpaqueRoot root(ReadableStreamDefaultReader*);
+WebCoreOpaqueRoot LEGACY_NODELETE root(ReadableStreamDefaultReader*);
 
 } // namespace WebCore

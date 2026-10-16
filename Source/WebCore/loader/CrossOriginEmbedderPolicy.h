@@ -25,6 +25,8 @@
 
 #pragma once
 
+#include <WebCore/CrossOriginEmbedderPolicyValue.h>
+#include <WebCore/IsSecureContext.h>
 #include <wtf/text/WTFString.h>
 
 namespace WTF {
@@ -53,12 +55,6 @@ class SecurityOriginData;
 
 enum class FetchOptionsDestination : uint8_t;
 
-// https://html.spec.whatwg.org/multipage/origin.html#embedder-policy-value
-enum class CrossOriginEmbedderPolicyValue : bool {
-    UnsafeNone,
-    RequireCORP
-};
-
 // https://html.spec.whatwg.org/multipage/origin.html#embedder-policy
 struct CrossOriginEmbedderPolicy {
     CrossOriginEmbedderPolicyValue value { CrossOriginEmbedderPolicyValue::UnsafeNone };
@@ -78,7 +74,7 @@ struct CrossOriginEmbedderPolicy {
 
 enum class COEPDisposition : bool { Reporting , Enforce };
 
-WEBCORE_EXPORT CrossOriginEmbedderPolicy obtainCrossOriginEmbedderPolicy(const ResourceResponse&, const ScriptExecutionContext*);
+WEBCORE_EXPORT CrossOriginEmbedderPolicy obtainCrossOriginEmbedderPolicy(const ResourceResponse&, IsSecureContext, const ScriptExecutionContext*);
 WEBCORE_EXPORT void sendCOEPInheritenceViolation(ReportingClient&, const URL& embedderURL, const String& endpoint, COEPDisposition, const String& type, const URL& blockedURL);
 WEBCORE_EXPORT void sendCOEPCORPViolation(ReportingClient&, const URL& embedderURL, const String& endpoint, COEPDisposition, FetchOptionsDestination, const URL& blockedURL);
 

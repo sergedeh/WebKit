@@ -34,7 +34,7 @@ class SVGFELightElement : public SVGElement {
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(SVGFELightElement);
 public:
     virtual Ref<LightSource> lightSource() const = 0;
-    static SVGFELightElement* findLightElement(const SVGElement*);
+    static SVGFELightElement* LEGACY_NODELETE findLightElement(const SVGElement*);
 
     float azimuth() const { return m_azimuth->currentValue(); }
     float elevation() const { return m_elevation->currentValue(); }
@@ -63,23 +63,25 @@ public:
 protected:
     SVGFELightElement(const QualifiedName&, Document&);
 
-    bool rendererIsNeeded(const RenderStyle&) override { return false; }
+    bool rendererIsNeeded(const Style::ComputedStyle&) override { return false; }
 
 private:
+    static constexpr float initialSpecularExponentValue = 1;
+
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) override;
     void svgAttributeChanged(const QualifiedName&) override;
     void childrenChanged(const ChildChange&) override;
 
-    Ref<SVGAnimatedNumber> m_azimuth { SVGAnimatedNumber::create(this) };
-    Ref<SVGAnimatedNumber> m_elevation { SVGAnimatedNumber::create(this) };
-    Ref<SVGAnimatedNumber> m_x { SVGAnimatedNumber::create(this) };
-    Ref<SVGAnimatedNumber> m_y { SVGAnimatedNumber::create(this) };
-    Ref<SVGAnimatedNumber> m_z { SVGAnimatedNumber::create(this) };
-    Ref<SVGAnimatedNumber> m_pointsAtX { SVGAnimatedNumber::create(this) };
-    Ref<SVGAnimatedNumber> m_pointsAtY { SVGAnimatedNumber::create(this) };
-    Ref<SVGAnimatedNumber> m_pointsAtZ { SVGAnimatedNumber::create(this) };
-    Ref<SVGAnimatedNumber> m_specularExponent { SVGAnimatedNumber::create(this, 1) };
-    Ref<SVGAnimatedNumber> m_limitingConeAngle { SVGAnimatedNumber::create(this) };
+    const Ref<SVGAnimatedNumber> m_azimuth { SVGAnimatedNumber::create(this) };
+    const Ref<SVGAnimatedNumber> m_elevation { SVGAnimatedNumber::create(this) };
+    const Ref<SVGAnimatedNumber> m_x { SVGAnimatedNumber::create(this) };
+    const Ref<SVGAnimatedNumber> m_y { SVGAnimatedNumber::create(this) };
+    const Ref<SVGAnimatedNumber> m_z { SVGAnimatedNumber::create(this) };
+    const Ref<SVGAnimatedNumber> m_pointsAtX { SVGAnimatedNumber::create(this) };
+    const Ref<SVGAnimatedNumber> m_pointsAtY { SVGAnimatedNumber::create(this) };
+    const Ref<SVGAnimatedNumber> m_pointsAtZ { SVGAnimatedNumber::create(this) };
+    const Ref<SVGAnimatedNumber> m_specularExponent { SVGAnimatedNumber::create(this, initialSpecularExponentValue) };
+    const Ref<SVGAnimatedNumber> m_limitingConeAngle { SVGAnimatedNumber::create(this) };
 };
 
 } // namespace WebCore

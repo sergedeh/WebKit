@@ -52,10 +52,10 @@
 #import <wtf/HashMap.h>
 #import <wtf/Lock.h>
 #import <wtf/NeverDestroyed.h>
+#import <wtf/RetainPtr.h>
 #import <wtf/Threading.h>
 #import <wtf/text/WTFString.h>
 
-using namespace JSC::Bindings;
 using namespace WebCore;
 
 using JSC::CallData;
@@ -64,9 +64,15 @@ using JSC::JSLockHolder;
 using JSC::JSObject;
 using JSC::MarkedArgumentBuffer;
 using JSC::PutPropertySlot;
-using JSC::jsCast;
 using JSC::jsUndefined;
 using JSC::makeSource;
+
+using JSC::Bindings::ObjCRuntimeObject;
+using JSC::Bindings::ObjcInstance;
+using JSC::Bindings::ObjcObjectType;
+using JSC::Bindings::RootObject;
+using JSC::Bindings::convertObjcValueToValue;
+using JSC::Bindings::convertValueToObjcValue;
 
 namespace WebCore {
 
@@ -74,7 +80,7 @@ static Lock wrapperCacheLock;
 static CreateWrapperFunction createDOMWrapperFunction;
 static DisconnectWindowWrapperFunction disconnectWindowWrapperFunction;
 
-static HashMap<JSObject*, NSObject *>& wrapperCache() WTF_REQUIRES_LOCK(wrapperCacheLock)
+static HashMap<JSObject*, NSObject *>& LEGACY_NODELETE wrapperCache() WTF_REQUIRES_LOCK(wrapperCacheLock)
 {
     static NeverDestroyed<HashMap<JSObject*, NSObject *>> map;
     return map;
@@ -202,7 +208,7 @@ void disconnectWindowWrapper(WebScriptObject *windowWrapper)
     WebCore::addJSWrapper(self, imp);
 
     if (_private->rootObject)
-        _private->rootObject->gcProtect(imp);
+        protect(_private->rootObject)->gcProtect(imp);
 }
 
 - (void)_setOriginRootObject:(RefPtr<RootObject>&&)originRootObject andRootObject:(RefPtr<RootObject>&&)rootObject
@@ -213,7 +219,7 @@ void disconnectWindowWrapper(WebScriptObject *windowWrapper)
         rootObject->gcProtect(_private->imp);
 
     if (_private->rootObject && _private->rootObject->isValid())
-        _private->rootObject->gcUnprotect(_private->imp);
+        protect(_private->rootObject)->gcUnprotect(_private->imp);
 
     if (_private->rootObject)
         _private->rootObject->deref();
@@ -230,7 +236,7 @@ void disconnectWindowWrapper(WebScriptObject *windowWrapper)
     ASSERT(imp);
 
     self = [super init];
-    _private = [[WebScriptObjectPrivate alloc] init];
+    _private = adoptNS([[WebScriptObjectPrivate alloc] init]);
     [self _setImp:imp originRootObject:WTF::move(originRootObject) rootObject:WTF::move(rootObject)];
     
     return self;
@@ -281,7 +287,7 @@ void disconnectWindowWrapper(WebScriptObject *windowWrapper)
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    auto* target = JSC::jsDynamicCast<JSDOMWindowBase*>(globalObject);
+    auto* target = dynamicDowncast<JSDOMWindowBase>(globalObject);
     if (!target)
         return false;
     
@@ -312,15 +318,13 @@ void disconnectWindowWrapper(WebScriptObject *windowWrapper)
         return;
 
     if (_private->rootObject && _private->rootObject->isValid())
-        _private->rootObject->gcUnprotect(_private->imp);
+        protect(_private->rootObject)->gcUnprotect(_private->imp);
 
     if (_private->rootObject)
         _private->rootObject->deref();
 
     if (_private->originRootObject)
         _private->originRootObject->deref();
-
-    [_private release];
 
     [super dealloc];
 }
@@ -333,8 +337,9 @@ void disconnectWindowWrapper(WebScriptObject *windowWrapper)
 
 static void getListFromNSArray(JSC::JSGlobalObject* lexicalGlobalObject, NSArray *array, RootObject* rootObject, MarkedArgumentBuffer& aList)
 {
-    for (id anObject in array)
-        aList.append(convertObjcValueToValue(lexicalGlobalObject, &anObject, ObjcObjectType, rootObject));
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL id anObject in array)
+        aList.append(convertObjcValueToValue(lexicalGlobalObject, anObject, rootObject));
 }
 
 - (id)callWebScriptMethod:(NSString *)name withArguments:(NSArray *)args
@@ -357,7 +362,7 @@ static void getListFromNSArray(JSC::JSGlobalObject* lexicalGlobalObject, NSArray
 
     MarkedArgumentBuffer argList;
     ASSERT(!argList.hasOverflowed());
-    getListFromNSArray(lexicalGlobalObject, args, [self _rootObject], argList);
+    getListFromNSArray(lexicalGlobalObject, args, protect([self _rootObject]), argList);
 
     if (![self _isSafeScript])
         return nil;
@@ -371,9 +376,9 @@ static void getListFromNSArray(JSC::JSGlobalObject* lexicalGlobalObject, NSArray
     }
 
     // Convert and return the result of the function call.
-    id resultObj = [WebScriptObject _convertValueToObjcValue:result originRootObject:[self _originRootObject] rootObject:[self _rootObject]];
+    RetainPtr<id> resultObj = [WebScriptObject _convertValueToObjcValue:result originRootObject:protect([self _originRootObject]) rootObject:protect([self _rootObject])];
 
-    return resultObj;
+    return resultObj.autorelease();
 }
 
 - (id)evaluateWebScript:(NSString *)script
@@ -389,9 +394,9 @@ static void getListFromNSArray(JSC::JSGlobalObject* lexicalGlobalObject, NSArray
 
     JSC::JSValue returnValue = JSExecState::profiledEvaluate(globalObject, JSC::ProfilingReason::Other, makeSource(String(script), { }, JSC::SourceTaintedOrigin::Untainted), JSC::JSValue());
 
-    id resultObj = [WebScriptObject _convertValueToObjcValue:returnValue originRootObject:[self _originRootObject] rootObject:[self _rootObject]];
-    
-    return resultObj;
+    RetainPtr<id> resultObj = [WebScriptObject _convertValueToObjcValue:returnValue originRootObject:protect([self _originRootObject]) rootObject:protect([self _rootObject])];
+
+    return resultObj.autorelease();
 }
 
 - (void)setValue:(id)value forKey:(NSString *)key
@@ -405,9 +410,9 @@ static void getListFromNSArray(JSC::JSGlobalObject* lexicalGlobalObject, NSArray
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::JSGlobalObject* lexicalGlobalObject = globalObject;
 
-    JSObject* object = JSC::jsDynamicCast<JSObject*>([self _imp]);
+    JSObject* object = [self _imp];
     PutPropertySlot slot(object);
-    object->methodTable()->put(object, lexicalGlobalObject, Identifier::fromString(vm, String(key)), convertObjcValueToValue(lexicalGlobalObject, &value, ObjcObjectType, [self _rootObject]), slot);
+    object->methodTable()->put(object, lexicalGlobalObject, Identifier::fromString(vm, String(key)), convertObjcValueToValue(lexicalGlobalObject, value, protect([self _rootObject])), slot);
 
     if (scope.exception()) [[unlikely]] {
         addExceptionToConsole(lexicalGlobalObject);
@@ -420,7 +425,7 @@ static void getListFromNSArray(JSC::JSGlobalObject* lexicalGlobalObject, NSArray
     if (![self _isSafeScript])
         return nil;
 
-    id resultObj;
+    RetainPtr<id> resultObj;
     {
         auto globalObject = [self _rootObject]->globalObject();
         auto& vm = globalObject->vm();
@@ -441,13 +446,13 @@ static void getListFromNSArray(JSC::JSGlobalObject* lexicalGlobalObject, NSArray
             scope.clearException();
         }
 
-        resultObj = [WebScriptObject _convertValueToObjcValue:result originRootObject:[self _originRootObject] rootObject:[self _rootObject]];
+        resultObj = [WebScriptObject _convertValueToObjcValue:result originRootObject:protect([self _originRootObject]) rootObject:protect([self _rootObject])];
     }
     
     if ([resultObj isKindOfClass:[WebUndefined class]])
         resultObj = [super valueForKey:key];    // defaults to throwing an exception
 
-    return resultObj;
+    return resultObj.autorelease();
 }
 
 - (void)removeWebScriptKey:(NSString *)key
@@ -498,7 +503,7 @@ static void getListFromNSArray(JSC::JSGlobalObject* lexicalGlobalObject, NSArray
     JSC::JSGlobalObject* lexicalGlobalObject = [self _rootObject]->globalObject();
     JSLockHolder lock(lexicalGlobalObject);
 
-    return [(__bridge id)convertValueToObjcValue(lexicalGlobalObject, [self _imp], ObjcObjectType).objectValue description];
+    return [protect((__bridge id)convertValueToObjcValue(lexicalGlobalObject, [self _imp], ObjcObjectType).objectValue) description];
 }
 
 - (id)webScriptValueAtIndex:(unsigned)index
@@ -520,9 +525,9 @@ static void getListFromNSArray(JSC::JSGlobalObject* lexicalGlobalObject, NSArray
         scope.clearException();
     }
 
-    id resultObj = [WebScriptObject _convertValueToObjcValue:result originRootObject:[self _originRootObject] rootObject:[self _rootObject]];
+    RetainPtr<id> resultObj = [WebScriptObject _convertValueToObjcValue:result originRootObject:protect([self _originRootObject]) rootObject:protect([self _rootObject])];
 
-    return resultObj;
+    return resultObj.autorelease();
 }
 
 - (void)setWebScriptValueAtIndex:(unsigned)index value:(id)value
@@ -536,7 +541,7 @@ static void getListFromNSArray(JSC::JSGlobalObject* lexicalGlobalObject, NSArray
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::JSGlobalObject* lexicalGlobalObject = globalObject;
 
-    [self _imp]->methodTable()->putByIndex([self _imp], lexicalGlobalObject, index, convertObjcValueToValue(lexicalGlobalObject, &value, ObjcObjectType, [self _rootObject]), false);
+    [self _imp]->methodTable()->putByIndex([self _imp], lexicalGlobalObject, index, convertObjcValueToValue(lexicalGlobalObject, value, protect([self _rootObject])), false);
 
     if (scope.exception()) [[unlikely]] {
         addExceptionToConsole(lexicalGlobalObject);
@@ -568,15 +573,14 @@ static void getListFromNSArray(JSC::JSGlobalObject* lexicalGlobalObject, NSArray
         JSC::VM& vm = rootObject->globalObject()->vm();
         JSLockHolder lock(vm);
 
-        if (auto* jsHTMLElement = JSC::jsDynamicCast<JSHTMLElement*>(object)) {
+        if (auto* jsHTMLElement = dynamicDowncast<JSHTMLElement>(object)) {
             // Plugin elements cache the instance internally.
-            if (RefPtr instance = downcast<ObjcInstance>(pluginInstance(jsHTMLElement->wrapped())))
+            if (auto* instance = downcast<ObjcInstance>(pluginInstance(protect(jsHTMLElement->wrapped()))))
                 return instance->getObject();
-        } else if (auto* runtimeObject = JSC::jsDynamicCast<ObjCRuntimeObject*>(object)) {
-            RefPtr instance = runtimeObject->getInternalObjCInstance();
-            if (!instance)
-                return nil;
-            return instance->getObject();
+        } else if (auto* runtimeObject = dynamicDowncast<ObjCRuntimeObject>(object)) {
+            if (auto* instance = runtimeObject->getInternalObjCInstance())
+                return instance->getObject();
+            return nil;
         }
 
         return [WebScriptObject scriptObjectForJSObject:toRef(object) originRootObject:originRootObject rootObject:rootObject];

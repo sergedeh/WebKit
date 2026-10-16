@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2026 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -53,20 +54,17 @@ ExceptionOr<Ref<CSSSkew>> CSSSkew::create(Ref<CSSNumericValue> ax, Ref<CSSNumeri
 
 ExceptionOr<Ref<CSSSkew>> CSSSkew::create(Ref<const CSSFunctionValue> cssFunctionValue, Document& document)
 {
-    if (cssFunctionValue->name() != CSSValueSkew) {
+    if (cssFunctionValue->name() != CSSValueID::Skew) {
         ASSERT_NOT_REACHED();
         return CSSSkew::create(CSSNumericFactory::deg(0), CSSNumericFactory::deg(0));
     }
 
     Vector<Ref<CSSNumericValue>> components;
     for (Ref componentCSSValue : cssFunctionValue.get()) {
-        auto valueOrException = CSSStyleValueFactory::reifyValue(document, componentCSSValue, std::nullopt);
+        auto valueOrException = CSSNumericValue::reifyValue(document, componentCSSValue.get());
         if (valueOrException.hasException())
             return valueOrException.releaseException();
-        RefPtr numericValue = dynamicDowncast<CSSNumericValue>(valueOrException.releaseReturnValue());
-        if (!numericValue)
-            return Exception { ExceptionCode::TypeError, "Expected a CSSNumericValue."_s };
-        components.append(numericValue.releaseNonNull());
+        components.append(valueOrException.releaseReturnValue());
     }
 
     auto numberOfComponents = components.size();
@@ -80,7 +78,7 @@ ExceptionOr<Ref<CSSSkew>> CSSSkew::create(Ref<const CSSFunctionValue> cssFunctio
     return CSSSkew::create(components[0], CSSNumericFactory::deg(0));
 }
 
-CSSSkew::CSSSkew(Ref<CSSNumericValue> ax, Ref<CSSNumericValue> ay)
+CSSSkew::CSSSkew(Ref<CSSNumericValue>&& ax, Ref<CSSNumericValue>&& ay)
     : CSSTransformComponent(Is2D::Yes)
     , m_ax(WTF::move(ax))
     , m_ay(WTF::move(ay))
@@ -109,10 +107,10 @@ void CSSSkew::serialize(StringBuilder& builder) const
 {
     // https://drafts.css-houdini.org/css-typed-om/#serialize-a-cssskew
     builder.append("skew("_s);
-    m_ax->serialize(builder);
+    protect(m_ax)->serialize(builder);
     if (RefPtr ayUnitValue = dynamicDowncast<CSSUnitValue>(m_ay); !ayUnitValue || ayUnitValue->value()) {
         builder.append(", "_s);
-        m_ay->serialize(builder);
+        protect(m_ay)->serialize(builder);
     }
     builder.append(')');
 }
@@ -124,8 +122,8 @@ ExceptionOr<Ref<DOMMatrix>> CSSSkew::toMatrix()
     if (!ax || !ay)
         return Exception { ExceptionCode::TypeError };
 
-    auto x = ax->convertTo(CSSUnitType::CSS_DEG);
-    auto y = ay->convertTo(CSSUnitType::CSS_DEG);
+    auto x = ax->convertTo(CSSUnitType::Deg);
+    auto y = ay->convertTo(CSSUnitType::Deg);
 
     if (!x || !y)
         return Exception { ExceptionCode::TypeError };
@@ -138,13 +136,13 @@ ExceptionOr<Ref<DOMMatrix>> CSSSkew::toMatrix()
 
 RefPtr<CSSValue> CSSSkew::toCSSValue() const
 {
-    RefPtr ax = m_ax->toCSSValue();
-    RefPtr ay = m_ay->toCSSValue();
+    RefPtr ax = protect(m_ax)->toCSSValue();
+    RefPtr ay = protect(m_ay)->toCSSValue();
     if (!ax || !ay)
         return nullptr;
     if (RefPtr ayUnitValue = dynamicDowncast<CSSUnitValue>(m_ay); ayUnitValue && !ayUnitValue->value())
-        return CSSFunctionValue::create(CSSValueSkew, ax.releaseNonNull());
-    return CSSFunctionValue::create(CSSValueSkew, ax.releaseNonNull(), ay.releaseNonNull());
+        return CSSFunctionValue::create(CSSValueID::Skew, ax.releaseNonNull());
+    return CSSFunctionValue::create(CSSValueID::Skew, ax.releaseNonNull(), ay.releaseNonNull());
 }
 
 } // namespace WebCore

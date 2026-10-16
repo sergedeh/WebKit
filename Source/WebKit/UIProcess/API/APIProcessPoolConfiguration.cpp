@@ -29,6 +29,10 @@
 #include "WebProcessPool.h"
 #include "WebsiteDataStore.h"
 
+#if USE(CF)
+#include <CoreFoundation/CoreFoundation.h>
+#endif
+
 namespace API {
 
 Ref<ProcessPoolConfiguration> ProcessPoolConfiguration::create()
@@ -66,9 +70,6 @@ Ref<ProcessPoolConfiguration> ProcessPoolConfiguration::copy()
     copy->m_usesWebProcessCache = this->m_usesWebProcessCache;
     copy->m_usesBackForwardCache = this->m_usesBackForwardCache;
     copy->m_usesSingleWebProcess = m_usesSingleWebProcess;
-#if PLATFORM(GTK) && !USE(GTK4) && USE(CAIRO)
-    copy->m_useSystemAppearanceForScrollbars = m_useSystemAppearanceForScrollbars;
-#endif
 #if PLATFORM(PLAYSTATION)
     copy->m_webProcessPath = this->m_webProcessPath;
     copy->m_networkProcessPath = this->m_networkProcessPath;
@@ -83,12 +84,23 @@ Ref<ProcessPoolConfiguration> ProcessPoolConfiguration::copy()
 #endif
     copy->m_timeZoneOverride = this->m_timeZoneOverride;
     copy->m_memoryFootprintPollIntervalForTesting = this->m_memoryFootprintPollIntervalForTesting;
+    copy->m_memoryLimitForTesting = this->m_memoryLimitForTesting;
     copy->m_memoryFootprintNotificationThresholds = this->m_memoryFootprintNotificationThresholds;
 #if ENABLE(WEB_PROCESS_SUSPENSION_DELAY)
     copy->m_suspendsWebProcessesAggressivelyOnMemoryPressure = this->m_suspendsWebProcessesAggressivelyOnMemoryPressure;
 #endif
     copy->m_prewarmedProcessCountLimitForTesting = this->m_prewarmedProcessCountLimitForTesting;
     return copy;
+}
+
+bool ProcessPoolConfiguration::defaultUsesWebBackForwardCache()
+{
+#if !USE(CF)
+    return true;
+#else
+    static bool enabledByDefault = !CFPreferencesGetAppBooleanValue(CFSTR("DebugDisableWebBackForwardCache"), kCFPreferencesCurrentApplication, nullptr);
+    return enabledByDefault;
+#endif
 }
 
 } // namespace API

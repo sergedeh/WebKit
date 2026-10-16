@@ -44,16 +44,30 @@ public:
     IndexMap(const IndexMap&) = default;
     IndexMap& operator=(const IndexMap&) = default;
     
-    template<typename... Args>
-    explicit IndexMap(size_t size, Args&&... args)
-        : m_vector(size, Value(std::forward<Args>(args)...))
+    // Constrained to non-copyable types so that POD types always use the variadic constructor below,
+    // which zero-initializes via fill (unlike Vector::grow).
+    explicit IndexMap(size_t size)
+        requires (!std::is_copy_constructible_v<Value>)
     {
+        m_vector.grow(size);
     }
 
     template<typename... Args>
-    void resize(size_t size, Args&&... args)
+    explicit IndexMap(size_t size, Args&&... args)
+        : m_vector(FillWith { }, size, Value(std::forward<Args>(args)...))
     {
-        m_vector.fill(Value(std::forward<Args>(args)...), size);
+    }
+
+    void resize(size_t size)
+    {
+        size_t oldSize = m_vector.size();
+        m_vector.resize(size);
+        // Vector::resize doesn't initialize new elements for trivial types.
+        if constexpr (std::is_trivially_copyable_v<Value>
+            && std::is_trivially_default_constructible_v<Value>) {
+            if (size > oldSize)
+                std::fill(m_vector.begin() + oldSize, m_vector.end(), Value());
+        }
     }
 
     template<typename... Args>

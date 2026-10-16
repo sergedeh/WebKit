@@ -1,5 +1,6 @@
 <html>
-<script src="../../../resources/js-test-pre.js"></script>
+<script src="../../../resources/js-test.js"></script>
+<script src="../../../resources/ui-helper.js"></script>
 <style type="text/css">
 #box {
     background-color:blue;
@@ -20,25 +21,25 @@
 
 <script type="text/javascript">
 description('Test touches set the active state.');
+window.jsTestIsAsync = true;
 
 function testComplete(event)
 {
-    isSuccessfullyParsed();
-    testRunner.notifyDone();
+    finishJSTest();
 }
 
-function runTest()
+async function runTest()
 {
+    await UIHelper.renderingComplete();
+
     if (window.eventSender) {
         // Touch the center of the div.
         eventSender.addTouchPoint(50, 50);
-        eventSender.touchStart();
+        await eventSender.asyncTouchStart();
     } else
         debug('This test requires DRT.');
 }
 
-if (window.testRunner)
-    testRunner.waitUntilDone();
 </script>
 </body>
 </html>

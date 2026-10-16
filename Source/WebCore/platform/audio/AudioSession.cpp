@@ -31,7 +31,9 @@
 #include "Logging.h"
 #include "NotImplemented.h"
 #include <wtf/LoggerHelper.h>
+#include <wtf/NativePromise.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/RunLoop.h>
 #include <wtf/TZoneMallocInlines.h>
 
 #if PLATFORM(MAC)
@@ -59,7 +61,7 @@ void AudioSession::setShouldManageAudioSessionCategory(bool flag)
     s_shouldManageAudioSessionCategory.store(flag);
 }
 
-static RefPtr<AudioSession>& sharedAudioSession()
+static RefPtr<AudioSession>& LEGACY_NODELETE sharedAudioSession()
 {
     static NeverDestroyed<RefPtr<AudioSession>> session;
     return session.get();
@@ -71,7 +73,7 @@ static Ref<AudioSession>& dummyAudioSession()
     return dummySession.get();
 }
 
-static WeakHashSet<AudioSession::ChangedObserver>& audioSessionChangedObservers()
+static WeakHashSet<AudioSession::ChangedObserver>& LEGACY_NODELETE audioSessionChangedObservers()
 {
     static NeverDestroyed<WeakHashSet<AudioSession::ChangedObserver>> observers;
     return observers;
@@ -129,30 +131,44 @@ void AudioSession::addAudioSessionChangedObserver(const ChangedObserver& observe
         observer(Ref { *sharedAudioSession() });
 }
 
-bool AudioSession::tryToSetActive(bool active)
+Ref<AudioSession::SetActivePromise> AudioSession::tryToSetActive(bool active)
 {
     bool previousIsActive = isActive();
-    if (!tryToSetActiveInternal(active))
-        return false;
-
-    ALWAYS_LOG(LOGIDENTIFIER, "is active = ", m_active, ", previousIsActive = ", previousIsActive);
-
-    bool hasActiveChanged = previousIsActive != isActive();
-    m_active = active;
-    if (m_isInterrupted && m_active) {
-        callOnMainThread([hasActiveChanged] {
-            if (singleton().m_isInterrupted && singleton().m_active)
-                singleton().endInterruption(MayResume::Yes);
+    bool previousIsInterrupted = m_isInterrupted;
+    auto logSiteIdentifier = LOGIDENTIFIER;
+    return tryToSetActiveInternal(active)->whenSettled(RunLoop::mainSingleton(),
+        [this, protectedThis = Ref { *this }, active, previousIsActive, previousIsInterrupted, logSiteIdentifier](auto&& result) mutable -> Ref<SetActivePromise> {
+            if (!result)
+                return SetActivePromise::createAndReject();
+            ALWAYS_LOG(logSiteIdentifier, "is active = ", active, ", previousIsActive = ", previousIsActive);
+            bool hasActiveChanged = previousIsActive != active;
+            m_active = active;
+            if (active && hasActiveChanged)
+                ++m_activationCountForTesting;
+            if (m_isInterrupted && m_active && previousIsInterrupted)
+                endInterruption(MayResume::Yes);
             if (hasActiveChanged)
-                singleton().activeStateChanged();
+                activeStateChanged();
+            return SetActivePromise::createAndResolve();
         });
-    } else if (hasActiveChanged)
-        activeStateChanged();
-
-    return true;
 }
 
-static WeakHashSet<AudioSessionInterruptionObserver>& audioSessionInterruptionObserversSingleton()
+Ref<AudioSession::ActivationCountPromise> AudioSession::systemActivationCountForTesting()
+{
+    return ActivationCountPromise::createAndResolve(activationCountForTesting());
+}
+
+uint64_t AudioSession::activationCountForTesting() const
+{
+    return m_activationCountForTesting;
+}
+
+void AudioSession::setActive(bool active)
+{
+    m_active = active;
+}
+
+static WeakHashSet<AudioSessionInterruptionObserver>& LEGACY_NODELETE audioSessionInterruptionObserversSingleton()
 {
     static NeverDestroyed<WeakHashSet<AudioSessionInterruptionObserver>> audioSessionInterruptionObservers;
     return audioSessionInterruptionObservers.get();
@@ -213,7 +229,7 @@ void AudioSession::setCategoryOverride(CategoryType category)
 
     m_categoryOverride = category;
     if (category != CategoryType::None)
-        setCategory(category, Mode::Default, RouteSharingPolicy::Default);
+        setCategory(category, category == AudioSessionCategory::PlayAndRecord ? Mode::VideoChat : Mode::Default, RouteSharingPolicy::Default);
 }
 
 AudioSession::CategoryType AudioSession::categoryOverride() const
@@ -257,10 +273,10 @@ size_t AudioSession::maximumNumberOfOutputChannels() const
     return 0;
 }
 
-bool AudioSession::tryToSetActiveInternal(bool)
+Ref<AudioSession::SetActivePromise> AudioSession::tryToSetActiveInternal(bool)
 {
     notImplemented();
-    return true;
+    return SetActivePromise::createAndResolve();
 }
 
 size_t AudioSession::preferredBufferSize() const

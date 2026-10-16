@@ -33,7 +33,6 @@
 #include <WebCore/ResourceLoader.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/Platform.h>
-#include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
  
 namespace WebCore {
@@ -51,20 +50,18 @@ public:
     virtual ~SubresourceLoader();
 
     void cancelIfNotFinishing();
-    bool isSubresourceLoader() const final;
+    bool LEGACY_NODELETE isSubresourceLoader() const final;
     CachedResource* cachedResource() const final { return m_resource.get(); };
-    CachedResourceHandle<CachedResource> protectedCachedResource() const { return cachedResource(); }
 
     WEBCORE_EXPORT const HTTPHeaderMap* originalHeaders() const;
 
     const SecurityOrigin* origin() const { return m_origin.get(); }
     SecurityOrigin* origin() { return m_origin.get(); }
-    RefPtr<SecurityOrigin> protectedOrigin() const;
 #if PLATFORM(IOS_FAMILY)
     void startLoading() final;
 
     // FIXME: What is an "iOS" original request? Why is it necessary?
-    const ResourceRequest& iOSOriginalRequest() const final { return m_iOSOriginalRequest; }
+    const ResourceRequest& iOSOriginalRequest() const LIFETIME_BOUND final { return m_iOSOriginalRequest; }
 #endif
 
     unsigned redirectCount() const { return m_redirectCount; }
@@ -98,8 +95,8 @@ private:
     void releaseResources() final;
 
     bool responseHasHTTPStatusCodeError() const;
-    Expected<void, String> checkResponseCrossOriginAccessControl(const ResourceResponse&);
-    Expected<void, String> checkRedirectionCrossOriginAccessControl(const ResourceRequest& previousRequest, const ResourceResponse&, ResourceRequest& newRequest);
+    std::expected<void, String> checkResponseCrossOriginAccessControl(const ResourceResponse&);
+    std::expected<void, String> checkRedirectionCrossOriginAccessControl(const ResourceRequest& previousRequest, const ResourceResponse&, ResourceRequest& newRequest);
 
     void didReceiveDataOrBuffer(const FragmentedSharedBuffer&, long long encodedDataLength, DataPayloadType);
 
@@ -126,7 +123,7 @@ private:
     public:
         RequestCountTracker(CachedResourceLoader&, const CachedResource&);
         RequestCountTracker(RequestCountTracker&&);
-        RequestCountTracker& operator=(RequestCountTracker&&);
+        RequestCountTracker& LEGACY_NODELETE operator=(RequestCountTracker&&);
         ~RequestCountTracker();
     private:
         WeakPtr<CachedResourceLoader> m_cachedResourceLoader;
@@ -136,7 +133,9 @@ private:
 #if PLATFORM(IOS_FAMILY)
     ResourceRequest m_iOSOriginalRequest;
 #endif
-    WeakPtr<CachedResource> m_resource;
+    // CachedResource has a RefPtr back to this SubresourceLoader via m_loader,
+    // forming a ref-cycle that is broken in releaseResources().
+    RefPtr<CachedResource> m_resource;
     SubresourceLoaderState m_state;
     std::optional<RequestCountTracker> m_requestCountTracker;
     RefPtr<SecurityOrigin> m_origin;

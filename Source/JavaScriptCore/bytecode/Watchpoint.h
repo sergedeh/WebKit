@@ -45,7 +45,7 @@ struct ArrayBufferViewWatchpointAdaptor;
 class VM;
 
 class FireDetail {
-    void* operator new(size_t) = delete;
+    WTF_FORBID_HEAP_ALLOCATION;
     
 public:
     virtual ~FireDetail() = default;
@@ -54,7 +54,7 @@ public:
     virtual void dump(PrintStream&) const { }
 };
 
-class StringFireDetail final : public FireDetail {
+class JS_EXPORT_PRIVATE StringFireDetail final : public FireDetail {
 public:
     StringFireDetail(const char* string)
         : m_string(string)
@@ -64,20 +64,23 @@ public:
     void dump(PrintStream& out) const final;
 
 private:
+    explicit StringFireDetail(ClangVTableWorkaroundTag);
+
     const char* m_string;
 };
 
+template<ConstInvocable<void(PrintStream&)> Functor>
 class LazyFireDetail final : public FireDetail {
 public:
-    LazyFireDetail(ScopedLambda<void(PrintStream&)>& lambda)
-        : m_lambda(lambda)
+    LazyFireDetail(Functor functor)
+        : m_functor(WTF::move(functor))
     {
     }
 
-    void dump(PrintStream& out) const final { m_lambda(out); }
+    void dump(PrintStream& out) const final { m_functor(out); }
 
 private:
-    ScopedLambda<void(PrintStream&)>& m_lambda;
+    Functor m_functor;
 };
 
 class WatchpointSet;
@@ -96,8 +99,8 @@ class WatchpointSet;
 #if ENABLE(JIT)
 #define JSC_WATCHPOINT_TYPES_WITHOUT_DFG(macro) \
     JSC_WATCHPOINT_TYPES_WITHOUT_JIT(macro) \
-    macro(StructureTransitionStructureStubClearing, StructureTransitionStructureStubClearingWatchpoint) \
-    macro(StructureStubInfoClearing, StructureStubInfoClearingWatchpoint)
+    macro(StructureTransitionPropertyInlineCacheClearing, StructureTransitionPropertyInlineCacheClearingWatchpoint) \
+    macro(PropertyInlineCacheClearing, PropertyInlineCacheClearingWatchpoint)
 
 #if ENABLE(DFG_JIT)
 #define JSC_WATCHPOINT_TYPES(macro) \
@@ -130,10 +133,10 @@ public:
         : m_type(type)
     { }
 
-    void operator delete(Watchpoint*, std::destroying_delete_t);
+    JS_EXPORT_PRIVATE void operator delete(Watchpoint*, std::destroying_delete_t);
 
 protected:
-    ~Watchpoint();
+    JS_EXPORT_PRIVATE ~Watchpoint();
 
 private:
     friend class WatchpointSet;
@@ -141,7 +144,7 @@ private:
     friend struct DFG::ArrayBufferViewWatchpointAdaptor;
     void fire(VM&, const FireDetail&);
     template<typename Func>
-    void runWithDowncast(const Func&);
+    void runWithDowncast(NOESCAPE const Func&);
 
     Type m_type;
 };
@@ -203,7 +206,7 @@ public:
     // As a convenience, this will ignore 0. That's because code paths in the DFG
     // that create speculation watchpoints may choose to bail out if speculation
     // had already been terminated.
-    void add(Watchpoint*);
+    void LEGACY_NODELETE add(Watchpoint*);
     
     // Force the watchpoint set to behave as if it was being watched even if no
     // watchpoints have been installed. This will result in invalidation if the
@@ -269,7 +272,7 @@ protected:
 
 private:
     void fireAllWatchpoints(VM&, const FireDetail&);
-    void take(WatchpointSet* other);
+    void LEGACY_NODELETE take(WatchpointSet* other);
     
     friend class InlineWatchpointSet;
 
@@ -279,13 +282,13 @@ private:
     SentinelLinkedList<Watchpoint, BasicRawSentinelNode<Watchpoint>> m_set;
 };
 
-// InlineWatchpointSet is a low-overhead, non-copyable watchpoint set in which
-// it is not possible to quickly query whether it is being watched in a single
-// branch. There is a fairly simple tradeoff between WatchpointSet and
-// InlineWatchpointSet:
+// InlineWatchpointSet is a low-overhead, non-copyable watchpoint set. There is
+// a fairly simple tradeoff between WatchpointSet and InlineWatchpointSet:
 //
-// Do you have to emit JIT code that rapidly tests whether the watchpoint set
-// is being watched?  If so, use WatchpointSet.
+// Do you have to emit JIT code that tests whether the watchpoint set is being
+// watched? Both work, but WatchpointSet needs a single branch while
+// InlineWatchpointSet needs a few more instructions to handle both its thin and
+// fat forms. If the test is on a very hot path, use WatchpointSet.
 //
 // Do you need multiple parties to have pointers to the same WatchpointSet?
 // If so, use WatchpointSet.
@@ -300,6 +303,7 @@ private:
 
 class InlineWatchpointSet {
     WTF_MAKE_NONCOPYABLE(InlineWatchpointSet);
+    friend class LLIntOffsetsExtractor;
 public:
     InlineWatchpointSet(WatchpointState state)
         : m_data(encodeState(state))
@@ -336,12 +340,12 @@ public:
         return !hasBeenInvalidated();
     }
     
-    void add(Watchpoint*);
+    JS_EXPORT_PRIVATE void add(Watchpoint*);
     
     void startWatching()
     {
         if (isFat()) {
-            protectedFat()->startWatching();
+            protect(fat())->startWatching();
             return;
         }
         ASSERT(decodeState(m_data) != IsInvalidated);
@@ -352,7 +356,7 @@ public:
     void fireAll(VM& vm, T fireDetails)
     {
         if (isFat()) {
-            protectedFat()->fireAll(vm, fireDetails);
+            protect(fat())->fireAll(vm, fireDetails);
             return;
         }
         if (decodeState(m_data) == ClearWatchpoint)
@@ -364,7 +368,7 @@ public:
     void invalidate(VM& vm, const FireDetail& detail)
     {
         if (isFat())
-            protectedFat()->invalidate(vm, detail);
+            protect(fat())->invalidate(vm, detail);
         else
             m_data = encodeState(IsInvalidated);
     }
@@ -374,7 +378,9 @@ public:
     void touch(VM& vm, const FireDetail& detail)
     {
         if (isFat()) {
-            protectedFat()->touch(vm, detail);
+            if (fat()->state() == IsInvalidated)
+                return;
+            protect(fat())->touch(vm, detail);
             return;
         }
         uintptr_t data = m_data;
@@ -442,9 +448,26 @@ public:
             return fat();
         return inflateSlow();
     }
-    
-private:
+
+    // Safe to call from another thread. Once inflated, the WatchpointSet never changes.
+    WatchpointSet* inflatedSetConcurrently() const
+    {
+        uintptr_t data = m_data;
+        if (isFat(data))
+            return fat(data);
+        return nullptr;
+    }
+
+    static constexpr ptrdiff_t offsetOfData() { return OBJECT_OFFSETOF(InlineWatchpointSet, m_data); }
+
     static constexpr uintptr_t IsThinFlag        = 1;
+
+    static constexpr uintptr_t encodeState(WatchpointState state)
+    {
+        return (static_cast<uintptr_t>(state) << StateShift) | IsThinFlag;
+    }
+
+private:
     static constexpr uintptr_t StateMask         = 6;
     static constexpr uintptr_t StateShift        = 1;
     
@@ -455,11 +478,6 @@ private:
     {
         ASSERT(isThin(data));
         return static_cast<WatchpointState>((data & StateMask) >> StateShift);
-    }
-    
-    static uintptr_t encodeState(WatchpointState state)
-    {
-        return (static_cast<uintptr_t>(state) << StateShift) | IsThinFlag;
     }
     
     bool isThin() const { return isThin(m_data); }
@@ -482,9 +500,6 @@ private:
         return fat(m_data);
     }
 
-    RefPtr<WatchpointSet> protectedFat() { return fat(); }
-    RefPtr<const WatchpointSet> protectedFat() const { return fat(); }
-    
     JS_EXPORT_PRIVATE WatchpointSet* inflateSlow();
     JS_EXPORT_PRIVATE void freeFat();
     
@@ -499,7 +514,7 @@ public:
     {
     }
 
-    JS_EXPORT_PRIVATE void takeWatchpointsToFire(WatchpointSet*);
+    JS_EXPORT_PRIVATE void LEGACY_NODELETE takeWatchpointsToFire(WatchpointSet*);
 
 protected:
     WatchpointSet& watchpointsToFire() { return m_watchpointsToFire; }

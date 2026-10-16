@@ -34,9 +34,9 @@
 #include "RenderInline.h"
 #include "RenderLineBreak.h"
 #include "RenderObjectDocument.h"
-#include "RenderStyle+GettersInlines.h"
 #include "RenderText.h"
 #include "RenderView.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -50,7 +50,7 @@ AccessibilityRegionContext::~AccessibilityRegionContext()
     for (auto renderTextToFrame : m_accumulatedRenderTextRects) {
         if (!cache) {
             // Use this RenderText to get to the "canonical" AXObjectCache (attached to the page).
-            cache = renderTextToFrame.key.document().axObjectCache();
+            cache = protect(renderTextToFrame.key.document())->axObjectCache();
         }
 
         if (cache) {
@@ -72,7 +72,7 @@ void AccessibilityRegionContext::takeBounds(const RenderBox& renderBox, LayoutPo
         takeBounds(*renderView, WTF::move(paintOffset));
         return;
     }
-    auto mappedPaintRect = enclosingIntRect(mapRect(LayoutRect(paintOffset, renderBox.size())));
+    auto mappedPaintRect = enclosingIntRect(mapRect(LayoutRect(paintOffset, renderBox.borderBoxSize())));
     takeBoundsInternal(renderBox, WTF::move(mappedPaintRect));
 }
 
@@ -115,10 +115,15 @@ void AccessibilityRegionContext::takeBounds(const RenderInline* renderInline, La
 
 void AccessibilityRegionContext::takeBoundsInternal(const RenderBoxModelObject& renderObject, IntRect&& paintRect)
 {
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+    // We want to cache element rects without scroll applied (that's handled by AXFrameGeometry), so don't apply contentsToView.
+    UNUSED_PARAM(renderObject);
+#else
     if (RefPtr view = renderObject.document().view())
         paintRect = view->contentsToRootView(paintRect);
+#endif
 
-    if (auto* cache = renderObject.document().axObjectCache())
+    if (CheckedPtr cache = protect(renderObject.document())->axObjectCache())
         cache->onPaint(renderObject, WTF::move(paintRect));
 }
 
@@ -128,8 +133,13 @@ void AccessibilityRegionContext::takeBoundsInternal(const RenderBoxModelObject& 
 void AccessibilityRegionContext::takeBounds(const RenderText& renderText, FloatRect paintRect, size_t lineIndex)
 {
     auto mappedPaintRect = enclosingIntRect(mapRect(WTF::move(paintRect)));
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+    // Same as takeBoundsInternal: keep rects in content space for ACCESSIBILITY_LOCAL_FRAME.
+    UNUSED_PARAM(renderText);
+#else
     if (RefPtr view = renderText.document().view())
         mappedPaintRect = view->contentsToRootView(mappedPaintRect);
+#endif
 
     auto accumulatedRectIterator = m_accumulatedRenderTextRects.find(renderText);
     if (accumulatedRectIterator == m_accumulatedRenderTextRects.end())
@@ -137,7 +147,7 @@ void AccessibilityRegionContext::takeBounds(const RenderText& renderText, FloatR
     else
         accumulatedRectIterator->value.unite(mappedPaintRect);
 
-    if (CheckedPtr cache = renderText.document().axObjectCache()) {
+    if (CheckedPtr cache = protect(renderText.document())->axObjectCache()) {
         // Note that the line-index provided here is relative to the containing-block, which could include lines
         // belonging to other RenderTexts. Concretely, this means the first painted line for |renderText| could
         // have a line index greater than zero. We adjust this later in AXObjectCache::onAccessibilityPaintFinished.
@@ -158,11 +168,17 @@ void AccessibilityRegionContext::onPaint(const ScrollView& scrollView)
     auto relativeFrame = frameView->frameRectShrunkByInset();
     // Only normalize the rect to the root view if this scrollview isn't already associated with the root view (i.e. it has a frame owner).
     if (RefPtr frameOwnerElement = frameView->frame().ownerElement()) {
-        if (RefPtr ownerDocumentFrameView = frameOwnerElement->document().view())
+        if (RefPtr ownerDocumentFrameView = frameOwnerElement->document().view()) {
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+            // Zero out the iframe position since frameScreenPosition accounts for it.
+            relativeFrame.setLocation(IntPoint());
+#else
             relativeFrame = ownerDocumentFrameView->contentsToRootView(relativeFrame);
+#endif
+        }
     }
 
-    if (auto* cache = frameView->axObjectCache())
+    if (CheckedPtr cache = frameView->axObjectCache())
         cache->onPaint(*frameView, WTF::move(relativeFrame));
 }
 

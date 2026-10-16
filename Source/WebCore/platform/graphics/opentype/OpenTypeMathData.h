@@ -63,7 +63,7 @@ public:
 
     // These constants are defined in the MATH table.
     // The implementation of OpenTypeMathData::getMathConstant assumes that they correspond to the indices of the MathContant table.
-    enum MathConstant {
+    enum class MathConstant : uint8_t {
         ScriptPercentScaleDown,
         ScriptScriptPercentScaleDown,
         DelimitedSubFormulaMinHeight,
@@ -130,6 +130,7 @@ public:
     float getMathConstant(const Font&, MathConstant) const;
     float getItalicCorrection(const Font&, Glyph) const;
     void getMathVariants(Glyph, bool isVertical, Vector<Glyph>& sizeVariants, Vector<AssemblyPart>& assemblyParts) const;
+    Glyph getMirroredGlyph(char32_t codePoint) const;
 
 private:
     explicit OpenTypeMathData(const FontPlatformData&);

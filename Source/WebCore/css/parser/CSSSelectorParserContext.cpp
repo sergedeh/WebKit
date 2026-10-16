@@ -39,10 +39,11 @@ CSSSelectorParserContext::CSSSelectorParserContext(const CSSParserContext& conte
     , imageControlsEnabled(context.imageControlsEnabled)
 #endif
     , popoverAttributeEnabled(context.popoverAttributeEnabled)
-    , htmlEnhancedSelectPseudoElementsEnabled(context.htmlEnhancedSelectPseudoElementsEnabled)
+    , cssClassPrefixSelectorEnabled(context.cssClassPrefixSelectorEnabled)
+    , cssPickerPseudoElementEnabled(context.cssPickerPseudoElementEnabled)
+    , htmlEnhancedSelectEnabled(context.htmlEnhancedSelectEnabled)
     , targetTextPseudoElementEnabled(context.targetTextPseudoElementEnabled)
-    , thumbAndTrackPseudoElementsEnabled(context.thumbAndTrackPseudoElementsEnabled)
-    , viewTransitionsEnabled(context.propertySettings.viewTransitionsEnabled)
+    , cssAppearanceBaseEnabled(context.cssAppearanceBaseEnabled)
     , webkitMediaTextTrackDisplayQuirkEnabled(context.webkitMediaTextTrackDisplayQuirkEnabled)
     , openPseudoClassEnabled(context.openPseudoClassEnabled)
 {
@@ -54,10 +55,11 @@ CSSSelectorParserContext::CSSSelectorParserContext(const Document& document)
     , imageControlsEnabled(document.settings().imageControlsEnabled())
 #endif
     , popoverAttributeEnabled(document.settings().popoverAttributeEnabled())
-    , htmlEnhancedSelectPseudoElementsEnabled(document.settings().htmlEnhancedSelectPseudoElementsEnabled())
+    , cssClassPrefixSelectorEnabled(document.settings().cssClassPrefixSelectorEnabled())
+    , cssPickerPseudoElementEnabled(document.settings().cssPickerPseudoElementEnabled())
+    , htmlEnhancedSelectEnabled(document.settings().htmlEnhancedSelectEnabled())
     , targetTextPseudoElementEnabled(document.settings().targetTextPseudoElementEnabled())
-    , thumbAndTrackPseudoElementsEnabled(document.settings().thumbAndTrackPseudoElementsEnabled())
-    , viewTransitionsEnabled(document.settings().viewTransitionsEnabled())
+    , cssAppearanceBaseEnabled(document.settings().cssAppearanceBaseEnabled())
     , webkitMediaTextTrackDisplayQuirkEnabled(document.quirks().needsWebKitMediaTextTrackDisplayQuirk())
     , openPseudoClassEnabled(document.settings().openPseudoClassEnabled())
 {
@@ -70,10 +72,11 @@ void add(Hasher& hasher, const CSSSelectorParserContext& context)
         context.imageControlsEnabled,
 #endif
         context.popoverAttributeEnabled,
-        context.htmlEnhancedSelectPseudoElementsEnabled,
+        context.cssClassPrefixSelectorEnabled,
+        context.cssPickerPseudoElementEnabled,
+        context.htmlEnhancedSelectEnabled,
         context.targetTextPseudoElementEnabled,
-        context.thumbAndTrackPseudoElementsEnabled,
-        context.viewTransitionsEnabled,
+        context.cssAppearanceBaseEnabled,
         context.webkitMediaTextTrackDisplayQuirkEnabled,
         context.openPseudoClassEnabled
     );

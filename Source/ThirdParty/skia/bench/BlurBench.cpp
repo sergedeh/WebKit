@@ -11,16 +11,14 @@
 #include "include/core/SkPaint.h"
 #include "include/core/SkShader.h"
 #include "include/core/SkString.h"
-#include "src/base/SkRandom.h"
 #include "src/core/SkBlurMask.h"
+#include "src/core/SkRandom.h"
 
 #define MINI    0.01f
 #define SMALL   SkIntToScalar(2)
 #define REAL    0.5f
 #define BIG     SkIntToScalar(10)
 #define REALBIG 100.5f
-// The value that produces a sigma of just over 2.
-#define CUTOVER 2.6f
 
 static const char* gStyleName[] = {
     "normal",

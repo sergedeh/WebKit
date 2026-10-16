@@ -32,7 +32,7 @@
 namespace WebCore {
 namespace Style {
 
-CSS::CubicBezierEasingFunction toCSSCubicBezierEasingFunction(const CubicBezierTimingFunction& function, const RenderStyle& style)
+CSS::CubicBezierEasingFunction toCSSCubicBezierEasingFunction(const CubicBezierTimingFunction& function, const Style::ComputedStyle& style)
 {
     ASSERT(function.timingFunctionPreset() == CubicBezierTimingFunction::TimingFunctionPreset::Custom);
 
@@ -62,7 +62,7 @@ Ref<TimingFunction> createTimingFunction(const BuilderState& state, const CSS::C
 
 Ref<TimingFunction> createTimingFunctionDeprecated(const CSS::CubicBezierEasingFunction& function)
 {
-    if (!CSS::collectComputedStyleDependencies(function).canResolveDependenciesWithConversionData({ }))
+    if (!CSS::collectComputedStyleDependencies(function).isAbsolute())
         return CubicBezierTimingFunction::create();
 
     return CubicBezierTimingFunction::create(

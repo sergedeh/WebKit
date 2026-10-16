@@ -27,27 +27,29 @@
 
 #include "SVGAnimatedProperty.h"
 #include "SVGDecoratedProperty.h"
+#include "SVGPropertyTraits.h"
+#include <type_traits>
 
 namespace WebCore {
 
 template<template <typename, typename> class DecoratedProperty, typename DecorationType>
-class SVGAnimatedDecoratedProperty : public SVGAnimatedProperty {
+class SVGAnimatedDecoratedProperty : public SVGAnimatedProperty<SVGAnimatedDecoratedProperty<DecoratedProperty, DecorationType>> {
+    using Base = SVGAnimatedProperty<SVGAnimatedDecoratedProperty<DecoratedProperty, DecorationType>>;
 public:
+    // The value passed here is the attribute's initial value, which the property keeps so that it
+    // can be restored when the attribute is removed or fails to parse. There is deliberately no
+    // overload without it: a property with no initial value would restore 0, which is not a legal
+    // enumeration value.
     template<typename PropertyType, typename AnimatedProperty = SVGAnimatedDecoratedProperty>
-    static Ref<AnimatedProperty> create(SVGElement* contextElement)
+    static Ref<AnimatedProperty> create(SVGElement* contextElement, const PropertyType& initialValue)
     {
-        return adoptRef(*new AnimatedProperty(contextElement, adoptRef(*new DecoratedProperty<DecorationType, PropertyType>())));
+        return adoptRef(*new AnimatedProperty(contextElement, DecoratedProperty<DecorationType, PropertyType>::create(initialValue), static_cast<DecorationType>(initialValue)));
     }
 
-    template<typename PropertyType, typename AnimatedProperty = SVGAnimatedDecoratedProperty>
-    static Ref<AnimatedProperty> create(SVGElement* contextElement, const PropertyType& value)
-    {
-        return adoptRef(*new AnimatedProperty(contextElement, DecoratedProperty<DecorationType, PropertyType>::create(value)));
-    }
-
-    SVGAnimatedDecoratedProperty(SVGElement* contextElement, Ref<SVGDecoratedProperty<DecorationType>>&& baseVal)
-        : SVGAnimatedProperty(contextElement)
+    SVGAnimatedDecoratedProperty(SVGElement* contextElement, Ref<SVGDecoratedProperty<DecorationType>>&& baseVal, DecorationType initialValue)
+        : Base(contextElement)
         , m_baseVal(WTF::move(baseVal))
+        , m_initialValue(initialValue)
     {
     }
 
@@ -56,7 +58,7 @@ public:
     {
         if (!m_baseVal->setValue(baseVal))
             return Exception { ExceptionCode::TypeError };
-        commitPropertyChange(nullptr);
+        this->commitPropertyChange(nullptr);
         return { };
     }
 
@@ -66,7 +68,38 @@ public:
     {
         m_baseVal->setValueInternal(static_cast<DecorationType>(baseVal));
         if (m_animVal)
-            m_animVal->setValueInternal(static_cast<DecorationType>(baseVal));
+            protect(m_animVal)->setValueInternal(static_cast<DecorationType>(baseVal));
+    }
+
+    // Parses an enumerated attribute value, restoring the attribute's initial value when the value
+    // is absent or is not one of the keywords in the attribute's grammar.
+    // https://w3c.github.io/svgwg/svg2-draft/types.html#InvalidValues
+    //
+    // Returns whether the value was recognized. The test for "not recognized" matches the one
+    // SVGDecoratedEnumeration::setValue() applies to values coming from the DOM: zero, which every
+    // SVGPropertyTraits<EnumType>::fromString() returns for an unrecognized keyword, or a value
+    // above the highest keyword of this attribute's grammar. The latter matters for attributes
+    // whose enumeration is shared with a non-SVG consumer that has more values than SVG allows,
+    // such as feBlend's mode, where BlendMode carries PlusDarker and PlusLighter.
+    //
+    // FIXME: SVGPropertyTraits<BlendMode>::fromString() cannot report failure at all -- it has no
+    // zero to return, so an unrecognized feBlend mode arrives here as BlendMode::Normal and is
+    // reported as recognized. Harmless today because Normal is also feBlend's initial value, so the
+    // restored value is right either way, but it means a caller cannot tell a bad mode from a good
+    // one. Fixing that needs BlendMode itself to express failure, which is out of scope here.
+    template<typename EnumType>
+    bool parseBaseVal(SVGElement& contextElement, const AtomString& value)
+    {
+        static_assert(std::is_integral<DecorationType>::value, "Restoring the initial value relies on zero meaning \"not a legal enumeration value\", which needs an integral DecorationType.");
+
+        auto parsedValue = SVGPropertyTraits<EnumType>::fromString(contextElement, value);
+        auto decoratedValue = static_cast<DecorationType>(parsedValue);
+        if (!decoratedValue || decoratedValue > SVGPropertyTraits<EnumType>::highestEnumValue()) {
+            setBaseValInternal<DecorationType>(m_initialValue);
+            return false;
+        }
+        setBaseValInternal<EnumType>(parsedValue);
+        return true;
     }
 
     DecorationType baseVal() const { return m_baseVal->value(); }
@@ -75,15 +108,15 @@ public:
     template<typename PropertyType>
     void setAnimVal(const PropertyType& animVal)
     {
-        ASSERT(isAnimating() && m_animVal);
-        m_animVal->setValueInternal(static_cast<DecorationType>(animVal));
+        ASSERT(this->isAnimating() && m_animVal);
+        protect(m_animVal)->setValueInternal(static_cast<DecorationType>(animVal));
     }
 
     template<typename PropertyType = DecorationType>
     PropertyType animVal() const
     {
-        ASSERT_IMPLIES(isAnimating(), m_animVal);
-        return static_cast<PropertyType>((isAnimating() ? *m_animVal : m_baseVal.get()).value());
+        ASSERT_IMPLIES(this->isAnimating(), m_animVal);
+        return static_cast<PropertyType>(protect(this->isAnimating() ? *m_animVal : m_baseVal.get())->value());
     }
 
     // Used when committing a change from the SVGAnimatedProperty to the attribute.
@@ -92,8 +125,8 @@ public:
     // Used to apply the SVGAnimator change to the target element.
     String animValAsString() const override
     {
-        ASSERT(isAnimating() && !!m_animVal);
-        return m_animVal->valueAsString();
+        ASSERT(this->isAnimating() && !!m_animVal);
+        return protect(m_animVal)->valueAsString();
     }
 
     // Managing the relationship with the owner.
@@ -111,46 +144,47 @@ public:
     template<typename PropertyType>
     PropertyType currentValue() const
     {
-        ASSERT_IMPLIES(isAnimating(), m_animVal);
-        return static_cast<PropertyType>((isAnimating() ? *m_animVal : m_baseVal.get()).valueInternal());
+        ASSERT_IMPLIES(this->isAnimating(), m_animVal);
+        return static_cast<PropertyType>(protect(this->isAnimating() ? *m_animVal : m_baseVal.get())->valueInternal());
     }
 
     // Controlling the animation.
     void startAnimation(SVGAttributeAnimator& animator) override
     {
         if (m_animVal)
-            m_animVal->setValue(m_baseVal->value());
+            protect(m_animVal)->setValue(m_baseVal->value());
         else
             m_animVal = m_baseVal->clone();
-        SVGAnimatedProperty::startAnimation(animator);
+        Base::startAnimation(animator);
     }
     void stopAnimation(SVGAttributeAnimator& animator) override
     {
-        SVGAnimatedProperty::stopAnimation(animator);
-        if (!isAnimating())
+        Base::stopAnimation(animator);
+        if (!this->isAnimating())
             m_animVal = nullptr;
         else if (m_animVal)
-            m_animVal->setValue(m_baseVal->value());
+            protect(m_animVal)->setValue(m_baseVal->value());
     }
 
     // Controlling the instance animation.
-    void instanceStartAnimation(SVGAttributeAnimator& animator, SVGAnimatedProperty& animated) override
+    void instanceStartAnimationImpl(SVGAttributeAnimator& animator, SVGAnimatedDecoratedProperty& animated) override
     {
-        if (!isAnimating())
-            m_animVal = static_cast<decltype(*this)>(animated).m_animVal;
-        SVGAnimatedProperty::instanceStartAnimation(animator, animated);
+        if (!this->isAnimating())
+            m_animVal = animated.m_animVal;
+        Base::startAnimation(animator);
     }
 
-    void instanceStopAnimation(SVGAttributeAnimator& animator) override
+    void instanceStopAnimationImpl(SVGAttributeAnimator& animator) override
     {
-        SVGAnimatedProperty::instanceStopAnimation(animator);
-        if (!isAnimating())
+        Base::stopAnimation(animator);
+        if (!this->isAnimating())
             m_animVal = nullptr;
     }
 
 protected:
     const Ref<SVGDecoratedProperty<DecorationType>> m_baseVal;
     RefPtr<SVGDecoratedProperty<DecorationType>> m_animVal;
+    const DecorationType m_initialValue { 0 };
     SVGPropertyState m_state { SVGPropertyState::Clean };
 };
 

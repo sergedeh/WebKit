@@ -28,6 +28,7 @@
 #include <JavaScriptCore/InspectorAgentBase.h>
 #include <JavaScriptCore/InspectorBackendDispatchers.h>
 #include <JavaScriptCore/InspectorFrontendDispatchers.h>
+#include <wtf/CheckedRef.h>
 #include <wtf/Forward.h>
 #include <wtf/HashMap.h>
 #include <wtf/MonotonicTime.h>
@@ -48,10 +49,16 @@ class InspectorHeapAgent;
 class ScriptArguments;
 class ScriptCallStack;
 
-class JS_EXPORT_PRIVATE InspectorConsoleAgent : public InspectorAgentBase, public ConsoleBackendDispatcherHandler {
+// Note: This uses CanMakeThreadSafeCheckedPtr because a JSC::JSGlobalObject (and thus its
+// JSGlobalObjectInspectorController, which keeps CheckedPtrs to its agents) may get destroyed
+// on a different thread than the one it got created on, when the VM is torn down.
+class JS_EXPORT_PRIVATE InspectorConsoleAgent : public InspectorAgentBase, public ConsoleBackendDispatcherHandler, public CanMakeThreadSafeCheckedPtr<InspectorConsoleAgent> {
     WTF_MAKE_NONCOPYABLE(InspectorConsoleAgent);
     WTF_MAKE_TZONE_ALLOCATED(InspectorConsoleAgent);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(InspectorConsoleAgent);
 public:
+    OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeThreadSafeCheckedPtr);
+
     InspectorConsoleAgent(AgentContext&);
     ~InspectorConsoleAgent() override;
 
@@ -88,7 +95,7 @@ protected:
     void addConsoleMessage(std::unique_ptr<ConsoleMessage>);
     void clearMessages(Protocol::Console::ClearReason);
 
-    InjectedScriptManager& m_injectedScriptManager;
+    const CheckedRef<InjectedScriptManager> m_injectedScriptManager;
     const UniqueRef<ConsoleFrontendDispatcher> m_frontendDispatcher;
     const Ref<ConsoleBackendDispatcher> m_backendDispatcher;
 

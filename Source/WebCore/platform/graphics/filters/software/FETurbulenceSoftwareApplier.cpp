@@ -174,7 +174,7 @@ ColorComponents<float, 4> FETurbulenceSoftwareApplier::noise2D(const PaintingDat
             fraction = position - index;
         }
         
-        void stitch(int size, int wrapSize)
+        void LEGACY_NODELETE stitch(int size, int wrapSize)
         {
             // if (bx0 >= pStitchInfo->nWrapX)
             //   bx0 -= pStitchInfo->nWidth;
@@ -230,7 +230,7 @@ ColorComponents<float, 4> FETurbulenceSoftwareApplier::noise2D(const PaintingDat
         q = paintingData.gradient[channel][b10];
         float v = (noiseX.fraction - 1) * q[0] + noiseY.fraction * q[1];
         // a = lerp(sx, u, v);
-        float a = linearInterpolation(sx, u, v);
+        float a = std::lerp(u, v, sx);
 
         // b01 = uLatticeSelector[i + by1];
         int b01 = paintingData.latticeSelector[latticeIndex + noiseY.nextIndex];
@@ -245,10 +245,10 @@ ColorComponents<float, 4> FETurbulenceSoftwareApplier::noise2D(const PaintingDat
         q = paintingData.gradient[channel][b11];
         v = (noiseX.fraction - 1) * q[0] + (noiseY.fraction - 1) * q[1];
         // b = lerp(sx, u, v);
-        float b = linearInterpolation(sx, u, v);
+        float b = std::lerp(u, v, sx);
 
         // return lerp(sy, a, b);
-        return linearInterpolation(sy, a, b);
+        return std::lerp(a, b, sy);
     };
 
     return {
@@ -327,7 +327,7 @@ void FETurbulenceSoftwareApplier::applyPlatformGeneric(const IntRect& filterRegi
 
 void FETurbulenceSoftwareApplier::applyPlatformWorker(ApplyParameters* parameters)
 {
-    applyPlatformGeneric(parameters->filterRegion, parameters->filterScale, *parameters->pixelBuffer, *parameters->paintingData, parameters->stitchData, parameters->startY, parameters->endY);
+    applyPlatformGeneric(parameters->filterRegion, parameters->filterScale, protect(*parameters->pixelBuffer), *parameters->paintingData, parameters->stitchData, parameters->startY, parameters->endY);
 }
 
 void FETurbulenceSoftwareApplier::applyPlatform(const IntRect& filterRegion, const FloatSize& filterScale, PixelBuffer& pixelBuffer, PaintingData& paintingData, StitchData& stitchData)

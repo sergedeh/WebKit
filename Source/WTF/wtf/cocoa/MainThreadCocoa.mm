@@ -26,20 +26,18 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#if !__has_feature(objc_arc)
+#error This file requires ARC. Add the "-fobjc-arc" compiler flag for this file.
+#endif
+
 #import "config.h"
 #import <wtf/MainThread.h>
 
-#import <CoreFoundation/CoreFoundation.h>
-#import <Foundation/NSThread.h>
-#import <dispatch/dispatch.h>
 #import <stdio.h>
 #import <wtf/Assertions.h>
 #import <wtf/BlockPtr.h>
 #import <wtf/Logging.h>
-#import <wtf/RetainPtr.h>
 #import <wtf/RunLoop.h>
-#import <wtf/SchedulePair.h>
-#import <wtf/Threading.h>
 
 #if USE(WEB_THREAD)
 #import <wtf/ios/WebCoreThread.h>
@@ -52,7 +50,9 @@ namespace WTF {
 static pthread_t s_webThreadPthread;
 
 static Thread* s_applicationUIThread;
+static std::optional<uint32_t> s_applicationUIThreadID;
 static Thread* s_webThread;
+static std::optional<uint32_t> s_webThreadID;
 #endif
 
 void initializeMainThreadPlatform()
@@ -100,7 +100,7 @@ static bool webThreadIsUninitializedOrLockedOrDisabled()
 
 bool isMainThread()
 {
-    return (isWebThread() || pthread_main_np()) && webThreadIsUninitializedOrLockedOrDisabled();
+    SUPPRESS_NODELETE { return (isWebThread() || pthread_main_np()) && webThreadIsUninitializedOrLockedOrDisabled(); }
 }
 
 bool isUIThread()
@@ -118,6 +118,7 @@ void initializeApplicationUIThread()
 {
     ASSERT(pthread_main_np());
     s_applicationUIThread = &Thread::currentSingleton();
+    s_applicationUIThreadID = s_applicationUIThread->uid();
 }
 
 void initializeWebThread()
@@ -127,18 +128,24 @@ void initializeWebThread()
         ASSERT(!pthread_main_np());
         s_webThreadPthread = pthread_self();
         s_webThread = &Thread::currentSingleton();
+        s_webThreadID = s_webThread->uid();
         RunLoop::initializeWeb();
     });
 }
 
 bool canCurrentThreadAccessThreadLocalData(Thread& thread)
 {
-    auto& currentThread = Thread::currentSingleton();
-    if (&thread == &currentThread)
+    return canCurrentThreadIDAccessThreadLocalData(thread.uid());
+}
+
+bool canCurrentThreadIDAccessThreadLocalData(uint32_t threadID)
+{
+    auto currentThread = currentThreadID();
+    if (threadID == currentThread)
         return true;
 
-    if (&thread == s_webThread || &thread == s_applicationUIThread)
-        return (&currentThread == s_webThread || &currentThread == s_applicationUIThread) && webThreadIsUninitializedOrLockedOrDisabled();
+    if (threadID == s_webThreadID || threadID == s_applicationUIThreadID)
+        return (currentThread == s_webThreadID || currentThread == s_applicationUIThreadID) && webThreadIsUninitializedOrLockedOrDisabled();
 
     return false;
 }
@@ -147,7 +154,7 @@ bool canCurrentThreadAccessThreadLocalData(Thread& thread)
 
 bool isMainThread()
 {
-    return pthread_main_np();
+    SUPPRESS_NODELETE { return pthread_main_np(); }
 }
 
 #endif // USE(WEB_THREAD)

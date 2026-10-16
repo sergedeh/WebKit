@@ -31,50 +31,42 @@
 namespace WebCore {
 
 class RenderSVGText;
-class SVGInlineTextBox;
 struct SVGTextFragment;
 
 namespace InlineIterator {
 
 class SVGTextBox : public TextBox {
 public:
-    SVGTextBox(PathVariant&&);
+    SVGTextBox(const LayoutIntegration::InlineContent&, size_t boxIndex);
 
     FloatRect calculateBoundariesIncludingSVGTransform() const;
+    static FloatRect calculateBoundariesIncludingSVGTransform(const RenderSVGInlineText&, std::span<const SVGTextFragment>);
     LayoutRect localSelectionRect(unsigned start, unsigned end) const;
     const Vector<SVGTextFragment>& textFragments() const;
 
     const RenderSVGInlineText& renderer() const { return downcast<RenderSVGInlineText>(TextBox::renderer()); }
-
-    const SVGInlineTextBox* legacyInlineBox() const;
-
-    using Key = std::pair<const RenderSVGInlineText*, unsigned>;
 };
 
 class SVGTextBoxIterator : public TextBoxIterator {
 public:
     SVGTextBoxIterator() = default;
-    SVGTextBoxIterator(Box::PathVariant&&);
     SVGTextBoxIterator(const Box&);
 
     SVGTextBoxIterator& operator++() { return downcast<SVGTextBoxIterator>(traverseNextTextBox()); }
 
-    const SVGTextBox& operator*() const { return get(); }
-    const SVGTextBox* operator->() const { return &get(); }
+    const SVGTextBox& operator*() const LIFETIME_BOUND { return get(); }
+    const SVGTextBox* operator->() const LIFETIME_BOUND { return &get(); }
 
 private:
-    const SVGTextBox& get() const { return downcast<SVGTextBox>(m_box); }
+    const SVGTextBox& get() const LIFETIME_BOUND { return downcast<SVGTextBox>(m_box); }
 };
 
 SVGTextBoxIterator firstSVGTextBoxFor(const RenderSVGInlineText&);
 BoxRange<SVGTextBoxIterator> svgTextBoxesFor(const RenderSVGInlineText&);
-SVGTextBoxIterator svgTextBoxFor(const SVGInlineTextBox*);
 SVGTextBoxIterator svgTextBoxFor(const LayoutIntegration::InlineContent&, size_t boxIndex);
 
 BoxRange<BoxIterator> boxesFor(const RenderSVGText&);
 BoxIterator lastBoxFor(const RenderSVGText&);
-
-SVGTextBox::Key makeKey(const SVGTextBox&);
 
 }
 }

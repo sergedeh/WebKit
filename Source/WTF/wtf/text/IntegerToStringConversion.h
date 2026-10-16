@@ -37,12 +37,12 @@ enum PositiveOrNegativeNumber { PositiveNumber, NegativeNumber };
 template<typename> struct IntegerToStringConversionTrait;
 
 template<typename T, typename UnsignedIntegerType, PositiveOrNegativeNumber NumberType, typename AdditionalArgumentType>
-static typename IntegerToStringConversionTrait<T>::ReturnType numberToStringImpl(UnsignedIntegerType number, AdditionalArgumentType additionalArgument)
+static inline typename IntegerToStringConversionTrait<T>::ReturnType numberToStringImpl(UnsignedIntegerType number, AdditionalArgumentType additionalArgument)
 {
     std::array<Latin1Character, sizeof(UnsignedIntegerType) * 3 + 1> buffer;
     auto index = buffer.size();
     do {
-        buffer[--index] = static_cast<Latin1Character>((number % 10) + '0');
+        buffer[--index] = static_cast<Latin1Character>(static_cast<unsigned>(number % 10) + '0');
         number /= 10;
     } while (number);
 
@@ -67,13 +67,13 @@ inline typename IntegerToStringConversionTrait<T>::ReturnType numberToStringUnsi
 }
 
 template<typename CharacterType, typename UnsignedIntegerType, PositiveOrNegativeNumber NumberType>
-static void writeIntegerToBufferImpl(UnsignedIntegerType number, std::span<CharacterType> destination)
+static inline void writeIntegerToBufferImpl(UnsignedIntegerType number, std::span<CharacterType> destination)
 {
     static_assert(!std::is_same_v<bool, std::remove_cv_t<UnsignedIntegerType>>, "'bool' not supported");
     std::array<Latin1Character, sizeof(UnsignedIntegerType) * 3 + 1> buffer;
     auto index = buffer.size();
     do {
-        buffer[--index] = static_cast<Latin1Character>((number % 10) + '0');
+        buffer[--index] = static_cast<Latin1Character>(static_cast<unsigned>(number % 10) + '0');
         number /= 10;
     } while (number);
 

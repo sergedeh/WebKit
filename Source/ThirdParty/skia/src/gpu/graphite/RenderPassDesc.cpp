@@ -69,8 +69,7 @@ RenderPassDesc RenderPassDesc::Make(const Caps* caps,
     // msaa-render-to-single-sample or with separate attachments, and select non-MSAA techniques if
     // they weren't supported. getCompatibleMSAASampleCount() downgrades to single-sampled if we got
     // here and MSAA isn't supported.
-    const bool msaaRenderToSingleSampledSupport =
-            caps->msaaTextureRenderToSingleSampledSupport(targetInfo);
+    const bool msaaRenderToSingleSampledSupport = caps->isRenderableWithMSRTSS(targetInfo);
     desc.fSampleCount = requiresMSAA ? caps->getCompatibleMSAASampleCount(targetInfo)
                                      : targetInfo.sampleCount();
 
@@ -101,7 +100,7 @@ RenderPassDesc RenderPassDesc::Make(const Caps* caps,
                                  targetInfo.sampleCount()};
     }
 
-    if (depthStencilFlags != DepthStencilFlags::kNone) {
+    if (depthStencilFlags != DepthStencilFlags::kNone && !caps->avoidDepthMode()) {
         // To reduce pipeline compiles and attachment creations, if we need multisampling and need
         // a depth or stencil attachment, we always choose a depth-AND-stencil format.
         if (desc.fColorAttachment.fSampleCount > SampleCount::k1) {
@@ -110,11 +109,11 @@ RenderPassDesc RenderPassDesc::Make(const Caps* caps,
         TextureFormat dsFormat = caps->getDepthStencilFormat(depthStencilFlags);
         SkASSERT(dsFormat != TextureFormat::kUnsupported);
         // Depth and stencil values are currently always cleared and don't need to persist.
-        // The sample count should always match the color attachment.
+        // The sample count should always match render pass.
         desc.fDepthStencilAttachment = {dsFormat,
                                         LoadOp::kClear,
                                         StoreOp::kDiscard,
-                                        desc.fColorAttachment.fSampleCount};
+                                        desc.fSampleCount};
     } else {
         SkASSERT(desc.fDepthStencilAttachment.fFormat == TextureFormat::kUnsupported);
     }
@@ -142,8 +141,6 @@ SkString RenderPassDesc::toPipelineLabel() const {
     SkASSERT(fColorAttachment.fFormat != TextureFormat::kUnsupported);
     SkASSERT(fColorResolveAttachment.fFormat == TextureFormat::kUnsupported ||
              fColorResolveAttachment.fFormat == fColorAttachment.fFormat);
-    SkASSERT(fDepthStencilAttachment.fFormat == TextureFormat::kUnsupported ||
-             fDepthStencilAttachment.fSampleCount == fColorAttachment.fSampleCount);
     SkASSERT(fColorResolveAttachment.fFormat == TextureFormat::kUnsupported ||
              fColorResolveAttachment.fSampleCount == SampleCount::k1);
     SkASSERT(fColorAttachment.fSampleCount == fSampleCount ||

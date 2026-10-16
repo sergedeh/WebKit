@@ -27,17 +27,18 @@
 
 #include "RenderSVGResourceClipper.h"
 #include "SVGClipPathElement.h"
+#include "SVGElementTypeHelpers.h"
 
 namespace WebCore {
 
-inline Ref<SVGClipPathElement> RenderSVGResourceClipper::protectedClipPathElement() const
+inline SVGClipPathElement& RenderSVGResourceClipper::clipPathElement() const
 {
     return downcast<SVGClipPathElement>(nodeForNonAnonymous());
 }
 
 inline SVGUnitTypes::SVGUnitType RenderSVGResourceClipper::clipPathUnits() const
 {
-    return protectedClipPathElement()->clipPathUnits();
+    return protect(clipPathElement())->clipPathUnits();
 }
 
 } // namespace WebCore

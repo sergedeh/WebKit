@@ -51,13 +51,13 @@ class FontLoadRequest : public AbstractRefCounted {
 public:
     virtual ~FontLoadRequest() = default;
 
-    virtual const URL& url() const = 0;
+    virtual URL url() const = 0;
     virtual bool isPending() const = 0;
     virtual bool isLoading() const = 0;
     virtual bool errorOccurred() const = 0;
 
     virtual bool ensureCustomFontData() = 0;
-    virtual RefPtr<Font> createFont(const FontDescription&, bool syntheticBold, bool syntheticItalic, const FontCreationContext&) = 0;
+    virtual RefPtr<Font> createFont(const FontDescription&, const FontCreationContext&) = 0;
 
     virtual void setClient(FontLoadRequestClient*) = 0;
 

@@ -51,52 +51,52 @@ public:
 
     static Ref<DatabaseAuthorizer> create(const String& databaseInfoTableName);
 
-    int createTable(const String& tableName);
-    int createTempTable(const String& tableName);
-    int dropTable(const String& tableName);
-    int dropTempTable(const String& tableName);
-    int allowAlterTable(const String& databaseName, const String& tableName);
+    int LEGACY_NODELETE createTable(const String& tableName);
+    int LEGACY_NODELETE createTempTable(const String& tableName);
+    int LEGACY_NODELETE dropTable(const String& tableName);
+    int LEGACY_NODELETE dropTempTable(const String& tableName);
+    int LEGACY_NODELETE allowAlterTable(const String& databaseName, const String& tableName);
 
-    int createIndex(const String& indexName, const String& tableName);
-    int createTempIndex(const String& indexName, const String& tableName);
-    int dropIndex(const String& indexName, const String& tableName);
-    int dropTempIndex(const String& indexName, const String& tableName);
+    int LEGACY_NODELETE createIndex(const String& indexName, const String& tableName);
+    int LEGACY_NODELETE createTempIndex(const String& indexName, const String& tableName);
+    int LEGACY_NODELETE dropIndex(const String& indexName, const String& tableName);
+    int LEGACY_NODELETE dropTempIndex(const String& indexName, const String& tableName);
 
-    int createTrigger(const String& triggerName, const String& tableName);
-    int createTempTrigger(const String& triggerName, const String& tableName);
-    int dropTrigger(const String& triggerName, const String& tableName);
-    int dropTempTrigger(const String& triggerName, const String& tableName);
+    int LEGACY_NODELETE createTrigger(const String& triggerName, const String& tableName);
+    int LEGACY_NODELETE createTempTrigger(const String& triggerName, const String& tableName);
+    int LEGACY_NODELETE dropTrigger(const String& triggerName, const String& tableName);
+    int LEGACY_NODELETE dropTempTrigger(const String& triggerName, const String& tableName);
 
-    int createView(const String& viewName);
-    int createTempView(const String& viewName);
-    int dropView(const String& viewName);
-    int dropTempView(const String& viewName);
+    int LEGACY_NODELETE createView(const String& viewName);
+    int LEGACY_NODELETE createTempView(const String& viewName);
+    int LEGACY_NODELETE dropView(const String& viewName);
+    int LEGACY_NODELETE dropTempView(const String& viewName);
 
-    int createVTable(const String& tableName, const String& moduleName);
-    int dropVTable(const String& tableName, const String& moduleName);
+    int LEGACY_NODELETE createVTable(const String& tableName, const String& moduleName);
+    int LEGACY_NODELETE dropVTable(const String& tableName, const String& moduleName);
 
-    int allowDelete(const String& tableName);
-    int allowInsert(const String& tableName);
-    int allowUpdate(const String& tableName, const String& columnName);
-    int allowTransaction();
+    int LEGACY_NODELETE allowDelete(const String& tableName);
+    int LEGACY_NODELETE allowInsert(const String& tableName);
+    int LEGACY_NODELETE allowUpdate(const String& tableName, const String& columnName);
+    int LEGACY_NODELETE allowTransaction();
 
     int allowSelect() { return SQLAuthAllow; }
-    int allowRead(const String& tableName, const String& columnName);
+    int LEGACY_NODELETE allowRead(const String& tableName, const String& columnName);
 
-    int allowReindex(const String& indexName);
-    int allowAnalyze(const String& tableName);
+    int LEGACY_NODELETE allowReindex(const String& indexName);
+    int LEGACY_NODELETE allowAnalyze(const String& tableName);
     int allowFunction(const String& functionName);
-    int allowPragma(const String& pragmaName, const String& firstArgument);
+    int LEGACY_NODELETE allowPragma(const String& pragmaName, const String& firstArgument);
 
-    int allowAttach(const String& filename);
-    int allowDetach(const String& databaseName);
+    int LEGACY_NODELETE allowAttach(const String& filename);
+    int LEGACY_NODELETE allowDetach(const String& databaseName);
 
-    void disable();
-    void enable();
-    void setPermissions(int permissions);
+    void LEGACY_NODELETE disable();
+    void LEGACY_NODELETE enable();
+    void LEGACY_NODELETE setPermissions(int permissions);
 
-    void reset();
-    void resetDeletes();
+    void LEGACY_NODELETE reset();
+    void LEGACY_NODELETE resetDeletes();
 
     bool lastActionWasInsert() const { return m_lastActionWasInsert; }
     bool lastActionChangedDatabase() const { return m_lastActionChangedDatabase; }
@@ -105,9 +105,9 @@ public:
 private:
     explicit DatabaseAuthorizer(const String& databaseInfoTableName);
     void addAllowedFunctions();
-    int denyBasedOnTableName(const String&) const;
-    int updateDeletesBasedOnTableName(const String&);
-    bool allowWrite();
+    int LEGACY_NODELETE denyBasedOnTableName(const String&) const;
+    int LEGACY_NODELETE updateDeletesBasedOnTableName(const String&);
+    bool LEGACY_NODELETE allowWrite();
 
     int m_permissions;
     bool m_securityEnabled : 1;

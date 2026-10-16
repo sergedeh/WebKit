@@ -26,6 +26,8 @@
 #include "config.h"
 #include "BytecodeUseDef.h"
 
+#include "BytecodeOperandsForCheckpoint.h"
+
 namespace JSC {
 
 #define CALL_FUNCTOR(__arg) \
@@ -42,7 +44,7 @@ namespace JSC {
 #define USES USES_OR_DEFS
 #define DEFS USES_OR_DEFS
 
-void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoint checkpoint, const ScopedLambda<void(VirtualRegister)>& functor)
+void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoint checkpoint, NOESCAPE const ScopedLambda<void(VirtualRegister)>& functor)
 {
     OpcodeID opcodeID = instruction->opcodeID();
 
@@ -87,13 +89,14 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
     case op_new_object:
     case op_new_promise:
     case op_new_generator:
+    case op_new_async_function_generator:
     case op_enter:
     case op_argument_count:
     case op_catch:
     case op_profile_control_flow:
     case op_create_direct_arguments:
     case op_create_cloned_arguments:
-    case op_get_rest_length:
+    case op_create_rest:
     case op_check_traps:
     case op_get_argument:
     case op_nop:
@@ -110,7 +113,6 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
     USES(OpThrow, value)
     USES(OpThrowStaticError, message)
     USES(OpDebug, data)
-    USES(OpEnd, value)
     USES(OpRet, value)
     USES(OpJtrue, condition)
     USES(OpJfalse, condition)
@@ -178,7 +180,6 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
     USES(OpToPrimitive, src)
     USES(OpToPropertyKey, src)
     USES(OpToPropertyKeyOrNumber, src)
-    USES(OpTryGetById, base)
     USES(OpGetById, base)
     USES(OpGetLength, base)
     USES(OpGetByIdDirect, base)
@@ -196,6 +197,7 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
     USES(OpIsObject, operand)
     USES(OpIsCellWithType, operand)
     USES(OpIsCallable, operand)
+    USES(OpIteratorCloseCheck, iterator, next, iterable)
     USES(OpIsConstructor, operand)
     USES(OpToNumber, operand)
     USES(OpToNumeric, operand)
@@ -222,7 +224,6 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
     USES(OpNewAsyncFunc, scope)
     USES(OpGetParentScope, scope)
     USES(OpCreateScopedArguments, scope)
-    USES(OpCreateRest, arraySize)
     USES(OpGetFromArguments, arguments)
     USES(OpNewArrayBuffer, immutableButterfly)
 
@@ -235,7 +236,6 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
     USES(OpHasPrivateName, base, property)
     USES(OpHasPrivateBrand, base, brand)
     USES(OpHasStructureWithFlags, operand)
-    USES(OpOverridesHasInstance, constructor, hasInstanceValue)
     USES(OpAdd, lhs, rhs)
     USES(OpMul, lhs, rhs)
     USES(OpDiv, lhs, rhs)
@@ -261,7 +261,6 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
     USES(OpPushWithScope, currentScope, newScope)
     USES(OpGetByIdWithThis, base, thisValue)
     USES(OpDelByVal, base, property)
-    USES(OpTailCallForwardArguments, callee, thisValue)
 
     USES(OpGetByValWithThis, base, thisValue, property)
 
@@ -308,10 +307,29 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
         return;
     }
 
+    case op_async_iterator_open: {
+        auto bytecode = instruction->as<OpAsyncIteratorOpen>();
+        useAtEachCheckpointStartingWith(OpAsyncIteratorOpen::symbolCall, bytecode.m_symbolIterator, bytecode.m_iterable);
+        useAtEachCheckpointStartingWith(OpAsyncIteratorOpen::getNext, bytecode.m_iterator);
+        return;
+    }
+
     case op_iterator_next: {
         auto bytecode = instruction->as<OpIteratorNext>();
         useAtEachCheckpoint(bytecode.m_iterator, bytecode.m_next);
         useAtEachCheckpointStartingWith(OpIteratorNext::computeNext, bytecode.m_iterable);
+        return;
+    }
+
+    case op_async_iterator_next: {
+        auto bytecode = instruction->as<OpAsyncIteratorNext>();
+        functor(bytecode.m_next);
+        functor(bytecode.m_iterator);
+        functor(bytecode.m_driver);
+        // The resume value isn't a stored field (see BytecodeList.rb); it's call argument index 1,
+        // derived from m_stackOffset, and only present when m_hasValue.
+        if (bytecode.m_hasValue)
+            functor(resumeValueOperandFor(bytecode));
         return;
     }
 
@@ -369,7 +387,7 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
     }
 }
 
-void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* instruction, Checkpoint checkpoint, const ScopedLambda<void(VirtualRegister)>& functor)
+void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* instruction, Checkpoint checkpoint, NOESCAPE const ScopedLambda<void(VirtualRegister)>& functor)
 {
 
     auto defAt = [&] (Checkpoint target, VirtualRegister operand) {
@@ -384,7 +402,6 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
 
     // These don't define anything.
     case op_put_to_scope:
-    case op_end:
     case op_throw:
     case op_throw_static_error:
     case op_check_tdz:
@@ -504,21 +521,19 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
         return;
     }
 
-    DEFS(OpTailCallForwardArguments, dst)
     DEFS(OpGetFromScope, dst)
     DEFS(OpCall, dst)
     DEFS(OpTailCall, dst)
     DEFS(OpCallDirectEval, dst)
     DEFS(OpConstruct, dst)
     DEFS(OpSuperConstruct, dst)
-    DEFS(OpTryGetById, dst)
     DEFS(OpGetById, dst)
+    DEFS(OpAsyncIteratorNext, dst)
     DEFS(OpGetLength, dst)
     DEFS(OpGetByIdDirect, dst)
     DEFS(OpGetByIdWithThis, dst)
     DEFS(OpGetByValWithThis, dst)
     DEFS(OpGetPrototypeOf, dst)
-    DEFS(OpOverridesHasInstance, dst)
     DEFS(OpGetByVal, dst)
     DEFS(OpGetPrivateName, dst)
     DEFS(OpTypeof, dst)
@@ -534,6 +549,7 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
     DEFS(OpIsObject, dst)
     DEFS(OpIsCellWithType, dst)
     DEFS(OpIsCallable, dst)
+    DEFS(OpIteratorCloseCheck, iterator)
     DEFS(OpIsConstructor, dst)
     DEFS(OpInById, dst)
     DEFS(OpInByVal, dst)
@@ -577,6 +593,7 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
     DEFS(OpNewObject, dst)
     DEFS(OpNewPromise, dst)
     DEFS(OpNewGenerator, dst)
+    DEFS(OpNewAsyncFunctionGenerator, dst)
     DEFS(OpToThis, srcDst)
     DEFS(OpGetScope, dst)
     DEFS(OpCreateDirectArguments, dst)
@@ -588,7 +605,6 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
     DEFS(OpGetFromArguments, dst)
     DEFS(OpGetArgument, dst)
     DEFS(OpCreateRest, dst)
-    DEFS(OpGetRestLength, dst)
     DEFS(OpGetInternalField, dst)
 
     DEFS(OpCatch, exception, thrownValue)
@@ -606,9 +622,18 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
         return;
     }
 
+    case op_async_iterator_open: {
+        auto bytecode = instruction->as<OpAsyncIteratorOpen>();
+
+        defAt(OpAsyncIteratorOpen::symbolCall, bytecode.m_iterator);
+        defAt(OpAsyncIteratorOpen::getNext, bytecode.m_next);
+        return;
+    }
+
     case op_iterator_next: {
         auto bytecode = instruction->as<OpIteratorNext>();
 
+        defAt(OpIteratorNext::computeNext, bytecode.m_next);
         defAt(OpIteratorNext::getDone, bytecode.m_done);
         // We need to claim we set m_value here because we could early exit from the bytecode if we are done.
         defAt(OpIteratorNext::getDone, bytecode.m_value);

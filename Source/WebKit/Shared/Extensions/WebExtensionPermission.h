@@ -48,10 +48,13 @@ public:
     static String menus();
     static String nativeMessaging();
     static String notifications();
+#if ENABLE(WK_WEB_EXTENSIONS_OFFSCREEN)
+    static String offscreen();
+#endif
     static String scripting();
-#if ENABLE(WK_WEB_EXTENSION_SIDEBAR)
+#if ENABLE(WK_WEB_EXTENSIONS_SIDEBAR)
     static String sidePanel();
-#endif // ENABLE(WK_WEB_EXTENSION_SIDEBAR)
+#endif
     static String storage();
     static String tabs();
     static String unlimitedStorage();

@@ -38,7 +38,7 @@ public:
         {
         }
 
-        bool isValid() const;
+        bool LEGACY_NODELETE isValid() const;
         String message() const;
 
     private:

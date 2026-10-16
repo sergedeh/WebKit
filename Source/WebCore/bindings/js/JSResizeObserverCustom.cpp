@@ -35,11 +35,12 @@
 namespace WebCore {
 
 template<typename Visitor>
-void JSResizeObserver::visitAdditionalChildren(Visitor& visitor)
+void JSResizeObserver::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
-    ResizeObserverCallback* callback = wrapped().callbackConcurrently();
+    // Cannot ref on the GC thread.
+    SUPPRESS_UNCOUNTED_LOCAL ResizeObserverCallback* callback = wrapped().callbackConcurrently();
     if (callback)
-        callback->visitJSFunction(visitor);
+        callback->visitJSFunctionInGCThread(visitor);
 
     Locker locker { wrapped().observationTargetsLock() };
 
@@ -54,11 +55,12 @@ void JSResizeObserver::visitAdditionalChildren(Visitor& visitor)
     }
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSResizeObserver);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSResizeObserver);
 
 bool JSResizeObserverOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, JSC::AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
-    if (JSC::jsCast<JSResizeObserver*>(handle.slot()->asCell())->wrapped().isReachableFromOpaqueRoots(visitor)) {
+    // This function is called on a GC thread so we cannot ref the object.
+    SUPPRESS_UNCOUNTED_ARG if (downcast<JSResizeObserver>(handle.slot()->asCell())->wrapped().isReachableFromOpaqueRoots(visitor)) {
         if (reason) [[unlikely]]
             *reason = "Reachable from observed nodes"_s;
         return true;

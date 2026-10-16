@@ -177,7 +177,7 @@ MediaRecorderPrivateWriterAVFObjC::Result MediaRecorderPrivateWriterAVFObjC::wri
             RELEASE_LOG_ERROR(MediaStream, "MediaRecorderPMediaRecorderPrivateWriterAVFObjC::writeFrame audio failed with %ld", static_cast<long>([m_writer error].code));
             return Result::Failure;
         }
-        RELEASE_LOG_ERROR(MediaStream, "MediaRecorderPMediaRecorderPrivateWriterAVFObjC::writeFrame autio toCMSampleBuffer failed with %s", sample.error().data());
+        RELEASE_LOG_ERROR(MediaStream, "MediaRecorderPMediaRecorderPrivateWriterAVFObjC::writeFrame autio toCMSampleBuffer failed with %s", sample.error());
         return Result::Failure;
     }
 
@@ -194,7 +194,7 @@ MediaRecorderPrivateWriterAVFObjC::Result MediaRecorderPrivateWriterAVFObjC::wri
         RELEASE_LOG_ERROR(MediaStream, "MediaRecorderPMediaRecorderPrivateWriterAVFObjC::writeFrame video failed with %ld", static_cast<long>([m_writer error].code));
         return Result::Failure;
     }
-    RELEASE_LOG_ERROR(MediaStream, "MediaRecorderPMediaRecorderPrivateWriterAVFObjC::writeFrame video toCMSampleBuffer failed with %s", sample.error().data());
+    RELEASE_LOG_ERROR(MediaStream, "MediaRecorderPMediaRecorderPrivateWriterAVFObjC::writeFrame video toCMSampleBuffer failed with %s", sample.error());
     return Result::Failure;
 }
 
@@ -272,7 +272,7 @@ Ref<GenericPromise> MediaRecorderPrivateWriterAVFObjC::close(Deque<UniqueRef<Med
     if (m_videoAssetWriterInput && videoSamples.size()) {
         GenericPromise::Producer producer;
         promises.append(producer.promise());
-        [m_videoAssetWriterInput requestMediaDataWhenReadyOnQueue:queue.get() usingBlock:makeBlockPtr([producer = WTF::move(producer), samples = WTF::move(audioSamples), writerInput = m_videoAssetWriterInput, hasAddedVideoFrame = m_hasAddedVideoFrame, endTime]() mutable {
+        [m_videoAssetWriterInput requestMediaDataWhenReadyOnQueue:queue.get() usingBlock:makeBlockPtr([producer = WTF::move(producer), samples = WTF::move(videoSamples), writerInput = m_videoAssetWriterInput, hasAddedVideoFrame = m_hasAddedVideoFrame, endTime]() mutable {
             while ([writerInput isReadyForMoreMediaData]) {
                 if (samples.size()) {
                     [writerInput appendSampleBuffer:samples.takeFirst().get()];

@@ -30,7 +30,7 @@
 
 #import "ContentFilter.h"
 #import "Logging.h"
-#import "ResourceRequest.h"
+#import <WebCore/ResourceRequest.h>
 #import <pal/spi/cocoa/NSKeyedUnarchiverSPI.h>
 #import <pal/spi/cocoa/WebFilterEvaluatorSPI.h>
 #import <wtf/BlockObjCExceptions.h>
@@ -53,7 +53,7 @@ ContentFilterUnblockHandler::ContentFilterUnblockHandler(String unblockURLHost, 
     : m_unblockURLHost { WTF::move(unblockURLHost) }
     , m_unblockRequester { WTF::move(unblockRequester) }
 {
-    LOG(ContentFiltering, "Creating ContentFilterUnblockHandler with an unblock requester and unblock URL host <%s>.\n", m_unblockURLHost.ascii().data());
+    LOG(ContentFiltering, "Creating ContentFilterUnblockHandler with an unblock requester and unblock URL host <%s>.\n", m_unblockURLHost.utf8());
 }
 
 #if HAVE(WEBCONTENTRESTRICTIONS)
@@ -66,7 +66,7 @@ ContentFilterUnblockHandler::ContentFilterUnblockHandler(String unblockURLHost, 
     : m_unblockURLHost { WTF::move(unblockURLHost) }
     , m_webFilterEvaluator { WTF::move(evaluator) }
 {
-    LOG(ContentFiltering, "Creating ContentFilterUnblockHandler with a WebFilterEvaluator and unblock URL host <%s>.\n", m_unblockURLHost.ascii().data());
+    LOG(ContentFiltering, "Creating ContentFilterUnblockHandler with a WebFilterEvaluator and unblock URL host <%s>.\n", m_unblockURLHost.utf8());
 }
 #endif
 
@@ -152,19 +152,46 @@ bool ContentFilterUnblockHandler::canHandleRequest(const ResourceRequest& reques
     bool isUnblockRequest = request.url().protocolIs(ContentFilter::urlScheme()) && equalIgnoringASCIICase(request.url().host(), m_unblockURLHost);
 #if !LOG_DISABLED
     if (isUnblockRequest)
-        LOG(ContentFiltering, "ContentFilterUnblockHandler will handle <%s> as an unblock request.\n", request.url().string().ascii().data());
+        LOG(ContentFiltering, "ContentFilterUnblockHandler will handle <%s> as an unblock request.\n", request.url().string().utf8());
 #endif
     return isUnblockRequest;
 }
 
-void ContentFilterUnblockHandler::requestUnblockAsync(DecisionHandlerFunction&& decisionHandler)
+void ContentFilterUnblockHandler::requestUnblockAsync(DecisionHandlerFunction&& decisionHandler, std::optional<URL> requestURL
+#if HAVE(WEBCONTENTRESTRICTIONS_ASK_TO) && HAVE(BROWSERENGINEKIT_WEBCONTENTFILTER)
+    , CocoaView* presentingView
+#endif
+    )
 {
+    // FIXME: Remove once all platforms use the same flow to request unblocking content, rdar://170455406
+    UNUSED_PARAM(requestURL);
+#if HAVE(WEBCONTENTRESTRICTIONS_ASK_TO) && HAVE(BROWSERENGINEKIT_WEBCONTENTFILTER)
+    UNUSED_PARAM(presentingView);
+#endif
 #if HAVE(WEBCONTENTRESTRICTIONS)
     if (m_evaluatedURL) {
 #if HAVE(WEBCONTENTRESTRICTIONS_PATH_SPI)
         Ref filter = WebCore::ParentalControlsURLFilter::filterWithConfigurationPath(configurationPath());
 #else
         Ref filter = WebCore::ParentalControlsURLFilter::singleton();
+#endif
+#if HAVE(WEBCONTENTRESTRICTIONS_ASK_TO)
+        if (requestURL) {
+#if HAVE(BROWSERENGINEKIT_WEBCONTENTFILTER)
+            filter->requestPermissionForURL(*m_evaluatedURL, *requestURL, [decisionHandler = WTF::move(decisionHandler)](bool didAllow) mutable {
+                callOnMainThread([decisionHandler = WTF::move(decisionHandler), didAllow]() {
+                    decisionHandler(didAllow);
+                });
+            }, presentingView);
+#else
+            filter->requestPermissionForURL(*m_evaluatedURL, *requestURL, [decisionHandler = WTF::move(decisionHandler)](bool didAllow) mutable {
+                callOnMainThread([decisionHandler = WTF::move(decisionHandler), didAllow]() {
+                    decisionHandler(didAllow);
+                });
+            });
+#endif
+            return;
+        }
 #endif
         filter->allowURL(*m_evaluatedURL, [decisionHandler = WTF::move(decisionHandler)](bool didAllow) mutable {
             callOnMainThread([decisionHandler = WTF::move(decisionHandler), didAllow]() {

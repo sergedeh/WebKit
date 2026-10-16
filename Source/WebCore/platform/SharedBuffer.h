@@ -27,20 +27,14 @@
 #pragma once
 
 #include <JavaScriptCore/Forward.h>
-#include <span>
-#include <utility>
 #include <wtf/FileSystem.h>
-#include <wtf/Forward.h>
 #include <wtf/Function.h>
 #include <wtf/MappedFileData.h>
-#include <wtf/RawPtrTraits.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/TypeCasts.h>
-#include <wtf/TypeTraits.h>
 #include <wtf/Variant.h>
 #include <wtf/Vector.h>
-#include <wtf/text/WTFString.h>
 
 #if USE(CF)
 #include <wtf/RetainPtr.h>
@@ -73,6 +67,10 @@ class Decoder;
 }
 }
 
+namespace JSC {
+class ArrayBufferContents;
+}
+
 namespace WebCore {
 
 class SharedBuffer;
@@ -83,6 +81,8 @@ class SharedMemoryHandle;
 // To modify or combine the data, allocate a new DataSegment.
 class DataSegment : public ThreadSafeRefCounted<DataSegment> {
 public:
+    WEBCORE_EXPORT ~DataSegment();
+
     size_t size() const { return span().size(); }
     WEBCORE_EXPORT std::span<const uint8_t> span() const LIFETIME_BOUND;
 
@@ -107,11 +107,13 @@ public:
     };
     WEBCORE_EXPORT static Ref<DataSegment> create(Provider&&);
 
+    WEBCORE_EXPORT static Ref<DataSegment> create(std::unique_ptr<JSC::ArrayBufferContents>&&);
+
 #if USE(FOUNDATION)
     WEBCORE_EXPORT RetainPtr<NSData> createNSData() const;
 #endif
 
-    WEBCORE_EXPORT bool containsMappedFileData() const;
+    WEBCORE_EXPORT bool LEGACY_NODELETE containsMappedFileData() const;
 
 private:
     void iterate(NOESCAPE const Function<void(std::span<const uint8_t>)>& apply) const;
@@ -119,28 +121,22 @@ private:
     void iterate(CFDataRef, NOESCAPE const Function<void(std::span<const uint8_t>)>& apply) const;
 #endif
 
-    explicit DataSegment(Vector<uint8_t>&& data)
-        : m_immutableData(WTF::move(data)) { }
+    explicit DataSegment(Vector<uint8_t>&&);
 #if USE(CF)
-    explicit DataSegment(RetainPtr<CFDataRef>&& data)
-        : m_immutableData(WTF::move(data)) { }
+    explicit DataSegment(RetainPtr<CFDataRef>&&);
 #endif
 #if USE(GLIB)
-    explicit DataSegment(GRefPtr<GBytes>&& data)
-        : m_immutableData(WTF::move(data)) { }
+    explicit DataSegment(GRefPtr<GBytes>&&);
 #endif
 #if USE(GSTREAMER)
-    explicit DataSegment(RefPtr<GstMappedOwnedBuffer>&& data)
-        : m_immutableData(WTF::move(data)) { }
+    explicit DataSegment(RefPtr<GstMappedOwnedBuffer>&&);
 #endif
 #if USE(SKIA)
-    explicit DataSegment(sk_sp<SkData>&& data)
-        : m_immutableData(WTF::move(data)) { }
+    explicit DataSegment(sk_sp<SkData>&&);
 #endif
-    explicit DataSegment(FileSystem::MappedFileData&& data)
-        : m_immutableData(WTF::move(data)) { }
-    explicit DataSegment(Provider&& provider)
-        : m_immutableData(WTF::move(provider)) { }
+    explicit DataSegment(FileSystem::MappedFileData&&);
+    explicit DataSegment(Provider&&);
+    explicit DataSegment(std::unique_ptr<JSC::ArrayBufferContents>&&);
 
     Variant<Vector<uint8_t>,
 #if USE(CF)
@@ -156,7 +152,8 @@ private:
         sk_sp<SkData>,
 #endif
         FileSystem::MappedFileData,
-        Provider> m_immutableData;
+        Provider,
+        std::unique_ptr<JSC::ArrayBufferContents>> m_immutableData;
 
     friend class FragmentedSharedBuffer;
     friend class SharedBuffer; // For createCFData
@@ -231,7 +228,7 @@ protected:
         : m_contiguous(contiguous == Contiguous::Yes) { }
     // To be used only by SharedBuffer constructor, set m_contiguous to true.
     WEBCORE_EXPORT explicit FragmentedSharedBuffer(Ref<const DataSegment>&&);
-    const DataSegmentVector& segments() const { return m_segments; }
+    const DataSegmentVector& segments() const LIFETIME_BOUND { return m_segments; }
 
 private:
     friend class SharedBufferBuilder;
@@ -303,7 +300,8 @@ public:
     WEBCORE_EXPORT sk_sp<SkData> createSkData() const;
 #endif
 
-    Ref<FragmentedSharedBuffer> asFragmentedSharedBuffer() const { return const_cast<SharedBuffer&>(*this); }
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    Ref<FragmentedSharedBuffer> asFragmentedSharedBuffer() const { SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<SharedBuffer&>(*this); }
 
     template<typename T>
     bool isSpanWithinBounds(std::span<T> otherSpan) const;
@@ -390,7 +388,6 @@ public:
         updateBufferIfNeeded();
         return m_buffer.get();
     }
-    RefPtr<FragmentedSharedBuffer> protectedBuffer() const { return buffer(); }
     Ref<FragmentedSharedBuffer> copyBuffer() const { return createBuffer(); }
 
     WEBCORE_EXPORT RefPtr<ArrayBuffer> tryCreateArrayBuffer() const;
@@ -408,7 +405,6 @@ private:
     WEBCORE_EXPORT SharedBufferBuilder(const SharedBufferBuilder&);
     WEBCORE_EXPORT SharedBufferBuilder& operator=(const SharedBufferBuilder&);
 
-    WEBCORE_EXPORT void initialize(Ref<FragmentedSharedBuffer>&&);
     WEBCORE_EXPORT void updateBufferIfNeeded() const;
     WEBCORE_EXPORT void appendDataSegment(Ref<DataSegment>&&);
     WEBCORE_EXPORT Ref<FragmentedSharedBuffer> createBuffer() const;
@@ -455,10 +451,11 @@ inline bool SharedBuffer::isSpanWithinBounds(std::span<T> otherSpan) const
 {
     auto thisSpan = this->span();
     auto otherByteSpan = asByteSpan(otherSpan);
-    if (std::to_address(otherByteSpan.end()) < std::to_address(thisSpan.begin()))
-        return false;
-    size_t offset = std::to_address(otherByteSpan.end()) - std::to_address(thisSpan.begin());
-    return offset <= size(); // "<=" because end is included as valid.
+    auto* thisBegin = std::to_address(thisSpan.begin());
+    auto* thisEnd = std::to_address(thisSpan.end());
+    auto* otherBegin = std::to_address(otherByteSpan.begin());
+    auto* otherEnd = std::to_address(otherByteSpan.end());
+    return otherBegin >= thisBegin && otherEnd <= thisEnd;
 }
 
 } // namespace WebCore

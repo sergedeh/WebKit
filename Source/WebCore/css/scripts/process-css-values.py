@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 #
 # Copyright (C) 2022 Apple Inc. All rights reserved.
+# Copyright (C) 2026 Samuel Weinig <sam@webkit.org>
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -56,8 +57,8 @@ class Value:
 
     def __str__(self):
         if self.conditional:
-            return f"Value [{self.name}, id={self.id_without_scope}, conditional={self.conditional}]"
-        return f"Value [{self.name}, id={self.id_without_scope}]"
+            return f"Value [{self.name}, id={self.id}, conditional={self.conditional}]"
+        return f"Value [{self.name}, id={self.id}]"
 
     def __repr__(self):
         return self.__str__()
@@ -71,12 +72,8 @@ class Value:
         return self.name.lower()
 
     @property
-    def id_without_scope(self):
-        return f"CSSValue{self.id_without_prefix}"
-
-    @property
     def id(self):
-        return f"CSSValueID::CSSValue{self.id_without_prefix}"
+        return f"CSSValueID::{self.id_without_prefix}"
 
 
 def attribute_from_attribute_string(attribute, attribute_name, attribute_string, value):
@@ -163,9 +160,11 @@ class GenerationContext:
             #include "config.h"
             #include "CSSValueKeywords.h"
 
+            #include <array>
             #include <wtf/ASCIICType.h>
             #include <wtf/NeverDestroyed.h>
             #include <wtf/text/AtomString.h>
+            #include <wtf/text/StringImpl.h>
             #include <string.h>
 
             WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -204,61 +203,62 @@ class GenerationContext:
             """))
 
         for value in self.values:
-            to.write(f"{value.name_lowercase}, {value.id_without_scope}\n")
+            to.write(f"{value.name_lowercase}, static_cast<uint16_t>({value.id})\n")
 
         to.write("%%\n")
 
     def _generate_name_string_tables(self, *, to):
-        to.write(f"constexpr ASCIILiteral valueList[] = {{\n")
-        to.write(f"    \"\"_s,\n")
+        value_count = len(self.values) + 2
+        to.write(f"static constexpr std::array<StringImpl::StaticStringImpl, {value_count}> valueData = {{{{\n")
+        to.write(f"    StringImpl::StaticStringImpl(\"\", StringImpl::StringAtom),\n")
 
         for value in self.values:
-            to.write(f"    \"{value.name}\"_s,\n")
+            to.write(f"    StringImpl::StaticStringImpl(\"{value.name}\", StringImpl::StringAtom),\n")
 
-        to.write(f"    ASCIILiteral()\n")
-        to.write(f"}};\n")
-        to.write(f"constexpr ASCIILiteral valueListForSerialization[] = {{\n")
-        to.write(f"    \"\"_s,\n")
+        to.write(f"    StringImpl::StaticStringImpl(\"\", StringImpl::StringAtom)\n")
+        to.write(f"}}}};\n")
+        to.write(f"static constexpr std::array<StringImpl::StaticStringImpl, {value_count}> valueDataForSerialization = {{{{\n")
+        to.write(f"    StringImpl::StaticStringImpl(\"\", StringImpl::StringAtom),\n")
 
         for value in self.values:
-            to.write(f"    \"{value.name_lowercase}\"_s,\n")
+            to.write(f"    StringImpl::StaticStringImpl(\"{value.name_lowercase}\", StringImpl::StringAtom),\n")
 
-        to.write(f"    ASCIILiteral()\n")
-        to.write(f"}};\n")
+        to.write(f"    StringImpl::StaticStringImpl(\"\", StringImpl::StringAtom)\n")
+        to.write(f"}}}};\n")
 
     def _generate_lookup_functions(self, *, to):
         to.write(textwrap.dedent("""
             CSSValueID findCSSValueKeyword(std::span<const char> characters)
             {
                 auto* value = CSSValueKeywordsHash::in_word_set(characters.data(), characters.size());
-                return value ? static_cast<CSSValueID>(value->id) : CSSValueInvalid;
+                return value ? static_cast<CSSValueID>(value->id) : CSSValueID::Invalid;
             }
 
             ASCIILiteral nameLiteral(CSSValueID id)
             {
-                if (static_cast<uint16_t>(id) >= numCSSValueKeywords)
+                if (std::to_underlying(id) >= numCSSValueKeywords)
                     return { };
-                return valueList[id];
+                return valueData[std::to_underlying(id)].literal();
             }
 
             // When serializing a CSS keyword, it should be converted to ASCII lowercase.
             // https://drafts.csswg.org/cssom/#serialize-a-css-component-value
             ASCIILiteral nameLiteralForSerialization(CSSValueID id)
             {
-                if (static_cast<uint16_t>(id) >= numCSSValueKeywords)
+                if (std::to_underlying(id) >= numCSSValueKeywords)
                     return { };
-                return valueListForSerialization[id];
+                return valueDataForSerialization[std::to_underlying(id)].literal();
             }
 
             const AtomString& nameString(CSSValueID id)
             {
-                if (static_cast<uint16_t>(id) >= numCSSValueKeywords)
+                if (std::to_underlying(id) >= numCSSValueKeywords)
                     return nullAtom();
 
                 static NeverDestroyed<std::array<AtomString, numCSSValueKeywords>> strings;
-                auto& string = strings.get()[id];
+                auto& string = strings.get()[std::to_underlying(id)];
                 if (string.isNull())
-                    string = valueList[id];
+                    string = valueData[std::to_underlying(id)];
                 return string;
             }
 
@@ -266,13 +266,13 @@ class GenerationContext:
             // https://drafts.csswg.org/cssom/#serialize-a-css-component-value
             const AtomString& nameStringForSerialization(CSSValueID id)
             {
-                if (static_cast<uint16_t>(id) >= numCSSValueKeywords)
+                if (std::to_underlying(id) >= numCSSValueKeywords)
                     return nullAtom();
 
                 static NeverDestroyed<std::array<AtomString, numCSSValueKeywords>> strings;
-                auto& string = strings.get()[id];
+                auto& string = strings.get()[std::to_underlying(id)];
                 if (string.isNull())
-                    string = valueListForSerialization[id];
+                    string = valueDataForSerialization[std::to_underlying(id)];
                 return string;
             }
 
@@ -317,14 +317,14 @@ class GenerationContext:
             """))
 
     def _generate_css_value_keywords_h_property_constants(self, *, to):
-        to.write(f"enum CSSValueID : uint16_t {{\n")
-        to.write(f"    CSSValueInvalid = 0,\n")
+        to.write(f"enum class CSSValueID : uint16_t {{\n")
+        to.write(f"    Invalid = 0,\n")
 
         count = GenerationContext.number_of_predefined_values
         max_length = 0
 
         for value in self.values:
-            to.write(f"    {value.id_without_scope} = {count},\n")
+            to.write(f"    {value.id_without_prefix} = {count},\n")
 
             count += 1
             max_length = max(len(value.name), max_length)
@@ -366,19 +366,31 @@ class GenerationContext:
         to.write(f"    constexpr bool operator==(const Constant<C>&) const = default;\n")
         to.write(f"}};\n\n")
 
-        to.write(f"namespace CSS::Keyword {{\n\n")
+        to.write(f"namespace CSS {{\n\n")
 
+        to.write(f"// A predefined keyword value\n")
+        to.write(f"// https://drafts.csswg.org/css-values-4/#keywords\n")
+        to.write(f"struct Keyword {{\n")
+        to.write(f"    CSSValueID value;\n\n")
+
+        to.write(f"    constexpr bool operator==(const Keyword&) const = default;\n")
+        to.write(f"    constexpr bool operator==(CSSValueID other) const {{ return value == other; }};\n\n")
+
+        to.write(f"    // Unique types for each predefined keyword value.\n\n")
         for value in self.values:
-            to.write(f"using {value.id_without_prefix} = Constant<{value.id_without_scope}>;\n")
+            to.write(f"    using {value.id_without_prefix} = Constant<{value.id}>;\n")
 
-        to.write(f"\n}} // namespace CSS::Keyword\n")
+        to.write(f"}};\n\n")
+
+        to.write(f"\n}} // namespace CSS\n")
+
         to.write(f"}} // namespace WebCore\n\n")
 
     def _generate_css_value_keywords_h_hash_traits(self, *, to):
         to.write(textwrap.dedent("""
             namespace WTF {
 
-            template<> struct DefaultHash<WebCore::CSSValueID> : IntHash<unsigned> { };
+            template<> struct DefaultHash<WebCore::CSSValueID> : IntHash<WebCore::CSSValueID> { };
 
             template<> struct HashTraits<WebCore::CSSValueID> : StrongEnumHashTraits<WebCore::CSSValueID> { };
 
@@ -427,11 +439,30 @@ class GenerationContext:
                 to=output_file
             )
 
+    # Helper generator functions for CSSValueKeywords.serialization.in
+
+    def generate_css_value_keywords_serialization_in(self):
+        with open('CSSValueKeywords.serialization.in', 'w') as output_file:
+            output_file.write("# This file is automatically generated from CSSValueKeywords.in and SVGCSSValueKeywords.in by the process-css-values script. Do not edit it.\n\n")
+            output_file.write("header: <WebCore/CSSValueKeywords.h>\n")
+            output_file.write("enum class WebCore::CSSValueID : uint16_t {\n")
+            output_file.write(",\n".join(["    Invalid"] + [f"    {value.id_without_prefix}" for value in self.values]))
+            output_file.write("\n}\n")
+
+
+def merge_defines(defines, defines_file):
+    names = (defines or '').split()
+    if defines_file:
+        with open(defines_file) as f:
+            names += f.read().split()
+    return ' '.join(names)
+
 
 def main():
     parser = argparse.ArgumentParser(description='Process CSS property definitions.')
     parser.add_argument('--values', action='append')
     parser.add_argument('--defines')
+    parser.add_argument('--defines-file')
     parser.add_argument('--gperf-executable')
     parser.add_argument('-v', '--verbose', action='store_true')
     args = parser.parse_args()
@@ -439,7 +470,7 @@ def main():
     if not args.values:
         args.values = ["CSSValueKeywords.in"]
 
-    parsing_context = ParsingContext(defines_string=args.defines, parsing_for_codegen=True, verbose=args.verbose)
+    parsing_context = ParsingContext(defines_string=merge_defines(args.defines, args.defines_file), parsing_for_codegen=True, verbose=args.verbose)
 
     parsed_values = []
     for values_file_path in args.values:
@@ -452,6 +483,7 @@ def main():
     generation_context = GenerationContext(parsed_values, verbose=args.verbose, gperf_executable=args.gperf_executable)
 
     generation_context.generate_css_value_keywords_h()
+    generation_context.generate_css_value_keywords_serialization_in()
     generation_context.generate_css_value_keywords_gperf()
     generation_context.run_gperf()
 

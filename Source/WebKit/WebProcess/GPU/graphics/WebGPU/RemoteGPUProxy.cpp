@@ -33,10 +33,10 @@
 #include "ModelConvertToBackingContext.h"
 #include "RemoteAdapterProxy.h"
 #include "RemoteCompositorIntegrationProxy.h"
-#include "RemoteDDMeshProxy.h"
 #include "RemoteGPU.h"
 #include "RemoteGPUMessages.h"
 #include "RemoteGPUProxyMessages.h"
+#include "RemoteMeshProxy.h"
 #include "RemotePresentationContextProxy.h"
 #include "RemoteRenderingBackendProxy.h"
 #include "WebGPUConvertToBackingContext.h"
@@ -51,12 +51,12 @@ namespace WebKit {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteGPUProxy);
 
-RefPtr<RemoteGPUProxy> RemoteGPUProxy::create(WebGPU::ConvertToBackingContext& convertToBackingContext, DDModel::ConvertToBackingContext& modelConvertToBackingContext, WebPage& page)
+RefPtr<RemoteGPUProxy> RemoteGPUProxy::create(WebGPU::ConvertToBackingContext& convertToBackingContext, ModelConvertToBackingContext& modelConvertToBackingContext, WebPage& page)
 {
-    return RemoteGPUProxy::create(convertToBackingContext, modelConvertToBackingContext, page.ensureProtectedRemoteRenderingBackendProxy(), RunLoop::mainSingleton());
+    return RemoteGPUProxy::create(convertToBackingContext, modelConvertToBackingContext, protect(page.ensureRemoteRenderingBackendProxy()), RunLoop::mainSingleton());
 }
 
-RefPtr<RemoteGPUProxy> RemoteGPUProxy::create(WebGPU::ConvertToBackingContext& convertToBackingContext, DDModel::ConvertToBackingContext& modelConvertToBackingContext, RemoteRenderingBackendProxy& renderingBackend, SerialFunctionDispatcher& dispatcher)
+RefPtr<RemoteGPUProxy> RemoteGPUProxy::create(WebGPU::ConvertToBackingContext& convertToBackingContext, ModelConvertToBackingContext& modelConvertToBackingContext, RemoteRenderingBackendProxy& renderingBackend, SerialFunctionDispatcher& dispatcher)
 {
     constexpr size_t connectionBufferSizeLog2 = 21;
     auto connectionPair = IPC::StreamClientConnection::create(connectionBufferSizeLog2, WebProcess::singleton().gpuProcessTimeoutDuration());
@@ -72,7 +72,7 @@ RefPtr<RemoteGPUProxy> RemoteGPUProxy::create(WebGPU::ConvertToBackingContext& c
 }
 
 
-RemoteGPUProxy::RemoteGPUProxy(WebGPU::ConvertToBackingContext& convertToBackingContext, DDModel::ConvertToBackingContext& modelConvertToBackingContext, SerialFunctionDispatcher& dispatcher)
+RemoteGPUProxy::RemoteGPUProxy(WebGPU::ConvertToBackingContext& convertToBackingContext, ModelConvertToBackingContext& modelConvertToBackingContext, SerialFunctionDispatcher& dispatcher)
     : m_convertToBackingContext(convertToBackingContext)
     , m_modelConvertToBackingContext(modelConvertToBackingContext)
     , m_dispatcher(dispatcher)
@@ -86,8 +86,8 @@ RemoteGPUProxy::~RemoteGPUProxy()
 
 void RemoteGPUProxy::initializeIPC(Ref<IPC::StreamClientConnection>&& streamConnection, RemoteRenderingBackendIdentifier renderingBackend, IPC::StreamServerConnection::Handle&& serverHandle)
 {
-    m_streamConnection = WTF::move(streamConnection);
-    protectedStreamConnection()->open(*this, *this);
+    lazyInitialize(m_streamConnection, WTF::move(streamConnection));
+    m_streamConnection->open(*this, *this);
     callOnMainRunLoopAndWait([&]() {
         Ref gpuProcessConnection = WebProcess::singleton().ensureGPUProcessConnection();
         gpuProcessConnection->createGPU(m_backing, renderingBackend, WTF::move(serverHandle));
@@ -99,7 +99,7 @@ void RemoteGPUProxy::disconnectGpuProcessIfNeeded()
 {
     if (m_lost)
         return;
-    protectedStreamConnection()->invalidate();
+    m_streamConnection->invalidate();
     // FIXME: deallocate m_streamConnection once the children work without the connection.
     ensureOnMainRunLoop([identifier = m_backing, weakGPUProcessConnection = WTF::move(m_gpuProcessConnection)]() {
         RefPtr gpuProcessConnection = weakGPUProcessConnection.get();
@@ -117,7 +117,7 @@ void RemoteGPUProxy::didClose(IPC::Connection&)
 
 void RemoteGPUProxy::abandonGPUProcess()
 {
-    protectedStreamConnection()->invalidate();
+    m_streamConnection->invalidate();
     m_lost = true;
 }
 
@@ -133,13 +133,11 @@ bool RemoteGPUProxy::isCurrent() const
     return dispatcher && dispatcher->isCurrent();
 }
 
-void RemoteGPUProxy::wasCreated(bool didSucceed, IPC::Semaphore&& wakeUpSemaphore, IPC::Semaphore&& clientWaitSemaphore)
+void RemoteGPUProxy::wasCreated(bool didSucceed)
 {
     ASSERT(!m_didInitialize);
     m_didInitialize = true;
-    if (didSucceed)
-        protectedStreamConnection()->setSemaphores(WTF::move(wakeUpSemaphore), WTF::move(clientWaitSemaphore));
-    else
+    if (!didSucceed)
         abandonGPUProcess();
 }
 
@@ -147,7 +145,7 @@ void RemoteGPUProxy::waitUntilInitialized()
 {
     if (m_didInitialize)
         return;
-    if (protectedStreamConnection()->waitForAndDispatchImmediately<Messages::RemoteGPUProxy::WasCreated>(m_backing) == IPC::Error::NoError)
+    if (m_streamConnection->waitForAndDispatchImmediately<Messages::RemoteGPUProxy::WasCreated>(m_backing) == IPC::Error::NoError)
         return;
     abandonGPUProcess();
 }
@@ -203,7 +201,6 @@ void RemoteGPUProxy::requestAdapter(const WebCore::WebGPU::RequestAdapterOptions
         response->limits.maxBufferSize,
         response->limits.maxVertexAttributes,
         response->limits.maxVertexBufferArrayStride,
-        response->limits.maxInterStageShaderComponents,
         response->limits.maxInterStageShaderVariables,
         response->limits.maxColorAttachments,
         response->limits.maxColorAttachmentBytesPerSample,
@@ -218,29 +215,32 @@ void RemoteGPUProxy::requestAdapter(const WebCore::WebGPU::RequestAdapterOptions
         response->limits.maxStorageBuffersInVertexStage,
         response->limits.maxStorageTexturesInVertexStage
     );
-    callback(WebGPU::RemoteAdapterProxy::create(WTF::move(response->name), WTF::move(resultSupportedFeatures), WTF::move(resultSupportedLimits), response->isFallbackAdapter, options.xrCompatible, *this, m_convertToBackingContext, identifier));
+    callback(WebGPU::RemoteAdapterProxy::create(WTF::move(response->name), WTF::move(resultSupportedFeatures), WTF::move(resultSupportedLimits), response->isFallbackAdapter, options.xrCompatible, *this, m_convertToBackingContext, identifier, response->subgroupMinSize, response->subgroupMaxSize));
 }
 
-RefPtr<WebCore::DDModel::DDMesh> RemoteGPUProxy::createModelBacking(unsigned width, unsigned height, const WebCore::DDModel::DDImageAsset& diffuseTexture, const WebCore::DDModel::DDImageAsset& specularTexture, CompletionHandler<void(Vector<MachSendRight>&&)>&& callback)
+RefPtr<WebKit::Mesh> RemoteGPUProxy::createModelBacking(unsigned width, unsigned height, WebModel::ImageAsset&& diffuseTexture, WebModel::ImageAsset&& specularTexture, bool standardDynamicRange, CompletionHandler<void(Vector<MachSendRight>&&)>&& callback)
 {
 #if ENABLE(GPU_PROCESS_MODEL)
-    auto identifier = DDModelIdentifier::generate();
+    auto identifier = WebModelIdentifier::generate();
 
-    auto sendResult = sendSync(Messages::RemoteGPU::CreateModelBacking(width, height, diffuseTexture, specularTexture, identifier));
-    if (!sendResult.succeeded())
+    auto sendResult = sendSync(Messages::RemoteGPU::CreateModelBacking(width, height, WTF::move(diffuseTexture), WTF::move(specularTexture), identifier, standardDynamicRange));
+    if (!sendResult.succeeded()) {
         callback({ });
+        return nullptr;
+    }
 
     auto [response] = sendResult.takeReply();
     callback(WTF::move(response));
 
     UNUSED_PARAM(sendResult);
 
-    auto result = DDModel::RemoteDDMeshProxy::create(root(), m_modelConvertToBackingContext, identifier);
+    auto result = RemoteMeshProxy::create(root(), m_modelConvertToBackingContext, identifier);
     result->setLabel("Placeholder model label"_s);
     return result;
 #else
     UNUSED_PARAM(width);
     UNUSED_PARAM(height);
+    UNUSED_PARAM(standardDynamicRange);
     UNUSED_PARAM(callback);
     return nullptr;
 #endif
@@ -252,7 +252,7 @@ RefPtr<WebCore::WebGPU::PresentationContext> RemoteGPUProxy::createPresentationC
 
     // FIXME: This is super yucky. We should solve this a better way. (For both WK1 and WK2.)
     // Maybe PresentationContext needs a present() function?
-    Ref compositorIntegration = const_cast<WebGPU::RemoteCompositorIntegrationProxy&>(m_convertToBackingContext->convertToRawBacking(Ref { descriptor.compositorIntegration }.get()));
+    Ref compositorIntegration = m_convertToBackingContext->convertToRawBacking(protect(descriptor.compositorIntegration).get());
 
     auto convertedDescriptor = m_convertToBackingContext->convertToBacking(descriptor);
     if (!convertedDescriptor)

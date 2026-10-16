@@ -20,14 +20,13 @@
  * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 #pragma once
 
 #include <JavaScriptCore/JSArrayBufferView.h>
 #include <JavaScriptCore/ThrowScope.h>
-#include <wtf/CheckedArithmetic.h>
 
 namespace JSC {
 
@@ -98,10 +97,10 @@ public:
     static JSGenericTypedArrayView* create(VM&, Structure*, RefPtr<typename Adaptor::ViewType>&& impl);
     static JSGenericTypedArrayView* create(Structure*, JSGlobalObject*, RefPtr<typename Adaptor::ViewType>&& impl);
     static JSGenericTypedArrayView* tryCreate(JSGlobalObject*, Structure*, RefPtr<typename Adaptor::ViewType>&& impl);
-    
+
     inline size_t byteLength() const;
     inline size_t byteLengthRaw() const;
-    
+
     inline const typename Adaptor::Type* typedVector() const;
     inline typename Adaptor::Type* typedVector();
 
@@ -118,7 +117,7 @@ public:
     inline JSValue getIndexQuickly(size_t) const;
     inline void setIndexQuicklyToNativeValue(size_t, typename Adaptor::Type);
     inline void setIndexQuickly(size_t, JSValue);
-    inline bool setIndex(JSGlobalObject*, size_t, JSValue);
+    inline bool setIndex(JSGlobalObject*, uint64_t, JSValue);
 
     static inline ElementType toAdaptorNativeFromValue(JSGlobalObject*, JSValue);
     static inline std::optional<ElementType> toAdaptorNativeFromValueWithoutCoercion(JSValue);
@@ -127,7 +126,7 @@ public:
     inline SortResult sort();
 
     inline bool canAccessRangeQuickly(size_t offset, size_t length);
-    
+
     // Like canSetQuickly, except: if it returns false, it will throw the
     // appropriate exception.
     bool validateRange(JSGlobalObject*, size_t offset, size_t length);
@@ -137,26 +136,28 @@ public:
     bool setFromTypedArray(JSGlobalObject*, size_t offset, JSArrayBufferView*, size_t objectOffset, size_t length, CopyType);
     bool setFromArrayLike(JSGlobalObject*, size_t offset, JSObject*, size_t objectOffset, size_t length);
     bool setFromArrayLike(JSGlobalObject*, size_t offset, JSValue source);
-    
+
     RefPtr<typename Adaptor::ViewType> possiblySharedTypedImpl();
     RefPtr<typename Adaptor::ViewType> unsharedTypedImpl();
 
     static inline Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
-    
+
     static const ClassInfo s_info; // This is never accessed directly, since that would break linkage on some compilers.
     static inline const ClassInfo* info();
 
     template<typename CellType, SubspaceAccess mode> static inline GCClient::IsoSubspace* subspaceFor(VM&);
-    
+
     ArrayBuffer* existingBuffer();
 
     static constexpr TypedArrayType TypedArrayStorageType = Adaptor::typeValue;
 
     // This is the default DOM unwrapping. It calls toUnsharedNativeTypedView().
     static inline RefPtr<typename Adaptor::ViewType> toWrapped(VM&, JSValue);
+    static inline RefPtr<typename Adaptor::ViewType> toWrappedAllowResizable(VM&, JSValue);
 
     // [AllowShared] annotation allows accepting TypedArray originated from SharedArrayBuffer.
     static inline RefPtr<typename Adaptor::ViewType> toWrappedAllowShared(VM&, JSValue);
+    static inline RefPtr<typename Adaptor::ViewType> toWrappedAllowSharedAndResizable(VM&, JSValue);
 
     inline void copyFromInt32ShapeArray(size_t offset, JSArray*, size_t objectOffset, size_t length);
     inline void copyFromDoubleShapeArray(size_t offset, JSArray*, size_t objectOffset, size_t length);
@@ -176,7 +177,7 @@ protected:
     static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned propertyName, PropertySlot&);
     static bool putByIndex(JSCell*, JSGlobalObject*, unsigned propertyName, JSValue, bool shouldThrow);
     static bool deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned propertyName);
-    
+
     static void getOwnPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
 
     static size_t estimatedSize(JSCell*, VM&);
@@ -213,6 +214,27 @@ protected:
     // are 1 and only the MSB of the mantissa is 1. So, NaN is recognized as the largest integral numbers.
 
     template<typename IntegralType> inline void sortFloat(ElementType* begin, ElementType* end);
+
+    // The unsigned integer of the same width as ElementType, used as the sort key. Ordering
+    // elements by this key gives the order sorting a typed array requires: for signed integers,
+    // flipping the sign bit; for floats, flipping every bit of a negative value and only the sign
+    // bit of a positive one, which lines IEEE 754 up with unsigned integer order.
+    using SortKeyType = std::conditional_t<elementSize == 1, uint8_t,
+        std::conditional_t<elementSize == 2, uint16_t,
+        std::conditional_t<elementSize == 4, uint32_t, uint64_t>>>;
+    static_assert(sizeof(SortKeyType) == elementSize);
+
+    static constexpr SortKeyType sortKeySignBit = static_cast<SortKeyType>(1) << (elementSize * 8 - 1);
+
+    static ALWAYS_INLINE SortKeyType sortKey(ElementType);
+    static inline bool isNonDescending(std::span<const ElementType>);
+    static inline bool hasFewDistinctValues(std::span<const ElementType>);
+
+    NEVER_INLINE bool radixSort(std::span<ElementType>);
+    template<typename CounterType> inline bool radixSortWithCounters(std::span<ElementType>);
+
+    inline void countingSort(std::span<ElementType>);
+    template<typename CounterType> inline void countingSortWithCounters(std::span<ElementType>);
 };
 
 template<typename PassedAdaptor>

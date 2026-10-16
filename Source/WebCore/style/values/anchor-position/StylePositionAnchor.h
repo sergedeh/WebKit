@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2025 Samuel Weinig <sam@webkit.org>
+ * Copyright (C) 2026 Suraj Thanugundla <contact@surajt.com>
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,17 +28,100 @@
 #include <WebCore/StyleAnchorName.h>
 #include <WebCore/StyleValueTypes.h>
 
+#if ENABLE(SPATIAL_PORTAL)
+#include <WebCore/StylePinnedAnchorName.h>
+#endif
+
 namespace WebCore {
 namespace Style {
 
-// <'position-anchor'> = auto | <anchor-name>
+// <'position-anchor'> = normal | none | auto | <anchor-name>
 // https://drafts.csswg.org/css-anchor-position-1/#propdef-position-anchor
-struct PositionAnchor : ValueOrKeyword<AnchorName, CSS::Keyword::Auto> {
-    using Base::Base;
+//
+// With the spatial portal feature enabled, <anchor-name> may carry a '#'-delimited attachment
+// point: normal | none | auto | <anchor-name> [ '#' <ident> ]?
+struct PositionAnchor {
+    PositionAnchor(CSS::Keyword::Normal keyword)
+        : m_value { keyword }
+    {
+    }
 
-    bool isAuto() const { return isKeyword(); }
-    bool isName() const { return isValue(); }
-    std::optional<AnchorName> tryName() const { return tryValue(); }
+    PositionAnchor(CSS::Keyword::None keyword)
+        : m_value { keyword }
+    {
+    }
+
+    PositionAnchor(CSS::Keyword::Auto keyword)
+        : m_value { keyword }
+    {
+    }
+
+    PositionAnchor(AnchorName&& value)
+        : m_value { WTF::move(value) }
+    {
+    }
+
+#if ENABLE(SPATIAL_PORTAL)
+    PositionAnchor(PinnedAnchorName&& value)
+        : m_value { WTF::move(value) }
+    {
+    }
+#endif
+
+    bool isNormal() const { return WTF::holdsAlternative<CSS::Keyword::Normal>(m_value); }
+    bool isNone() const { return WTF::holdsAlternative<CSS::Keyword::None>(m_value); }
+    bool isAuto() const { return WTF::holdsAlternative<CSS::Keyword::Auto>(m_value); }
+
+    bool isName() const
+    {
+#if ENABLE(SPATIAL_PORTAL)
+        if (WTF::holdsAlternative<PinnedAnchorName>(m_value))
+            return true;
+#endif
+        return WTF::holdsAlternative<AnchorName>(m_value);
+    }
+
+    std::optional<AnchorName> tryName() const
+    {
+        if (auto* name = std::get_if<AnchorName>(&m_value))
+            return *name;
+#if ENABLE(SPATIAL_PORTAL)
+        if (auto* pinned = std::get_if<PinnedAnchorName>(&m_value))
+            return pinned->name;
+#endif
+        return { };
+    }
+
+#if ENABLE(SPATIAL_PORTAL)
+    std::optional<CustomIdent> tryAttachment() const
+    {
+        if (auto* pinned = std::get_if<PinnedAnchorName>(&m_value))
+            return pinned->attachment;
+        return { };
+    }
+#endif
+
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
+    {
+        return WTF::switchOn(m_value, std::forward<F>(f)...);
+    }
+
+    bool operator==(const PositionAnchor&) const = default;
+
+private:
+#if ENABLE(SPATIAL_PORTAL)
+    using Value = Variant<CSS::Keyword::Normal, CSS::Keyword::None, CSS::Keyword::Auto, AnchorName, PinnedAnchorName>;
+#else
+    using Value = Variant<CSS::Keyword::Normal, CSS::Keyword::None, CSS::Keyword::Auto, AnchorName>;
+#endif
+
+    Value m_value;
+};
+
+// MARK: - Conversion
+
+template<> struct CSSValueConversion<PositionAnchor> {
+    auto operator()(BuilderState&, const CSSValue&) -> PositionAnchor;
 };
 
 } // namespace Style

@@ -25,25 +25,25 @@
 
 #pragma once
 
+#import <WebGPU/WebGPUCpp.h>
 #import <wtf/FastMalloc.h>
 #import <wtf/GenericHashKey.h>
 #import <wtf/Hasher.h>
 #import <wtf/ListHashSet.h>
 #import <wtf/Lock.h>
 #import <wtf/Ref.h>
-#import <wtf/RefCounted.h>
 #import <wtf/TZoneMalloc.h>
 #import <wtf/WeakObjCPtr.h>
 
 struct WGPUSamplerImpl {
 };
 
-namespace WebGPU {
+namespace WebGPU::Metal {
 
 class Device;
 
 // https://gpuweb.github.io/gpuweb/#gpusampler
-class Sampler : public WGPUSamplerImpl, public RefCounted<Sampler> {
+class Sampler final : public WebGPU::Sampler, public WGPUSamplerImpl {
     WTF_MAKE_TZONE_ALLOCATED(Sampler);
 public:
     using UniqueSamplerIdentifier = std::array<uint32_t, 4>;
@@ -54,7 +54,7 @@ public:
             WTF::add(hasher, value);
     }
 
-    static Ref<Sampler> create(UniqueSamplerIdentifier&& samplerIdentifier, const WGPUSamplerDescriptor& descriptor, Device& device)
+    static Ref<Sampler> create(UniqueSamplerIdentifier&& samplerIdentifier, const WebGPU::SamplerDescriptor& descriptor, Device& device)
     {
         return adoptRef(*new Sampler(WTF::move(samplerIdentifier), descriptor, device));
     }
@@ -65,28 +65,37 @@ public:
 
     ~Sampler();
 
-    void setLabel(String&&);
+    void setLabel(String&&) final;
 
-    bool isValid() const;
+    bool LEGACY_NODELETE isValid() const final;
 
     id<MTLSamplerState> cachedSamplerState() const { return m_cachedSamplerState; }
     id<MTLSamplerState> tryCacheSamplerState() const;
-    const WGPUSamplerDescriptor& descriptor() const { return m_descriptor; }
-    bool isComparison() const { return descriptor().compare != WGPUCompareFunction_Undefined; }
-    bool isFiltering() const { return descriptor().minFilter == WGPUFilterMode_Linear || descriptor().magFilter == WGPUFilterMode_Linear || descriptor().mipmapFilter == WGPUMipmapFilterMode_Linear; }
+    bool isComparison() const { return !!m_compare; }
+    bool isFiltering() const { return m_minFilter == WebGPU::FilterMode::Linear || m_magFilter == WebGPU::FilterMode::Linear || m_mipmapFilter == WebGPU::MipmapFilterMode::Linear; }
 
     Device& device() const { return m_device; }
 
 private:
-    Sampler(UniqueSamplerIdentifier&&, const WGPUSamplerDescriptor&, Device&);
+    Sampler(UniqueSamplerIdentifier&&, const WebGPU::SamplerDescriptor&, Device&);
     Sampler(Device&);
 
     std::optional<UniqueSamplerIdentifier> m_samplerIdentifier;
-    WGPUSamplerDescriptor m_descriptor { };
+    String m_label;
+    WebGPU::AddressMode m_addressModeU { WebGPU::AddressMode::ClampToEdge };
+    WebGPU::AddressMode m_addressModeV { WebGPU::AddressMode::ClampToEdge };
+    WebGPU::AddressMode m_addressModeW { WebGPU::AddressMode::ClampToEdge };
+    WebGPU::FilterMode m_magFilter { WebGPU::FilterMode::Nearest };
+    WebGPU::FilterMode m_minFilter { WebGPU::FilterMode::Nearest };
+    WebGPU::MipmapFilterMode m_mipmapFilter { WebGPU::MipmapFilterMode::Nearest };
+    float m_lodMinClamp { 0 };
+    float m_lodMaxClamp { 0 };
+    std::optional<WebGPU::CompareFunction> m_compare;
+    uint16_t m_maxAnisotropy { 0 };
 
     const Ref<Device> m_device;
 
     mutable __weak id<MTLSamplerState> m_cachedSamplerState { nil };
 };
 
-} // namespace WebGPU
+} // namespace WebGPU::Metal

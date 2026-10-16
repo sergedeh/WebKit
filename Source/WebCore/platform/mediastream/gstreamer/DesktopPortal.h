@@ -29,7 +29,7 @@
 #include <wtf/RefCounted.h>
 #include <wtf/glib/GRefPtr.h>
 #include <wtf/glib/WTFGType.h>
-#include <wtf/text/CStringView.h>
+#include <wtf/text/UTF8CStringView.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
@@ -38,18 +38,20 @@ class DesktopPortal : public RefCounted<DesktopPortal> {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(DesktopPortal);
 public:
     DesktopPortal(ASCIILiteral, GRefPtr<GDBusProxy>&&);
+    virtual ~DesktopPortal();
 
     GRefPtr<GVariant> getProperty(ASCIILiteral name);
 
     using ResponseCallback = CompletionHandler<void(GVariant*)>;
-    void waitResponseSignal(CStringView objectPath, ResponseCallback&& = [](auto*) { });
+    void waitResponseSignal(UTF8CStringView objectPath, ResponseCallback&& = [](auto*) { });
 
-    void notifyResponse(GVariant* parameters) { m_currentResponseCallback(parameters); }
+    void notifyResponse(GVariant* parameters);
 
 protected:
     ASCIILiteral m_interfaceName;
     GRefPtr<GDBusProxy> m_proxy;
     ResponseCallback m_currentResponseCallback;
+    unsigned m_responseSignalId { 0 };
 };
 
 class DesktopPortalCamera : public DesktopPortal {
@@ -78,7 +80,7 @@ public:
             , m_proxy(proxy)
         {
         }
-        const String& path() const { return m_path; }
+        const String& path() const LIFETIME_BOUND { return m_path; }
         GRefPtr<GVariant> selectSources(GVariantBuilder&);
         GRefPtr<GVariant> start();
         std::optional<PipeWireNodeData> openPipewireRemote();

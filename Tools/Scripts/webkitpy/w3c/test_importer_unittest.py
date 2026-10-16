@@ -27,6 +27,7 @@
 # SUCH DAMAGE.
 
 import json
+import logging
 import os
 import unittest
 
@@ -159,7 +160,6 @@ class TestImporterTest(unittest.TestCase):
             f'{FAKE_WPT_DIR}/css/t/test.html': MINIMAL_TESTHARNESS,
             f'{FAKE_WPT_DIR}/t/test.html': MINIMAL_TESTHARNESS,
             '/mock-checkout/Source/WebCore/css/CSSProperties.json': '',
-            '/mock-checkout/Source/WebCore/css/CSSValueKeywords.in': '',
         }
         FAKE_FILES.update(FAKE_RESOURCES)
 
@@ -304,6 +304,48 @@ class TestImporterTest(unittest.TestCase):
         self.assertTrue(fs.exists('/mock-checkout/LayoutTests/w3c/web-platform-tests/.gitattributes'))
         self.assertTrue(fs.exists('/mock-checkout/LayoutTests/w3c/web-platform-tests/.gitignore'))
         self.assertTrue(fs.exists('/mock-checkout/LayoutTests/w3c/web-platform-tests/.svn'))
+
+    def test_case_mismatch_in_test_path(self):
+        FAKE_FILES = {
+            f'{FAKE_WPT_DIR}/webidl/test.html': MINIMAL_TESTHARNESS,
+        }
+        FAKE_FILES.update(FAKE_RESOURCES)
+
+        with OutputCapture(level=logging.ERROR) as captured:
+            fs = self.import_downloaded_tests(['--no-fetch', '-d', 'w3c', 'web-platform-tests/WebIDL'], FAKE_FILES)
+
+        self.assertEqual(captured.root.log.getvalue(), 'web-platform-tests/WebIDL differs only in case from web-platform-tests/webidl in the WPT checkout.\n')
+        self.assertFalse(fs.exists('/mock-checkout/LayoutTests/w3c/web-platform-tests/webidl/test.html'))
+        import_expectations = json.loads(fs.read_text_file('/mock-checkout/LayoutTests/imported/w3c/resources/import-expectations.json'))
+        self.assertNotIn('web-platform-tests/WebIDL', import_expectations)
+
+    def test_case_mismatch_in_destination_directory(self):
+        FAKE_FILES = {
+            f'{FAKE_WPT_DIR}/webidl/test.html': MINIMAL_TESTHARNESS,
+            '/mock-checkout/LayoutTests/w3c/web-platform-tests/WebIDL/test.html': 'old',
+        }
+        FAKE_FILES.update(FAKE_RESOURCES)
+
+        with OutputCapture(level=logging.ERROR) as captured:
+            fs = self.import_downloaded_tests(['--no-fetch', '-d', 'w3c', 'web-platform-tests/webidl'], FAKE_FILES)
+
+        self.assertEqual(captured.root.log.getvalue(), '/mock-checkout/LayoutTests/w3c/web-platform-tests/WebIDL differs only in case from web-platform-tests/webidl in the WPT checkout. Rename it to match before importing.\n')
+        self.assertEqual(fs.read_text_file('/mock-checkout/LayoutTests/w3c/web-platform-tests/WebIDL/test.html'), 'old')
+        self.assertFalse(fs.exists('/mock-checkout/LayoutTests/w3c/web-platform-tests/webidl/test.html'))
+
+    def test_case_mismatch_in_destination_file(self):
+        FAKE_FILES = {
+            f'{FAKE_WPT_DIR}/t/progress.html': MINIMAL_TESTHARNESS,
+            '/mock-checkout/LayoutTests/w3c/web-platform-tests/t/Progress.html': 'old',
+        }
+        FAKE_FILES.update(FAKE_RESOURCES)
+
+        with OutputCapture(level=logging.ERROR) as captured:
+            fs = self.import_downloaded_tests(['--no-fetch', '-d', 'w3c', 'web-platform-tests/t'], FAKE_FILES)
+
+        self.assertEqual(captured.root.log.getvalue(), '/mock-checkout/LayoutTests/w3c/web-platform-tests/t/Progress.html differs only in case from web-platform-tests/t/progress.html in the WPT checkout. Rename it to match before importing.\n')
+        self.assertEqual(fs.read_text_file('/mock-checkout/LayoutTests/w3c/web-platform-tests/t/Progress.html'), 'old')
+        self.assertFalse(fs.exists('/mock-checkout/LayoutTests/w3c/web-platform-tests/t/progress.html'))
 
     def test_update_slow_test(self):
         existing_resource_files = {
@@ -579,7 +621,6 @@ class TestImporterTest(unittest.TestCase):
             f'{FAKE_WPT_DIR}/t/test.any.js': 'test(() => {}, "empty")',
             '/mock-checkout/LayoutTests/w3c/web-platform-tests/t/test.any.html': '<!-- This file is required for WebKit test infrastructure to run the templated test --><!-- webkit-test-runner [ dummy ] -->',
             '/mock-checkout/Source/WebCore/css/CSSProperties.json': '',
-            '/mock-checkout/Source/WebCore/css/CSSValueKeywords.in': '',
         }
         FAKE_FILES.update(FAKE_RESOURCES)
 
@@ -716,6 +757,30 @@ class TestImporterTest(unittest.TestCase):
         self.assertTrue('<!-- META: variant=?1-10 -->' in fs.read_text_file('/mock-checkout/LayoutTests/w3c/web-platform-tests/t/variant.any.html'))
         self.assertTrue('<!-- META: variant=?11-20 -->' in fs.read_text_file('/mock-checkout/LayoutTests/w3c/web-platform-tests/t/variant.any.html'))
 
+    def test_template_test_variant_window(self):
+        FAKE_FILES = {
+            f'{FAKE_WPT_DIR}/t/variant.window.js': '// META: variant=?urlType=origin\n// META: variant=?urlType=blob',
+        }
+        FAKE_FILES.update(FAKE_RESOURCES)
+
+        fs = self.import_downloaded_tests(['--no-fetch', '--import-all', '--no-clean-dest-dir', '-d', 'w3c'], FAKE_FILES)
+
+        self.assertTrue(fs.exists('/mock-checkout/LayoutTests/w3c/web-platform-tests/t/variant.window.html'))
+        self.assertTrue('<!-- META: variant=?urlType=origin -->' in fs.read_text_file('/mock-checkout/LayoutTests/w3c/web-platform-tests/t/variant.window.html'))
+        self.assertTrue('<!-- META: variant=?urlType=blob -->' in fs.read_text_file('/mock-checkout/LayoutTests/w3c/web-platform-tests/t/variant.window.html'))
+
+    def test_template_test_variant_worker(self):
+        FAKE_FILES = {
+            f'{FAKE_WPT_DIR}/t/variant.worker.js': '// META: variant=?1-10\n// META: variant=?11-20',
+        }
+        FAKE_FILES.update(FAKE_RESOURCES)
+
+        fs = self.import_downloaded_tests(['--no-fetch', '--import-all', '--no-clean-dest-dir', '-d', 'w3c'], FAKE_FILES)
+
+        self.assertTrue(fs.exists('/mock-checkout/LayoutTests/w3c/web-platform-tests/t/variant.worker.html'))
+        self.assertTrue('<!-- META: variant=?1-10 -->' in fs.read_text_file('/mock-checkout/LayoutTests/w3c/web-platform-tests/t/variant.worker.html'))
+        self.assertTrue('<!-- META: variant=?11-20 -->' in fs.read_text_file('/mock-checkout/LayoutTests/w3c/web-platform-tests/t/variant.worker.html'))
+
     def test_template_test_variant_dangling(self):
         FAKE_FILES = {
             f'{FAKE_WPT_DIR}/t/variant.any.js': '// META: variant=?1-10\n// META: variant=?11-20',
@@ -752,3 +817,56 @@ class TestImporterTest(unittest.TestCase):
         self.assertTrue(fs.exists('/test.checkout/LayoutTests/platform/test-mac-leopard/w3c/web-platform-tests/t/test-expected.txt'))
         self.assertTrue(fs.exists('/test.checkout/LayoutTests/platform/test-linux-x86_64/w3c/web-platform-tests/t/test-expected.txt'))
         self.assertTrue(fs.exists('/test.checkout/LayoutTests/platform/unknown-platform/w3c/web-platform-tests/t/test-expected.txt'))
+
+    def test_unmodified_files_not_rewritten(self):
+        """HTML files that need no conversion should be copied verbatim, not parsed and re-serialized."""
+        # HTMLParser lowercases end tags, so this content would be mangled by a parse/serialize cycle.
+        TEST_HTML = '<!DOCTYPE html>\n<script src="/resources/testharness.js"></script>\n<script src="/resources/testharnessreport.js"></script>\n<p>Content</P></BODY></HTML>'
+        FAKE_FILES = {
+            f'{FAKE_WPT_DIR}/t/test.html': TEST_HTML,
+            '/mock-checkout/Source/WebCore/css/CSSProperties.json': '{"properties":{}}',
+        }
+        FAKE_FILES.update(FAKE_RESOURCES)
+
+        fs = self.import_downloaded_tests(['--no-fetch', '--import-all', '--no-clean-dest-dir', '-d', 'w3c'], FAKE_FILES)
+
+        imported = fs.read_text_file('/mock-checkout/LayoutTests/w3c/web-platform-tests/t/test.html')
+        self.assertEqual(imported, TEST_HTML)
+
+    def test_resource_files_not_rewritten(self):
+        """Resource HTML files should be copied without HTML parsing to avoid corrupting non-UTF-8 encoded content."""
+        RESOURCE_HTML = '<span data-bytes="1B 24 42 26 41 1B 28 42">&A</span>'
+        FAKE_FILES = {
+            f'{FAKE_WPT_DIR}/t/test.html': MINIMAL_TESTHARNESS,
+            f'{FAKE_WPT_DIR}/t/resource.html': RESOURCE_HTML,
+            '/mock-checkout/Source/WebCore/css/CSSProperties.json': '{"properties":{}}',
+        }
+        FAKE_FILES.update(FAKE_RESOURCES)
+
+        fs = self.import_downloaded_tests(['--no-fetch', '--import-all', '--no-clean-dest-dir', '-d', 'w3c'], FAKE_FILES)
+
+        imported = fs.read_text_file('/mock-checkout/LayoutTests/w3c/web-platform-tests/t/resource.html')
+        self.assertEqual(imported, RESOURCE_HTML)
+
+    def test_import_no_rewrite_policy(self):
+        """Files under a directory marked 'import-no-rewrite' should be copied verbatim, and the policy should survive re-running the importer."""
+        TEST_HTML = '<!doctype html><meta charset=shift_jis><script src="/resources/testharness.js"></script><script src="/resources/testharnessreport.js"></script><span data-bytes="&A">&A</span>'
+        FAKE_FILES = {
+            '/mock-checkout/LayoutTests/imported/w3c/resources/import-expectations.json': '''
+{
+"web-platform-tests/encoding": "import-no-rewrite"
+}''',
+            f'{FAKE_WPT_DIR}/encoding/raw-test.html': TEST_HTML,
+            '/mock-checkout/Source/WebCore/css/CSSProperties.json': '{"properties":{}}',
+            '/mock-checkout/LayoutTests/imported/w3c/resources/resource-files.json': '{"directories": [], "files": []}',
+            f'{FAKE_WPT_DIR}/wpt': '',
+            f'{FAKE_WPT_DIR}/resources/testharness.js': '',
+        }
+
+        fs = self.import_downloaded_tests(['--no-fetch', '--no-clean-dest-dir', '-d', 'w3c', 'web-platform-tests/encoding'], FAKE_FILES)
+
+        imported = fs.read_text_file('/mock-checkout/LayoutTests/w3c/web-platform-tests/encoding/raw-test.html')
+        self.assertEqual(imported, TEST_HTML)
+
+        import_expectations = json.loads(fs.read_text_file('/mock-checkout/LayoutTests/imported/w3c/resources/import-expectations.json'))
+        self.assertEqual('import-no-rewrite', import_expectations['web-platform-tests/encoding'])

@@ -39,6 +39,7 @@
 #include <WebCore/LibWebRTCUtils.h>
 #include <WebCore/Settings.h>
 #include <algorithm>
+#include <wtf/Borrow.h>
 #include <wtf/EnumTraits.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -62,7 +63,7 @@ RefPtr<LibWebRTCNetworkManager> LibWebRTCNetworkManager::getOrCreate(WebCore::Sc
         auto newNetworkManager = adoptRef(*new LibWebRTCNetworkManager(identifier));
         networkManager = newNetworkManager.ptr();
         document->setRTCNetworkManager(WTF::move(newNetworkManager));
-        WebProcess::singleton().libWebRTCNetwork().protectedMonitor()->addObserver(*networkManager);
+        protect(WebProcess::singleton().libWebRTCNetwork().monitor())->addObserver(*networkManager);
     }
 
     return networkManager;
@@ -91,12 +92,12 @@ void LibWebRTCNetworkManager::close()
 #if ASSERT_ENABLED
     m_isClosed = true;
 #endif
-    WebProcess::singleton().libWebRTCNetwork().protectedMonitor()->removeObserver(*this);
+    protect(WebProcess::singleton().libWebRTCNetwork().monitor())->removeObserver(*this);
 }
 
 void LibWebRTCNetworkManager::unregisterMDNSNames()
 {
-    WebProcess::singleton().protectedLibWebRTCNetwork()->protectedMDNSRegister()->unregisterMDNSNames(m_documentIdentifier);
+    protect(protect(WebProcess::singleton().libWebRTCNetwork())->mdnsRegister())->unregisterMDNSNames(m_documentIdentifier);
 }
 
 void LibWebRTCNetworkManager::setEnumeratingAllNetworkInterfacesEnabled(bool enabled)
@@ -119,7 +120,7 @@ void LibWebRTCNetworkManager::StartUpdating()
         Ref monitor = WebProcess::singleton().libWebRTCNetwork().monitor();
         if (protectedThis->m_receivedNetworkList) {
             WebCore::LibWebRTCProvider::callOnWebRTCNetworkThread([protectedThis] {
-                protectedThis->SignalNetworksChanged();
+                protectedThis->NotifyNetworksChanged();
             });
         } else if (monitor->didReceiveNetworkList())
             protectedThis->networksChanged(monitor->networkList() , monitor->ipv4(), monitor->ipv6());
@@ -132,7 +133,7 @@ void LibWebRTCNetworkManager::StopUpdating()
     callOnMainRunLoop([weakThis = WeakPtr { *this }] {
         if (!weakThis)
             return;
-        WebProcess::singleton().libWebRTCNetwork().protectedMonitor()->stopUpdating();
+        protect(WebProcess::singleton().libWebRTCNetwork().monitor())->stopUpdating();
     });
 }
 
@@ -167,10 +168,10 @@ void LibWebRTCNetworkManager::networksChanged(const Vector<RTCNetwork>& networks
                 RegistrableDomain domain { document->url() };
                 RTCSocketCreationFlags flags {
                     .isFirstParty = domain == RegistrableDomain(document->firstPartyForCookies()),
-                    .isRelayDisabled = true,
+                    .isRelayDisabled = !document->settings().webRTCRelayBypassDisabled(),
                     .enableServiceClass = false
                 };
-                WebProcess::singleton().ensureNetworkProcessConnection().connection().sendWithAsyncReply(Messages::NetworkRTCProvider::GetInterfaceName { document->url(), webPage->webPageProxyIdentifier(), flags, WTF::move(domain) }, [weakThis = WeakPtr { *this }] (auto&& interfaceName) {
+                protect(WebProcess::singleton().ensureNetworkProcessConnection().connection())->sendWithAsyncReply(Messages::NetworkRTCProvider::GetInterfaceName { document->url(), webPage->webPageProxyIdentifier(), flags, WTF::move(domain) }, [weakThis = WeakPtr { *this }] (auto&& interfaceName) {
                     RefPtr protectedThis = weakThis.get();
                     if (protectedThis && !interfaceName.isNull())
                         protectedThis->signalUsedInterface(WTF::move(interfaceName));
@@ -178,22 +179,23 @@ void LibWebRTCNetworkManager::networksChanged(const Vector<RTCNetwork>& networks
             }
         }
 #endif
-        for (auto& network : networks) {
+        for (auto& network : borrow(networks)) {
             if (std::ranges::any_of(network.ips, [&](const auto& ip) { return ipv4.rtcAddress() == ip.rtcAddress() || ipv6.rtcAddress() == ip.rtcAddress(); }) || (!m_useMDNSCandidates && m_enableEnumeratingVisibleNetworkInterfaces && m_allowedInterfaces.contains(network.name)))
                 filteredNetworks.append(network);
         }
     }
 
     WebCore::LibWebRTCProvider::callOnWebRTCNetworkThread([this, protectedThis = Ref { *this }, networks = WTF::move(filteredNetworks), ipv4, ipv6, forceSignaling] {
-        std::vector<std::unique_ptr<webrtc::Network>> networkList(networks.size());
-        for (size_t index = 0; index < networks.size(); ++index)
-            networkList[index] = std::make_unique<webrtc::Network>(networks[index].value());
+        Borrow borrowedNetworks = networks;
+        std::vector<std::unique_ptr<webrtc::Network>> networkList(borrowedNetworks->size());
+        for (size_t index = 0; index < borrowedNetworks->size(); ++index)
+            networkList[index] = borrowedNetworks[index].value();
 
         bool hasChanged;
         set_default_local_addresses(ipv4.rtcAddress(), ipv6.rtcAddress());
         MergeNetworkList(WTF::move(networkList), &hasChanged);
         if (hasChanged || forceSignaling)
-            SignalNetworksChanged();
+            NotifyNetworksChanged();
     });
 
 }
@@ -223,23 +225,23 @@ void LibWebRTCNetworkManager::networkProcessCrashed()
     if (!WebCore::LibWebRTCProvider::hasWebRTCThreads())
         return;
 
-    // In case we have clients waiting for networksChanged, we call SignalNetworksChanged to make sure they do not wait for nothing.
-    WebCore::LibWebRTCProvider::callOnWebRTCNetworkThread([this, protectedThis = Ref { *this }] {
-        SignalNetworksChanged();
+    // In case we have clients waiting for networksChanged, we call NotifyNetworksChanged to make sure they do not wait for nothing.
+    WebCore::LibWebRTCProvider::callOnWebRTCNetworkThread([protectedThis = Ref { *this }] {
+        protectedThis->NotifyNetworksChanged();
     });
 }
 
 void LibWebRTCNetworkManager::CreateNameForAddress(const webrtc::IPAddress& address, NameCreatedCallback callback)
 {
-    callOnMainRunLoop([weakThis = WeakPtr { *this }, address, callback = std::move(callback)]() mutable {
+    callOnMainRunLoop([weakThis = WeakPtr { *this }, address, callback = WTF::move(callback)]() mutable {
         if (!weakThis)
             return;
 
-        WebProcess::singleton().protectedLibWebRTCNetwork()->protectedMDNSRegister()->registerMDNSName(weakThis->m_documentIdentifier, fromStdString(address.ToString()), [address, callback = std::move(callback)](auto name, auto error) mutable {
-            WebCore::LibWebRTCProvider::callOnWebRTCNetworkThread([address, callback = std::move(callback), name = WTF::move(name).isolatedCopy(), error] {
-                RELEASE_LOG_ERROR_IF(error, WebRTC, "MDNS registration of a host candidate failed with error %hhu", enumToUnderlyingType(*error));
+        protect(protect(WebProcess::singleton().libWebRTCNetwork())->mdnsRegister())->registerMDNSName(weakThis->m_documentIdentifier, fromStdString(address.ToString()), [address, callback = WTF::move(callback)](auto name, auto error) mutable {
+            WebCore::LibWebRTCProvider::callOnWebRTCNetworkThread([address, callback = WTF::move(callback), name = WTF::move(name).isolatedCopy(), error] {
+                RELEASE_LOG_ERROR_IF(error, WebRTC, "MDNS registration of a host candidate failed with error %hhu", std::to_underlying(*error));
                 // In case of error, we provide the name to let gathering complete.
-                callback(address, name.utf8().data());
+                callback(address, std::string_view { byteCast<char>(name.utf8().span()) });
             });
         });
     });

@@ -35,6 +35,7 @@
 #include "RenderBoxInlines.h"
 #include "RenderBoxModelObjectInlines.h"
 #include "LayoutRoundedRect.h"
+#include "RenderElementInlines.h"
 #include <numbers>
 #include <wtf/MathExtras.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -49,7 +50,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderMathMLMenclose);
 // For now, we use a Bezier curve and this somewhat arbitrary value.
 const unsigned short longDivLeftSpace = 10;
 
-RenderMathMLMenclose::RenderMathMLMenclose(MathMLMencloseElement& element, RenderStyle&& style)
+RenderMathMLMenclose::RenderMathMLMenclose(MathMLMencloseElement& element, Style::ComputedStyle&& style)
     : RenderMathMLRow(Type::MathMLMenclose, element, WTF::move(style))
 {
     ASSERT(isRenderMathMLMenclose());
@@ -159,21 +160,22 @@ RenderMathMLMenclose::SpaceAroundContent RenderMathMLMenclose::spaceAroundConten
     return space;
 }
 
-void RenderMathMLMenclose::computePreferredLogicalWidths()
+void RenderMathMLMenclose::computeIntrinsicLogicalWidthContributions()
 {
-    ASSERT(needsPreferredLogicalWidthsUpdate());
+    ASSERT(hasInvalidContentLogicalWidths());
 
     LayoutUnit preferredWidth = preferredLogicalWidthOfRowItems();
     SpaceAroundContent space = spaceAroundContent(preferredWidth, 0);
     preferredWidth += space.left + space.right;
-    m_maxPreferredLogicalWidth = m_minPreferredLogicalWidth = preferredWidth;
+    m_minContentLogicalWidthContribution = preferredWidth;
+    m_maxContentLogicalWidthContribution = preferredWidth;
 
     auto sizes = sizeAppliedToMathContent(LayoutPhase::CalculatePreferredLogicalWidth);
     applySizeToMathContent(LayoutPhase::CalculatePreferredLogicalWidth, sizes);
 
-    adjustPreferredLogicalWidthsForBorderAndPadding();
+    adjustContentLogicalWidthsForBorderAndPadding();
 
-    clearNeedsPreferredWidthsUpdate();
+    clearContentLogicalWidthsInvalidation();
 }
 
 void RenderMathMLMenclose::layoutBlock(RelayoutChildren relayoutChildren, LayoutUnit)
@@ -209,6 +211,8 @@ void RenderMathMLMenclose::layoutBlock(RelayoutChildren relayoutChildren, Layout
     adjustLayoutForBorderAndPadding();
     m_contentRect.moveBy(LayoutPoint(borderLeft() + paddingLeft(), borderAndPaddingBefore()));
 
+    updateLogicalHeight();
+
     layoutOutOfFlowBoxes(relayoutChildren);
 }
 
@@ -226,7 +230,7 @@ void RenderMathMLMenclose::paint(PaintInfo& info, const LayoutPoint& paintOffset
 {
     RenderMathMLRow::paint(info, paintOffset);
 
-    if (info.context().paintingDisabled() || info.phase != PaintPhase::Foreground || style().usedVisibility() != Visibility::Visible)
+    if (info.context().paintingDisabled() || info.phase != PaintPhase::Foreground || usedStyle().visibility() != UsedVisibility::Visible)
         return;
 
     LayoutUnit thickness = ruleThickness();
@@ -237,7 +241,7 @@ void RenderMathMLMenclose::paint(PaintInfo& info, const LayoutPoint& paintOffset
 
     paintInfo.context().setStrokeThickness(thickness);
     paintInfo.context().setStrokeStyle(StrokeStyle::SolidStroke);
-    paintInfo.context().setStrokeColor(style().visitedDependentColorApplyingColorFilter());
+    paintInfo.context().setStrokeColor(protect(style())->visitedDependentColorApplyingColorFilter());
     paintInfo.context().setFillColor(Color::transparentBlack);
     paintInfo.applyTransform(AffineTransform().translate(paintOffset + location()));
 

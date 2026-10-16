@@ -28,9 +28,17 @@ use lib "$FindBin::Bin/bindings/scripts";
 use Getopt::Long;
 
 my $defines;
-my $preprocessor;
+my $definesFile;
 GetOptions('defines=s' => \$defines,
-           'preprocessor=s' => \$preprocessor);
+           'defines-file=s' => \$definesFile);
+
+if (defined $definesFile) {
+    open(my $df, '<', $definesFile) or die "Cannot open --defines-file $definesFile: $!";
+    local $/;
+    my $extra = <$df>;
+    close($df);
+    $defines = join(' ', grep { defined && length } $defines, $extra);
+}
 
 my $out = $ARGV[0];
 shift;
@@ -42,7 +50,7 @@ for my $in (@ARGV) {
 
     my $text;
     require preprocessor;
-    $text = join('', applyPreprocessor($in, $defines, $preprocessor, "YES"));
+    $text = join('', applyPreprocessor($in, $defines, "YES"));
 
     print OUT $text;
 }

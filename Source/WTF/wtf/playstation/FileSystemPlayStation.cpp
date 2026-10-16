@@ -32,6 +32,8 @@
 
 #include <dirent.h>
 #include <sys/statvfs.h>
+#include <wtf/Function.h>
+#include <wtf/posix/POSIXExtras.h>
 #include <wtf/text/MakeString.h>
 
 namespace WTF {
@@ -41,14 +43,13 @@ namespace FileSystemImpl {
 enum class ShouldFollowSymbolicLinks : bool { No, Yes };
 static std::optional<FileType> fileTypePotentiallyFollowingSymLinks(const String& path, ShouldFollowSymbolicLinks shouldFollowSymbolicLinks)
 {
-    CString fsRep = fileSystemRepresentation(path);
+    auto fsRep = fileSystemRepresentation(path);
 
-    if (!fsRep.data() || fsRep.data()[0] == '\0')
+    if (fsRep.isEmpty())
         return std::nullopt;
 
-    auto statFunc = shouldFollowSymbolicLinks == ShouldFollowSymbolicLinks::Yes ? stat : lstat;
     struct stat fileInfo;
-    if (statFunc(fsRep.data(), &fileInfo))
+    if (shouldFollowSymbolicLinks == ShouldFollowSymbolicLinks::Yes ? posixStat(fsRep, &fileInfo) : posixLstat(fsRep, &fileInfo))
         return std::nullopt;
 
     if (S_ISDIR(fileInfo.st_mode))
@@ -68,13 +69,13 @@ bool moveFile(const String& oldPath, const String& newPath)
     if (newFilename.isNull())
         return false;
 
-    return rename(oldFilename.data(), newFilename.data()) != -1;
+    return posixRename(oldFilename, newFilename) != -1;
 }
 
 std::optional<uint64_t> volumeFreeSpace(const String& path)
 {
     struct statvfs fileSystemStat;
-    if (!statvfs(fileSystemRepresentation(path).data(), &fileSystemStat))
+    if (!posixStatvfs(fileSystemRepresentation(path), &fileSystemStat))
         return fileSystemStat.f_bavail * fileSystemStat.f_frsize;
     return std::nullopt;
 }
@@ -82,7 +83,7 @@ std::optional<uint64_t> volumeFreeSpace(const String& path)
 std::optional<uint64_t> volumeCapacity(const String& path)
 {
     struct statvfs fileSystemStat;
-    if (!statvfs(fileSystemRepresentation(path).data(), &fileSystemStat))
+    if (!posixStatvfs(fileSystemRepresentation(path), &fileSystemStat))
         return fileSystemStat.f_blocks * fileSystemStat.f_frsize;
     return std::nullopt;
 }
@@ -90,8 +91,8 @@ std::optional<uint64_t> volumeCapacity(const String& path)
 Vector<String> listDirectorySub(const String& path, bool fullPath)
 {
     Vector<String> entries;
-    CString cpath = fileSystemRepresentation(path);
-    DIR* dir = opendir(cpath.data());
+    auto cpath = fileSystemRepresentation(path);
+    DIR* dir = posixOpendir(cpath);
     if (dir) {
         struct dirent* dp;
         while ((dp = readdir(dir))) {
@@ -119,6 +120,14 @@ Vector<String> listDirectory(const String& path)
     return listDirectorySub(path, false);
 }
 
+void traverseDirectory(const String& path, NOESCAPE const Function<void(const String&, FileType)>& function)
+{
+    for (auto& fileName : listDirectory(path)) {
+        auto type = fileTypePotentiallyFollowingSymLinks(pathByAppendingComponent(path, fileName), ShouldFollowSymbolicLinks::No).value_or(FileType::Regular);
+        function(fileName, type);
+    }
+}
+
 bool deleteNonEmptyDirectory(const String& path)
 {
     auto entries = listDirectorySub(path, true);
@@ -134,8 +143,8 @@ bool deleteNonEmptyDirectory(const String& path)
 
 String realPath(const String& filePath)
 {
-    CString fsRep = fileSystemRepresentation(filePath);
-    std::unique_ptr<char, decltype(free)*> resolvedPath(realpath(fsRep.data(), nullptr), free);
+    auto fsRep = fileSystemRepresentation(filePath);
+    std::unique_ptr<char, decltype(free)*> resolvedPath(posixRealpath(fsRep, nullptr), free);
     return resolvedPath ? String::fromUTF8(resolvedPath.get()) : filePath;
 }
 

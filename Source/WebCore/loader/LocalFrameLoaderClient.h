@@ -29,6 +29,7 @@
 
 #pragma once
 
+#include <WebCore/BackForwardCacheCommitData.h>
 #include <WebCore/FrameLoaderClient.h>
 #include <WebCore/IntPoint.h>
 #include <WebCore/LayoutMilestone.h>
@@ -36,7 +37,6 @@
 #include <WebCore/LoaderMalloc.h>
 #include <WebCore/RegistrableDomain.h>
 #include <WebCore/ResourceLoaderIdentifier.h>
-#include <wtf/Expected.h>
 #include <wtf/Forward.h>
 #include <wtf/Platform.h>
 #include <wtf/TZoneMalloc.h>
@@ -95,6 +95,7 @@ class ProtectionSpace;
 class RegistrableDomain;
 class RTCPeerConnectionHandler;
 class ResourceError;
+class ResourceTiming;
 class SecurityOrigin;
 class SharedBuffer;
 class SubstituteData;
@@ -102,12 +103,14 @@ class Widget;
 
 enum class LoadWillContinueInAnotherProcess : bool;
 enum class LockBackForwardList : bool;
-enum class UsedLegacyTLS : bool;
-enum class WasPrivateRelayed : bool;
 enum class FromDownloadAttribute : bool { No , Yes };
 enum class IsSameDocumentNavigation : bool { No, Yes };
 enum class ShouldGoToHistoryItem : uint8_t { No, Yes, ItemUnknown };
 enum class ProcessSwapDisposition : uint8_t;
+enum class IFrameUnloadReason : bool { ResourceMonitor, MemoryMonitor };
+
+struct BackForwardFrameItemIdentifierType;
+using BackForwardFrameItemIdentifier = ProcessQualified<ObjectIdentifier<BackForwardFrameItemIdentifierType>>;
 
 struct BackForwardItemIdentifierType;
 struct StringWithDirection;
@@ -119,7 +122,7 @@ class WEBCORE_EXPORT LocalFrameLoaderClient : public FrameLoaderClient {
 public:
     ~LocalFrameLoaderClient();
 
-    void ref() const;
+    void LEGACY_NODELETE ref() const;
     void deref() const;
 
     virtual bool isWebLocalFrameLoaderClient() const { return false; }
@@ -171,6 +174,7 @@ public:
     virtual void dispatchWillPerformClientRedirect(const URL&, double interval, WallTime fireDate, LockBackForwardList) = 0;
     virtual void dispatchDidChangeMainDocument() { }
     virtual void dispatchWillChangeDocument(const URL&, const URL&) { }
+    virtual void dispatchDidChangeCSPOriginsThatUpgradeInsecureNavigations(const HashSet<SecurityOriginData>&) { }
     virtual void dispatchDidNavigateWithinPage() { }
     virtual void dispatchDidChangeLocationWithinPage() = 0;
     virtual void dispatchDidPushStateWithinPage() = 0;
@@ -180,7 +184,7 @@ public:
     virtual void dispatchDidReceiveIcon() { }
     virtual void dispatchDidStartProvisionalLoad() = 0;
     virtual void dispatchDidReceiveTitle(const StringWithDirection&) = 0;
-    virtual void dispatchDidCommitLoad(std::optional<HasInsecureContent>, std::optional<UsedLegacyTLS>, std::optional<WasPrivateRelayed>) = 0;
+    virtual void dispatchDidCommitLoad(const std::optional<BackForwardCacheCommitData>&) = 0;
     virtual void dispatchDidFailProvisionalLoad(const ResourceError&, WillContinueLoading, WillInternallyHandleFailure) = 0;
     virtual void dispatchDidFailLoad(const ResourceError&) = 0;
     virtual void dispatchDidFinishDocumentLoad() = 0;
@@ -194,7 +198,7 @@ public:
     virtual void dispatchDidReachLayoutMilestone(OptionSet<LayoutMilestone>) { }
     virtual void dispatchDidReachVisuallyNonEmptyState() { }
 
-    virtual LocalFrame* dispatchCreatePage(const NavigationAction&, NewFrameOpenerPolicy) = 0;
+    virtual LocalFrame* dispatchCreatePage(const NavigationAction&, NewFrameOpenerPolicy, const String& openedMainFrameName) = 0;
     virtual void dispatchShow() = 0;
 
     virtual void dispatchDecidePolicyForResponse(const ResourceResponse&, const ResourceRequest&, const String& downloadAttribute, FramePolicyFunction&&) = 0;
@@ -205,6 +209,8 @@ public:
 
     virtual void dispatchWillSendSubmitEvent(Ref<FormState>&&) = 0;
     virtual void dispatchWillSubmitForm(FormState&, URL&& requestURL, String&& method, CompletionHandler<void()>&&) = 0;
+
+    virtual void dispatchBackForwardItemLoading(const URL&, const String& referer, LocalFrame& childFrame);
 
     virtual void revertToProvisionalState(DocumentLoader*) = 0;
     virtual void setMainDocumentError(DocumentLoader*, const ResourceError&) = 0;
@@ -225,9 +231,11 @@ public:
     virtual void updateGlobalHistory() = 0;
     virtual void updateGlobalHistoryRedirectLinks() = 0;
 
-    virtual ShouldGoToHistoryItem shouldGoToHistoryItem(HistoryItem&, IsSameDocumentNavigation, ProcessSwapDisposition processSwapDisposition) const = 0;
+    virtual ShouldGoToHistoryItem shouldGoToHistoryItem(HistoryItem&, IsSameDocumentNavigation) const = 0;
     virtual bool supportsAsyncShouldGoToHistoryItem() const = 0;
     virtual void shouldGoToHistoryItemAsync(HistoryItem&, CompletionHandler<void(ShouldGoToHistoryItem)>&&) const = 0;
+    virtual void dispatchGoToBackForwardItemAtIndex(int steps) = 0;
+    virtual void dispatchEnqueueHistoryTraversalDelta(int delta) = 0;
 
     virtual bool shouldFallBack(const ResourceError&) const = 0;
 
@@ -246,6 +254,7 @@ public:
     virtual void didFinishLoad() = 0;
     virtual void prepareForDataSourceReplacement() = 0;
 
+    virtual Ref<DocumentLoader> createDocumentLoader(ResourceRequest&&, SubstituteData&&, ResourceRequest&&) = 0;
     virtual Ref<DocumentLoader> createDocumentLoader(ResourceRequest&&, SubstituteData&&) = 0;
     virtual void updateCachedDocumentLoader(DocumentLoader&) = 0;
     virtual void setTitle(const StringWithDirection&, const URL&) = 0;
@@ -264,6 +273,10 @@ public:
     virtual void transitionToCommittedForNewPage(InitializingIframe) = 0;
 
     virtual void didRestoreFromBackForwardCache() = 0;
+
+    virtual void didCacheBackForwardItem(BackForwardItemIdentifier, BackForwardFrameItemIdentifier);
+    virtual void didEvictBackForwardItem(BackForwardItemIdentifier);
+    virtual void didTakeBackForwardItemForRestoration(BackForwardItemIdentifier);
 
     virtual bool canCachePage() const = 0;
     virtual void convertMainResourceLoadToDownload(DocumentLoader*, const ResourceRequest&, const ResourceResponse&) = 0;
@@ -334,7 +347,7 @@ public:
 #endif
 
     virtual void prefetchDNS(const String&) = 0;
-    virtual void sendH2Ping(const URL&, CompletionHandler<void(Expected<Seconds, ResourceError>&&)>&&) = 0;
+    virtual void sendH2Ping(const URL&, CompletionHandler<void(std::expected<Seconds, ResourceError>&&)>&&) = 0;
 
     virtual void didRestoreScrollPosition() { }
 
@@ -351,6 +364,10 @@ public:
 
     virtual RefPtr<Frame> provisionalParentFrame() const;
 
+    // True while this frame is a provisional frame for a cross-process navigation that has not
+    // committed yet, and so is not in the frame tree even though it has a parent to be attached to.
+    virtual bool isProvisionalFrame() const;
+
     virtual AllowsContentJavaScript allowsContentJavaScriptFromMostRecentNavigation() const { return AllowsContentJavaScript::Yes; }
 
 #if ENABLE(APP_BOUND_DOMAINS)
@@ -364,15 +381,7 @@ public:
 
     virtual bool isParentProcessAFullWebBrowser() const { return false; }
 
-#if ENABLE(ARKIT_INLINE_PREVIEW_MAC)
-    virtual void modelInlinePreviewUUIDs(CompletionHandler<void(Vector<String>)>&&) const { }
-#endif
-
     virtual void dispatchLoadEventToOwnerElementInAnotherProcess() = 0;
-
-#if ENABLE(WINDOW_PROXY_PROPERTY_ACCESS_NOTIFICATION)
-    virtual void didAccessWindowProxyPropertyViaOpener(SecurityOriginData&&, WindowProxyProperty) { }
-#endif
 
     virtual void documentLoaderDetached(NavigationIdentifier, LoadWillContinueInAnotherProcess) { }
 
@@ -383,6 +392,8 @@ public:
 #if ENABLE(CONTENT_EXTENSIONS)
     virtual void didExceedNetworkUsageThreshold();
 #endif
+
+    virtual void applyMonitorUnloadToOwnerFrame(IFrameUnloadReason);
 
     virtual bool shouldSuppressLayoutMilestones() const { return false; }
 

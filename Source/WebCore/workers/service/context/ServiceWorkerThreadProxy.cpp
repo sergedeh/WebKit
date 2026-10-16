@@ -34,6 +34,7 @@
 #include "EventNames.h"
 #include "FetchLoader.h"
 #include "FetchLoaderClient.h"
+#include "FileSystemStorageConnection.h"
 #include "FrameLoader.h"
 #include "IDBConnectionProxy.h"
 #include "LoaderStrategy.h"
@@ -48,6 +49,7 @@
 #include "ServiceWorkerGlobalScope.h"
 #include "Settings.h"
 #include "SocketProvider.h"
+#include "StorageConnection.h"
 #include "WebRTCProvider.h"
 #include "WorkerGlobalScope.h"
 #include <wtf/CrossThreadCopier.h>
@@ -62,12 +64,7 @@ static inline IDBClient::IDBConnectionProxy* idbConnectionProxy(Document& docume
     return document.idbConnectionProxy();
 }
 
-static inline RefPtr<IDBClient::IDBConnectionProxy> protectedIDBConnectionProxy(Document& document)
-{
-    return idbConnectionProxy(document);
-}
-
-static ThreadSafeWeakHashSet<ServiceWorkerThreadProxy>& allServiceWorkerThreadProxies()
+static ThreadSafeWeakHashSet<ServiceWorkerThreadProxy>& LEGACY_NODELETE allServiceWorkerThreadProxies()
 {
     static MainThreadNeverDestroyed<ThreadSafeWeakHashSet<ServiceWorkerThreadProxy>> set;
     return set;
@@ -79,7 +76,7 @@ ServiceWorkerThreadProxy::ServiceWorkerThreadProxy(Ref<Page>&& page, ServiceWork
 #if ENABLE(REMOTE_INSPECTOR)
     , m_remoteDebuggable(ServiceWorkerDebuggable::create(*this, contextData))
 #endif
-    , m_serviceWorkerThread(ServiceWorkerThread::create(WTF::move(contextData), WTF::move(workerData), WTF::move(userAgent), workerThreadMode, m_document->settingsValues(), *this, *this, *this, protectedIDBConnectionProxy(m_document).get(), m_document->protectedSocketProvider().get(), WTF::move(notificationClient), m_page->sessionID(), m_document->noiseInjectionHashSalt(), m_document->advancedPrivacyProtections()))
+    , m_serviceWorkerThread(ServiceWorkerThread::create(WTF::move(contextData), WTF::move(workerData), WTF::move(userAgent), workerThreadMode, m_document->settingsValues(), *this, *this, *this, protect(idbConnectionProxy(m_document)).get(), protect(m_document->socketProvider()).get(), WTF::move(notificationClient), m_page->sessionID(), m_document->noiseInjectionHashSalt(), m_document->advancedPrivacyProtections()))
     , m_cacheStorageProvider(cacheStorageProvider)
     , m_inspectorProxy(*this)
 {
@@ -160,8 +157,16 @@ RefPtr<CacheStorageConnection> ServiceWorkerThreadProxy::createCacheStorageConne
 {
     ASSERT(isMainThread());
     if (!m_cacheStorageConnection)
-        m_cacheStorageConnection = Ref { m_cacheStorageProvider.get() }->createCacheStorageConnection();
+        lazyInitialize(m_cacheStorageConnection, Ref { m_cacheStorageProvider.get() }->createCacheStorageConnection());
     return m_cacheStorageConnection;
+}
+
+RefPtr<IDBClient::IDBConnectionProxy> ServiceWorkerThreadProxy::createIDBConnectionProxy()
+{
+    // Service workers are terminated by WebProcess::networkProcessConnectionClosed()
+    // when the network process crashes, so there is no surviving worker to
+    // refresh an IDB proxy for.
+    return nullptr;
 }
 
 RefPtr<RTCDataChannelRemoteHandlerConnection> ServiceWorkerThreadProxy::createRTCDataChannelRemoteHandlerConnection()
@@ -193,7 +198,7 @@ void ServiceWorkerThreadProxy::notifyNetworkStateChange(bool isOnline)
     postTaskForModeToWorkerOrWorkletGlobalScope([isOnline] (ScriptExecutionContext& context) {
         auto& globalScope = downcast<WorkerGlobalScope>(context);
         globalScope.setIsOnline(isOnline);
-        globalScope.checkedEventLoop()->queueTask(TaskSource::DOMManipulation, [globalScope = Ref { globalScope }, isOnline] {
+        protect(globalScope.eventLoop())->queueTask(TaskSource::DOMManipulation, [globalScope = Ref { globalScope }, isOnline] {
             globalScope->dispatchEvent(Event::create(isOnline ? eventNames().onlineEvent : eventNames().offlineEvent, Event::CanBubble::No, Event::IsCancelable::No));
         });
     }, WorkerRunLoop::defaultMode());
@@ -286,7 +291,7 @@ void ServiceWorkerThreadProxy::navigationPreloadFailed(SWServerConnectionIdentif
 
 void ServiceWorkerThreadProxy::removeFetch(SWServerConnectionIdentifier connectionIdentifier, FetchIdentifier fetchIdentifier)
 {
-    RELEASE_LOG_FORWARDABLE(ServiceWorker, SERVICEWORKERTHREADPROXY_REMOVEFETCH, fetchIdentifier.toUInt64());
+    RELEASE_LOG_FORWARDABLE(ServiceWorker, ServiceWorkerThreadProxyRemoveFetch, fetchIdentifier.toUInt64());
 
     postTaskForModeToWorkerOrWorkletGlobalScope([protectedThis = Ref { *this }, connectionIdentifier, fetchIdentifier] (auto& context) {
         downcast<ServiceWorkerGlobalScope>(context).removeFetchTask({ connectionIdentifier, fetchIdentifier });
@@ -299,7 +304,7 @@ void ServiceWorkerThreadProxy::removeFetch(SWServerConnectionIdentifier connecti
     }, WorkerRunLoop::defaultMode());
 }
 
-void ServiceWorkerThreadProxy::fireMessageEvent(MessageWithMessagePorts&& message, ServiceWorkerOrClientData&& sourceData)
+void ServiceWorkerThreadProxy::fireMessageEvent(MessageWithMessagePorts&& message, ServiceWorkerOrClientData&& sourceData, CompletionHandlerCallingScope&& messageDispatched)
 {
     ASSERT(!isMainThread());
 
@@ -307,8 +312,8 @@ void ServiceWorkerThreadProxy::fireMessageEvent(MessageWithMessagePorts&& messag
         protectedThis->thread().willPostTaskToFireMessageEvent();
     });
 
-    thread().runLoop().postTask([this, protectedThis = Ref { *this }, message = WTF::move(message), sourceData = crossThreadCopy(WTF::move(sourceData))](auto&) mutable {
-        thread().queueTaskToPostMessage(WTF::move(message), WTF::move(sourceData));
+    thread().runLoop().postTask([this, protectedThis = Ref { *this }, message = WTF::move(message), sourceData = crossThreadCopy(WTF::move(sourceData)), messageDispatched = WTF::move(messageDispatched)](auto&) mutable {
+        thread().queueTaskToPostMessage(WTF::move(message), WTF::move(sourceData), WTF::move(messageDispatched));
     });
 }
 
@@ -477,6 +482,14 @@ void ServiceWorkerThreadProxy::setInspectable(bool inspectable)
 #else
     UNUSED_PARAM(inspectable);
 #endif // ENABLE(REMOTE_INSPECTOR)
+}
+
+RefPtr<FileSystemStorageConnection> ServiceWorkerThreadProxy::createFileSystemStorageConnection()
+{
+    ASSERT(isMainThread());
+    if (RefPtr storageConnection = m_document->storageConnection())
+        return storageConnection->fileSystemStorageConnection();
+    return nullptr;
 }
 
 } // namespace WebCore

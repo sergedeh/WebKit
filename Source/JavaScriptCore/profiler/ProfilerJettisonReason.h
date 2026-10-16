@@ -35,11 +35,29 @@ enum JettisonReason {
     JettisonDueToBaselineLoopReoptimizationTrigger,
     JettisonDueToBaselineLoopReoptimizationTriggerOnOSREntryFail,
     JettisonDueToOSRExit,
-    JettisonDueToProfiledWatchpoint,
     JettisonDueToUnprofiledWatchpoint,
     JettisonDueToOldAge,
     JettisonDueToVMTraps
 };
+
+inline bool isSpeculationFailure(JettisonReason reason)
+{
+    switch (reason) {
+    case JettisonDueToOSRExit:
+    case JettisonDueToUnprofiledWatchpoint:
+    case JettisonDueToBaselineLoopReoptimizationTrigger:
+    case JettisonDueToBaselineLoopReoptimizationTriggerOnOSREntryFail:
+        return true;
+    case JettisonDueToWeakReference:
+    case JettisonDueToDebuggerBreakpoint:
+    case JettisonDueToDebuggerStepping:
+    case JettisonDueToOldAge:
+    case JettisonDueToVMTraps:
+    case NotJettisoned:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
 
 } } // namespace JSC::Profiler
 

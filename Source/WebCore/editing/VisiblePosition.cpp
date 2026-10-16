@@ -37,14 +37,18 @@
 #include "HTMLHtmlElement.h"
 #include "HTMLNames.h"
 #include "InlineIteratorBox.h"
+#include "InlineIteratorBoxInlines.h"
 #include "InlineIteratorLineBox.h"
+#include "InlineIteratorLogicalOrderTraversal.h"
 #include "InlineRunAndOffset.h"
 #include "LineSelection.h"
 #include "Logging.h"
 #include "PositionInlines.h"
 #include "Range.h"
 #include "RenderBlockFlow.h"
+#include "RenderBoxModelObject.h"
 #include "RenderObjectInlines.h"
+#include "RenderTextFragment.h"
 #include "SimpleRange.h"
 #include "Text.h"
 #include "TextIterator.h"
@@ -58,8 +62,19 @@ namespace WebCore {
 
 using namespace HTMLNames;
 
-VisiblePosition::VisiblePosition(const Position& position, Affinity affinity)
-    : m_deepPosition { canonicalPosition(position) }
+// The anonymous text renderer inside ::first-letter has no DOM node.
+static RenderTextFragment* remainingTextFragmentForFirstLetter(const RenderObject& renderer)
+{
+    if (renderer.node())
+        return { };
+    if (auto* parent = dynamicDowncast<RenderBoxModelObject>(renderer.parent()))
+        return parent->firstLetterRemainingText();
+    return { };
+}
+
+VisiblePosition::VisiblePosition(const Position& position, Affinity affinity, AllowUserSelectNone allowUserSelectNone)
+    : m_deepPosition(canonicalPosition(position, allowUserSelectNone))
+    , m_allowUserSelectNone(allowUserSelectNone)
 {
     if (affinity == Affinity::Upstream && !isNull()) {
         auto upstreamCopy = *this;
@@ -140,7 +155,7 @@ Position VisiblePosition::leftVisuallyDistinctCandidate() const
             if ((renderer->isBlockLevelReplacedOrAtomicInline() || renderer->isBR()) && offset == box->rightmostCaretOffset())
                 return box->isLeftToRightDirection() ? previousVisuallyDistinctCandidate(m_deepPosition) : nextVisuallyDistinctCandidate(m_deepPosition);
 
-            if (!renderer->node()) {
+            if (!renderer->node() && !remainingTextFragmentForFirstLetter(*renderer)) {
                 box.traverseLineLeftwardOnLine();
                 if (!box)
                     return primaryDirection == TextDirection::LTR ? previousVisuallyDistinctCandidate(m_deepPosition) : nextVisuallyDistinctCandidate(m_deepPosition);
@@ -182,8 +197,8 @@ Position VisiblePosition::leftVisuallyDistinctCandidate() const
             if (box->direction() == primaryDirection) {
                 if (!previousBox) {
                     auto logicalStart = primaryDirection == TextDirection::LTR
-                        ? InlineIterator::firstLeafOnLineInLogicalOrderWithNode(box->lineBox(), orderCache)
-                        : InlineIterator::lastLeafOnLineInLogicalOrderWithNode(box->lineBox(), orderCache);
+                        ? InlineIterator::firstLeafOnLineInLogicalOrder(box->lineBox(), orderCache)
+                        : InlineIterator::lastLeafOnLineInLogicalOrder(box->lineBox(), orderCache);
                     if (logicalStart) {
                         box = logicalStart;
                         renderer = &box->renderer();
@@ -253,7 +268,9 @@ Position VisiblePosition::leftVisuallyDistinctCandidate() const
             break;
         }
 
-        p = makeDeprecatedLegacyPosition(renderer->protectedNode().get(), offset);
+        CheckedPtr remainingFragment = remainingTextFragmentForFirstLetter(*renderer);
+        RefPtr node = remainingFragment ? remainingFragment->textNode() : renderer->node();
+        p = makeDeprecatedLegacyPosition(protect(node).get(), convertOffsetInTextFragmentToNodeOffset(*renderer, offset));
 
         if ((p.isCandidate() && p.downstream() != downstreamStart) || p.atStartOfTree() || p.atEndOfTree())
             return p;
@@ -305,7 +322,7 @@ Position VisiblePosition::rightVisuallyDistinctCandidate() const
             if ((renderer->isBlockLevelReplacedOrAtomicInline() || renderer->isBR()) && offset == box->leftmostCaretOffset())
                 return box->isLeftToRightDirection() ? nextVisuallyDistinctCandidate(m_deepPosition) : previousVisuallyDistinctCandidate(m_deepPosition);
 
-            if (!renderer->node()) {
+            if (!renderer->node() && !remainingTextFragmentForFirstLetter(*renderer)) {
                 box.traverseLineRightwardOnLine();
                 if (!box)
                     return primaryDirection == TextDirection::LTR ? nextVisuallyDistinctCandidate(m_deepPosition) : previousVisuallyDistinctCandidate(m_deepPosition);
@@ -422,7 +439,9 @@ Position VisiblePosition::rightVisuallyDistinctCandidate() const
             break;
         }
 
-        p = makeDeprecatedLegacyPosition(renderer->protectedNode().get(), offset);
+        CheckedPtr remainingFragment = remainingTextFragmentForFirstLetter(*renderer);
+        RefPtr node = remainingFragment ? remainingFragment->textNode() : renderer->node();
+        p = makeDeprecatedLegacyPosition(protect(node).get(), convertOffsetInTextFragmentToNodeOffset(*renderer, offset));
 
         if ((p.isCandidate() && p.downstream() != downstreamStart) || p.atStartOfTree() || p.atEndOfTree())
             return p;
@@ -462,7 +481,7 @@ VisiblePosition VisiblePosition::honorEditingBoundaryAtOrBefore(const VisiblePos
     RefPtr highestRoot = highestEditableRoot(deepEquivalent());
     
     // Return empty position if pos is not somewhere inside the editable region containing this position
-    if (highestRoot && !position.deepEquivalent().protectedDeprecatedNode()->isDescendantOf(*highestRoot)) {
+    if (highestRoot && !position.deepEquivalent().deprecatedNode()->isDescendantOf(*highestRoot)) {
         if (reachedBoundary)
             *reachedBoundary = true;
         return VisiblePosition();
@@ -486,7 +505,7 @@ VisiblePosition VisiblePosition::honorEditingBoundaryAtOrBefore(const VisiblePos
     }
 
     // Return the last position before pos that is in the same editable region as this position
-    return lastEditablePositionBeforePositionInRoot(position.deepEquivalent(), highestRoot.get());
+    return VisiblePosition(lastEditablePositionBeforePositionInRoot(position.deepEquivalent(), highestRoot.get()), VisiblePosition::defaultAffinity, position.allowUserSelectNone());
 }
 
 VisiblePosition VisiblePosition::honorEditingBoundaryAtOrAfter(const VisiblePosition& otherPosition, bool* reachedBoundary) const
@@ -499,7 +518,7 @@ VisiblePosition VisiblePosition::honorEditingBoundaryAtOrAfter(const VisiblePosi
     RefPtr highestRoot = highestEditableRoot(deepEquivalent());
     
     // Return empty position if otherPosition is not somewhere inside the editable region containing this position
-    if (highestRoot && !otherPosition.deepEquivalent().protectedDeprecatedNode()->isDescendantOf(*highestRoot)) {
+    if (highestRoot && !otherPosition.deepEquivalent().deprecatedNode()->isDescendantOf(*highestRoot)) {
         if (reachedBoundary)
             *reachedBoundary = true;
         return VisiblePosition();
@@ -523,21 +542,21 @@ VisiblePosition VisiblePosition::honorEditingBoundaryAtOrAfter(const VisiblePosi
     }
 
     // Return the next position after pos that is in the same editable region as this position
-    return firstEditablePositionAfterPositionInRoot(otherPosition.deepEquivalent(), highestRoot.get());
+    return VisiblePosition(firstEditablePositionAfterPositionInRoot(otherPosition.deepEquivalent(), highestRoot.get()), VisiblePosition::defaultAffinity, otherPosition.allowUserSelectNone());
 }
 
-static Position canonicalizeCandidate(const Position& candidate)
+static Position canonicalizeCandidate(const Position& candidate, AllowUserSelectNone allowUserSelectNone)
 {
     if (candidate.isNull())
         return Position();
-    ASSERT(candidate.isCandidate());
+    ASSERT(candidate.isCandidate(allowUserSelectNone));
     Position upstream = candidate.upstream();
-    if (upstream.isCandidate())
+    if (upstream.isCandidate(allowUserSelectNone))
         return upstream;
     return candidate;
 }
 
-Position VisiblePosition::canonicalPosition(const Position& passedPosition)
+Position VisiblePosition::canonicalPosition(const Position& passedPosition, AllowUserSelectNone allowUserSelectNone)
 {
     // The updateLayout call below can do so much that even the position passed
     // in to us might get changed as a side effect. Specifically, there are code
@@ -553,21 +572,21 @@ Position VisiblePosition::canonicalPosition(const Position& passedPosition)
         return Position();
 
     ASSERT(position.document());
-    position.document()->updateLayoutIgnorePendingStylesheets();
+    protect(position.document())->updateLayoutIgnorePendingStylesheets();
 
     RefPtr node = position.containerNode();
 
     Position candidate = position.upstream();
-    if (candidate.isCandidate())
+    if (candidate.isCandidate(allowUserSelectNone))
         return candidate;
     candidate = position.downstream();
-    if (candidate.isCandidate())
+    if (candidate.isCandidate(allowUserSelectNone))
         return candidate;
 
     // When neither upstream or downstream gets us to a candidate (upstream/downstream won't leave 
     // blocks or enter new ones), we search forward and backward until we find one.
-    Position next = canonicalizeCandidate(nextCandidate(position));
-    Position prev = canonicalizeCandidate(previousCandidate(position));
+    Position next = canonicalizeCandidate(nextCandidate(position, allowUserSelectNone), allowUserSelectNone);
+    Position prev = canonicalizeCandidate(previousCandidate(position, allowUserSelectNone), allowUserSelectNone);
     RefPtr nextNode = next.deprecatedNode();
     RefPtr prevNode = prev.deprecatedNode();
 
@@ -651,7 +670,8 @@ auto VisiblePosition::localCaretRect() const -> LocalCaretRect
         return { };
 
     auto boxAndOffset = inlineBoxAndOffset();
-    CheckedPtr renderer = boxAndOffset.box ? const_cast<RenderObject*>(&boxAndOffset.box->renderer()) : node->renderer();
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST CheckedPtr renderer = boxAndOffset.box ? const_cast<RenderObject*>(&boxAndOffset.box->renderer()) : node->renderer();
     if (!renderer)
         return { };
 
@@ -672,7 +692,7 @@ FloatRect VisiblePosition::absoluteSelectionBoundsForLine() const
         return { };
 
     auto line = box->lineBox();
-    return line->formattingContextRoot().localToAbsoluteQuad(FloatRect { LineSelection::physicalRect(*line) }).boundingBox();
+    return protect(line->formattingContextRoot())->localToAbsoluteQuad(FloatRect { LineSelection::physicalRect(*line) }).boundingBox();
 }
 
 int VisiblePosition::lineDirectionPointForBlockDirectionNavigation() const
@@ -727,7 +747,7 @@ Element* enclosingBlockFlowElement(const VisiblePosition& visiblePosition)
     if (visiblePosition.isNull())
         return nullptr;
 
-    return deprecatedEnclosingBlockFlowElement(visiblePosition.deepEquivalent().protectedDeprecatedNode().get());
+    return deprecatedEnclosingBlockFlowElement(protect(visiblePosition.deepEquivalent().deprecatedNode()).get());
 }
 
 bool isFirstVisiblePositionInNode(const VisiblePosition& visiblePosition, const Node* node)
@@ -735,11 +755,11 @@ bool isFirstVisiblePositionInNode(const VisiblePosition& visiblePosition, const 
     if (visiblePosition.isNull())
         return false;
 
-    if (!visiblePosition.deepEquivalent().protectedContainerNode()->isDescendantOf(node))
+    if (!visiblePosition.deepEquivalent().containerNode()->isDescendantOf(node))
         return false;
 
     VisiblePosition previous = visiblePosition.previous();
-    return previous.isNull() || !previous.deepEquivalent().protectedDeprecatedNode()->isDescendantOf(node);
+    return previous.isNull() || !previous.deepEquivalent().deprecatedNode()->isDescendantOf(node);
 }
 
 bool isLastVisiblePositionInNode(const VisiblePosition& visiblePosition, const Node* node)
@@ -747,16 +767,16 @@ bool isLastVisiblePositionInNode(const VisiblePosition& visiblePosition, const N
     if (visiblePosition.isNull())
         return false;
 
-    if (!visiblePosition.deepEquivalent().protectedContainerNode()->isDescendantOf(node))
+    if (!visiblePosition.deepEquivalent().containerNode()->isDescendantOf(node))
         return false;
 
     VisiblePosition next = visiblePosition.next();
-    return next.isNull() || !next.deepEquivalent().protectedDeprecatedNode()->isDescendantOf(node);
+    return next.isNull() || !next.deepEquivalent().deprecatedNode()->isDescendantOf(node);
 }
 
 bool areVisiblePositionsInSameTreeScope(const VisiblePosition& a, const VisiblePosition& b)
 {
-    return connectedInSameTreeScope(a.deepEquivalent().protectedAnchorNode().get(), b.deepEquivalent().protectedAnchorNode().get());
+    return connectedInSameTreeScope(a.deepEquivalent().anchorNode(), b.deepEquivalent().anchorNode());
 }
 
 bool VisiblePosition::equals(const VisiblePosition& other) const

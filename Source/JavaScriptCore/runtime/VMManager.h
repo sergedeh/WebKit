@@ -102,7 +102,7 @@ class VM;
 //        have entered the VM. This numberOfActiveVMs is only available while the
 //        world is NOT in Mode::RunAll (i.e. must be in some form of stoppage).
 // 3. numberOfStoppedVMs - the number of VMs that have reached the stopping point
-//        in VMManager::notifyVMStop(). The currently executing targetVM is counted
+//        in VMManager::notifyVMStop(). The currently executing servicing VM is counted
 //        as stopped when single stepping in Mode::RunOne.
 // 3. worldMode - this is the current VM world mode (as described above).
 //
@@ -251,25 +251,20 @@ public:
         unsigned numberOfVMs;
         unsigned numberOfActiveVMs;
         unsigned numberOfStoppedVMs;
+        unsigned numberOfBlockedVMs;
         Mode worldMode;
+        VM* servingVM;
         VM* targetVM;
 
-        void dump(PrintStream& out) const
-        {
-            out.print("VMManager::Info(numberOfVMs:", numberOfVMs);
-            out.print(", numberOfActiveVMs:", numberOfActiveVMs);
-            out.print(", numberOfStoppedVMs:", numberOfStoppedVMs);
-            out.print(", worldMode:", worldMode);
-            out.print(", targetVM:", RawPointer(targetVM), ")");
-        }
+        void dump(PrintStream& out) const;
     };
 
     JS_EXPORT_PRIVATE static Info info();
     static unsigned numberOfVMs() { return singleton().m_numberOfVMs; }
 
-    JS_EXPORT_PRIVATE static void setWasmDebuggerOnStop(StopTheWorldCallback);
-    JS_EXPORT_PRIVATE static void setWasmDebuggerOnResume(PostResumeCallback);
-    JS_EXPORT_PRIVATE static void setMemoryDebuggerCallback(StopTheWorldCallback);
+    JS_EXPORT_PRIVATE static void LEGACY_NODELETE setWasmDebuggerOnStop(StopTheWorldCallback);
+    JS_EXPORT_PRIVATE static void LEGACY_NODELETE setWasmDebuggerOnResume(PostResumeCallback);
+    JS_EXPORT_PRIVATE static void LEGACY_NODELETE setMemoryDebuggerCallback(StopTheWorldCallback);
 
     ALWAYS_INLINE CONCURRENT_SAFE static void requestStopAll(StopReason reason)
     {
@@ -284,7 +279,10 @@ public:
     void notifyVMDestruction(VM&);
     void notifyVMActivation(VM&);
     void notifyVMDeactivation(VM&);
-    void notifyVMStop(VM&, StopTheWorldEvent);
+    JS_EXPORT_PRIVATE void notifyVMStop(VM&, StopTheWorldEvent);
+
+    JS_EXPORT_PRIVATE void notifyVMBlocking(VM&);
+    JS_EXPORT_PRIVATE void notifyVMUnblocking(VM&, StopTheWorldEvent);
 
     void handleVMDestructionWhileWorldStopped(VM&);
 
@@ -293,19 +291,19 @@ public:
     using IteratorCallback = IterationStatus(VM&);
     using TestCallback = bool(VM&);
 
-    static inline VM* findMatchingVM(const Invocable<TestCallback> auto& test)
+    static inline VM* findMatchingVM(NOESCAPE const Invocable<TestCallback> auto& test)
     {
-        SUPPRESS_FORWARD_DECL_ARG return singleton().findMatchingVMImpl(scopedLambda<TestCallback>(test));
+        SUPPRESS_FORWARD_DECL_ARG return singleton().findMatchingVMImpl(test);
     }
 
-    static inline void forEachVM(const Invocable<IteratorCallback> auto& functor)
+    static inline void forEachVM(NOESCAPE const Invocable<IteratorCallback> auto& functor)
     {
-        SUPPRESS_FORWARD_DECL_ARG singleton().forEachVMImpl(scopedLambda<IteratorCallback>(functor));
+        SUPPRESS_FORWARD_DECL_ARG singleton().forEachVMImpl(functor);
     }
 
-    static inline Error forEachVMWithTimeout(Seconds timeout, const Invocable<IteratorCallback> auto& functor)
+    static inline Error forEachVMWithTimeout(Seconds timeout, NOESCAPE const Invocable<IteratorCallback> auto& functor)
     {
-        SUPPRESS_FORWARD_DECL_ARG return singleton().forEachVMWithTimeoutImpl(timeout, scopedLambda<IteratorCallback>(functor));
+        SUPPRESS_FORWARD_DECL_ARG return singleton().forEachVMWithTimeoutImpl(timeout, functor);
     }
 
     JS_EXPORT_PRIVATE static void dumpVMs();
@@ -319,15 +317,23 @@ private:
     JS_EXPORT_PRIVATE CONCURRENT_SAFE void requestResumeAllInternal(StopReason);
 
     void resumeTheWorld() WTF_REQUIRES_LOCK(m_worldLock);
-    void incrementActiveVMs(VM&) WTF_REQUIRES_LOCK(m_worldLock);
+    void LEGACY_NODELETE incrementActiveVMs(VM&) WTF_REQUIRES_LOCK(m_worldLock);
     void decrementActiveVMs(VM&) WTF_REQUIRES_LOCK(m_worldLock);
+    void handleVMExit(VM&) WTF_REQUIRES_LOCK(m_worldLock);
+    void enterStopTheWorldParticipation(VM&, StopTheWorldEvent);
+    bool allActiveVMsHaveReachedStoppingPoint() const WTF_REQUIRES_LOCK(m_worldLock)
+    {
+        return (m_numberOfStoppedVMs + m_numberOfBlockedVMs) == m_numberOfActiveVMs;
+    }
+
+    void dispatchStopHandler(VM&);
 
     JS_EXPORT_PRIVATE static bool isValidVMSlow(VM*);
-    JS_EXPORT_PRIVATE VM* findMatchingVMImpl(const ScopedLambda<TestCallback>&);
-    JS_EXPORT_PRIVATE void forEachVMImpl(const ScopedLambda<IteratorCallback>&);
-    JS_EXPORT_PRIVATE Error forEachVMWithTimeoutImpl(Seconds timeout, const ScopedLambda<IteratorCallback>&);
+    JS_EXPORT_PRIVATE VM* findMatchingVMImpl(NOESCAPE const ScopedLambda<TestCallback>&);
+    JS_EXPORT_PRIVATE void forEachVMImpl(NOESCAPE const ScopedLambda<IteratorCallback>&);
+    JS_EXPORT_PRIVATE Error forEachVMWithTimeoutImpl(Seconds timeout, NOESCAPE const ScopedLambda<IteratorCallback>&);
 
-    void iterateVMs(const Invocable<IterationStatus(VM&)> auto&) WTF_REQUIRES_LOCK(m_worldLock);
+    void iterateVMs(NOESCAPE const Invocable<IterationStatus(VM&)> auto&) WTF_REQUIRES_LOCK(m_worldLock);
 
     DoublyLinkedList<VMThreadContext> m_vmList WTF_GUARDED_BY_LOCK(m_worldLock);
     Lock m_worldLock;
@@ -351,7 +357,7 @@ private:
     Atomic<StopRequestBits> m_pendingStopRequestBits { 0 };
 
     // We need to track a m_currentStopReason because we may need to continue servicing the current
-    // request after a context switch to a different targetVM. Conceptually, if StopTheWorld requests
+    // request after a context switch to a different callback target. Conceptually, if StopTheWorld requests
     // are analogous to interrupts, then when a specific interrupt is being serviced, all other
     // interrupts are blocked / disabled though their status remains pending. Similarly, all other
     // pending StopTheWorld requests will be blocked, and only serviced after the current one being
@@ -359,14 +365,20 @@ private:
     // Only notifyVMStop() may modify m_currentStopReason.
     StopReason m_currentStopReason { StopReason::None };
 
-    // Flags whether WasmDebugger post-resume callback is pending. Set when servicing WasmDebugger
-    // stop, atomically read-and-cleared by last VM exiting notifyVMStop().
-    Atomic<bool> m_needsWasmDebuggerOnResume { false };
+    // Flags whether WasmDebugger post-resume callback is pending. Set when servicing WasmDebugger stop.
+    Atomic<bool> m_wasmDebuggerResumePending { false };
 
-    // Indicates the targetVM that will service the StopTheWorld request, or the targetVM that may
+    // Indicates the VM that will service the StopTheWorld request (i.e. drive the
+    // enterStopTheWorldParticipation loop and invoke the callback), or the VM that may
     // continue running in RunOne mode.
     // Can only be written to while holding the m_worldLock.
     // Can be read without the m_worldLock under some restricted circumstances.
+    VM* m_servingVM { nullptr };
+
+    // The VM that STW_CONTEXT_SWITCH(vm)/STW_RESUME_ONE(vm) designates as callback target.
+    // Usually the same as m_servingVM; differs only in proxy mode, when that VM is asleep in a
+    // VMBlockingScope and can't drive the loop itself. Set to the first serving VM when a stop
+    // begins, so it is never null while a request is being serviced.
     VM* m_targetVM { nullptr };
 
     // We'll set m_numberOfActiveVMs to 99999999 when it's not supposed to hold a valid value.
@@ -382,9 +394,12 @@ private:
     //
     // The choice to not track a valid m_numberOfActiveVMs at all times is just an optimization so
     // that we can skip this work when not doing Stop the World.
-    unsigned m_numberOfActiveVMs { invalidNumberOfActiveVMs };
+    unsigned m_numberOfActiveVMs WTF_GUARDED_BY_LOCK(m_worldLock) { invalidNumberOfActiveVMs };
 
-    Atomic<unsigned> m_numberOfStoppedVMs { 0 };
+    unsigned m_numberOfStoppedVMs WTF_GUARDED_BY_LOCK(m_worldLock) { 0 };
+
+    // VMs inside a VMBlockingScope; count toward (stopped + blocked == active) for STW.
+    unsigned m_numberOfBlockedVMs WTF_GUARDED_BY_LOCK(m_worldLock) { 0 };
 
     // === End of variables only relevant for StopTheWorld =================================
 
@@ -396,5 +411,21 @@ private:
 };
 
 #undef FOR_EACH_STOP_THE_WORLD_REASON
+
+// RAII scope for a VM about to block in a blocking operation (memory.atomic.wait,
+// WebCore semaphore, etc.). Increments m_numberOfBlockedVMs so the STW trigger condition
+// (stopped + blocked == active) can be satisfied while this VM sleeps.
+//
+// Design assumption: the main thread VM is never OS-blocked while entered. This ensures
+// m_numberOfStoppedVMs > 0 when the STW condition fires, so a VM is always in
+// enterStopTheWorldParticipation to receive the notifyOne and service the callback.
+class VMBlockingScope {
+public:
+    JS_EXPORT_PRIVATE explicit VMBlockingScope(VM&, StopTheWorldEvent = StopTheWorldEvent::VMStopped);
+    JS_EXPORT_PRIVATE ~VMBlockingScope();
+private:
+    VM& m_vm;
+    std::optional<StopTheWorldEvent> m_event;
+};
 
 } // namespace JSC

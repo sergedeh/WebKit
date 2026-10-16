@@ -131,11 +131,6 @@ enum Opcode : uint8_t {
     ZExt32,
     // Does a bitwise truncation of Int64->Int32 and Double->Float:
     Trunc,
-    // On JSVALUE32_64 platforms only: gets the high 32-bits of an Int64.
-    TruncHigh,
-    // On JSVALUE32_64 platforms only: puts together an Int32 from two Int32s.
-    // High bits come from the first child.
-    Stitch,
     // Takes ints and returns floating point value. Note that we don't currently provide the opposite operation,
     // because double-to-int conversions have weirdly different semantics on different platforms. Use
     // a patchpoint if you need to do that.
@@ -295,8 +290,9 @@ enum Opcode : uint8_t {
     // We do WasmAddress(ZExt32(ptr), ...) so that we can avoid generating extraneous moves in Air.
     WasmAddress,
 
-    // This is used for Wasm bulk memory operation `memory.copy`
-    MemoryCopy,
+    // This is used for Wasm bulk memory operation `memory.copy`. The ranges may overlap and the
+    // result is as if the source were copied to a temporary first, as with memmove.
+    MemoryMove,
 
     // This is used for Wasm bulk memory operation `memory.fill`
     MemoryFill,
@@ -356,12 +352,16 @@ enum Opcode : uint8_t {
     // WarmAny. It will not have an output constraint.
     Check,
 
-    // Special Wasm opcode that takes a Int32, a special pinned gpr and an offset. This node exists
-    // to allow us to CSE WasmBoundsChecks if both use the same pointer and one dominates the other.
-    // Without some such node B3 would not have enough information about the inner workings of wasm
-    // to be able to perform such optimizations.
+    // Special Wasm opcode that takes an Int32 or an Int64 in the memory64 case, a special pinned gpr and an
+    // offset. This node exists to allow us to CSE WasmBoundsChecks if both use the same pointer and one
+    // dominates the other. Without some such node B3 would not have enough information about the inner
+    // workings of wasm to be able to perform such optimizations.
     WasmBoundsCheck,
 
+    WasmArrayGet,
+    WasmArraySet,
+    WasmArrayNew,
+    WasmArrayLength,
     WasmStructGet,
     WasmStructSet,
     WasmStructNew,
@@ -441,6 +441,16 @@ enum Opcode : uint8_t {
     VectorMulSat,
     VectorSwizzle,
 
+    // Canonical shuffle patterns, lowered from VectorSwizzle in strength reduction.
+    VectorUnzipEven,     // UZP1: extract even-indexed elements from two vectors
+    VectorUnzipOdd,      // UZP2: extract odd-indexed elements from two vectors
+    VectorZipLower,      // ZIP1: interleave low halves of two vectors
+    VectorZipHigher,     // ZIP2: interleave high halves of two vectors
+    VectorTransposeEven, // TRN1: transpose even elements of two vectors
+    VectorTransposeOdd,  // TRN2: transpose odd elements of two vectors
+    VectorReverse,       // REV16/REV32/REV64: reverse elements within groups (unary)
+    VectorExtractPair,   // EXT: extract bytes from concatenation of two vectors (binary + imm)
+
     // Relaxed SIMD
 
     VectorRelaxedSwizzle,
@@ -448,11 +458,15 @@ enum Opcode : uint8_t {
     VectorRelaxedMAdd,
     VectorRelaxedNMAdd,
     VectorRelaxedLaneSelect,
+    VectorRelaxedMin,
+    VectorRelaxedMax,
+    VectorRelaxedQ15Mulr,
+    VectorRelaxedDotI8x16I7x16,
+    VectorRelaxedDotI8x16I7x16Add,
 
     // Currently only some architectures support this.
     // FIXME: Expand this to identical instructions for the other architectures as a macro.
     VectorMulByElement,
-    VectorShiftByVector,
 
     // SSA support, in the style of DFG SSA.
     Upsilon, // This uses the UpsilonValue class.
@@ -493,13 +507,11 @@ inline bool isCheckMath(Opcode opcode)
     }
 }
 
-std::optional<Opcode> invertedCompare(Opcode, Type);
+std::optional<Opcode> LEGACY_NODELETE invertedCompare(Opcode, Type);
 
 inline Opcode constPtrOpcode()
 {
-    if (is64Bit())
-        return Const64;
-    return Const32;
+    return Const64;
 }
 
 inline bool isConstant(Opcode opcode)
@@ -647,7 +659,7 @@ inline Opcode signExtendOpcode(Width width)
     }
 }
 
-JS_EXPORT_PRIVATE Opcode storeOpcode(Bank bank, Width width);
+JS_EXPORT_PRIVATE Opcode LEGACY_NODELETE storeOpcode(Bank bank, Width width);
 
 } } // namespace JSC::B3
 #endif // ENABLE(B3_JIT)

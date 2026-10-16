@@ -95,11 +95,7 @@ constexpr uint32_t kMaxRenderTargets = 8;
 // Metal Apple1 iOS devices only support 4 render targets
 constexpr uint32_t kMaxRenderTargetsOlderGPUFamilies = 4;
 
-constexpr uint32_t kMaxColorTargetBitsApple1To3      = 256;
-constexpr uint32_t kMaxColorTargetBitsApple4Plus     = 512;
-constexpr uint32_t kMaxColorTargetBitsMacAndCatalyst = std::numeric_limits<uint32_t>::max();
-
-constexpr uint32_t kMaxShaderUBOs = 12;
+constexpr uint32_t kMaxShaderUBOs = 16;
 constexpr uint32_t kMaxUBOSize    = 16384;
 
 constexpr uint32_t kMaxShaderXFBs = gl::IMPLEMENTATION_MAX_TRANSFORM_FEEDBACK_SEPARATE_ATTRIBS;
@@ -139,6 +135,7 @@ constexpr uint32_t kUniformBufferSettingOffsetMinAlignment = 4;
 constexpr uint32_t kIndexBufferOffsetAlignment       = 4;
 constexpr uint32_t kArgumentBufferOffsetAlignment    = kUniformBufferSettingOffsetMinAlignment;
 constexpr uint32_t kTextureToBufferBlittingAlignment = 256;
+constexpr size_t kConstantBufferOffsetAlignment = 32;  // Metal3 minimum constant buffer alignment.
 
 // Front end binding limits
 constexpr uint32_t kMaxGLSamplerBindings = 2 * kMaxShaderSamplers;
@@ -155,10 +152,8 @@ constexpr uint32_t kDriverUniformsBindingIndex = kDefaultAttribsBindingIndex + 1
 constexpr uint32_t kDefaultUniformsBindingIndex = kDefaultAttribsBindingIndex + 3;
 // Binding index for Transform Feedback Buffers (4)
 constexpr uint32_t kTransformFeedbackBindingIndex = kDefaultUniformsBindingIndex + 1;
-// Binding index for shadow samplers' compare modes
-constexpr uint32_t kShadowSamplerCompareModesBindingIndex = kTransformFeedbackBindingIndex + 4;
 // Binding index for UBO's argument buffer
-constexpr uint32_t kUBOArgumentBufferBindingIndex = kShadowSamplerCompareModesBindingIndex + 1;
+constexpr uint32_t kUBOArgumentBufferBindingIndex = kTransformFeedbackBindingIndex + 4;
 
 constexpr uint32_t kStencilMaskAll = 0xff;  // Only 8 bits stencil is supported
 

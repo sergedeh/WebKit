@@ -23,4 +23,6 @@
 struct WebKit::FrameTreeNodeData {
     WebKit::FrameInfoData info
     Vector<WebKit::FrameTreeNodeData> children
+    URL topDocumentURLForTesting
+    WTF::ProcessID processIDForTesting
 };

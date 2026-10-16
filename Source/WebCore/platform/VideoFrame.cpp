@@ -36,6 +36,11 @@
 #include "ImageOrientation.h"
 #endif
 
+#if PLATFORM(COCOA)
+#include <pal/cf/CoreMediaSoftLink.h>
+#include "CoreVideoSoftLink.h"
+#endif
+
 namespace WebCore {
 
 VideoFrame::VideoFrame(MediaTime presentationTime, bool isMirrored, Rotation rotation, PlatformVideoColorSpace&& colorSpace)
@@ -53,14 +58,34 @@ void VideoFrame::initializeCharacteristics(MediaTime presentationTime, bool isMi
     const_cast<Rotation&>(m_rotation) = rotation;
 }
 
-Ref<VideoFrame> VideoFrame::updateTimestamp(MediaTime mediaTime, ShouldCloneWithDifferentTimestamp shouldCloneWithDifferentTimestamp)
+Ref<VideoFrame> VideoFrame::updateTimestamp(MediaTime mediaTime, ShouldClone shouldCloneIfUpdating)
 {
     if (m_presentationTime == mediaTime)
         return *this;
 
-    Ref updatedVideoFrame = shouldCloneWithDifferentTimestamp == ShouldCloneWithDifferentTimestamp::Yes ? clone() : Ref { *this };
+    Ref updatedVideoFrame = shouldCloneIfUpdating == ShouldClone::Yes ? clone() : Ref { *this };
     const_cast<MediaTime&>(updatedVideoFrame->m_presentationTime) = mediaTime;
     return updatedVideoFrame;
+}
+
+Ref<VideoFrame> VideoFrame::updateShouldIgnoreAlpha(bool shouldIgnore, ShouldClone shouldCloneIfUpdating)
+{
+    if (shouldIgnoreAlpha() == shouldIgnore)
+        return *this;
+
+    Ref updatedVideoFrame = shouldCloneIfUpdating == ShouldClone::Yes ? clone() : Ref { *this };
+    updatedVideoFrame->setShouldIgnoreAlpha(shouldIgnore);
+    return updatedVideoFrame;
+}
+
+bool VideoFrame::is10bits() const
+{
+#if PLATFORM(COCOA)
+    auto pixelFormat = this->pixelFormat();
+    return pixelFormat == kCVPixelFormatType_420YpCbCr10BiPlanarFullRange || pixelFormat == kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange;
+#else
+    return false;
+#endif
 }
 
 #if !PLATFORM(COCOA) && !USE(GSTREAMER)
@@ -88,7 +113,19 @@ RefPtr<VideoFrame> VideoFrame::createRGBA(std::span<const uint8_t>, size_t, size
     return nullptr;
 }
 
+RefPtr<VideoFrame> VideoFrame::createRGBX(std::span<const uint8_t>, size_t, size_t, const ComputedPlaneLayout&, PlatformVideoColorSpace&&)
+{
+    // FIXME: Add support.
+    return nullptr;
+}
+
 RefPtr<VideoFrame> VideoFrame::createBGRA(std::span<const uint8_t>, size_t, size_t, const ComputedPlaneLayout&, PlatformVideoColorSpace&&)
+{
+    // FIXME: Add support.
+    return nullptr;
+}
+
+RefPtr<VideoFrame> VideoFrame::createBGRX(std::span<const uint8_t>, size_t, size_t, const ComputedPlaneLayout&, PlatformVideoColorSpace&&)
 {
     // FIXME: Add support.
     return nullptr;

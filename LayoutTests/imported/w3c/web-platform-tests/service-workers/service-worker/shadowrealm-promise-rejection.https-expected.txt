@@ -1,3 +1,0 @@
-
-FAIL Promise rejections within worker thread ShadowRealms are handled assert_not_equals: ShadowRealm should be defined. got disallowed value undefined
-

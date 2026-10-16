@@ -80,6 +80,7 @@ extern const CFStringRef kIOSurfaceContentHeadroom;
 size_t IOSurfaceAlignProperty(CFStringRef property, size_t value);
 IOSurfaceRef IOSurfaceCreate(CFDictionaryRef properties);
 mach_port_t IOSurfaceCreateMachPort(IOSurfaceRef buffer);
+void IOSurfaceDecrementUseCount(IOSurfaceRef buffer);
 size_t IOSurfaceGetAllocSize(IOSurfaceRef buffer);
 void *IOSurfaceGetBaseAddress(IOSurfaceRef buffer);
 size_t IOSurfaceGetBytesPerRow(IOSurfaceRef buffer);
@@ -94,8 +95,14 @@ IOSurfaceRef IOSurfaceLookupFromMachPort(mach_port_t);
 IOReturn IOSurfaceUnlock(IOSurfaceRef buffer, uint32_t options, uint32_t *seed);
 size_t IOSurfaceGetWidthOfPlane(IOSurfaceRef buffer, size_t planeIndex);
 size_t IOSurfaceGetHeightOfPlane(IOSurfaceRef buffer, size_t planeIndex);
+CFTypeID IOSurfaceGetTypeID(void);
 
 WTF_EXTERN_C_END
+
+#ifdef __cplusplus
+#include <wtf/cf/CFTypeTraits.h>
+WTF_DECLARE_CF_TYPE_TRAIT(IOSurface);
+#endif
 
 #if USE(APPLE_INTERNAL_SDK)
 
@@ -124,6 +131,12 @@ IOReturn IOSurfaceSetOwnership(IOSurfaceRef buffer, task_t newOwner, int newLedg
 
 #if HAVE(IOSURFACE_SET_OWNERSHIP_IDENTITY)
 kern_return_t IOSurfaceSetOwnershipIdentity(IOSurfaceRef buffer, mach_port_t task_id_token, int newLedgerTag, uint32_t newLedgerOptions);
+#endif
+
+#if HAVE(IOSURFACE_ALPHA_CHANNEL_MODE)
+extern const CFStringRef kIOSurfaceAlphaChannelMode;
+extern const CFStringRef kIOSurfaceAlphaChannelMode_StraightAlpha;
+extern const CFStringRef kIOSurfaceAlphaChannelMode_PremultipliedAlpha;
 #endif
 
 WTF_EXTERN_C_END

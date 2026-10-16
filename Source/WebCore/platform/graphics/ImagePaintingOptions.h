@@ -44,11 +44,17 @@ struct ImagePaintingOptions {
         || std::is_same_v<Type, ImageOrientation::Orientation>
         || std::is_same_v<Type, InterpolationQuality>
         || std::is_same_v<Type, AllowImageSubsampling>
+        || std::is_same_v<Type, DrawLuminanceMask>
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+        || std::is_same_v<Type, InvertContent>
+#endif
 #if USE(SKIA)
         || std::is_same_v<Type, StrictImageClamping>
 #endif
         || std::is_same_v<Type, ShowDebugBackground>
+        || std::is_same_v<Type, IgnoreRootPreserveAspectRatio>
         || std::is_same_v<Type, DrawsHDRContent>
+        || std::is_same_v<Type, AllowAcceleratedApplyGainMap>
         || std::is_same_v<Type, Headroom>
         || std::is_same_v<Type, PlatformDynamicRangeLimit>;
 
@@ -98,11 +104,17 @@ struct ImagePaintingOptions {
     ImageOrientation orientation() const { return m_orientation; }
     InterpolationQuality interpolationQuality() const { return m_interpolationQuality; }
     AllowImageSubsampling allowImageSubsampling() const { return m_allowImageSubsampling; }
+    DrawLuminanceMask drawLuminanceMask() const { return m_drawLuminanceMask; }
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    InvertContent invertContent() const { return m_invertContent; }
+#endif
 #if USE(SKIA)
     StrictImageClamping strictImageClamping() const { return m_strictImageClamping; }
 #endif
     ShowDebugBackground showDebugBackground() const { return m_showDebugBackground; }
+    IgnoreRootPreserveAspectRatio ignoreRootPreserveAspectRatio() const { return m_ignoreRootPreserveAspectRatio; }
     DrawsHDRContent drawsHDRContent() const { return m_drawsHDRContent; }
+    AllowAcceleratedApplyGainMap allowAcceleratedApplyGainMap() const { return m_allowAcceleratedApplyGainMap; }
     Headroom headroom() const { return m_headroom; }
     PlatformDynamicRangeLimit dynamicRangeLimit() const { return m_dynamicRangeLimit; }
 
@@ -114,11 +126,17 @@ private:
     void setOption(ImageOrientation::Orientation orientation) { m_orientation = orientation; }
     void setOption(InterpolationQuality interpolationQuality) { m_interpolationQuality = interpolationQuality; }
     void setOption(AllowImageSubsampling allowImageSubsampling) { m_allowImageSubsampling = allowImageSubsampling; }
+    void setOption(DrawLuminanceMask drawLuminanceMask) { m_drawLuminanceMask = drawLuminanceMask; }
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    void setOption(InvertContent invertContent) { m_invertContent = invertContent; }
+#endif
 #if USE(SKIA)
     void setOption(StrictImageClamping strictImageClamping) { m_strictImageClamping = strictImageClamping; }
 #endif
     void setOption(ShowDebugBackground showDebugBackground) { m_showDebugBackground = showDebugBackground; }
+    void setOption(IgnoreRootPreserveAspectRatio ignoreRootPreserveAspectRatio) { m_ignoreRootPreserveAspectRatio = ignoreRootPreserveAspectRatio; }
     void setOption(DrawsHDRContent drawsHDRContent) { m_drawsHDRContent = drawsHDRContent; }
+    void setOption(AllowAcceleratedApplyGainMap allowAcceleratedApplyGainMap) { m_allowAcceleratedApplyGainMap = allowAcceleratedApplyGainMap; }
     void setOption(Headroom headroom) { m_headroom = headroom; }
     void setOption(PlatformDynamicRangeLimit dynamicRangeLimit) { m_dynamicRangeLimit = dynamicRangeLimit; }
 
@@ -128,11 +146,17 @@ private:
     ImageOrientation::Orientation m_orientation : 4 { ImageOrientation::Orientation::None };
     InterpolationQuality m_interpolationQuality : 4 { InterpolationQuality::Default };
     AllowImageSubsampling m_allowImageSubsampling : 1 { AllowImageSubsampling::No };
+    DrawLuminanceMask m_drawLuminanceMask : 1 { DrawLuminanceMask::No };
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    InvertContent m_invertContent : 2 { InvertContent::FromResource };
+#endif
 #if USE(SKIA)
     StrictImageClamping m_strictImageClamping: 1 { StrictImageClamping::Yes };
 #endif
     ShowDebugBackground m_showDebugBackground : 1 { ShowDebugBackground::No };
+    IgnoreRootPreserveAspectRatio m_ignoreRootPreserveAspectRatio : 1 { IgnoreRootPreserveAspectRatio::No };
     DrawsHDRContent m_drawsHDRContent : 1 { DrawsHDRContent::No };
+    AllowAcceleratedApplyGainMap m_allowAcceleratedApplyGainMap : 1 { AllowAcceleratedApplyGainMap::No };
     Headroom m_headroom { Headroom::FromImage };
     PlatformDynamicRangeLimit m_dynamicRangeLimit { PlatformDynamicRangeLimit::initialValue() };
 };

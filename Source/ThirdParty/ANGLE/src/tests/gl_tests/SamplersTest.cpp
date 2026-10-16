@@ -6,10 +6,7 @@
 
 // SamplerTest.cpp : Tests for samplers.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
+#include "common/unsafe_buffers.h"
 #include "gtest/gtest.h"
 #include "test_utils/ANGLETest.h"
 
@@ -153,13 +150,14 @@ void main()
         {
             for (GLubyte x = 0; x < getTextureWidth(); x++)
             {
-                GLubyte *pixel = &gradientPixels[0] + ((y * getTextureWidth() + x) * 4);
+                GLubyte *pixel =
+                    ANGLE_UNSAFE_TODO(&gradientPixels[0] + ((y * getTextureWidth() + x) * 4));
 
                 // Draw a gradient, red in x direction, green in y direction
                 pixel[0] = x;
-                pixel[1] = y;
-                pixel[2] = 0u;
-                pixel[3] = 255u;
+                ANGLE_UNSAFE_TODO(pixel[1]) = y;
+                ANGLE_UNSAFE_TODO(pixel[2]) = 0u;
+                ANGLE_UNSAFE_TODO(pixel[3]) = 255u;
             }
         }
 
@@ -214,7 +212,7 @@ void main()
         // Attach the texture to the fbo
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
                                *colorAttachment, 0);
-        ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+        ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
         ASSERT_GL_NO_ERROR();
 
         glBindTexture(GL_TEXTURE_2D, 0);
@@ -256,24 +254,26 @@ void main()
         {
             for (size_t x = 1; x < checkWidth; x++)
             {
-                const GLubyte *prevPixel =
-                    pixels.data() + (((y - 1) * getTextureWidth() + (x - 1)) * 4);
-                const GLubyte *curPixel = pixels.data() + ((y * getTextureWidth() + x) * 4);
+                const GLubyte *prevPixel = ANGLE_UNSAFE_TODO(
+                    pixels.data() + (((y - 1) * getTextureWidth() + (x - 1)) * 4));
+                const GLubyte *curPixel =
+                    ANGLE_UNSAFE_TODO(pixels.data() + ((y * getTextureWidth() + x) * 4));
 
                 if (strict)
                 {
                     EXPECT_EQ(curPixel[0], prevPixel[0] + 1)
                         << " failed at (" << x << ", " << y << ")";
-                    EXPECT_EQ(curPixel[1], prevPixel[1] + 1)
+                    ANGLE_UNSAFE_TODO(EXPECT_EQ(curPixel[1], prevPixel[1] + 1))
                         << " failed at (" << x << ", " << y << ")";
                 }
                 else
                 {
                     EXPECT_GE(curPixel[0], prevPixel[0]) << " failed at (" << x << ", " << y << ")";
-                    EXPECT_GE(curPixel[1], prevPixel[1]) << " failed at (" << x << ", " << y << ")";
+                    ANGLE_UNSAFE_TODO(EXPECT_GE(curPixel[1], prevPixel[1]))
+                        << " failed at (" << x << ", " << y << ")";
                 }
-                EXPECT_EQ(curPixel[2], prevPixel[2]);
-                EXPECT_EQ(curPixel[3], prevPixel[3]);
+                ANGLE_UNSAFE_TODO(EXPECT_EQ(curPixel[2], prevPixel[2]));
+                ANGLE_UNSAFE_TODO(EXPECT_EQ(curPixel[3], prevPixel[3]));
             }
         }
     }
@@ -507,6 +507,14 @@ TEST_P(SamplersTest, InvalidOverTextureSamplerMaxAnisotropyExt)
     maxValue += 1;
 
     validateInvalidAnisotropy(sampler, maxValue);
+}
+
+// Verify an error is thrown if we try to set a NaN value for
+// GL_TEXTURE_MAX_ANISOTROPY_EXT
+TEST_P(SamplersTest, InvalidNaNTextureSamplerMaxAnisotropyExt)
+{
+    GLSampler sampler;
+    validateInvalidAnisotropy(sampler, std::numeric_limits<float>::quiet_NaN());
 }
 
 // Test that updating a sampler uniform in a program behaves correctly.

@@ -33,13 +33,15 @@
 #import "AXUtilities.h"
 #import "AccessibilityRenderObject.h"
 #import "EventNames.h"
-#import "EventTargetInlines.h"
 #import "HTMLInputElement.h"
 #import "HTMLNames.h"
 #import "LocalFrameView.h"
 #import "RenderObject.h"
+#import "RenderObjectStyle.h"
+#import "StyleTextDecorationLine.h"
 #import "WAKView.h"
 #import "WebAccessibilityObjectWrapperIOS.h"
+#import <pal/ios/UIKitSoftLink.h>
 #import <pal/spi/ios/AXRuntimeSPI.h>
 #import <wtf/SoftLinking.h>
 #import <wtf/cocoa/SpanCocoa.h>
@@ -67,7 +69,7 @@ namespace WebCore {
 
 void AccessibilityObject::detachPlatformWrapper(AccessibilityDetachmentType)
 {
-    [wrapper() detach];
+    [protect(wrapper()) detach];
 }
 
 void AccessibilityObject::detachFromParent()
@@ -76,18 +78,15 @@ void AccessibilityObject::detachFromParent()
 
 FloatRect AccessibilityObject::convertRectToPlatformSpace(const FloatRect& rect, AccessibilityConversionSpace space) const
 {
-    auto* frameView = documentFrameView();
-    WAKView *documentView = frameView ? frameView->documentView() : nullptr;
+    RefPtr frameView = documentFrameView();
+    RetainPtr documentView = frameView ? frameView->documentView() : nullptr;
     if (documentView) {
-        CGPoint point = CGPointMake(rect.x(), rect.y());
-        CGSize size = CGSizeMake(rect.size().width(), rect.size().height());
-        CGRect cgRect = CGRectMake(point.x, point.y, size.width, size.height);
-
+        CGRect cgRect = CGRectMake(rect.x(), rect.y(), rect.width(), rect.height());
         cgRect = [documentView convertRect:cgRect toView:nil];
 
         // we need the web document view to give us our final screen coordinates
         // because that can take account of the scroller
-        id webDocument = [wrapper() _accessibilityWebDocumentView];
+        RetainPtr<id> webDocument = [protect(wrapper()) _accessibilityWebDocumentView];
         if (webDocument)
             cgRect = [webDocument convertRect:cgRect toView:nil];
         return cgRect;
@@ -104,18 +103,18 @@ unsigned AccessibilityObject::accessibilitySecureFieldLength()
     if (!renderer || !isSecureField())
         return 0;
 
-    auto* inputElement = dynamicDowncast<HTMLInputElement>(renderer->node());
+    RefPtr inputElement = dynamicDowncast<HTMLInputElement>(renderer->node());
     return inputElement ? inputElement->value()->length() : 0;
 }
 
 void AccessibilityObject::markPlatformWrapperIgnoredStateDirty() const
 {
-    [wrapper() _clearCachedIsAccessibilityElementState];
+    [protect(wrapper()) _clearCachedIsAccessibilityElementState];
 }
 
 bool AccessibilityObject::accessibilityIgnoreAttachment() const
 {
-    return [[wrapper() attachmentView] accessibilityIsIgnored];
+    return [[protect(wrapper()) attachmentView] accessibilityIsIgnored];
 }
 
 AccessibilityObjectInclusion AccessibilityObject::accessibilityPlatformIncludesObject() const
@@ -131,7 +130,7 @@ bool AccessibilityObject::hasTouchEventListener() const
     auto& eventNames = WebCore::eventNames();
     // If the node is in a shadowRoot, going up the node parent tree will stop and
     // not check the entire chain of ancestors. Thus, use the parentInComposedTree instead.
-    for (auto* node = this->node(); node; node = node->parentInComposedTree()) {
+    for (RefPtr node = this->node(); node; node = node->parentInComposedTree()) {
         if (node->containsMatchingEventListener([&](const AtomString& name, auto&) {
             return eventNames.typeInfoForEvent(name).isInCategory(EventCategory::TouchRelated);
         }))
@@ -191,7 +190,7 @@ void AXRemoteFrame::initializePlatformElementWithRemoteToken(AccessibilityRemote
     RetainPtr remoteElement = adoptNS([allocAXRemoteElementInstance() initWithUUID:[token.uuid.createNSUUID() UUIDString] andRemotePid:processIdentifier andContextId:0]);
     remoteElement.get().onClientSide = YES;
     RefPtr parent = parentObjectUnignored();
-    remoteElement.get().accessibilityContainer = parent ?  parent->wrapper() : nil;
+    remoteElement.get().accessibilityContainer = parent ? protect(parent->wrapper()).get() : nil;
 
     m_remoteFramePlatformElement = WTF::move(remoteElement);
 
@@ -210,7 +209,7 @@ static void attributeStringSetLanguage(NSMutableAttributedString *attrString, Re
     if (!renderer)
         return;
 
-    RefPtr object = renderer->document().axObjectCache()->getOrCreate(*renderer);
+    RefPtr object = protect(protect(renderer->document())->axObjectCache())->getOrCreate(*renderer);
     RetainPtr language = object->languageIncludingAncestors().createNSString();
     if (language.get().length)
         [attrString addAttribute:AccessibilityTokenLanguage value:language.get() range:range];
@@ -247,22 +246,22 @@ static void attributeStringSetStyle(NSMutableAttributedString *attrString, Rende
     if (!renderer)
         return;
 
-    auto& style = renderer->style();
+    CheckedRef style = renderer->style();
 
     // Set basic font info.
-    attributedStringSetFont(attrString, style.fontCascade().primaryFont()->ctFont(), range);
+    attributedStringSetFont(attrString, protect(style->primaryFont().ctFont()), range);
 
-    if (style.textDecorationLineInEffect().hasUnderline())
+    if (style->textDecorationLineInEffectOutOfLine().hasUnderline())
         attributedStringSetNumber(attrString, AccessibilityTokenUnderline, @YES, range);
 
     // Add code context if this node is within a <code> block.
-    RefPtr object = renderer->document().axObjectCache()->getOrCreate(*renderer);
+    RefPtr object = protect(protect(renderer->document())->axObjectCache())->getOrCreate(*renderer);
     auto matchFunc = [] (const auto& axObject) {
         return axObject.isCode();
     };
 
     if (Accessibility::findAncestor<AccessibilityObject>(*object, true, WTF::move(matchFunc)))
-        [attrString addAttribute:UIAccessibilityTextAttributeContext value:UIAccessibilityTextualContextSourceCode range:range];
+        [attrString addAttribute:PAL::get_UIKit_UIAccessibilityTextAttributeContextSingleton() value:PAL::get_UIKit_UIAccessibilityTextualContextSourceCodeSingleton() range:range];
 }
 
 static void attributedStringSetCompositionAttributes(NSMutableAttributedString *attributedString, RenderObject* renderer)
@@ -271,7 +270,7 @@ static void attributedStringSetCompositionAttributes(NSMutableAttributedString *
     if (!renderer)
         return;
 
-    RefPtr object = renderer->document().axObjectCache()->getOrCreate(*renderer);
+    RefPtr object = protect(protect(renderer->document())->axObjectCache())->getOrCreate(*renderer);
 
     if (!object)
         return;

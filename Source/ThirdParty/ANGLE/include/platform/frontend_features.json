@@ -16,6 +16,21 @@
             ]
         },
         {
+            "name": "lose_hardened_context_on_backend_error",
+            "category": "Workarounds",
+            "description": [
+                "On hardened contexts, lose context if the backend generates an error"
+            ]
+        },
+        {
+            "name": "disallow_non_zero_base_level_and_incompatible_levels_on_hardened_contexts",
+            "category": "Workarounds",
+            "description": [
+                "On hardened contexts, disallow redeclaring mutable texture levels incompatibly and changing ",
+                "the base level to something other than zero"
+            ]
+        },
+        {
             "name": "disable_program_caching_for_transform_feedback",
             "category": "Workarounds",
             "description": [
@@ -105,6 +120,14 @@
                 "Emulate ANGLE_shader_pixel_local_storage using shader images"
             ],
             "issue": "http://anglebug.com/40096838"
+        },
+        {
+            "name": "use_ir",
+            "category": "Features",
+            "description": [
+                "Use the translator's IR instead of AST"
+            ],
+            "issue": "http://anglebug.com/349994211"
         },
         {
             "name": "cache_compiled_shader",
@@ -203,14 +226,6 @@
             "issue": "https://issuetracker.google.com/349489248"
         },
         {
-            "name": "reject_webgl_shaders_with_undefined_behavior",
-            "category": "Workarounds",
-            "description": [
-                "Attempts to detect undefined behavior when in WebGL mode and reject shaders if any detected."
-            ],
-            "issue": "http://crbug.com/350528343"
-        },
-        {
             "name": "always_enable_emulated_multidraw_extensions",
             "category": "Workarounds",
             "description": [
@@ -225,6 +240,14 @@
                 "Parse shaders for reflection but do not translate them."
             ],
             "issue": "https://anglebug.com/398857482"
+        },
+        {
+            "name": "enable_create_context_backwards_compatible",
+            "category": "Features",
+            "description": [
+                "It allows the creation of a context with a requested version by exposing EGL_ANGLE_create_context_backwards_compatible."
+            ],
+            "issue": "http://issuetracker.google.com/522318550"
         },
         {
             "name": "clip_cull_distance_broken_with_passthrough_shaders",
@@ -249,6 +272,42 @@
                 "Force every context into debug mode as if EGL_CONTEXT_OPENGL_DEBUG_BIT_KHR was used."
             ],
             "issue": "https://anglebug.com/423956139"
+        },
+        {
+            "name": "limit_max_buffer_bytes_to_1MB",
+            "category": "Features",
+            "description": [
+                "Force a max buffer size of 1MB for testing."
+            ]
+        },
+        {
+            "name": "limit_max_texture_bytes_to_1MB",
+            "category": "Features",
+            "description": [
+                "Force a max image size of 1MB for testing."
+            ]
+        },
+        {
+            "name": "allow_extension_disable_after_non_pp_tokens",
+            "category": "Features",
+            "description": [
+                "Allow #extension ... : disable after non preprocessor tokens in WebGL."
+            ]
+        },
+        {
+            "name": "set_need_init_on_invalidation",
+            "category": "Features",
+            "description": [
+                "Set Texture's InitState to MayNeedInit inside invalidateFramebuffer or discardFramebuffer."
+            ]
+        },
+        {
+            "name": "compress_program_binary_blob",
+            "category": "Features",
+            "description": [
+                "If true, compress the blob when glGetProgramiv is used to query the binary length and",
+                "glGetProgramBinary is used to retrieve it. Also decompress the blob when glProgramBinary is called."
+            ]
         }
     ]
 }

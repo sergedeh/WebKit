@@ -27,11 +27,14 @@
 
 #include "BuiltinNames.h"
 #include "IntlNumberFormat.h"
-#include "IntlPluralRules.h"
 #include "IntlObjectInlines.h"
+#include "IntlPluralRules.h"
 #include "JSBigIntInlines.h"
 #include "JSGlobalObject.h"
 #include "JSGlobalObjectFunctions.h"
+#include "JSObjectInlines.h"
+#include <wtf/Range.h>
+#include <wtf/StdLibExtras.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -68,13 +71,12 @@ void setNumberFormatDigitOptions(JSGlobalObject* globalObject, IntlType* intlIns
 
     unsigned roundingIncrement = intlNumberOption(globalObject, options, vm.propertyNames->roundingIncrement, 1, 5000, 1);
     RETURN_IF_EXCEPTION(scope, void());
-    static constexpr const unsigned roundingIncrementCandidates[] = {
+    static constexpr auto roundingIncrementCandidates = WTF::toArray<unsigned>({
         1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 2500, 5000
-    };
-    if (std::none_of(roundingIncrementCandidates, roundingIncrementCandidates + std::size(roundingIncrementCandidates),
-        [&](unsigned candidate) {
-            return candidate == roundingIncrement;
-        })) {
+    });
+    if (std::ranges::none_of(roundingIncrementCandidates, [&](auto candidate) {
+        return candidate == roundingIncrement;
+    })) {
         throwRangeError(globalObject, scope, "roundingIncrement must be one of 1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 2500, 5000"_s);
         return;
     }
@@ -299,40 +301,53 @@ void appendNumberFormatNotationOptionsToSkeleton(IntlType* intlInstance, StringB
         skeletonBuilder.append(" engineering"_s);
         break;
     case IntlNotation::Compact:
-        if constexpr (std::is_same_v<IntlType, JSC::IntlPluralRules>) {
-            // Intl.PluralRules does not support `compactDisplay` option
-            // https://github.com/tc39/ecma402/issues/1013
+        switch (intlInstance->m_compactDisplay) {
+        case CompactDisplay::Short:
             skeletonBuilder.append(" compact-short"_s);
-        } else {
-            switch (intlInstance->m_compactDisplay) {
-            case IntlNumberFormat::CompactDisplay::Short:
-                skeletonBuilder.append(" compact-short"_s);
-                break;
-            case IntlNumberFormat::CompactDisplay::Long:
-                skeletonBuilder.append(" compact-long"_s);
-                break;
-            }
+            break;
+        case CompactDisplay::Long:
+            skeletonBuilder.append(" compact-long"_s);
+            break;
         }
         break;
     }
 }
+
+struct IntlNumberFormatField {
+    int32_t m_field;
+    WTF::Range<int32_t> m_range;
+};
 
 class IntlFieldIterator {
 public:
     WTF_MAKE_NONCOPYABLE(IntlFieldIterator);
 
     explicit IntlFieldIterator(UFieldPositionIterator& iterator)
-        : m_iterator(iterator)
+        : m_iterator(&iterator)
+    {
+    }
+
+    explicit IntlFieldIterator(Vector<IntlNumberFormatField>&& fields)
+        : m_fields(WTF::move(fields))
     {
     }
 
     int32_t next(int32_t& beginIndex, int32_t& endIndex, UErrorCode&)
     {
-        return ufieldpositer_next(&m_iterator, &beginIndex, &endIndex);
+        if (m_iterator)
+            return ufieldpositer_next(m_iterator, &beginIndex, &endIndex);
+        if (m_cursor >= m_fields.size())
+            return -1;
+        auto& field = m_fields[m_cursor++];
+        beginIndex = field.m_range.begin();
+        endIndex = field.m_range.end();
+        return field.m_field;
     }
 
 private:
-    UFieldPositionIterator& m_iterator;
+    UFieldPositionIterator* m_iterator { nullptr };
+    Vector<IntlNumberFormatField> m_fields;
+    size_t m_cursor { 0 };
 };
 
 // https://tc39.es/ecma402/#sec-unwrapnumberformat

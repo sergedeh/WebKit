@@ -25,9 +25,11 @@
 
 #pragma once
 
+#include "ASTExpression.h"
 #include "CompilationMessage.h"
 #include "CompilationScope.h"
 #include "ConstantValue.h"
+#include "Types.h"
 #include "WGSLEnums.h"
 #include <cinttypes>
 #include <cstdint>
@@ -48,10 +50,6 @@ namespace WGSL {
 
 class ShaderModule;
 class CompilationScope;
-
-namespace AST {
-class Expression;
-}
 
 struct SuccessfulCheck {
     SuccessfulCheck() = delete;
@@ -242,6 +240,6 @@ Variant<PrepareResult, Error> prepare(ShaderModule&, const String& entryPointNam
 
 Variant<String, Error> generate(ShaderModule&, PrepareResult&, HashMap<String, ConstantValue>&, DeviceState&&);
 
-std::optional<ConstantValue> evaluate(const AST::Expression&, const HashMap<String, ConstantValue>&);
+std::optional<ConstantValue> evaluate(const ShaderModule&, const AST::Expression&, const HashMap<String, ConstantValue>&);
 
 } // namespace WGSL

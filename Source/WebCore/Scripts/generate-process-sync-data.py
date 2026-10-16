@@ -138,7 +138,7 @@ public:
 
 _process_sync_client_header_suffix = """
 protected:
-    virtual void broadcast{prefix}SyncDataToOtherProcesses(const {prefix}SyncSerializationData&) {{ }}
+    virtual void broadcast{prefix}SyncDataToOtherProcesses({prefix}SyncSerializationData&&) {{ }}
 }};
 
 }} // namespace WebCore
@@ -161,6 +161,7 @@ def generate_process_sync_client_header(prefix, synched_datas):
         if data.conditional is not None:
             result.append('#if %s' % data.conditional)
         result.append('    WEBCORE_EXPORT void broadcast%sToOtherProcesses(const %s&);' % (data.name, data.fully_qualified_type))
+        result.append('    WEBCORE_EXPORT void broadcast%sToOtherProcesses(%s&&);' % (data.name, data.fully_qualified_type))
         if data.conditional is not None:
             result.append('#endif')
 
@@ -174,6 +175,7 @@ _process_sync_client_impl_prefix = """
 
 #include "{prefix}SyncData.h"
 #include <wtf/EnumTraits.h>
+#include <wtf/StdLibExtras.h>
 
 namespace WebCore {{
 """
@@ -189,12 +191,17 @@ def generate_process_sync_client_impl(prefix, synched_datas):
             result.append('#if %s' % data.conditional)
         result.append('void %sSyncClient::broadcast%sToOtherProcesses(const %s& data)' % (prefix, data.name, data.fully_qualified_type))
         result.append('{')
-        result.append('    %sSyncDataVariant dataVariant;' % (prefix))
-        result.append('    dataVariant.emplace<enumToUnderlyingType(%sSyncDataType::%s)>(data);' % (prefix, data.name))
-        result.append('    broadcast%sSyncDataToOtherProcesses({ %sSyncDataType::%s, WTF::move(dataVariant) });' % (prefix, prefix, data.name))
+        result.append('    broadcast%sSyncDataToOtherProcesses({ %sSyncDataVariant { WTF::InPlaceIndex<std::to_underlying(%sSyncDataType::%s)>, data } });' % (prefix, prefix, prefix, data.name))
+
+        result.append('}')
+        result.append('')
+        result.append('void %sSyncClient::broadcast%sToOtherProcesses(%s&& data)' % (prefix, data.name, data.fully_qualified_type))
+        result.append('{')
+        result.append('    broadcast%sSyncDataToOtherProcesses({ %sSyncDataVariant { WTF::InPlaceIndex<std::to_underlying(%sSyncDataType::%s)>, WTF::move(data) } });' % (prefix, prefix, prefix, data.name))
         result.append('}')
         if data.conditional is not None:
             result.append('#endif')
+        result.append('')
 
     result.append('\n} // namespace WebCore\n')
     return '\n'.join(result)
@@ -202,7 +209,6 @@ def generate_process_sync_client_impl(prefix, synched_datas):
 
 _process_sync_data_header_suffix = """
 struct {prefix}SyncSerializationData {{
-    {prefix}SyncDataType type;
     {prefix}SyncDataVariant value;
 }};
 
@@ -273,7 +279,7 @@ public:
         return adoptRef(*new data_type_name(std::forward<Args>(args)...));
     }}
     static Ref<data_type_name> create() {{ return adoptRef(*new data_type_name); }}
-    void update(const {prefix}SyncSerializationData&);
+    WEBCORE_EXPORT void update(const {prefix}SyncSerializationData&);
 """
 
 
@@ -296,13 +302,18 @@ def generate_synched_data_header(prefix, variant_sorted_synched_datas, sync_data
     for header in headers:
         result.append('#include %s' % header)
 
+    result.append('')
+    result.append('namespace WTF {')
+    result.append('class TextStream;')
+    result.append('}')
+
     result.append(_synced_data_header_midfix.format(prefix=prefix))
 
     for data in sync_data_sorted_synched_datas:
         if data.conditional is not None:
             result.append('#if %s' % data.conditional)
         name = data.name[0].lower() + data.name[1:]
-        result.append('    %s %s = { };' % (data.fully_qualified_type, name))
+        result.append('    %s %s { };' % (data.fully_qualified_type, name))
         if data.conditional is not None:
             result.append('#endif')
 
@@ -331,6 +342,10 @@ def generate_synched_data_header(prefix, variant_sorted_synched_datas, sync_data
 
     result.append(generate_process_sync_data_header(prefix, variant_sorted_synched_datas, sync_data_sorted_synched_datas))
 
+    result.append('WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, const %sSyncData&);' % prefix)
+    result.append('WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, const %sSyncSerializationData&);' % prefix)
+    result.append('')
+
     result.append('} // namespace WebCore')
     result.append('')
 
@@ -342,12 +357,13 @@ _synched_data_impl_prefix = """
 #include "data_type_name.h"
 
 #include <wtf/EnumTraits.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebCore {{
 
 void data_type_name::update(const {prefix}SyncSerializationData& data)
 {{
-    switch (data.type) {{"""
+    switch (static_cast<{prefix}SyncDataType>(data.value.index())) {{"""
 
 _synched_data_impl_midfix = """    default:
         RELEASE_ASSERT_NOT_REACHED();
@@ -369,7 +385,7 @@ def generate_synched_data_impl(prefix, synched_datas):
 
         lowercase_name = data.name[0].lower() + data.name[1:]
         result.append('    case %sSyncDataType::%s:' % (prefix, data.name))
-        result.append('        %s = std::get<enumToUnderlyingType(%sSyncDataType::%s)>(data.value);' % (lowercase_name, prefix, data.name))
+        result.append('        %s = std::get<std::to_underlying(%sSyncDataType::%s)>(data.value);' % (lowercase_name, prefix, data.name))
         result.append('        break;')
 
         if data.conditional is not None:
@@ -418,6 +434,43 @@ def generate_synched_data_impl(prefix, synched_datas):
     result.append('{')
     result.append('}')
     result.append('')
+
+    result.append('WTF::TextStream& operator<<(WTF::TextStream& ts, const data_type_name& data)')
+    result.append('{')
+    result.append('    WTF::TextStream::GroupScope scope(ts);')
+    result.append('    ts << "data_type_name"_s;')
+    for data in synched_datas:
+        if data.conditional is not None:
+            result.append('#if %s' % data.conditional)
+        lowercase_name = data.name[0].lower() + data.name[1:]
+        result.append('    ts.dumpProperty("%s"_s, ValueOrEllipsis(data.%s));' % (lowercase_name, lowercase_name))
+        if data.conditional is not None:
+            result.append('#endif')
+    result.append('    return ts;')
+    result.append('}')
+    result.append('')
+
+    result.append('WTF::TextStream& operator<<(WTF::TextStream& ts, const %sSyncSerializationData& data)' % prefix)
+    result.append('{')
+    result.append('    WTF::TextStream::GroupScope scope(ts);')
+    result.append('    ts << "%sSyncSerializationData"_s;' % prefix)
+    result.append('    switch (static_cast<%sSyncDataType>(data.value.index())) {' % prefix)
+    for data in synched_datas:
+        if data.conditional is not None:
+            result.append('#if %s' % data.conditional)
+        lowercase_name = data.name[0].lower() + data.name[1:]
+        result.append('    case %sSyncDataType::%s:' % (prefix, data.name))
+        result.append('        ts.dumpProperty("%s"_s, ValueOrEllipsis(std::get<std::to_underlying(%sSyncDataType::%s)>(data.value)));' % (lowercase_name, prefix, data.name))
+        result.append('        break;')
+        if data.conditional is not None:
+            result.append('#endif')
+    result.append('    default:')
+    result.append('        RELEASE_ASSERT_NOT_REACHED();')
+    result.append('    }')
+    result.append('    return ts;')
+    result.append('}')
+    result.append('')
+
     result.append('} // namespace WebCore')
     result.append('')
 
@@ -454,7 +507,6 @@ header: <WebCore/{prefix}SyncData.h>
 
 _process_sync_data_serialization_in_suffix = """
 [CustomHeader] struct WebCore::{prefix}SyncSerializationData {{
-    WebCore::{prefix}SyncDataType type;
     WebCore::{prefix}SyncDataVariant value;
 }};
 """
@@ -476,17 +528,6 @@ def generate_process_sync_data_serialiation_in(prefix, variant_sorted_synched_da
 
     result.append('};')
     result.append('')
-
-    result.append("enum class WebCore::%sSyncDataType : uint8_t {" % prefix)
-    for data in variant_sorted_synched_datas:
-        if data.conditional is not None:
-            result.append('#if %s' % data.conditional)
-        result.append('    %s,' % data.name)
-        if data.conditional is not None:
-            result.append('#endif')
-
-    result.append("};")
-    result.append(" ")
 
     for data in variant_sorted_synched_datas:
         if data.conditional is not None:

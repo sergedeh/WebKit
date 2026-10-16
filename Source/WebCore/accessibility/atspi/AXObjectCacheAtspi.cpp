@@ -23,6 +23,7 @@
 #if USE(ATSPI)
 #include "AXNotifications.h"
 #include "AXTextStateChangeIntent.h"
+#include "AccessibilityNodeObjectInlines.h"
 #include "AccessibilityObject.h"
 #include "AccessibilityObjectAtspi.h"
 #include "AccessibilityRenderObject.h"
@@ -31,6 +32,7 @@
 #include "Element.h"
 #include "HTMLSelectElement.h"
 #include "Range.h"
+#include "RenderView.h"
 #include "TextIterator.h"
 
 namespace WebCore {
@@ -53,7 +55,7 @@ void AXObjectCache::platformPerformDeferredCacheUpdate()
 
         auto* axParent = axObject.parentObjectUnignored();
         if (!axParent) {
-            if (axObject.isScrollView() && document() && axObject.scrollView() == document()->view())
+            if (axObject.isScrollArea() && document() && axObject.scrollView() == document()->view())
                 wrapper->setParent(nullptr); // nullptr means root.
             return;
         }
@@ -105,7 +107,7 @@ void AXObjectCache::postPlatformNotification(AccessibilityObject& coreObject, AX
             wrapper->valueChanged(coreObject.valueForRange());
         break;
     case AXNotification::InvalidStatusChanged:
-        wrapper->stateChanged("invalid-entry", coreObject.invalidStatus() != "false"_s);
+        wrapper->stateChanged("invalid-entry", coreObject.invalidStatusIncludingInferred() != "false"_s);
         break;
     case AXNotification::ElementBusyChanged:
         wrapper->stateChanged("busy", coreObject.isBusy());
@@ -256,27 +258,27 @@ void AXObjectCache::frameLoadingEventPlatformNotification(RenderView* renderView
         break;
     case AXLoadingEvent::Reloaded:
         wrapper->stateChanged("busy", true);
-        wrapper->loadEvent("Reload");
+        wrapper->loadEvent("Reload"_s);
         break;
     case AXLoadingEvent::Failed:
         wrapper->stateChanged("busy", false);
-        wrapper->loadEvent("LoadStopped");
+        wrapper->loadEvent("LoadStopped"_s);
         break;
     case AXLoadingEvent::Finished:
         wrapper->stateChanged("busy", false);
-        wrapper->loadEvent("LoadComplete");
+        wrapper->loadEvent("LoadComplete"_s);
         break;
     }
 }
 
-void AXObjectCache::platformHandleFocusedUIElementChanged(Element* oldFocus, Element* newFocus)
+void AXObjectCache::platformHandleFocusedUIElementChanged(AccessibilityObject* oldFocus, AccessibilityObject* newFocus)
 {
-    if (auto* axObject = get(oldFocus)) {
-        if (auto* wrapper = axObject->wrapper())
+    if (oldFocus) {
+        if (auto* wrapper = oldFocus->wrapper())
             wrapper->stateChanged("focused", false);
     }
-    if (auto* axObject = getOrCreate(newFocus)) {
-        if (auto* wrapper = axObject->wrapper())
+    if (newFocus) {
+        if (auto* wrapper = newFocus->wrapper())
             wrapper->stateChanged("focused", true);
     }
 }

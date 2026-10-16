@@ -45,11 +45,10 @@ public:
     }
 
     LocalFrame& frame() const { return m_frame; }
-    Ref<LocalFrame> protectedFrame() const { return m_frame; }
 
 protected:
     bool shouldSanitize() const;
-    MSOListQuirks msoListQuirksForMarkup() const;
+    MSOListQuirks LEGACY_NODELETE msoListQuirksForMarkup() const;
 
 private:
     WeakRef<LocalFrame> m_frame;
@@ -74,7 +73,6 @@ public:
     void addFragment(Ref<DocumentFragment>&&);
     RefPtr<DocumentFragment> takeFragment() { return std::exchange(m_fragment, nullptr); }
     DocumentFragment* fragment() const { return m_fragment.get(); }
-    RefPtr<DocumentFragment> protectedFragment() const { return m_fragment; }
 
     bool madeFragmentFromPlainText() const { return m_madeFragmentFromPlainText; }
 

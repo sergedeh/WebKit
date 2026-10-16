@@ -24,6 +24,7 @@
 
 #include "FEMorphology.h"
 #include "NodeName.h"
+#include "SVGElementTypeHelpers.h"
 #include "SVGFilterRenderer.h"
 #include "SVGNames.h"
 #include "SVGParserUtilities.h"
@@ -35,7 +36,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGFEMorphologyElement);
 
 inline SVGFEMorphologyElement::SVGFEMorphologyElement(const QualifiedName& tagName, Document& document)
-    : SVGFilterPrimitiveStandardAttributes(tagName, document, makeUniqueRef<PropertyRegistry>(*this))
+    : SVGFilterPrimitiveStandardAttributes(tagName, document, PropertyRegistry::singleton())
 {
     ASSERT(hasTagName(SVGNames::feMorphologyTag));
     
@@ -56,19 +57,19 @@ Ref<SVGFEMorphologyElement> SVGFEMorphologyElement::create(const QualifiedName& 
 void SVGFEMorphologyElement::attributeChanged(const QualifiedName& name, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason attributeModificationReason)
 {
     switch (name.nodeName()) {
-    case AttributeNames::operatorAttr: {
-        MorphologyOperatorType propertyValue = SVGPropertyTraits<MorphologyOperatorType>::fromString(*this, newValue);
-        if (propertyValue != MorphologyOperatorType::Unknown)
-            Ref { m_svgOperator }->setBaseValInternal<MorphologyOperatorType>(propertyValue);
+    case AttributeNames::operatorAttr:
+        protect(m_svgOperator)->parseBaseVal<MorphologyOperatorType>(*this, newValue);
         break;
-    }
     case AttributeNames::inAttr:
         Ref { m_in1 }->setBaseValInternal(newValue);
         break;
     case AttributeNames::radiusAttr:
         if (auto result = parseNumberOptionalNumber(newValue)) {
-            Ref { m_radiusX }->setBaseValInternal(result->first);
-            Ref { m_radiusY }->setBaseValInternal(result->second);
+            m_radiusX->setBaseValInternal(result->first);
+            m_radiusY->setBaseValInternal(result->second);
+        } else {
+            m_radiusX->setBaseValInternal(std::nullopt);
+            m_radiusY->setBaseValInternal(std::nullopt);
         }
         break;
     default:

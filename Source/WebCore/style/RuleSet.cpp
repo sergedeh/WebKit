@@ -29,6 +29,7 @@
 #include "config.h"
 #include "RuleSet.h"
 
+#include "CSSEnvironmentMapRule.h"
 #include "CSSFontSelector.h"
 #include "CSSKeyframesRule.h"
 #include "CSSPositionTryRule.h"
@@ -51,6 +52,7 @@
 #include "StyleSheetContents.h"
 #include "UserAgentParts.h"
 #include <ranges>
+#include <wtf/MainThread.h>
 
 namespace WebCore {
 namespace Style {
@@ -59,7 +61,11 @@ using namespace HTMLNames;
 
 RuleSet::RuleSet() = default;
 
-RuleSet::~RuleSet() = default;
+RuleSet::~RuleSet()
+{
+    RELEASE_ASSERT(isMainThread());
+    RELEASE_ASSERT(!m_isBuilding);
+}
 
 void RuleSet::addToRuleSet(const AtomString& key, AtomRuleMap& map, const RuleData& ruleData)
 {
@@ -71,29 +77,11 @@ void RuleSet::addToRuleSet(const AtomString& key, AtomRuleMap& map, const RuleDa
     rules->append(ruleData);
 }
 
-static unsigned rulesCountForName(const RuleSet::AtomRuleMap& map, const AtomString& name)
+static unsigned LEGACY_NODELETE rulesCountForName(const RuleSet::AtomRuleMap& map, const AtomString& name)
 {
     if (const auto* rules = map.get(name))
         return rules->size();
     return 0;
-}
-
-// FIXME: Maybe we can unify both following functions
-
-static bool hasHostOrScopePseudoClassSubjectInSelectorList(const CSSSelectorList* selectorList)
-{
-    if (!selectorList)
-        return false;
-
-    for (auto& selector : *selectorList) {
-        if (selector.isHostPseudoClass() || selector.isScopePseudoClass())
-            return true;
-
-        if (hasHostOrScopePseudoClassSubjectInSelectorList(selector.selectorList()))
-            return true;
-    }
-
-    return false;
 }
 
 static bool isHostSelectorMatchingInShadowTree(const CSSSelector& startSelector)
@@ -175,6 +163,11 @@ void RuleSet::addRule(RuleData&& ruleData, CascadeLayerIdentifier cascadeLayerId
     if (featureCollectionContext)
         m_features.collectFeatures(*featureCollectionContext, ruleData, scopeRules);
 
+    addRuleToBucket(ruleData);
+}
+
+void RuleSet::addRuleToBucket(RuleData& ruleData)
+{
     unsigned classBucketSize = 0;
     const CSSSelector* idSelector = nullptr;
     const CSSSelector* tagSelector = nullptr;
@@ -185,116 +178,147 @@ void RuleSet::addRule(RuleData&& ruleData, CascadeLayerIdentifier cascadeLayerId
     const CSSSelector* focusVisibleSelector = nullptr;
     const CSSSelector* rootElementSelector = nullptr;
     const CSSSelector* hostPseudoClassSelector = nullptr;
+    const CSSSelector* fullscreenPseudoClassSelector = nullptr;
     const CSSSelector* customPseudoElementSelector = nullptr;
     const CSSSelector* slottedPseudoElementSelector = nullptr;
     const CSSSelector* partPseudoElementSelector = nullptr;
+    const CSSSelector* pickerPseudoElementSelector = nullptr;
     const CSSSelector* namedPseudoElementSelector = nullptr;
+    const CSSSelector* otherPseudoElementSelector = nullptr;
+    const CSSSelector* headingPseudoClassSelector = nullptr;
 #if ENABLE(VIDEO)
     const CSSSelector* cuePseudoElementSelector = nullptr;
 #endif
-    const CSSSelector* selector = &ruleData.selector();
-    do {
-        switch (selector->match()) {
-        case CSSSelector::Match::Id:
-            idSelector = selector;
-            break;
-        case CSSSelector::Match::Class: {
-            auto& className = selector->value();
-            if (!classSelector) {
-                classSelector = selector;
-                classBucketSize = rulesCountForName(m_classRules, className);
-            } else if (classBucketSize) {
-                unsigned newClassBucketSize = rulesCountForName(m_classRules, className);
-                if (newClassBucketSize < classBucketSize) {
-                    classSelector = selector;
-                    classBucketSize = newClassBucketSize;
+    Vector<const CSSSelector*, 4> nestedSelectors;
+    // We only process the subject (rightmost) compound.
+    for (const CSSSelector* selector = &ruleData.selector(); selector; selector = selector->followingInCompound()) {
+        nestedSelectors.append(selector);
+        while (!nestedSelectors.isEmpty()) {
+            const CSSSelector* current = nestedSelectors.takeLast();
+            switch (current->match()) {
+            case CSSSelector::Match::Id:
+                idSelector = current;
+                break;
+            case CSSSelector::Match::List:
+                if (!current->isEquivalentToClassSelector()) {
+                    if (shouldHaveBucketForAttributeName(*current))
+                        attributeSelector = current;
+                    break;
                 }
+                [[fallthrough]];
+            case CSSSelector::Match::Class: {
+                auto& className = current->value();
+                if (!classSelector) {
+                    classSelector = current;
+                    classBucketSize = rulesCountForName(m_classRules, className);
+                } else if (classBucketSize) {
+                    unsigned newClassBucketSize = rulesCountForName(m_classRules, className);
+                    if (newClassBucketSize < classBucketSize) {
+                        classSelector = current;
+                        classBucketSize = newClassBucketSize;
+                    }
+                }
+                break;
             }
-            break;
-        }
-        case CSSSelector::Match::Exact:
-        case CSSSelector::Match::Set:
-        case CSSSelector::Match::List:
-        case CSSSelector::Match::Hyphen:
-        case CSSSelector::Match::Contain:
-        case CSSSelector::Match::Begin:
-        case CSSSelector::Match::End:
-            if (shouldHaveBucketForAttributeName(*selector))
-                attributeSelector = selector;
-            break;
-        case CSSSelector::Match::Tag:
-            if (selector->tagQName().localName() != starAtom())
-                tagSelector = selector;
-            break;
-        case CSSSelector::Match::PseudoElement:
-            switch (selector->pseudoElement()) {
-            case CSSSelector::PseudoElement::UserAgentPart:
-            case CSSSelector::PseudoElement::UserAgentPartLegacyAlias:
-                customPseudoElementSelector = selector;
+            case CSSSelector::Match::Exact:
+            case CSSSelector::Match::Set:
+            case CSSSelector::Match::Hyphen:
+            case CSSSelector::Match::Contain:
+            case CSSSelector::Match::Begin:
+            case CSSSelector::Match::End:
+                if (shouldHaveBucketForAttributeName(*current))
+                    attributeSelector = current;
                 break;
-            case CSSSelector::PseudoElement::Slotted:
-                slottedPseudoElementSelector = selector;
+            case CSSSelector::Match::Tag:
+                if (current->tagQName().localName() != starAtom())
+                    tagSelector = current;
                 break;
-            case CSSSelector::PseudoElement::Part:
-                partPseudoElementSelector = selector;
-                break;
+            case CSSSelector::Match::PseudoElement:
+                switch (current->pseudoElement()) {
+                case CSSSelector::PseudoElement::Picker:
+                    pickerPseudoElementSelector = current;
+                    break;
+                case CSSSelector::PseudoElement::UserAgentPart:
+                case CSSSelector::PseudoElement::UserAgentPartLegacyAlias:
+                    customPseudoElementSelector = current;
+                    break;
+                case CSSSelector::PseudoElement::Slotted:
+                    slottedPseudoElementSelector = current;
+                    break;
+                case CSSSelector::PseudoElement::Part:
+                    partPseudoElementSelector = current;
+                    break;
 #if ENABLE(VIDEO)
-            case CSSSelector::PseudoElement::Cue:
-                cuePseudoElementSelector = selector;
-                break;
+                case CSSSelector::PseudoElement::Cue:
+                    cuePseudoElementSelector = current;
+                    break;
 #endif
-            case CSSSelector::PseudoElement::ViewTransitionGroup:
-            case CSSSelector::PseudoElement::ViewTransitionImagePair:
-            case CSSSelector::PseudoElement::ViewTransitionOld:
-            case CSSSelector::PseudoElement::ViewTransitionNew:
-                if (selector->stringList()->first() != starAtom())
-                    namedPseudoElementSelector = selector;
+                case CSSSelector::PseudoElement::ViewTransitionGroup:
+                case CSSSelector::PseudoElement::ViewTransitionImagePair:
+                case CSSSelector::PseudoElement::ViewTransitionOld:
+                case CSSSelector::PseudoElement::ViewTransitionNew:
+                    if (current->stringList()->first() != universalPseudoElementNameAtom())
+                        namedPseudoElementSelector = current;
+                    break;
+                default:
+                    otherPseudoElementSelector = current;
+                    break;
+                }
                 break;
-            default:
+            case CSSSelector::Match::PseudoClass:
+                switch (current->pseudoClass()) {
+                case CSSSelector::PseudoClass::Link:
+                case CSSSelector::PseudoClass::Visited:
+                case CSSSelector::PseudoClass::AnyLink:
+                    linkSelector = current;
+                    break;
+                case CSSSelector::PseudoClass::Focus:
+                    focusSelector = current;
+                    break;
+                case CSSSelector::PseudoClass::FocusVisible:
+                    focusVisibleSelector = current;
+                    break;
+                case CSSSelector::PseudoClass::Host:
+                    hostPseudoClassSelector = current;
+                    break;
+                case CSSSelector::PseudoClass::Root:
+                    rootElementSelector = current;
+                    break;
+#if ENABLE(FULLSCREEN_API)
+                case CSSSelector::PseudoClass::Fullscreen:
+                case CSSSelector::PseudoClass::InternalInWindowFullscreen:
+                case CSSSelector::PseudoClass::InternalFullscreenDocument:
+                case CSSSelector::PseudoClass::InternalAnimatingFullscreenTransition:
+                    fullscreenPseudoClassSelector = current;
+                    break;
+#endif
+                case CSSSelector::PseudoClass::Heading:
+                    headingPseudoClassSelector = current;
+                    break;
+                case CSSSelector::PseudoClass::Is:
+                case CSSSelector::PseudoClass::Where: {
+                    auto* selectorList = current->selectorList();
+                    if (selectorList && selectorList->size() == 1) {
+                        for (auto* inner = &selectorList->first(); inner; inner = inner->followingInCompound())
+                            nestedSelectors.append(inner);
+                    }
+                    break;
+                }
+                default:
+                    break;
+                }
+                break;
+            case CSSSelector::Match::Unknown:
+            case CSSSelector::Match::ForgivingUnknown:
+            case CSSSelector::Match::ForgivingUnknownNestContaining:
+            case CSSSelector::Match::HasScope:
+            case CSSSelector::Match::NestingParent:
+            case CSSSelector::Match::PagePseudoClass:
+            case CSSSelector::Match::ClassPrefix:
                 break;
             }
-            break;
-        case CSSSelector::Match::PseudoClass:
-            switch (selector->pseudoClass()) {
-            case CSSSelector::PseudoClass::Link:
-            case CSSSelector::PseudoClass::Visited:
-            case CSSSelector::PseudoClass::AnyLink:
-                linkSelector = selector;
-                break;
-            case CSSSelector::PseudoClass::Focus:
-                focusSelector = selector;
-                break;
-            case CSSSelector::PseudoClass::FocusVisible:
-                focusVisibleSelector = selector;
-                break;
-            case CSSSelector::PseudoClass::Host:
-                hostPseudoClassSelector = selector;
-                break;
-            case CSSSelector::PseudoClass::Root:
-                rootElementSelector = selector;
-                break;
-            case CSSSelector::PseudoClass::Scope:
-                m_hasHostOrScopePseudoClassRulesInUniversalBucket = true;
-                break;
-            default:
-                if (hasHostOrScopePseudoClassSubjectInSelectorList(selector->selectorList()))
-                    m_hasHostOrScopePseudoClassRulesInUniversalBucket = true;
-                break;
-            }
-            break;
-        case CSSSelector::Match::Unknown:
-        case CSSSelector::Match::ForgivingUnknown:
-        case CSSSelector::Match::ForgivingUnknownNestContaining:
-        case CSSSelector::Match::HasScope:
-        case CSSSelector::Match::NestingParent:
-        case CSSSelector::Match::PagePseudoClass:
-            break;
         }
-        // We only process the subject (rightmost compound selector).
-        if (selector->relation() != CSSSelector::Relation::Subselector)
-            break;
-        selector = selector->precedingInComplexSelector();
-    } while (selector);
+    }
 
     if (!m_hasHostPseudoClassRulesMatchingInShadowTree)
         m_hasHostPseudoClassRulesMatchingInShadowTree = isHostSelectorMatchingInShadowTree(ruleData.selector());
@@ -320,17 +344,32 @@ void RuleSet::addRule(RuleData&& ruleData, CascadeLayerIdentifier cascadeLayerId
         return;
     }
 
-    if (customPseudoElementSelector) {
+    auto* userAgentPartSelector = customPseudoElementSelector ? customPseudoElementSelector : pickerPseudoElementSelector;
+    if (userAgentPartSelector) {
         // FIXME: Custom pseudo elements are handled by the shadow tree's selector filter. It doesn't know about the main DOM.
         ruleData.disableSelectorFiltering();
 
-        auto* nextSelector = customPseudoElementSelector->precedingInComplexSelector();
-        if (nextSelector && nextSelector->match() == CSSSelector::Match::PseudoElement && nextSelector->pseudoElement() == CSSSelector::PseudoElement::Part) {
+        auto* previousSelector = userAgentPartSelector->precedingInComplexSelector();
+        if (previousSelector && previousSelector->match() == CSSSelector::Match::PseudoElement && previousSelector->pseudoElement() == CSSSelector::PseudoElement::Part) {
             // Handle selectors like ::part(foo)::placeholder with the part codepath.
             m_partPseudoElementRules.append(ruleData);
             return;
         }
 
+        if (previousSelector && previousSelector->match() == CSSSelector::Match::PseudoElement && previousSelector->pseudoElement() == CSSSelector::PseudoElement::Slotted) {
+            // Handle selectors like ::slotted(select)::picker(select) with the slotted codepath.
+            ruleData.disableSelectorFiltering();
+            m_slottedPseudoElementRules.append(ruleData);
+            return;
+        }
+
+        if (pickerPseudoElementSelector) [[unlikely]] {
+            // Look up useragentpart="picker(...)".
+            addToRuleSet(AtomString(makeString("picker("_s, pickerPseudoElementSelector->stringList()->at(0), ')')), m_userAgentPartRules, ruleData);
+            return;
+        }
+
+        ASSERT(customPseudoElementSelector);
         addToRuleSet(customPseudoElementSelector->value(), m_userAgentPartRules, ruleData);
 
 #if ENABLE(VIDEO)
@@ -349,7 +388,7 @@ void RuleSet::addRule(RuleData&& ruleData, CascadeLayerIdentifier cascadeLayerId
             cueBackgroundSelector->setPseudoElement(CSSSelector::PseudoElement::UserAgentPart);
             cueBackgroundSelector->setValue(UserAgentParts::internalCueBackground());
 
-            Ref cueBackgroundStyleRule = StyleRule::create(ruleData.styleRule().properties().immutableCopyIfNeeded(), ruleData.styleRule().hasDocumentSecurityOrigin(), CSSSelectorList { MutableCSSSelectorList::from(WTF::move(cueBackgroundSelector)) });
+            Ref cueBackgroundStyleRule = StyleRule::create(protect(ruleData.styleRule())->properties().immutableCopyIfNeeded(), ruleData.styleRule().hasDocumentSecurityOrigin(), CSSSelectorList { MutableCSSSelectorList::from(WTF::move(cueBackgroundSelector)) });
 
             // Warning: Recursion!
             addRule(WTF::move(cueBackgroundStyleRule), 0, 0);
@@ -394,6 +433,11 @@ void RuleSet::addRule(RuleData&& ruleData, CascadeLayerIdentifier cascadeLayerId
         return;
     }
 
+    if (fullscreenPseudoClassSelector) {
+        m_fullscreenPseudoClassRules.append(ruleData);
+        return;
+    }
+
     if (namedPseudoElementSelector) {
         addToRuleSet(namedPseudoElementSelector->stringList()->first(), m_namedPseudoElementRules, ruleData);
         return;
@@ -410,8 +454,81 @@ void RuleSet::addRule(RuleData&& ruleData, CascadeLayerIdentifier cascadeLayerId
         return;
     }
 
+    if (headingPseudoClassSelector) {
+        unsigned highestMatchableBase = 0;
+        if (auto* integerList = headingPseudoClassSelector->integerList()) {
+            for (int level : *integerList) {
+                if (level >= 1 && level <= 9)
+                    highestMatchableBase = std::max(highestMatchableBase, std::min<unsigned>(level, 6));
+            }
+        } else
+            highestMatchableBase = 6;
+
+        for (unsigned level = 1; level <= highestMatchableBase; ++level) {
+            auto& tag = [&] -> const HTMLQualifiedName& {
+                switch (level) {
+                case 1: return HTMLNames::h1Tag;
+                case 2: return HTMLNames::h2Tag;
+                case 3: return HTMLNames::h3Tag;
+                case 4: return HTMLNames::h4Tag;
+                case 5: return HTMLNames::h5Tag;
+                default: return HTMLNames::h6Tag;
+                }
+            }();
+            addToRuleSet(tag.localName(), m_tagLocalNameRules, ruleData);
+            addToRuleSet(tag.localName(), m_tagLowercaseLocalNameRules, ruleData);
+        }
+        if (highestMatchableBase)
+            return;
+    }
+
+    auto addUniversalPseudoElement = [&] {
+        if (!otherPseudoElementSelector)
+            return false;
+
+        // Check this is a simple selector like "::marker" that applies to HTML elements.
+        if (otherPseudoElementSelector->precedingInComplexSelector())
+            return false;
+
+        bool isHTMLNamespace = false;
+        auto* leftmost = otherPseudoElementSelector->leftmostInCompound();
+        if (leftmost->precedingInComplexSelector() == otherPseudoElementSelector) {
+            // Check that implicit * is present with the right namespace and nothing else.
+            if (leftmost->match() != CSSSelector::Match::Tag)
+                return false;
+
+            ASSERT(leftmost->tagQName().localName() == starAtom());
+            auto& namespaceURI = leftmost->tagQName().namespaceURI();
+            isHTMLNamespace = namespaceURI == xhtmlNamespaceURI;
+            if (!isHTMLNamespace && namespaceURI != starAtom())
+                return false;
+        } else if (leftmost != otherPseudoElementSelector)
+            return false;
+
+        auto stylePseudoElement = CSSSelector::stylePseudoElementTypeFor(otherPseudoElementSelector->pseudoElement());
+        if (!stylePseudoElement)
+            return false;
+
+        m_universalPseudoElementRules.append(ruleData);
+        m_universalHTMLPseudoElementTypes.add(*stylePseudoElement);
+        if (!isHTMLNamespace)
+            m_universalPseudoElementTypes.add(*stylePseudoElement);
+        if (ruleData.pseudoElementBoxGeneration() == PseudoElementBoxGeneration::Normal) {
+            m_universalHTMLPseudoElementBoxGeneration = PseudoElementBoxGeneration::Normal;
+            if (!isHTMLNamespace)
+                m_universalPseudoElementBoxGeneration = PseudoElementBoxGeneration::Normal;
+        }
+        return true;
+    };
+
+    if (addUniversalPseudoElement())
+        return;
+
     // If we didn't find a specialized map to stick it in, file under universal rules.
     m_universalRules.append(ruleData);
+    // Only a rule whose subject compound is allowed to match a featureless element can match the shadow host.
+    if (SelectorChecker::isCompoundSelectorAllowedToMatchFeaturelessShadowHost(ruleData.selector()))
+        m_shadowHostRulesInUniversalBucket.append(ruleData);
 }
 
 void RuleSet::addPageRule(StyleRulePage& rule)
@@ -430,7 +547,7 @@ RefPtr<StyleRuleViewTransition> RuleSet::viewTransitionRule() const
 }
 
 template<typename Function>
-void RuleSet::traverseRuleDatas(Function&& function)
+void RuleSet::traverseRuleDatas(NOESCAPE const Function& function)
 {
     auto traverseVector = [&](auto& vector) {
         for (auto& ruleData : vector)
@@ -455,17 +572,21 @@ void RuleSet::traverseRuleDatas(Function&& function)
     traverseVector(m_cuePseudoRules);
 #endif
     traverseVector(m_hostPseudoClassRules);
+    traverseVector(m_shadowHostRulesInUniversalBucket);
     traverseVector(m_slottedPseudoElementRules);
     traverseVector(m_partPseudoElementRules);
     traverseVector(m_focusPseudoClassRules);
     traverseVector(m_focusVisiblePseudoClassRules);
+    traverseVector(m_fullscreenPseudoClassRules);
     traverseVector(m_rootElementRules);
     traverseVector(m_universalRules);
+    traverseVector(m_universalPseudoElementRules);
 }
 
-template<typename Function> void RuleSet::traverseRuleDatas(Function&& function) const
+template<typename Function> void RuleSet::traverseRuleDatas(NOESCAPE const Function& function) const
 {
-    const_cast<RuleSet&>(*this).traverseRuleDatas([&](const RuleData& ruleData) {
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST const_cast<RuleSet&>(*this).traverseRuleDatas([&](const RuleData& ruleData) {
         function(ruleData);
     });
 }
@@ -558,12 +679,15 @@ void RuleSet::shrinkToFit()
     m_cuePseudoRules.shrinkToFit();
 #endif
     m_hostPseudoClassRules.shrinkToFit();
+    m_shadowHostRulesInUniversalBucket.shrinkToFit();
     m_slottedPseudoElementRules.shrinkToFit();
     m_partPseudoElementRules.shrinkToFit();
     m_focusPseudoClassRules.shrinkToFit();
     m_focusVisiblePseudoClassRules.shrinkToFit();
+    m_fullscreenPseudoClassRules.shrinkToFit();
     m_rootElementRules.shrinkToFit();
     m_universalRules.shrinkToFit();
+    m_universalPseudoElementRules.shrinkToFit();
 
     m_pageRules.shrinkToFit();
     m_features.shrinkToFit();
@@ -611,7 +735,16 @@ const RefPtr<const StyleRulePositionTry> RuleSet::positionTryRuleForName(const A
     return m_positionTryRules.get(name);
 }
 
-String RuleSet::selectorsForDebugging() const
+#if ENABLE(SPATIAL_PORTAL)
+
+RefPtr<const StyleRuleEnvironmentMap> RuleSet::environmentMapRuleForName(const AtomString& name) const
+{
+    return m_environmentMapRules.get(name);
+}
+
+#endif // ENABLE(SPATIAL_PORTAL)
+
+WTF::String RuleSet::selectorsForDebugging() const
 {
     TextStream ts;
     ts << "RuleSet size " << ruleCount();

@@ -31,28 +31,27 @@
 #include "FetchResponse.h"
 
 #include "ContextDestructionObserverInlines.h"
+#include "DocumentQuirks.h"
 #include "FetchRequest.h"
 #include "FetchResponseBodyLoader.h"
 #include "HTTPParsers.h"
 #include "InspectorInstrumentation.h"
 #include "JSBlob.h"
 #include "MIMETypeRegistry.h"
+#include "Quirks.h"
 #include "ReadableStreamToSharedBufferSink.h"
 #include "ResourceError.h"
 #include "ScriptExecutionContext.h"
+#include "Settings.h"
+#include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/JSONObject.h>
+#include <WebCore/HTTPStatusCodes.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(FetchResponseBodyLoader);
-
-// https://fetch.spec.whatwg.org/#null-body-status
-static inline bool isNullBodyStatus(int status)
-{
-    return status == 101 || status == 204 || status == 205 || status == 304;
-}
 
 FetchResponse::~FetchResponse() = default;
 
@@ -105,7 +104,7 @@ ExceptionOr<Ref<FetchResponse>> FetchResponse::create(ScriptExecutionContext& co
     if (bodyWithType) {
         // 6.1 If response’s status is a null body status, then throw a TypeError.
         //     (NOTE: 101 and 103 are included in null body status due to their use elsewhere. It does not affect this step.)
-        if (isNullBodyStatus(init.status))
+        if (isHttpNullBodyStatus(init.status))
             return Exception { ExceptionCode::TypeError, "Response cannot have a body with the given status."_s };
 
         // 6.2 Set response’s body to body’s body.
@@ -161,12 +160,12 @@ Ref<FetchResponse> FetchResponse::error(ScriptExecutionContext& context)
 
 ExceptionOr<Ref<FetchResponse>> FetchResponse::redirect(ScriptExecutionContext& context, const String& url, int status)
 {
-    URL requestURL = context.completeURL(url, ScriptExecutionContext::ForceUTF8::Yes);
+    URL requestURL = context.parseURL(url);
     if (!requestURL.isValid())
         return Exception { ExceptionCode::TypeError, makeString("Redirection URL '"_s, requestURL.string(), "' is invalid"_s) };
     if (requestURL.hasCredentials())
         return Exception { ExceptionCode::TypeError, "Redirection URL contains credentials"_s };
-    if (!ResourceResponse::isRedirectionStatusCode(status))
+    if (!isHttpRedirectStatus(status))
         return Exception { ExceptionCode::RangeError, makeString(status, " is not a redirection status code"_s) };
     auto redirectResponse = adoptRef(*new FetchResponse(&context, { }, FetchHeaders::create(FetchHeaders::Guard::Immutable), { }));
     redirectResponse->suspendIfNeeded();
@@ -219,16 +218,19 @@ ExceptionOr<Ref<FetchResponse>> FetchResponse::clone(JSDOMGlobalObject& globalOb
 
     Ref headers = FetchHeaders::create(this->headers());
     auto clone = FetchResponse::create(context.get(), std::nullopt, WTF::move(headers), ResourceResponse { m_internalResponse });
-    clone->cloneBody(globalObject, *this);
+    if (auto exception = clone->cloneBody(globalObject, *this))
+        return { WTF::move(*exception) };
+
     clone->m_opaqueLoadIdentifier = m_opaqueLoadIdentifier;
     clone->m_bodySizeWithPadding = m_bodySizeWithPadding;
+    clone->m_resourceLoaderIdentifier = m_resourceLoaderIdentifier;
     return clone;
 }
 
 void FetchResponse::addAbortSteps(Ref<AbortSignal>&& signal)
 {
     m_abortSignal = signal.copyRef();
-    signal->addAlgorithm([weakThis = WeakPtr { *this }](JSC::JSValue) {
+    signal->addAlgorithm([weakThis = WeakPtr { *this }](JSC::JSValue value) {
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis)
             return;
@@ -253,34 +255,41 @@ void FetchResponse::addAbortSteps(Ref<AbortSignal>&& signal)
         if (protectedThis->m_body)
             protectedThis->m_body->loadingFailed(*protectedThis->loadingException());
 
-        if (RefPtr loader = std::exchange(protectedThis->m_loader, nullptr))
+        if (RefPtr loader = std::exchange(protectedThis->m_loader, nullptr)) {
+            RefPtr context = protectedThis->scriptExecutionContext();
+            auto* globalObject = context ? context->globalObject() : nullptr;
+            if (globalObject)
+                loader->abortUpload(*downcast<JSDOMGlobalObject>(globalObject), value);
             loader->stop();
+        }
         if (auto bodyLoader = std::exchange(protectedThis->m_bodyLoader, nullptr))
             bodyLoader->stop();
     });
 }
 
-Ref<FetchResponse> FetchResponse::createFetchResponse(ScriptExecutionContext& context, FetchRequest& request, NotificationCallback&& responseCallback)
+Ref<FetchResponse> FetchResponse::createFetchResponse(ScriptExecutionContext& context, FetchRequest& request, NotificationCallback&& responseCallback, RefPtr<ReadableStreamToSharedBufferSink>&& pendingUpload)
 {
     auto response = adoptRef(*new FetchResponse(&context, FetchBody { }, FetchHeaders::create(FetchHeaders::Guard::Immutable), { }));
     response->suspendIfNeeded();
 
-    response->body().checkedConsumer()->setAsLoading();
+    response->body().consumer().setAsLoading();
 
     response->addAbortSteps(request.signal());
 
-    response->m_loader = Loader::create(response.get(), WTF::move(responseCallback));
+    response->m_loader = Loader::create(response.get(), WTF::move(responseCallback), WTF::move(pendingUpload));
     return response;
 }
 
 void FetchResponse::fetch(ScriptExecutionContext& context, FetchRequest& request, NotificationCallback&& responseCallback, const String& initiator)
 {
+    RefPtr<ReadableStreamToSharedBufferSink> uploadSink;
     if (request.isReadableStreamBody()) {
-        responseCallback(Exception { ExceptionCode::NotSupportedError, "ReadableStream uploading is not supported"_s });
-        return;
-    }
-
-    if (request.hasReadableStreamBody()) {
+        if (!context.settingsValues().fetchUploadStreamsEnabled) {
+            responseCallback(Exception { ExceptionCode::NotSupportedError, "ReadableStream uploading is not supported"_s });
+            return;
+        }
+        uploadSink = request.body().startPendingStreamUpload(context);
+    } else if (request.hasReadableStreamBody()) {
         request.body().convertReadableStreamToArrayBuffer(request, [context = Ref { context }, weakRequest = WeakPtr { request }, responseCallback = WTF::move(responseCallback), initiator](auto&& exception) mutable {
             if (!!exception) {
                 responseCallback(WTF::move(*exception));
@@ -294,7 +303,7 @@ void FetchResponse::fetch(ScriptExecutionContext& context, FetchRequest& request
         return;
     }
 
-    Ref response = createFetchResponse(context, request, WTF::move(responseCallback));
+    Ref response = createFetchResponse(context, request, WTF::move(responseCallback), WTF::move(uploadSink));
     response->startLoader(context, request, initiator);
 }
 
@@ -375,25 +384,33 @@ void FetchResponse::setReceivedInternalResponse(const ResourceResponse& resource
     m_headers->filterAndFill(m_filteredResponse->httpHeaderFields(), FetchHeaders::Guard::Response);
 }
 
-Ref<FetchResponse::Loader> FetchResponse::Loader::create(FetchResponse& response, NotificationCallback&& responseCallback)
+Ref<FetchResponse::Loader> FetchResponse::Loader::create(FetchResponse& response, NotificationCallback&& responseCallback, RefPtr<ReadableStreamToSharedBufferSink>&& pendingUpload)
 {
-    return adoptRef(*new Loader(response, WTF::move(responseCallback)));
+    return adoptRef(*new Loader(response, WTF::move(responseCallback), WTF::move(pendingUpload)));
 }
 
-FetchResponse::Loader::Loader(FetchResponse& response, NotificationCallback&& responseCallback)
+FetchResponse::Loader::Loader(FetchResponse& response, NotificationCallback&& responseCallback, RefPtr<ReadableStreamToSharedBufferSink>&& pendingUpload)
     : m_response(response)
     , m_responseCallback(WTF::move(responseCallback))
     , m_pendingActivity(response.makePendingActivity(response))
+    , m_pendingUpload(WTF::move(pendingUpload))
 {
 }
 
 FetchResponse::Loader::~Loader() = default;
 
-void FetchResponse::Loader::didReceiveResponse(const ResourceResponse& resourceResponse)
+void FetchResponse::Loader::didReceiveResponse(std::optional<ResourceLoaderIdentifier> resourceLoaderIdentifier, const ResourceResponse& resourceResponse)
 {
     RefPtr response = m_response.get();
     if (!response)
         return;
+
+    if (resourceResponse.source() == ResourceResponse::Source::MemoryCache || resourceResponse.source() == ResourceResponse::Source::MemoryCacheAfterValidation)
+        resourceLoaderIdentifier = std::nullopt;
+    response->m_resourceLoaderIdentifier = resourceLoaderIdentifier;
+
+    if (RefPtr document = dynamicDowncast<Document>(response->scriptExecutionContext()))
+        document->quirks().clearLogoutSurvivingIdentityCookiesIfNeeded(resourceResponse.url(), resourceResponse.httpStatusCode());
 
     response->setReceivedInternalResponse(resourceResponse, m_credentials);
 
@@ -437,7 +454,7 @@ void FetchResponse::Loader::didReceiveData(const SharedBuffer& buffer)
 bool FetchResponse::Loader::start(ScriptExecutionContext& context, const FetchRequest& request, const String& initiator)
 {
     m_credentials = request.fetchOptions().credentials;
-    Ref loader = FetchLoader::create(*this, m_response->m_body->checkedConsumer().ptr());
+    Ref loader = FetchLoader::create(*this, protect(m_response->m_body->consumer()).ptr());
     m_loader = loader.copyRef();
     loader->start(context, request, initiator);
 
@@ -450,6 +467,12 @@ bool FetchResponse::Loader::start(ScriptExecutionContext& context, const FetchRe
     }
 
     return true;
+}
+
+void FetchResponse::Loader::abortUpload(JSDOMGlobalObject& globalObject, JSC::JSValue value)
+{
+    if (m_pendingUpload)
+        m_pendingUpload->cancel(globalObject, value);
 }
 
 void FetchResponse::Loader::stop()
@@ -499,7 +522,7 @@ void FetchResponse::consumeBodyReceivedByChunk(ConsumeDataByChunkCallback&& call
     m_isDisturbed = true;
 
     if (hasReadableStreamBody()) {
-        m_body->checkedConsumer()->extract(*m_body->protectedReadableStream(), [callback = WTF::move(callback), weakThis = WeakPtr { *this }](auto&& result) {
+        protect(m_body->consumer())->extract(*protect(m_body->readableStream()), [callback = WTF::move(callback), weakThis = WeakPtr { *this }](auto&& result) {
             WTF::switchOn(WTF::move(result), [&](std::nullptr_t) {
                 callback(nullptr);
             }, [&](std::span<const uint8_t> chunk) {
@@ -519,7 +542,7 @@ void FetchResponse::consumeBodyReceivedByChunk(ConsumeDataByChunkCallback&& call
     }
 
     ASSERT(isLoading());
-    protectedLoader()->consumeDataByChunk(WTF::move(callback));
+    protect(loader())->consumeDataByChunk(WTF::move(callback));
 }
 
 void FetchResponse::setBodyData(ResponseData&& data, uint64_t bodySizeWithPadding)
@@ -534,7 +557,7 @@ void FetchResponse::setBodyData(ResponseData&& data, uint64_t bodySizeWithPaddin
         [this](Ref<SharedBuffer>& buffer) {
             if (isBodyNull())
                 setBody({ });
-            body().checkedConsumer()->setData(WTF::move(buffer));
+            protect(body().consumer())->setData(WTF::move(buffer));
         },
         [](std::nullptr_t&) {
         }
@@ -543,7 +566,7 @@ void FetchResponse::setBodyData(ResponseData&& data, uint64_t bodySizeWithPaddin
 
 void FetchResponse::consumeChunk(Ref<JSC::Uint8Array>&& chunk)
 {
-    body().checkedConsumer()->append(SharedBuffer::create(chunk->span()));
+    protect(body().consumer())->append(SharedBuffer::create(chunk->span()));
 }
 
 void FetchResponse::consumeBodyAsStream()
@@ -555,7 +578,7 @@ void FetchResponse::consumeBodyAsStream()
     }
 
     ASSERT(m_loader);
-    auto data = protectedLoader()->startStreaming();
+    auto data = protect(loader())->startStreaming();
     if (data) {
         Ref readableStreamSource = *m_readableStreamSource;
         if (!readableStreamSource->enqueue(data->tryCreateArrayBuffer())) {
@@ -576,7 +599,7 @@ void FetchResponse::closeStream()
 void FetchResponse::cancelStream()
 {
     if (isAllowedToRunScript() && hasReadableStreamBody()) {
-        body().protectedReadableStream()->cancel(Exception { ExceptionCode::AbortError, "load is cancelled"_s });
+        protect(body().readableStream())->cancel(Exception { ExceptionCode::AbortError, "load is cancelled"_s });
         return;
     }
     cancel();
@@ -584,7 +607,9 @@ void FetchResponse::cancelStream()
 
 void FetchResponse::feedStream()
 {
-    ASSERT(m_readableStreamSource);
+    if (!m_readableStreamSource)
+        return;
+
     bool shouldCloseStream = !m_loader;
 
     CheckedRef consumer = body().consumer();
@@ -699,7 +724,7 @@ void FetchResponse::didSucceed(const NetworkLoadMetrics& metrics)
 
 void FetchResponse::receivedData(Ref<SharedBuffer>&& buffer)
 {
-    body().checkedConsumer()->append(buffer.get());
+    protect(body().consumer())->append(buffer.get());
 }
 
 ResourceResponse FetchResponse::resourceResponse() const

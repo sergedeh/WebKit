@@ -47,7 +47,8 @@ enum ScratchMode {
 };
 
 template<typename Functor>
-Tmp findPossibleScratch(Code& code, Bank bank, const Functor& functor) {
+Tmp findPossibleScratch(Code& code, Bank bank, NOESCAPE const Functor& functor)
+{
     for (Reg reg : code.regsInPriorityOrder(bank)) {
         Tmp tmp(reg);
         if (functor(tmp))
@@ -120,12 +121,15 @@ void ShufflePair::dump(PrintStream& out) const
     out.print(width(), ":", src(), "=>", dst());
 }
 
-Inst createShuffle(Value* origin, const Vector<ShufflePair>& pairs)
+Inst createShuffle(Value* origin, std::span<const ShufflePair> pairs)
 {
-    Inst result(Shuffle, origin);
-    for (const ShufflePair& pair : pairs)
-        result.append(pair.src(), pair.dst(), Arg::widthArg(pair.width()));
-    return result;
+    Vector<Arg, 8> args;
+    for (const ShufflePair& pair : pairs) {
+        args.append(pair.src());
+        args.append(pair.dst());
+        args.append(Arg::widthArg(pair.width()));
+    }
+    return Inst(Shuffle, origin, WTF::move(args));
 }
 
 Vector<Inst> emitShuffle(

@@ -78,7 +78,7 @@ bool NetworkMDNSRegister::hasRegisteredName(const String& name) const
 }
 
 #if ENABLE_MDNS
-static HashMap<NetworkMDNSRegister::PendingRegistrationRequestIdentifier, std::unique_ptr<NetworkMDNSRegister::PendingRegistrationRequest>>& pendingRegistrationRequestMap()
+static HashMap<NetworkMDNSRegister::PendingRegistrationRequestIdentifier, std::unique_ptr<NetworkMDNSRegister::PendingRegistrationRequest>>& LEGACY_NODELETE pendingRegistrationRequestMap()
 {
     static NeverDestroyed<HashMap<NetworkMDNSRegister::PendingRegistrationRequestIdentifier, std::unique_ptr<NetworkMDNSRegister::PendingRegistrationRequest>>> map;
     return map.get();
@@ -111,7 +111,7 @@ static void registerMDNSNameCallback(DNSServiceRef service, DNSRecordRef record,
     MDNS_RELEASE_LOG_IN_CALLBACK(request->sessionID, "registerMDNSNameCallback with error %d", errorCode);
 
     if (errorCode) {
-        request->connection->protectedMDNSRegister()->closeAndForgetService(service);
+        protect(request->connection->mdnsRegister())->closeAndForgetService(service);
         request->completionHandler(request->name, WebCore::MDNSRegisterError::DNSSD);
         return;
     }
@@ -145,7 +145,7 @@ void NetworkMDNSRegister::registerMDNSName(WebCore::ScriptExecutionContextIdenti
     } else
         service = iterator->value.get();
 
-    auto ip = inet_addr(ipAddress.utf8().data());
+    auto ip = inet_addr(ipAddress.utf8().legacyCStringPointer());
 
     // FIXME: Add IPv6 support.
     if (ip == ( in_addr_t)(-1)) {
@@ -166,7 +166,7 @@ void NetworkMDNSRegister::registerMDNSName(WebCore::ScriptExecutionContextIdenti
         kDNSServiceFlagsUnique,
 #endif
         0,
-        addResult.iterator->value->name.utf8().data(),
+        addResult.iterator->value->name.utf8().legacyCStringPointer(),
         kDNSServiceType_A,
         kDNSServiceClass_IN,
         4,
@@ -209,7 +209,7 @@ PAL::SessionID NetworkMDNSRegister::sessionID() const
 
 std::optional<SharedPreferencesForWebProcess> NetworkMDNSRegister::sharedPreferencesForWebProcess() const
 {
-    RefPtr connectionToWebProcess = m_connection.get();
+    auto* connectionToWebProcess = &m_connection.get();
     if (!connectionToWebProcess)
         return std::nullopt;
 

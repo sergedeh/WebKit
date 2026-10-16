@@ -41,13 +41,16 @@
 #include "PseudoElementIdentifier.h"
 #include "RenderElement.h"
 #include "ResizeObserver.h"
-#include "ShadowRoot.h"
 #include "SpaceSplitString.h"
 #include "StylePropertyMap.h"
 #include "StylePropertyMapReadOnly.h"
 #include "VisibilityAdjustment.h"
 #include <wtf/HashMap.h>
 #include <wtf/Markable.h>
+
+#if ENABLE(SPATIAL_PORTAL)
+#include "SpatialPortalController.h"
+#endif
 
 namespace WebCore {
 
@@ -71,18 +74,14 @@ public:
     void setChildIndex(unsigned index) { m_childIndex = index; }
     static constexpr ptrdiff_t childIndexMemoryOffset() { return OBJECT_OFFSETOF(ElementRareData, m_childIndex); }
 
-    void clearShadowRoot() { m_shadowRoot = nullptr; }
-    ShadowRoot* shadowRoot() const { return m_shadowRoot.get(); }
-    void setShadowRoot(RefPtr<ShadowRoot>&& shadowRoot) { m_shadowRoot = WTF::move(shadowRoot); }
-
     CustomElementReactionQueue* customElementReactionQueue() { return m_customElementReactionQueue.get(); }
-    void setCustomElementReactionQueue(std::unique_ptr<CustomElementReactionQueue>&& queue) { m_customElementReactionQueue = WTF::move(queue); }
+    void initializeCustomElementReactionQueue(std::unique_ptr<CustomElementReactionQueue>&& queue) { lazyInitialize(m_customElementReactionQueue, WTF::move(queue)); }
 
     CustomElementDefaultARIA* customElementDefaultARIA() { return m_customElementDefaultARIA.get(); }
-    void setCustomElementDefaultARIA(std::unique_ptr<CustomElementDefaultARIA>&& defaultARIA) { m_customElementDefaultARIA = WTF::move(defaultARIA); }
+    void initializeCustomElementDefaultARIA(std::unique_ptr<CustomElementDefaultARIA>&& defaultARIA) { lazyInitialize(m_customElementDefaultARIA, WTF::move(defaultARIA)); }
 
     FormAssociatedCustomElement* formAssociatedCustomElement() { return m_formAssociatedCustomElement.get(); }
-    void setFormAssociatedCustomElement(const std::unique_ptr<FormAssociatedCustomElement>&& element) { lazyInitialize(m_formAssociatedCustomElement, std::move(element)); }
+    void initializeFormAssociatedCustomElement(const std::unique_ptr<FormAssociatedCustomElement>&& element) { lazyInitialize(m_formAssociatedCustomElement, std::move(element)); }
 
     NamedNodeMap* attributeMap() const { return m_attributeMap.get(); }
     void setAttributeMap(const std::unique_ptr<NamedNodeMap>&& attributeMap) { lazyInitialize(m_attributeMap, std::move(attributeMap)); }
@@ -90,13 +89,13 @@ public:
     String userInfo() const { return m_userInfo; }
     void setUserInfo(String&& userInfo) { m_userInfo = WTF::move(userInfo); }
 
-    RenderStyle* computedStyle() const { return m_computedStyle.get(); }
-    void setComputedStyle(std::unique_ptr<RenderStyle>&& computedStyle) { m_computedStyle = WTF::move(computedStyle); }
+    Style::ComputedStyle* computedStyle() const LIFETIME_BOUND { return m_computedStyle.get(); }
+    void setComputedStyle(std::unique_ptr<Style::ComputedStyle>&& computedStyle) { m_computedStyle = WTF::move(computedStyle); }
 
-    RenderStyle* displayContentsOrNoneStyle() const { return m_displayContentsOrNoneStyle.get(); }
-    void setDisplayContentsOrNoneStyle(std::unique_ptr<RenderStyle> style) { m_displayContentsOrNoneStyle = WTF::move(style); }
+    Style::ComputedStyle* displayContentsOrNoneStyle() const LIFETIME_BOUND { return m_displayContentsOrNoneStyle.get(); }
+    void setDisplayContentsOrNoneStyle(std::unique_ptr<Style::ComputedStyle> style) { m_displayContentsOrNoneStyle = WTF::move(style); }
 
-    const AtomString& effectiveLang() const { return m_effectiveLang; }
+    const AtomString& effectiveLang() const LIFETIME_BOUND { return m_effectiveLang; }
     void setEffectiveLang(const AtomString& lang) { m_effectiveLang = lang; }
 
     DOMTokenList* classList() const { return m_classList.get(); }
@@ -109,8 +108,8 @@ public:
     void setSavedLayerScrollPosition(ScrollPosition position) { m_savedLayerScrollPosition = position; }
 
     bool hasAnimationRareData() const { return !m_animationRareData.isEmpty(); }
-    ElementAnimationRareData* animationRareData(const std::optional<Style::PseudoElementIdentifier>&) const;
-    ElementAnimationRareData& ensureAnimationRareData(const std::optional<Style::PseudoElementIdentifier>&);
+    ElementAnimationRareData* animationRareData(const std::optional<Style::PseudoElementIdentifier>&) const LIFETIME_BOUND;
+    ElementAnimationRareData& ensureAnimationRareData(const std::optional<Style::PseudoElementIdentifier>&) LIFETIME_BOUND;
 
     AtomString viewTransitionCapturedName(const std::optional<Style::PseudoElementIdentifier>&) const;
     void setViewTransitionCapturedName(const std::optional<Style::PseudoElementIdentifier>&, AtomString);
@@ -118,17 +117,17 @@ public:
     DOMTokenList* partList() const { return m_partList.get(); }
     void setPartList(const std::unique_ptr<DOMTokenList>&& partList) { lazyInitialize(m_partList, std::move(partList)); }
 
-    const SpaceSplitString& partNames() const { return m_partNames; }
+    const SpaceSplitString& partNames() const LIFETIME_BOUND { return m_partNames; }
     void setPartNames(SpaceSplitString&& partNames) { m_partNames = WTF::move(partNames); }
 
-    IntersectionObserverData* intersectionObserverData() { return m_intersectionObserverData.get(); }
-    void setIntersectionObserverData(std::unique_ptr<IntersectionObserverData>&& data) { m_intersectionObserverData = WTF::move(data); }
+    IntersectionObserverData* intersectionObserverData() const LIFETIME_BOUND { return m_intersectionObserverData.get(); }
+    void initializeIntersectionObserverData(std::unique_ptr<IntersectionObserverData>&& data) { lazyInitialize(m_intersectionObserverData, WTF::move(data)); }
 
-    ResizeObserverData* resizeObserverData() { return m_resizeObserverData.get(); }
-    void setResizeObserverData(std::unique_ptr<ResizeObserverData>&& data) { m_resizeObserverData = WTF::move(data); }
+    ResizeObserverData* resizeObserverData() const LIFETIME_BOUND { return m_resizeObserverData.get(); }
+    void initializeResizeObserverData(std::unique_ptr<ResizeObserverData>&& data) { lazyInitialize(m_resizeObserverData, WTF::move(data)); }
 
-    ElementLargestContentfulPaintData* largestContentfulPaintData() { return m_largestContentfulPaintData.get(); }
-    void setLargestContentfulPaintData(std::unique_ptr<ElementLargestContentfulPaintData>&& data) { m_largestContentfulPaintData = WTF::move(data); }
+    ElementLargestContentfulPaintData* largestContentfulPaintData() const LIFETIME_BOUND { return m_largestContentfulPaintData.get(); }
+    void initializeLargestContentfulPaintData(std::unique_ptr<ElementLargestContentfulPaintData>&& data) { lazyInitialize(m_largestContentfulPaintData, WTF::move(data)); }
 
     std::optional<LayoutUnit> lastRememberedLogicalWidth() const { return m_lastRememberedLogicalWidth; }
     std::optional<LayoutUnit> lastRememberedLogicalHeight() const { return m_lastRememberedLogicalHeight; }
@@ -137,31 +136,41 @@ public:
     void clearLastRememberedLogicalWidth() { m_lastRememberedLogicalWidth.reset(); }
     void clearLastRememberedLogicalHeight() { m_lastRememberedLogicalHeight.reset(); }
 
-    const AtomString& nonce() const { return m_nonce; }
+    const AtomString& nonce() const LIFETIME_BOUND { return m_nonce; }
     void setNonce(const AtomString& value) { m_nonce = value; }
 
     StylePropertyMap* attributeStyleMap() { return m_attributeStyleMap.get(); }
-    void setAttributeStyleMap(Ref<StylePropertyMap>&& map) { m_attributeStyleMap = WTF::move(map); }
+    void initializeAttributeStyleMap(Ref<StylePropertyMap>&& map) { lazyInitialize(m_attributeStyleMap, WTF::move(map)); }
 
     StylePropertyMapReadOnly* computedStyleMap() { return m_computedStyleMap.get(); }
-    void setComputedStyleMap(Ref<StylePropertyMapReadOnly>&& map) { m_computedStyleMap = WTF::move(map); }
+    void initializeComputedStyleMap(Ref<StylePropertyMapReadOnly>&& map) { lazyInitialize(m_computedStyleMap, WTF::move(map)); }
 
-    ExplicitlySetAttrElementsMap& explicitlySetAttrElementsMap() { return m_explicitlySetAttrElementsMap; }
+    ExplicitlySetAttrElementsMap& explicitlySetAttrElementsMap() LIFETIME_BOUND { return m_explicitlySetAttrElementsMap; }
 
-    PopoverData* popoverData() { return m_popoverData.get(); }
+    PopoverData* popoverData() const LIFETIME_BOUND { return m_popoverData.get(); }
     void setPopoverData(std::unique_ptr<PopoverData>&& popoverData) { m_popoverData = WTF::move(popoverData); }
 
     Element* invokedPopover() const { return m_invokedPopover.get(); }
     void setInvokedPopover(RefPtr<Element>&& element) { m_invokedPopover = WTF::move(element); }
 
-    const std::optional<OptionSet<ContentRelevancy>>& contentRelevancy() const { return m_contentRelevancy; }
+    const std::optional<OptionSet<ContentRelevancy>>& contentRelevancy() const LIFETIME_BOUND { return m_contentRelevancy; }
     void setContentRelevancy(OptionSet<ContentRelevancy>& contentRelevancy) { m_contentRelevancy = contentRelevancy; }
 
     CustomStateSet* customStateSet() { return m_customStateSet.get(); }
-    void setCustomStateSet(Ref<CustomStateSet>&& customStateSet) { m_customStateSet = WTF::move(customStateSet); }
+    void initializeCustomStateSet(Ref<CustomStateSet>&& customStateSet) { lazyInitialize(m_customStateSet, WTF::move(customStateSet)); }
 
     OptionSet<VisibilityAdjustment> visibilityAdjustment() const { return m_visibilityAdjustment; }
     void setVisibilityAdjustment(OptionSet<VisibilityAdjustment> adjustment) { m_visibilityAdjustment = adjustment; }
+
+#if ENABLE(SPATIAL_PORTAL)
+    SpatialPortalController* spatialPortalController() const { return m_spatialPortalController.get(); }
+    void setSpatialPortalController(std::unique_ptr<SpatialPortalController>&& controller) { m_spatialPortalController = WTF::move(controller); }
+#endif
+
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    bool isVolumetricSceneEstablished() const { return m_isVolumetricSceneEstablished; }
+    void setVolumetricSceneEstablished(bool established) { m_isVolumetricSceneEstablished = established; }
+#endif
 
     Ref<CSSCalc::RandomCachingKeyMap> ensureRandomCachingKeyMap(const std::optional<Style::PseudoElementIdentifier>&);
     bool hasRandomCachingKeyMap() const;
@@ -184,8 +193,6 @@ public:
             result.add(UseType::Dataset);
         if (m_classList)
             result.add(UseType::ClassList);
-        if (m_shadowRoot)
-            result.add(UseType::ShadowRoot);
         if (m_customElementReactionQueue)
             result.add(UseType::CustomElementReactionQueue);
         if (m_customElementDefaultARIA)
@@ -218,9 +225,9 @@ public:
             result.add(UseType::Popover);
         if (m_childIndex)
             result.add(UseType::ChildIndex);
-        if (!m_customStateSet.isEmpty())
+        if (m_customStateSet)
             result.add(UseType::CustomStateSet);
-        if (m_userInfo)
+        if (!m_userInfo.isEmpty())
             result.add(UseType::UserInfo);
         if (m_invokedPopover)
             result.add(UseType::InvokedPopover);
@@ -233,25 +240,28 @@ private:
     int m_unusualTabIndex { 0 }; // Keep on top for better bit packing with NodeRareData.
 
     std::optional<OptionSet<ContentRelevancy>> m_contentRelevancy;
+    OptionSet<VisibilityAdjustment> m_visibilityAdjustment; // Keep next to m_contentRelevancy for better bit packing.
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    bool m_isVolumetricSceneEstablished { false };
+#endif
     ScrollPosition m_savedLayerScrollPosition;
 
     String m_userInfo;
 
-    std::unique_ptr<RenderStyle> m_computedStyle;
-    std::unique_ptr<RenderStyle> m_displayContentsOrNoneStyle;
+    std::unique_ptr<Style::ComputedStyle> m_computedStyle;
+    std::unique_ptr<Style::ComputedStyle> m_displayContentsOrNoneStyle;
 
     AtomString m_effectiveLang;
     const std::unique_ptr<DatasetDOMStringMap> m_dataset;
     const std::unique_ptr<DOMTokenList> m_classList;
-    RefPtr<ShadowRoot> m_shadowRoot;
-    std::unique_ptr<CustomElementReactionQueue> m_customElementReactionQueue;
-    std::unique_ptr<CustomElementDefaultARIA> m_customElementDefaultARIA;
+    const std::unique_ptr<CustomElementReactionQueue> m_customElementReactionQueue;
+    const std::unique_ptr<CustomElementDefaultARIA> m_customElementDefaultARIA;
     const std::unique_ptr<FormAssociatedCustomElement> m_formAssociatedCustomElement;
     const std::unique_ptr<NamedNodeMap> m_attributeMap;
 
-    std::unique_ptr<IntersectionObserverData> m_intersectionObserverData;
-    std::unique_ptr<ResizeObserverData> m_resizeObserverData;
-    std::unique_ptr<ElementLargestContentfulPaintData> m_largestContentfulPaintData;
+    const std::unique_ptr<IntersectionObserverData> m_intersectionObserverData;
+    const std::unique_ptr<ResizeObserverData> m_resizeObserverData;
+    const std::unique_ptr<ElementLargestContentfulPaintData> m_largestContentfulPaintData;
 
     Markable<LayoutUnit> m_lastRememberedLogicalWidth;
     Markable<LayoutUnit> m_lastRememberedLogicalHeight;
@@ -263,8 +273,8 @@ private:
     RefPtr<PseudoElement> m_beforePseudoElement;
     RefPtr<PseudoElement> m_afterPseudoElement;
 
-    RefPtr<StylePropertyMap> m_attributeStyleMap;
-    RefPtr<StylePropertyMapReadOnly> m_computedStyleMap;
+    const RefPtr<StylePropertyMap> m_attributeStyleMap;
+    const RefPtr<StylePropertyMapReadOnly> m_computedStyleMap;
 
     const std::unique_ptr<DOMTokenList> m_partList;
     SpaceSplitString m_partNames;
@@ -277,9 +287,11 @@ private:
 
     WeakPtr<Element, WeakPtrImplWithEventTargetData> m_invokedPopover;
 
-    RefPtr<CustomStateSet> m_customStateSet;
+    const RefPtr<CustomStateSet> m_customStateSet;
 
-    OptionSet<VisibilityAdjustment> m_visibilityAdjustment;
+#if ENABLE(SPATIAL_PORTAL)
+    std::unique_ptr<SpatialPortalController> m_spatialPortalController;
+#endif
 
     HashMap<std::optional<Style::PseudoElementIdentifier>, Ref<CSSCalc::RandomCachingKeyMap>> m_randomCachingKeyMaps;
 };
@@ -291,7 +303,6 @@ inline ElementRareData::ElementRareData()
 
 inline ElementRareData::~ElementRareData()
 {
-    ASSERT(!m_shadowRoot);
     ASSERT(!m_beforePseudoElement);
     ASSERT(!m_afterPseudoElement);
 }
@@ -366,31 +377,6 @@ inline ElementRareData* Element::elementRareData() const
 {
     ASSERT_WITH_SECURITY_IMPLICATION(hasRareData());
     return downcast<ElementRareData>(rareData());
-}
-
-inline ShadowRoot* Node::shadowRoot() const
-{
-    if (auto* element = dynamicDowncast<Element>(*this))
-        return element->shadowRoot();
-    return nullptr;
-}
-
-inline ShadowRoot* Element::shadowRoot() const
-{
-    return hasRareData() ? elementRareData()->shadowRoot() : nullptr;
-}
-
-inline RefPtr<ShadowRoot> Node::protectedShadowRoot() const
-{
-    return shadowRoot();
-}
-
-inline void Element::removeShadowRoot()
-{
-    RefPtr shadowRoot = this->shadowRoot();
-    if (!shadowRoot) [[likely]]
-        return;
-    removeShadowRootSlow(*shadowRoot);
 }
 
 } // namespace WebCore

@@ -52,6 +52,7 @@ private:
 
 class InbandGenericTextTrack final : public InbandTextTrack, private WebVTTParserClient {
     WTF_MAKE_TZONE_ALLOCATED(InbandGenericTextTrack);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(InbandGenericTextTrack);
 public:
     static Ref<InbandGenericTextTrack> create(ScriptExecutionContext&, InbandTextTrackPrivate&);
     virtual ~InbandGenericTextTrack();
@@ -84,7 +85,7 @@ private:
 #endif
 
     GenericTextTrackCueMap m_cueMap;
-    std::unique_ptr<WebVTTParser> m_webVTTParser;
+    const std::unique_ptr<WebVTTParser> m_webVTTParser;
 };
 
 } // namespace WebCore

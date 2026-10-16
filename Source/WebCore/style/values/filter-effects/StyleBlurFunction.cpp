@@ -29,25 +29,27 @@
 #include "CSSFilterFunctionDescriptor.h"
 #include "FEGaussianBlur.h"
 #include "FilterOperation.h"
+#include "StyleComputedStyleBase+GettersInlines.h"
 #include "StylePrimitiveNumericTypes+Conversions.h"
+#include "StylePrimitiveNumericTypes+Evaluation.h"
 
 namespace WebCore {
 namespace Style {
 
 Blur Blur::passthroughForInterpolation()
 {
-    return { .value = CSSFilterFunctionDescriptor<CSSValueBlur>::initialValueForInterpolation };
+    return { .value = CSSFilterFunctionDescriptor<CSSValueID::Blur>::initialValueForInterpolation };
 }
 
-IntOutsets Blur::calculateOutsets(ZoomFactor) const
+IntOutsets Blur::calculateOutsets(ZoomFactor zoom) const
 {
-    auto stdDeviation = evaluate<float>(value, ZoomNeeded { });
+    auto stdDeviation = evaluate<float>(value, zoom);
     return FEGaussianBlur::calculateOutsets({ stdDeviation, stdDeviation });
 }
 
 // MARK: - Conversion
 
-auto ToCSS<Blur>::operator()(const Blur& value, const RenderStyle& style) -> CSS::Blur
+auto ToCSS<Blur>::operator()(const Blur& value, const Style::ComputedStyle& style) -> CSS::Blur
 {
     return { .value = toCSS(value.value, style) };
 }
@@ -56,22 +58,22 @@ auto ToStyle<CSS::Blur>::operator()(const CSS::Blur& value, const BuilderState& 
 {
     if (auto parameter = value.value)
         return { .value = toStyle(*parameter, state) };
-    return { .value = CSSFilterFunctionDescriptor<CSSValueBlur>::defaultValue };
+    return { .value = CSSFilterFunctionDescriptor<CSSValueID::Blur>::defaultValue };
 }
 
 // MARK: - Evaluation
 
-auto Evaluation<Blur, Ref<FilterEffect>>::operator()(const Blur& value, const RenderStyle&) -> Ref<FilterEffect>
+auto Evaluation<Blur, Ref<FilterEffect>>::operator()(const Blur& value, const Style::ComputedStyle& style) -> Ref<FilterEffect>
 {
-    auto stdDeviation = evaluate<float>(value, ZoomNeeded { });
+    auto stdDeviation = evaluate<float>(value, style.usedZoomForLength());
     return FEGaussianBlur::create(stdDeviation, stdDeviation, EdgeModeType::None);
 }
 
 // MARK: - Platform
 
-auto ToPlatform<Blur>::operator()(const Blur& value, const RenderStyle&) -> Ref<FilterOperation>
+auto ToPlatform<Blur>::operator()(const Blur& value, const Style::ComputedStyle& style) -> Ref<FilterOperation>
 {
-    return BlurFilterOperation::create(Style::evaluate<float>(value, ZoomNeeded { }));
+    return BlurFilterOperation::create(Style::evaluate<float>(value, style.usedZoomForLength()));
 }
 
 } // namespace Style

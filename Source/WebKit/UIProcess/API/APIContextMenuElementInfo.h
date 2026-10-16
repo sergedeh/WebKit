@@ -43,9 +43,9 @@ public:
         return adoptRef(*new ContextMenuElementInfo(std::forward<Args>(args)...));
     }
     
-    const WTF::URL& url() const { return m_interactionInformation.url; }
+    const WTF::URL& url() const LIFETIME_BOUND { return m_interactionInformation.url; }
 
-    const WebKit::InteractionInformationAtPosition& interactionInformation() const { return m_interactionInformation; }
+    const WebKit::InteractionInformationAtPosition& interactionInformation() const LIFETIME_BOUND { return m_interactionInformation; }
 
     const RetainPtr<NSDictionary> userInfo() const { return m_userInfo; }
 
@@ -54,7 +54,7 @@ private:
     ContextMenuElementInfo(const WebKit::InteractionInformationAtPosition&, NSDictionary *);
     
     WebKit::InteractionInformationAtPosition m_interactionInformation;
-    RetainPtr<NSDictionary> m_userInfo;
+    const RetainPtr<NSDictionary> m_userInfo;
 };
 
 } // namespace API

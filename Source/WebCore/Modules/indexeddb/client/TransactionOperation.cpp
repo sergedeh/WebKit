@@ -40,7 +40,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(TransactionOperationImpl);
 
 TransactionOperation::TransactionOperation(IDBTransaction& transaction)
     : m_transaction(transaction)
-    , m_identifier(transaction.connectionProxy())
+    , m_identifier(protect(transaction.connectionProxy()))
     , m_operationID(transaction.generateOperationID())
     , m_scriptExecutionContextIdentifier(transaction.database().scriptExecutionContextIdentifier())
 {
@@ -53,11 +53,11 @@ TransactionOperation::TransactionOperation(IDBTransaction& transaction, IDBReque
     m_indexIdentifier = request.sourceIndexIdentifier();
     if (m_indexIdentifier)
         m_indexRecordType = request.requestedIndexRecordType();
-    if (RefPtr cursor = request.pendingCursor())
+    if (auto* cursor = request.pendingCursor())
         m_cursorIdentifier = cursor->info().identifier();
 
     request.setTransactionOperationID(m_operationID);
-    m_idbRequest = request;
+    lazyInitialize(m_idbRequest, Ref { request });
 }
 
 void TransactionOperation::transitionToComplete(const IDBResultData& data, RefPtr<TransactionOperation>&& lastRef)

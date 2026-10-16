@@ -25,20 +25,16 @@
 
 #pragma once
 
-#if HAVE(AVROUTING_FRAMEWORK)
+#if ENABLE(WIRELESS_PLAYBACK_MEDIA_PLAYER)
 
-// FIXME: Properly support using WKA in modules.
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wnon-modular-include-in-module"
-#include <WebKitAdditions/MediaDeviceRouteAdditions.h>
-#include <WebKitAdditions/MediaDeviceRouteControllerAdditions.h>
-#pragma clang diagnostic pop
 #include <wtf/AbstractThreadSafeRefCountedAndCanMakeWeakPtr.h>
 #include <wtf/RetainPtr.h>
 #include <wtf/ThreadSafeWeakPtr.h>
 #include <wtf/Vector.h>
 
-OBJC_CLASS WebMediaDeviceRouteController;
+OBJC_CLASS AVSystemRouteController;
+OBJC_CLASS WebMediaDeviceRouteObserver;
+OBJC_PROTOCOL(WebMediaDevicePlatformRoute);
 
 namespace WebCore {
 
@@ -66,21 +62,22 @@ public:
 
     WEBCORE_EXPORT bool activateRoute(WebMediaDevicePlatformRoute *);
     WEBCORE_EXPORT bool deactivateRoute(WebMediaDevicePlatformRoute *);
+    WEBCORE_EXPORT void deactivateAllRoutes();
 
 private:
     MediaDeviceRouteController();
 
-    RetainPtr<WebMediaDeviceRouteController> m_controller;
-    RetainPtr<WebMediaDevicePlatformRouteController> m_platformController;
     ThreadSafeWeakPtr<MediaDeviceRouteControllerClient> m_client;
     Vector<Ref<MediaDeviceRoute>> m_activeRoutes;
+#if HAVE(AVSYSTEMROUTING_FRAMEWORK)
+    const RetainPtr<WebMediaDeviceRouteObserver> m_routeObserver;
+    const RetainPtr<AVSystemRouteController> m_platformController;
+#endif
 };
+
+WEBCORE_EXPORT void setMockMediaDeviceRouteControllerEnabled(bool);
+WEBCORE_EXPORT bool mockMediaDeviceRouteControllerEnabled();
 
 } // namespace WebCore
 
-#endif // HAVE(AVROUTING_FRAMEWORK)
-
-namespace WebCore {
-WEBCORE_EXPORT void setMockMediaDeviceRouteControllerEnabled(bool);
-WEBCORE_EXPORT bool mockMediaDeviceRouteControllerEnabled();
-}
+#endif // ENABLE(WIRELESS_PLAYBACK_MEDIA_PLAYER)

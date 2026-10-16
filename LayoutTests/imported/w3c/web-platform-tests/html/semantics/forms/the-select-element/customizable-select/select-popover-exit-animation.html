@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html class=reftest-wait>
+<style>select::picker(select), select::picker-icon { transition-duration: 0s !important; }</style>
 <meta name=fuzzy content="maxDifference=0-41;totalPixels=0-6">
 <link rel=author href="mailto:jarhar@chromium.org">
 <link rel=match href="select-popover-exit-animation-ref.html">
@@ -15,6 +16,10 @@
 <style>
 select,::picker(select) {
   appearance: base-select;
+}
+/* :focus-visible behavior is UA-defined, do not exercise in the test */
+select:focus-visible {
+  outline: none;
 }
 select.animate::picker(select) {
   transition: display 10000s allow-discrete, overlay 10000s allow-discrete;

@@ -52,6 +52,8 @@ struct WasmFrameData {
     size_t functionIndex { 0 };
 };
 
+enum class AllowURLOverride : bool { No, Yes };
+
 class StackFrame {
 public:
     using FrameData = Variant<JSFrameData, WasmFrameData>;
@@ -79,6 +81,13 @@ public:
         return nullptr;
     }
 
+    JSCell* callee() const
+    {
+        if (auto* jsFrame = std::get_if<JSFrameData>(&m_frameData))
+            return jsFrame->callee.get();
+        return nullptr;
+    }
+
     bool isAsyncFrameWithoutCodeBlock() const
     {
         if (auto* jsFrame = std::get_if<JSFrameData>(&m_frameData))
@@ -89,7 +98,7 @@ public:
     LineColumn computeLineAndColumn() const;
     String functionName(VM&) const;
     SourceID sourceID() const;
-    String sourceURL(VM&) const;
+    JS_EXPORT_PRIVATE String sourceURL(VM&, AllowURLOverride = AllowURLOverride::Yes) const;
     String sourceURLStripped(VM&) const;
     String toString(VM&) const;
 

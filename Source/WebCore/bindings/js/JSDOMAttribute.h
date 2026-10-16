@@ -23,9 +23,9 @@
 
 #pragma once
 
+#include "JSDOMCastThisValue.h"
+#include "JSDOMExceptionHandling.h"
 #include <JavaScriptCore/Error.h>
-#include <WebCore/JSDOMCastThisValue.h>
-#include <WebCore/JSDOMExceptionHandling.h>
 
 namespace WebCore {
 
@@ -85,7 +85,7 @@ public:
 
         if constexpr (shouldThrow == CastedThisErrorBehavior::Assert) {
             ASSERT(castThisValue<JSClass>(lexicalGlobalObject, JSC::JSValue::decode(thisValue)));
-            auto* thisObject = JSC::jsCast<JSClass*>(JSC::JSValue::decode(thisValue));
+            auto* thisObject = uncheckedDowncast<JSClass>(JSC::JSValue::decode(thisValue));
             RELEASE_AND_RETURN(throwScope, (JSC::JSValue::encode(getter(lexicalGlobalObject, *thisObject))));
         } else {
             auto* thisObject = castThisValue<JSClass>(lexicalGlobalObject, JSC::JSValue::decode(thisValue));
@@ -110,7 +110,7 @@ public:
 
         if constexpr (shouldThrow == CastedThisErrorBehavior::Assert) {
             ASSERT(castThisValue<JSClass>(lexicalGlobalObject, JSC::JSValue::decode(thisValue)));
-            auto* thisObject = JSC::jsCast<JSClass*>(JSC::JSValue::decode(thisValue));
+            auto* thisObject = uncheckedDowncast<JSClass>(JSC::JSValue::decode(thisValue));
             RELEASE_AND_RETURN(throwScope, (JSC::JSValue::encode(getter(lexicalGlobalObject, *thisObject, attributeName))));
         } else {
             auto* thisObject = castThisValue<JSClass>(lexicalGlobalObject, JSC::JSValue::decode(thisValue));

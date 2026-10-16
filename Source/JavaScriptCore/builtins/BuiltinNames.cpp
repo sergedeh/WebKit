@@ -38,8 +38,6 @@ JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_WELL_KNOWN_SYMBOL(INITIALIZE_BUILTIN_STATIC_
 JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_EXPLICIT_RESOURCE_MANAGEMENT_WELL_KNOWN_SYMBOL(INITIALIZE_BUILTIN_STATIC_SYMBOLS)
 #undef INITIALIZE_BUILTIN_STATIC_SYMBOLS
 
-SymbolImpl::StaticSymbolImpl intlLegacyConstructedSymbol { "IntlLegacyConstructedSymbol" };
-
 #define INITIALIZE_BUILTIN_PRIVATE_NAMES(name) SymbolImpl::StaticSymbolImpl name##PrivateName { #name, SymbolImpl::s_flagIsPrivate };
 JSC_FOREACH_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_PRIVATE_NAMES)
 JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(INITIALIZE_BUILTIN_PRIVATE_NAMES)
@@ -47,6 +45,7 @@ JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(INITIALIZE_BUILTIN_PRIVATE_NAM
 
 SymbolImpl::StaticSymbolImpl dollarVMPrivateName { "$vm", SymbolImpl::s_flagIsPrivate };
 SymbolImpl::StaticSymbolImpl polyProtoPrivateName { "PolyProto", SymbolImpl::s_flagIsPrivate };
+SymbolImpl::StaticSymbolImpl stackPrivateName { "stack", SymbolImpl::s_flagIsPrivate };
 
 } // namespace Symbols
 
@@ -78,11 +77,16 @@ BuiltinNames::BuiltinNames(VM& vm, CommonIdentifiers* commonIdentifiers)
     JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(INITIALIZE_BUILTIN_NAMES_IN_JSC)
     JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_WELL_KNOWN_SYMBOL(INITIALIZE_BUILTIN_SYMBOLS_IN_JSC)
     JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_EXPLICIT_RESOURCE_MANAGEMENT_WELL_KNOWN_SYMBOL(INITIALIZE_BUILTIN_SYMBOLS_IN_JSC)
-    , m_intlLegacyConstructedSymbol(JSC::Identifier::fromUid(vm, &static_cast<SymbolImpl&>(Symbols::intlLegacyConstructedSymbol)))
     , m_dollarVMName(Identifier::fromString(vm, "$vm"_s))
     , m_dollarVMPrivateName(Identifier::fromUid(vm, &static_cast<SymbolImpl&>(Symbols::dollarVMPrivateName)))
     , m_polyProtoPrivateName(Identifier::fromUid(vm, &static_cast<SymbolImpl&>(Symbols::polyProtoPrivateName)))
+    , m_stackPrivateName(Identifier::fromUid(vm, &static_cast<SymbolImpl&>(Symbols::stackPrivateName)))
 {
+    // Pre-size so the set does not rehash repeatedly while it fills. It holds JSC's own private
+    // names and well-known symbols, plus whatever the embedder appends through appendExternalName -
+    // WebCore adds about 750 of them, which is what dominates the final size.
+    m_privateNameSet.reserveInitialCapacity(1024);
+
     JSC_FOREACH_BUILTIN_FUNCTION_NAME(INITIALIZE_PUBLIC_TO_PRIVATE_ENTRY)
     JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(INITIALIZE_PUBLIC_TO_PRIVATE_ENTRY)
     JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_WELL_KNOWN_SYMBOL(INITIALIZE_WELL_KNOWN_SYMBOL_PUBLIC_TO_PRIVATE_ENTRY)
@@ -102,12 +106,12 @@ using UTF16Buffer = WTF::HashTranslatorCharBuffer<char16_t>;
 template<typename CharacterType>
 struct CharBufferSeacher {
     using Buffer = WTF::HashTranslatorCharBuffer<CharacterType>;
-    static unsigned hash(const Buffer& buf)
+    static unsigned LEGACY_NODELETE hash(const Buffer& buf)
     {
         return buf.hash;
     }
 
-    static bool equal(const String& str, const Buffer& buf)
+    static bool LEGACY_NODELETE equal(const String& str, const Buffer& buf)
     {
         return WTF::equal(str.impl(), buf.characters);
     }

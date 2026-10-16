@@ -25,7 +25,10 @@
 
 #pragma once
 
-#include <WebCore/RenderStyle.h>
+#include <WebCore/Color.h>
+#include <WebCore/StyleAppleColorFilter.h>
+#include <WebCore/StyleComputedStyle.h>
+#include <WebCore/StyleResolvedColors.h>
 
 namespace WebCore {
 namespace Style {
@@ -48,8 +51,8 @@ template<typename T> concept ImplementsExcludesVisitedLinkColor = requires {
 
 class ColorResolver {
 public:
-    explicit ColorResolver(const RenderStyle& style)
-        : m_style { style.computedStyle() }
+    explicit ColorResolver(const Style::ComputedStyle& style)
+        : m_style { style }
     {
     }
 
@@ -68,16 +71,16 @@ public:
     WebCore::Color visitedLinkColorResolvingCurrentColor(const Style::Color&) const;
     WebCore::Color visitedLinkColorResolvingCurrentColorApplyingColorFilter(const Style::Color&) const;
 
-protected:
-    bool visitedDependentShouldReturnUnvisitedLinkColor(OptionSet<PaintBehavior>) const;
+    bool LEGACY_NODELETE visitedDependentShouldReturnUnvisitedLinkColor(OptionSet<PaintBehavior>) const;
 
+protected:
     const CheckedRef<const ComputedStyleProperties> m_style;
 };
 
 // Property specialized resolver. Can perform visited link color specific resolutions that the non-specialized resolver cannot.
 template<typename ColorTraits> class ColorPropertyResolver : public ColorResolver {
 public:
-    explicit ColorPropertyResolver(const RenderStyle& style)
+    explicit ColorPropertyResolver(const Style::ComputedStyle& style)
         : ColorResolver { style }
     {
     }
@@ -103,12 +106,12 @@ public:
 template<typename ColorTraits>
 WebCore::Color ColorPropertyResolver<ColorTraits>::colorResolvingCurrentColor() const
 {
-    if constexpr (std::same_as<ColorTraits, ColorPropertyTraits<PropertyNameConstant<CSSPropertyColor>>>)
+    if constexpr (std::same_as<ColorTraits, ColorPropertyTraits<PropertyNameConstant<CSSPropertyID::Color>>>)
         return m_style->color();
     else if constexpr (ImplementsColorResolvingCurrentColor<ColorTraits>)
         return ColorTraits::colorResolvingCurrentColor(m_style);
     else
-        return ColorTraits::color(m_style).resolveColor(m_style->color());
+        return ColorTraits::color(m_style).resolveColor(ResolvedColors::fromStyle(m_style));
 }
 
 template<typename ColorTraits>
@@ -123,12 +126,12 @@ template<typename ColorTraits>
 WebCore::Color ColorPropertyResolver<ColorTraits>::visitedLinkColorResolvingCurrentColor() const
     requires (ImplementsVisitedLinkColor<ColorTraits>)
 {
-    if constexpr (std::same_as<ColorTraits, ColorPropertyTraits<PropertyNameConstant<CSSPropertyColor>>>)
+    if constexpr (std::same_as<ColorTraits, ColorPropertyTraits<PropertyNameConstant<CSSPropertyID::Color>>>)
         return m_style->visitedLinkColor();
     else if constexpr (ImplementsVisitedLinkColorResolvingCurrentColor<ColorTraits>)
         return ColorTraits::visitedLinkColorResolvingCurrentColor(m_style);
     else
-        return ColorTraits::visitedLinkColor(m_style).resolveColor(m_style->visitedLinkColor());
+        return ColorTraits::visitedLinkColor(m_style).resolveColor(ResolvedColors::fromVisitedLinkStyle(m_style));
 }
 
 template<typename ColorTraits>

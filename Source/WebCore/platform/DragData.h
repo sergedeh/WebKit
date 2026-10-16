@@ -33,18 +33,19 @@
 #include <wtf/HashMap.h>
 #include <wtf/OptionSet.h>
 #include <wtf/Platform.h>
+#include <wtf/RetainPtr.h>
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
 #if PLATFORM(MAC)
 
-#ifdef __OBJC__ 
+#ifdef __OBJC__
 #import <Foundation/Foundation.h>
 #import <AppKit/NSDragging.h>
-typedef id <NSDraggingInfo> DragDataRef;
-#else
-typedef void* DragDataRef;
 #endif
+
+OBJC_PROTOCOL(NSDraggingInfo);
+typedef NSDraggingInfo* DragDataRef;
 
 #elif PLATFORM(WIN)
 typedef struct IDataObject* DragDataRef;
@@ -98,11 +99,15 @@ public:
     void getDragFileDescriptorData(int& size, String& pathname);
     void getDragFileContentData(int size, void* dataBlob);
 #endif
-    const IntPoint& clientPosition() const { return m_clientPosition; }
-    const IntPoint& globalPosition() const { return m_globalPosition; }
+    const IntPoint& clientPosition() const LIFETIME_BOUND { return m_clientPosition; }
+    const IntPoint& globalPosition() const LIFETIME_BOUND { return m_globalPosition; }
     void setClientPosition(const IntPoint& clientPosition) { m_clientPosition = clientPosition; }
     OptionSet<DragApplicationFlags> flags() const { return m_applicationFlags; }
+#if PLATFORM(MAC)
+    DragDataRef platformData() const { return m_platformDragData.get(); }
+#else
     DragDataRef platformData() const { return m_platformDragData; }
+#endif
     OptionSet<DragOperation> draggingSourceOperationMask() const { return m_draggingSourceOperationMask; }
     bool containsURL(FilenameConversionPolicy = ConvertFilenames) const;
     bool containsPlainText() const;
@@ -117,17 +122,17 @@ public:
     unsigned numberOfFiles() const;
     OptionSet<DragDestinationAction> dragDestinationActionMask() const { return m_dragDestinationActionMask; }
     void setFileNames(Vector<String>& fileNames) { m_fileNames = WTF::move(fileNames); }
-    const Vector<String>& fileNames() const { return m_fileNames; }
+    const Vector<String>& fileNames() const LIFETIME_BOUND { return m_fileNames; }
     void setPromisedFileMIMETypes(Vector<String>&& types) { m_promisedFileMIMETypes = WTF::move(types); }
-    const Vector<String>& promisedFileMIMETypes() const { return m_promisedFileMIMETypes; }
+    const Vector<String>& promisedFileMIMETypes() const LIFETIME_BOUND { return m_promisedFileMIMETypes; }
     void disallowFileAccess();
 #if PLATFORM(COCOA)
-    const String& pasteboardName() const { return m_pasteboardName; }
+    const String& pasteboardName() const LIFETIME_BOUND { return m_pasteboardName; }
     bool containsURLTypeIdentifier() const;
     bool containsPromise() const;
 #endif
 
-    bool shouldMatchStyleOnDrop() const;
+    bool LEGACY_NODELETE shouldMatchStyleOnDrop() const;
 
     std::optional<PageIdentifier> pageID() const { return m_pageID; }
 
@@ -136,7 +141,11 @@ public:
 private:
     IntPoint m_clientPosition;
     IntPoint m_globalPosition;
+#if PLATFORM(MAC)
+    RetainPtr<NSDraggingInfo> m_platformDragData;
+#else
     DragDataRef m_platformDragData { NULL };
+#endif
     OptionSet<DragOperation> m_draggingSourceOperationMask;
     OptionSet<DragApplicationFlags> m_applicationFlags;
     Vector<String> m_fileNames;

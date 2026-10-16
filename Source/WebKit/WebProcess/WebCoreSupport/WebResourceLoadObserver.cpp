@@ -35,9 +35,12 @@
 #include <WebCore/FrameDestructionObserverInlines.h>
 #include <WebCore/FrameLoader.h>
 #include <WebCore/HTMLFrameOwnerElement.h>
+#include <WebCore/HTTPStatusCodes.h>
 #include <WebCore/LocalFrameInlines.h>
 #include <WebCore/LocalFrameLoaderClient.h>
 #include <WebCore/Settings.h>
+#include <WebCore/StorageAccessQuirks.h>
+#include <wtf/Borrow.h>
 #include <wtf/text/MakeString.h>
 
 namespace WebKit {
@@ -57,7 +60,7 @@ void WebResourceLoadObserver::setShouldLogUserInteraction(bool value)
 
 static bool is3xxRedirect(const ResourceResponse& response)
 {
-    return response.httpStatusCode() >= 300 && response.httpStatusCode() <= 399;
+    return response.httpStatusCode() >= httpStatus300MultipleChoices && response.httpStatusCode() < httpStatus400BadRequest;
 }
 
 WebResourceLoadObserver::WebResourceLoadObserver(ResourceLoadStatistics::IsEphemeral isEphemeral)
@@ -83,7 +86,7 @@ void WebResourceLoadObserver::requestStorageAccessUnderOpener(const RegistrableD
     if (domainInNeedOfStorageAccess != openerDomain
         && !openerDocument.hasRequestedPageSpecificStorageAccessWithUserInteraction(domainInNeedOfStorageAccess)
         && !openerUrl.isAboutBlank()) {
-        Ref { WebProcess::singleton().ensureNetworkProcessConnection().connection() }->send(Messages::NetworkConnectionToWebProcess::RequestStorageAccessUnderOpener(domainInNeedOfStorageAccess, openerPage.identifier(), openerDomain), 0);
+        Ref { WebProcess::singleton().ensureNetworkProcessConnection().connection() }->send(Messages::NetworkConnectionToWebProcess::RequestStorageAccessUnderOpener(domainInNeedOfStorageAccess, openerPage.webPageProxyIdentifier(), openerDomain), 0);
         
         openerPage.addDomainWithPageLevelStorageAccess(openerDomain, domainInNeedOfStorageAccess);
 
@@ -287,12 +290,11 @@ void WebResourceLoadObserver::logSubresourceLoading(const LocalFrame* frame, con
     if (isEphemeral())
         return;
 
-    ASSERT(frame->page());
-
     if (!frame)
         return;
 
     RefPtr page = frame->page();
+    ASSERT(page);
     if (!page)
         return;
     const URL& topFrameURL = page->mainFrameURL();
@@ -368,7 +370,11 @@ void WebResourceLoadObserver::logWebSocketLoading(const URL& targetURL, const UR
 
 void WebResourceLoadObserver::logUserInteractionWithReducedTimeResolution(const Document& document)
 {
-    auto& url = document.url();
+    RefPtr page = document.page();
+    if (!page)
+        return;
+
+    auto& url = page->mainFrameURL();
     if (url.protocolIsAbout() || url.protocolIsFile() || url.isEmpty())
         return;
 
@@ -387,13 +393,33 @@ void WebResourceLoadObserver::logUserInteractionWithReducedTimeResolution(const 
         statistics.mostRecentUserInteractionTime = newTime;
     }
 
-    if (RefPtr frame = document.frame()) {
-        if (RefPtr opener = dynamicDowncast<LocalFrame>(frame->opener())) {
-            if (RefPtr openerDocument = opener->document()) {
-                if (RefPtr openerPage = openerDocument->page())
-                    requestStorageAccessUnderOpener(topFrameDomain, Ref { *WebPage::fromCorePage(*openerPage) }, *openerDocument);
+    if (RefPtr mainFrameDocument = document.mainFrameDocument()) {
+        RefPtr frame = mainFrameDocument->frame();
+        if (RefPtr opener = frame ? dynamicDowncast<LocalFrame>(frame->opener()) : nullptr) {
+            RefPtr openerDocument = opener->document();
+            if (RefPtr openerPage = openerDocument ? openerDocument->page() : nullptr)
+                requestStorageAccessUnderOpener(topFrameDomain, Ref { *WebPage::fromCorePage(*openerPage) }, *openerDocument);
+        } else if (frame && frame->opener()) {
+            if (RefPtr openerCorePage = frame->opener()->page()) {
+                RefPtr openerWebPage = WebPage::fromCorePage(*openerCorePage);
+                RefPtr webPage = WebPage::fromCorePage(*protect(protect(mainFrameDocument)->page()));
+                RELEASE_LOG_FORWARDABLE(SiteIsolation, WebResourceLoadObserverLogUserInteractionWithReducedTimeResolutionWithRemoteFrame, openerWebPage ? openerWebPage->identifier().toUInt64() : 0);
+                if (webPage && openerWebPage) {
+                    if (auto openerURL = webPage->mainFrameOpenerURL(); !openerURL.isEmpty()) {
+                        RegistrableDomain openerDomain { openerURL };
+                        if (topFrameDomain != openerDomain && !mainFrameDocument->hasRequestedPageSpecificStorageAccessWithUserInteraction(topFrameDomain)) {
+                            openerWebPage->addDomainWithPageLevelStorageAccess(openerDomain, topFrameDomain);
+                            // FIXME: this message and the message in requestStorageAccessUnderOpener should instead be sent from the UI process. See rdar://183732418.
+                            Ref connection = WebProcess::singleton().ensureNetworkProcessConnection().connection();
+                            connection->send(Messages::NetworkConnectionToWebProcess::RequestStorageAccessUnderOpener(topFrameDomain, openerWebPage->webPageProxyIdentifier(), openerDomain), 0);
+                            mainFrameDocument->setHasRequestedPageSpecificStorageAccessWithUserInteraction(topFrameDomain);
+                        }
+                    }
+                }
             }
         }
+    } else {
+        LOG_ONCE(SiteIsolation, "Unable to request storage access under opener when logging user interation without access to the main frame document ");
     }
 
     // We notify right away in case of a user interaction instead of waiting the usual 5 seconds because we want
@@ -414,8 +440,8 @@ void WebResourceLoadObserver::logUserInteractionWithReducedTimeResolution(const 
         auto escapedURL = escapeForJSON(url.string());
         auto escapedDomain = escapeForJSON(topFrameDomain.string());
 
-        LOCAL_LOG("{ \"url\": \"%" PUBLIC_LOG_STRING "\",", escapedURL.utf8().data());
-        LOCAL_LOG("  \"domain\" : \"%" PUBLIC_LOG_STRING "\",", escapedDomain.utf8().data());
+        LOCAL_LOG("{ \"url\": \"%" PUBLIC_LOG_STRING "\",", escapedURL.utf8());
+        LOCAL_LOG("  \"domain\" : \"%" PUBLIC_LOG_STRING "\",", escapedDomain.utf8());
         LOCAL_LOG("  \"until\" : %f }", newTime.secondsSinceEpoch().seconds());
 
 #undef LOCAL_LOG
@@ -452,13 +478,13 @@ bool WebResourceLoadObserver::hasCrossPageStorageAccess(const SubFrameDomain& su
 void WebResourceLoadObserver::setDomainsWithCrossPageStorageAccess(HashMap<TopFrameDomain, Vector<SubFrameDomain>>&& domains, CompletionHandler<void()>&& completionHandler)
 {
     for (const auto& [topDomain, subResourceDomains] : domains) {
-        for (auto& subResourceDomain : subResourceDomains) {
+        for (auto& subResourceDomain : borrow(subResourceDomains)) {
             m_domainsWithCrossPageStorageAccess.ensure(topDomain, [] {
                 return HashSet<RegistrableDomain> { };
             }).iterator->value.add(subResourceDomain);
 
             // Some sites have quirks where multiple login domains require storage access.
-            if (auto additionalLoginDomain = WebCore::NetworkStorageSession::findAdditionalLoginDomain(topDomain, subResourceDomain)) {
+            if (auto additionalLoginDomain = WebCore::findAdditionalLoginDomain(topDomain, subResourceDomain)) {
                 m_domainsWithCrossPageStorageAccess.ensure(topDomain, [] {
                     return HashSet<RegistrableDomain> { };
                 }).iterator->value.add(*additionalLoginDomain);

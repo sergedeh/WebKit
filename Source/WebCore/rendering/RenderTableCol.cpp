@@ -34,10 +34,10 @@
 #include "RenderChildIterator.h"
 #include "RenderIterator.h"
 #include "RenderObjectInlines.h"
-#include "RenderStyle+GettersInlines.h"
 #include "RenderTable.h"
 #include "RenderTableCaption.h"
 #include "RenderTableCell.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include <wtf/CheckedPtr.h>
 #include <wtf/CheckedRef.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -48,7 +48,7 @@ using namespace HTMLNames;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderTableCol);
 
-RenderTableCol::RenderTableCol(Element& element, RenderStyle&& style)
+RenderTableCol::RenderTableCol(Element& element, Style::ComputedStyle&& style)
     : RenderBox(Type::TableCol, element, WTF::move(style))
 {
     // init RenderObject attributes
@@ -57,7 +57,7 @@ RenderTableCol::RenderTableCol(Element& element, RenderStyle&& style)
     ASSERT(isRenderTableCol());
 }
 
-RenderTableCol::RenderTableCol(Document& document, RenderStyle&& style)
+RenderTableCol::RenderTableCol(Document& document, Style::ComputedStyle&& style)
     : RenderBox(Type::TableCol, document, WTF::move(style))
 {
     setInline(true);
@@ -66,7 +66,7 @@ RenderTableCol::RenderTableCol(Document& document, RenderStyle&& style)
 
 RenderTableCol::~RenderTableCol() = default;
 
-void RenderTableCol::styleDidChange(Style::Difference diff, const RenderStyle* oldStyle)
+void RenderTableCol::styleDidChange(Style::Difference diff, const Style::ComputedStyle* oldStyle)
 {
     RenderBox::styleDidChange(diff, oldStyle);
     CheckedPtr table = this->table();
@@ -75,7 +75,7 @@ void RenderTableCol::styleDidChange(Style::Difference diff, const RenderStyle* o
     // If border was changed, notify table.
     if (!oldStyle)
         return;
-    table->invalidateCollapsedBordersAfterStyleChangeIfNeeded(*oldStyle, checkedStyle());
+    table->invalidateCollapsedBordersAfterStyleChangeIfNeeded(*oldStyle, protect(style()));
     if (oldStyle->width() != style().width()) {
         table->recalcSectionsIfNeeded();
         for (CheckedRef section : childrenOfType<RenderTableSection>(*table)) {
@@ -86,7 +86,7 @@ void RenderTableCol::styleDidChange(Style::Difference diff, const RenderStyle* o
                     CheckedPtr cell = section->primaryCellAt(i, j);
                     if (!cell)
                         continue;
-                    cell->setNeedsPreferredWidthsUpdate();
+                    cell->invalidateContentLogicalWidths();
                 }
             }
         }
@@ -98,13 +98,13 @@ void RenderTableCol::updateFromElement()
     ASSERT(element());
     unsigned oldSpan = m_span;
     if (element()->hasTagName(colTag) || element()->hasTagName(colgroupTag)) {
-        HTMLTableColElement& tc = static_cast<HTMLTableColElement&>(*element());
+        HTMLTableColElement& tc = downcast<HTMLTableColElement>(*element());
         m_span = tc.span();
     } else
         m_span = 1;
     if (m_span != oldSpan && parent()) {
         if (hasInitializedStyle())
-            setNeedsLayoutAndPreferredWidthsUpdate();
+            setNeedsLayoutAndInvalidateContentLogicalWidths();
         if (CheckedPtr table = this->table())
             table->invalidateColumns();
     }
@@ -113,7 +113,7 @@ void RenderTableCol::updateFromElement()
 void RenderTableCol::insertedIntoTree()
 {
     RenderBox::insertedIntoTree();
-    checkedTable()->addColumn(this);
+    protect(table())->addColumn(this);
 }
 
 void RenderTableCol::willBeRemovedFromTree()
@@ -125,10 +125,10 @@ void RenderTableCol::willBeRemovedFromTree()
     }
 }
 
-bool RenderTableCol::isChildAllowed(const RenderObject& child, const RenderStyle& style) const
+bool RenderTableCol::isChildAllowed(const RenderObject& child, const Style::ComputedStyle& style) const
 {
     // We cannot use isTableColumn here as style() may return 0.
-    return style.display() == DisplayType::TableColumn && child.isRenderTableCol();
+    return style.display() == Style::DisplayType::TableColumn && child.isRenderTableCol();
 }
 
 bool RenderTableCol::canHaveChildren() const
@@ -138,7 +138,7 @@ bool RenderTableCol::canHaveChildren() const
     return isTableColumnGroup();
 }
 
-LayoutRect RenderTableCol::clippedOverflowRect(const RenderLayerModelObject* repaintContainer, VisibleRectContext context) const
+LayoutRect RenderTableCol::clippedOverflowRect(const RenderLayerModelObject* repaintContainer, const VisibleRectContext& context) const
 {
     // For now, just repaint the whole table.
     // FIXME: Find a better way to do this, e.g., need to repaint all the cells that we
@@ -166,12 +166,12 @@ void RenderTableCol::imageChanged(WrappedImagePtr, const IntRect*)
     repaint();
 }
 
-void RenderTableCol::clearNeedsPreferredLogicalWidthsUpdate()
+void RenderTableCol::clearContentLogicalWidthsInvalidation()
 {
-    clearNeedsPreferredWidthsUpdate();
+    RenderObject::clearContentLogicalWidthsInvalidation();
 
     for (CheckedRef child : childrenOfType<RenderObject>(*this))
-        child->clearNeedsPreferredWidthsUpdate();
+        child->clearContentLogicalWidthsInvalidation();
 }
 
 RenderTable* RenderTableCol::table() const
@@ -180,11 +180,6 @@ RenderTable* RenderTableCol::table() const
     if (table && !is<RenderTable>(*table))
         table = table->parent();
     return dynamicDowncast<RenderTable>(table);
-}
-
-CheckedPtr<RenderTable> RenderTableCol::checkedTable() const
-{
-    return table();
 }
 
 RenderTableCol* RenderTableCol::enclosingColumnGroup() const
@@ -201,15 +196,15 @@ RenderTableCol* RenderTableCol::enclosingColumnGroup() const
 RenderTableCol* RenderTableCol::nextColumn() const
 {
     // If |this| is a column-group, the next column is the colgroup's first child column.
-    if (CheckedPtr firstChild = this->firstChild())
-        return downcast<RenderTableCol>(firstChild.get());
+    if (auto* firstChild = this->firstChild())
+        return downcast<RenderTableCol>(firstChild);
 
     // Otherwise it's the next column along.
     CheckedPtr next = nextSibling();
 
     // Failing that, the child is the last column in a column-group, so the next column is the next column/column-group after its column-group.
     if (!next && is<RenderTableCol>(*parent()))
-        next = checkedParent()->nextSibling();
+        next = protect(parent())->nextSibling();
 
     for (; next; next = next->nextSibling()) {
         if (auto* column = dynamicDowncast<RenderTableCol>(*next))
@@ -221,46 +216,46 @@ RenderTableCol* RenderTableCol::nextColumn() const
 
 const BorderValue& RenderTableCol::borderAdjoiningCellStartBorder() const
 {
-    return checkedStyle()->borderStart(table()->writingMode());
+    return style().borderStart(table()->writingMode());
 }
 
 const BorderValue& RenderTableCol::borderAdjoiningCellEndBorder() const
 {
-    return checkedStyle()->borderEnd(table()->writingMode());
+    return style().borderEnd(table()->writingMode());
 }
 
 const BorderValue& RenderTableCol::borderAdjoiningCellBefore(const RenderTableCell& cell) const
 {
-    CheckedPtr table = this->table();
+    auto* table = this->table();
     ASSERT_UNUSED(cell, table->colElement(cell.col() + cell.colSpan()) == this);
-    return checkedStyle()->borderStart(table->writingMode());
+    return style().borderStart(table->writingMode());
 }
 
 const BorderValue& RenderTableCol::borderAdjoiningCellAfter(const RenderTableCell& cell) const
 {
-    CheckedPtr table = this->table();
+    auto* table = this->table();
     ASSERT_UNUSED(cell, table->colElement(cell.col() - 1) == this);
-    return checkedStyle()->borderEnd(table->writingMode());
+    return style().borderEnd(table->writingMode());
 }
 
 LayoutUnit RenderTableCol::offsetLeft() const
 {
-    return checkedTable()->offsetLeftForColumn(*this);
+    return protect(table())->offsetLeftForColumn(*this);
 }
 
 LayoutUnit RenderTableCol::offsetTop() const
 {
-    return checkedTable()->offsetTopForColumn(*this);
+    return protect(table())->offsetTopForColumn(*this);
 }
 
 LayoutUnit RenderTableCol::offsetWidth() const
 {
-    return checkedTable()->offsetWidthForColumn(*this);
+    return protect(table())->offsetWidthForColumn(*this);
 }
 
 LayoutUnit RenderTableCol::offsetHeight() const
 {
-    return checkedTable()->offsetHeightForColumn(*this);
+    return protect(table())->offsetHeightForColumn(*this);
 }
 
 }

@@ -175,7 +175,7 @@ void Pasteboard::writeTrustworthyWebURLsPboardType(const PasteboardURL&)
     notImplemented();
 }
 
-void Pasteboard::write(const PasteboardImage& pasteboardImage)
+void Pasteboard::write(PasteboardImage&& pasteboardImage)
 {
     if (m_selectionData) {
         m_selectionData->clearAll();
@@ -183,14 +183,12 @@ void Pasteboard::write(const PasteboardImage& pasteboardImage)
             m_selectionData->setURL(pasteboardImage.url.url, pasteboardImage.url.title);
             m_selectionData->setMarkup(pasteboardImage.url.markup);
         }
-        m_selectionData->setImage(pasteboardImage.image.get());
+        m_selectionData->setImage(WTF::move(pasteboardImage.bitmap));
     } else {
         SelectionData data;
-        if (!pasteboardImage.url.url.isEmpty()) {
-            data.setURL(pasteboardImage.url.url, pasteboardImage.url.title);
+        if (!pasteboardImage.url.markup.isEmpty())
             data.setMarkup(pasteboardImage.url.markup);
-        }
-        data.setImage(pasteboardImage.image.get());
+        data.setImage(WTF::move(pasteboardImage.bitmap));
         platformStrategies()->pasteboardStrategy()->writeToClipboard(m_name, WTF::move(data));
     }
 }
@@ -365,6 +363,12 @@ void Pasteboard::read(PasteboardFileReader& reader, std::optional<size_t>)
             return;
         }
     }
+
+    static constexpr auto svgImageType = "image/svg+xml"_s;
+    if (reader.shouldReadBuffer(svgImageType)) {
+        if (auto buffer = readBuffer(0, svgImageType))
+            reader.readBuffer("image.svg"_s, svgImageType, buffer.releaseNonNull());
+    }
 }
 
 bool Pasteboard::hasData()
@@ -377,7 +381,7 @@ bool Pasteboard::hasData()
 Vector<String> Pasteboard::typesSafeForBindings(const String& origin)
 {
     if (m_selectionData) {
-        ListHashSet<String> types;
+        OrderedHashSet<String> types;
         if (auto& buffer = m_selectionData->customData()) {
             auto customData = PasteboardCustomData::fromSharedBuffer(*buffer);
             if (customData.origin() == origin) {
@@ -478,8 +482,13 @@ String Pasteboard::readStringInCustomData(const String& type)
 
 Pasteboard::FileContentState Pasteboard::fileContentState()
 {
-    if (m_selectionData)
-        return m_selectionData->filenames().isEmpty() ? FileContentState::NoFileOrImageData : FileContentState::MayContainFilePaths;
+    if (m_selectionData) {
+        if (!m_selectionData->filenames().isEmpty())
+            return FileContentState::MayContainFilePaths;
+        if (m_selectionData->hasImage())
+            return FileContentState::InMemoryImage;
+        return FileContentState::NoFileOrImageData;
+    }
 
     auto types = platformStrategies()->pasteboardStrategy()->types(m_name);
     if (types.contains("text/uri-list"_s)) {
@@ -491,14 +500,14 @@ Pasteboard::FileContentState Pasteboard::fileContentState()
     auto result = types.findIf([](const String& type) {
         return MIMETypeRegistry::isSupportedImageMIMEType(type);
     });
-    return result == notFound ? FileContentState::NoFileOrImageData : FileContentState::MayContainFilePaths;
+    return result == notFound ? FileContentState::NoFileOrImageData : FileContentState::InMemoryImage;
 }
 
 void Pasteboard::writeMarkup(const String&)
 {
 }
 
-void Pasteboard::writeCustomData(const Vector<PasteboardCustomData>& data)
+void Pasteboard::writeCustomData(const Vector<PasteboardCustomData>& data, PasteboardWriteType)
 {
     if (m_selectionData) {
         if (!data.isEmpty()) {

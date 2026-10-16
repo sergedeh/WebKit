@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2004, 2005, 2008 Nikolas Zimmermann <zimmermann@kde.org>
  * Copyright (C) 2004, 2005, 2006, 2008 Rob Buis <buis@kde.org>
- * Copyright (C) 2018-2019 Apple Inc. All rights reserved.
+ * Copyright (C) 2018-2026 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -72,7 +72,7 @@ public:
         LENGTHADJUST_SPACINGANDGLYPHS = SVGLengthAdjustSpacingAndGlyphs
     };
 
-    unsigned getNumberOfChars();
+    int numberOfCharsForBindings();
     float getComputedTextLength();
     ExceptionOr<float> getSubStringLength(unsigned charnum, unsigned nchars);
     ExceptionOr<Ref<SVGPoint>> getStartPositionOfChar(unsigned charnum);
@@ -82,19 +82,19 @@ public:
     int getCharNumAtPosition(DOMPointInit&&);
     ExceptionOr<void> selectSubString(unsigned charnum, unsigned nchars);
 
-    static const SVGTextContentElement* elementFromRenderer(const RenderObject*);
+    static const SVGTextContentElement* LEGACY_NODELETE elementFromRenderer(const RenderObject*);
 
     using PropertyRegistry = SVGPropertyOwnerRegistry<SVGTextContentElement, SVGGraphicsElement>;
 
-    const SVGLengthValue& specifiedTextLength() const { return m_specifiedTextLength; }
-    const SVGLengthValue& textLength() const { return m_textLength->currentValue(); }
+    const SVGLengthValue& specifiedTextLength() const LIFETIME_BOUND { return m_specifiedTextLength; }
+    const SVGLengthValue& textLength() const LIFETIME_BOUND { return m_textLength->currentValue(); }
     SVGLengthAdjustType lengthAdjust() const { return m_lengthAdjust->currentValue<SVGLengthAdjustType>(); }
 
     SVGAnimatedLength& textLengthAnimated();
     SVGAnimatedEnumeration& lengthAdjustAnimated() { return m_lengthAdjust; }
 
 protected:
-    SVGTextContentElement(const QualifiedName&, Document&, UniqueRef<SVGPropertyRegistry>&&);
+    SVGTextContentElement(const QualifiedName&, Document&, const SVGPropertyRegistry&);
 
     bool isValid() const override { return SVGTests::isValid(); }
 
@@ -108,8 +108,10 @@ protected:
 private:
     bool isTextContent() const final { return true; }
 
-    Ref<SVGAnimatedLength> m_textLength { SVGAnimatedLength::create(this, SVGLengthMode::Other) };
-    Ref<SVGAnimatedEnumeration> m_lengthAdjust { SVGAnimatedEnumeration::create(this, SVGLengthAdjustSpacing) };
+    unsigned numberOfChars();
+
+    const Ref<SVGAnimatedLength> m_textLength { SVGAnimatedLength::create(this, SVGLengthMode::Other) };
+    const Ref<SVGAnimatedEnumeration> m_lengthAdjust { SVGAnimatedEnumeration::create(this, SVGLengthAdjustSpacing) };
     SVGLengthValue m_specifiedTextLength { SVGLengthMode::Other };
 };
 

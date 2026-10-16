@@ -29,9 +29,11 @@
 #include <WebCore/AXStitchGroup.h>
 #include <WebCore/AXTextRun.h>
 #include <WebCore/AccessibilityRole.h>
+#include <WebCore/AffineTransform.h>
 #include <WebCore/CharacterRange.h>
 #include <WebCore/Color.h>
 #include <WebCore/ColorConversion.h>
+#include <WebCore/FrameIdentifier.h>
 #include <WebCore/HTMLTextFormControlElement.h>
 #include <WebCore/InputType.h>
 #include <WebCore/LayoutRect.h>
@@ -48,6 +50,7 @@
 #include <wtf/Platform.h>
 #include <wtf/ProcessID.h>
 #include <wtf/RefCounted.h>
+#include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/ThreadSafeWeakPtr.h>
 #include <wtf/WallTime.h>
 #include <wtf/threads/BinarySemaphore.h>
@@ -92,6 +95,7 @@ namespace WebCore {
 
 class AXCoreObject;
 class AXObjectCache;
+class AXTextMarker;
 class AXTextMarkerRange;
 class AccessibilityScrollView;
 class Document;
@@ -104,6 +108,7 @@ class Path;
 class QualifiedName;
 class RenderObject;
 class ScrollView;
+class SharedBuffer;
 
 struct AccessibilitySearchCriteria;
 struct AccessibilityText;
@@ -125,6 +130,17 @@ enum class ClickHandlerFilter : bool {
 
 enum class PreSortedObjectType : uint8_t { LiveRegion, WebArea };
 
+struct AXImageDataParameters {
+    static constexpr unsigned maxDimension = 2000;
+
+    unsigned resizeWidth { 0 };
+    unsigned resizeHeight { 0 };
+    unsigned left { 0 };
+    unsigned top { 0 };
+    unsigned width { 0 };
+    unsigned height { 0 };
+};
+
 enum class DateComponentsType : uint8_t;
 
 enum class AXAncestorFlag : uint8_t {
@@ -144,7 +160,7 @@ enum class AccessibilityDetachmentType { CacheDestroyed, ElementDestroyed, Eleme
 enum class AccessibilityConversionSpace { Screen, Page };
 
 // FIXME: This should be replaced by AXDirection (or vice versa).
-enum class AccessibilitySearchDirection {
+enum class AccessibilitySearchDirection : uint8_t {
     Next = 1,
     Previous,
 };
@@ -172,7 +188,17 @@ enum class AccessibilityObjectInclusion : uint8_t {
     DefaultBehavior,
 };
 
-enum class AccessibilityCurrentState { False, True, Page, Step, Location, Date, Time };
+enum class AccessibilityCurrentState : uint8_t { False, True, Page, Step, Location, Date, Time };
+
+enum class AccessibilityPopupValue : uint8_t {
+    False,
+    True,
+    Menu,
+    Listbox,
+    Tree,
+    Grid,
+    Dialog,
+};
 
 enum class AccessibilityButtonState {
     Off = 0,
@@ -181,6 +207,13 @@ enum class AccessibilityButtonState {
 };
 
 enum class AXDirection : bool { Next, Previous };
+
+// Controls what traverseDescendantsIncludingIgnored() does after visiting a descendant.
+enum class AXTraversalResult : uint8_t {
+    SkipSubtree, // Advance to this descendant's next sibling; do not descend into its children.
+    Descend, // Descend into this descendant's children (if any).
+    Stop, // End the traversal immediately.
+};
 
 enum class AccessibilitySortDirection {
     // It's important that Invalid is the first entry, as that means it is the "default value"
@@ -321,6 +354,10 @@ struct TextUnderElementMode {
     DescendIntoContainers descendIntoContainers { DescendIntoContainers::No };
     TrimWhitespace trimWhitespace { TrimWhitespace::Yes };
     CheckedPtr<Node> ignoredChildNode { nullptr };
+    // Tracks nodes that have already been referenced via aria-labelledby during
+    // the current name computation. These nodes should be skipped when encountered
+    // directly in the tree to avoid double-counting.
+    HashSet<const Node*>* nodesReferencedViaLabeledby { nullptr };
 
     bool isHidden() { return considerHiddenState && inHiddenSubtree; }
 };
@@ -358,6 +395,8 @@ enum class CompositionState : uint8_t { Started, InProgress, Ended };
 // Relationships between AX objects.
 enum class AXRelation : uint8_t {
     None,
+    Actions,
+    ActionsOf,
     ActiveDescendant,
     ActiveDescendantOf,
     ControlledBy,
@@ -374,6 +413,8 @@ enum class AXRelation : uint8_t {
     HeaderFor,
     LabeledBy,
     LabelFor,
+    NativeLabeledBy,
+    NativeLabelFor,
     OwnedBy,
     OwnerFor,
 };
@@ -472,7 +513,7 @@ public:
     String debugDescription(OptionSet<AXDebugStringOption> options) const { return debugDescriptionInternal(false, { options }); }
 
     inline AXID objectID() const { return m_id; }
-    virtual std::optional<AXID> treeID() const = 0;
+    virtual std::optional<AXTreeID> treeID() const = 0;
     virtual ProcessID processID() const = 0;
 
     // When the corresponding WebCore object that this accessible object
@@ -495,6 +536,7 @@ public:
     bool isLink() const { return role() == AccessibilityRole::Link; };
     bool isCode() const { return role() == AccessibilityRole::Code; }
     bool isImage() const { return role() == AccessibilityRole::Image; }
+    bool isInImage() const;
     bool isImageMap() const { return role() == AccessibilityRole::ImageMap; }
     bool isVideo() const { return role() == AccessibilityRole::Video; }
     virtual bool isSecureField() const = 0;
@@ -508,23 +550,25 @@ public:
     ListBoxInterpretation listBoxInterpretation() const;
     bool isListBoxOption() const { return role() == AccessibilityRole::ListBoxOption; }
     virtual bool isAttachment() const = 0;
-    bool isMenuRelated() const;
+    bool LEGACY_NODELETE isMenuRelated() const;
     bool isMenu() const { return role() == AccessibilityRole::Menu; }
     bool isMenuBar() const { return role() == AccessibilityRole::MenuBar; }
-    bool isMenuItem() const;
+    bool LEGACY_NODELETE isMenuItem() const;
     bool isInputImage() const;
     bool isProgressIndicator() const { return role() == AccessibilityRole::ProgressIndicator || role() == AccessibilityRole::Meter; }
     bool isSlider() const { return role() == AccessibilityRole::Slider; }
     bool isControl() const;
     bool isRadioInput() const;
     // lists support (l, ul, ol, dl)
-    bool isList() const;
+    bool LEGACY_NODELETE isList() const;
     virtual bool isDescriptionList() const = 0;
     bool isFileUploadButton() const;
+    // True for a native select.
+    bool isSelectElement() const { return elementName() == ElementName::HTML_select; }
     // Returns true for objects whose role implies interactivity. For example, when a screen
     // reader announces "link", it doesn't need to announce "clickable" or "pressable" — that
     // is implicit in the concept of a link.
-    bool isImplicitlyInteractive() const;
+    bool LEGACY_NODELETE isImplicitlyInteractive() const;
     bool isReplacedElement() const;
 
     virtual std::optional<InputType::Type> inputType() const = 0;
@@ -533,9 +577,9 @@ public:
     virtual bool isTable() const = 0;
     virtual bool isExposableTable() const = 0;
     unsigned tableLevel() const;
-    bool hasGridRole() const;
-    bool hasCellRole() const;
-    bool hasCellOrRowRole() const;
+    bool LEGACY_NODELETE hasGridRole() const;
+    bool LEGACY_NODELETE hasCellRole() const;
+    bool LEGACY_NODELETE hasCellOrRowRole() const;
     bool supportsSelectedRows() const { return hasGridRole(); }
     virtual AccessibilityChildrenVector columns() = 0;
     virtual AccessibilityChildrenVector rows() = 0;
@@ -560,7 +604,6 @@ public:
     virtual bool isColumnHeader() const { return false; }
     virtual bool isRowHeader() const { return false; }
     bool isTableCellInSameRowGroup(AXCoreObject&);
-    bool isTableCellInSameColGroup(AXCoreObject*);
     std::optional<AXID> rowGroupAncestorID() const;
     virtual String cellScope() const { return { }; }
     // Returns the start location and row span of the cell.
@@ -593,7 +636,7 @@ public:
 
     virtual bool isFieldset() const = 0;
     bool isImageMapLink() const;
-    bool isGroup() const;
+    bool LEGACY_NODELETE isGroup() const;
 #if PLATFORM(MAC)
     bool isEmptyGroup();
 #endif
@@ -607,7 +650,8 @@ public:
     virtual bool isMockObject() const = 0;
     bool isSwitch() const { return role() == AccessibilityRole::Switch; }
     bool isToggleButton() const { return role() == AccessibilityRole::ToggleButton; }
-    bool isTextControl() const;
+    bool LEGACY_NODELETE isTextControl() const;
+    static bool isTextControl(AccessibilityRole);
     virtual bool isEditableWebArea() const = 0;
     virtual bool isNonNativeTextControl() const = 0;
     bool isTabList() const { return role() == AccessibilityRole::TabList; }
@@ -622,21 +666,25 @@ public:
     bool isScrollbar() const { return role() == AccessibilityRole::ScrollBar; }
     bool isRemoteFrame() const { return role() == AccessibilityRole::RemoteFrame; }
     bool isLocalFrame() const { return role() == AccessibilityRole::LocalFrame; }
+    bool isFrame() const;
 #if PLATFORM(COCOA)
     virtual RetainPtr<id> remoteFramePlatformElement() const = 0;
+    virtual pid_t remoteFramePID() const = 0;
+    virtual std::optional<FrameIdentifier> remoteFrameID() const = 0;
 #endif
     virtual bool hasRemoteFrameChild() const = 0;
 
-    bool isButton() const;
+    bool LEGACY_NODELETE isButton() const;
     bool isMeter() const { return role() == AccessibilityRole::Meter; }
 
     bool isListItem() const { return role() == AccessibilityRole::ListItem; }
     bool isCheckboxOrRadio() const { return isCheckbox() || isRadioButton(); }
-    bool isScrollView() const { return role() == AccessibilityRole::ScrollArea; }
+    bool isScrollArea() const { return role() == AccessibilityRole::ScrollArea; }
     bool isCanvas() const { return role() == AccessibilityRole::Canvas; }
     bool isPopUpButton() const { return role() == AccessibilityRole::PopUpButton; }
     bool isColorWell() const { return role() == AccessibilityRole::ColorWell; }
     bool isSplitter() const { return role() == AccessibilityRole::Splitter; }
+    bool isFocusableSplitter() const { return isSplitter() && canSetFocusAttribute(); }
     bool isToolbar() const { return role() == AccessibilityRole::Toolbar; }
     bool isSummary() const { return role() == AccessibilityRole::Summary; }
     bool isBlockquote() const { return role() == AccessibilityRole::Blockquote; }
@@ -645,13 +693,15 @@ public:
 #endif
     bool isLineBreak() const { return role() == AccessibilityRole::LineBreak; }
 
-    bool isLandmark() const;
+    bool LEGACY_NODELETE isLandmark() const;
     virtual bool isKeyboardFocusable() const = 0;
     virtual bool isOutput() const = 0;
 
     virtual bool isChecked() const = 0;
     virtual bool isEnabled() const = 0;
     virtual bool isSelected() const = 0;
+    // The glyph of a selected option's visible ::checkmark (e.g. in a base-appearance select's picker), or the empty string.
+    virtual String selectedOptionCheckmark() const = 0;
     virtual bool isFocused() const = 0;
     virtual bool isIndeterminate() const = 0;
     virtual bool isLoaded() const = 0;
@@ -667,6 +717,8 @@ public:
     bool supportsRequiredAttribute() const;
     virtual bool isExpanded() const = 0;
     virtual bool isVisible() const = 0;
+    virtual bool isARIAHidden() const { return false; }
+    bool isAXHidden() const;
     virtual void setIsExpanded(bool) = 0;
     virtual bool supportsCheckedState() const = 0;
 
@@ -705,13 +757,16 @@ public:
     bool canSetExpandedAttribute() const;
 
     virtual Element* element() const = 0;
-    virtual Node* node() const = 0;
+    virtual Node* LEGACY_NODELETE node() const = 0;
     virtual RenderObject* renderer() const = 0;
 
     virtual bool isIgnored() const = 0;
+    // Returns std::nullopt if we don't have a cached ignored value.
+    virtual std::optional<bool> cachedIsIgnored() const = 0;
 
     unsigned blockquoteLevel() const;
     unsigned headingLevel() const;
+    virtual unsigned computedHeadingLevel() const { return 0; }
     virtual AccessibilityButtonState checkboxOrRadioValue() const = 0;
     virtual String valueDescription() const = 0;
     virtual float valueForRange() const = 0;
@@ -728,16 +783,20 @@ public:
     virtual String brailleRoleDescription() const = 0;
     virtual String embeddedImageDescription() const = 0;
     virtual std::optional<AccessibilityChildrenVector> imageOverlayElements() = 0;
+    virtual FloatSize imageDataSize() const = 0;
+    virtual RefPtr<SharedBuffer> imageData(const AXImageDataParameters&) const = 0;
     virtual String extendedDescription() const = 0;
 
-    bool supportsActiveDescendant() const;
+    bool LEGACY_NODELETE supportsActiveDescendant() const;
     bool isActiveDescendantOfFocusedContainer() const;
     virtual bool supportsARIAOwns() const = 0;
-    bool supportsARIARoleDescription() const;
+    bool LEGACY_NODELETE supportsARIARoleDescription() const;
 
     // Retrieval of related objects.
     AXCoreObject* activeDescendant() const;
     AccessibilityChildrenVector activeDescendantOfObjects() const { return relatedObjects(AXRelation::ActiveDescendantOf); }
+    AccessibilityChildrenVector associatedActionElements() const { return relatedObjects(AXRelation::Actions); }
+    AccessibilityChildrenVector ariaActionsOfObjects() const { return relatedObjects(AXRelation::ActionsOf); }
     AccessibilityChildrenVector controlledObjects() const { return relatedObjects(AXRelation::ControllerFor); }
     AccessibilityChildrenVector controllers() const { return relatedObjects(AXRelation::ControlledBy); }
     AccessibilityChildrenVector describedByObjects() const { return relatedObjects(AXRelation::DescribedBy); }
@@ -750,6 +809,11 @@ public:
     AccessibilityChildrenVector flowFromObjects() const { return relatedObjects(AXRelation::FlowsFrom); }
     AccessibilityChildrenVector labeledByObjects() const { return relatedObjects(AXRelation::LabeledBy); }
     AccessibilityChildrenVector labelForObjects() const { return relatedObjects(AXRelation::LabelFor); }
+    // This function exists because in the accname calculation, aria-labelledby takes precedence over "native"
+    // labels (like <label for="z"><input id="z">), and thus we do not create a LabelFor relationship for the native
+    // label. However, sometimes outside of accname, we do also want to know the native label relationship,
+    // which is what this function is for.
+    AccessibilityChildrenVector nativeLabeledByObjects() const { return relatedObjects(AXRelation::NativeLabeledBy); }
     AccessibilityChildrenVector ownedObjects() const { return relatedObjects(AXRelation::OwnerFor); }
     AccessibilityChildrenVector owners() const { return relatedObjects(AXRelation::OwnedBy); }
     virtual AccessibilityChildrenVector relatedObjects(AXRelation) const = 0;
@@ -760,15 +824,17 @@ public:
     virtual AccessibilityChildrenVector radioButtonGroup() const = 0;
 
     virtual bool containsOnlyStaticText() const;
+    bool isStaticTextLabel() const { return role() == AccessibilityRole::Label && containsOnlyStaticText(); }
 
-    bool hasPopup() const;
+    bool hasPopup() const { return popupValue() != AccessibilityPopupValue::False; }
     bool selfOrAncestorLinkHasPopup() const;
-    virtual String explicitPopupValue() const = 0;
-    String popupValue() const;
+    virtual AccessibilityPopupValue popupValue() const = 0;
+    String popupValueString() const;
     virtual bool supportsHasPopup() const = 0;
     virtual bool pressedIsPresent() const = 0;
-    virtual String explicitInvalidStatus() const = 0;
-    String invalidStatus() const;
+    // Assembled from aria-invalid, HTML constraint validation and any error message detected beside the
+    // field. Prefer this over explicitInvalidStatus() for determining an object's computed / final invalid state.
+    virtual String invalidStatusIncludingInferred() const = 0;
     virtual bool supportsExpanded() const = 0;
     virtual bool supportsChecked() const = 0;
     virtual AccessibilitySortDirection sortDirection() const = 0;
@@ -782,6 +848,10 @@ public:
     String currentValue() const;
     virtual bool supportsKeyShortcuts() const = 0;
     virtual String keyShortcuts() const = 0;
+#if PLATFORM(COCOA)
+    // keyShortcuts(), with the modifier keys renamed to match the labels printed on Apple keyboards.
+    String keyShortcutsPlatformString() const;
+#endif
 
     virtual bool isModalNode() const = 0;
 
@@ -808,6 +878,9 @@ public:
 #endif
     virtual AXCoreObject* parentObject() const = 0;
     virtual AXCoreObject* parentObjectUnignored() const;
+    // The unignored parent for roles whose parent is structural rather than the nearest unignored
+    // ancestor (currently a table row -> its exposed table); nullptr if no such special case applies.
+    AXCoreObject* roleSpecificUnignoredParent() const;
     AXCoreObject* parentInCoreTree() const
     {
         // Returns the parent in the "core", platform-agnostic accessibility tree, which is not necessarily
@@ -829,6 +902,11 @@ public:
     // Helpers that run on any platform and return children and parents, calling the cross frame functions if needed
     // to walk between LocalFrames.
     AccessibilityChildrenVector crossFrameUnignoredChildren();
+    size_t crossFrameUnignoredChildrenCount();
+    // Whether this object hosts a cross-frame subtree that crossFrameUnignoredChildren() hoists.
+    // Returns std::nullopt when the implementation can not cheaply determine (i.e. from a cache)
+    // whether a cross-frame child is present.
+    virtual std::optional<bool> cachedHasCrossFrameChild();
     AXCoreObject* crossFrameParentObjectUnignored() const;
     AccessibilityChildrenVector crossFrameChildrenIncludingIgnored(bool updateChildrenIfNeeded = true);
     bool crossFrameIsAncestorOfObject(const AXCoreObject&) const;
@@ -837,7 +915,13 @@ public:
     AXCoreObject* parentObjectIncludingCrossFrame() const;
     AXCoreObject* parentObjectUnignoredIncludingCrossFrame() const;
 
-    virtual AccessibilityChildrenVector findMatchingObjects(AccessibilitySearchCriteria&&) = 0;
+    // Finds the next or previous sibling that is not ignored. Uses the parent's
+    // children() list, so it works for both live objects and isolated objects.
+    AXCoreObject* nextSiblingUnignored() const;
+    AXCoreObject* previousSiblingUnignored() const;
+
+    // Finds objects within |this| object matching the given search criteria.
+    virtual AccessibilityChildrenVector findMatchingObjectsWithin(AccessibilitySearchCriteria&&);
     virtual bool isDescendantOfRole(AccessibilityRole) const = 0;
     AXCoreObject* selfOrFirstTextDescendant();
 
@@ -886,7 +970,19 @@ public:
     virtual bool hasTextRuns() = 0;
     virtual TextEmissionBehavior textEmissionBehavior() const = 0;
     bool emitsNewline() const;
-    virtual AXTextRunLineID listMarkerLineID() const = 0;
+    // True when TextIterator considers this object's node to be a replaced element (form controls,
+    // images, plugins, media, ...). The text-marker APIs represent these with a single U+FFFC
+    // object replacement character (only when the object is unignored, see
+    // AccessibilityObject::replacedNodeNeedsCharacter) rather than with newlines at their block
+    // boundaries, because TextIterator handles them in handleReplacedElement, not exitNode.
+    virtual bool isReplacedElementForTextEmission() const = 0;
+    // True when this object's node is inside a user-agent shadow tree, e.g. the inner text of a
+    // text field or the controls of a <video>. TextIterator walks the light DOM and so never emits
+    // this text, and neither do the text-marker walks over document text.
+    virtual bool isInUserAgentShadowTree() const = 0;
+    // True when this object's node is in the shadow tree of an <input> or <textarea>, as opposed to
+    // an ARIA text control.
+    virtual bool isInsideNativeTextControl() const = 0;
     virtual String listMarkerText() const = 0;
     virtual FontOrientation fontOrientation() const = 0;
 #endif
@@ -959,6 +1055,12 @@ public:
     // This is the amount that the RemoteFrame is offset from its containing parent.
     virtual IntPoint remoteFrameOffset() const = 0;
 
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+    virtual IntPoint frameScreenPosition() const = 0;
+    virtual AffineTransform frameScreenTransform() const = 0;
+    virtual bool isFrameGeometryInitialized() const { return true; }
+#endif
+
     virtual FloatRect convertFrameToSpace(const FloatRect&, AccessibilityConversionSpace) const = 0;
 #if PLATFORM(COCOA)
     virtual FloatRect convertRectToPlatformSpace(const FloatRect&, AccessibilityConversionSpace) const = 0;
@@ -972,10 +1074,14 @@ public:
     virtual IntSize size() const = 0;
     virtual IntPoint clickPoint() = 0;
     virtual Path elementPath() const = 0;
-    virtual bool supportsPath() const = 0;
+    virtual bool supportsPath() const;
 
     virtual CharacterRange selectedTextRange() const = 0;
     virtual int insertionPointLineNumber() const = 0;
+
+#if ENABLE(WRITING_TOOLS)
+    virtual bool writingToolsAvailable() const = 0;
+#endif // ENABLE(WRITING_TOOLS)
 
     virtual URL url() const = 0;
     virtual VisibleSelection selection() const = 0;
@@ -988,9 +1094,6 @@ public:
     virtual bool isWidget() const = 0;
     virtual Widget* widget() const = 0;
     virtual PlatformWidget platformWidget() const = 0;
-#if PLATFORM(COCOA)
-    virtual RetainPtr<PlatformWidget> protectedPlatformWidget() const;
-#endif
     virtual Widget* widgetForAttachmentView() const = 0;
     virtual bool isPlugin() const = 0;
 
@@ -1004,6 +1107,8 @@ public:
     virtual String language() const = 0;
     String languageIncludingAncestors() const;
     virtual unsigned ariaLevel() const = 0;
+    // True only when the author explicitly set role="group" on this object.
+    virtual bool hasExplicitGroupRole() const = 0;
     // 1-based, to match the aria-level spec.
     unsigned hierarchicalLevel() const;
     virtual bool isInlineText() const = 0;
@@ -1022,6 +1127,7 @@ public:
     virtual void setSelectedRows(AccessibilityChildrenVector&&) = 0;
 
     virtual bool press() = 0;
+    virtual bool syncPress() = 0;
     bool performDefaultAction() { return press(); }
     virtual bool performDismissAction() { return false; }
     virtual void performDismissActionIgnoringResult() = 0;
@@ -1033,35 +1139,51 @@ public:
     // which inherently are horizontal or vertical.
     virtual std::optional<AccessibilityOrientation> explicitOrientation() const = 0;
     AccessibilityOrientation orientation() const;
-    std::optional<AccessibilityOrientation> defaultOrientation() const;
+    std::optional<AccessibilityOrientation> LEGACY_NODELETE defaultOrientation() const;
 
     virtual void increment() = 0;
     virtual void decrement() = 0;
+    virtual void syncIncrement() = 0;
+    virtual void syncDecrement() = 0;
 
     // When ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE) is true, this returns ignored children.
     // When it is not, it returns unignored children. After ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
     // is the default, we should rename this function to childrenIncludingIgnored, and all callers
     // should be audited to either use that, or unignoredChildren.
-    virtual const AccessibilityChildrenVector& children(bool updateChildrenIfNeeded = true) = 0;
+    virtual const AccessibilityChildrenVector& children(bool updateChildrenIfNeeded = true) LIFETIME_BOUND = 0;
 
-    const AccessibilityChildrenVector& childrenIncludingIgnored(bool updateChildrenIfNeeded = true)
+    const AccessibilityChildrenVector& childrenIncludingIgnored(bool updateChildrenIfNeeded = true) LIFETIME_BOUND
     {
         return children(updateChildrenIfNeeded);
     };
 
+    // Walks this object's descendants in pre-order through the core (include-ignored) AX tree,
+    // calling `visitor` once per descendant. `visitor` returns an AXTraversalResult controlling
+    // descent.
+    //
+    // Keeps a cached parent + siblings cursor so sibling walks and subtree ascents reuse one
+    // parentObject() call per hop instead of re-fetching via nextSiblingIncludingIgnored() /
+    // nextInPreOrder().
+    template<typename Visitor>
+    void traverseDescendantsIncludingIgnored(NOESCAPE const Visitor&, bool updateChildrenIfNeeded = true);
+
 #if ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
     bool onlyAddsUnignoredChildren() const { return isTableColumn() || role() == AccessibilityRole::TableHeaderContainer; }
-    AccessibilityChildrenVector unignoredChildren(bool updateChildrenIfNeeded = true);
+    virtual AccessibilityChildrenVector unignoredChildren(bool updateChildrenIfNeeded = true);
     bool hasUnignoredChild();
 #else
-    const AccessibilityChildrenVector& unignoredChildren(bool updateChildrenIfNeeded = true) { return children(updateChildrenIfNeeded); }
+    const AccessibilityChildrenVector& unignoredChildren(bool updateChildrenIfNeeded = true) LIFETIME_BOUND { return children(updateChildrenIfNeeded); }
     bool hasUnignoredChild()
     {
         const auto& children = this->children();
         return !children.isEmpty();
     }
 #endif // ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
-    AccessibilityChildrenVector stitchedUnignoredChildren();
+    virtual AccessibilityChildrenVector stitchedUnignoredChildren();
+    virtual size_t stitchedUnignoredChildrenCount();
+    virtual const AccessibilityChildrenVector* cachedUnignoredChildren() { return nullptr; }
+    virtual const AccessibilityChildrenVector* cachedStitchedUnignoredChildren() { return nullptr; }
+    virtual AccessibilityChildrenVector crossFrameUnignoredChildrenInRange(size_t start, size_t maxCount);
 
     virtual bool isBlockFlow() const { return false; }
     bool hasStitchableRole() const
@@ -1084,6 +1206,12 @@ public:
         return std::nullopt;
     }
 
+    // Resolves this object to its stitch-group representative when it has been stitched away
+    // (i.e. removed from its parent's exposed children); otherwise returns this object. AT-facing
+    // APIs that hand a single object to the client should route through this so a stitched-away
+    // member is never exposed as an element that is absent from the tree.
+    RefPtr<AXCoreObject> stitchRepresentativeOrSelf();
+
     // When ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE) is true, this returns IDs of ignored children.
     // When it is not, it returns IDs of unignored children. After ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
     // is the default, we should rename this function to childrenIDsIncludingIgnored, as that is what all
@@ -1093,7 +1221,6 @@ public:
     RefPtr<AXCoreObject> nextInPreOrder(bool updateChildrenIfNeeded, AXCoreObject* stayWithin, bool includeCrossFrame);
     AXCoreObject* nextSiblingIncludingIgnored(bool updateChildrenIfNeeded) const;
     AXCoreObject* nextSiblingIncludingIgnored(bool updateChildrenIfNeeded, bool includeCrossFrame) const;
-    AXCoreObject* nextUnignoredSibling(bool updateChildrenIfNeeded, AXCoreObject* unignoredParent = nullptr) const;
     AXCoreObject* nextSiblingIncludingIgnoredOrParent() const;
     std::optional<AXID> idOfNextSiblingIncludingIgnoredOrParent() const
     {
@@ -1102,7 +1229,8 @@ public:
     }
 
     RefPtr<AXCoreObject> previousInPreOrder(bool updateChildrenIfNeeded = true, AXCoreObject* stayWithin = nullptr);
-    AXCoreObject* previousSiblingIncludingIgnored(bool updateChildrenIfNeeded);
+    RefPtr<AXCoreObject> previousInPreOrder(bool updateChildrenIfNeeded, AXCoreObject* stayWithin, bool includeCrossFrame);
+    RefPtr<AXCoreObject> previousSiblingIncludingIgnored(bool updateChildrenIfNeeded);
     AXCoreObject* deepestLastChildIncludingIgnored(bool updateChildrenIfNeeded);
 
     void setIndexInParent(unsigned index)
@@ -1125,7 +1253,7 @@ public:
         return shouldSetChildIndex;
     }
     unsigned indexInParent() const { return m_indexInParent; }
-#ifndef NDEBUG
+#if ASSERT_ENABLED
     virtual void verifyChildrenIndexInParent() const = 0;
     void verifyChildrenIndexInParent(const AccessibilityChildrenVector&) const;
 #endif
@@ -1135,7 +1263,7 @@ public:
     AccessibilityChildrenVector listboxSelectedChildren();
     AccessibilityChildrenVector selectedRows();
     AccessibilityChildrenVector selectedListItems();
-    bool canHaveSelectedChildren() const;
+    bool LEGACY_NODELETE canHaveSelectedChildren() const;
     AccessibilityChildrenVector selectedChildren();
     virtual void setSelectedChildren(const AccessibilityChildrenVector&) = 0;
     virtual AccessibilityChildrenVector visibleChildren() = 0;
@@ -1162,6 +1290,13 @@ public:
 #endif
 #if PLATFORM(MAC)
     virtual AXTextMarkerRange selectedTextMarkerRange() const = 0;
+
+    // Character offset of `marker` within this object's textMarkerRange,
+    // 0..numberOfCharacters. Returns std::nullopt when `marker` does not lie
+    // within this object's range, or when the range cannot be determined.
+    // The returned value is the natural counterpart to AXIndexForTextMarker
+    // (which is document-root-relative); this is receiver-relative.
+    std::optional<unsigned> relativeIndexForTextMarker(const AXTextMarker&);
 #endif
 
     virtual IntRect boundsForRange(const SimpleRange&) const = 0;
@@ -1273,9 +1408,10 @@ public:
 
     AccessibilityObjectWrapper* wrapper() const { return m_wrapper.get(); }
 #if PLATFORM(COCOA)
-    WEBCORE_EXPORT RetainPtr<AccessibilityObjectWrapper> protectedWrapper() const;
+    WEBCORE_EXPORT RetainPtr<id> platformElement() const;
 #endif
     void setWrapper(AccessibilityObjectWrapper* wrapper) { m_wrapper = wrapper; }
+    void setWrapperFrom(const AXCoreObject& other) { m_wrapper = other.m_wrapper; }
     void detachWrapper(AccessibilityDetachmentType);
 
 #if PLATFORM(IOS_FAMILY)
@@ -1413,6 +1549,61 @@ inline Vector<AXID> axIDs(const AXCoreObject::AccessibilityChildrenVector& objec
     });
 }
 
+template<typename Visitor>
+void AXCoreObject::traverseDescendantsIncludingIgnored(NOESCAPE const Visitor& visitor, bool updateChildrenIfNeeded)
+{
+    const auto& children = childrenIncludingIgnored(updateChildrenIfNeeded);
+    if (children.isEmpty())
+        return;
+
+    RefPtr descendant = children[0].ptr();
+    RefPtr<AXCoreObject> parent;
+    const AccessibilityChildrenVector* siblings = nullptr;
+
+    while (descendant && descendant != this) {
+        AXTraversalResult result = visitor(*descendant);
+        if (result == AXTraversalResult::Stop)
+            return;
+
+        if (result == AXTraversalResult::Descend && descendant->shouldSetChildIndexInParent()) {
+            // Ignored or invalid descendant: descend into its subtree to look for unignored nested descendants.
+            // Skip descent into Column and TableHeaderContainer, as they add cells despite not being their "true"
+            // parent (the rows are), so descending would either recurse infinitely or walk the wrong sibling
+            // list. This matches the role check in nextInPreOrder().
+            const auto& descendantChildren = descendant->childrenIncludingIgnored(updateChildrenIfNeeded);
+            if (!descendantChildren.isEmpty()) {
+                descendant = descendantChildren[0].ptr();
+                parent = nullptr;
+                continue;
+            }
+        }
+
+        // Either SkipSubtree, or descent wasn't possible. Advance to the next sibling,
+        // or ascend if there isn't one.
+        while (descendant && descendant != this) {
+            if (!parent) {
+                parent = descendant->parentObject();
+                if (!parent) {
+                    siblings = nullptr;
+                    descendant = nullptr;
+                    break;
+                }
+                siblings = &parent->childrenIncludingIgnored();
+            }
+
+            unsigned nextSiblingIndex = descendant->indexInParent() + 1;
+            if (RefPtr nextSibling = nextSiblingIndex < siblings->size() ? (*siblings)[nextSiblingIndex].ptr() : nullptr) {
+                descendant = WTF::move(nextSibling);
+                break;
+            }
+
+            // No next sibling, ascend to parent.
+            descendant = WTF::move(parent);
+            parent = nullptr;
+        }
+    }
+}
+
 #if PLATFORM(MAC)
 void attributedStringSetExpandedText(NSMutableAttributedString *, const AXCoreObject&, const NSRange&);
 void attributedStringSetNeedsSpellCheck(NSMutableAttributedString *, const AXCoreObject&);
@@ -1499,6 +1690,12 @@ inline Vector<AXID> AXCoreObject::childrenIDs(bool updateChildrenIfNeeded)
     return axIDs(children(updateChildrenIfNeeded));
 }
 
+inline bool AXCoreObject::isFrame() const
+{
+    auto role = this->role();
+    return role == AccessibilityRole::LocalFrame || role == AccessibilityRole::RemoteFrame;
+}
+
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
 inline bool AXCoreObject::emitsNewline() const
 {
@@ -1509,8 +1706,10 @@ inline bool AXCoreObject::emitsNewline() const
 
 namespace Accessibility {
 
+constexpr unsigned maxDescendantTraversalIterations = 100000;
+
 template<typename T, typename MatchFunctionT, typename StopFunctionT>
-T* crossFrameFindAncestor(const T& object, bool includeSelf, const MatchFunctionT& matches, const StopFunctionT& shouldStop)
+T* crossFrameFindAncestor(const T& object, bool includeSelf, NOESCAPE const MatchFunctionT& matches, NOESCAPE const StopFunctionT& shouldStop)
 {
     RefPtr<T> current;
     if (includeSelf)
@@ -1529,7 +1728,7 @@ T* crossFrameFindAncestor(const T& object, bool includeSelf, const MatchFunction
 }
 
 template<typename T, typename MatchFunctionT, typename StopFunctionT>
-T* findAncestor(const T& object, bool includeSelf, const MatchFunctionT& matches, const StopFunctionT& shouldStop)
+T* findAncestor(const T& object, bool includeSelf, NOESCAPE const MatchFunctionT& matches, NOESCAPE const StopFunctionT& shouldStop)
 {
     RefPtr<T> current;
     if (includeSelf)
@@ -1548,7 +1747,7 @@ T* findAncestor(const T& object, bool includeSelf, const MatchFunctionT& matches
 }
 
 template<typename T, typename MatchFunctionT>
-T* findAncestor(const T& object, bool includeSelf, const MatchFunctionT& matches)
+T* findAncestor(const T& object, bool includeSelf, NOESCAPE const MatchFunctionT& matches)
 {
     return findAncestor(object, includeSelf, matches, [] (const auto&) {
         return false;
@@ -1556,7 +1755,7 @@ T* findAncestor(const T& object, bool includeSelf, const MatchFunctionT& matches
 }
 
 template<typename T, typename MatchFunctionT>
-T* crossFrameFindAncestor(const T& object, bool includeSelf, const MatchFunctionT& matches)
+T* crossFrameFindAncestor(const T& object, bool includeSelf, NOESCAPE const MatchFunctionT& matches)
 {
     return crossFrameFindAncestor(object, includeSelf, matches, [] (const auto&) {
         return false;
@@ -1564,7 +1763,7 @@ T* crossFrameFindAncestor(const T& object, bool includeSelf, const MatchFunction
 }
 
 template<typename T, typename F>
-T* clickableSelfOrAncestor(const T& startObject, const F& shouldStop)
+T* clickableSelfOrAncestor(const T& startObject, NOESCAPE const F& shouldStop)
 {
     RefPtr<T> ancestor = findAncestor<T>(startObject, true, [](const auto& ancestor) {
         return ancestor.hasClickHandler();
@@ -1591,30 +1790,55 @@ T* findRelatedObjectInAncestry(const T& object, AXRelation relation, const T& de
 }
 
 template<typename T, typename F>
-AXCoreObject* findUnignoredDescendant(T& object, bool includeSelf, const F& matches)
+AXCoreObject* findUnignoredDescendant(T& object, bool includeSelf, NOESCAPE const F& matches)
 {
     if (includeSelf && matches(object) && !object.isIgnored())
         return &object;
 
-    for (Ref child : object.childrenIncludingIgnored()) {
-        if (RefPtr descendant = findUnignoredDescendant(child.get(), /* includeSelf */ true, matches))
-            return descendant.unsafeGet();
+    Vector<Ref<AXCoreObject>> stack;
+    for (const auto& child : object.childrenIncludingIgnored())
+        stack.append(child);
+
+    unsigned iterationCount = 0;
+#if AX_ASSERTS_ENABLED
+    HashSet<Ref<AXCoreObject>> visited;
+#endif
+
+    RefPtr<AXCoreObject> result = nullptr;
+    while (!stack.isEmpty()) {
+        if (++iterationCount > maxDescendantTraversalIterations)
+            break;
+
+        Ref current = stack.takeLast();
+#if AX_ASSERTS_ENABLED
+        bool foundCycle = !visited.add(current.copyRef()).isNewEntry;
+        AX_ASSERT(!foundCycle);
+        if (foundCycle)
+            break;
+#endif
+        if (matches(current.get()) && !current->isIgnored()) {
+            result = current.ptr();
+            break;
+        }
+
+        for (const auto& child : current->childrenIncludingIgnored())
+            stack.append(child);
     }
-    return nullptr;
+    return result.unsafeGet();
 }
 
 template<typename T, typename F>
-T* findUnignoredChild(T& object, F&& matches)
+T* findUnignoredChild(T& object, NOESCAPE const F& matches)
 {
     for (auto child : object.unignoredChildren()) {
         if (matches(child))
-            return downcast<T>(child.ptr());
+            return downcast<T>(child.unsafePtr());
     }
     return nullptr;
 }
 
 template<typename T, typename F>
-void enumerateAncestors(const T& object, bool includeSelf, const F& lambda)
+void enumerateAncestors(const T& object, bool includeSelf, NOESCAPE const F& lambda)
 {
     if (includeSelf)
         lambda(object);
@@ -1624,26 +1848,70 @@ void enumerateAncestors(const T& object, bool includeSelf, const F& lambda)
 }
 
 template<typename T, typename F>
-void enumerateDescendantsIncludingIgnored(T& object, bool includeSelf, const F& lambda)
+void enumerateDescendantsIncludingIgnored(T& object, bool includeSelf, NOESCAPE const F& lambda)
 {
     if (includeSelf)
         lambda(object);
 
-    for (const auto& child : object.childrenIncludingIgnored())
-        enumerateDescendantsIncludingIgnored(child.get(), true, lambda);
+    unsigned iterationCount = 0;
+#if AX_ASSERTS_ENABLED
+    HashSet<Ref<AXCoreObject>> visited;
+#endif
+
+    Vector<Ref<AXCoreObject>> stack;
+    for (auto& child : object.childrenIncludingIgnored())
+        stack.append(child);
+
+    while (!stack.isEmpty()) {
+        if (++iterationCount > maxDescendantTraversalIterations)
+            break;
+
+        Ref current = stack.takeLast();
+#if AX_ASSERTS_ENABLED
+        bool foundCycle = !visited.add(current.copyRef()).isNewEntry;
+        AX_ASSERT(!foundCycle);
+        if (foundCycle)
+            break;
+#endif
+        lambda(current.get());
+        for (auto& child : current->childrenIncludingIgnored())
+            stack.append(child);
+    }
 }
 
 template<typename T, typename F>
-void enumerateUnignoredDescendants(T& object, bool includeSelf, const F& lambda)
+void enumerateUnignoredDescendants(T& object, bool includeSelf, NOESCAPE const F& lambda)
 {
     if (includeSelf)
         lambda(object);
 
-    // We have a reference to unignored children here, so it's possible that it will change when enumerating the unignored
-    // descendants, so copying here ensures they don't change.
-    auto children = object.unignoredChildren();
-    for (const auto& child : children)
-        enumerateUnignoredDescendants(child.get(), true, lambda);
+    // Children go onto the stack last to first, so that they come off it in document order.
+    Vector<Ref<AXCoreObject>> stack;
+    const auto& children = object.unignoredChildren();
+    for (const auto& child : children | std::views::reverse)
+        stack.append(child);
+
+    unsigned iterationCount = 0;
+#if AX_ASSERTS_ENABLED
+    HashSet<Ref<AXCoreObject>> visited;
+#endif
+
+    while (!stack.isEmpty()) {
+        if (++iterationCount > maxDescendantTraversalIterations)
+            break;
+
+        Ref current = stack.takeLast();
+#if AX_ASSERTS_ENABLED
+        bool foundCycle = !visited.add(current.copyRef()).isNewEntry;
+        AX_ASSERT(!foundCycle);
+        if (foundCycle)
+            break;
+#endif
+        lambda(current.get());
+        const auto& currentChildren = current->unignoredChildren();
+        for (const auto& child : currentChildren | std::views::reverse)
+            stack.append(child);
+    }
 }
 
 template<typename U> inline void performFunctionOnMainThreadAndWait(U&& lambda)
@@ -1661,7 +1929,7 @@ template<typename U> inline void performFunctionOnMainThread(U&& lambda)
 }
 
 template<typename T = std::monostate>
-struct TimeoutSafeSemaphore : RefCounted<TimeoutSafeSemaphore<T>> {
+struct TimeoutSafeSemaphore : ThreadSafeRefCounted<TimeoutSafeSemaphore<T>> {
     // This struct is useful for passing in lambdas from one thread to another, as it is ref-counted,
     // meaning it won't be destroyed out from any thread involved even when a timeout happens
     // and one of the threads moves on (which would normally destroy the semaphore it had on
@@ -1675,6 +1943,19 @@ struct TimeoutSafeSemaphore : RefCounted<TimeoutSafeSemaphore<T>> {
     bool wait(Seconds timeout) { return semaphore.waitFor(timeout); }
 };
 
+constexpr Seconds HitTestCacheExpiration = 500_ms;
+// Timeout constants for retrieveValueFromMainThreadWithTimeoutAndDefault.
+// These are grouped by operation type to make it easier to tune timeouts.
+constexpr Seconds HitTestTimeout = 15_ms;
+constexpr Seconds BoundingBoxTimeout = 25_ms;
+constexpr Seconds GeneralPropertyTimeout = 25_ms;
+constexpr Seconds VisibilityCheckTimeout = 50_ms;
+constexpr Seconds SpellCheckTimeout = 100_ms;
+constexpr Seconds LineRectsAndTextTimeout = 100_ms;
+constexpr Seconds TextMarkerForBoundsTimeout = 100_ms;
+constexpr Seconds InteractiveTimeout = 250_ms;
+constexpr Seconds ImageDataTimeout = 250_ms;
+constexpr Seconds PluginTimeout = 500_ms;
 
 template<typename U>
 inline DidTimeout performFunctionOnMainThreadAndWaitWithTimeout(U&& lambda, Seconds timeout)
@@ -1735,6 +2016,33 @@ inline auto retrieveValueFromMainThreadWithTimeout(U&& lambda, Seconds timeout)
     return TimeoutableValue<RetrieveValueType> { semaphore->value };
 }
 
+template<typename U, typename DefaultType>
+inline auto retrieveValueFromMainThreadWithTimeoutAndDefault(U&& lambda, Seconds timeout, DefaultType&& defaultValue)
+{
+    using RetrieveValueType = decltype(lambda());
+
+    if (isMainThread())
+        return std::forward<U>(lambda)();
+
+    Ref<TimeoutSafeSemaphore<RetrieveValueType>> semaphore = adoptRef(*new TimeoutSafeSemaphore<RetrieveValueType>);
+    ensureOnMainThread([semaphore, lambda = std::forward<U>(lambda)] () mutable {
+        // Execute lambda and store result.
+        semaphore->value = lambda();
+        // Only signal if the calling thread didn't timeout waiting for the main-thread to complete the lambda.
+        if (semaphore->shouldSignal.exchange(false, std::memory_order_acq_rel))
+            semaphore->signal();
+    });
+
+    bool completedInTime = semaphore->wait(timeout);
+    if (!completedInTime) {
+        // If we timed out, prevent a later signal attempt from the lambda.
+        semaphore->shouldSignal.exchange(false, std::memory_order_acq_rel);
+        return static_cast<RetrieveValueType>(std::forward<DefaultType>(defaultValue));
+    }
+    // If we completed in time, the value was written before the signal, so we can safely read it.
+    return *semaphore->value;
+}
+
 template<typename T, typename U> inline T retrieveValueFromMainThread(U&& lambda)
 {
     std::optional<T> value;
@@ -1755,7 +2063,7 @@ template<typename T, typename U> inline T retrieveAutoreleasedValueFromMainThrea
 }
 #endif
 
-bool inRenderTreeOrStyleUpdate(const Document&);
+bool LEGACY_NODELETE inRenderTreeOrStyleUpdate(const Document&);
 
 using PlatformRoleMap = HashMap<AccessibilityRole, String, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>>;
 
@@ -1766,6 +2074,10 @@ String roleToPlatformString(AccessibilityRole);
 std::optional<AXTextMarkerRange> markerRangeFrom(NSRange, const AXCoreObject&);
 #endif
 Color defaultColor();
+
+// Performs a press action on the target object identified by treeID and targetID.
+// Handles the tree lookup and main thread execution. Returns true if the press succeeded.
+bool performCustomActionPress(AXTreeID, AXID targetID);
 
 // Intended to work with size-types (like IntSize) or rect-types (like LayoutRect).
 template <typename SizeOrRectType>
@@ -1797,7 +2109,7 @@ inline bool AXCoreObject::isAncestorOfObject(const AXCoreObject& axObject) const
 inline AXCoreObject* AXCoreObject::axScrollView() const
 {
     return Accessibility::findAncestor(*this, true, [] (const auto& ancestor) {
-        return ancestor.isScrollView();
+        return ancestor.isScrollArea();
     });
 }
 
@@ -1858,6 +2170,13 @@ inline AXCoreObject* AXCoreObject::exposedTableAncestor(bool includeSelf) const
 {
     return Accessibility::findAncestor(*this, includeSelf, [] (const auto& object) {
         return object.isExposableTable();
+    });
+}
+
+inline bool AXCoreObject::isInImage() const
+{
+    return Accessibility::findAncestor<AXCoreObject>(*this, /* includeSelf */ false, [] (const AXCoreObject& ancestor) {
+        return ancestor.role() == AccessibilityRole::Image;
     });
 }
 

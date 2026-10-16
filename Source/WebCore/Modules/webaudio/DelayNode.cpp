@@ -43,7 +43,7 @@ constexpr double maximumAllowedDelayTime = 180;
 inline DelayNode::DelayNode(BaseAudioContext& context, double maxDelayTime)
     : AudioBasicProcessorNode(context, NodeTypeDelay)
 {
-    m_processor = makeUnique<DelayProcessor>(context, context.sampleRate(), 1, maxDelayTime);
+    lazyInitialize(m_processor, makeUnique<DelayProcessor>(context, context.sampleRate(), 1, maxDelayTime));
 
     // Initialize so that AudioParams can be processed.
     initialize();
@@ -63,7 +63,7 @@ ExceptionOr<Ref<DelayNode>> DelayNode::create(BaseAudioContext& context, const D
     if (result.hasException())
         return result.releaseException();
 
-    delayNode->checkedDelayTime()->setValue(options.delayTime);
+    protect(delayNode->delayTime())->setValue(options.delayTime);
 
     return delayNode;
 }
@@ -71,11 +71,6 @@ ExceptionOr<Ref<DelayNode>> DelayNode::create(BaseAudioContext& context, const D
 AudioParam& DelayNode::delayTime()
 {
     return downcast<DelayProcessor>(*m_processor).delayTime();
-}
-
-CheckedRef<AudioParam> DelayNode::checkedDelayTime()
-{
-    return delayTime();
 }
 
 } // namespace WebCore

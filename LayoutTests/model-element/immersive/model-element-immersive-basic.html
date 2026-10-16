@@ -26,11 +26,11 @@ promise_test(async t => {
 promise_test(async t => {
     const [model, source] = createModelAndSource(t, "../resources/cube.usdz");
     
-    await promise_rejects_js(t, TypeError, 
+    await promise_rejects_dom(t, "NotAllowedError",
         model.requestImmersive(),
         'Should reject without user activation'
     );
-    
+
     assert_equals(document.immersiveElement, null, 'No immersive element without user gesture');
 }, 'Model immersive request fails without user activation');
 
@@ -41,6 +41,8 @@ promise_test(async t => {
     await model.requestImmersive();
     
     assert_equals(document.immersiveElement, model, 'Document should reference immersive model');
+
+    await document.exitImmersive();
 }, 'Model enters immersive mode with user activation');
 
 promise_test(async t => {
@@ -94,6 +96,8 @@ promise_test(async t => {
 
     assert_equals(documentChangeEvents.length, 1, 'Document should fire one immersivechange event');
     assert_equals(documentChangeEvents[0], model, 'Document event should reference model');
+
+    await document.exitImmersive();
 }, 'Immersivechange events fire when entering immersive');
 
 promise_test(async t => {
@@ -109,6 +113,8 @@ promise_test(async t => {
     await model2.requestImmersive();
     
     assert_equals(document.immersiveElement, model2, 'Document should reference second model');
+
+    await document.exitImmersive();
 }, 'Only one model can be immersive at a time');
 
 
@@ -141,7 +147,7 @@ promise_test(async t => {
     
     model.remove();
     
-    assert_equals(document.immersiveElement, null, 'No immersive element after removal');
+    await t.step_wait(() => document.immersiveElement === null, 'Waiting for immersive element to be cleared after removal');
 }, 'Removing immersive model from DOM exits immersive mode');
 
 promise_test(async t => {
@@ -151,14 +157,14 @@ promise_test(async t => {
     const errorHandler = () => { errorFired = true; };
     model.addEventListener('immersiveerror', errorHandler);
     
-    await promise_rejects_js(t, TypeError, 
+    await promise_rejects_dom(t, "NotAllowedError",
         model.requestImmersive(),
         'Should reject without user activation'
     );
-    
+
     await new Promise(resolve => setTimeout(resolve, 100));
     model.removeEventListener('immersiveerror', errorHandler);
-    
+
     assert_true(errorFired, 'immersiveerror event should fire on failed request');
 }, 'Immersiveerror event fires when request fails');
 
@@ -184,6 +190,8 @@ promise_test(async t => {
     await model.requestImmersive();
     
     assert_equals(model.complete, true, 'Model should be complete when immersive');
+
+    await document.exitImmersive();
 }, 'Model is complete once presented as immersive');
 
 promise_test(async t => {
@@ -192,7 +200,7 @@ promise_test(async t => {
     
     await test_driver.bless("immersive");
     const promise1 = model1.requestImmersive();
-    const promise2 = promise_rejects_js(t, TypeError, 
+    const promise2 = promise_rejects_dom(t, "NotAllowedError",
         model2.requestImmersive(),
         'Should reject without user activation'
     );
@@ -200,6 +208,8 @@ promise_test(async t => {
     await Promise.all([promise1, promise2]);
     
     assert_equals(document.immersiveElement, model1, 'Model should be immersive after multiple requests');
+
+    await document.exitImmersive();
 }, 'Multiple concurrent requestImmersive calls are handled correctly');
 
 </script>

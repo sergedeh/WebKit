@@ -54,12 +54,12 @@ public:
 
     using Type = WebExtensionDataType;
 
-    const String& displayName() const { return m_displayName; }
-    const String& uniqueIdentifier() const { return m_uniqueIdentifier; }
+    const String& displayName() const LIFETIME_BOUND { return m_displayName; }
+    const String& uniqueIdentifier() const LIFETIME_BOUND { return m_uniqueIdentifier; }
 
-    OptionSet<Type> types() const;
+    OptionSet<Type> LEGACY_NODELETE types() const;
 
-    size_t totalSize() const;
+    size_t LEGACY_NODELETE totalSize() const;
     size_t sizeOfTypes(OptionSet<Type>) const;
 
     size_t sizeOfType(Type type) const { return m_typeSizes.get(type); }
@@ -74,14 +74,14 @@ public:
     WKWebExtensionDataRecord *wrapper() const { return (WKWebExtensionDataRecord *)API::ObjectImpl<API::Object::Type::WebExtensionDataRecord>::wrapper(); }
 #endif
 
-    bool operator==(const WebExtensionDataRecord&) const;
+    bool LEGACY_NODELETE operator==(const WebExtensionDataRecord&) const;
 
 private:
     String m_displayName;
     String m_uniqueIdentifier;
     HashMap<Type, size_t> m_typeSizes;
 #if PLATFORM(COCOA)
-    RetainPtr<NSMutableArray> m_errors;
+    const RetainPtr<NSMutableArray> m_errors;
 #endif
 };
 
@@ -96,9 +96,10 @@ public:
         return adoptRef(*new WebExtensionDataRecordHolder(std::forward<Args>(args)...));
     }
 
-    WebExtensionDataRecordHolder() { };
-
     HashMap<String, Ref<WebExtensionDataRecord>> recordsMap;
+
+private:
+    WebExtensionDataRecordHolder() = default;
 };
 
 } // namespace WebKit

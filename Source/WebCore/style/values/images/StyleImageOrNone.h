@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 Samuel Weinig <sam@webkit.org>
+ * Copyright (C) 2025-2026 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,6 +28,11 @@
 #include <wtf/PointerComparison.h>
 
 namespace WebCore {
+
+namespace CSS {
+struct ImageOrNone;
+}
+
 namespace Style {
 
 struct ImageOrNone {
@@ -40,7 +45,7 @@ struct ImageOrNone {
     {
     }
 
-    ImageOrNone(RefPtr<StyleImage>&& image)
+    ImageOrNone(RefPtr<Image>&& image)
         : m_value { WTF::move(image) }
     {
     }
@@ -49,9 +54,9 @@ struct ImageOrNone {
     bool isImage() const { return !!m_value; }
 
     std::optional<ImageWrapper> tryImage() const { return m_value ? std::make_optional(ImageWrapper { *m_value }) : std::nullopt; }
-    RefPtr<StyleImage> tryStyleImage() const { return m_value; }
+    RefPtr<Image> tryStyleImage() const { return m_value; }
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
@@ -66,18 +71,21 @@ struct ImageOrNone {
     }
 
 private:
-    RefPtr<StyleImage> m_value { };
+    RefPtr<Image> m_value { };
 };
 
 // MARK: - Conversion
+
+template<> struct ToCSS<ImageOrNone> { auto operator()(const ImageOrNone&, const Style::ComputedStyle&) -> CSS::ImageOrNone; };
+template<> struct ToStyle<CSS::ImageOrNone> { auto operator()(const CSS::ImageOrNone&, const BuilderState&) -> ImageOrNone; };
 
 template<> struct CSSValueConversion<ImageOrNone> { auto operator()(BuilderState&, const CSSValue&) -> ImageOrNone; };
 
 // MARK: - Blending
 
 template<> struct Blending<ImageOrNone> {
-    auto canBlend(const ImageOrNone&, const ImageOrNone&) -> bool;
-    auto blend(const ImageOrNone&, const ImageOrNone&, const RenderStyle&, const RenderStyle&, const BlendingContext&) -> ImageOrNone;
+    bool LEGACY_NODELETE canBlend(const ImageOrNone&, const ImageOrNone&);
+    auto blend(const ImageOrNone&, const ImageOrNone&, const Style::ComputedStyle&, const Style::ComputedStyle&, const BlendingContext&) -> ImageOrNone;
 };
 
 } // namespace Style

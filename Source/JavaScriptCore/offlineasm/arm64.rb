@@ -429,6 +429,27 @@ end
 # Actual lowering code follows.
 #
 
+# Pre- and post-indexed accesses fold the offset into the base register as a side effect of the
+# access. The lowerings that legalise an out-of-range offset compute the address into a temporary
+# instead, which would drop that writeback without a diagnostic, so these opcodes are kept out of
+# those lowerings and their offset has to be encodable exactly as written. Post-indexed forms carry
+# the increment as a separate operand, so their address has to be a bare base register.
+ARM64_INDEXED_LOAD_STORE_OFFSETS = {
+    "loadqinc" => 0..0,
+    "loadbinc" => 0..0,
+    "loadbpreinc" => -256..255,
+}
+
+def isArm64IndexedLoadStore(opcode)
+    ARM64_INDEXED_LOAD_STORE_OFFSETS.key? opcode
+end
+
+def arm64IndexedLoadStoreAddress(opcode, operand)
+    raise "#{opcode} needs an address with an immediate offset at #{operand.codeOriginString}" unless operand.is_a? Address
+    raise "#{opcode} offset #{operand.offset.value} out of range at #{operand.codeOriginString}" unless ARM64_INDEXED_LOAD_STORE_OFFSETS[opcode].include? operand.offset.value
+    operand
+end
+
 def isMalformedArm64LoadStoreAddress(opcode, operand)
     malformed = false
     if operand.is_a? Address
@@ -445,6 +466,8 @@ def isMalformedArm64LoadStoreAddress(opcode, operand)
             malformed ||= (not (operand.offset.value % 8).zero?)
         when "loadi", "loadis", "storei"
             malformed ||= (not (-255..16380).include? operand.offset.value)
+        when *ARM64_INDEXED_LOAD_STORE_OFFSETS.keys
+            malformed ||= (not ARM64_INDEXED_LOAD_STORE_OFFSETS[opcode].include? operand.offset.value)
         else
             # This is just a conservative estimate of the max offset.
             malformed ||= (not (-255..4095).include? operand.offset.value)
@@ -505,7 +528,7 @@ def arm64LowerMalformedLoadStoreAddresses(list)
                 tmp = Tmp.new(codeOrigin, :gpr)
                 newList << Instruction.new(node.codeOrigin, "move", [address.offset, tmp])
                 newList << Instruction.new(node.codeOrigin, node.opcode, [node.operands[0], BaseIndex.new(node.codeOrigin, address.base, tmp, Immediate.new(codeOrigin, 1), Immediate.new(codeOrigin, 0))], node.annotation)
-            elsif node.opcode =~ /^load/ and isMalformedArm64LoadStoreAddress(node.opcode, node.operands[0])
+            elsif node.opcode =~ /^load/ and not isArm64IndexedLoadStore(node.opcode) and isMalformedArm64LoadStoreAddress(node.opcode, node.operands[0])
                 address = node.operands[0]
                 tmp = Tmp.new(codeOrigin, :gpr)
                 newList << Instruction.new(node.codeOrigin, "move", [address.offset, tmp])
@@ -599,6 +622,7 @@ class Sequence
         result = arm64LowerLabelReferences(result)
         result = riscLowerMalformedAddresses(result) {
             | node, address |
+            next true if isArm64IndexedLoadStore(node.opcode)
             isLoadStorePairOp = false
             case node.opcode
             when "loadb", "loadbsi", "loadbsq", "storeb", /^bb/, /^btb/, /^cb/, /^tb/, "loadlinkacqb", "storecondrelb", /^atomic[a-z]+b$/
@@ -629,8 +653,12 @@ class Sequence
             end
             
             if address.is_a? BaseIndex
+                registerOffsetForm = $currentSettings["ADDRESS64"] &&
+                    !isLoadStorePairOp &&
+                    node.opcode !~ /^atomic|^loadlinkacq|^storecondrel|^loadv$|^storev$/
                 address.offset.value == 0 and
-                    (node.opcode =~ /^lea/ or address.scale == 1 or address.scale == size)
+                    (node.opcode =~ /^lea/ or
+                     (registerOffsetForm and (address.scaleValue == 1 or address.scaleValue == size)))
             elsif address.is_a? Address
                 if isLoadStorePairOp
                     not isMalformedArm64LoadStorePairAddress(node.opcode, address)
@@ -680,6 +708,8 @@ class Sequence
         result = riscLowerMalformedAddresses(result) {
             | node, address |
             case node.opcode
+            when *ARM64_INDEXED_LOAD_STORE_OFFSETS.keys
+                true
             when /^loadpair/, /^storepair/
                 not address.is_a? Address or not isMalformedArm64LoadStorePairAddress(node.opcode, address)
             when /^load/, /^store/, /^transfer/
@@ -692,7 +722,10 @@ class Sequence
                 raise "Bad instruction #{node.opcode} for heap access at #{node.codeOriginString}"
             end
         }
-        result = riscLowerTest(result)
+        result = riscLowerTest(result) {
+            | node |
+            not arm64TestBitBranchOperands(node.opcode, node.operands).nil?
+        }
         result = arm64FixSpecialRegisterArithmeticMode(result)
         result = assignRegistersToTemporaries(result, :gpr, ARM64_EXTRA_GPRS)
         result = assignRegistersToTemporaries(result, :fpr, ARM64_EXTRA_FPRS)
@@ -894,6 +927,28 @@ def emitARM64Branch(opcode, operands, kind, branchOpcode)
     $asm.puts "#{branchOpcode} #{operands[-1].asmLabel}"
 end
 
+def arm64TestBitBranchOperands(opcode, operands)
+    return nil unless opcode =~ /^bt[ibpq]n?z$/ and operands.size == 3 and operands[2].is_a? LocalLabelReference
+    if operands[0].immediate? and operands[1].register?
+        mask = operands[0]
+        register = operands[1]
+    elsif operands[1].immediate? and operands[0].register?
+        register = operands[0]
+        mask = operands[1]
+    else
+        return nil
+    end
+    return nil unless isPowerOfTwo(mask.value)
+    [register, mask.value.bit_length - 1, operands[2]]
+end
+
+def emitARM64TestBitBranch(opcode, operands, kind)
+    register, bit, label = arm64TestBitBranchOperands(opcode, operands)
+    width = (kind == :quad or (kind == :ptr and $currentSettings["ADDRESS64"])) ? 64 : 32
+    raise "Bit #{bit} does not fit in #{width} bits" unless bit < width
+    $asm.puts "#{opcode =~ /nz$/ ? "tbnz" : "tbz"} #{register.arm64Operand(bit < 32 ? :word : :quad)}, ##{bit}, #{label.asmLabel}"
+end
+
 def emitARM64CompareFP(operands, kind, compareCode)
     emitARM64Unflipped("fcmp", operands[0..-2], kind)
     $asm.puts "cset #{operands[-1].arm64Operand(:word)}, #{compareCode}"
@@ -958,6 +1013,20 @@ class Instruction
             emitARM64Add("add", operands, :quad)
         when 'addlshiftp'
             emitARM64AddShift("add", operands, :quad)
+        when 'orlshifti'
+            emitARM64AddShift("orr", operands, :word)
+        when 'addqs'
+            emitARM64Add("adds", operands, :quad)
+        when 'subqs'
+            emitARM64Sub("subs", operands, :quad)
+        when "adcq"
+            emitARM64TAC("adc", operands, :quad)
+        when "sbcq"
+            emitARM64TAC("sbc", operands, :quad)
+        when "smulhq"
+            emitARM64TAC("smulh", operands, :quad)
+        when "umulhq"
+            emitARM64TAC("umulh", operands, :quad)
         when "andi"
             emitARM64TAC("and", operands, :word)
         when "andp"
@@ -1055,7 +1124,14 @@ class Instruction
         when "loadq"
             emitARM64Access("ldr", "ldur", operands[1], operands[0], :quad)
         when "loadqinc"
-            $asm.puts "ldr #{operands[1].arm64Operand(:quad)}, #{operands[0].arm64Operand(:quad)}, #{operands[2].value}"
+            address = arm64IndexedLoadStoreAddress("loadqinc", operands[0])
+            $asm.puts "ldr #{operands[1].arm64Operand(:quad)}, #{address.arm64Operand(:quad)}, #{operands[2].value}"
+        when "loadbinc"
+            address = arm64IndexedLoadStoreAddress("loadbinc", operands[0])
+            $asm.puts "ldrb #{operands[1].arm64Operand(:word)}, #{address.arm64Operand(:word)}, #{operands[2].value}"
+        when "loadbpreinc"
+            address = arm64IndexedLoadStoreAddress("loadbpreinc", operands[0])
+            $asm.puts "ldrb #{operands[1].arm64Operand(:word)}, [#{address.base.arm64Operand(:ptr)}, \##{address.offset.value}]!"
         when "storei"
             emitARM64Unflipped("str", operands, :word)
         when "storep"
@@ -1257,6 +1333,12 @@ class Instruction
             else
                 emitARM64Branch("subs xzr, ", operands, :quad, "b.ne")
             end
+        when "btiz", "btinz", "btbz", "btbnz"
+            emitARM64TestBitBranch(opcode, operands, :word)
+        when "btpz", "btpnz"
+            emitARM64TestBitBranch(opcode, operands, :ptr)
+        when "btqz", "btqnz"
+            emitARM64TestBitBranch(opcode, operands, :quad)
         when "bia", "bba"
             emitARM64Branch("subs wzr, ", operands, :word, "b.hi")
         when "bpa"
@@ -1401,6 +1483,8 @@ class Instruction
             $asm.puts "b.eq #{operands[0].asmLabel}"
         when "bnz"
             $asm.puts "b.ne #{operands[0].asmLabel}"
+        when "bc"
+            $asm.puts "b.hs #{operands[0].asmLabel}"
         when "leai"
             operands[0].arm64EmitLea(operands[1], :word)
         when "leap"
@@ -1416,7 +1500,20 @@ class Instruction
         when "bfiq"
             $asm.puts "bfi #{operands[3].arm64Operand(:quad)}, #{operands[0].arm64Operand(:quad)}, #{operands[1].value}, #{operands[2].value}"
         when "pcrtoaddr"
-            $asm.puts "adr #{operands[1].arm64Operand(:quad)}, #{operands[0].value}"
+            labelRef = operands[0]
+            register = operands[1].arm64Operand(:quad)
+            if labelRef.externOrGlobal?
+                $asm.putStr("#if OS(DARWIN)")
+                $asm.puts "adrp #{register}, #{labelRef.asmLabel}@PAGE"
+                $asm.puts "add #{register}, #{register}, #{labelRef.asmLabel}@PAGEOFF"
+                $asm.putStr("#else")
+                $asm.puts "adrp #{register}, #{labelRef.asmLabel}"
+                $asm.puts "add #{register}, #{register}, :lo12:#{labelRef.asmLabel}"
+                $asm.putStr("#endif")
+            else
+                $asm.puts "adr #{register}, #{labelRef.value}"
+            end
+
         when "globaladdr"
             uid = $asm.newUID
 
@@ -1442,6 +1539,12 @@ class Instruction
             $asm.putStr("#else")
             $asm.puts "ldr #{operands[1].arm64Operand(:quad)}, [#{operands[1].arm64Operand(:quad)}, :got_lo12:#{operands[0].asmLabel}]"
             $asm.putStr("#endif")
+
+            # On Windows, use COFF-style addressing.
+            $asm.putStr("#elif OS(WINDOWS)")
+
+            $asm.puts "adrp #{operands[1].arm64Operand(:quad)}, #{operands[0].asmLabel}"
+            $asm.puts "add #{operands[1].arm64Operand(:quad)}, #{operands[1].arm64Operand(:quad)}, :lo12:#{operands[0].asmLabel}"
 
             # Throw a compiler error everywhere else.
             $asm.putStr("#else")

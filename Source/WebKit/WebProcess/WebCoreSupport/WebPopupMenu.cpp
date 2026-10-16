@@ -56,6 +56,7 @@ void WebPopupMenu::disconnectClient()
     m_popupClient = nullptr;
 }
 
+#if !PLATFORM(IOS_FAMILY)
 void WebPopupMenu::didChangeSelectedIndex(int newIndex)
 {
     RefPtr popupClient = m_popupClient;
@@ -66,12 +67,15 @@ void WebPopupMenu::didChangeSelectedIndex(int newIndex)
     if (newIndex >= 0)
         popupClient->valueChanged(newIndex);
 }
+#endif
 
+#if !PLATFORM(COCOA)
 void WebPopupMenu::setTextForIndex(int index)
 {
     if (RefPtr popupClient = m_popupClient)
         popupClient->setTextFromItem(index);
 }
+#endif
 
 Vector<WebPopupItem> WebPopupMenu::populateItems()
 {
@@ -103,13 +107,15 @@ void WebPopupMenu::show(const IntRect& rect, LocalFrameView& view, int selectedI
 
     page->setActivePopupMenu(this);
 
-    // Move to page coordinates
-    IntRect pageCoordinates(view.contentsToWindow(rect.location()), rect.size());
+    // Move to main frame view coordinates. This converts across process boundaries when Site Isolation is
+    // enabled, so the UI process can use the rect as-is. Only the location is converted, so the popup keeps
+    // the element's untransformed size.
+    IntRect rectInMainFrameView(view.contentsToMainFrameView(rect.location()), rect.size());
 
     PlatformPopupMenuData platformData;
-    setUpPlatformData(pageCoordinates, platformData);
+    setUpPlatformData(rectInMainFrameView, platformData);
 
-    WebProcess::singleton().protectedParentProcessConnection()->send(Messages::WebPageProxy::ShowPopupMenuFromFrame(view.frame().frameID(), pageCoordinates, static_cast<uint64_t>(popupClient->menuStyle().textDirection()), items, selectedIndex, platformData), page->identifier());
+    protect(WebProcess::singleton().parentProcessConnection())->send(Messages::WebPageProxy::ShowPopupMenuFromFrame(view.frame().frameID(), rectInMainFrameView, static_cast<uint64_t>(popupClient->menuStyle().textDirection()), items, selectedIndex, platformData), page->identifier());
 }
 
 void WebPopupMenu::hide()
@@ -119,7 +125,7 @@ void WebPopupMenu::hide()
     if (!page || !popupClient)
         return;
 
-    WebProcess::singleton().protectedParentProcessConnection()->send(Messages::WebPageProxy::HidePopupMenu(), page->identifier());
+    protect(WebProcess::singleton().parentProcessConnection())->send(Messages::WebPageProxy::HidePopupMenu(), page->identifier());
     page->setActivePopupMenu(nullptr);
     popupClient->popupDidHide();
 }

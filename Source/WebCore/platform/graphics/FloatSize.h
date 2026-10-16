@@ -28,12 +28,11 @@
 
 #pragma once
 
+#include <WebCore/AspectRatioFit.h>
 #include <WebCore/DoubleSize.h>
 #include <WebCore/IntPoint.h>
 #include <wtf/JSONValues.h>
 #include <wtf/MathExtras.h>
-#include <wtf/Platform.h>
-#include <wtf/text/WTFString.h>
 
 #if PLATFORM(IOS_FAMILY)
 #include <CoreGraphics/CoreGraphics.h>
@@ -61,7 +60,7 @@ public:
     constexpr FloatSize(float width, float height) : m_width(width), m_height(height) { }
     constexpr FloatSize(const IntSize& size) : m_width(size.width()), m_height(size.height()) { }
 
-    static FloatSize narrowPrecision(double width, double height);
+    static FloatSize LEGACY_NODELETE narrowPrecision(double width, double height);
 
     constexpr float width() const { return m_width; }
     constexpr float height() const { return m_height; }
@@ -74,10 +73,21 @@ public:
 
     constexpr bool isEmpty() const { return m_width <= 0 || m_height <= 0; }
     constexpr bool isZero() const;
-    bool isExpressibleAsIntSize() const;
+    bool LEGACY_NODELETE isExpressibleAsIntSize() const;
 
     constexpr float aspectRatio() const { return m_width / m_height; }
     constexpr double aspectRatioDouble() const { return m_width / static_cast<double>(m_height); }
+
+    constexpr FloatSize fitToAspectRatio(const FloatSize& aspectRatio, AspectRatioFit fit) const
+    {
+        float heightScale = height() / aspectRatio.height();
+        float widthScale = width() / aspectRatio.width();
+
+        if ((widthScale > heightScale) != (fit == AspectRatioFit::Grow))
+            return { height() * aspectRatio.width() / aspectRatio.height(), height() };
+
+        return { width(), width() * aspectRatio.height() / aspectRatio.width() };
+    }
 
     void expand(float width, float height)
     {
@@ -124,6 +134,28 @@ public:
     float diagonalLength() const
     {
         return std::hypot(m_width, m_height);
+    }
+
+    FloatSize normalized() const
+    {
+        float length = diagonalLength();
+        return !length ? *this : scaled(1.0f / length);
+    }
+
+    FloatSize directionScaledBy(float length) const
+    {
+        return normalized().scaled(length);
+    }
+
+    constexpr FloatSize perpendicular() const
+    {
+        return { -m_height, m_width };
+    }
+
+    // The z component of the 3D cross product of the two sizes taken as vectors in the z = 0 plane.
+    constexpr float cross(const FloatSize& a) const
+    {
+        return m_width * a.height() - m_height * a.width();
     }
 
     constexpr float diagonalLengthSquared() const
@@ -242,22 +274,22 @@ inline bool areEssentiallyEqual(const FloatSize& a, const FloatSize& b)
 
 inline IntSize roundedIntSize(const FloatSize& p)
 {
-    return IntSize(clampToInteger(roundf(p.width())), clampToInteger(roundf(p.height())));
+    return IntSize(clampTo<int>(roundf(p.width())), clampTo<int>(roundf(p.height())));
 }
 
 inline IntSize flooredIntSize(const FloatSize& p)
 {
-    return IntSize(clampToInteger(floorf(p.width())), clampToInteger(floorf(p.height())));
+    return IntSize(clampTo<int>(floorf(p.width())), clampTo<int>(floorf(p.height())));
 }
 
 inline IntSize expandedIntSize(const FloatSize& p)
 {
-    return IntSize(clampToInteger(ceilf(p.width())), clampToInteger(ceilf(p.height())));
+    return IntSize(clampTo<int>(ceilf(p.width())), clampTo<int>(ceilf(p.height())));
 }
 
 inline IntPoint flooredIntPoint(const FloatSize& p)
 {
-    return IntPoint(clampToInteger(floorf(p.width())), clampToInteger(floorf(p.height())));
+    return IntPoint(clampTo<int>(floorf(p.width())), clampTo<int>(floorf(p.height())));
 }
 
 constexpr FloatSize FloatSize::nanSize()

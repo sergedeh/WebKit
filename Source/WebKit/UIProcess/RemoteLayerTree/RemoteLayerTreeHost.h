@@ -25,9 +25,11 @@
 
 #pragma once
 
+#include "ImageBufferBackendHandle.h"
 #include "PlaybackSessionContextIdentifier.h"
 #include "RemoteLayerTreeNode.h"
 #include "RemoteLayerTreeTransaction.h"
+#include "RemoteSnapshotIdentifier.h"
 #include <WebCore/PlatformCALayer.h>
 #include <WebCore/ProcessIdentifier.h>
 #include <wtf/HashMap.h>
@@ -63,25 +65,31 @@ public:
     ~RemoteLayerTreeHost();
 
     RemoteLayerTreeNode* nodeForID(std::optional<WebCore::PlatformLayerIdentifier>) const;
-    RemoteLayerTreeNode* rootNode() const { return m_rootNode.get(); }
-    RefPtr<RemoteLayerTreeNode> protectedRootNode() const { return m_rootNode.get(); }
+    RefPtr<RemoteLayerTreeNode> rootNode() const { return m_rootNode.get(); }
 
-    CALayer *layerForID(std::optional<WebCore::PlatformLayerIdentifier>) const;
-    RetainPtr<CALayer> protectedLayerForID(std::optional<WebCore::PlatformLayerIdentifier>) const;
-    CALayer *rootLayer() const;
-    RetainPtr<CALayer> protectedRootLayer() const;
+    RetainPtr<CALayer> layerForID(std::optional<WebCore::PlatformLayerIdentifier>) const;
+    RetainPtr<CALayer> rootLayer() const;
 
-    RemoteLayerTreeDrawingAreaProxy& drawingArea() const;
+    RemoteLayerTreeDrawingAreaProxy& LEGACY_NODELETE drawingArea() const;
 
     // Returns true if the root layer changed.
     bool updateLayerTree(const IPC::Connection&, const RemoteLayerTreeTransaction&, const std::optional<MainFrameData>&, float indicatorScaleFactor  = 1);
     void asyncSetLayerContents(WebCore::PlatformLayerIdentifier, RemoteLayerBackingStoreProperties&&);
 
+    // Held here rather than handed back to the process that asked for it, which must not see the
+    // pixels. That process names it when it wants one of its layers to display it.
+    bool startDisplayOnlyImage(RemoteSnapshotIdentifier);
+    // Only completes an image still started, so that one released, or dropped along with its process,
+    // stays dropped.
+    bool completeDisplayOnlyImage(RemoteSnapshotIdentifier, ImageBufferBackendHandle&&);
+    void releaseDisplayOnlyImage(RemoteSnapshotIdentifier);
+    void removeDisplayOnlyImagesForProcess(WebCore::ProcessIdentifier);
+
     void setIsDebugLayerTreeHost(bool flag) { m_isDebugLayerTreeHost = flag; }
     bool isDebugLayerTreeHost() const { return m_isDebugLayerTreeHost; }
 
     typedef HashMap<WebCore::PlatformLayerIdentifier, RetainPtr<WKAnimationDelegate>> LayerAnimationDelegateMap;
-    LayerAnimationDelegateMap& animationDelegates() { return m_animationDelegates; }
+    LayerAnimationDelegateMap& animationDelegates() LIFETIME_BOUND { return m_animationDelegates; }
 
     void animationDidStart(std::optional<WebCore::PlatformLayerIdentifier>, CAAnimation *, MonotonicTime startTime);
     void animationDidEnd(std::optional<WebCore::PlatformLayerIdentifier>, CAAnimation *);
@@ -93,15 +101,15 @@ public:
     RefPtr<const RemoteAnimationStack> animationStackForNodeWithIDForTesting(WebCore::PlatformLayerIdentifier) const;
 #endif
 
-    void detachFromDrawingArea();
+    void LEGACY_NODELETE detachFromDrawingArea();
     void clearLayers();
 
     // Detach the root layer; it will be reattached upon the next incoming commit.
     void detachRootLayer();
 
-    CALayer *layerWithIDForTesting(WebCore::PlatformLayerIdentifier) const;
+    RetainPtr<CALayer> layerWithIDForTesting(WebCore::PlatformLayerIdentifier) const;
 
-    bool replayDynamicContentScalingDisplayListsIntoBackingStore() const;
+    bool LEGACY_NODELETE replayDynamicContentScalingDisplayListsIntoBackingStore() const;
     bool threadedAnimationsEnabled() const;
 
     bool cssUnprefixedBackdropFilterEnabled() const;
@@ -109,27 +117,25 @@ public:
     void remotePageProcessDidTerminate(WebCore::ProcessIdentifier);
 
 private:
-    Ref<RemoteLayerTreeDrawingAreaProxy> protectedDrawingArea() const;
 
-    void createLayer(const RemoteLayerTreeTransaction::LayerCreationProperties&);
-    RefPtr<RemoteLayerTreeNode> makeNode(const RemoteLayerTreeTransaction::LayerCreationProperties&);
+    void createLayer(const IPC::Connection&, const RemoteLayerTreeTransaction::LayerCreationProperties&);
+    RefPtr<RemoteLayerTreeNode> makeNode(const IPC::Connection&, const RemoteLayerTreeTransaction::LayerCreationProperties&);
 
     bool updateBannerLayers(const std::optional<MainFrameData>&);
 
+    void applyDisplayOnlyImage(RemoteLayerTreeNode&, WebCore::ProcessIdentifier sender, Markable<RemoteSnapshotIdentifier>);
     void layerWillBeRemoved(WebCore::ProcessIdentifier, WebCore::PlatformLayerIdentifier);
 
     WeakPtr<RemoteLayerTreeDrawingAreaProxy> m_drawingArea;
-    WeakPtr<RemoteLayerTreeNode> m_rootNode;
+    ThreadSafeWeakPtr<RemoteLayerTreeNode> m_rootNode;
     HashMap<WebCore::PlatformLayerIdentifier, Ref<RemoteLayerTreeNode>> m_nodes;
     HashMap<WebCore::LayerHostingContextIdentifier, WebCore::PlatformLayerIdentifier> m_hostingLayers;
     HashMap<WebCore::LayerHostingContextIdentifier, WebCore::PlatformLayerIdentifier> m_hostedLayers;
     HashMap<WebCore::ProcessIdentifier, HashSet<WebCore::PlatformLayerIdentifier>> m_hostedLayersInProcess;
     HashMap<WebCore::PlatformLayerIdentifier, RetainPtr<WKAnimationDelegate>> m_animationDelegates;
+    HashMap<RemoteSnapshotIdentifier, RetainPtr<id>> m_displayOnlyImages;
 #if HAVE(AVKIT)
     HashMap<WebCore::PlatformLayerIdentifier, PlaybackSessionContextIdentifier> m_videoLayers;
-#endif
-#if ENABLE(OVERLAY_REGIONS_IN_EVENT_REGION)
-    HashSet<WebCore::PlatformLayerIdentifier> m_overlayRegionIDs;
 #endif
 #if PLATFORM(IOS_FAMILY) && ENABLE(MODEL_PROCESS)
     HashSet<WebCore::PlatformLayerIdentifier> m_modelLayers;

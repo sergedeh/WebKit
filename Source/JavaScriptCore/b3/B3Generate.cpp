@@ -34,12 +34,12 @@
 #include "B3DuplicateTails.h"
 #include "B3EliminateCommonSubexpressions.h"
 #include "B3EliminateDeadCode.h"
+#include "B3EliminateWasmGCAllocations.h"
 #include "B3FixSSA.h"
 #include "B3FoldPathConstants.h"
 #include "B3HoistLoopInvariantValues.h"
 #include "B3InferSwitches.h"
 #include "B3LegalizeMemoryOffsets.h"
-#include "B3LowerInt64.h"
 #include "B3LowerMacros.h"
 #include "B3LowerMacrosAfterOptimizations.h"
 #include "B3LowerToAir.h"
@@ -48,6 +48,7 @@
 #include "B3Procedure.h"
 #include "B3ReduceDoubleToFloat.h"
 #include "B3ReduceStrength.h"
+#include "B3SpecializeSelect.h"
 #include "B3Validate.h"
 #include "CompilerTimingScope.h"
 
@@ -56,7 +57,6 @@ namespace JSC { namespace B3 {
 void prepareForGeneration(Procedure& procedure)
 {
     CompilerTimingScope timingScope("Total B3+Air"_s, "prepareForGeneration"_s);
-
     generateToAir(procedure);
     Air::prepareForGeneration(procedure.code());
 }
@@ -85,37 +85,47 @@ void generateToAir(Procedure& procedure)
     
     if (procedure.optLevel() >= 2) {
         reduceDoubleToFloat(procedure);
-        reduceStrength(procedure);
+        if (Options::useB3SpecializeSelect())
+            specializeSelect(procedure);
+        reduceStrength(procedure, ReduceStrengthPass::Initial);
         if (Options::useB3HoistLoopInvariantValues())
             hoistLoopInvariantValues(procedure);
-        if (eliminateCommonSubexpressions(procedure))
-            eliminateCommonSubexpressions(procedure);
+        eliminateCommonSubexpressions(procedure);
         eliminateDeadCode(procedure);
-        inferSwitches(procedure);
+
+        // Wasm has br_table instruction, so intent of the switch is already represented
+        // and OMG generates Switch nodes directly.
+        // In JS, switch can involve variables (non-constant values) and bytecode can fail
+        // to be in op_switch. Thus after FTL with type speculation & constant folding,
+        // we can infer a switch from if-else chain.
+        if (!procedure.isWasm())
+            inferSwitches(procedure);
+
         if (Options::useB3TailDup())
             duplicateTails(procedure);
         fixSSA(procedure);
         foldPathConstants(procedure);
+        if (procedure.usesWasmGCStructAllocations() && Options::useB3EliminateWasmGCAllocations())
+            eliminateWasmGCAllocations(procedure);
         // FIXME: Add more optimizations here.
         // https://bugs.webkit.org/show_bug.cgi?id=150507
     } else if (procedure.optLevel() >= 1) {
         // FIXME: Explore better "quick mode" optimizations.
-        reduceStrength(procedure);
-    }
+        reduceStrength(procedure, ReduceStrengthPass::Initial);
+        fixSSA(procedure);
+    } else
+        fixSSA(procedure);
 
     // This puts the IR in quirks mode.
     lowerMacros(procedure);
 
     if (procedure.optLevel() >= 2) {
         optimizeAssociativeExpressionTrees(procedure);
-        reduceStrength(procedure);
+        reduceStrength(procedure, ReduceStrengthPass::Final);
 
         // FIXME: Add more optimizations here.
         // https://bugs.webkit.org/show_bug.cgi?id=150507
     }
-#if USE(JSVALUE32_64)
-    lowerInt64(procedure);
-#endif
 
     lowerMacrosAfterOptimizations(procedure);
     legalizeMemoryOffsets(procedure);
@@ -147,4 +157,3 @@ void generateToAir(Procedure& procedure)
 } } // namespace JSC::B3
 
 #endif // ENABLE(B3_JIT)
-

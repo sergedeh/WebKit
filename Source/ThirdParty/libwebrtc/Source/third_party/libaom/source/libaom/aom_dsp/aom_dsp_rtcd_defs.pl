@@ -530,6 +530,11 @@ specialize qw/aom_convolve_copy       neon                        sse2 avx2/;
 specialize qw/aom_convolve8_horiz     neon neon_dotprod neon_i8mm ssse3/, "$avx2_ssse3";
 specialize qw/aom_convolve8_vert      neon neon_dotprod neon_i8mm ssse3/, "$avx2_ssse3";
 
+if (aom_config("CONFIG_HIGHWAY") eq "yes") {
+  specialize qw/aom_convolve8_horiz     avx512/;
+  specialize qw/aom_convolve8_vert      avx512/;
+}
+
 add_proto qw/void aom_scaled_2d/, "const uint8_t *src, ptrdiff_t src_stride, uint8_t *dst, ptrdiff_t dst_stride, const InterpKernel *filter, int x0_q4, int x_step_q4, int y0_q4, int y_step_q4, int w, int h";
 specialize qw/aom_scaled_2d ssse3 neon neon_dotprod neon_i8mm/;
 
@@ -1380,6 +1385,14 @@ if (aom_config("CONFIG_AV1_ENCODER") eq "yes") {
   add_proto qw/uint64_t/, "aom_mse_wxh_16bit", "uint8_t *dst, int dstride,uint16_t *src, int sstride, int w, int h";
   specialize qw/aom_mse_wxh_16bit  sse2 avx2 neon/;
 
+  add_proto qw/int64_t/, "aom_calc_variance_stat", "const uint8_t *src, int stride, int bw, int bh";
+  specialize qw/aom_calc_variance_stat avx2/;
+
+  if (aom_config("CONFIG_AV1_HIGHBITDEPTH") eq "yes") {
+    add_proto qw/int64_t/, "aom_highbd_calc_variance_stat", "const uint16_t *src, int stride, int bw, int bh";
+    specialize qw/aom_highbd_calc_variance_stat avx2/;
+  }
+
   add_proto qw/uint64_t/, "aom_mse_16xh_16bit", "uint8_t *dst, int dstride,uint16_t *src, int w, int h";
   specialize qw/aom_mse_16xh_16bit sse2 avx2 neon/;
 
@@ -1404,23 +1417,23 @@ if (aom_config("CONFIG_AV1_ENCODER") eq "yes") {
   specialize qw/aom_variance8x8       sse2      neon neon_dotprod/;
   specialize qw/aom_variance8x4       sse2      neon neon_dotprod/;
   specialize qw/aom_variance4x8       sse2      neon neon_dotprod/;
-  specialize qw/aom_variance4x4       sse2      neon neon_dotprod/;
+  specialize qw/aom_variance4x4       sse2      neon/;
 
-  specialize qw/aom_sub_pixel_variance128x128   avx2 neon ssse3/;
-  specialize qw/aom_sub_pixel_variance128x64    avx2 neon ssse3/;
-  specialize qw/aom_sub_pixel_variance64x128    avx2 neon ssse3/;
-  specialize qw/aom_sub_pixel_variance64x64     avx2 neon ssse3/;
-  specialize qw/aom_sub_pixel_variance64x32     avx2 neon ssse3/;
-  specialize qw/aom_sub_pixel_variance32x64     avx2 neon ssse3/;
-  specialize qw/aom_sub_pixel_variance32x32     avx2 neon ssse3/;
-  specialize qw/aom_sub_pixel_variance32x16     avx2 neon ssse3/;
-  specialize qw/aom_sub_pixel_variance16x32     avx2 neon ssse3/;
-  specialize qw/aom_sub_pixel_variance16x16     avx2 neon ssse3/;
-  specialize qw/aom_sub_pixel_variance16x8      avx2 neon ssse3/;
-  specialize qw/aom_sub_pixel_variance8x16           neon ssse3/;
-  specialize qw/aom_sub_pixel_variance8x8            neon ssse3/;
-  specialize qw/aom_sub_pixel_variance8x4            neon ssse3/;
-  specialize qw/aom_sub_pixel_variance4x8            neon ssse3/;
+  specialize qw/aom_sub_pixel_variance128x128   avx2 neon neon_dotprod ssse3/;
+  specialize qw/aom_sub_pixel_variance128x64    avx2 neon neon_dotprod ssse3/;
+  specialize qw/aom_sub_pixel_variance64x128    avx2 neon neon_dotprod ssse3/;
+  specialize qw/aom_sub_pixel_variance64x64     avx2 neon neon_dotprod ssse3/;
+  specialize qw/aom_sub_pixel_variance64x32     avx2 neon neon_dotprod ssse3/;
+  specialize qw/aom_sub_pixel_variance32x64     avx2 neon neon_dotprod ssse3/;
+  specialize qw/aom_sub_pixel_variance32x32     avx2 neon neon_dotprod ssse3/;
+  specialize qw/aom_sub_pixel_variance32x16     avx2 neon neon_dotprod ssse3/;
+  specialize qw/aom_sub_pixel_variance16x32     avx2 neon neon_dotprod ssse3/;
+  specialize qw/aom_sub_pixel_variance16x16     avx2 neon neon_dotprod ssse3/;
+  specialize qw/aom_sub_pixel_variance16x8      avx2 neon neon_dotprod ssse3/;
+  specialize qw/aom_sub_pixel_variance8x16           neon neon_dotprod ssse3/;
+  specialize qw/aom_sub_pixel_variance8x8            neon neon_dotprod ssse3/;
+  specialize qw/aom_sub_pixel_variance8x4            neon neon_dotprod ssse3/;
+  specialize qw/aom_sub_pixel_variance4x8            neon neon_dotprod ssse3/;
   specialize qw/aom_sub_pixel_variance4x4            neon ssse3/;
 
   specialize qw/aom_sub_pixel_avg_variance128x128 avx2 neon ssse3/;
@@ -1448,12 +1461,12 @@ if (aom_config("CONFIG_AV1_ENCODER") eq "yes") {
     specialize qw/aom_variance16x64 neon neon_dotprod sse2 avx2/;
     specialize qw/aom_variance64x16 neon neon_dotprod sse2 avx2/;
 
-    specialize qw/aom_sub_pixel_variance4x16 neon ssse3/;
-    specialize qw/aom_sub_pixel_variance16x4 neon avx2 ssse3/;
-    specialize qw/aom_sub_pixel_variance8x32 neon ssse3/;
-    specialize qw/aom_sub_pixel_variance32x8 neon ssse3/;
-    specialize qw/aom_sub_pixel_variance16x64 neon avx2 ssse3/;
-    specialize qw/aom_sub_pixel_variance64x16 neon ssse3/;
+    specialize qw/aom_sub_pixel_variance4x16 neon neon_dotprod ssse3/;
+    specialize qw/aom_sub_pixel_variance16x4 neon neon_dotprod avx2 ssse3/;
+    specialize qw/aom_sub_pixel_variance8x32 neon neon_dotprod ssse3/;
+    specialize qw/aom_sub_pixel_variance32x8 neon neon_dotprod ssse3/;
+    specialize qw/aom_sub_pixel_variance16x64 neon neon_dotprod avx2 ssse3/;
+    specialize qw/aom_sub_pixel_variance64x16 neon neon_dotprod ssse3/;
     specialize qw/aom_sub_pixel_avg_variance4x16 neon ssse3/;
     specialize qw/aom_sub_pixel_avg_variance16x4 neon ssse3/;
     specialize qw/aom_sub_pixel_avg_variance8x32 neon ssse3/;
@@ -1733,7 +1746,7 @@ if (aom_config("CONFIG_AV1_ENCODER") eq "yes") {
     add_proto qw/double aom_compute_correlation/, "const unsigned char *frame1, int stride1, int x1, int y1, double mean1, double one_over_stddev1, const unsigned char *frame2, int stride2, int x2, int y2, double mean2, double one_over_stddev2";
     specialize qw/aom_compute_correlation sse4_1 avx2/;
 
-    add_proto qw/void aom_compute_flow_at_point/, "const uint8_t *src, const uint8_t *ref, int x, int y, int width, int height, int stride, double *u, double *v";
+    add_proto qw/void aom_compute_flow_at_point/, "const uint8_t *src, int src_stride, const uint8_t *ref, int ref_stride, int x, int y, int width, int height, double *u, double *v";
     specialize qw/aom_compute_flow_at_point sse4_1 avx2 neon sve/;
   }
 

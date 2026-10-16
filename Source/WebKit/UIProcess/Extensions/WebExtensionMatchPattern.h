@@ -68,6 +68,7 @@ public:
         IgnoreSchemes        = 1 << 0, // Ignore the scheme component when matching.
         IgnorePaths          = 1 << 1, // Ignore the path component when matching.
         MatchBidirectionally = 1 << 2, // Match two patterns in either direction (A matches B, or B matches A). Invalid for matching URLs.
+        AllowFileScheme      = 1 << 3, // Allow file:// to be considered a match for <all_urls>. The scheme wildcard `*` still does not match file://, matching Chrome and Firefox behavior.
     };
 
     enum class CreateOptions : uint8_t {
@@ -83,7 +84,7 @@ public:
     static Ref<WebExtensionMatchPattern> allURLsMatchPattern();
     static Ref<WebExtensionMatchPattern> allHostsAndSchemesMatchPattern();
 
-    static bool patternsMatchAllHosts(const MatchPatternSet&);
+    static bool LEGACY_NODELETE patternsMatchAllHosts(const MatchPatternSet&);
     static bool patternsMatchURL(const MatchPatternSet&, const URL&);
     static bool patternsMatchPattern(const MatchPatternSet&, const WebExtensionMatchPattern&);
 
@@ -98,27 +99,27 @@ public:
     static void registerCustomURLScheme(String);
     static bool isWebExtensionURL(const URL&);
 
-    bool operator==(const WebExtensionMatchPattern&) const;
+    bool LEGACY_NODELETE operator==(const WebExtensionMatchPattern&) const;
 
     bool isValid() const { return m_valid; }
     bool isSupported() const;
 
-    String scheme() const;
+    String LEGACY_NODELETE scheme() const;
     String host() const;
-    String path() const;
+    String LEGACY_NODELETE path() const;
 
     bool hostIsPublicSuffix() const;
 
     bool matchesAllURLs() const { return m_matchesAllURLs; }
-    bool matchesAllHosts() const;
+    bool LEGACY_NODELETE matchesAllHosts() const;
 
     bool matchesURL(const URL&, OptionSet<Options> = { }) const;
     bool matchesPattern(const WebExtensionMatchPattern&, OptionSet<Options> = { }) const;
 
     String string() const { return stringWithScheme(nullString()); }
-    Vector<String> expandedStrings() const;
+    Vector<String> expandedStrings(OptionSet<Options> = { }) const;
 
-    const WebCore::UserContentURLPattern& pattern() const { return m_pattern; }
+    const WebCore::UserContentURLPattern& pattern() const LIFETIME_BOUND { return m_pattern; }
 
     unsigned hash() const { return m_hash; }
 
@@ -134,8 +135,8 @@ private:
     static bool isValidScheme(String);
 
     bool schemeMatches(const WebExtensionMatchPattern&, OptionSet<Options> = { }) const;
-    bool hostMatches(const WebExtensionMatchPattern&, OptionSet<Options> = { }) const;
-    bool pathMatches(const WebExtensionMatchPattern&, OptionSet<Options> = { }) const;
+    bool LEGACY_NODELETE hostMatches(const WebExtensionMatchPattern&, OptionSet<Options> = { }) const;
+    bool LEGACY_NODELETE pathMatches(const WebExtensionMatchPattern&, OptionSet<Options> = { }) const;
 
     WebCore::UserContentURLPattern m_pattern;
     bool m_matchesAllURLs { false };

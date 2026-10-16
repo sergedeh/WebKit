@@ -39,6 +39,7 @@
 #include <WebCore/NodeInlines.h>
 #include <WebCore/PlatformKeyboardEvent.h>
 #include <WebCore/WindowsKeyboardCodes.h>
+#include <array>
 #include <wtf/NeverDestroyed.h>
 
 namespace WebKit {
@@ -65,7 +66,7 @@ struct KeyPressEntry {
     const char* name;
 };
 
-static constexpr KeyDownEntry keyDownEntries[] = {
+static constexpr auto keyDownEntries = WTF::toArray<KeyDownEntry>({
     { VK_LEFT,   0,                  "MoveLeft"                                },
     { VK_LEFT,   ShiftKey,           "MoveLeftAndModifySelection"              },
     { VK_LEFT,   CtrlKey,            "MoveWordLeft"                            },
@@ -127,9 +128,9 @@ static constexpr KeyDownEntry keyDownEntries[] = {
     { 'Z',         CtrlKey | ShiftKey, "Redo"                                  },
     { 'Y',         CtrlKey,          "Redo"                                    },
     { VK_INSERT, 0,                  "OverWrite"                               },
-};
+});
 
-static constexpr KeyPressEntry keyPressEntries[] = {
+static constexpr auto keyPressEntries = WTF::toArray<KeyPressEntry>({
     { '\t',   0,                  "InsertTab"                                  },
     { '\t',   ShiftKey,           "InsertBacktab"                              },
     { '\r',   0,                  "InsertNewline"                              },
@@ -137,7 +138,7 @@ static constexpr KeyPressEntry keyPressEntries[] = {
     { '\r',   ShiftKey,           "InsertLineBreak"                            },
     { '\r',   AltKey,             "InsertNewline"                              },
     { '\r',   AltKey | ShiftKey,  "InsertNewline"                              },
-};
+});
 
 static const char* interpretKeyEvent(const KeyboardEvent& event)
 {
@@ -172,6 +173,11 @@ static const char* interpretKeyEvent(const KeyboardEvent& event)
 
 static void handleKeyPress(LocalFrame& frame, KeyboardEvent& event, const PlatformKeyboardEvent& platformEvent)
 {
+    // Every command reached from here inserts text, so nothing is left to do
+    // for content that cannot be edited.
+    if (!frame.editor().canEdit())
+        return;
+
     auto commandName = String::fromLatin1(interpretKeyEvent(event));
 
     if (!commandName.isEmpty()) {
@@ -205,8 +211,10 @@ static void handleKeyDown(LocalFrame& frame, KeyboardEvent& event, const Platfor
     if (command.isTextInsertion())
         return;
 
-    command.execute();
-    event.setDefaultHandled();
+    // A command the selection does not allow, like moving the caret through
+    // content that is not editable, has to fall through to its default handling.
+    if (command.execute())
+        event.setDefaultHandled();
 }
 
 void WebEditorClient::handleKeyboardEvent(WebCore::KeyboardEvent& event)
@@ -223,10 +231,6 @@ void WebEditorClient::handleKeyboardEvent(WebCore::KeyboardEvent& event)
 
     // If this was an IME event don't do anything.
     if (platformEvent->windowsVirtualKeyCode() == VK_PROCESSKEY)
-        return;
-
-    // Don't allow text insertion for nodes that cannot edit.
-    if (!frame->editor().canEdit())
         return;
 
     // This is just a normal text insertion, so wait to execute the insertion

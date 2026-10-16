@@ -32,21 +32,23 @@ class GraphicsContext;
 class LayoutRect;
 class LayoutSize;
 class RenderElement;
-class RenderStyle;
 
 enum class CompositeOperator : uint8_t;
 
 struct ImagePaintingOptions;
 
+class UsedStyle;
+
 namespace Style {
+class ComputedStyle;
 struct BorderImage;
 struct MaskBorder;
 }
 
 class NinePieceImagePainter {
 public:
-    static void paint(const Style::BorderImage&, GraphicsContext&, const RenderElement*, const RenderStyle&, const LayoutRect& destination, const LayoutSize& source, float deviceScaleFactor, ImagePaintingOptions);
-    static void paint(const Style::MaskBorder&, GraphicsContext&, const RenderElement*, const RenderStyle&, const LayoutRect& destination, const LayoutSize& source, float deviceScaleFactor, ImagePaintingOptions);
+    static void paint(const Style::BorderImage&, GraphicsContext&, const RenderElement&, const UsedStyle&, const LayoutRect& destination, const LayoutSize& source, float deviceScaleFactor, ImagePaintingOptions);
+    static void paint(const Style::MaskBorder&, GraphicsContext&, const RenderElement&, const UsedStyle&, const LayoutRect& destination, const LayoutSize& source, float deviceScaleFactor, ImagePaintingOptions);
 };
 
 } // namespace WebCore

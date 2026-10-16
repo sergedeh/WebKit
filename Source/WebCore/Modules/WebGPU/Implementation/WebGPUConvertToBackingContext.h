@@ -34,15 +34,49 @@
 #include "WebGPUMapMode.h"
 #include "WebGPUOrigin2D.h"
 #include "WebGPUOrigin3D.h"
+#include "WebGPUPredefinedColorSpace.h"
 #include "WebGPUShaderStage.h"
+#include "WebGPUTextureComponentSwizzle.h"
 #include "WebGPUTextureUsage.h"
 #include <WebGPU/WebGPU.h>
 #include <WebGPU/WebGPUExt.h>
 #include <cstdint>
+#include <optional>
 #include <wtf/RefCounted.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace WebCore::WebGPU {
+
+// Owns the UTF-8 encoding of a String and converts implicitly to a WGPUStringView
+// borrowing it, so the bytes outlive the conversion. Bind it to a named local when the
+// view has to outlive the full expression, as it does for a descriptor field.
+class BackingStringView {
+public:
+    explicit BackingStringView(const String& string)
+        : m_utf8(string.utf8())
+    {
+    }
+
+    operator WGPUStringView() const LIFETIME_BOUND
+    {
+        auto bytes = byteCast<char>(m_utf8.span());
+        return { bytes.data(), bytes.size() };
+    }
+
+private:
+    UTF8CString m_utf8;
+};
+
+inline BackingStringView toBackingStringView(const String& string)
+{
+    return BackingStringView { string };
+}
+
+// Literals have static storage, so nothing needs to own them.
+inline WGPUStringView toBackingStringView(ASCIILiteral literal)
+{
+    return { literal.characters(), literal.length() };
+}
 
 class Adapter;
 enum class AddressMode : uint8_t;
@@ -108,12 +142,13 @@ class ConvertToBackingContext : public RefCounted<ConvertToBackingContext> {
 public:
     virtual ~ConvertToBackingContext() = default;
 
-    WGPUAddressMode convertToBacking(AddressMode);
-    WGPUBlendFactor convertToBacking(BlendFactor);
+    WGPUAddressMode LEGACY_NODELETE convertToBacking(AddressMode);
+    WGPUBlendFactor LEGACY_NODELETE convertToBacking(BlendFactor);
     WGPUBlendOperation convertToBacking(BlendOperation);
     WGPUBufferBindingType convertToBacking(BufferBindingType);
     WGPUCompareFunction convertToBacking(CompareFunction);
     WGPUCompilationMessageType convertToBacking(CompilationMessageType);
+    WGPUComponentSwizzle convertToBacking(ComponentSwizzle);
     WGPUCullMode convertToBacking(CullMode);
     WGPUErrorFilter convertToBacking(ErrorFilter);
     WGPUFeatureName convertToBacking(FeatureName);
@@ -123,6 +158,7 @@ public:
     WGPUIndexFormat convertToBacking(IndexFormat);
     WGPULoadOp convertToBacking(LoadOp);
     WGPUPowerPreference convertToBacking(PowerPreference);
+    WGPUColorSpace LEGACY_NODELETE convertToBacking(PredefinedColorSpace);
     WGPUPrimitiveTopology convertToBacking(PrimitiveTopology);
     WGPUQueryType convertToBacking(QueryType);
     WGPUSamplerBindingType convertToBacking(SamplerBindingType);
@@ -137,16 +173,19 @@ public:
     WGPUVertexFormat convertToBacking(VertexFormat);
     WGPUVertexStepMode convertToBacking(VertexStepMode);
 
-    WGPUBufferUsageFlags convertBufferUsageFlagsToBacking(BufferUsageFlags);
-    WGPUColorWriteMaskFlags convertColorWriteFlagsToBacking(ColorWriteFlags);
-    WGPUMapModeFlags convertMapModeFlagsToBacking(MapModeFlags);
-    WGPUShaderStageFlags convertShaderStageFlagsToBacking(ShaderStageFlags);
-    WGPUTextureUsageFlags convertTextureUsageFlagsToBacking(TextureUsageFlags);
+    WGPUBufferUsage LEGACY_NODELETE convertBufferUsageFlagsToBacking(BufferUsageFlags);
+    WGPUColorWriteMask LEGACY_NODELETE convertColorWriteFlagsToBacking(ColorWriteFlags);
+    WGPUMapMode LEGACY_NODELETE convertMapModeFlagsToBacking(MapModeFlags);
+    WGPUShaderStage LEGACY_NODELETE convertShaderStageFlagsToBacking(ShaderStageFlags);
+    WGPUTextureUsage LEGACY_NODELETE convertTextureUsageFlagsToBacking(TextureUsageFlags);
 
+    WGPUOptionalBool LEGACY_NODELETE convertToBacking(std::optional<bool>);
+    uint32_t LEGACY_NODELETE convertDepthSliceToBacking(std::optional<IntegerCoordinate>);
     WGPUColor convertToBacking(const Color&);
     WGPUExtent3D convertToBacking(const Extent3D&);
     WGPUOrigin3D convertToBacking(const Origin2D&);
     WGPUOrigin3D convertToBacking(const Origin3D&);
+    WGPUTextureComponentSwizzle convertToBacking(const TextureComponentSwizzle&);
 
     virtual WGPUAdapter convertToBacking(const Adapter&) = 0;
     virtual WGPUBindGroup convertToBacking(const BindGroup&) = 0;

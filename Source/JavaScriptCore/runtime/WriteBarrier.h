@@ -26,9 +26,9 @@
 #pragma once
 
 #include <JavaScriptCore/GCAssertions.h>
-#include <JavaScriptCore/HandleTypes.h>
 #include <JavaScriptCore/StructureID.h>
 #include <type_traits>
+#include <wtf/ForbidHeapAllocation.h>
 #include <wtf/RawPtrTraits.h>
 #include <wtf/RawValueTraits.h>
 #include <wtf/TZoneMalloc.h>
@@ -128,7 +128,8 @@ public:
     void clear() { Traits::exchange(m_cell, nullptr); }
 
     // Slot cannot be used when pointers aren't stored as-is.
-    template<typename BarrierT, typename BarrierTraits, std::enable_if_t<std::is_same<BarrierTraits, RawPtrTraits<BarrierT>>::value, void*> = nullptr>
+    template<typename BarrierT, typename BarrierTraits>
+        requires std::same_as<BarrierTraits, RawPtrTraits<BarrierT>>
     struct SlotHelper {
         static BarrierT** reinterpret(typename BarrierTraits::StorageType* cell) { return reinterpret_cast<T**>(cell); }
     };
@@ -168,11 +169,7 @@ public:
 
     JSValue get() const
     {
-#if USE(JSVALUE64) || !ENABLE(CONCURRENT_JS)
         return JSValue::decode(m_value);
-#else
-        return JSValue::decodeConcurrent(&m_value);
-#endif
     }
     void clear() { m_value = JSValue::encode(JSValue()); }
     void setUndefined() { m_value = JSValue::encode(jsUndefined()); }
@@ -188,9 +185,6 @@ public:
     { 
         return std::bit_cast<JSValue*>(&m_value);
     }
-    
-    int32_t* tagPointer() { return &std::bit_cast<EncodedValueDescriptor*>(&m_value)->asBits.tag; }
-    int32_t* payloadPointer() { return &std::bit_cast<EncodedValueDescriptor*>(&m_value)->asBits.payload; }
     
     explicit operator bool() const { return !!get(); }
     bool operator!() const { return !get(); } 
@@ -243,7 +237,7 @@ enum UndefinedWriteBarrierTagType { UndefinedWriteBarrierTag };
 enum NullWriteBarrierTagType { NullWriteBarrierTag };
 template <>
 class WriteBarrier<Unknown, RawValueTraits<Unknown>> : public WriteBarrierBase<Unknown, RawValueTraits<Unknown>> {
-    WTF_MAKE_TZONE_ALLOCATED_TEMPLATE(WriteBarrier);
+    WTF_FORBID_HEAP_ALLOCATION_ALLOWING_PLACEMENT_NEW;
 public:
     WriteBarrier()
     {
@@ -397,10 +391,6 @@ template<typename T> struct VectorTraits<JSC::WriteBarrier<T>> : public SimpleCl
 
 template<> struct VectorTraits<JSC::WriteBarrier<JSC::Unknown>> : public SimpleClassVectorTraits {
     static_assert(std::is_trivially_destructible<JSC::WriteBarrier<JSC::Unknown>>::value);
-#if USE(JSVALUE32_64)
-    // We can memset only in JSVALUE64 since empty value is zero. On the other hand, JSVALUE32_64's empty value is not zero.
-    static constexpr bool canInitializeWithMemset = false;
-#endif
     static constexpr bool canCopyWithMemcpy = true;
 };
 

@@ -27,6 +27,7 @@
 
 #include <WebCore/FloatPoint.h>
 #include <WebCore/IntPoint.h>
+#include <WebCore/MouseEventTypes.h>
 #include <WebCore/PlatformEvent.h>
 #include <wtf/Platform.h>
 #include <wtf/WindowsExtras.h>
@@ -100,7 +101,7 @@ public:
     }
 
 #if ENABLE(MAC_GESTURE_EVENTS)
-    static PlatformWheelEvent createFromGesture(const PlatformGestureEvent&, double deltaY);
+    static PlatformWheelEvent createFromGesture(const PlatformGestureEvent&, double deltaY, std::optional<double> wheelTicksYOverride = std::nullopt);
 #endif
 
     PlatformWheelEvent copySwappingDirection() const
@@ -127,6 +128,19 @@ public:
         return copy;
     }
 
+    // Converts the deltas from view pixels to content pixels, including the unaccelerated ones rubber-banding uses.
+    PlatformWheelEvent copyScalingDeltas(float scale) const
+    {
+        PlatformWheelEvent copy = *this;
+        copy.m_deltaX /= scale;
+        copy.m_deltaY /= scale;
+#if PLATFORM(COCOA)
+        copy.m_unacceleratedScrollingDeltaX /= scale;
+        copy.m_unacceleratedScrollingDeltaY /= scale;
+#endif
+        return copy;
+    }
+
     const IntPoint& position() const { return m_position; } // PlatformWindow coordinates.
     const IntPoint& globalPosition() const { return m_globalPosition; } // Screen coordinates.
 
@@ -141,10 +155,13 @@ public:
 
     bool directionInvertedFromDevice() const { return m_directionInvertedFromDevice; }
 
-    const FloatSize& scrollingVelocity() const { return m_scrollingVelocity; }
+    const FloatSize& scrollingVelocity() const LIFETIME_BOUND { return m_scrollingVelocity; }
 
     bool hasPreciseScrollingDeltas() const { return m_hasPreciseScrollingDeltas; }
     void setHasPreciseScrollingDeltas(bool hasPreciseScrollingDeltas) { m_hasPreciseScrollingDeltas = hasPreciseScrollingDeltas; }
+
+    MouseEventInputSource inputSource() const { return m_inputSource; }
+    void setInputSource(MouseEventInputSource inputSource) { m_inputSource = inputSource; }
 
 #if PLATFORM(COCOA)
     unsigned scrollCount() const { return m_scrollCount; }
@@ -188,6 +205,7 @@ protected:
     PlatformWheelEventGranularity m_granularity { PlatformWheelEventGranularity::ScrollByPixelWheelEvent };
     bool m_directionInvertedFromDevice { false };
     bool m_hasPreciseScrollingDeltas { false };
+    MouseEventInputSource m_inputSource { MouseEventInputSource::UserDriven };
 
     IntPoint m_position;
     IntPoint m_globalPosition;

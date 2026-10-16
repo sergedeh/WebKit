@@ -22,6 +22,8 @@
 
 import json
 import os
+import subprocess
+import tempfile
 from webkitpy.common.host import Host
 from webkitpy.port import configuration_options, platform_options, factory
 from webkitpy.binary_bundling.ldd import SharedObjectResolver
@@ -38,24 +40,39 @@ def generate_json_for_benchmark(basename_sizes):
     return benchmark_json
 
 
+def get_stripped_object_size(object_path):
+    fd, tmp_path = tempfile.mkstemp(prefix=f'{PLUGIN_NAME}_', suffix='.stripped')
+    os.close(fd)
+    try:
+        result = subprocess.run(['strip', '--strip-all', '-o', tmp_path, object_path], capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"'strip --strip-all' failed for '{object_path}' (exit {result.returncode}): {result.stderr.strip()}")
+        return os.path.getsize(tmp_path)
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+
+
 def get_basenames_and_sizes(path_list):
     basename_sizes = {}
     for object_path in path_list:
         object_base = os.path.basename(object_path)
         if object_base in basename_sizes:
             raise RuntimeError(f'There are repeated objects on the list. Object {object_path} is at least twice')
-        basename_sizes[object_base] = os.path.getsize(object_path)
+        basename_sizes[object_base] = get_stripped_object_size(object_path)
     return basename_sizes
 
 
 def get_browser_relevant_objects_glib(browser_driver):
     required_binary = 'Tools/Scripts/run-minibrowser'
     if not browser_driver.process_name.endswith(required_binary):
-        raise NotImplementedError(f'Getting the browser size data for browser "{browser_name}" is only supported when running the browser via "{required_binary}" and the driver was going to run "{browser_driver.process_name}"')
+        raise NotImplementedError(f'Getting the browser size data for browser "{browser_driver.browser_name}" is only supported when running the browser via "{required_binary}" and the driver was going to run "{browser_driver.process_name}"')
     browser_relevant_objects = []
     port_name = 'gtk' if browser_driver.browser_name == 'minibrowser-gtk' else 'wpe'
     port_driver = factory.PortFactory(Host()).get(port_name)
-    browser_path = port_driver.get_browser_path('cog' if browser_driver.browser_name == 'cog' else 'MiniBrowser')
+    browser_path = port_driver.get_browser_path('MiniBrowser')
     browser_relevant_objects.append(browser_path)
     browser_env = port_driver.setup_environ_for_server()
     if not os.path.isfile(browser_path):
@@ -69,7 +86,7 @@ def get_browser_relevant_objects_glib(browser_driver):
 
 
 def run(browser_driver, results_file):
-    if browser_driver.platform == "linux" and (browser_driver.browser_name.startswith('minibrowser-wpe') or browser_driver.browser_name in ['cog', 'minibrowser-gtk']):
+    if browser_driver.platform == "linux" and (browser_driver.browser_name.startswith('minibrowser-wpe') or browser_driver.browser_name == 'minibrowser-gtk'):
         browser_relevant_objects = get_browser_relevant_objects_glib(browser_driver)
     else:
         raise NotImplementedError(f'Getting the browser size data for browser "{browser_driver.browser_name}" and platform "{browser_driver.platform}" is not implemented')

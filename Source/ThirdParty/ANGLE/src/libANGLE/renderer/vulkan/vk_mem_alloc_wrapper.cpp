@@ -50,6 +50,13 @@ VkResult InitAllocator(VkPhysicalDevice physicalDevice,
         funcs.vkBindBufferMemory2KHR                  = vkBindBufferMemory2;
         funcs.vkBindImageMemory2KHR                   = vkBindImageMemory2;
         funcs.vkGetPhysicalDeviceMemoryProperties2KHR = vkGetPhysicalDeviceMemoryProperties2;
+
+        // vkGetPhysicalDeviceProperties2KHR was introduced in VMA 3.4 and is guarded by
+        // VMA_GET_PHYSICAL_DEVICE_PROPERTIES2. VMA_VERSION cannot be used in a preprocessor #if
+        // check because VK_MAKE_API_VERSION contains (uint32_t) casts.
+#if VMA_GET_PHYSICAL_DEVICE_PROPERTIES2
+        funcs.vkGetPhysicalDeviceProperties2KHR = vkGetPhysicalDeviceProperties2;
+#endif
     }
 
     VmaAllocatorCreateInfo allocatorInfo      = {};
@@ -71,6 +78,24 @@ void DestroyAllocator(VmaAllocator allocator)
 void FreeMemory(VmaAllocator allocator, VmaAllocation allocation)
 {
     vmaFreeMemory(allocator, allocation);
+}
+
+VkResult CreatePool(VmaAllocator allocator,
+                    uint32_t memoryTypeIndex,
+                    size_t maxBlockCount,
+                    VkDeviceSize blockSize,
+                    VmaPool *pPoolOut)
+{
+    VmaPoolCreateInfo poolCreateInfo = {};
+    poolCreateInfo.memoryTypeIndex   = memoryTypeIndex;
+    poolCreateInfo.blockSize         = blockSize;
+    poolCreateInfo.maxBlockCount     = maxBlockCount;
+    return vmaCreatePool(allocator, &poolCreateInfo, pPoolOut);
+}
+
+void DestroyPool(VmaAllocator allocator, VmaPool pool)
+{
+    vmaDestroyPool(allocator, pool);
 }
 
 VkResult CreateBuffer(VmaAllocator allocator,
@@ -113,8 +138,40 @@ VkResult AllocateAndBindMemoryForImage(VmaAllocator allocator,
     allocationCreateInfo.memoryTypeBits          = memoryTypeBits;
     allocationCreateInfo.flags =
         allocateDedicatedMemory ? VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT : 0;
-    VmaAllocationInfo allocationInfo = {};
 
+    VmaAllocationInfo allocationInfo = {};
+    result = vmaAllocateMemoryForImage(allocator, *pImage, &allocationCreateInfo, pAllocationOut,
+                                       &allocationInfo);
+    if (result == VK_SUCCESS)
+    {
+        // If binding was unsuccessful, we should free the allocation.
+        result = vmaBindImageMemory(allocator, *pAllocationOut, *pImage);
+        if (result != VK_SUCCESS)
+        {
+            vmaFreeMemory(allocator, *pAllocationOut);
+            *pAllocationOut = VK_NULL_HANDLE;
+            return result;
+        }
+
+        *pMemoryTypeIndexOut = allocationInfo.memoryType;
+        *sizeOut             = allocationInfo.size;
+    }
+
+    return result;
+}
+
+VkResult AllocateAndBindMemoryForImageFromPool(VmaAllocator allocator,
+                                               VkImage *pImage,
+                                               VmaPool pool,
+                                               VmaAllocation *pAllocationOut,
+                                               uint32_t *pMemoryTypeIndexOut,
+                                               VkDeviceSize *sizeOut)
+{
+    VkResult result;
+    VmaAllocationCreateInfo allocationCreateInfo = {};
+    allocationCreateInfo.pool                    = pool;
+
+    VmaAllocationInfo allocationInfo = {};
     result = vmaAllocateMemoryForImage(allocator, *pImage, &allocationCreateInfo, pAllocationOut,
                                        &allocationInfo);
     if (result == VK_SUCCESS)
@@ -155,12 +212,14 @@ VkResult FindMemoryTypeIndexForImageInfo(VmaAllocator allocator,
                                          const VkImageCreateInfo *pImageCreateInfo,
                                          VkMemoryPropertyFlags requiredFlags,
                                          VkMemoryPropertyFlags preferredFlags,
+                                         uint32_t memoryTypeBits,
                                          bool allocateDedicatedMemory,
                                          uint32_t *pMemoryTypeIndexOut)
 {
     VmaAllocationCreateInfo allocationCreateInfo = {};
     allocationCreateInfo.requiredFlags           = requiredFlags;
     allocationCreateInfo.preferredFlags          = preferredFlags;
+    allocationCreateInfo.memoryTypeBits          = memoryTypeBits;
     allocationCreateInfo.flags =
         allocateDedicatedMemory ? VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT : 0;
 

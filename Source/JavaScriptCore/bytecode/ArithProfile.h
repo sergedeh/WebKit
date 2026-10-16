@@ -79,6 +79,16 @@ public:
     };
     static constexpr uint32_t numBitsNeeded = 7;
 
+    static constexpr int64_t int52OverflowPoint = static_cast<int64_t>(1) << (JSValue::numberOfInt52Bits - 1);
+
+    static constexpr bool isInt52Overflow(double value)
+    {
+        constexpr double overflowPoint = static_cast<double>(int52OverflowPoint);
+        uint64_t bits = std::bit_cast<uint64_t>(value);
+        // Shifting out the sign bit orders the remaining bits by magnitude; NaN and Infinity sort above every finite value.
+        return bits != std::bit_cast<uint64_t>(-overflowPoint) && (bits << 1) >= (std::bit_cast<uint64_t>(overflowPoint) << 1);
+    }
+
     ObservedResults() = default;
     explicit ObservedResults(uint8_t bits)
         : m_bits(bits)
@@ -130,7 +140,9 @@ public:
         if (value.isInt32())
             return;
         if (value.isNumber()) {
-            m_bits |= ObservedResults::Int32Overflow | ObservedResults::Int52Overflow | ObservedResults::NonNegZeroDouble | ObservedResults::NegZeroDouble;
+            m_bits |= ObservedResults::Int32Overflow | ObservedResults::NonNegZeroDouble | ObservedResults::NegZeroDouble;
+            if (ObservedResults::isInt52Overflow(value.asNumber()))
+                m_bits |= ObservedResults::Int52Overflow;
             return;
         }
         if (value.isBigInt32()) {
@@ -144,24 +156,26 @@ public:
         m_bits |= ObservedResults::NonNumeric;
     }
 
-    const void* addressOfBits() const { return &m_bits; }
+    const void* addressOfBits() const LIFETIME_BOUND { return &m_bits; }
 
 #if ENABLE(JIT)
-    // Sets (Int32Overflow | Int52Overflow | NonNegZeroDouble | NegZeroDouble) if it sees a
-    // double. Sets NonNumeric if it sees a non-numeric.
-    void emitObserveResult(CCallHelpers&, JSValueRegs, GPRReg tempGPR, TagRegistersMode = HaveTagRegisters);
+    // Records the same bits as observeResult().
+    void emitObserveResult(CCallHelpers&, GPRReg, GPRReg tempGPR, TagRegistersMode = HaveTagRegisters);
+
+    // Clobbers doubleBitsGPR, which holds the raw bits of a double result.
+    void emitSetInt52OverflowIfNeeded(CCallHelpers&, GPRReg doubleBitsGPR) const;
 
     // Sets (Int32Overflow | Int52Overflow | NonNegZeroDouble | NegZeroDouble).
-    bool shouldEmitSetDouble() const;
+    bool LEGACY_NODELETE shouldEmitSetDouble() const;
     void emitSetDouble(CCallHelpers&, GPRReg scratchGPR) const;
 
     void emitSetNonNumeric(CCallHelpers&) const;
-    bool shouldEmitSetNonNumeric() const;
+    bool LEGACY_NODELETE shouldEmitSetNonNumeric() const;
 
-    bool shouldEmitSetHeapBigInt() const;
+    bool LEGACY_NODELETE shouldEmitSetHeapBigInt() const;
     void emitSetHeapBigInt(CCallHelpers&) const;
 
-    bool shouldEmitSetBigInt32() const;
+    bool LEGACY_NODELETE shouldEmitSetBigInt32() const;
 #if USE(BIGINT32)
     void emitSetBigInt32(CCallHelpers&) const;
 #endif
@@ -259,7 +273,7 @@ public:
         return argObservedType().isEmpty();
     }
 
-    friend class JSC::LLIntOffsetsExtractor;
+    friend class LLIntOffsetsExtractor;
 };
 
 /* This class stores the following components in 16 bits:
@@ -384,7 +398,7 @@ public:
         return lhsObservedType().isEmpty() && rhsObservedType().isEmpty();
     }
 
-    friend class JSC::LLIntOffsetsExtractor;
+    friend class LLIntOffsetsExtractor;
 };
 
 } // namespace JSC

@@ -19,7 +19,7 @@
 
 #pragma once
 
-#if USE(TEXTURE_MAPPER)
+#if USE(TEXTURE_MAPPER) || USE(COORDINATED_GRAPHICS)
 #include "GraphicsLayer.h"
 #include "GraphicsLayerAnimation.h"
 #include "GraphicsLayerKeyframeValueList.h"
@@ -54,18 +54,20 @@ public:
     void pause(Seconds);
     void resume();
 
-    const String& name() const { return m_name; }
-    const GraphicsLayerKeyframeValueList& keyframes() const { return m_keyframes; }
+    const String& name() const LIFETIME_BOUND { return m_name; }
+    const GraphicsLayerKeyframeValueList& keyframes() const LIFETIME_BOUND { return m_keyframes; }
     State state() const { return m_state; }
     TimingFunction* timingFunction() const { return m_timingFunction.get(); }
 
 private:
     void applyInternal(ApplicationResult&, const GraphicsLayerAnimationValue& from, const GraphicsLayerAnimationValue& to, float progress);
     Seconds computeTotalRunningTime(MonotonicTime);
+    const TimingFunction& timingFunctionForKeyframe(const GraphicsLayerAnimationValue& from) const;
 
     String m_name;
     GraphicsLayerKeyframeValueList m_keyframes { AnimatedProperty::Invalid };
     RefPtr<TimingFunction> m_timingFunction;
+    RefPtr<TimingFunction> m_defaultTimingFunctionForKeyframes;
     double m_iterationCount { 0 };
     double m_duration { 0 };
     GraphicsLayerAnimation::Direction m_direction { GraphicsLayerAnimation::Direction::Normal };
@@ -91,15 +93,13 @@ public:
     void remove(const String&);
     void remove(const String&, AnimatedProperty);
     void pause(const String&, Seconds);
-    void suspend(MonotonicTime);
-    void resume();
 
     void apply(TextureMapperAnimation::ApplicationResult&, MonotonicTime, TextureMapperAnimation::KeepInternalState = TextureMapperAnimation::KeepInternalState::No);
 
     bool isEmpty() const { return m_animations.isEmpty(); }
     size_t size() const { return m_animations.size(); }
-    const Vector<TextureMapperAnimation>& animations() const { return m_animations; }
-    Vector<TextureMapperAnimation>& animations() { return m_animations; }
+    const Vector<TextureMapperAnimation>& animations() const LIFETIME_BOUND { return m_animations; }
+    Vector<TextureMapperAnimation>& animations() LIFETIME_BOUND { return m_animations; }
 
     bool hasActiveAnimationsOfType(AnimatedProperty) const;
 
@@ -117,4 +117,4 @@ private:
 
 } // namespace WebCore
 
-#endif // USE(TEXTURE_MAPPER)
+#endif // USE(TEXTURE_MAPPER) || USE(COORDINATED_GRAPHICS)

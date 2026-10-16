@@ -21,7 +21,7 @@ requires = ["ENABLE_MULTI_REPRESENTATION_HEIC"]
 selectors = [
     { name = "isSystemVoice", class = "?" },
 ]
-requires = ["!SDKDB_HAS_148943382"]
+requires = ["!SDKDB_HAS_164901718"]
 
 [[legacy]]
 classes = [
@@ -33,12 +33,6 @@ selectors = [
     { name = "shouldEvaluateURLs", class = "WCRBrowserEngineClient" },
 ]
 requires = ["HAVE_WEBCONTENTRESTRICTIONS"]
-
-[[legacy]]
-selectors = [
-    { name = "_getCookiesForPartition:completionHandler:", class = "?" },
-]
-requires = ["HAVE_ALLOW_ONLY_PARTITIONED_COOKIES"]
 
 [[legacy]]
 symbols = [
@@ -68,6 +62,24 @@ selectors = [
 ]
 requires = ["!HAVE_LINK_PRESENTATION_CHANGE_FOR_RADAR_115801517"]
 
+[[legacy]]
+symbols = [
+    "kCTFontDescriptorLanguageAttribute",
+]
+requires-sdk = ["iOS <= 26.4"]
+
+[[legacy]]
+selectors = [
+    { name = "addData:", class = "?" },
+    { name = "dataComplete", class = "?" },
+    { name = "filterState", class = "?" },
+    { name = "initWithResponse:", class = "?" },
+    { name = "isManagedSession", class = "?" },
+    { name = "setBrowserAuditToken:", class = "?" },
+    { name = "unblockWithCompletion:", class = "?" },
+]
+requires = ["!HAVE_WEBCONTENTRESTRICTIONS", "HAVE_WEBCONTENTANALYSIS_FRAMEWORK"]
+
 # ------------------------------------------------------------------------
 # Below are uncategorized and unconditionally used SPI introduced in older
 # releases.
@@ -76,12 +88,8 @@ requires = ["!HAVE_LINK_PRESENTATION_CHANGE_FOR_RADAR_115801517"]
 [[legacy]]
 selectors = [
     { name = "borderColorForEdge:", class = "?" },
-    { name = "collapsesBorders", class = "?" },
-    { name = "hidesEmptyCells", class = "?" },
-    { name = "layoutAlgorithm", class = "?" },
+    { name = "webPlayerLayer", class = "?" },
     { name = "transferVideoViewTo:", class = "?" },
-    { name = "valueForDimension:", class = "?" },
-    { name = "verticalAlignment", class = "?" },
     { name = "widthForLayer:edge:", class = "?" },
 ]
 symbols = [
@@ -124,11 +132,16 @@ selectors = [
 [[legacy]]
 classes = [
     "AVAssetCollection",
+    "AVBackgroundView",
     "AVContentKeyReportGroup",
     "AVOutputContext",
+    "AVOutputDeviceMenuController",
     "AVPlayerController",
+    "AVPlayerViewControllerContentSource",
     "AVStreamDataParser",
     "AVSystemController",
+    "AVTimeRange",
+    "AVTouchBarMediaSelectionOption",
     "AVValueTiming",
     "CABackdropLayer",
     "CAFilter",
@@ -145,8 +158,6 @@ classes = [
     "MCProfileConnection",
     "NEFilterSource",
     "NSColor",
-    "NSTextTable",
-    "NSTextTableBlock",
     "NSURLFileTypeMappings",
     "PKDisbursementPaymentRequest",
     "PKPaymentInstallmentConfiguration",
@@ -205,14 +216,12 @@ selectors = [
     { name = "__openXPC_and_CBApplicationDidBecomeActive__", class = "?" },
     { name = "_accessibilityUnregister", class = "?" },
     { name = "_attributedStringForRange:", class = "?" },
-    { name = "_cf2nsCookies:", class = "?" },
     { name = "_classicMode", class = "?" },
     { name = "_cookieForSetCookieString:forURL:partition:", class = "?" },
     { name = "_cookieStorage", class = "?" },
     { name = "_didFinishScrollingOrZooming", class = "?" },
     { name = "_disambiguated_due_to_CIImage_colorWithCGColor:", class = "?" },
     { name = "_dispatchTileDidDraw:", class = "?" },
-    { name = "_getCookiesForDomain:", class = "?" },
     { name = "_getCookiesForURL:mainDocumentURL:partition:policyProperties:completionHandler:", class = "?" },
     { name = "_hardwareKeyboard", class = "?" },
     { name = "_htmlDocumentFragmentString:documentAttributes:subresources:", class = "?" },
@@ -228,12 +237,9 @@ selectors = [
     { name = "_propertyForKey:", class = "?" },
     { name = "_protocolClassForRequest:skipAppSSO:", class = "?" },
     { name = "_referenceBounds", class = "?" },
-    { name = "_saveCookies:", class = "?" },
     { name = "_scheduleRenderingUpdateForPendingTileCacheRepaint", class = "?" },
     { name = "_schemeWasUpgradedDueToDynamicHSTS", class = "?" },
     { name = "_setCookies:forURL:mainDocumentURL:policyProperties:", class = "?" },
-    { name = "_setCookiesChangedHandler:onQueue:", class = "?" },
-    { name = "_setCookiesRemovedHandler:onQueue:", class = "?" },
     { name = "_setIdleTimerDisabled:forReason:", class = "?" },
     { name = "_setIgnoreAppSupportedOrientations:", class = "?" },
     { name = "_setMIMEType:", class = "?" },
@@ -241,7 +247,6 @@ selectors = [
     { name = "_setPreventsSleepDuringVideoPlayback:", class = "?" },
     { name = "_setPrivacyProxyFailClosedForUnreachableNonMainHosts:", class = "?" },
     { name = "_setProperty:forKey:", class = "?" },
-    { name = "_setSubscribedDomainsForCookieChanges:", class = "?" },
     { name = "_setSuppressesAudioRendering:", class = "?" },
     { name = "_setUseEnhancedPrivacyMode:", class = "?" },
     { name = "_standardMarkerAttributesForAttributes:", class = "?" },
@@ -272,7 +277,6 @@ selectors = [
     { name = "bundleProxyWithAuditToken:error:", class = "?" },
     { name = "canParseExtendedMIMEType:", class = "?" },
     { name = "colorWithCalibratedRed:green:blue:alpha:", class = "?" },
-    { name = "columnSpan", class = "?" },
     { name = "containsAttachments", class = "?" },
     { name = "contentDispositionEncodingFallbackArray", class = "?" },
     { name = "coreResult", class = "?" },
@@ -308,7 +312,6 @@ selectors = [
     { name = "initWithRTF:documentAttributes:", class = "?" },
     { name = "initWithRTFD:documentAttributes:", class = "?" },
     { name = "initWithStorageDirectoryAtURL:", class = "?" },
-    { name = "initWithTable:startingRow:rowSpan:startingColumn:columnSpan:", class = "?" },
     { name = "initWithText:selectedRange:", class = "?" },
     { name = "initWithType:location:", class = "?" },
     { name = "installmentAuthorizationToken", class = "?" },
@@ -326,7 +329,6 @@ selectors = [
     { name = "lastModifiedDateOfEntryForKey:", class = "?" },
     { name = "makeContentKeyGroup", class = "?" },
     { name = "maxAlpha", class = "?" },
-    { name = "merchandisingImageData", class = "?" },
     { name = "objectForWebScript", class = "?" },
     { name = "openToBuyThresholdAmount", class = "?" },
     { name = "optionID", class = "?" },
@@ -350,7 +352,6 @@ selectors = [
     { name = "receivedResponse:decisionHandler:", class = "?" },
     { name = "referrerIdentifier", class = "?" },
     { name = "regionBeingDrawn", class = "?" },
-    { name = "registerForPostingNotificationsWithContext:", class = "?" },
     { name = "reloadValueForKeyPath:", class = "?" },
     { name = "remediateWithDecisionHandler:", class = "?" },
     { name = "removeEntryForKey:", class = "?" },
@@ -360,7 +361,6 @@ selectors = [
     { name = "retailChannel", class = "?" },
     { name = "revealRangeAtIndex:selectedRanges:shouldUpdateSelection:", class = "?" },
     { name = "routingContextUID", class = "?" },
-    { name = "rowSpan", class = "?" },
     { name = "safeRequestForRequest:", class = "?" },
     { name = "scrollView:shouldScrollToPoint:", class = "?" },
     { name = "setAllowsHitTesting:", class = "?" },
@@ -370,7 +370,6 @@ selectors = [
     { name = "setAuditTokensForProcessAssertion:error:", class = "?" },
     { name = "setBindingTotalAmount:", class = "?" },
     { name = "setBorderColor:forEdge:", class = "?" },
-    { name = "setCollapsesBorders:", class = "?" },
     { name = "setContentDispositionEncodingFallbackArray:", class = "?" },
     { name = "setContentsOpaque:", class = "?" },
     { name = "setContextId:", class = "?" },
@@ -380,14 +379,11 @@ selectors = [
     { name = "setFeature:", class = "?" },
     { name = "setFencePort:", class = "?" },
     { name = "setHeaderLevel:", class = "?" },
-    { name = "setHidesEmptyCells:", class = "?" },
     { name = "setHostProcessAttribution:error:", class = "?" },
     { name = "setInStorePurchase:", class = "?" },
     { name = "setInstallmentItemType:", class = "?" },
     { name = "setInstallmentItems:", class = "?" },
     { name = "setInstallmentMerchantIdentifier:", class = "?" },
-    { name = "setLayoutAlgorithm:", class = "?" },
-    { name = "setMerchandisingImageData:", class = "?" },
     { name = "setNeedsLayoutOnGeometryChange:", class = "?" },
     { name = "setOpenToBuyThresholdAmount:", class = "?" },
     { name = "setPIPModeEnabled:", class = "?" },
@@ -402,13 +398,10 @@ selectors = [
     { name = "setSortsSublayers:", class = "?" },
     { name = "setSourceAppIdentifier:", class = "?" },
     { name = "setSourceAppPid:", class = "?" },
-    { name = "setTextBlocks:", class = "?" },
     { name = "setThumbstickUserIntentHandler:", class = "?" },
     { name = "setToneMapToStandardDynamicRange:", class = "?" },
     { name = "setURLSession:", class = "?" },
     { name = "setUsesWebKitBehavior:", class = "?" },
-    { name = "setValue:type:forDimension:", class = "?" },
-    { name = "setVerticalAlignment:", class = "NSTextBlock" },
     { name = "setVideoView:", class = "?" },
     { name = "setWidth:type:forLayer:edge:", class = "?" },
     { name = "sharedAVSystemController", class = "?" },
@@ -419,14 +412,10 @@ selectors = [
     { name = "signature", class = "RSABSSATokenReady" },
     { name = "sizeValue", class = "?" },
     { name = "startRoutingVideoToPictureInPicturePlayerLayerView", class = "?" },
-    { name = "startingColumn", class = "?" },
-    { name = "startingRow", class = "?" },
     { name = "stopRoutingVideoToPictureInPicturePlayerLayerView", class = "?" },
     { name = "supportedOptions", class = "?" },
     { name = "supportsMultipleOutputDevices", class = "?" },
-    { name = "table", class = "?" },
     { name = "tableCellDefaultSelectionTintColor", class = "?" },
-    { name = "textBlocks", class = "?" },
     { name = "tokenContent", class = "?" },
     { name = "tokenWaitingActivationWithContent:error:", class = "?" },
     { name = "valueForTimeStamp:", class = "?" },
@@ -502,7 +491,6 @@ symbols = [
     "CCRSAGetCRTComponentsSizes",
     "CCRSAGetKeyComponents",
     "CCRSAGetKeyType",
-    "CFHTTPCookieStorageCopyCookies",
     "CFHTTPCookieStorageDeleteAllCookies",
     "CFHTTPCookieStorageDeleteCookie",
     "CFHTTPCookieStorageGetCookieAcceptPolicy",
@@ -530,7 +518,6 @@ symbols = [
     "CGColorSpaceEqualToColorSpace",
     "CGColorTransformConvertColorComponents",
     "CGColorTransformCreate",
-    "CGContextCopyDeviceColorSpace",
     "CGContextCreateWithDelegate",
     "CGContextDelegateCreate",
     "CGContextDelegateGetInfo",
@@ -559,7 +546,7 @@ symbols = [
     "CGGStateGetStrokeColor",
     "CGGStateGetStyle",
     "CGGradientCreateWithColorComponentsAndOptions",
-    "CGIOSurfaceContextCreate",
+    "CGIOSurfaceContextCreateWithOptions",
     "CGIOSurfaceContextCreateImage",
     "CGIOSurfaceContextCreateImageReference",
     "CGIOSurfaceContextGetColorSpace",
@@ -573,7 +560,6 @@ symbols = [
     "CGSNextRect",
     "CGSRegionEnumerator",
     "CGSReleaseRegionEnumerator",
-    "CGShadingCreateConic",
     "CGStyleCreateColorMatrix",
     "CGStyleCreateFocusRingWithColor",
     "CGStyleCreateGaussianBlur",
@@ -801,7 +787,6 @@ symbols = [
     "kCTFontCSSWeightAttribute",
     "kCTFontCSSWidthAttribute",
     "kCTFontContentSizeCategoryL",
-    "kCTFontDescriptorLanguageAttribute",
     "kCTFontDescriptorTextStyleAttribute",
     "kCTFontFallbackOptionAttribute",
     "kCTFontGradeTrait",

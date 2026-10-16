@@ -9,6 +9,7 @@
 
 #include <stdint.h>
 #include <webgpu/webgpu.h>
+#include <array>
 #include <limits>
 
 #include "libANGLE/Constants.h"
@@ -139,7 +140,7 @@ class RenderPipelineDesc final
 
     void setFrontFace(GLenum frontFace);
     void setCullMode(gl::CullFaceMode cullMode, bool cullFaceEnabled);
-    void setColorWriteMask(size_t colorIndex, bool r, bool g, bool b, bool a);
+    bool setColorWriteMask(size_t colorIndex, bool r, bool g, bool b, bool a);
 
     bool setBlendEnabled(size_t colorIndex, bool enabled);
     bool setBlendFuncs(size_t colorIndex,
@@ -173,8 +174,8 @@ class RenderPipelineDesc final
                                  RenderPipelineHandle *pipelineOut) const;
 
   private:
-    PackedVertexAttribute mVertexAttributes[gl::MAX_VERTEX_ATTRIBS];
-    PackedColorTargetState mColorTargetStates[gl::IMPLEMENTATION_MAX_DRAW_BUFFERS];
+    std::array<PackedVertexAttribute, gl::MAX_VERTEX_ATTRIBS> mVertexAttributes;
+    std::array<PackedColorTargetState, gl::IMPLEMENTATION_MAX_DRAW_BUFFERS> mColorTargetStates;
     PackedDepthStencilState mDepthStencilState;
     PackedPrimitiveState mPrimitiveState;
     uint8_t mPad0[3];

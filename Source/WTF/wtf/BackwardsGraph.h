@@ -50,9 +50,9 @@ public:
         GraphNodeWorklist<typename Graph::Node, typename Graph::Set> worklist;
 
         auto addRootSuccessor = [&] (typename Graph::Node node) {
-            if (worklist.push(node)) {
+            if (m_rootSuccessorSet.add(node))
                 m_rootSuccessorList.append(node);
-                m_rootSuccessorSet.add(node);
+            if (worklist.push(node)) {
                 while (typename Graph::Node node = worklist.pop())
                     worklist.pushAll(graph.predecessors(node));
             }
@@ -77,8 +77,10 @@ public:
 
         for (unsigned i = 0; i < graph.numNodes(); ++i) {
             if (typename Graph::Node node = graph.node(i)) {
-                if (!graph.successors(node).size())
+                if (!graph.successors(node).size()) {
+                    ASSERT(!worklist.saw(node));
                     addRootSuccessor(node);
+                }
             }
         }
 
@@ -88,8 +90,10 @@ public:
         // edges. That would require thinking, so we just use a rough heuristic: add the highest
         // numbered nodes first, which is totally fine if the input program is already sorted nicely.
         for (unsigned i = graph.numNodes(); i--;) {
-            if (typename Graph::Node node = graph.node(i))
-                addRootSuccessor(node);
+            if (typename Graph::Node node = graph.node(i)) {
+                if (!worklist.saw(node))
+                    addRootSuccessor(node);
+            }
         }
     }
 
@@ -143,7 +147,7 @@ public:
         return m_graph.numNodes() + 1;
     }
 
-    CString dump(Node node) const
+    UTF8CString dump(Node node) const
     {
         StringPrintStream out;
         if (!node)
@@ -152,7 +156,7 @@ public:
             out.print(Node::rootName());
         else
             out.print(m_graph.dump(node.node()));
-        return out.toCString();
+        return out.toUTF8CString();
     }
 
     void dump(PrintStream& out) const

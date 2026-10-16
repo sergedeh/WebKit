@@ -42,11 +42,11 @@ public:
 
     bool operator==(const FEImage&) const;
 
-    const SourceImage& sourceImage() const { return m_sourceImage; }
+    const SourceImage& sourceImage() const LIFETIME_BOUND { return m_sourceImage; }
     void setImageSource(SourceImage&& sourceImage) { m_sourceImage = WTF::move(sourceImage); }
 
     FloatRect sourceImageRect() const { return m_sourceImageRect; }
-    const SVGPreserveAspectRatioValue& preserveAspectRatio() const { return m_preserveAspectRatio; }
+    const SVGPreserveAspectRatioValue& preserveAspectRatio() const LIFETIME_BOUND { return m_preserveAspectRatio; }
 
 private:
     FEImage(SourceImage&&, const FloatRect& sourceImageRect, const SVGPreserveAspectRatioValue&);
@@ -55,8 +55,8 @@ private:
 
     unsigned numberOfEffectInputs() const override { return 0; }
 
-    // FEImage results are always in DestinationColorSpace::SRGB()
-    void setOperatingColorSpace(const DestinationColorSpace&) override { }
+    // FEImage results are always in ColorSpace::SRGB()
+    void setOperatingColorSpace(const ColorSpace&) override { }
 
     FloatRect calculateImageRect(const Filter&, std::span<const FloatRect> inputImageRects, const FloatRect& primitiveSubregion) const override;
 

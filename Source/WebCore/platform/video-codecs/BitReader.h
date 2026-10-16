@@ -38,8 +38,8 @@ public:
     {
     }
 
-    std::optional<uint64_t> read(size_t);
-    std::optional<bool> readBit();
+    std::optional<uint64_t> LEGACY_NODELETE read(size_t);
+    std::optional<bool> LEGACY_NODELETE readBit();
     template <typename T> std::optional<T> read()
     {
         static_assert(std::is_unsigned<T>::value);
@@ -48,9 +48,17 @@ public:
             return { };
         return static_cast<T>(*value);
     }
-    size_t bitOffset() const;
-    bool skipBytes(size_t);
+    size_t LEGACY_NODELETE bitOffset() const;
+    bool LEGACY_NODELETE skipBytes(size_t);
     size_t byteOffset() const { return m_index; }
+
+    // Once a read fails, ok() becomes false and every subsequent call to these helpers returns 0/false without touching m_index further.
+    bool ok() const { return !m_invalid; }
+    uint32_t LEGACY_NODELETE readBits(size_t bits);
+    bool LEGACY_NODELETE readFlag();
+    void LEGACY_NODELETE consumeBits(size_t bits);
+    uint32_t LEGACY_NODELETE readExpGolomb();
+    int32_t LEGACY_NODELETE readSignedExpGolomb();
 
 private:
     std::optional<uint64_t> readBytes(size_t bytes) { return read(bytes * 8); }
@@ -58,6 +66,7 @@ private:
     size_t m_index { 0 };
     uint8_t m_currentByte { 0 };
     size_t m_remainingBits { 0 };
+    bool m_invalid { false };
 };
 
 }

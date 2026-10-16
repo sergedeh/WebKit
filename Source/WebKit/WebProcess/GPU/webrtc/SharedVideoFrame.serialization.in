@@ -28,6 +28,8 @@ using WebKit::SharedVideoFrame::Buffer = Variant<std::nullptr_t, WebKit::RemoteV
     MediaTime time;
     bool mirrored;
     WebCore::VideoFrameRotation rotation;
+    WebCore::PlatformVideoColorSpace colorSpace;
+    bool shouldIgnoreAlpha;
     WebKit::SharedVideoFrame::Buffer buffer;
 };
 

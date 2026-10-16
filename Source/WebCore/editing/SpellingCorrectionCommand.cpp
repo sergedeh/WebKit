@@ -66,7 +66,7 @@ private:
     void doUnapply() override
     {
         if (!m_hasBeenUndone) {
-            document().protectedEditor()->unappliedSpellCorrection(startingSelection(), m_corrected, m_correction);
+            protect(document().editor())->unappliedSpellCorrection(startingSelection(), m_corrected, m_correction);
             m_hasBeenUndone = true;
         }
         
@@ -99,7 +99,7 @@ Ref<SpellingCorrectionCommand> SpellingCorrectionCommand::create(const SimpleRan
 
 bool SpellingCorrectionCommand::willApplyCommand()
 {
-    m_correctionFragment = createFragmentFromText(m_rangeToBeCorrected, m_correction);
+    lazyInitialize(m_correctionFragment, createFragmentFromText(m_rangeToBeCorrected, m_correction));
     return CompositeEditCommand::willApplyCommand();
 }
 
@@ -118,7 +118,7 @@ void SpellingCorrectionCommand::doApply()
     applyCommandToComposite(SpellingCorrectionRecordUndoCommand::create(document.copyRef(), m_corrected, m_correction));
 #endif
 
-    applyCommandToComposite(ReplaceSelectionCommand::create(WTF::move(document), protectedCorrectionFragment(), ReplaceSelectionCommand::MatchStyle, EditAction::Paste));
+    applyCommandToComposite(ReplaceSelectionCommand::create(WTF::move(document), protect(m_correctionFragment), ReplaceSelectionCommand::MatchStyle, EditAction::Paste));
 }
 
 String SpellingCorrectionCommand::inputEventData() const
@@ -131,13 +131,13 @@ String SpellingCorrectionCommand::inputEventData() const
 
 Vector<Ref<StaticRange>> SpellingCorrectionCommand::targetRanges() const
 {
-    return { 1, StaticRange::create(m_rangeToBeCorrected) };
+    return { FillWith { }, 1, StaticRange::create(m_rangeToBeCorrected) };
 }
 
 RefPtr<DataTransfer> SpellingCorrectionCommand::inputEventDataTransfer() const
 {
     if (!isEditingTextAreaOrTextInput())
-        return DataTransfer::createForInputEvent(m_correction, serializeFragment(*protectedCorrectionFragment(), SerializedNodes::SubtreeIncludingNode));
+        return DataTransfer::createForInputEvent(m_correction, serializeFragment(*m_correctionFragment, SerializedNodes::SubtreeIncludingNode));
 
     return CompositeEditCommand::inputEventDataTransfer();
 }

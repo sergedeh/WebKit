@@ -41,19 +41,20 @@ public:
     void setClearGapBeforeFirstLine(InlineLayoutUnit verticalGap) { m_clearGapBeforeFirstLine = verticalGap; }
     InlineLayoutUnit clearGapBeforeFirstLine() const { return m_clearGapBeforeFirstLine; }
 
-    const BlockLayoutState& parentBlockLayoutState() const { return m_parentBlockLayoutState; }
-    BlockLayoutState& parentBlockLayoutState() { return m_parentBlockLayoutState; }
+    const BlockLayoutState& parentBlockLayoutState() const LIFETIME_BOUND { return m_parentBlockLayoutState; }
+    BlockLayoutState& parentBlockLayoutState() LIFETIME_BOUND { return m_parentBlockLayoutState; }
 
-    const PlacedFloats& placedFloats() const { return m_parentBlockLayoutState.placedFloats(); }
-    PlacedFloats& placedFloats() { return m_parentBlockLayoutState.placedFloats(); }
+    const PlacedFloats& placedFloats() const LIFETIME_BOUND { return m_parentBlockLayoutState.placedFloats(); }
+    PlacedFloats& placedFloats() LIFETIME_BOUND { return m_parentBlockLayoutState.placedFloats(); }
 
     void setAvailableLineWidthOverride(AvailableLineWidthOverride availableLineWidthOverride) { m_availableLineWidthOverride = availableLineWidthOverride; }
-    const AvailableLineWidthOverride& availableLineWidthOverride() const { return m_availableLineWidthOverride; }
+    const AvailableLineWidthOverride& availableLineWidthOverride() const LIFETIME_BOUND { return m_availableLineWidthOverride; }
 
     void setLegacyClampedLineIndex(size_t lineIndex) { m_legacyClampedLineIndex = lineIndex; }
     std::optional<size_t> legacyClampedLineIndex() const { return m_legacyClampedLineIndex; }
 
     void setLineCount(size_t lineCount) { m_lineCount = lineCount; }
+    void incrementLineCount() { ++m_lineCount; }
     size_t lineCount() const { return m_lineCount; }
 
     void setLineCountWithInlineContentIncludingNestedBlocks(size_t lineCount) { m_lineCountWithInlineContentIncludingNestedBlocks = lineCount; }
@@ -73,11 +74,18 @@ public:
     void setShouldShapeTextAcrossInlineBoxes() { m_shouldShapeTextAcrossInlineBoxes = true; }
     bool shouldShapeTextAcrossInlineBoxes() const { return m_shouldShapeTextAcrossInlineBoxes; }
 
-    // Integration codepath
+    // Excluded list markers belonging to ancestor list items, which are aligned with this formatting context's first formatted line but are no part of its content.
+    using AscentAndDescent = std::pair<InlineLayoutUnit, InlineLayoutUnit>;
+    void setExcludedMarkerLayoutBounds(Vector<AscentAndDescent>&& layoutBounds) { m_excludedMarkerLayoutBounds = WTF::move(layoutBounds); }
+    const Vector<AscentAndDescent>& excludedMarkerLayoutBounds() const LIFETIME_BOUND { return m_excludedMarkerLayoutBounds; }
+
     void setNestedListMarkerOffsets(HashMap<CheckedRef<const ElementBox>, LayoutUnit>&& nestedListMarkerOffsets) { m_nestedListMarkerOffsets = WTF::move(nestedListMarkerOffsets); }
     LayoutUnit nestedListMarkerOffset(const ElementBox& listMarkerBox) const { return m_nestedListMarkerOffsets.get(listMarkerBox); }
     void setShouldNotSynthesizeInlineBlockBaseline() { m_shouldNotSynthesizeInlineBlockBaseline = true; }
     bool shouldNotSynthesizeInlineBlockBaseline() const { return m_shouldNotSynthesizeInlineBlockBaseline; }
+
+    void setContentMayHaveInkOverflow(bool mayHaveInkOverflow) { m_contentMayHaveInkOverflow |= mayHaveInkOverflow; }
+    bool contentMayHaveInkOverflow() const { return m_contentMayHaveInkOverflow; }
 
 private:
     BlockLayoutState& m_parentBlockLayoutState;
@@ -91,7 +99,9 @@ private:
     size_t m_lineCountWithInlineContentIncludingNestedBlocks { 0 };
     // FIXME: This is required by the integaration codepath.
     HashMap<CheckedRef<const ElementBox>, LayoutUnit> m_nestedListMarkerOffsets;
+    Vector<AscentAndDescent> m_excludedMarkerLayoutBounds;
     AvailableLineWidthOverride m_availableLineWidthOverride;
+    bool m_contentMayHaveInkOverflow { false };
     bool m_shouldNotSynthesizeInlineBlockBaseline { false };
     bool m_inStandardsMode { false };
     bool m_shouldShapeTextAcrossInlineBoxes { false };

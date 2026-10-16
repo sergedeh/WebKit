@@ -33,13 +33,13 @@
 #import <wtf/StdLibExtras.h>
 #import <wtf/TZoneMallocInlines.h>
 
-namespace WebGPU {
+namespace WebGPU::Metal {
 
 Lock QuerySet::querySetLock;
 __attribute__((no_destroy)) std::unique_ptr<Vector<id<MTLCounterSampleBuffer>>> QuerySet::m_counterSampleBuffers;
 __attribute__((no_destroy)) std::unique_ptr<Vector<RangeSet<Range<uint32_t>>>> QuerySet::m_counterSampleBufferFreeRanges;
 
-Ref<QuerySet> Device::createQuerySet(const WGPUQuerySetDescriptor& descriptor)
+Ref<QuerySet> Device::createQuerySet(const WebGPU::QuerySetDescriptor& descriptor)
 {
     QuerySet::createContainersIfNeeded();
 
@@ -50,28 +50,20 @@ Ref<QuerySet> Device::createQuerySet(const WGPUQuerySetDescriptor& descriptor)
         return QuerySet::createInvalid(*this);
     }
 
-    const char* label = descriptor.label;
-    auto type = descriptor.type;
-
-    switch (type) {
-    case WGPUQueryType_Timestamp: {
-#if !PLATFORM(WATCHOS)
+    switch (descriptor.type) {
+    case WebGPU::QueryType::Timestamp: {
         auto querySetWithOffset = QuerySet::counterSampleBufferWithOffsetForDevice(count, *this);
         if (!querySetWithOffset.buffer)
             return QuerySet::createInvalid(*this);
 
-        return QuerySet::create(WTF::move(querySetWithOffset), count, type, *this);
-#else
-        return QuerySet::createInvalid(*this);
-#endif
-    } case WGPUQueryType_Occlusion: {
+        return QuerySet::create(WTF::move(querySetWithOffset), count, WGPUQueryType_Timestamp, *this);
+    } case WebGPU::QueryType::Occlusion: {
         auto buffer = safeCreateBuffer(sizeof(uint64_t) * count, MTLStorageModePrivate);
-        buffer.label = fromAPI(label).createNSString().get();
-        return QuerySet::create(buffer, count, type, *this);
+        buffer.label = descriptor.label.createNSString().get();
+        return QuerySet::create(buffer, count, WGPUQueryType_Occlusion, *this);
     }
-    case WGPUQueryType_Force32:
-        return QuerySet::createInvalid(*this);
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(QuerySet);
@@ -227,36 +219,36 @@ void QuerySet::createContainersIfNeeded()
     }
 }
 
-} // namespace WebGPU
+} // namespace WebGPU::Metal
 
 #pragma mark WGPU Stubs
 
-void wgpuQuerySetReference(WGPUQuerySet querySet)
+void LEGACY_NODELETE wgpuQuerySetAddRef(WGPUQuerySet querySet)
 {
-    WebGPU::fromAPI(querySet).ref();
+    WebGPU::Metal::fromAPI(querySet).ref();
 }
 
 void wgpuQuerySetRelease(WGPUQuerySet querySet)
 {
-    WebGPU::fromAPI(querySet).deref();
+    WebGPU::Metal::fromAPI(querySet).deref();
 }
 
 void wgpuQuerySetDestroy(WGPUQuerySet querySet)
 {
-    WebGPU::protectedFromAPI(querySet)->destroy();
+    protect(WebGPU::Metal::fromAPI(querySet))->destroy();
 }
 
-void wgpuQuerySetSetLabel(WGPUQuerySet querySet, const char* label)
+void wgpuQuerySetSetLabel(WGPUQuerySet querySet, WGPUStringView label)
 {
-    WebGPU::protectedFromAPI(querySet)->setLabel(WebGPU::fromAPI(label));
+    protect(WebGPU::Metal::fromAPI(querySet))->setLabel(WebGPU::Metal::fromAPI(label));
 }
 
 uint32_t wgpuQuerySetGetCount(WGPUQuerySet querySet)
 {
-    return WebGPU::protectedFromAPI(querySet)->count();
+    return WebGPU::Metal::fromAPI(querySet).count();
 }
 
 WGPUQueryType wgpuQuerySetGetType(WGPUQuerySet querySet)
 {
-    return WebGPU::protectedFromAPI(querySet)->type();
+    return WebGPU::Metal::fromAPI(querySet).type();
 }

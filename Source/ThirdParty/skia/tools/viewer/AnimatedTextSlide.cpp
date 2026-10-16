@@ -11,20 +11,20 @@
 #include "include/core/SkFontMgr.h"
 #include "include/core/SkImage.h"
 #include "include/core/SkTypeface.h"
-#include "src/base/SkRandom.h"
-#include "src/base/SkTime.h"
-#include "src/base/SkUTF.h"
 #include "src/core/SkColorPriv.h"
+#include "src/core/SkRandom.h"
+#include "src/core/SkTime.h"
+#include "src/core/SkUTF.h"
+#include "src/gpu/MaskFormat.h"
 #include "tools/fonts/FontToolUtils.h"
 #include "tools/viewer/Slide.h"
 
 #if defined(SK_GANESH)
 #include "include/gpu/ganesh/GrDirectContext.h"
-#include "src/gpu/AtlasTypes.h"
 #include "src/gpu/ganesh/GrDirectContextPriv.h"
+#endif
 
 using MaskFormat = skgpu::MaskFormat;
-#endif
 
 SkRandom gRand;
 

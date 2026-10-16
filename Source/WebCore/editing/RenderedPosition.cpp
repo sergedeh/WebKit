@@ -32,22 +32,23 @@
 #include "RenderedPosition.h"
 
 #include "CaretRectComputation.h"
+#include "Editing.h"
 #include "InlineRunAndOffset.h"
-#include "NodeInlines.h"
 #include "RenderObjectInlines.h"
 #include "VisiblePosition.h"
+#include "NodeInlines.h"
 
 namespace WebCore {
 
-static inline const RenderObject* rendererFromPosition(const Position& position)
+static inline Node* LEGACY_NODELETE nodeFromPosition(const Position& position)
 {
     ASSERT(position.isNotNull());
-    RefPtr<Node> rendererNode;
+    Node* node = nullptr;
     switch (position.anchorType()) {
     case Position::PositionIsOffsetInAnchor:
-        rendererNode = position.computeNodeAfterPosition();
-        if (!rendererNode || !rendererNode->renderer())
-            rendererNode = position.anchorNode()->lastChild();
+        node = position.computeNodeAfterPosition();
+        if (!node || !node->renderer())
+            node = position.anchorNode()->lastChild();
         break;
 
     case Position::PositionIsBeforeAnchor:
@@ -55,20 +56,23 @@ static inline const RenderObject* rendererFromPosition(const Position& position)
         break;
 
     case Position::PositionIsBeforeChildren:
-        rendererNode = position.anchorNode()->firstChild();
+        node = position.anchorNode()->firstChild();
         break;
     case Position::PositionIsAfterChildren:
-        rendererNode = position.anchorNode()->lastChild();
+        node = position.anchorNode()->lastChild();
         break;
     }
-    if (!rendererNode || !rendererNode->renderer())
-        rendererNode = position.anchorNode();
-    return rendererNode->renderer();
+    if (!node || !node->renderer())
+        node = position.anchorNode();
+    return node;
 }
 
-RenderedPosition::RenderedPosition()
+static inline const RenderObject* LEGACY_NODELETE rendererFromPosition(const Position& position)
 {
+    return nodeFromPosition(position)->renderer();
 }
+
+RenderedPosition::RenderedPosition() = default;
 
 RenderedPosition::RenderedPosition(const RenderObject* renderer, InlineIterator::LeafBoxIterator box, unsigned offset)
     : m_renderer(renderer)
@@ -94,6 +98,9 @@ RenderedPosition::RenderedPosition(const Position& position, Affinity affinity)
         m_renderer = &m_box->renderer();
     else
         m_renderer = rendererFromPosition(position);
+
+    if (m_renderer)
+        m_node = m_renderer->node() ? m_renderer->node() : nodeFromPosition(position);
 }
 
 InlineIterator::LeafBoxIterator RenderedPosition::previousLeafOnLine() const
@@ -208,19 +215,20 @@ Position RenderedPosition::positionAtLeftBoundaryOfBiDiRun() const
     ASSERT(atLeftBoundaryOfBidiRun());
 
     if (atLeftmostOffsetInBox())
-        return makeDeprecatedLegacyPosition(m_renderer->protectedNode().get(), m_offset);
-
-    return makeDeprecatedLegacyPosition(nextLeafOnLine()->renderer().protectedNode().get(), nextLeafOnLine()->leftmostCaretOffset());
+        return makeDeprecatedLegacyPosition(protect(m_node.get()).get(), m_offset);
+    return makeDeprecatedLegacyPosition(protect(nextLeafOnLine()->renderer().node()).get(), nextLeafOnLine()->leftmostCaretOffset());
 }
 
 Position RenderedPosition::positionAtRightBoundaryOfBiDiRun() const
 {
     ASSERT(atRightBoundaryOfBidiRun());
 
-    if (atRightmostOffsetInBox())
-        return makeDeprecatedLegacyPosition(m_renderer->protectedNode().get(), m_offset);
+    if (atRightmostOffsetInBox()) {
+        auto offset = convertOffsetInTextFragmentToNodeOffset(protect(*m_renderer), m_offset);
+        return makeDeprecatedLegacyPosition(protect(m_node.get()).get(), offset);
+    }
 
-    return makeDeprecatedLegacyPosition(previousLeafOnLine()->renderer().protectedNode().get(), previousLeafOnLine()->rightmostCaretOffset());
+    return makeDeprecatedLegacyPosition(protect(previousLeafOnLine()->renderer().node()).get(), previousLeafOnLine()->rightmostCaretOffset());
 }
 
 IntRect RenderedPosition::absoluteRect(CaretRectMode caretRectMode) const
@@ -228,8 +236,8 @@ IntRect RenderedPosition::absoluteRect(CaretRectMode caretRectMode) const
     if (isNull())
         return IntRect();
 
-    IntRect localRect = snappedIntRect(computeLocalCaretRect(*m_renderer, { m_box, m_offset }, caretRectMode));
-    return localRect == IntRect() ? IntRect() : m_renderer->localToAbsoluteQuad(FloatRect(localRect)).enclosingBoundingBox();
+    IntRect localRect = snappedIntRect(computeLocalCaretRect(protect(*m_renderer), { m_box, m_offset }, caretRectMode));
+    return localRect == IntRect() ? IntRect() : protect(m_renderer)->localToAbsoluteQuad(FloatRect(localRect)).enclosingBoundingBox();
 }
 
 std::optional<BoundaryPoint> RenderedPosition::boundaryPoint() const

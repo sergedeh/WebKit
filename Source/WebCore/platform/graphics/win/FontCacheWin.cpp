@@ -112,7 +112,7 @@ static const Vector<String>* getLinkedFonts(String& family)
 
     DWORD linkedFontsBufferSize = 0;
     if (::RegQueryValueEx(fontLinkKey, family.wideCharacters().data(), 0, nullptr, nullptr, &linkedFontsBufferSize) == ERROR_FILE_NOT_FOUND) {
-        WTFLogAlways("The font link key %s does not exist in the registry.", family.utf8().data());
+        SAFE_WTFLOGALWAYS("The font link key %s does not exist in the registry.", family.utf8());
         return result;
     }
 
@@ -288,7 +288,7 @@ RefPtr<Font> FontCache::systemFallbackForCharacterCluster(const FontDescription&
     }
 
     String familyName;
-    const Vector<String>* linkedFonts = 0;
+    const Vector<String>* linkedFonts = nullptr;
     unsigned linkedFontIndex = 0;
     while (hfont) {
         SelectObject(hdc, hfont);
@@ -407,7 +407,7 @@ Ref<Font> FontCache::lastResortFallbackFont(const FontDescription& fontDescripti
     }
 
     auto hFont = adoptGDIObject(static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT)));
-    FontPlatformData platformData(WTF::move(hFont), fontDescription.computedSize(), false, false);
+    FontPlatformData platformData(WTF::move(hFont), fontDescription.usedSize(), false, false);
     return fontForPlatformData(platformData);
 }
 

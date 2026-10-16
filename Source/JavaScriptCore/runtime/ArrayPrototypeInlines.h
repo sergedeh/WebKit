@@ -35,7 +35,6 @@
 #include "JSStringJoiner.h"
 #include "JSStringInlines.h"
 #include "ObjectPrototype.h"
-#include "StringRecursionChecker.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -49,9 +48,11 @@ enum class SpeciesConstructResult : uint8_t {
 
 ALWAYS_INLINE bool arraySpeciesWatchpointIsValid(VM& vm, JSObject* thisObject)
 {
-    JSGlobalObject* globalObject = thisObject->globalObject();
-    ArrayPrototype* arrayPrototype = globalObject->arrayPrototype();
+    JSGlobalObject* globalObject = thisObject->realmMayBeNull();
+    if (!globalObject)
+        return false;
 
+    ArrayPrototype* arrayPrototype = globalObject->arrayPrototype();
     ASSERT(globalObject->arraySpeciesWatchpointSet().state() != ClearWatchpoint);
     if (arrayPrototype != thisObject->getPrototypeDirect())
         return false;
@@ -67,7 +68,9 @@ ALWAYS_INLINE bool arraySpeciesWatchpointIsValid(VM& vm, JSObject* thisObject)
 
 ALWAYS_INLINE bool arrayMissingIsConcatSpreadable(VM& vm, JSObject* thisObject)
 {
-    JSGlobalObject* globalObject = thisObject->globalObject();
+    JSGlobalObject* globalObject = thisObject->realmMayBeNull();
+    if (!globalObject)
+        return false;
     ASSERT(globalObject->arrayIsConcatSpreadableWatchpointSet().state() != ClearWatchpoint);
     if (globalObject->arrayIsConcatSpreadableWatchpointSet().state() != IsWatched)
         return false;
@@ -101,7 +104,7 @@ ALWAYS_INLINE std::pair<SpeciesConstructResult, JSObject*> speciesConstructArray
     if (thisIsArray) [[likely]] {
         // Fast path in the normal case where the user has not set an own constructor and the Array.prototype.constructor is normal.
         // We need prototype check for subclasses of Array, which are Array objects but have a different prototype by default.
-        bool isValid = arraySpeciesWatchpointIsValid(vm, thisObject);
+        bool isValid = isJSArray(thisObject) && arraySpeciesWatchpointIsValid(vm, thisObject);
         RETURN_IF_EXCEPTION(scope, exceptionResult);
         if (isValid) [[likely]]
             return std::pair { SpeciesConstructResult::FastPath, nullptr };
@@ -109,8 +112,8 @@ ALWAYS_INLINE std::pair<SpeciesConstructResult, JSObject*> speciesConstructArray
         constructor = thisObject->get(globalObject, vm.propertyNames->constructor);
         RETURN_IF_EXCEPTION(scope, exceptionResult);
         if (constructor.isConstructor()) {
-            JSObject* constructorObject = jsCast<JSObject*>(constructor);
-            bool isArrayConstructorFromAnotherRealm = globalObject != constructorObject->globalObject()
+            JSObject* constructorObject = uncheckedDowncast<JSObject>(constructor);
+            bool isArrayConstructorFromAnotherRealm = globalObject != constructorObject->realm()
                 && constructorObject->inherits<ArrayConstructor>();
             if (isArrayConstructorFromAnotherRealm)
                 return std::pair { SpeciesConstructResult::FastPath, nullptr };
@@ -129,10 +132,10 @@ ALWAYS_INLINE std::pair<SpeciesConstructResult, JSObject*> speciesConstructArray
     if (constructor.isUndefined())
         return std::pair { SpeciesConstructResult::FastPath, nullptr };
 
-    MarkedArgumentBuffer args;
-    args.append(jsNumber(length));
-    ASSERT(!args.hasOverflowed());
-    JSObject* newObject = construct(globalObject, constructor, args, "Species construction did not get a valid constructor"_s);
+    auto args = WTF::toArray<EncodedJSValue>({
+        JSValue::encode(jsNumber(length)),
+    });
+    JSObject* newObject = construct(globalObject, constructor, ArgList { args.data(), args.size() }, "Species construction did not get a valid constructor"_s);
     RETURN_IF_EXCEPTION(scope, exceptionResult);
     return std::pair { SpeciesConstructResult::CreatedObject, newObject };
 }
@@ -146,8 +149,12 @@ ALWAYS_INLINE void setLength(JSGlobalObject* globalObject, VM& vm, JSObject* obj
             throwRangeError(globalObject, scope, "Invalid array length"_s);
             return;
         }
+        JSArray* array = uncheckedDowncast<JSArray>(obj);
+        // Only ArrayStorage can hold a read-only length, whose unchanged assignment must still throw.
+        if (!hasAnyArrayStorage(array->indexingType()) && array->length() == value)
+            return;
         scope.release();
-        jsCast<JSArray*>(obj)->setLength(globalObject, static_cast<uint32_t>(value), throwException);
+        array->setLength(globalObject, static_cast<uint32_t>(value), throwException);
         return;
     }
     scope.release();
@@ -184,11 +191,8 @@ void shift(JSGlobalObject* globalObject, JSObject* thisObj, uint64_t header, uin
 
     if (isJSArray(thisObj)) {
         JSArray* array = asArray(thisObj);
-        uint32_t header32 = static_cast<uint32_t>(header);
-        ASSERT(header32 == header);
-        if (array->length() == length && array->shiftCount<shiftCountMode>(globalObject, header32, static_cast<uint32_t>(count)))
+        if (array->length() == length && array->shiftCount<shiftCountMode>(globalObject, static_cast<uint32_t>(header + resultCount), static_cast<uint32_t>(count)))
             return;
-        header = header32;
     }
 
     for (uint64_t k = header; k < length - currentCount; ++k) {
@@ -243,7 +247,7 @@ inline void unshift(JSGlobalObject* globalObject, JSObject* thisObj, uint64_t he
 
         JSArray* array = asArray(thisObj);
         if (array->length() == length) {
-            bool handled = array->unshiftCount(globalObject, static_cast<uint32_t>(header), static_cast<uint32_t>(count));
+            bool handled = array->unshiftCount(globalObject, static_cast<uint32_t>(header + currentCount), static_cast<uint32_t>(count));
             EXCEPTION_ASSERT(!scope.exception() || handled);
             if (handled)
                 return;
@@ -307,9 +311,15 @@ ALWAYS_INLINE JSString* fastArrayJoin(JSGlobalObject* globalObject, JSObject* th
         auto& butterfly = *thisObject->butterfly();
         if (length > butterfly.publicLength()) [[unlikely]]
             break;
+        auto data = butterfly.contiguous().data();
+
+        JSOnlyStringsAndInt32sJoiner onlyInt32sJoiner(separator);
+        if (auto joined = onlyInt32sJoiner.tryJoin<Int32Shape>(globalObject, data, length))
+            RELEASE_AND_RETURN(scope, joined);
+        RETURN_IF_EXCEPTION(scope, { });
+
         joiner.reserveCapacity(globalObject, length);
         RETURN_IF_EXCEPTION(scope, { });
-        auto data = butterfly.contiguous().data();
         bool holesKnownToBeOK = false;
         for (; i < length; ++i) {
             JSValue value = data[i].get();
@@ -336,7 +346,7 @@ ALWAYS_INLINE JSString* fastArrayJoin(JSGlobalObject* globalObject, JSObject* th
         bool holesKnownToBeOK = false;
 
         JSOnlyStringsAndInt32sJoiner onlyStringsJoiner(separator);
-        if (auto joined = onlyStringsJoiner.tryJoin(globalObject, data, length))
+        if (auto joined = onlyStringsJoiner.tryJoin<ContiguousShape>(globalObject, data, length))
             RELEASE_AND_RETURN(scope, joined);
         RETURN_IF_EXCEPTION(scope, { });
 
@@ -346,6 +356,7 @@ ALWAYS_INLINE JSString* fastArrayJoin(JSGlobalObject* globalObject, JSObject* th
                 RETURN_IF_EXCEPTION(scope, { });
                 if (!withoutSideEffect) {
                     genericCase = true;
+                    holesKnownToBeOK = false;
                     if (thisObject->butterfly() == &butterfly && originalLength == butterfly.publicLength()) [[likely]]
                         continue;
                     ++i;

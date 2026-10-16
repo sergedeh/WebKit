@@ -129,17 +129,17 @@ void DataDetectorHighlight::paintContents(const GraphicsLayer&, GraphicsContext&
     if (!highlight())
         return;
 
-    CGRect highlightBoundingRect = PAL::softLink_DataDetectors_DDHighlightGetBoundingRect(protectedHighlight().get());
+    CGRect highlightBoundingRect = PAL::softLink_DataDetectors_DDHighlightGetBoundingRect(protect(m_highlight).get());
     highlightBoundingRect.origin = CGPointZero;
 
-    auto imageBuffer = graphicsContext.createImageBuffer(FloatSize(highlightBoundingRect.size), deviceScaleFactor(), DestinationColorSpace::SRGB(), graphicsContext.renderingMode(), RenderingMethod::Local);
+    auto imageBuffer = graphicsContext.createImageBuffer(FloatSize(highlightBoundingRect.size), deviceScaleFactor(), ColorSpace::SRGB(), graphicsContext.renderingMode(), RenderingMethod::Local);
     if (!imageBuffer)
         return;
 
     RetainPtr cgContext = imageBuffer->context().platformContext();
 
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-    RetainPtr highlightLayer = PAL::softLink_DataDetectors_DDHighlightGetLayerWithContext(protectedHighlight().get(), cgContext.get());
+    RetainPtr highlightLayer = PAL::softLink_DataDetectors_DDHighlightGetLayerWithContext(protect(m_highlight).get(), cgContext.get());
 ALLOW_DEPRECATED_DECLARATIONS_END
 
     CGContextDrawLayerInRect(cgContext.get(), highlightBoundingRect, highlightLayer.get());

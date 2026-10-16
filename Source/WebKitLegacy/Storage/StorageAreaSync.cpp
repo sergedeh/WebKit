@@ -32,6 +32,7 @@
 #include <WebCore/SQLiteStatement.h>
 #include <WebCore/SQLiteTransaction.h>
 #include <WebCore/SuddenTermination.h>
+#include <array>
 #include <wtf/FileSystem.h>
 #include <wtf/MainThread.h>
 
@@ -255,7 +256,7 @@ void StorageAreaSync::openDatabase(OpenDatabaseParamType openingStrategy)
     StorageTracker::tracker().cancelDeletingOrigin(m_databaseIdentifier);
 
     if (!m_database->open(databaseFilename)) {
-        LOG_ERROR("Failed to open database file %s for local storage", databaseFilename.utf8().data());
+        LOG_ERROR("Failed to open database file %s for local storage", databaseFilename.utf8());
         markImported();
         m_databaseOpenFailed = true;
         return;
@@ -286,14 +287,14 @@ void StorageAreaSync::migrateItemTableIfNeeded()
     }
 
     // alter table for backward compliance, change the value type from TEXT to BLOB.
-    static const ASCIILiteral commands[] = {
+    static constexpr auto commands = WTF::toArray<ASCIILiteral>({
         "DROP TABLE IF EXISTS ItemTable2"_s,
         "CREATE TABLE ItemTable2 (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB NOT NULL ON CONFLICT FAIL)"_s,
         "INSERT INTO ItemTable2 SELECT * from ItemTable"_s,
         "DROP TABLE ItemTable"_s,
         "ALTER TABLE ItemTable2 RENAME TO ItemTable"_s,
         { },
-    };
+    });
 
     SQLiteTransaction transaction(m_database.get(), false);
     transaction.begin();
@@ -348,7 +349,7 @@ void StorageAreaSync::performImport()
         return;
     }
 
-    m_storageArea->importItems(WTF::move(itemMap));
+    protect(m_storageArea)->importItems(WTF::move(itemMap));
 
     markImported();
 }
@@ -526,7 +527,7 @@ void StorageAreaSync::deleteEmptyDatabase()
     } else {
         String databaseFilename = m_syncManager->fullDatabaseFilename(m_databaseIdentifier);
         if (!FileSystem::deleteFile(databaseFilename))
-            LOG_ERROR("Failed to delete database file %s\n", databaseFilename.utf8().data());
+            LOG_ERROR("Failed to delete database file %s\n", databaseFilename.utf8());
     }
 }
 

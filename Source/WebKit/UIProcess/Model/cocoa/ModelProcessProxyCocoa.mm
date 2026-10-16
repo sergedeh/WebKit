@@ -26,16 +26,26 @@
 #include "config.h"
 #include "ModelProcessProxy.h"
 
-#if PLATFORM(VISION) && ENABLE(GPU_PROCESS) && ENABLE(MODEL_PROCESS)
+#if ENABLE(MODEL_PROCESS)
+
+#include "ModelProcessCreationParameters.h"
+
+#if ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
+#include "Logging.h"
+#include <wtf/spi/cocoa/OSLogSPI.h>
+#endif
+
+#if PLATFORM(VISION) && ENABLE(GPU_PROCESS) && HAVE(CORE_RE)
 
 #include "GPUProcessProxy.h"
-#include "ModelProcessCreationParameters.h"
 #include "RunningBoardServicesSPI.h"
 #include "SharedFileHandle.h"
 #include "SharedPreferencesForWebProcess.h"
 #include "WebProcessProxy.h"
 
 #define MESSAGE_CHECK(assertion) MESSAGE_CHECK_BASE(assertion, connection())
+
+#endif
 
 namespace WebKit {
 
@@ -52,8 +62,18 @@ void ModelProcessProxy::updateModelProcessCreationParameters(ModelProcessCreatio
     value = [NSUserDefaults.standardUserDefaults objectForKey:memoryLimitFlag];
     if ([value isKindOfClass:NSNumber.class])
         parameters.debugEntityMemoryLimit = [value integerValue];
+
+    NSString * const immersiveMemoryLimitFlag = @"WebKitDebugModelImmersiveEntityMemoryLimit";
+    value = [NSUserDefaults.standardUserDefaults objectForKey:immersiveMemoryLimitFlag];
+    if ([value isKindOfClass:NSNumber.class])
+        parameters.debugImmersiveEntityMemoryLimit = [value integerValue];
+
+#if ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
+    parameters.isDebugLoggingEnabled = os_log_debug_enabled(OS_LOG_DEFAULT);
+#endif
 }
 
+#if PLATFORM(VISION) && ENABLE(GPU_PROCESS) && ENABLE(MODEL_PROCESS) && HAVE(CORE_RE)
 void ModelProcessProxy::requestSharedSimulationConnection(WebCore::ProcessIdentifier webProcessIdentifier, CompletionHandler<void(std::optional<IPC::SharedFileHandle>)>&& completionHandler)
 {
     auto webProcessProxy = WebProcessProxy::processForIdentifier(webProcessIdentifier);
@@ -82,9 +102,17 @@ void ModelProcessProxy::requestSharedSimulationConnection(WebCore::ProcessIdenti
     GPUProcessProxy::getOrCreate()->requestSharedSimulationConnection(process.auditToken, WTF::move(completionHandler));
 }
 
-}
-
 #undef MESSAGE_CHECK
-
 #endif
 
+#if ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
+RefPtr<XPCEventHandler> ModelProcessProxy::xpcEventHandler() const
+{
+    return adoptRef(new LogXPCEventHandler(*this));
+}
+#endif // ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
+
+}
+
+
+#endif // ENABLE(MODEL_PROCESS)

@@ -38,7 +38,7 @@ using namespace Inspector;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WebInjectedScriptManager);
 
-Ref<WebInjectedScriptManager> WebInjectedScriptManager::create(Inspector::InspectorEnvironment& environment, Ref<Inspector::InjectedScriptHost>&& host)
+Ref<WebInjectedScriptManager> WebInjectedScriptManager::create(InspectorEnvironment& environment, Ref<InjectedScriptHost>&& host)
 {
     return adoptRef(*new WebInjectedScriptManager(environment, WTF::move(host)));
 }
@@ -93,11 +93,15 @@ void WebInjectedScriptManager::discardInjectedScripts()
     InjectedScriptManager::discardInjectedScripts();
 
     if (m_commandLineAPIHost)
-        m_commandLineAPIHost->clearAllWrappers();
+        protect(m_commandLineAPIHost)->clearAllWrappers();
 }
 
 void WebInjectedScriptManager::didCreateInjectedScript(const Inspector::InjectedScript& injectedScript)
 {
+    // A manager that was never connected to a frontend has no CommandLineAPIHost.
+    if (!m_commandLineAPIHost)
+        return;
+
     CommandLineAPIModule::injectIfNeeded(this, injectedScript);
 }
 

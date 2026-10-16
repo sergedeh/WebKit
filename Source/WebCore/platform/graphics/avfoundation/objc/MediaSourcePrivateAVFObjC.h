@@ -70,6 +70,7 @@ public:
 
     RefPtr<MediaPlayerPrivateInterface> player() const final;
     void setPlayer(MediaPlayerPrivateInterface*) final;
+    void willShutdown() final;
 
     AddStatus addSourceBuffer(const ContentType&, const MediaSourceConfiguration&, RefPtr<SourceBufferPrivate>&) final;
     void durationChanged(const MediaTime&) final;
@@ -109,7 +110,7 @@ private:
     friend class SourceBufferPrivateAVFObjC;
 
     MediaSourcePrivateAVFObjC(MediaPlayerPrivateMediaSourceAVFObjC&, MediaSourcePrivateClient&);
-    RefPtr<MediaPlayerPrivateMediaSourceAVFObjC> platformPlayer() const;
+    RefPtr<MediaPlayerPrivateMediaSourceAVFObjC> LEGACY_NODELETE platformPlayer() const;
     void callOnMainThreadWithPlayer(Function<void(MediaPlayerPrivateMediaSourceAVFObjC&)>&&);
 
     void notifyActiveSourceBuffersChanged() final;
@@ -117,9 +118,9 @@ private:
 
     void setSourceBufferWithSelectedVideo(SourceBufferPrivateAVFObjC*);
 
-    MediaTime currentTime() const final;
+    MediaTime platformCurrentTime() const final;
     bool timeIsProgressing() const final;
-    void bufferedChanged(const PlatformTimeRanges&) final;
+    void bufferedChanged(PlatformTimeRanges&&) final;
 
     WeakPtr<MediaPlayerPrivateMediaSourceAVFObjC> m_player WTF_GUARDED_BY_CAPABILITY(mainThread);
     ThreadSafeWeakPtr<SourceBufferPrivateAVFObjC> m_sourceBufferWithSelectedVideo WTF_GUARDED_BY_CAPABILITY(m_dispatcher.get());

@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2011 Google, Inc. All rights reserved.
- * Copyright (C) 2016-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -44,55 +44,56 @@ public:
     static std::unique_ptr<ContentSecurityPolicyDirectiveList> create(ContentSecurityPolicy&, const String&, ContentSecurityPolicyHeaderType, ContentSecurityPolicy::PolicyFrom);
     ContentSecurityPolicyDirectiveList(ContentSecurityPolicy&, ContentSecurityPolicyHeaderType);
 
-    const String& header() const { return m_header; }
+    const String& header() const LIFETIME_BOUND { return m_header; }
     ContentSecurityPolicyHeaderType headerType() const { return m_headerType; }
 
-    const ContentSecurityPolicyDirective* violatedDirectiveForUnsafeEval() const;
-    const ContentSecurityPolicyDirective* violatedDirectiveForInlineJavascriptURL(const Vector<ContentSecurityPolicyHash>&) const;
-    const ContentSecurityPolicyDirective* violatedDirectiveForInlineEventHandlers(const Vector<ContentSecurityPolicyHash>&) const;
-    const ContentSecurityPolicyDirective* violatedDirectiveForUnsafeInlineScriptElement(const String&, const Vector<ContentSecurityPolicyHash>&) const;
-    const ContentSecurityPolicyDirective* violatedDirectiveForNonParserInsertedScripts(const String&, const Vector<ContentSecurityPolicyHash>&, const Vector<ResourceCryptographicDigest>&, const URL&, ParserInserted) const;
-    const ContentSecurityPolicyDirective* violatedDirectiveForUnsafeInlineStyleElement(const String&, const Vector<ContentSecurityPolicyHash>&) const;
-    const ContentSecurityPolicyDirective* violatedDirectiveForUnsafeInlineStyleAttribute(const String&, const Vector<ContentSecurityPolicyHash>&) const;
+    const ContentSecurityPolicyDirective* violatedDirectiveForUnsafeEval() const LIFETIME_BOUND;
+    const ContentSecurityPolicyDirective* violatedDirectiveForInlineJavascriptURL(const Vector<ContentSecurityPolicyHash>&) const LIFETIME_BOUND;
+    const ContentSecurityPolicyDirective* violatedDirectiveForInlineEventHandlers(const Vector<ContentSecurityPolicyHash>&) const LIFETIME_BOUND;
+    const ContentSecurityPolicyDirective* violatedDirectiveForUnsafeInlineScriptElement(const String&, const Vector<ContentSecurityPolicyHash>&) const LIFETIME_BOUND;
+    const ContentSecurityPolicyDirective* violatedDirectiveForScriptUnderStrictDynamic(const String&, const Vector<ContentSecurityPolicyHash>&, const Vector<ResourceCryptographicDigest>&, const URL&, ParserInserted) const LIFETIME_BOUND;
+    const ContentSecurityPolicyDirective* violatedDirectiveForUnsafeInlineStyleElement(const String&, const Vector<ContentSecurityPolicyHash>&) const LIFETIME_BOUND;
+    const ContentSecurityPolicyDirective* violatedDirectiveForUnsafeInlineStyleAttribute(const String&, const Vector<ContentSecurityPolicyHash>&) const LIFETIME_BOUND;
 
-    const ContentSecurityPolicyDirective* violatedDirectiveForScriptNonce(const String&) const;
-    const ContentSecurityPolicyDirective* violatedDirectiveForStyleNonce(const String&) const;
+    const ContentSecurityPolicyDirective* violatedDirectiveForScriptNonce(const String&) const LIFETIME_BOUND;
+    const ContentSecurityPolicyDirective* violatedDirectiveForStyleNonce(const String&) const LIFETIME_BOUND;
 
-    const ContentSecurityPolicyDirective* violatedDirectiveForBaseURI(const URL&) const;
-    const ContentSecurityPolicyDirective* violatedDirectiveForChildContext(const URL&, bool didReceiveRedirectResponse) const;
-    const ContentSecurityPolicyDirective* violatedDirectiveForConnectSource(const URL&, bool didReceiveRedirectResponse) const;
-    const ContentSecurityPolicyDirective* violatedDirectiveForFont(const URL&, bool didReceiveRedirectResponse) const;
-    const ContentSecurityPolicyDirective* violatedDirectiveForFormAction(const URL&, bool didReceiveRedirectResponse) const;
-    const ContentSecurityPolicyDirective* violatedDirectiveForFrame(const URL&, bool didReceiveRedirectResponse) const;
-    const ContentSecurityPolicyDirective* violatedDirectiveForFrameAncestor(const LocalFrame&) const;
-    const ContentSecurityPolicyDirective* violatedDirectiveForFrameAncestorOrigins(const Vector<Ref<SecurityOrigin>>&) const;
-    const ContentSecurityPolicyDirective* violatedDirectiveForImage(const URL&, bool didReceiveRedirectResponse) const;
-    const ContentSecurityPolicyDirective* violatedDirectiveForPrefetch(const URL&, bool didReceiveRedirectResponse) const;
+    const ContentSecurityPolicyDirective* violatedDirectiveForBaseURI(const URL&) const LIFETIME_BOUND;
+    const ContentSecurityPolicyDirective* violatedDirectiveForChildContext(const URL&, bool didReceiveRedirectResponse) const LIFETIME_BOUND;
+    const ContentSecurityPolicyDirective* violatedDirectiveForConnectSource(const URL&, bool didReceiveRedirectResponse) const LIFETIME_BOUND;
+    const ContentSecurityPolicyDirective* violatedDirectiveForFont(const URL&, bool didReceiveRedirectResponse) const LIFETIME_BOUND;
+    const ContentSecurityPolicyDirective* violatedDirectiveForFormAction(const URL&, bool didReceiveRedirectResponse) const LIFETIME_BOUND;
+    const ContentSecurityPolicyDirective* violatedDirectiveForFrame(const URL&, bool didReceiveRedirectResponse) const LIFETIME_BOUND;
+    const ContentSecurityPolicyDirective* violatedDirectiveForFrameAncestor(const LocalFrame&) const LIFETIME_BOUND;
+    const ContentSecurityPolicyDirective* violatedDirectiveForFrameAncestorOrigins(const Vector<Ref<SecurityOrigin>>&) const LIFETIME_BOUND;
+    const ContentSecurityPolicyDirective* violatedDirectiveForImage(const URL&, bool didReceiveRedirectResponse) const LIFETIME_BOUND;
+    const ContentSecurityPolicyDirective* violatedDirectiveForPrefetch(const URL&, bool didReceiveRedirectResponse) const LIFETIME_BOUND;
 #if ENABLE(APPLICATION_MANIFEST)
-    const ContentSecurityPolicyDirective* violatedDirectiveForManifest(const URL&, bool didReceiveRedirectResponse) const;
+    const ContentSecurityPolicyDirective* violatedDirectiveForManifest(const URL&, bool didReceiveRedirectResponse) const LIFETIME_BOUND;
 #endif
-    const ContentSecurityPolicyDirective* violatedDirectiveForMedia(const URL&, bool didReceiveRedirectResponse) const;
-    const ContentSecurityPolicyDirective* violatedDirectiveForObjectSource(const URL&, bool didReceiveRedirectResponse, ContentSecurityPolicySourceListDirective::ShouldAllowEmptyURLIfSourceListIsNotNone) const;
-    const ContentSecurityPolicyDirective* violatedDirectiveForPluginType(const String& type, const String& typeAttribute) const;
-    const ContentSecurityPolicyDirective* violatedDirectiveForScript(const URL&, bool didReceiveRedirectResponse, const Vector<ResourceCryptographicDigest>&, const String&) const;
-    const ContentSecurityPolicyDirective* violatedDirectiveForStyle(const URL&, bool didReceiveRedirectResponse, const String&) const;
-    const ContentSecurityPolicyDirective* violatedDirectiveForWorker(const URL&, bool didReceiveRedirectResponse);
-    const ContentSecurityPolicyDirective* violatedDirectiveForTrustedTypesPolicy(const String&, bool isDuplicate, AllowTrustedTypePolicy&) const;
+    const ContentSecurityPolicyDirective* violatedDirectiveForMedia(const URL&, bool didReceiveRedirectResponse) const LIFETIME_BOUND;
+    const ContentSecurityPolicyDirective* violatedDirectiveForObjectSource(const URL&, bool didReceiveRedirectResponse) const LIFETIME_BOUND;
+    const ContentSecurityPolicyDirective* violatedDirectiveForPluginType(const String& type, const String& typeAttribute) const LIFETIME_BOUND;
+    bool hasPluginTypesDirective() const { return !!m_pluginTypes; }
+    const ContentSecurityPolicyDirective* violatedDirectiveForScript(const URL&, bool didReceiveRedirectResponse, const Vector<ResourceCryptographicDigest>&, const String&) const LIFETIME_BOUND;
+    const ContentSecurityPolicyDirective* violatedDirectiveForStyle(const URL&, bool didReceiveRedirectResponse, const String&) const LIFETIME_BOUND;
+    const ContentSecurityPolicyDirective* violatedDirectiveForWorker(const URL&, bool didReceiveRedirectResponse) LIFETIME_BOUND;
+    const ContentSecurityPolicyDirective* violatedDirectiveForTrustedTypesPolicy(const String&, bool isDuplicate, AllowTrustedTypePolicy&) const LIFETIME_BOUND;
 
-    const ContentSecurityPolicyDirective* defaultSrc() const { return m_defaultSrc.get(); }
+    const ContentSecurityPolicyDirective* defaultSrc() const LIFETIME_BOUND { return m_defaultSrc.get(); }
 
     bool hasBlockAllMixedContentDirective() const { return m_hasBlockAllMixedContentDirective; }
     bool hasFrameAncestorsDirective() const { return !!m_frameAncestors; }
     bool requiresTrustedTypesForScript() const { return m_requireTrustedTypesForScript; }
     bool trustedEvalEnabled() const { return m_trustedEvalEnabled; }
 
-    const String& evalDisabledErrorMessage() const { return m_evalDisabledErrorMessage; }
-    const String& webAssemblyDisabledErrorMessage() const { return m_webAssemblyDisabledErrorMessage; }
+    const String& evalDisabledErrorMessage() const LIFETIME_BOUND { return m_evalDisabledErrorMessage; }
+    const String& webAssemblyDisabledErrorMessage() const LIFETIME_BOUND { return m_webAssemblyDisabledErrorMessage; }
     bool isReportOnly() const { return m_reportOnly; }
-    bool shouldReportSample(const String&) const;
+    bool LEGACY_NODELETE shouldReportSample(const String&) const;
     HashAlgorithmSet reportHash() const;
-    const Vector<String>& reportToTokens() const { return m_reportToTokens; }
-    const Vector<String>& reportURIs() const { return m_reportURIs; }
+    const Vector<String>& reportToTokens() const LIFETIME_BOUND { return m_reportToTokens; }
+    const Vector<String>& reportURIs() const LIFETIME_BOUND { return m_reportURIs; }
 
     // FIXME: Remove this once we teach ContentSecurityPolicyDirectiveList how to log an arbitrary console message.
     const ContentSecurityPolicy& policy() const { return m_policy; }
@@ -115,10 +116,10 @@ private:
     void setUpgradeInsecureRequests(ParsedDirective&&);
     void setBlockAllMixedContentEnabled(ParsedDirective&&);
 
-    const ContentSecurityPolicySourceListDirective* hashReportDirectiveForScript() const;
+    const ContentSecurityPolicySourceListDirective* hashReportDirectiveForScript() const LIFETIME_BOUND;
 
     template <class CSPDirectiveType>
-    void setCSPDirective(ParsedDirective&&, std::unique_ptr<CSPDirectiveType>&);
+    void setCSPDirective(ParsedDirective&&, const std::unique_ptr<CSPDirectiveType>&);
 
     ContentSecurityPolicySourceListDirective* operativeDirective(ContentSecurityPolicySourceListDirective*, const String&) const;
     ContentSecurityPolicySourceListDirective* operativeDirectiveScript(ContentSecurityPolicySourceListDirective*, const String&) const;
@@ -142,30 +143,30 @@ private:
     bool m_requireTrustedTypesForScript { false };
     bool m_trustedEvalEnabled { false };
 
-    std::unique_ptr<ContentSecurityPolicyMediaListDirective> m_pluginTypes;
-    std::unique_ptr<ContentSecurityPolicySourceListDirective> m_baseURI;
-    std::unique_ptr<ContentSecurityPolicySourceListDirective> m_connectSrc;
-    std::unique_ptr<ContentSecurityPolicySourceListDirective> m_childSrc;
-    std::unique_ptr<ContentSecurityPolicySourceListDirective> m_defaultSrc;
-    std::unique_ptr<ContentSecurityPolicySourceListDirective> m_fontSrc;
-    std::unique_ptr<ContentSecurityPolicySourceListDirective> m_formAction;
-    std::unique_ptr<ContentSecurityPolicySourceListDirective> m_frameAncestors;
-    std::unique_ptr<ContentSecurityPolicySourceListDirective> m_frameSrc;
-    std::unique_ptr<ContentSecurityPolicySourceListDirective> m_imgSrc;
+    const std::unique_ptr<ContentSecurityPolicyMediaListDirective> m_pluginTypes;
+    const std::unique_ptr<ContentSecurityPolicySourceListDirective> m_baseURI;
+    const std::unique_ptr<ContentSecurityPolicySourceListDirective> m_connectSrc;
+    const std::unique_ptr<ContentSecurityPolicySourceListDirective> m_childSrc;
+    const std::unique_ptr<ContentSecurityPolicySourceListDirective> m_defaultSrc;
+    const std::unique_ptr<ContentSecurityPolicySourceListDirective> m_fontSrc;
+    const std::unique_ptr<ContentSecurityPolicySourceListDirective> m_formAction;
+    const std::unique_ptr<ContentSecurityPolicySourceListDirective> m_frameAncestors;
+    const std::unique_ptr<ContentSecurityPolicySourceListDirective> m_frameSrc;
+    const std::unique_ptr<ContentSecurityPolicySourceListDirective> m_imgSrc;
 #if ENABLE(APPLICATION_MANIFEST)
-    std::unique_ptr<ContentSecurityPolicySourceListDirective> m_manifestSrc;
+    const std::unique_ptr<ContentSecurityPolicySourceListDirective> m_manifestSrc;
 #endif
-    std::unique_ptr<ContentSecurityPolicySourceListDirective> m_mediaSrc;
-    std::unique_ptr<ContentSecurityPolicySourceListDirective> m_objectSrc;
-    std::unique_ptr<ContentSecurityPolicySourceListDirective> m_prefetchSrc;
-    std::unique_ptr<ContentSecurityPolicySourceListDirective> m_scriptSrc;
-    std::unique_ptr<ContentSecurityPolicySourceListDirective> m_styleSrc;
-    std::unique_ptr<ContentSecurityPolicySourceListDirective> m_scriptSrcElem;
-    std::unique_ptr<ContentSecurityPolicySourceListDirective> m_scriptSrcAttr;
-    std::unique_ptr<ContentSecurityPolicySourceListDirective> m_styleSrcElem;
-    std::unique_ptr<ContentSecurityPolicySourceListDirective> m_styleSrcAttr;
-    std::unique_ptr<ContentSecurityPolicyTrustedTypesDirective> m_trustedTypes;
-    std::unique_ptr<ContentSecurityPolicySourceListDirective> m_workerSrc;
+    const std::unique_ptr<ContentSecurityPolicySourceListDirective> m_mediaSrc;
+    const std::unique_ptr<ContentSecurityPolicySourceListDirective> m_objectSrc;
+    const std::unique_ptr<ContentSecurityPolicySourceListDirective> m_prefetchSrc;
+    const std::unique_ptr<ContentSecurityPolicySourceListDirective> m_scriptSrc;
+    const std::unique_ptr<ContentSecurityPolicySourceListDirective> m_styleSrc;
+    const std::unique_ptr<ContentSecurityPolicySourceListDirective> m_scriptSrcElem;
+    const std::unique_ptr<ContentSecurityPolicySourceListDirective> m_scriptSrcAttr;
+    const std::unique_ptr<ContentSecurityPolicySourceListDirective> m_styleSrcElem;
+    const std::unique_ptr<ContentSecurityPolicySourceListDirective> m_styleSrcAttr;
+    const std::unique_ptr<ContentSecurityPolicyTrustedTypesDirective> m_trustedTypes;
+    const std::unique_ptr<ContentSecurityPolicySourceListDirective> m_workerSrc;
 
     Vector<String> m_reportToTokens;
     Vector<String> m_reportURIs;

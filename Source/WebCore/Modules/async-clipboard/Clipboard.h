@@ -47,10 +47,10 @@ public:
     ~Clipboard();
 
     enum EventTargetInterfaceType eventTargetInterface() const final;
-    ScriptExecutionContext* scriptExecutionContext() const final;
+    ScriptExecutionContext* LEGACY_NODELETE scriptExecutionContext() const final;
 
-    LocalFrame* frame() const;
-    Navigator* navigator();
+    LocalFrame* LEGACY_NODELETE frame() const;
+    Navigator* LEGACY_NODELETE navigator();
 
     using RefCounted::ref;
     using RefCounted::deref;
@@ -75,7 +75,7 @@ private:
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
 
-    Pasteboard& activePasteboard();
+    Pasteboard& LEGACY_NODELETE activePasteboard();
 
     enum class SessionIsValid : bool { No, Yes };
     SessionIsValid updateSessionValidity();
@@ -103,7 +103,7 @@ private:
         Vector<std::optional<PasteboardCustomData>> m_dataToWrite;
         RefPtr<DeferredPromise> m_promise;
         unsigned m_pendingItemCount;
-        std::unique_ptr<Pasteboard> m_pasteboard;
+        const std::unique_ptr<Pasteboard> m_pasteboard;
         int64_t m_changeCountAtStart { 0 };
     };
 

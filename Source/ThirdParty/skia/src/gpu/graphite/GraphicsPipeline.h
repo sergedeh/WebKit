@@ -9,8 +9,12 @@
 #define skgpu_graphite_GraphicsPipeline_DEFINED
 
 #include "src/gpu/graphite/Caps.h"
+#include "src/gpu/graphite/DescriptorData.h"
 #include "src/gpu/graphite/Resource.h"
 #include "src/gpu/graphite/UniquePaintParamsID.h"
+
+#include <optional>
+#include <string>
 
 namespace skgpu::graphite {
 
@@ -44,7 +48,12 @@ public:
 
     int  numFragTexturesAndSamplers() const { return fPipelineInfo.fNumFragTexturesAndSamplers; }
     bool hasCombinedUniforms()        const { return fPipelineInfo.fHasCombinedUniforms;        }
-    bool hasGradientBuffer()          const { return fPipelineInfo.fHasGradientBuffer;          }
+    bool usesStorageBuffer()          const { return fPipelineInfo.usesStorageBuffer();         }
+    bool vsUsesStorage()              const { return fPipelineInfo.vsUsesStorage();             }
+    bool fsUsesStorage()              const { return fPipelineInfo.fsUsesStorage();             }
+    SkEnumBitMask<PipelineStageFlags> storageBufferStages() const {
+        return fPipelineInfo.fStorageBufferStages;
+    }
 
     struct PipelineInfo {
         PipelineInfo() = default;
@@ -52,11 +61,21 @@ public:
         // NOTE: Subclasses must manually fill in native shader code in GPU_TEST_UTILS builds.
         PipelineInfo(const ShaderInfo&, SkEnumBitMask<PipelineCreationFlags>,
                      uint32_t uniqueKeyHash, uint32_t compilationID);
+        bool usesStorageBuffer() const { return SkToBool(fStorageBufferStages); }
+        bool vsUsesStorage() const {
+            return SkToBool(fStorageBufferStages & PipelineStageFlags::kVertexShader);
+        }
+        bool fsUsesStorage() const {
+            return SkToBool(fStorageBufferStages & PipelineStageFlags::kFragmentShader);
+        }
+        SkEnumBitMask<PipelineStageFlags> storageBufferStages() const {
+            return fStorageBufferStages;
+        }
 
         DstReadStrategy fDstReadStrategy = DstReadStrategy::kNoneRequired;
         int  fNumFragTexturesAndSamplers = 0;
         bool fHasCombinedUniforms = false;
-        bool fHasGradientBuffer = false;
+        SkEnumBitMask<PipelineStageFlags> fStorageBufferStages = {};
 
         // In test-enabled builds, we preserve the generated shader code to display in the viewer
         // slide UI. This is not quite enough information to fully recreate the pipeline, as the
@@ -86,9 +105,9 @@ public:
     uint16_t epoch() const { return fPipelineInfo.fEpoch; }
 
     // GraphicsPipeline compiles can take a while. If the underlying compilation is performed
-    // asynchronously, we may create a GraphicsPipeline object that later "fails" and need to remove
-    // it from the GlobalCache.
-    virtual bool didAsyncCompilationFail() const { return false; }
+    // asynchronously, we may create a GraphicsPipeline object that later "fails".
+    // If the compilation failed, this will return an error message.
+    virtual std::optional<std::string> didAsyncCompilationFail() const { return std::nullopt; }
 
 protected:
     // GraphicsPipeline labels are often provided to the description of what needs to be compiled,

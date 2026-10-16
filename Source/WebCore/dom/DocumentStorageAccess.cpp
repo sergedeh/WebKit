@@ -29,15 +29,18 @@
 #include "Chrome.h"
 #include "ChromeClient.h"
 #include "DocumentEventLoop.h"
+#include "DocumentPage.h"
 #include "DocumentQuirks.h"
 #include "DocumentSecurityOrigin.h"
 #include "DocumentView.h"
 #include "EventLoop.h"
+#include "FrameDestructionObserverInlines.h"
+#include "FrameInlines.h"
 #include "FrameLoader.h"
+#include "JSDOMConvertBoolean.h"
 #include "JSDOMPromiseDeferred.h"
 #include "LocalFrame.h"
 #include "LocalFrameLoaderClient.h"
-#include "NetworkStorageSession.h"
 #include "Page.h"
 #include "RegistrableDomain.h"
 #include "SecurityOrigin.h"
@@ -88,7 +91,7 @@ static bool hasSameOriginAsAllAncestors(const Document& document)
 
     Ref securityOrigin = document.securityOrigin();
     for (RefPtr parentDocument = document.parentDocument(); parentDocument; parentDocument = parentDocument->parentDocument()) {
-        if (!securityOrigin->equal(parentDocument->protectedSecurityOrigin()))
+        if (!securityOrigin->equal(protect(parentDocument->securityOrigin())))
             break;
         if (parentDocument->isTopDocument())
             return true;
@@ -106,7 +109,7 @@ std::optional<bool> DocumentStorageAccess::hasStorageAccessQuickCheck()
     if (frame && hasFrameSpecificStorageAccess())
         return true;
 
-    if (!frame || document->protectedSecurityOrigin()->isOpaque())
+    if (!frame || document->securityOrigin().isOpaque())
         return false;
 
     if (hasSameOriginAsAllAncestors(document))
@@ -146,7 +149,7 @@ void DocumentStorageAccess::hasStorageAccess(Ref<DeferredPromise>&& promise)
         return;
     }
 
-    page->chrome().client().hasStorageAccess(RegistrableDomain::uncheckedCreateFromHost(document->protectedSecurityOrigin()->host()), RegistrableDomain::uncheckedCreateFromHost(document->protectedTopOrigin()->host()), *frame, [weakThis = WeakPtr { *this }, promise = WTF::move(promise)] (bool hasAccess) {
+    page->chrome().client().hasStorageAccess(RegistrableDomain::uncheckedCreateFromHost(protect(document->securityOrigin())->host()), RegistrableDomain::uncheckedCreateFromHost(protect(document->topOrigin())->host()), *frame, [weakThis = WeakPtr { *this }, promise = WTF::move(promise)] (bool hasAccess) {
         if (!weakThis)
             return;
 
@@ -193,7 +196,7 @@ std::optional<StorageAccessQuickResult> DocumentStorageAccess::requestStorageAcc
     if (hasSameOriginAsAllAncestors(document))
         return StorageAccessQuickResult::Grant;
 
-    if (securityOrigin->isSameSiteAs(document->protectedTopOrigin()))
+    if (securityOrigin->isSameSiteAs(protect(document->topOrigin())))
         return std::nullopt;
 
     // If there is a sandbox, it has to allow the storage access API to be called.
@@ -234,8 +237,8 @@ void DocumentStorageAccess::requestStorageAccess(Ref<DeferredPromise>&& promise)
     if (!page->settings().storageAccessAPIPerPageScopeEnabled())
         m_storageAccessScope = StorageAccessScope::PerFrame;
 
-    auto hasOrShouldIgnoreUserGesture = frame->requestSkipUserActivationCheckForStorageAccess(RegistrableDomain { document->url() }) || UserGestureIndicator::processingUserGesture() ? HasOrShouldIgnoreUserGesture::Yes : HasOrShouldIgnoreUserGesture::No;
-    page->chrome().client().requestStorageAccess(RegistrableDomain::uncheckedCreateFromHost(document->protectedSecurityOrigin()->host()), RegistrableDomain::uncheckedCreateFromHost(document->protectedTopOrigin()->host()), *frame, m_storageAccessScope, hasOrShouldIgnoreUserGesture, [weakThis = WeakPtr { *this }, promise = WTF::move(promise)] (RequestStorageAccessResult result) mutable {
+    auto hasUserGestureOrNoUserGestureRequired = frame->requestSkipUserActivationCheckForStorageAccess(RegistrableDomain { document->url() }) || UserGestureIndicator::processingUserGesture() ? HasUserGestureOrNoUserGestureRequired::Yes : HasUserGestureOrNoUserGestureRequired::No;
+    page->chrome().client().requestStorageAccess(RegistrableDomain::uncheckedCreateFromHost(protect(document->securityOrigin())->host()), RegistrableDomain::uncheckedCreateFromHost(protect(document->topOrigin())->host()), *frame, m_storageAccessScope, hasUserGestureOrNoUserGestureRequired, [weakThis = WeakPtr { *this }, promise = WTF::move(promise), hasUserGestureOrNoUserGestureRequired] (RequestStorageAccessResult result) mutable {
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis)
             return;
@@ -248,12 +251,13 @@ void DocumentStorageAccess::requestStorageAccess(Ref<DeferredPromise>&& promise)
             shouldPreserveUserGesture = true;
             break;
         case StorageAccessWasGranted::No:
-            shouldPreserveUserGesture = result.promptWasShown == StorageAccessPromptWasShown::No;
+            const bool promptNotShownButMayHaveUserGesture = result.promptWasShown == StorageAccessPromptWasShown::No && hasUserGestureOrNoUserGestureRequired == HasUserGestureOrNoUserGestureRequired::Yes;
+            shouldPreserveUserGesture = promptNotShownButMayHaveUserGesture;
         }
 
         Ref document = protectedThis->m_document.get();
         if (shouldPreserveUserGesture) {
-            document->checkedEventLoop()->queueMicrotask([weakThis] {
+            protect(document->eventLoop())->queueMicrotask(document->vm(), [weakThis] {
                 if (RefPtr protectedThis = weakThis.get())
                     protectedThis->enableTemporaryTimeUserGesture();
             });
@@ -278,7 +282,7 @@ void DocumentStorageAccess::requestStorageAccess(Ref<DeferredPromise>&& promise)
         }
 
         if (shouldPreserveUserGesture) {
-            document->checkedEventLoop()->queueMicrotask([weakThis] {
+            protect(document->eventLoop())->queueMicrotask(document->vm(), [weakThis] {
                 if (RefPtr protectedThis = weakThis.get())
                     protectedThis->consumeTemporaryTimeUserGesture();
             });
@@ -296,10 +300,6 @@ void DocumentStorageAccess::deref() const
     m_document->deref();
 }
 
-Ref<Document> DocumentStorageAccess::protectedDocument() const
-{
-    return m_document.get();
-}
 
 void DocumentStorageAccess::requestStorageAccessForDocumentQuirk(Document& document, CompletionHandler<void(StorageAccessWasGranted)>&& completionHandler)
 {
@@ -318,7 +318,7 @@ void DocumentStorageAccess::requestStorageAccessForDocumentQuirk(CompletionHandl
         *quickCheckResult == StorageAccessQuickResult::Grant ? completionHandler(StorageAccessWasGranted::Yes) : completionHandler(StorageAccessWasGranted::No);
         return;
     }
-    requestStorageAccessQuirk(RegistrableDomain::uncheckedCreateFromHost(protectedDocument()->protectedSecurityOrigin()->host()), WTF::move(completionHandler));
+    requestStorageAccessQuirk(RegistrableDomain::uncheckedCreateFromHost(protect(protect(m_document)->securityOrigin())->host()), WTF::move(completionHandler));
 }
 
 void DocumentStorageAccess::requestStorageAccessForNonDocumentQuirk(Document& hostingDocument, RegistrableDomain&& requestingDomain, CompletionHandler<void(StorageAccessWasGranted)>&& completionHandler)
@@ -349,16 +349,18 @@ void DocumentStorageAccess::requestStorageAccessQuirk(RegistrableDomain&& reques
     auto topFrameDomain = RegistrableDomain(page->mainFrameURL());
 
     RefPtr frame = document->frame();
-    page->chrome().client().requestStorageAccess(WTF::move(requestingDomain), WTF::move(topFrameDomain), *frame, m_storageAccessScope, HasOrShouldIgnoreUserGesture::Yes, [weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)] (RequestStorageAccessResult result) mutable {
+    page->chrome().client().requestStorageAccess(WTF::move(requestingDomain), WTF::move(topFrameDomain), *frame, m_storageAccessScope, HasUserGestureOrNoUserGestureRequired::Yes, [weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)] (RequestStorageAccessResult result) mutable {
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis)
             return;
+
+        Ref document = protectedThis->m_document;
 
         // Consume the user gesture only if the user explicitly denied access.
         bool shouldPreserveUserGesture = result.wasGranted == StorageAccessWasGranted::Yes || result.promptWasShown == StorageAccessPromptWasShown::No;
 
         if (shouldPreserveUserGesture) {
-            protectedThis->protectedDocument()->checkedEventLoop()->queueMicrotask([weakThis] {
+            protect(document->eventLoop())->queueMicrotask(document->vm(), [weakThis] {
                 if (RefPtr protectedThis = weakThis.get())
                     protectedThis->enableTemporaryTimeUserGesture();
             });
@@ -376,7 +378,7 @@ void DocumentStorageAccess::requestStorageAccessQuirk(RegistrableDomain&& reques
         }
 
         if (shouldPreserveUserGesture) {
-            protectedThis->protectedDocument()->checkedEventLoop()->queueMicrotask([weakThis] {
+            protect(document->eventLoop())->queueMicrotask(document->vm(), [weakThis] {
                 if (RefPtr protectedThis = weakThis.get())
                     protectedThis->consumeTemporaryTimeUserGesture();
             });
@@ -386,7 +388,7 @@ void DocumentStorageAccess::requestStorageAccessQuirk(RegistrableDomain&& reques
 
 void DocumentStorageAccess::enableTemporaryTimeUserGesture()
 {
-    m_temporaryUserGesture = makeUnique<UserGestureIndicator>(IsProcessingUserGesture::Yes, protectedDocument().ptr());
+    m_temporaryUserGesture = makeUnique<UserGestureIndicator>(IsProcessingUserGesture::Yes, protect(m_document).ptr(), UserGestureType::ActivationTriggering, UserGestureIndicator::ProcessInteractionStyle::Never);
 }
 
 void DocumentStorageAccess::consumeTemporaryTimeUserGesture()

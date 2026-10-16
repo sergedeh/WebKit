@@ -34,6 +34,7 @@
 #include "VM.h"
 #include "JITStubRoutineSet.h"
 #include "JSCellInlines.h"
+#include "PropertyInlineCacheClearingWatchpoint.h"
 #include "SharedJITStubSet.h"
 #include <wtf/RefPtr.h>
 
@@ -163,12 +164,12 @@ void PolymorphicAccessJITStubRoutine::addedToSharedJITStubSet()
     m_isInSharedJITStubSet = true;
 }
 
-bool PolymorphicAccessJITStubRoutine::visitWeakImpl(VM& vm)
+bool PolymorphicAccessJITStubRoutine::reconcileWeakReferencesAtGCEndImpl(VM& vm)
 {
     bool isValid = true;
     for (StructureID weakReference : m_weakStructures)
         isValid &= vm.heap.isMarked(weakReference.decode());
-    isValid &= Base::visitWeakImpl(vm);
+    isValid &= Base::reconcileWeakReferencesAtGCEndImpl(vm);
     return isValid;
 }
 
@@ -179,8 +180,12 @@ MarkingGCAwareJITStubRoutine::MarkingGCAwareJITStubRoutine(
     , m_cells(cells.size())
     , m_callLinkInfos(WTF::move(callLinkInfos))
 {
-    for (unsigned i = cells.size(); i--;)
-        m_cells[i].set(vm, owner, cells[i]);
+    for (unsigned i = cells.size(); i--;) {
+        if (owner)
+            m_cells[i].set(vm, owner, cells[i]);
+        else
+            m_cells[i].setWithoutWriteBarrier(cells[i]);
+    }
 }
 
 template<typename Visitor>
@@ -199,13 +204,13 @@ void MarkingGCAwareJITStubRoutine::markRequiredObjectsImpl(SlotVisitor& visitor)
     markRequiredObjectsInternalImpl(visitor);
 }
 
-bool MarkingGCAwareJITStubRoutine::visitWeakImpl(VM& vm)
+bool MarkingGCAwareJITStubRoutine::reconcileWeakReferencesAtGCEndImpl(VM& vm)
 {
     for (auto& callLinkInfo : m_callLinkInfos) {
         if (callLinkInfo)
-            callLinkInfo->visitWeak(vm);
+            callLinkInfo->reconcileWeakReferencesAtGCEnd(vm);
     }
-    return Base::visitWeakImpl(vm);
+    return Base::reconcileWeakReferencesAtGCEndImpl(vm);
 }
 
 CallLinkInfo* MarkingGCAwareJITStubRoutine::callLinkInfoAtImpl(const ConcurrentJSLocker&, unsigned index)

@@ -28,6 +28,7 @@
 
 #include "BackgroundFetchRecordInformation.h"
 #include "FetchRequest.h"
+#include "JSDOMConvertInterface.h"
 #include "JSFetchResponse.h"
 
 namespace WebCore {
@@ -39,9 +40,7 @@ BackgroundFetchRecord::BackgroundFetchRecord(ScriptExecutionContext& context, Ba
     // FIXME: We should provide a body to the request.
 }
 
-BackgroundFetchRecord::~BackgroundFetchRecord()
-{
-}
+BackgroundFetchRecord::~BackgroundFetchRecord() = default;
 
 void BackgroundFetchRecord::settleResponseReadyPromise(ExceptionOr<Ref<FetchResponse>>&& result)
 {

@@ -474,6 +474,9 @@ void RegisterContextCompatibilityTests()
 {
     // Linux failures: http://anglebug.com/42263563
     // Also wrong drivers loaded under xvfb due to egl* calls: https://anglebug.com/42266535
+    // Also need to create OSWindow before eglGetPlatformDisplay to set
+    //   EGL_PLATFORM_ANGLE_NATIVE_PLATFORM_TYPE_ANGLE correctly to
+    //   OSWindow::getNativeDisplayPlatformType().  http://anglebug.com/520829539
     if (IsLinux())
     {
         std::cerr << "EGLContextCompatibilityTest: skipped on Linux\n";
@@ -481,7 +484,6 @@ void RegisterContextCompatibilityTests()
     }
 
     std::vector<EGLint> renderers = {{
-        EGL_PLATFORM_ANGLE_TYPE_D3D9_ANGLE,
         EGL_PLATFORM_ANGLE_TYPE_D3D11_ANGLE,
         EGL_PLATFORM_ANGLE_TYPE_METAL_ANGLE,
         EGL_PLATFORM_ANGLE_TYPE_OPENGL_ANGLE,

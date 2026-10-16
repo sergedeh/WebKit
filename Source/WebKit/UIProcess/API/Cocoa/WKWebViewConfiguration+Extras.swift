@@ -21,10 +21,11 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
 // THE POSSIBILITY OF SUCH DAMAGE.
 
-#if ENABLE_SWIFTUI && compiler(>=6.0)
+#if ENABLE_SWIFTUI
 
 import Foundation
-internal import WebKit_Private
+import WebKit_Private
+import WebKit_Private.WKPreferencesPrivate
 
 extension WKWebViewConfiguration {
     convenience init(_ wrapped: WebPage.Configuration) {
@@ -44,11 +45,11 @@ extension WKWebViewConfiguration {
         self.supportsAdaptiveImageGlyph = wrapped.supportsAdaptiveImageGlyph
         self._loadsSubresources = wrapped.loadsSubresources
 
-        #if !os(visionOS)
+        #if !WTF_PLATFORM_VISION
         self.showsSystemScreenTimeBlockingView = wrapped.showsSystemScreenTimeBlockingView
         #endif
 
-        #if os(iOS)
+        #if WTF_PLATFORM_IOS_FAMILY
         self.dataDetectorTypes = wrapped.dataDetectorTypes
         self.ignoresViewportScaleLimits = wrapped.ignoresViewportScaleLimits
 
@@ -57,13 +58,41 @@ extension WKWebViewConfiguration {
         }
         #endif
 
-        #if os(macOS)
+        #if WTF_PLATFORM_MAC
         self.userInterfaceDirectionPolicy = wrapped.userInterfaceDirectionPolicy
         #endif
 
         for (scheme, handler) in wrapped.urlSchemeHandlers {
             let handlerAdapter = WKURLSchemeHandlerAdapter(handler)
             self.setURLSchemeHandler(handlerAdapter, forURLScheme: scheme.rawValue)
+        }
+
+        #if ENABLE_MODEL_ELEMENT_IMMERSIVE
+        self.allowsImmersiveEnvironments = wrapped.allowsImmersiveEnvironments
+        #endif
+
+        if let processPool = wrapped.processPool {
+            self.processPool = processPool
+        }
+
+        #if WTF_PLATFORM_MAC
+        self._requiresUserActionForEditingControlsManager = wrapped.requiresUserActionForEditingControlsManager
+        #endif
+
+        self._isControlledByAutomation = wrapped.isControlledByAutomation
+
+        #if !WTF_PLATFORM_WATCHOS && !WTF_PLATFORM_APPLETV
+        self._attachmentElementEnabled = wrapped.attachmentElementEnabled
+        #endif
+
+        #if WTF_PLATFORM_MAC
+        self._imageControlsEnabled = wrapped.imageControlsEnabled
+        #endif
+
+        self._backgroundTextExtractionEnabled = wrapped.backgroundTextExtractionEnabled
+
+        if wrapped.siteIsolationEnabled {
+            self.preferences._siteIsolationEnabled = true
         }
     }
 }

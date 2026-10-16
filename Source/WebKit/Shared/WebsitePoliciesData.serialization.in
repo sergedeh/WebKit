@@ -70,6 +70,12 @@ struct WebKit::WebsitePoliciesData {
 #if ENABLE(TOUCH_EVENTS)
     std::optional<bool> overrideTouchEventDOMAttributesEnabled;
 #endif
+#if ENABLE(IOS_TOUCH_EVENTS)
+    std::optional<bool> overrideShouldReportZeroMaxTouchPoints;
+#endif
+    std::optional<bool> overrideShouldReportViewportSizeAsScreenSize;
+    std::optional<bool> overrideShouldReportDesktopClassPointingDevice;
+    std::optional<bool> globalPrivacyControlEnabled;
     WebKit::WebsiteAutoplayPolicy autoplayPolicy;
     WebKit::WebsitePopUpPolicy popUpPolicy;
     WebKit::WebsiteMetaViewportPolicy metaViewportPolicy;
@@ -88,7 +94,7 @@ struct WebKit::WebsitePoliciesData {
     bool idempotentModeAutosizingOnlyHonorsPercentages;
     bool allowPrivacyProxy;
     bool allowSiteSpecificQuirksToOverrideContentMode;
-    bool allowSharedProcess;
+    bool prefersIsolatedProcess;
     bool allowsJSHandleCreationInPageWorld;
     WebKit::WebsitePushAndNotificationsEnabledPolicy pushAndNotificationsEnabledPolicy;
     WebKit::WebsiteInlineMediaPlaybackPolicy inlineMediaPlaybackPolicy;

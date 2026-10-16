@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2009 Dirk Schulze <krit@webkit.org>
- * Copyright (C) 2018-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2018-2026 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -30,7 +30,6 @@ namespace WebCore {
 template<>
 struct SVGPropertyTraits<EdgeModeType> {
     static unsigned highestEnumValue() { return static_cast<unsigned>(EdgeModeType::None); }
-    static EdgeModeType initialValue() { return EdgeModeType::None; }
 
     static String toString(EdgeModeType type)
     {
@@ -73,7 +72,7 @@ public:
     String in1() const { return m_in1->currentValue(); }
     int orderX() const { return m_orderX->currentValue(); }
     int orderY() const { return m_orderY->currentValue(); }
-    const SVGNumberList& kernelMatrix() const { return m_kernelMatrix->currentValue(); }
+    const SVGNumberList& kernelMatrix() const LIFETIME_BOUND { return m_kernelMatrix->currentValue(); }
     float divisor() const { return m_divisor->currentValue(); }
     float bias() const { return m_bias->currentValue(); }
     int targetX() const { return m_targetX->currentValue(); }
@@ -103,7 +102,6 @@ private:
 
     static constexpr int initialOrderValue = 3;
     static constexpr float initialDivisorValue = 1;
-    static constexpr float initialKernelUnitLengthValue = 0;
 
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) override;
     void svgAttributeChanged(const QualifiedName&) override;
@@ -114,18 +112,20 @@ private:
     Vector<AtomString> filterEffectInputsNames() const override { return { AtomString { in1() } }; }
     RefPtr<FilterEffect> createFilterEffect(const FilterEffectVector&, const GraphicsContext& destinationContext) const override;
 
-    Ref<SVGAnimatedString> m_in1 { SVGAnimatedString::create(this) };
-    Ref<SVGAnimatedInteger> m_orderX { SVGAnimatedInteger::create(this, initialOrderValue) };
-    Ref<SVGAnimatedInteger> m_orderY { SVGAnimatedInteger::create(this, initialOrderValue) };
-    Ref<SVGAnimatedNumberList> m_kernelMatrix { SVGAnimatedNumberList::create(this) };
-    Ref<SVGAnimatedNumber> m_divisor { SVGAnimatedNumber::create(this, initialDivisorValue) };
-    Ref<SVGAnimatedNumber> m_bias { SVGAnimatedNumber::create(this) };
-    Ref<SVGAnimatedInteger> m_targetX { SVGAnimatedInteger::create(this) };
-    Ref<SVGAnimatedInteger> m_targetY { SVGAnimatedInteger::create(this) };
-    Ref<SVGAnimatedEnumeration> m_edgeMode { SVGAnimatedEnumeration::create(this, EdgeModeType::Duplicate) };
-    Ref<SVGAnimatedNumber> m_kernelUnitLengthX { SVGAnimatedNumber::create(this) };
-    Ref<SVGAnimatedNumber> m_kernelUnitLengthY { SVGAnimatedNumber::create(this) };
-    Ref<SVGAnimatedBoolean> m_preserveAlpha { SVGAnimatedBoolean::create(this) };
+    bool m_hasInvalidOrderAttribute { false };
+
+    const Ref<SVGAnimatedString> m_in1 { SVGAnimatedString::create(this) };
+    const Ref<SVGAnimatedInteger> m_orderX { SVGAnimatedInteger::create(this, initialOrderValue) };
+    const Ref<SVGAnimatedInteger> m_orderY { SVGAnimatedInteger::create(this, initialOrderValue) };
+    const Ref<SVGAnimatedNumberList> m_kernelMatrix { SVGAnimatedNumberList::create(this) };
+    const Ref<SVGAnimatedNumber> m_divisor { SVGAnimatedNumber::create(this, initialDivisorValue) };
+    const Ref<SVGAnimatedNumber> m_bias { SVGAnimatedNumber::create(this) };
+    const Ref<SVGAnimatedInteger> m_targetX { SVGAnimatedInteger::create(this) };
+    const Ref<SVGAnimatedInteger> m_targetY { SVGAnimatedInteger::create(this) };
+    const Ref<SVGAnimatedEnumeration> m_edgeMode { SVGAnimatedEnumeration::create(this, EdgeModeType::Duplicate) };
+    const Ref<SVGAnimatedNumber> m_kernelUnitLengthX { SVGAnimatedNumber::create(this) };
+    const Ref<SVGAnimatedNumber> m_kernelUnitLengthY { SVGAnimatedNumber::create(this) };
+    const Ref<SVGAnimatedBoolean> m_preserveAlpha { SVGAnimatedBoolean::create(this) };
 };
 
 } // namespace WebCore

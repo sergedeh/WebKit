@@ -35,6 +35,7 @@
 #import "RemoteImageBufferSetProxy.h"
 #import "RemoteLayerBackingStoreCollection.h"
 #import "RemoteLayerTreeContext.h"
+#import "WebPage.h"
 #import <WebCore/GraphicsContext.h>
 #import <WebCore/IOSurfacePool.h>
 #import <WebCore/PixelFormat.h>
@@ -144,7 +145,7 @@ private:
     }
 
     ImageBufferSetIdentifier m_identifier;
-    std::unique_ptr<WebCore::ThreadSafeImageBufferFlusher> m_imageBufferFlusher;
+    const std::unique_ptr<WebCore::ThreadSafeImageBufferFlusher> m_imageBufferFlusher;
     std::unique_ptr<BufferSetBackendHandle> m_handles;
 };
 
@@ -159,9 +160,9 @@ std::unique_ptr<ThreadSafeImageBufferSetFlusher> RemoteLayerWithInProcessRenderi
 
     auto handles = makeUnique<BufferSetBackendHandle>(BufferSetBackendHandle {
         frontBufferHandle(),
-        m_bufferSet.m_frontBuffer ? std::optional { BufferAndBackendInfo::fromImageBuffer(Ref { *m_bufferSet.m_frontBuffer }) } : std::nullopt,
-        m_bufferSet.m_backBuffer ? std::optional { BufferAndBackendInfo::fromImageBuffer(Ref { *m_bufferSet.m_backBuffer }) } : std::nullopt,
-        m_bufferSet.m_secondaryBackBuffer ? std::optional { BufferAndBackendInfo::fromImageBuffer(Ref { *m_bufferSet.m_secondaryBackBuffer }) } : std::nullopt,
+        m_bufferSet.m_frontBuffer ? std::optional { BufferAndBackendInfo::fromImageBuffer(*m_bufferSet.m_frontBuffer) } : std::nullopt,
+        m_bufferSet.m_backBuffer ? std::optional { BufferAndBackendInfo::fromImageBuffer(*m_bufferSet.m_backBuffer) } : std::nullopt,
+        m_bufferSet.m_secondaryBackBuffer ? std::optional { BufferAndBackendInfo::fromImageBuffer(*m_bufferSet.m_secondaryBackBuffer) } : std::nullopt,
     });
 
     return ImageBufferBackingStoreFlusher::create(m_bufferSet.identifier(), WTF::move(flusher), WTF::move(handles));
@@ -215,7 +216,7 @@ bool RemoteLayerWithInProcessRenderingBackingStore::setBufferVolatile(BufferType
 }
 
 template<typename ImageBufferType>
-static RefPtr<ImageBuffer> allocateBufferInternal(RemoteLayerBackingStore::Type type, const WebCore::FloatSize& logicalSize, WebCore::RenderingPurpose purpose, float resolutionScale, const WebCore::DestinationColorSpace& colorSpace, WebCore::ImageBufferFormat bufferFormat, WebCore::ImageBufferCreationContext& creationContext)
+static RefPtr<ImageBuffer> allocateBufferInternal(RemoteLayerBackingStore::Type type, const WebCore::FloatSize& logicalSize, WebCore::RenderingPurpose purpose, float resolutionScale, const WebCore::ColorSpace& colorSpace, WebCore::ImageBufferFormat bufferFormat, WebCore::ImageBufferCreationContext& creationContext)
 {
     switch (type) {
     case RemoteLayerBackingStore::Type::IOSurface:
@@ -229,6 +230,12 @@ RefPtr<WebCore::ImageBuffer> RemoteLayerWithInProcessRenderingBackingStore::allo
 {
     ImageBufferCreationContext creationContext;
     creationContext.surfacePool = WebCore::IOSurfacePool::sharedPoolSingleton();
+#if USE(APPLE_INTERNAL_SDK)
+    if (RefPtr context = m_layer->context()) {
+        auto preferences = context->webPage().sharedPreferencesForWebProcess();
+        creationContext.useIOSurfaceWebKitBehavior = preferences && preferences->useIOSurfaceWebKitBehavior;
+    }
+#endif
 
 #if ENABLE(RE_DYNAMIC_CONTENT_SCALING)
     if (m_parameters.includeDisplayList == WebCore::IncludeDynamicContentScalingDisplayList::Yes) {

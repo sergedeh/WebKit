@@ -97,6 +97,8 @@ typedef struct AomAV1RateControlRtcConfig {
   int min_quantizers[kAomAV1MaxLayers];
   int scaling_factor_num[kAomAV1MaxSpatialLayers];
   int scaling_factor_den[kAomAV1MaxSpatialLayers];
+  // Bit-depth (8, 10, or 12).
+  int bit_depth;
 } AomAV1RateControlRtcConfig;
 
 struct AomAV1RateControlRTC;
@@ -148,6 +150,7 @@ class AV1RateControlRTC {
   AV1_COMP *cpi_;
   int initial_width_;
   int initial_height_;
+  bool rc_is_valid_ = false;
 };
 }  // namespace aom
 #endif  // __cplusplus

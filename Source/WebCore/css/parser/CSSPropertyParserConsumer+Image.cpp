@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 Samuel Weinig <sam@webkit.org>
+ * Copyright (C) 2024-2026 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,6 +28,8 @@
 #include "CSSCalcSymbolTable.h"
 #include "CSSCanvasValue.h"
 #include "CSSColor.h"
+#include "CSSColorImageValue.h"
+#include "CSSColorInterpolationMethod.h"
 #include "CSSCrossfadeValue.h"
 #include "CSSCursorImageValue.h"
 #include "CSSFilterImageValue.h"
@@ -35,6 +37,7 @@
 #include "CSSImageSetOptionValue.h"
 #include "CSSImageSetValue.h"
 #include "CSSImageValue.h"
+#include "CSSLightDarkImageValue.h"
 #include "CSSNamedImageValue.h"
 #include "CSSPaintImageValue.h"
 #include "CSSParserContext.h"
@@ -60,11 +63,11 @@
 #include "CSSPropertyParserConsumer+URL.h"
 #include "CSSPropertyParserOptions.h"
 #include "CSSPropertyParserState.h"
+#include "CSSStringValue.h"
 #include "CSSValue.h"
 #include "CSSValueList.h"
 #include "CSSValuePool.h"
 #include "CSSVariableData.h"
-#include "StyleImage.h"
 #include <wtf/SortedArrayMap.h>
 
 namespace WebCore {
@@ -82,7 +85,7 @@ template<CSSValueID zeroValue, CSSValueID oneHundredValue> static std::optional<
             return CSS::NumberOrPercentage<> { CSS::PercentageRaw<> { 0 } };
         if (consumeIdent<oneHundredValue>(range))
             return CSS::NumberOrPercentage<> { CSS::PercentageRaw<> { 100 } };
-        if (consumeIdent<CSSValueCenter>(range))
+        if (consumeIdent<CSSValueID::Center>(range))
             return CSS::NumberOrPercentage<> { CSS::PercentageRaw<> { 50 } };
         return std::nullopt;
     }
@@ -91,11 +94,11 @@ template<CSSValueID zeroValue, CSSValueID oneHundredValue> static std::optional<
 
 static std::optional<CSS::DeprecatedGradientPosition> consumeDeprecatedGradientPosition(CSSParserTokenRange& range, CSS::PropertyParserState& state)
 {
-    auto horizontal = consumeDeprecatedGradientPositionComponent<CSSValueLeft, CSSValueRight>(range, state);
+    auto horizontal = consumeDeprecatedGradientPositionComponent<CSSValueID::Left, CSSValueID::Right>(range, state);
     if (!horizontal)
         return std::nullopt;
 
-    auto vertical = consumeDeprecatedGradientPositionComponent<CSSValueTop, CSSValueBottom>(range, state);
+    auto vertical = consumeDeprecatedGradientPositionComponent<CSSValueID::Top, CSSValueID::Bottom>(range, state);
     if (!vertical)
         return std::nullopt;
 
@@ -104,7 +107,7 @@ static std::optional<CSS::DeprecatedGradientPosition> consumeDeprecatedGradientP
 
 static std::optional<CSS::Color> consumeDeprecatedGradientStopColor(CSSParserTokenRange& range, CSS::PropertyParserState& state)
 {
-    if (range.peek().id() == CSSValueCurrentcolor)
+    if (range.peek().id() == CSSValueID::Currentcolor)
         return std::nullopt;
     return consumeUnresolvedColor(range, state);
 }
@@ -113,9 +116,9 @@ static std::optional<CSS::GradientDeprecatedColorStop> consumeDeprecatedGradient
 {
     auto id = range.peek().functionId();
     switch (id) {
-    case CSSValueFrom:
-    case CSSValueTo:
-    case CSSValueColorStop:
+    case CSSValueID::From:
+    case CSSValueID::To:
+    case CSSValueID::ColorStop:
         break;
 
     default:
@@ -125,13 +128,13 @@ static std::optional<CSS::GradientDeprecatedColorStop> consumeDeprecatedGradient
     auto args = consumeFunction(range);
     std::optional<CSS::GradientDeprecatedColorStopPosition> position;
     switch (id) {
-    case CSSValueFrom:
+    case CSSValueID::From:
         position = CSS::NumberRaw<> { 0 };
         break;
-    case CSSValueTo:
+    case CSSValueID::To:
         position = CSS::NumberRaw<> { 1 };
         break;
-    case CSSValueColorStop: {
+    case CSSValueID::ColorStop: {
         auto numberOrPercentage = MetaConsumer<CSS::Number<>, CSS::Percentage<>>::consume(args, state);
         if (!numberOrPercentage)
             return std::nullopt;
@@ -190,7 +193,7 @@ static RefPtr<CSSValue> consumeDeprecatedLinearGradient(CSSParserTokenRange& ran
         return nullptr;
 
     return CSSGradientValue::create(
-        FunctionNotation<CSSValueWebkitGradient, CSS::DeprecatedLinearGradient> {
+        FunctionNotation<CSSValueID::WebkitGradient, CSS::DeprecatedLinearGradient> {
             .parameters = {
                 .colorInterpolationMethod = CSS::GradientColorInterpolationMethod::legacyMethod(AlphaPremultiplication::Premultiplied),
                 .gradientLine = { WTF::move(*first), WTF::move(*second) },
@@ -235,7 +238,7 @@ static RefPtr<CSSValue> consumeDeprecatedRadialGradient(CSSParserTokenRange& ran
         return nullptr;
 
     return CSSGradientValue::create(
-        FunctionNotation<CSSValueWebkitGradient, CSS::DeprecatedRadialGradient> {
+        FunctionNotation<CSSValueID::WebkitGradient, CSS::DeprecatedRadialGradient> {
             .parameters = {
                 .colorInterpolationMethod = CSS::GradientColorInterpolationMethod::legacyMethod(AlphaPremultiplication::Premultiplied),
                 .gradientBox = {
@@ -253,9 +256,9 @@ static RefPtr<CSSValue> consumeDeprecatedRadialGradient(CSSParserTokenRange& ran
 static RefPtr<CSSValue> consumeDeprecatedGradient(CSSParserTokenRange& range, CSS::PropertyParserState& state)
 {
     switch (range.consumeIncludingWhitespace().id()) {
-    case CSSValueLinear:
+    case CSSValueID::Linear:
         return consumeDeprecatedLinearGradient(range, state);
-    case CSSValueRadial:
+    case CSSValueID::Radial:
         return consumeDeprecatedRadialGradient(range, state);
     default:
         return nullptr;
@@ -272,7 +275,7 @@ static std::optional<CSS::Color> consumeStopColor(CSSParserTokenRange& range, CS
     return consumeUnresolvedColor(range, state);
 }
 
-template<SupportsColorHints supportsColorHints, typename Stop, typename Consumer> static std::optional<CSS::GradientColorStopList<Stop>> consumeColorStopList(CSSParserTokenRange& range, CSS::PropertyParserState& state, Consumer&& consumeStopPosition)
+template<SupportsColorHints supportsColorHints, typename Stop, typename Consumer> static std::optional<CSS::GradientColorStopList<Stop>> consumeColorStopList(CSSParserTokenRange& range, CSS::PropertyParserState& state, NOESCAPE const Consumer& consumeStopPosition)
 {
     typename CSS::GradientColorStopList<Stop>::Container stops;
 
@@ -314,7 +317,7 @@ template<SupportsColorHints supportsColorHints, typename Stop, typename Consumer
 template<SupportsColorHints supportsColorHints> static std::optional<CSS::GradientLinearColorStopList> consumeLinearColorStopList(CSSParserTokenRange& range, CSS::PropertyParserState& state)
 {
     return consumeColorStopList<supportsColorHints, CSS::GradientLinearColorStop>(range, state, [&](auto& range) {
-        return MetaConsumer<CSS::LengthPercentage<>>::consume(range, state);
+        return MetaConsumer<CSS::LengthPercentage<CSS::AllLayoutUnitClamped>>::consume(range, state);
     });
 }
 
@@ -338,7 +341,7 @@ static bool stopColorIs8Bit(const Markable<CSS::Color>& color)
     return !color || stopColorIs8Bit(*color);
 }
 
-template<typename Stop> static CSS::GradientColorInterpolationMethod computeGradientColorInterpolationMethod(std::optional<ColorInterpolationMethod> parsedColorInterpolationMethod, const CSS::GradientColorStopList<Stop>& stops)
+template<typename Stop> static CSS::GradientColorInterpolationMethod computeGradientColorInterpolationMethod(std::optional<CSS::ColorInterpolationMethod> parsedColorInterpolationMethod, const CSS::GradientColorStopList<Stop>& stops)
 {
     // We detect whether stops use legacy vs. non-legacy CSS color syntax using the following rules:
     //  - A CSSValueID is always considered legacy since all keyword based colors are considered legacy by the spec.
@@ -357,18 +360,18 @@ template<typename Stop> static CSS::GradientColorInterpolationMethod computeGrad
     }
 
     if (parsedColorInterpolationMethod)
-        return { *parsedColorInterpolationMethod, defaultColorInterpolationMethod };
+        return { .method = *parsedColorInterpolationMethod, .defaultMethod = defaultColorInterpolationMethod };
 
     switch (defaultColorInterpolationMethod) {
     case CSS::GradientColorInterpolationMethod::Default::SRGB:
-        return { { ColorInterpolationMethod::SRGB { }, AlphaPremultiplication::Premultiplied }, defaultColorInterpolationMethod };
+        return { .method = { ColorInterpolationMethod::SRGB { }, AlphaPremultiplication::Premultiplied }, .defaultMethod = defaultColorInterpolationMethod };
 
     case CSS::GradientColorInterpolationMethod::Default::OKLab:
-        return { { ColorInterpolationMethod::OKLab { }, AlphaPremultiplication::Premultiplied }, defaultColorInterpolationMethod };
+        return { .method = { ColorInterpolationMethod::OKLab { }, AlphaPremultiplication::Premultiplied }, .defaultMethod = defaultColorInterpolationMethod };
     }
 
     ASSERT_NOT_REACHED();
-    return { { ColorInterpolationMethod::SRGB { }, AlphaPremultiplication::Premultiplied }, defaultColorInterpolationMethod };
+    return { .method = { ColorInterpolationMethod::SRGB { }, AlphaPremultiplication::Premultiplied }, .defaultMethod = defaultColorInterpolationMethod };
 }
 
 // MARK: Compat <gradient> values
@@ -387,14 +390,14 @@ template<CSSValueID Name> static RefPtr<CSSValue> consumePrefixedLinearGradient(
     //
     // see https://www.w3.org/TR/2011/WD-css3-images-20110217/#linear-gradients.
 
-    static constexpr SortedArrayMap verticalMap { std::to_array<std::pair<CSSValueID, CSS::Vertical>>({
-        { CSSValueTop, CSS::Vertical { CSS::Keyword::Top { } } },
-        { CSSValueBottom, CSS::Vertical { CSS::Keyword::Bottom { } } },
+    static constexpr SortedArrayMap verticalMap { WTF::toArray<std::pair<CSSValueID, CSS::Vertical>>({
+        { CSSValueID::Top, CSS::Vertical { CSS::Keyword::Top { } } },
+        { CSSValueID::Bottom, CSS::Vertical { CSS::Keyword::Bottom { } } },
     }) };
 
-    static constexpr SortedArrayMap horizontalMap { std::to_array<std::pair<CSSValueID, CSS::Horizontal>>({
-        { CSSValueLeft, CSS::Horizontal { CSS::Keyword::Left { } } },
-        { CSSValueRight, CSS::Horizontal { CSS::Keyword::Right { } } },
+    static constexpr SortedArrayMap horizontalMap { WTF::toArray<std::pair<CSSValueID, CSS::Horizontal>>({
+        { CSSValueID::Left, CSS::Horizontal { CSS::Keyword::Left { } } },
+        { CSSValueID::Right, CSS::Horizontal { CSS::Keyword::Right { } } },
     }) };
 
     auto consumeKeywordGradientLineKnownHorizontal = [&](CSSParserTokenRange& range, CSS::Horizontal knownHorizontal) -> CSS::PrefixedLinearGradient::GradientLine {
@@ -411,16 +414,16 @@ template<CSSValueID Name> static RefPtr<CSSValue> consumePrefixedLinearGradient(
 
     auto consumeKeywordGradientLine = [&](CSSParserTokenRange& range) -> std::optional<CSS::PrefixedLinearGradient::GradientLine> {
         switch (range.peek().id()) {
-        case CSSValueLeft:
+        case CSSValueID::Left:
             range.consumeIncludingWhitespace();
             return consumeKeywordGradientLineKnownHorizontal(range, CSS::Horizontal { CSS::Keyword::Left { } });
-        case CSSValueRight:
+        case CSSValueID::Right:
             range.consumeIncludingWhitespace();
             return consumeKeywordGradientLineKnownHorizontal(range, CSS::Horizontal { CSS::Keyword::Right { } });
-        case CSSValueTop:
+        case CSSValueID::Top:
             range.consumeIncludingWhitespace();
             return consumeKeywordGradientLineKnownVertical(range, CSS::Vertical { CSS::Keyword::Top { } });
-        case CSSValueBottom:
+        case CSSValueID::Bottom:
             range.consumeIncludingWhitespace();
             return consumeKeywordGradientLineKnownVertical(range, CSS::Vertical { CSS::Keyword::Bottom { } });
         default:
@@ -475,18 +478,18 @@ template<CSSValueID Name> static RefPtr<CSSValue> consumePrefixedRadialGradient(
     //
     // see https://www.w3.org/TR/2011/WD-css3-images-20110217/#radial-gradients.
 
-    static constexpr SortedArrayMap shapeMap { std::to_array<std::pair<CSSValueID, ShapeKeyword>>({
-        { CSSValueCircle, ShapeKeyword::Circle },
-        { CSSValueEllipse, ShapeKeyword::Ellipse },
+    static constexpr SortedArrayMap shapeMap { WTF::toArray<std::pair<CSSValueID, ShapeKeyword>>({
+        { CSSValueID::Circle, ShapeKeyword::Circle },
+        { CSSValueID::Ellipse, ShapeKeyword::Ellipse },
     }) };
 
-    static constexpr SortedArrayMap extentMap { std::to_array<std::pair<CSSValueID, CSS::PrefixedRadialGradient::Extent>>({
-        { CSSValueContain, CSS::PrefixedRadialGradient::Extent { CSS::Keyword::Contain { } } },
-        { CSSValueCover, CSS::PrefixedRadialGradient::Extent { CSS::Keyword::Cover { } } },
-        { CSSValueClosestSide, CSS::PrefixedRadialGradient::Extent { CSS::Keyword::ClosestSide { } } },
-        { CSSValueClosestCorner, CSS::PrefixedRadialGradient::Extent { CSS::Keyword::ClosestCorner { } } },
-        { CSSValueFarthestSide, CSS::PrefixedRadialGradient::Extent { CSS::Keyword::FarthestSide { } } },
-        { CSSValueFarthestCorner, CSS::PrefixedRadialGradient::Extent { CSS::Keyword::FarthestCorner { } } },
+    static constexpr SortedArrayMap extentMap { WTF::toArray<std::pair<CSSValueID, CSS::PrefixedRadialGradient::Extent>>({
+        { CSSValueID::Contain, CSS::PrefixedRadialGradient::Extent { CSS::Keyword::Contain { } } },
+        { CSSValueID::Cover, CSS::PrefixedRadialGradient::Extent { CSS::Keyword::Cover { } } },
+        { CSSValueID::ClosestSide, CSS::PrefixedRadialGradient::Extent { CSS::Keyword::ClosestSide { } } },
+        { CSSValueID::ClosestCorner, CSS::PrefixedRadialGradient::Extent { CSS::Keyword::ClosestCorner { } } },
+        { CSSValueID::FarthestSide, CSS::PrefixedRadialGradient::Extent { CSS::Keyword::FarthestSide { } } },
+        { CSSValueID::FarthestCorner, CSS::PrefixedRadialGradient::Extent { CSS::Keyword::FarthestCorner { } } },
     }) };
 
     auto position = consumeOneOrTwoComponentPositionUnresolved(range, state);
@@ -599,14 +602,14 @@ template<CSSValueID Name> static RefPtr<CSSValue> consumeLinearGradient(CSSParse
     //   <color-stop-list>
     // )
 
-    static constexpr SortedArrayMap verticalMap { std::to_array<std::pair<CSSValueID, CSS::Vertical>>({
-        { CSSValueTop, CSS::Vertical { CSS::Keyword::Top { } } },
-        { CSSValueBottom, CSS::Vertical { CSS::Keyword::Bottom { } } },
+    static constexpr SortedArrayMap verticalMap { WTF::toArray<std::pair<CSSValueID, CSS::Vertical>>({
+        { CSSValueID::Top, CSS::Vertical { CSS::Keyword::Top { } } },
+        { CSSValueID::Bottom, CSS::Vertical { CSS::Keyword::Bottom { } } },
     }) };
 
-    static constexpr SortedArrayMap horizontalMap { std::to_array<std::pair<CSSValueID, CSS::Horizontal>>({
-        { CSSValueLeft, CSS::Horizontal { CSS::Keyword::Left { } } },
-        { CSSValueRight, CSS::Horizontal { CSS::Keyword::Right { } } },
+    static constexpr SortedArrayMap horizontalMap { WTF::toArray<std::pair<CSSValueID, CSS::Horizontal>>({
+        { CSSValueID::Left, CSS::Horizontal { CSS::Keyword::Left { } } },
+        { CSSValueID::Right, CSS::Horizontal { CSS::Keyword::Right { } } },
     }) };
 
     auto consumeKeywordGradientLineKnownHorizontal = [&](CSSParserTokenRange& range, CSS::Horizontal knownHorizontal) -> CSS::LinearGradient::GradientLine {
@@ -622,20 +625,20 @@ template<CSSValueID Name> static RefPtr<CSSValue> consumeLinearGradient(CSSParse
     };
 
     auto consumeKeywordGradientLine = [&](CSSParserTokenRange& range) -> std::optional<CSS::LinearGradient::GradientLine> {
-        ASSERT(range.peek().id() == CSSValueTo);
+        ASSERT(range.peek().id() == CSSValueID::To);
         range.consumeIncludingWhitespace();
 
         switch (range.peek().id()) {
-        case CSSValueLeft:
+        case CSSValueID::Left:
             range.consumeIncludingWhitespace();
             return consumeKeywordGradientLineKnownHorizontal(range, CSS::Horizontal { CSS::Keyword::Left { } });
-        case CSSValueRight:
+        case CSSValueID::Right:
             range.consumeIncludingWhitespace();
             return consumeKeywordGradientLineKnownHorizontal(range, CSS::Horizontal { CSS::Keyword::Right { } });
-        case CSSValueTop:
+        case CSSValueID::Top:
             range.consumeIncludingWhitespace();
             return consumeKeywordGradientLineKnownVertical(range, CSS::Vertical { CSS::Keyword::Top { } });
-        case CSSValueBottom:
+        case CSSValueID::Bottom:
             range.consumeIncludingWhitespace();
             return consumeKeywordGradientLineKnownVertical(range, CSS::Vertical { CSS::Keyword::Bottom { } });
         default:
@@ -643,9 +646,9 @@ template<CSSValueID Name> static RefPtr<CSSValue> consumeLinearGradient(CSSParse
         }
     };
 
-    std::optional<ColorInterpolationMethod> colorInterpolationMethod;
+    std::optional<CSS::ColorInterpolationMethod> colorInterpolationMethod;
 
-    if (range.peek().id() == CSSValueIn) {
+    if (range.peek().id() == CSSValueID::In) {
         colorInterpolationMethod = consumeColorInterpolationMethod(range, state);
         if (!colorInterpolationMethod)
             return nullptr;
@@ -658,14 +661,14 @@ template<CSSValueID Name> static RefPtr<CSSValue> consumeLinearGradient(CSSParse
 
     if (auto angle = MetaConsumer<CSS::Angle<>>::consume(range, state, { .unitlessZeroAngle = UnitlessZeroQuirk::Allow }))
         gradientLine = WTF::move(angle);
-    else if (range.peek().id() == CSSValueTo) {
+    else if (range.peek().id() == CSSValueID::To) {
         auto keywordGradientLine = consumeKeywordGradientLine(range);
         if (!keywordGradientLine)
             return nullptr;
         gradientLine = WTF::move(*keywordGradientLine);
     }
 
-    if (gradientLine && !colorInterpolationMethod && range.peek().id() == CSSValueIn) {
+    if (gradientLine && !colorInterpolationMethod && range.peek().id() == CSSValueID::In) {
         colorInterpolationMethod = consumeColorInterpolationMethod(range, state);
         if (!colorInterpolationMethod)
             return nullptr;
@@ -703,23 +706,23 @@ template<CSSValueID Name> static RefPtr<CSSValue> consumeRadialGradient(CSSParse
     //   <color-stop-list>
     // )
 
-    static constexpr SortedArrayMap shapeMap { std::to_array<std::pair<CSSValueID, ShapeKeyword>>({
-        { CSSValueCircle, ShapeKeyword::Circle },
-        { CSSValueEllipse, ShapeKeyword::Ellipse },
+    static constexpr SortedArrayMap shapeMap { WTF::toArray<std::pair<CSSValueID, ShapeKeyword>>({
+        { CSSValueID::Circle, ShapeKeyword::Circle },
+        { CSSValueID::Ellipse, ShapeKeyword::Ellipse },
     }) };
 
-    static constexpr SortedArrayMap extentMap { std::to_array<std::pair<CSSValueID, CSS::RadialGradient::Extent>>({
-        { CSSValueClosestSide, CSS::RadialGradient::Extent { CSS::Keyword::ClosestSide { } } },
-        { CSSValueClosestCorner, CSS::RadialGradient::Extent { CSS::Keyword::ClosestCorner { } } },
-        { CSSValueFarthestSide, CSS::RadialGradient::Extent { CSS::Keyword::FarthestSide { } } },
-        { CSSValueFarthestCorner, CSS::RadialGradient::Extent { CSS::Keyword::FarthestCorner { } } },
+    static constexpr SortedArrayMap extentMap { WTF::toArray<std::pair<CSSValueID, CSS::RadialGradient::Extent>>({
+        { CSSValueID::ClosestSide, CSS::RadialGradient::Extent { CSS::Keyword::ClosestSide { } } },
+        { CSSValueID::ClosestCorner, CSS::RadialGradient::Extent { CSS::Keyword::ClosestCorner { } } },
+        { CSSValueID::FarthestSide, CSS::RadialGradient::Extent { CSS::Keyword::FarthestSide { } } },
+        { CSSValueID::FarthestCorner, CSS::RadialGradient::Extent { CSS::Keyword::FarthestCorner { } } },
     }) };
 
     static constexpr auto defaultExtent = CSS::RadialGradient::Extent { CSS::Keyword::FarthestCorner { } };
 
-    std::optional<ColorInterpolationMethod> colorInterpolationMethod;
+    std::optional<CSS::ColorInterpolationMethod> colorInterpolationMethod;
 
-    if (range.peek().id() == CSSValueIn) {
+    if (range.peek().id() == CSSValueID::In) {
         colorInterpolationMethod = consumeColorInterpolationMethod(range, state);
         if (!colorInterpolationMethod)
             return nullptr;
@@ -779,13 +782,13 @@ template<CSSValueID Name> static RefPtr<CSSValue> consumeRadialGradient(CSSParse
     }
 
     std::optional<CSS::Position> position;
-    if (consumeIdent<CSSValueAt>(range)) {
+    if (consumeIdent<CSSValueID::At>(range)) {
         position = consumePositionUnresolved(range, state);
         if (!position)
             return nullptr;
     }
 
-    if ((shape || size || position) && !colorInterpolationMethod && range.peek().id() == CSSValueIn) {
+    if ((shape || size || position) && !colorInterpolationMethod && range.peek().id() == CSSValueID::In) {
         colorInterpolationMethod = consumeColorInterpolationMethod(range, state);
         if (!colorInterpolationMethod)
             return nullptr;
@@ -916,9 +919,9 @@ template<CSSValueID Name> static RefPtr<CSSValue> consumeConicGradient(CSSParser
     //   <angular-color-stop-list>
     // )
 
-    std::optional<ColorInterpolationMethod> colorInterpolationMethod;
+    std::optional<CSS::ColorInterpolationMethod> colorInterpolationMethod;
 
-    if (range.peek().id() == CSSValueIn) {
+    if (range.peek().id() == CSSValueID::In) {
         colorInterpolationMethod = consumeColorInterpolationMethod(range, state);
         if (!colorInterpolationMethod)
             return nullptr;
@@ -928,20 +931,20 @@ template<CSSValueID Name> static RefPtr<CSSValue> consumeConicGradient(CSSParser
     // https://drafts.csswg.org/css-images-4/#typedef-conic-gradient-syntax
 
     std::optional<CSS::Angle<>> angle;
-    if (consumeIdent<CSSValueFrom>(range)) {
+    if (consumeIdent<CSSValueID::From>(range)) {
         angle = MetaConsumer<CSS::Angle<>>::consume(range, state, { .unitlessZeroAngle = UnitlessZeroQuirk::Allow });
         if (!angle)
             return nullptr;
     }
 
     std::optional<CSS::Position> position;
-    if (consumeIdent<CSSValueAt>(range)) {
+    if (consumeIdent<CSSValueID::At>(range)) {
         position = consumePositionUnresolved(range, state);
         if (!position)
             return nullptr;
     }
 
-    if ((angle || position) && !colorInterpolationMethod && range.peek().id() == CSSValueIn) {
+    if ((angle || position) && !colorInterpolationMethod && range.peek().id() == CSSValueID::In) {
         colorInterpolationMethod = consumeColorInterpolationMethod(range, state);
         if (!colorInterpolationMethod)
             return nullptr;
@@ -972,33 +975,74 @@ template<CSSValueID Name> static RefPtr<CSSValue> consumeConicGradient(CSSParser
     );
 }
 
-// MARK: <cross-fade()>
+// MARK: <-webkit-cross-fade()>
 
-static RefPtr<CSSValue> consumeCrossFade(CSSParserTokenRange& args, CSS::PropertyParserState& state, CSSValueID functionId)
+static RefPtr<CSSValue> consumeWebkitCrossfade(CSSParserTokenRange& args, CSS::PropertyParserState& state)
 {
-    // FIXME: The current CSS Images spec has a pretty different construction than is being parsed here:
-    //
-    //    cross-fade() = cross-fade( <cf-image># )
-    //    <cf-image> = <percentage [0,100]>? && [ <image> | <color> ]
-    //
-    //  https://drafts.csswg.org/css-images-4/#funcdef-cross-fade
+    // <-webkit-cross-fade()> = -webkit-cross-fade( [ <image> | none ] , [ <image> | none ] , [ <number [0,1]> | <percentage [0,100]> ] )
 
-    auto fromImageValueOrNone = consumeImageOrNone(args, state);
-    if (!fromImageValueOrNone || !consumeCommaIncludingWhitespace(args))
+    auto from = consumeUnresolvedImageOrNone(args, state);
+    if (!from || !consumeCommaIncludingWhitespace(args))
         return nullptr;
-    auto toImageValueOrNone = consumeImageOrNone(args, state);
-    if (!toImageValueOrNone || !consumeCommaIncludingWhitespace(args))
+    auto to = consumeUnresolvedImageOrNone(args, state);
+    if (!to || !consumeCommaIncludingWhitespace(args))
+        return nullptr;
+    auto progress = MetaConsumer<CSS::Number<CSS::ClosedUnitRangeClampBoth>, CSS::Percentage<CSS::ClosedPercentageRangeClampBoth>>::consume(args, state);
+    if (!progress)
         return nullptr;
 
-    auto value = consumePercentageDividedBy100OrNumber(args, state);
-    if (!value)
+    return CSSCrossfadeValue::create(CSS::WebkitCrossfadeFunction {
+        .parameters = CSS::WebkitCrossfade {
+            .from = WTF::move(*from),
+            .to = WTF::move(*to),
+            .progress = CSS::WebkitCrossfade::Progress { WTF::move(*progress) },
+        }
+    });
+}
+
+static std::optional<CSS::Crossfade::Component> consumeCrossfadeComponent(CSSParserTokenRange& args, CSS::PropertyParserState& state)
+{
+    // <cross-fade-component> = [ <image> | <color> ] && <percentage [0,100]>?
+    // https://drafts.csswg.org/css-images-4/#funcdef-cross-fade
+
+    // FIXME: Add support for <color> parameter.
+
+    auto percentage = MetaConsumer<CSS::Crossfade::Component::Percentage>::consume(args, state);
+
+    RefPtr image = consumeImage(args, state);
+    if (!image)
+        return std::nullopt;
+
+    if (!percentage)
+        percentage = MetaConsumer<CSS::Crossfade::Component::Percentage>::consume(args, state);
+
+    return CSS::Crossfade::Component {
+        .image = { image.releaseNonNull() },
+        .percentage = WTF::move(percentage)
+    };
+}
+
+static RefPtr<CSSValue> consumeCrossfade(CSSParserTokenRange& args, CSS::PropertyParserState& state)
+{
+    // <cross-fade()> = cross-fade( <cross-fade-component># )
+    // https://drafts.csswg.org/css-images-4/#funcdef-cross-fade
+
+    CommaSeparatedVector<CSS::Crossfade::Component> components;
+    do {
+        auto component = consumeCrossfadeComponent(args, state);
+        if (!component)
+            return nullptr;
+        components.value.append(WTF::move(*component));
+    } while (consumeCommaIncludingWhitespace(args));
+
+    if (!args.atEnd())
         return nullptr;
 
-    if (value->isNumber()) {
-        if (auto numberValue = value->resolveAsNumberIfNotCalculated(); numberValue && (*numberValue < 0 || *numberValue > 1))
-            value = CSSPrimitiveValue::create(clampTo<double>(*numberValue, 0, 1));
-    }
-    return CSSCrossfadeValue::create(fromImageValueOrNone.releaseNonNull(), toImageValueOrNone.releaseNonNull(), value.releaseNonNull(), functionId == CSSValueWebkitCrossFade);
+    return CSSCrossfadeValue::create(CSS::CrossfadeFunction {
+        .parameters = CSS::Crossfade {
+            .components = WTF::move(components)
+        }
+    });
 }
 
 // MARK: <-webkit-canvas()>
@@ -1007,7 +1051,7 @@ static RefPtr<CSSValue> consumeWebkitCanvas(CSSParserTokenRange& args)
 {
     if (args.peek().type() != IdentToken)
         return nullptr;
-    return CSSCanvasValue::create(args.consumeIncludingWhitespace().value().toString());
+    return CSSCanvasValue::create(CSS::CustomIdent { args.consumeIncludingWhitespace().value().toAtomString() });
 }
 
 // MARK: <-webkit-named-image()>
@@ -1016,7 +1060,32 @@ static RefPtr<CSSValue> consumeWebkitNamedImage(CSSParserTokenRange& args)
 {
     if (args.peek().type() != IdentToken)
         return nullptr;
-    return CSSNamedImageValue::create(args.consumeIncludingWhitespace().value().toString());
+    return CSSNamedImageValue::create(CSS::CustomIdent { args.consumeIncludingWhitespace().value().toAtomString() });
+}
+
+// MARK: <image()>
+// https://drafts.csswg.org/css-images-4/#funcdef-image
+
+static RefPtr<CSSValue> consumeColorImage(CSSParserTokenRange& args, CSS::PropertyParserState& state)
+{
+    auto color = consumeUnresolvedColor(args, state);
+    if (!color)
+        return nullptr;
+    return CSSColorImageValue::create(WTF::move(*color));
+}
+
+// MARK: light-dark() for images
+// https://drafts.csswg.org/css-color-5/#light-dark
+
+static RefPtr<CSSValue> consumeLightDarkImage(CSSParserTokenRange& args, CSS::PropertyParserState& state, OptionSet<AllowedImageType> allowedImageTypes)
+{
+    auto lightValueOrNone = consumeImageOrNone(args, state, allowedImageTypes);
+    if (!lightValueOrNone || !consumeCommaIncludingWhitespace(args))
+        return nullptr;
+    auto darkValueOrNone = consumeImageOrNone(args, state, allowedImageTypes);
+    if (!darkValueOrNone)
+        return nullptr;
+    return CSSLightDarkImageValue::create(lightValueOrNone.releaseNonNull(), darkValueOrNone.releaseNonNull());
 }
 
 // MARK: <filter()>
@@ -1049,7 +1118,7 @@ static RefPtr<CSSValue> consumeCustomPaint(CSSParserTokenRange& args, CSS::Prope
         return nullptr;
     if (args.peek().type() != IdentToken)
         return nullptr;
-    auto name = args.consumeIncludingWhitespace().value().toString();
+    auto name = args.consumeIncludingWhitespace().value().toAtomString();
 
     if (!args.atEnd() && args.peek() != CommaToken)
         return nullptr;
@@ -1057,13 +1126,14 @@ static RefPtr<CSSValue> consumeCustomPaint(CSSParserTokenRange& args, CSS::Prope
         args.consume();
 
     auto argumentList = CSSVariableData::create(args.consumeAll());
-    return CSSPaintImageValue::create(name, WTF::move(argumentList));
+    return CSSPaintImageValue::create(CSS::CustomIdent { WTF::move(name) }, WTF::move(argumentList));
 }
 
 // MARK: <image-set()>
+// https://w3c.github.io/csswg-drafts/css-images-4/#image-set-notation
 
 struct ImageSetTypeFunctionRaw {
-    String value;
+    FunctionNotation<CSSValueID::Type, CSS::String> value;
 
     bool operator==(const ImageSetTypeFunctionRaw&) const = default;
 };
@@ -1075,18 +1145,18 @@ struct ImageSetTypeFunctionRawKnownTokenTypeFunctionConsumer {
     static std::optional<ImageSetTypeFunctionRaw> consume(CSSParserTokenRange& range, CSS::PropertyParserState&, CSSCalcSymbolsAllowed, CSSPropertyParserOptions)
     {
         ASSERT(range.peek().type() == FunctionToken);
-        if (range.peek().functionId() != CSSValueType)
+        if (range.peek().functionId() != CSSValueID::Type)
             return { };
 
         auto rangeCopy = range;
         auto typeArg = consumeFunction(rangeCopy);
-        auto result = consumeStringRaw(typeArg);
+        auto result = consumeUnresolvedString(typeArg);
 
-        if (result.isNull() || !typeArg.atEnd())
+        if (!result || !typeArg.atEnd())
             return { };
 
         range = rangeCopy;
-        return { { result.toString() } };
+        return ImageSetTypeFunctionRaw { FunctionNotation<CSSValueID::Type, CSS::String> { WTF::move(*result) } };
     }
 };
 
@@ -1096,61 +1166,47 @@ template<> struct ConsumerDefinition<ImageSetTypeFunction> {
 
 // MARK: Image Set Resolution + Type Function
 
-static RefPtr<CSSPrimitiveValue> consumeImageSetResolutionOrTypeFunction(CSSParserTokenRange& range, CSS::PropertyParserState& state)
-{
-    // [ <resolution> || type(<string>) ]
-    //
-    //   as part of
-    //
-    // <image-set()> = image-set( <image-set-option># )
-    // <image-set-option> = [ <image> | <string> ] [ <resolution> || type(<string>) ]?
-
-    return MetaConsumer<CSS::Resolution<>, ImageSetTypeFunction>::consume(range, state,
-        [&](const ImageSetTypeFunction& typeFunction) -> RefPtr<CSSPrimitiveValue> {
-            return CSSPrimitiveValue::create(typeFunction.value);
-        },
-        [&](const CSS::Resolution<>& resolution) -> RefPtr<CSSPrimitiveValue> {
-            return CSSPrimitiveValueResolverBase::resolve(resolution);
-        }
-    ).value_or(nullptr);
-}
-
-// https://w3c.github.io/csswg-drafts/css-images-4/#image-set-notation
 static RefPtr<CSSImageSetOptionValue> consumeImageSetOption(CSSParserTokenRange& range, CSS::PropertyParserState& state, OptionSet<AllowedImageType> allowedImageTypes)
 {
+    // <image-set()> = image-set( <image-set-option># )
+    // <image-set-option> = [ <image> | <string> ] [ <resolution> || type(<string>) ]?
+    // https://w3c.github.io/csswg-drafts/css-images-4/#image-set-notation
+
     auto image = consumeImage(range, state, allowedImageTypes);
     if (!image)
         return nullptr;
 
-    auto result = CSSImageSetOptionValue::create(image.releaseNonNull());
-
-    RefPtr<CSSPrimitiveValue> resolution;
-    RefPtr<CSSPrimitiveValue> type;
+    std::optional<CSS::Resolution<>> resolution;
+    std::optional<FunctionNotation<CSSValueID::Type, CSS::String>> type;
 
     // Optional resolution and type in any order.
     for (size_t i = 0; i < 2 && !range.atEnd(); ++i) {
-        if (auto optionalArgument = consumeImageSetResolutionOrTypeFunction(range, state)) {
-            if ((resolution && optionalArgument->isResolution()) || (type && optionalArgument->isString()))
+        if (auto optionalArgument = MetaConsumer<CSS::Resolution<>, ImageSetTypeFunction>::consume(range, state)) {
+            bool success = WTF::switchOn(WTF::move(*optionalArgument),
+                [&](CSS::Resolution<>&& parsedResolution) {
+                    if (resolution)
+                        return false;
+                    resolution = WTF::move(parsedResolution);
+                    return true;
+                },
+                [&](ImageSetTypeFunction&& parsedType) {
+                    if (type)
+                        return false;
+                    type = WTF::move(parsedType.value);
+                    return true;
+                }
+            );
+            if (!success)
                 return nullptr;
-
-            if (optionalArgument->isResolution()) {
-                resolution = optionalArgument;
-                result->setResolution(optionalArgument.releaseNonNull());
-                continue;
-            }
-
-            if (optionalArgument->isString()) {
-                type = optionalArgument;
-                result->setType(type->stringValue());
-                continue;
-            }
+            continue;
         }
         break;
     }
 
     if (!range.atEnd() && range.peek().type() != CommaToken)
         return nullptr;
-    return result;
+
+    return CSSImageSetOptionValue::create(image.releaseNonNull(), WTF::move(resolution), WTF::move(type));
 }
 
 
@@ -1181,69 +1237,71 @@ RefPtr<CSSValue> consumeImage(CSSParserTokenRange& range, CSS::PropertyParserSta
     }
 
     if (range.peek().type() == FunctionToken) {
-        auto consumeGeneratedImage = [&](auto consumer) -> RefPtr<CSSValue> {
-            if (!allowedImageTypes.contains(AllowedImageType::GeneratedImage))
-                return nullptr;
-            CSSParserTokenRange rangeCopy = range;
-            CSSParserTokenRange args = consumeFunction(rangeCopy);
+        auto consumeImageFunction = [&](auto consumer) -> RefPtr<CSSValue> {
+            auto rangeCopy = range;
+            auto args = consumeFunction(rangeCopy);
             RefPtr result = consumer(args);
             if (!result || !args.atEnd())
                 return nullptr;
             range = rangeCopy;
             return result;
+        };
+
+        auto consumeGeneratedImage = [&](auto consumer) -> RefPtr<CSSValue> {
+            if (!allowedImageTypes.contains(AllowedImageType::GeneratedImage))
+                return nullptr;
+            return consumeImageFunction(consumer);
         };
 
         auto consumeImageSetImage = [&](auto consumer) -> RefPtr<CSSValue> {
             if (!allowedImageTypes.contains(AllowedImageType::ImageSet))
                 return nullptr;
-            CSSParserTokenRange rangeCopy = range;
-            CSSParserTokenRange args = consumeFunction(rangeCopy);
-            RefPtr result = consumer(args);
-            if (!result || !args.atEnd())
-                return nullptr;
-            range = rangeCopy;
-            return result;
+            return consumeImageFunction(consumer);
         };
 
         auto functionId = range.peek().functionId();
         switch (functionId) {
-        case CSSValueRadialGradient:
-            return consumeGeneratedImage([&](auto& args) { return consumeRadialGradient<CSSValueRadialGradient>(args, state); });
-        case CSSValueRepeatingRadialGradient:
-            return consumeGeneratedImage([&](auto& args) { return consumeRadialGradient<CSSValueRepeatingRadialGradient>(args, state); });
-        case CSSValueWebkitLinearGradient:
-            return consumeGeneratedImage([&](auto& args) { return consumePrefixedLinearGradient<CSSValueWebkitLinearGradient>(args, state); });
-        case CSSValueWebkitRepeatingLinearGradient:
-            return consumeGeneratedImage([&](auto& args) { return consumePrefixedLinearGradient<CSSValueWebkitRepeatingLinearGradient>(args, state); });
-        case CSSValueRepeatingLinearGradient:
-            return consumeGeneratedImage([&](auto& args) { return consumeLinearGradient<CSSValueRepeatingLinearGradient>(args, state); });
-        case CSSValueLinearGradient:
-            return consumeGeneratedImage([&](auto& args) { return consumeLinearGradient<CSSValueLinearGradient>(args, state); });
-        case CSSValueWebkitGradient:
+        case CSSValueID::RadialGradient:
+            return consumeGeneratedImage([&](auto& args) { return consumeRadialGradient<CSSValueID::RadialGradient>(args, state); });
+        case CSSValueID::RepeatingRadialGradient:
+            return consumeGeneratedImage([&](auto& args) { return consumeRadialGradient<CSSValueID::RepeatingRadialGradient>(args, state); });
+        case CSSValueID::WebkitLinearGradient:
+            return consumeGeneratedImage([&](auto& args) { return consumePrefixedLinearGradient<CSSValueID::WebkitLinearGradient>(args, state); });
+        case CSSValueID::WebkitRepeatingLinearGradient:
+            return consumeGeneratedImage([&](auto& args) { return consumePrefixedLinearGradient<CSSValueID::WebkitRepeatingLinearGradient>(args, state); });
+        case CSSValueID::RepeatingLinearGradient:
+            return consumeGeneratedImage([&](auto& args) { return consumeLinearGradient<CSSValueID::RepeatingLinearGradient>(args, state); });
+        case CSSValueID::LinearGradient:
+            return consumeGeneratedImage([&](auto& args) { return consumeLinearGradient<CSSValueID::LinearGradient>(args, state); });
+        case CSSValueID::WebkitGradient:
             return consumeGeneratedImage([&](auto& args) { return consumeDeprecatedGradient(args, state); });
-        case CSSValueWebkitRadialGradient:
-            return consumeGeneratedImage([&](auto& args) { return consumePrefixedRadialGradient<CSSValueWebkitRadialGradient>(args, state); });
-        case CSSValueWebkitRepeatingRadialGradient:
-            return consumeGeneratedImage([&](auto& args) { return consumePrefixedRadialGradient<CSSValueWebkitRepeatingRadialGradient>(args, state); });
-        case CSSValueConicGradient:
-            return consumeGeneratedImage([&](auto& args) { return consumeConicGradient<CSSValueConicGradient>(args, state); });
-        case CSSValueRepeatingConicGradient:
-            return consumeGeneratedImage([&](auto& args) { return consumeConicGradient<CSSValueRepeatingConicGradient>(args, state); });
-        case CSSValueWebkitCrossFade:
-            return consumeGeneratedImage([&](auto& args) { return consumeCrossFade(args, state, functionId); });
-        case CSSValueCrossFade:
-            return consumeGeneratedImage([&](auto& args) { return consumeCrossFade(args, state, functionId); });
-        case CSSValueWebkitCanvas:
+        case CSSValueID::WebkitRadialGradient:
+            return consumeGeneratedImage([&](auto& args) { return consumePrefixedRadialGradient<CSSValueID::WebkitRadialGradient>(args, state); });
+        case CSSValueID::WebkitRepeatingRadialGradient:
+            return consumeGeneratedImage([&](auto& args) { return consumePrefixedRadialGradient<CSSValueID::WebkitRepeatingRadialGradient>(args, state); });
+        case CSSValueID::ConicGradient:
+            return consumeGeneratedImage([&](auto& args) { return consumeConicGradient<CSSValueID::ConicGradient>(args, state); });
+        case CSSValueID::RepeatingConicGradient:
+            return consumeGeneratedImage([&](auto& args) { return consumeConicGradient<CSSValueID::RepeatingConicGradient>(args, state); });
+        case CSSValueID::WebkitCrossFade:
+            return consumeGeneratedImage([&](auto& args) { return consumeWebkitCrossfade(args, state); });
+        case CSSValueID::CrossFade:
+            return consumeGeneratedImage([&](auto& args) { return consumeCrossfade(args, state); });
+        case CSSValueID::WebkitCanvas:
             return consumeGeneratedImage([&](auto& args) { return consumeWebkitCanvas(args); });
-        case CSSValueWebkitNamedImage:
+        case CSSValueID::WebkitNamedImage:
             return consumeGeneratedImage([&](auto& args) { return consumeWebkitNamedImage(args); });
-        case CSSValueWebkitFilter:
-        case CSSValueFilter:
+        case CSSValueID::Image:
+            return consumeGeneratedImage([&](auto& args) { return consumeColorImage(args, state); });
+        case CSSValueID::LightDark:
+            return consumeImageFunction([&](auto& args) { return consumeLightDarkImage(args, state, allowedImageTypes - AllowedImageType::RawStringAsURL); });
+        case CSSValueID::WebkitFilter:
+        case CSSValueID::Filter:
             return consumeGeneratedImage([&](auto& args) { return consumeFilterImage(args, state); });
-        case CSSValuePaint:
+        case CSSValueID::Paint:
             return consumeGeneratedImage([&](auto& args) { return consumeCustomPaint(args, state); });
-        case CSSValueImageSet:
-        case CSSValueWebkitImageSet:
+        case CSSValueID::ImageSet:
+        case CSSValueID::WebkitImageSet:
             return consumeImageSetImage([&](auto& args) { return consumeImageSet(args, state, (allowedImageTypes | AllowedImageType::RawStringAsURL) - AllowedImageType::ImageSet); });
         default:
             break;
@@ -1251,7 +1309,7 @@ RefPtr<CSSValue> consumeImage(CSSParserTokenRange& range, CSS::PropertyParserSta
     }
 
     if (allowedImageTypes.contains(AllowedImageType::URLFunction)) {
-        if (auto imageURL = consumeURLRaw(range, state, { AllowedURLModifiers::CrossOrigin, AllowedURLModifiers::ReferrerPolicy }))
+        if (auto imageURL = consumeURLRaw(range, state, { AllowedURLModifiers::CrossOrigin, AllowedURLModifiers::ReferrerPolicy, AllowedURLModifiers::Param }))
             return CSSImageValue::create(WTF::move(*imageURL));
     }
 
@@ -1262,9 +1320,21 @@ RefPtr<CSSValue> consumeImage(CSSParserTokenRange& range, CSS::PropertyParserSta
 
 RefPtr<CSSValue> consumeImageOrNone(CSSParserTokenRange& range, CSS::PropertyParserState& state, OptionSet<AllowedImageType> allowedImageTypes)
 {
-    if (range.peek().id() == CSSValueNone)
+    if (range.peek().id() == CSSValueID::None && allowedImageTypes.contains(AllowedImageType::GeneratedImage))
         return consumeIdent(range);
     return consumeImage(range, state, allowedImageTypes);
+}
+
+std::optional<CSS::ImageOrNone> consumeUnresolvedImageOrNone(CSSParserTokenRange& range, CSS::PropertyParserState& state, OptionSet<AllowedImageType> allowedImageTypes)
+{
+    if (range.peek().id() == CSSValueID::None && allowedImageTypes.contains(AllowedImageType::GeneratedImage)) {
+        range.consumeIncludingWhitespace();
+        return CSS::ImageOrNone { CSS::Keyword::None { } };
+    }
+    RefPtr image = consumeImage(range, state, allowedImageTypes);
+    if (!image)
+        return std::nullopt;
+    return CSS::ImageOrNone { CSS::ImageWrapper { image.releaseNonNull() } };
 }
 
 } // namespace CSSPropertyParserHelpers

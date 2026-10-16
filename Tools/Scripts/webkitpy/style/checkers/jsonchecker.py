@@ -23,6 +23,7 @@
 
 """Checks WebKit style for JSON files."""
 
+import importlib.util
 import json
 import os
 import re
@@ -39,7 +40,7 @@ class JSONChecker(object):
         self._handle_style_error = handle_style_error
         self._handle_style_error.turn_off_line_filtering()
 
-    def check(self, lines):
+    def check(self, lines, line_numbers=None):
         try:
             json.loads('\n'.join(lines) + '\n')
         except ValueError as e:
@@ -56,7 +57,7 @@ class JSONChecker(object):
 class JSONContributorsChecker(JSONChecker):
     """Processes contributors.json lines"""
 
-    def check(self, lines):
+    def check(self, lines, line_numbers=None):
         super(JSONContributorsChecker, self).check(lines)
         self._handle_style_error(0, 'json/syntax', 5, 'contributors.json should not be modified through the commit queue')
 
@@ -64,7 +65,7 @@ class JSONContributorsChecker(JSONChecker):
 class JSONFeaturesChecker(JSONChecker):
     """Processes the features.json lines"""
 
-    def check(self, lines):
+    def check(self, lines, line_numbers=None):
         super(JSONFeaturesChecker, self).check(lines)
 
         try:
@@ -118,7 +119,7 @@ class JSONFeaturesChecker(JSONChecker):
 class JSONCSSPropertiesChecker(JSONChecker):
     """Processes CSSProperties.json"""
 
-    def check(self, lines):
+    def check(self, lines, line_numbers=None):
         super(JSONCSSPropertiesChecker, self).check(lines)
 
         try:
@@ -387,6 +388,7 @@ class JSONCSSPropertiesChecker(JSONChecker):
             'animation-wrapper-requires-override-parameters': self.validate_array,
             'animation-wrapper-requires-setter': self.validate_string,
             'animation-wrapper': self.validate_string,
+            'applies-to-highlight-pseudo-elements': self.validate_string,
             'cascade-alias': self.validate_string,
             'color-property-traits-color-custom': self.validate_boolean,
             'color-property-traits-requires-excludes-visited-link-color': self.validate_boolean,
@@ -399,6 +401,7 @@ class JSONCSSPropertiesChecker(JSONChecker):
             'computed-style-getter-custom': self.validate_boolean,
             'computed-style-getter-exported': self.validate_boolean,
             'computed-style-getter-inline': self.validate_boolean,
+            'computed-style-getter-nodelete': self.validate_boolean,
             'computed-style-getter': self.validate_string,
             'computed-style-has-explicitly-set-getter-custom': self.validate_boolean,
             'computed-style-has-explicitly-set-policy': self.validate_string,
@@ -489,6 +492,7 @@ class JSONCSSPropertiesChecker(JSONChecker):
             'style-extractor-custom': self.validate_boolean,
             'top-priority-reason': self.validate_string,
             'top-priority': self.validate_boolean,
+            'used-style': self.validate_string,
             'visited-link-color-support': self.validate_boolean,
         }
 
@@ -503,7 +507,7 @@ class JSONCSSPropertiesChecker(JSONChecker):
 class JSONImportExpectationsChecker(JSONChecker):
     """Processes the import-expectations.json lines"""
 
-    def check(self, lines):
+    def check(self, lines, line_numbers=None):
         super(JSONImportExpectationsChecker, self).check(lines)
 
         try:
@@ -557,12 +561,12 @@ class JSONImportExpectationsChecker(JSONChecker):
                 )
                 valid = False
 
-            if value not in ("import", "skip", "skip-new-directories"):
+            if value not in ("import", "import-no-rewrite", "skip", "skip-new-directories"):
                 self._handle_style_error(
                     line_no,
                     "json/syntax",
                     5,
-                    'Each value must be one of "import", "skip", or "skip-new-directories"',
+                    'Each value must be one of "import", "import-no-rewrite", "skip", or "skip-new-directories"',
                 )
                 valid = False
 
@@ -604,7 +608,7 @@ class JSONImportExpectationsChecker(JSONChecker):
             is_prefix = any(
                 parsed_key == k[: len(parsed_key)]
                 and len(k) > len(parsed_key)
-                and v == "import"
+                and v in ("import", "import-no-rewrite")
                 for k, v in parsed_expectations.items()
             )
             should_exist = not is_skipped or is_prefix
@@ -631,3 +635,34 @@ class JSONImportExpectationsChecker(JSONChecker):
                     5,
                     "'{}' is not a directory".format(key),
                 )
+
+
+def _load_quirk_table_validator():
+    # The validator lives with the table in Source/WebCore so it can also run on its own. Load it here, at
+    # import time, so tests that fake the filesystem can still check tables.
+    checkout_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', '..'))
+    path = os.path.join(checkout_root, 'Source', 'WebCore', 'Scripts', 'validate-quirk-table.py')
+    spec = importlib.util.spec_from_file_location('validate_quirk_table', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.QuirkTableValidator
+
+
+QuirkTableValidator = _load_quirk_table_validator()
+
+
+class JSONQuirkTableChecker(JSONChecker):
+    """Processes QuirkTable.json, the site-specific quirk table in Source/WebCore/page.
+
+    The checks themselves are in Source/WebCore/Scripts/validate-quirk-table.py.
+    """
+
+    def check(self, lines, line_numbers=None):
+        super(JSONQuirkTableChecker, self).check(lines)
+        try:
+            table = json.loads('\n'.join(lines) + '\n')
+        except ValueError:
+            return
+
+        for message in QuirkTableValidator(os.path.dirname(self._file_path)).validate(table):
+            self._handle_style_error(0, 'json/syntax', 5, message)

@@ -55,18 +55,22 @@ public:
 private:
     SVGFEDiffuseLightingElement(const QualifiedName&, Document&);
 
+    static constexpr float initialDiffuseConstantValue = 1;
+    static constexpr float initialSurfaceScaleValue = 1;
+
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) override;
     void svgAttributeChanged(const QualifiedName&) override;
 
     bool setFilterEffectAttribute(FilterEffect&, const QualifiedName&) override;
     Vector<AtomString> filterEffectInputsNames() const override { return { AtomString { in1() } }; }
+    bool taintsOrigin() const override;
     RefPtr<FilterEffect> createFilterEffect(const FilterEffectVector&, const GraphicsContext& destinationContext) const override;
 
-    Ref<SVGAnimatedString> m_in1 { SVGAnimatedString::create(this) };
-    Ref<SVGAnimatedNumber> m_diffuseConstant { SVGAnimatedNumber::create(this, 1) };
-    Ref<SVGAnimatedNumber> m_surfaceScale { SVGAnimatedNumber::create(this, 1) };
-    Ref<SVGAnimatedNumber> m_kernelUnitLengthX { SVGAnimatedNumber::create(this) };
-    Ref<SVGAnimatedNumber> m_kernelUnitLengthY { SVGAnimatedNumber::create(this) };
+    const Ref<SVGAnimatedString> m_in1 { SVGAnimatedString::create(this) };
+    const Ref<SVGAnimatedNumber> m_diffuseConstant { SVGAnimatedNumber::create(this, initialDiffuseConstantValue) };
+    const Ref<SVGAnimatedNumber> m_surfaceScale { SVGAnimatedNumber::create(this, initialSurfaceScaleValue) };
+    const Ref<SVGAnimatedNumber> m_kernelUnitLengthX { SVGAnimatedNumber::create(this) };
+    const Ref<SVGAnimatedNumber> m_kernelUnitLengthY { SVGAnimatedNumber::create(this) };
 };
 
 } // namespace WebCore

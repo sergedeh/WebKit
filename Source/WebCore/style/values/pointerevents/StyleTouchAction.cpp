@@ -25,6 +25,7 @@
 #include "config.h"
 #include "StyleTouchAction.h"
 
+#include "CSSKeywordValue.h"
 #include "StyleBuilderChecking.h"
 
 namespace WebCore {
@@ -32,19 +33,19 @@ namespace Style {
 
 auto CSSValueConversion<TouchAction>::operator()(BuilderState& state, const CSSValue& value) -> TouchAction
 {
-    if (RefPtr primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value)) {
-        switch (primitiveValue->valueID()) {
-        case CSSValueAuto:
+    if (auto* keywordValue = dynamicDowncast<CSSKeywordValue>(value)) {
+        switch (keywordValue->valueID()) {
+        case CSSValueID::Auto:
             return CSS::Keyword::Auto { };
-        case CSSValueNone:
+        case CSSValueID::None:
             return CSS::Keyword::None { };
-        case CSSValueManipulation:
+        case CSSValueID::Manipulation:
             return CSS::Keyword::Manipulation { };
-        case CSSValuePanX:
+        case CSSValueID::PanX:
             return TouchActionValue::PanX;
-        case CSSValuePanY:
+        case CSSValueID::PanY:
             return TouchActionValue::PanY;
-        case CSSValuePinchZoom:
+        case CSSValueID::PinchZoom:
             return TouchActionValue::PinchZoom;
         default:
             state.setCurrentPropertyInvalidAtComputedValueTime();
@@ -52,20 +53,20 @@ auto CSSValueConversion<TouchAction>::operator()(BuilderState& state, const CSSV
         }
     }
 
-    auto list = requiredListDowncast<CSSValueList, CSSPrimitiveValue>(state, value);
+    auto list = requiredListDowncast<CSSValueList, CSSKeywordValue>(state, value);
     if (!list)
         return CSS::Keyword::Auto { };
 
     TouchActionValueEnumSet result;
     for (Ref item : *list) {
         switch (item->valueID()) {
-        case CSSValuePanX:
+        case CSSValueID::PanX:
             result.value.add(TouchActionValue::PanX);
             break;
-        case CSSValuePanY:
+        case CSSValueID::PanY:
             result.value.add(TouchActionValue::PanY);
             break;
-        case CSSValuePinchZoom:
+        case CSSValueID::PinchZoom:
             result.value.add(TouchActionValue::PinchZoom);
             break;
         default:

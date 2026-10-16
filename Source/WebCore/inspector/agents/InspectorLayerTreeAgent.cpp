@@ -31,11 +31,11 @@
 #include "config.h"
 #include "InspectorLayerTreeAgent.h"
 
-#include "DestinationColorSpace.h"
-#include "EventTargetInlines.h"
+#include "ColorSpace.h"
 #include "GraphicsContext.h"
 #include "GraphicsLayer.h"
 #include "ImageBuffer.h"
+#include "ImageUtilities.h"
 #include "InspectorDOMAgent.h"
 #include "InstrumentingAgents.h"
 #include "IntRect.h"
@@ -59,7 +59,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(InspectorLayerTreeAgent);
 InspectorLayerTreeAgent::InspectorLayerTreeAgent(WebAgentContext& context)
     : InspectorAgentBase("LayerTree"_s, context)
     , m_frontendDispatcher(makeUniqueRef<Inspector::LayerTreeFrontendDispatcher>(context.frontendRouter))
-    , m_backendDispatcher(Inspector::LayerTreeBackendDispatcher::create(context.backendDispatcher, this))
+    , m_backendDispatcher(Inspector::LayerTreeBackendDispatcher::create(protect(context.backendDispatcher), this))
 {
 }
 
@@ -121,6 +121,8 @@ void InspectorLayerTreeAgent::pseudoElementDestroyed(PseudoElement& pseudoElemen
 
 Inspector::Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Inspector::Protocol::LayerTree::Layer>>> InspectorLayerTreeAgent::layersForNode(Inspector::Protocol::DOM::NodeId nodeId)
 {
+    m_suppressLayerChangeEvents = false;
+
     Ref agents = m_instrumentingAgents.get();
     RefPtr node = CheckedPtr { agents->persistentDOMAgent() }->nodeForId(nodeId);
     if (!node)
@@ -136,8 +138,6 @@ Inspector::Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Inspector::Protocol::LayerT
     auto layers = JSON::ArrayOf<Inspector::Protocol::LayerTree::Layer>::create();
 
     gatherLayersUsingRenderObjectHierarchy(downcast<RenderElement>(*renderer), layers);
-
-    m_suppressLayerChangeEvents = false;
 
     return layers;
 }
@@ -256,7 +256,7 @@ Inspector::Protocol::ErrorStringOr<Ref<Inspector::Protocol::LayerTree::Compositi
     if (!renderLayer)
         return makeUnexpected("Missing render layer for given layerId"_s);
 
-    OptionSet<CompositingReason> reasons = renderLayer->compositor().reasonsForCompositing(*renderLayer);
+    OptionSet<CompositingReason> reasons = protect(renderLayer->compositor())->reasonsForCompositing(*renderLayer);
     auto compositingReasons = Inspector::Protocol::LayerTree::CompositingReasons::create().release();
 
     if (reasons.contains(CompositingReason::Transform3D))
@@ -360,24 +360,24 @@ Inspector::CommandResult<String> InspectorLayerTreeAgent::requestContent(const I
 
     FloatSize layerSize = graphicsLayer->size();
     if (layerSize.isEmpty())
-        return makeUnexpected("Layer has zero size"_s);
+        return emptyString();
 
-    constexpr float scaleFactor = 2.0;
-    IntSize integralSize = IntSize(layerSize);
+    // Limit scale factor for large layers to prevent excessive memory usage.
+    constexpr float maxScaleFactor = 2;
+    constexpr float maxSnapshotDimension = 4096;
+    float scaleFactor = std::min({
+        maxSnapshotDimension / layerSize.width(),
+        maxSnapshotDimension / layerSize.height(),
+        maxScaleFactor,
+    });
 
-    auto imageBuffer = ImageBuffer::create(integralSize, RenderingMode::Unaccelerated, RenderingPurpose::Snapshot, scaleFactor, DestinationColorSpace::SRGB(), PixelFormat::BGRA8);
+    auto imageBuffer = ImageBuffer::create(layerSize, RenderingMode::Unaccelerated, RenderingPurpose::Snapshot, scaleFactor, ColorSpace::SRGB(), PixelFormat::BGRA8);
     if (!imageBuffer)
         return makeUnexpected("Failed to create image buffer"_s);
 
-    GraphicsContext& context = imageBuffer->context();
-    IntRect layerRect(IntPoint(), integralSize);
-    graphicsLayer->paintGraphicsLayerContents(context, layerRect);
+    graphicsLayer->paintGraphicsLayerContents(imageBuffer->context(), { { }, layerSize });
 
-    String dataURL = imageBuffer->toDataURL("image/png"_s, std::nullopt, PreserveResolution::Yes);
-    if (dataURL.isEmpty())
-        return makeUnexpected("Failed to encode layer snapshot"_s);
-
-    return dataURL;
+    return encodeDataURL(WTF::move(imageBuffer), "image/png"_s);
 }
 
 

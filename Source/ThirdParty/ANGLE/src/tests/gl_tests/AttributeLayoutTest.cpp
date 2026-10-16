@@ -10,11 +10,9 @@
 //   - various combinations of data types
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
+#include <array>
 #include <vector>
+#include "common/unsafe_buffers.h"
 
 #include "test_utils/ANGLETest.h"
 #include "test_utils/gl_raii.h"
@@ -67,7 +65,7 @@ class VertexData
     unsigned getNumVertices() const { return mNumVertices; }
     double getValue(unsigned vertexNumber, int component) const
     {
-        return mData[mOffset + mStride * vertexNumber + component];
+        return ANGLE_UNSAFE_TODO(mData[mOffset + mStride * vertexNumber + component]);
     }
 
   private:
@@ -85,8 +83,8 @@ class Container
   public:
     static constexpr size_t kSize = 1024;
 
-    void open(void) { memset(mMemory, 0xff, kSize); }
-    void *getDestination(size_t offset) { return mMemory + offset; }
+    void open(void) { ANGLE_UNSAFE_TODO(memset(mMemory, 0xff, kSize)); }
+    void *getDestination(size_t offset) { return ANGLE_UNSAFE_TODO(mMemory + offset); }
     virtual void close(void) {}
     virtual ~Container() {}
     virtual const char *getAddress() = 0;
@@ -173,7 +171,7 @@ struct Attrib
     bool inClientMemory() const { return mContainer->getAddress() != nullptr; }
     const char *getContainerOffset() const
     {
-        return inClientMemory() ? mContainer->getAddress() + mOffset
+        return inClientMemory() ? ANGLE_UNSAFE_TODO(mContainer->getAddress() + mOffset)
                                 : reinterpret_cast<const char *>(mOffset);
     }
 
@@ -197,7 +195,7 @@ template <class T>
 void Store(double value, void *dest)
 {
     T v = static_cast<T>(value);
-    memcpy(dest, &v, sizeof(v));
+    ANGLE_UNSAFE_TODO(memcpy(dest, &v, sizeof(v)));
 }
 
 // Function object that makes Attrib structs according to a vertex format.
@@ -344,12 +342,12 @@ class AttributeLayoutTest : public ANGLETest<>
             std::string testCase;
             if (drawFirstTriangle)
             {
-                Draw(0, kNumVertices, mIndices);
+                Draw(0, kNumVertices, mIndices.data());
                 testCase = "draw";
             }
             else
             {
-                Draw(3, kNumVertices - 3, mIndices + 3);
+                Draw(3, kNumVertices - 3, &mIndices[3]);
                 testCase = "skip";
             }
 
@@ -370,7 +368,8 @@ class AttributeLayoutTest : public ANGLETest<>
         }
     }
 
-    static const GLushort mIndices[kNumVertices];
+    static constexpr std::array<GLushort, kNumVertices> mIndices = {0, 1, 2, 3, 4,  5,
+                                                                    6, 7, 8, 9, 10, 11};
 
     GLuint mProgram;
     GLuint mIndexBuffer;
@@ -380,7 +379,6 @@ class AttributeLayoutTest : public ANGLETest<>
     VertexData mCoord;
     VertexData mColor;
 };
-const GLushort AttributeLayoutTest::mIndices[kNumVertices] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
 
 void AttributeLayoutTest::GetTestCases(void)
 {
@@ -488,7 +486,7 @@ class AttributeLayoutBufferIndexed : public AttributeLayoutTest
     void Draw(int firstVertex, unsigned vertexCount, const GLushort *indices) override
     {
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mIndexBuffer);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(*mIndices) * vertexCount, indices,
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(mIndices[0]) * vertexCount, indices,
                      GL_STATIC_DRAW);
         glDrawElements(GL_TRIANGLES, vertexCount, GL_UNSIGNED_SHORT, nullptr);
     }
@@ -572,41 +570,41 @@ ResType GetRefValue(const void *data, GLenum glType)
         case GL_BYTE:
         {
             const int8_t *p = reinterpret_cast<const int8_t *>(data);
-            return ResType(p[0], p[1], p[2], p[3]);
+            return ANGLE_UNSAFE_TODO(ResType(p[0], p[1], p[2], p[3]));
         }
         case GL_SHORT:
         case GL_HALF_FLOAT:
         {
             const int16_t *p = reinterpret_cast<const int16_t *>(data);
-            return ResType(p[0], p[1], p[2], p[3]);
+            return ANGLE_UNSAFE_TODO(ResType(p[0], p[1], p[2], p[3]));
         }
         case GL_INT:
         case GL_FIXED:
         {
             const int32_t *p = reinterpret_cast<const int32_t *>(data);
-            return ResType(p[0], p[1], p[2], p[3]);
+            return ANGLE_UNSAFE_TODO(ResType(p[0], p[1], p[2], p[3]));
         }
         case GL_UNSIGNED_BYTE:
         {
             const uint8_t *p = reinterpret_cast<const uint8_t *>(data);
-            return ResType(p[0], p[1], p[2], p[3]);
+            return ANGLE_UNSAFE_TODO(ResType(p[0], p[1], p[2], p[3]));
         }
         case GL_UNSIGNED_SHORT:
         {
             const uint16_t *p = reinterpret_cast<const uint16_t *>(data);
-            return ResType(p[0], p[1], p[2], p[3]);
+            return ANGLE_UNSAFE_TODO(ResType(p[0], p[1], p[2], p[3]));
         }
         case GL_FLOAT:
         case GL_UNSIGNED_INT:
         {
             const uint32_t *p = reinterpret_cast<const uint32_t *>(data);
-            return ResType(p[0], p[1], p[2], p[3]);
+            return ANGLE_UNSAFE_TODO(ResType(p[0], p[1], p[2], p[3]));
         }
         default:
         {
             ASSERT(0);
             const uint32_t *p = reinterpret_cast<const uint32_t *>(data);
-            return ResType(p[0], p[1], p[2], p[3]);
+            return ANGLE_UNSAFE_TODO(ResType(p[0], p[1], p[2], p[3]));
         }
     }
 }
@@ -690,13 +688,13 @@ class AttributeDataTypeMismatchTest : public ANGLETest<>
 
         glDisable(GL_DEPTH_TEST);
 
-        constexpr const char *kVS[VsInputDataType::COUNT] = {
+        constexpr std::array<const char *, VsInputDataType::COUNT> kVS = {
             VS_SHADER(vec4),
             VS_SHADER(ivec4),
             VS_SHADER(uvec4),
         };
 
-        constexpr const char *kFS[VsInputDataType::COUNT] = {
+        constexpr std::array<const char *, VsInputDataType::COUNT> kFS = {
             PS_SHADER(vec4),
             PS_SHADER(ivec4),
             PS_SHADER(uvec4),
@@ -868,9 +866,9 @@ class AttributeDataTypeMismatchTest : public ANGLETest<>
 
     static const GLushort mIndices[kIndexCount];
 
-    GLuint mProgram[VsInputDataType::COUNT];
-    GLuint mFbo[VsInputDataType::COUNT];
-    GLuint mRbo[VsInputDataType::COUNT];
+    std::array<GLuint, VsInputDataType::COUNT> mProgram;
+    std::array<GLuint, VsInputDataType::COUNT> mFbo;
+    std::array<GLuint, VsInputDataType::COUNT> mRbo;
     GLuint mIndexBuffer;
 
     std::vector<TestCase> mTestCases;

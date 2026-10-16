@@ -40,43 +40,36 @@ class WTF_EMPTY_BASE_CLASS ThreadSafeRefCountedBase {
 public:
     void ref() const
     {
-        m_refCountDebugger.willRef(m_refCount, RefCountIsThreadSafe::Yes);
-        ++m_refCount;
+        m_refCountDebugger.willRef(m_refCount.load(std::memory_order_relaxed));
+        m_refCount.fetch_add(1, std::memory_order_relaxed);
     }
 
-    bool hasOneRef() const { return m_refCount == 1; }
-    uint32_t refCount() const { return m_refCount; }
+    bool hasOneRef() const { return m_refCount.load(std::memory_order_acquire) == 1; }
+    uint32_t refCount() const { return m_refCount.load(std::memory_order_relaxed); }
 
     // Debug APIs
-    void adopted() { m_refCountDebugger.adopted(); }
-    void relaxAdoptionRequirement() { m_refCountDebugger.relaxAdoptionRequirement(); }
     void disableThreadingChecks() { m_refCountDebugger.disableThreadingChecks(); }
-    RefCountDebugger& refCountDebugger() { return m_refCountDebugger; }
+    ThreadSafeRefCountDebugger& refCountDebugger() LIFETIME_BOUND { return m_refCountDebugger; }
 
 protected:
-    ThreadSafeRefCountedBase()
-    {
-        // FIXME: Lots of subclasses violate our adoption requirements. Migrate
-        // this call into only those subclasses that need it.
-        m_refCountDebugger.relaxAdoptionRequirement();
-    }
+    ThreadSafeRefCountedBase() = default;
 
     ~ThreadSafeRefCountedBase()
     {
-        m_refCountDebugger.willDestroy(m_refCount);
-        // FIXME: Test performance, then change this to RELEASE_ASSERT.
-        ASSERT(m_refCount == 1);
+        m_refCountDebugger.willDestroy(m_refCount.load(std::memory_order_relaxed));
+        // Ideally we'd use a RELEASE_ASSERT() here but it is a 0.7-0.8% regression on Speedometer 3.
+        ASSERT_WITH_SECURITY_IMPLICATION(m_refCount.load(std::memory_order_relaxed) == 1);
     }
 
     // Returns true if the pointer should be freed.
     bool derefBase() const
     {
-        m_refCountDebugger.willDeref(m_refCount, RefCountIsThreadSafe::Yes);
+        m_refCountDebugger.willDeref(m_refCount.load(std::memory_order_relaxed));
 
-        if (!--m_refCount) [[unlikely]] {
+        if (m_refCount.fetch_sub(1, std::memory_order_acq_rel) == 1) [[unlikely]] {
             m_refCountDebugger.willDelete();
 
-            m_refCount = 1;
+            m_refCount.store(1, std::memory_order_relaxed);
             return true;
         }
 
@@ -85,7 +78,7 @@ protected:
 
 private:
     mutable std::atomic<uint32_t> m_refCount { 1 };
-    NO_UNIQUE_ADDRESS RefCountDebugger m_refCountDebugger;
+    NO_UNIQUE_ADDRESS ThreadSafeRefCountDebugger m_refCountDebugger;
 };
 
 template<class T, DestructionThread destructionThread = DestructionThread::Any> class ThreadSafeRefCounted : public ThreadSafeRefCountedBase {
@@ -95,31 +88,32 @@ public:
         if (!derefBase())
             return;
 
+        // T derives from ThreadSafeRefCounted<T> (CRTP), so this is always a T.
         if constexpr (destructionThread == DestructionThread::Any) {
-            delete static_cast<const T*>(this);
+            SUPPRESS_MEMORY_UNSAFE_CAST delete static_cast<const T*>(this);
         } else if constexpr (destructionThread == DestructionThread::Main) {
             SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE ensureOnMainThread([this] {
-                delete static_cast<const T*>(this);
+                SUPPRESS_MEMORY_UNSAFE_CAST delete static_cast<const T*>(this);
             });
         } else if constexpr (destructionThread == DestructionThread::MainRunLoop) {
             SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE ensureOnMainRunLoop([this] {
-                delete static_cast<const T*>(this);
+                SUPPRESS_MEMORY_UNSAFE_CAST delete static_cast<const T*>(this);
             });
         } else
             STATIC_ASSERT_NOT_REACHED_FOR_VALUE(destructionThread, "Unexpected destructionThread enumerator value");
     }
 
+#if defined(__swift__) && ENABLE(SWIFT_BASE_CLASS_ANNOTATIONS)
+    void swiftRef() const
+    {
+        ref();
+    }
+#endif
+
 protected:
     ThreadSafeRefCounted() = default;
     ~ThreadSafeRefCounted() = default;
-} SWIFT_RETURNED_AS_UNRETAINED_BY_DEFAULT;
-
-inline void adopted(ThreadSafeRefCountedBase* object)
-{
-    if (!object)
-        return;
-    object->adopted();
-}
+} SWIFT_RETURNED_AS_UNRETAINED_BY_DEFAULT BASE_CLASS_SWIFT_SHARED_REFERENCE(.swiftRef, .deref);
 
 } // namespace WTF
 

@@ -26,6 +26,9 @@
 #include "config.h"
 #include "CSSGradientValue.h"
 
+#include "CSSColorInlines.h"
+#include "CSSGradientInlines.h"
+
 #include "CSSPrimitiveNumericTypes+CSSValueVisitation.h"
 #include "CSSPrimitiveNumericTypes+Serialization.h"
 #include "ColorInterpolation.h"
@@ -66,7 +69,7 @@ template<NumericRaw CSSType> struct StyleImageIsUncacheable<CSSType> {
 };
 
 template<Calc CSSType> struct StyleImageIsUncacheable<CSSType> {
-    constexpr bool operator()(const auto& value) { return value.protectedCalc()->requiresConversionData(); }
+    constexpr bool operator()(const auto& value) { return value.requiresConversionData(); }
 };
 
 template<OptionalLike CSSType> struct StyleImageIsUncacheable<CSSType> {
@@ -90,12 +93,12 @@ template<VariantLike CSSType> struct StyleImageIsUncacheable<CSSType> {
 
 // MARK: -
 
-RefPtr<StyleImage> CSSGradientValue::createStyleImage(const Style::BuilderState& state) const
+RefPtr<Style::Image> CSSGradientValue::createStyleImage(const Style::BuilderState& state) const
 {
     if (m_cachedStyleImage)
         return m_cachedStyleImage;
 
-    auto styleImage = StyleGradientImage::create(
+    auto styleImage = Style::GradientImage::create(
         Style::toStyle(m_gradient, state)
     );
     if (!CSS::styleImageIsUncacheable(m_gradient))

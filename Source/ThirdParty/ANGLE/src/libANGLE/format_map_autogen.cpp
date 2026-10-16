@@ -586,6 +586,8 @@ bool ValidES3Format(GLenum format)
         case GL_BGRA_EXT:
         case GL_DEPTH_COMPONENT:
         case GL_DEPTH_STENCIL:
+        case GL_G8_B8R8_2PLANE_420_UNORM_ANGLE:
+        case GL_G8_B8_R8_3PLANE_420_UNORM_ANGLE:
         case GL_LUMINANCE:
         case GL_LUMINANCE_ALPHA:
         case GL_RED:
@@ -762,18 +764,8 @@ bool ValidES3FormatCombination(GLenum format, GLenum type, GLenum internalFormat
                     {
                         case GL_DEPTH_COMPONENT24:
                         case GL_DEPTH_COMPONENT16:
-                        case GL_DEPTH_COMPONENT:
-                            return true;
-                        default:
-                            break;
-                    }
-                    break;
-                }
-                case GL_UNSIGNED_INT_24_8:
-                {
-                    switch (internalFormat)
-                    {
                         case GL_DEPTH_COMPONENT32_OES:
+                        case GL_DEPTH_COMPONENT:
                             return true;
                         default:
                             break;
@@ -817,6 +809,44 @@ bool ValidES3FormatCombination(GLenum format, GLenum type, GLenum internalFormat
                     {
                         case GL_DEPTH_STENCIL:
                         case GL_DEPTH24_STENCIL8:
+                            return true;
+                        default:
+                            break;
+                    }
+                    break;
+                }
+                default:
+                    break;
+            }
+            break;
+
+        case GL_G8_B8R8_2PLANE_420_UNORM_ANGLE:
+            switch (type)
+            {
+                case GL_UNSIGNED_BYTE:
+                {
+                    switch (internalFormat)
+                    {
+                        case GL_G8_B8R8_2PLANE_420_UNORM_ANGLE:
+                            return true;
+                        default:
+                            break;
+                    }
+                    break;
+                }
+                default:
+                    break;
+            }
+            break;
+
+        case GL_G8_B8_R8_3PLANE_420_UNORM_ANGLE:
+            switch (type)
+            {
+                case GL_UNSIGNED_BYTE:
+                {
+                    switch (internalFormat)
+                    {
+                        case GL_G8_B8_R8_3PLANE_420_UNORM_ANGLE:
                             return true;
                         default:
                             break;
@@ -1271,6 +1301,7 @@ bool ValidES3FormatCombination(GLenum format, GLenum type, GLenum internalFormat
                         case GL_RGB565:
                         case GL_SRGB8:
                         case GL_RGB:
+                        case GL_SRGB_EXT:
                         case GL_RGBX8_ANGLE:
                         case GL_RGBX8_SRGB_ANGLEX:
                             return true;
@@ -1410,6 +1441,7 @@ bool ValidES3FormatCombination(GLenum format, GLenum type, GLenum internalFormat
                         case GL_RGBA4:
                         case GL_SRGB8_ALPHA8:
                         case GL_RGBA:
+                        case GL_SRGB_ALPHA_EXT:
                         case GL_RGBX8_ANGLE:
                             return true;
                         default:

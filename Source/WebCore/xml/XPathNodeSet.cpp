@@ -39,7 +39,7 @@ namespace WebCore::XPath {
 // assume that we aren't dealing with documents that we cannot even traverse in reasonable time).
 const unsigned traversalSortCutoff = 10000;
 
-static inline Node* parentWithDepth(unsigned depth, const Vector<Ref<Node>>& parents)
+static inline Node* LEGACY_NODELETE parentWithDepth(unsigned depth, const Vector<Ref<Node>>& parents)
 {
     ASSERT(parents.size() >= depth + 1);
     return parents[parents.size() - 1 - depth].ptr();
@@ -96,7 +96,7 @@ static void sortBlock(unsigned from, unsigned to, Vector<Vector<Ref<Node>>>& par
         unsigned sortedEnd = from;
         // FIXME: namespace nodes are not implemented.
         for (unsigned i = sortedEnd; i < to; ++i) {
-            if (RefPtr attr = dynamicDowncast<Attr>(parentMatrix[i][0].get()); attr && attr->ownerElement() == commonAncestor)
+            if (auto* attr = dynamicDowncast<Attr>(parentMatrix[i][0].get()); attr && attr->ownerElement() == commonAncestor)
                 parentMatrix[i].swap(parentMatrix[sortedEnd++]);
         }
         if (sortedEnd != from) {
@@ -180,17 +180,16 @@ void NodeSet::sort() const
     m_isSorted = true;
 }
 
-static Node* findRootNode(Node* node)
+static inline RefPtr<Node> findRootNode(Node* node)
 {
-    if (RefPtr attr = dynamicDowncast<Attr>(*node))
-        node = attr->ownerElement();
-    if (node->isConnected())
-        node = &node->document();
-    else {
-        while (RefPtr parent = node->parentNode())
-            node = parent.get();
-    }
-    return node;
+    RefPtr<Node> current = node;
+    if (RefPtr attr = dynamicDowncast<Attr>(*current))
+        current = attr->ownerElement();
+    if (current->isConnected())
+        return protect(current->document());
+    for (RefPtr parent = current->parentNode(); parent; parent = current->parentNode())
+        current = WTF::move(parent);
+    return current;
 }
 
 void NodeSet::traversalSort() const

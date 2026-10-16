@@ -35,6 +35,7 @@
 #include "LocalDOMWindow.h"
 #include "WindowEventLoop.h"
 #include <JavaScriptCore/Heap.h>
+#include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/Ref.h>
@@ -77,6 +78,10 @@ inline void CustomElementReactionQueueItem::invoke(Element& element, JSCustomEle
     case Type::Disconnected:
         ASSERT(!m_payload.has_value());
         elementInterface.invokeDisconnectedCallback(element);
+        break;
+    case Type::ConnectedMove:
+        ASSERT(!m_payload.has_value());
+        elementInterface.invokeConnectedMoveCallback(element);
         break;
     case Type::Adopted: {
         ASSERT(m_payload.has_value() && std::holds_alternative<AdoptedPayload>(m_payload.value()));
@@ -143,19 +148,20 @@ void CustomElementReactionQueue::enqueueElementUpgrade(Element& element, bool al
 }
 
 // https://html.spec.whatwg.org/multipage/custom-elements.html#concept-try-upgrade
-void CustomElementReactionQueue::tryToUpgradeElement(Element& element)
+bool CustomElementReactionQueue::tryToUpgradeElement(Element& element)
 {
     ASSERT(CustomElementReactionDisallowedScope::isReactionAllowed());
     ASSERT(element.isCustomElementUpgradeCandidate());
     RefPtr registry = CustomElementRegistry::registryForElement(element);
     if (!registry)
-        return;
+        return false;
 
     RefPtr elementInterface = registry->findInterface(element);
     if (!elementInterface)
-        return;
+        return false;
 
     element.enqueueToUpgrade(*elementInterface);
+    return true;
 }
 
 void CustomElementReactionQueue::enqueueConnectedCallbackIfNeeded(Element& element)
@@ -183,6 +189,26 @@ void CustomElementReactionQueue::enqueueDisconnectedCallbackIfNeeded(Element& el
         return;
     queue->m_items.append(Item::Type::Disconnected);
     enqueueElementOnAppropriateElementQueue(element);
+}
+
+void CustomElementReactionQueue::enqueueConnectedMoveCallbackIfNeeded(Element& element)
+{
+    ASSERT(CustomElementReactionDisallowedScope::isReactionAllowed());
+    ASSERT(element.isDefinedCustomElement());
+    ASSERT(element.document().refCount() > 0);
+    ASSERT(element.reactionQueue());
+    CheckedRef queue = *element.reactionQueue();
+    if (queue->m_interface->hasConnectedMoveCallback()) {
+        queue->m_items.append(Item::Type::ConnectedMove);
+        enqueueElementOnAppropriateElementQueue(element);
+        return;
+    }
+    if (queue->m_interface->hasDisconnectedCallback())
+        queue->m_items.append(Item::Type::Disconnected);
+    if (queue->m_interface->hasConnectedCallback())
+        queue->m_items.append(Item::Type::Connected);
+    if (!queue->m_items.isEmpty())
+        enqueueElementOnAppropriateElementQueue(element);
 }
 
 void CustomElementReactionQueue::enqueueAdoptedCallbackIfNeeded(Element& element, Document& oldDocument, Document& newDocument)
@@ -301,11 +327,6 @@ bool CustomElementReactionQueue::hasFormStateRestoreCallback() const
     return m_interface->hasFormStateRestoreCallback();
 }
 
-bool CustomElementReactionQueue::isElementInternalsAttached() const
-{
-    return m_elementInternalsAttached;
-}
-
 void CustomElementReactionQueue::setElementInternalsAttached()
 {
     m_elementInternalsAttached = true;
@@ -389,7 +410,7 @@ void CustomElementReactionQueue::enqueueElementOnAppropriateElementQueue(Element
     ASSERT(element.reactionQueue());
     element.setIsInCustomElementReactionQueue();
     if (!CustomElementReactionStack::s_currentProcessingStack) {
-        element.protectedDocument()->protectedWindowEventLoop()->backupElementQueue().add(element);
+        protect(protect(element.document())->windowEventLoop())->backupElementQueue().add(element);
         return;
     }
 

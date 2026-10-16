@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include "JSFunction.h"
+#include <JavaScriptCore/JSFunction.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -59,13 +59,19 @@ public:
 
         PromiseAnyContext = 0,
         PromiseAnyReject = 1,
+
+#if ENABLE(WEBASSEMBLY)
+        WebAssemblySuspendingWrappedCallable = 0,
+        WebAssemblyPromisingWrappedFunction = 0,
+        PromiseHandlerPinballCompletion = 0,
+#endif
     };
 
     DECLARE_INFO;
 
     DECLARE_VISIT_CHILDREN;
 
-    static JSFunctionWithFields* create(VM&, JSGlobalObject*, NativeExecutable*, unsigned length, const String& name);
+    static JSFunctionWithFields* create(VM&, JSGlobalObject*, NativeExecutable*);
 
     template<typename CellType, SubspaceAccess mode>
     static GCClient::IsoSubspace* subspaceFor(VM& vm)

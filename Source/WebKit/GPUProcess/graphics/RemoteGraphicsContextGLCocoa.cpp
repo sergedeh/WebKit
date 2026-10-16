@@ -31,8 +31,11 @@
 #include "GPUConnectionToWebProcess.h"
 #include "IPCUtilities.h"
 #include "RemoteSharedResourceCache.h"
+#include "StreamConnectionWorkQueue.h"
 #include <WebCore/ProcessIdentity.h>
+#include <WebCore/SharedMemory.h>
 #include <wtf/MachSendRight.h>
+#include <wtf/RunLoop.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -60,7 +63,7 @@ void RemoteGraphicsContextGL::copyTextureFromVideoFrame(WebKit::SharedVideoFrame
         return;
     }
     texture = m_objectNames.get(texture);
-    bool result = protectedContext()->copyTextureFromVideoFrame(*videoFrame, texture, target, level, internalFormat, format, type, premultiplyAlpha, flipY);
+    bool result = protect(m_context)->copyTextureFromVideoFrame(*videoFrame, texture, target, level, internalFormat, format, type, premultiplyAlpha, flipY);
     completionHandler(result);
 }
 
@@ -69,7 +72,7 @@ void RemoteGraphicsContextGL::setSharedVideoFrameSemaphore(IPC::Semaphore&& sema
     m_sharedVideoFrameReader.setSemaphore(WTF::move(semaphore));
 }
 
-void RemoteGraphicsContextGL::setSharedVideoFrameMemory(SharedMemory::Handle&& handle)
+void RemoteGraphicsContextGL::setSharedVideoFrameMemory(WebCore::SharedMemory::Handle&& handle)
 {
     m_sharedVideoFrameReader.setSharedMemory(WTF::move(handle));
 }
@@ -89,6 +92,11 @@ public:
     void platformWorkQueueInitialize(WebCore::GraphicsContextGLAttributes&&) final;
     void prepareForDisplay(IPC::Semaphore&&, CompletionHandler<void(WTF::MachSendRight&&)>&&) final;
 private:
+    void scheduleIdleSpareDrawingBufferRelease();
+    void idleSpareDrawingBufferReleaseTimerFired();
+
+    bool m_idleSpareDrawingBufferReleaseScheduled WTF_GUARDED_BY_CAPABILITY(workQueue()) { false };
+    bool m_didDisplaySinceIdleSpareDrawingBufferReleaseScheduled WTF_GUARDED_BY_CAPABILITY(workQueue()) { false };
 };
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteGraphicsContextGLCocoa);
@@ -125,6 +133,41 @@ void RemoteGraphicsContextGLCocoa::prepareForDisplay(IPC::Semaphore&& finishedSe
     if (WebCore::IOSurface* surface = context->displayBufferSurface())
         sendRight = surface->createSendRight();
     completionHandler(WTF::move(sendRight));
+    m_didDisplaySinceIdleSpareDrawingBufferReleaseScheduled = true;
+    if (context->hasSpareDrawingBuffersInUse())
+        scheduleIdleSpareDrawingBufferRelease();
+}
+
+static constexpr Seconds idleSpareDrawingBufferReleaseDelay = 200_ms;
+
+void RemoteGraphicsContextGLCocoa::scheduleIdleSpareDrawingBufferRelease()
+{
+    assertIsCurrent(workQueue());
+    if (m_idleSpareDrawingBufferReleaseScheduled)
+        return;
+    m_idleSpareDrawingBufferReleaseScheduled = true;
+    m_didDisplaySinceIdleSpareDrawingBufferReleaseScheduled = false;
+    RunLoop::mainSingleton().dispatchAfter(idleSpareDrawingBufferReleaseDelay, [protectedThis = protect(*this)] mutable {
+        Ref workQueue = protectedThis->workQueue();
+        workQueue->dispatch([protectedThis = WTF::move(protectedThis)] {
+            protectedThis->idleSpareDrawingBufferReleaseTimerFired();
+        });
+    });
+}
+
+void RemoteGraphicsContextGLCocoa::idleSpareDrawingBufferReleaseTimerFired()
+{
+    assertIsCurrent(workQueue());
+    m_idleSpareDrawingBufferReleaseScheduled = false;
+    RefPtr context = m_context;
+    if (!context)
+        return;
+    if (m_didDisplaySinceIdleSpareDrawingBufferReleaseScheduled) {
+        if (context->hasSpareDrawingBuffersInUse())
+            scheduleIdleSpareDrawingBufferRelease();
+        return;
+    }
+    context->releaseIdleSpareDrawingBuffers();
 }
 
 }

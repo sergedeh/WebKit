@@ -30,7 +30,7 @@
 
 #include "ContentExtensionError.h"
 #include "ResourceRequest.h"
-#include <JavaScriptCore/JSRetainPtr.h>
+#include <JavaScriptCore/JSStringRefCPP.h>
 #include <JavaScriptCore/JavaScript.h>
 #include <wtf/CrossThreadCopier.h>
 #include <wtf/StdLibExtras.h>
@@ -48,12 +48,12 @@ static void append(Vector<uint8_t>& vector, size_t length)
     vector.append(asByteSpan(integer));
 }
 
-static void append(Vector<uint8_t>& vector, const CString& string)
+static void append(Vector<uint8_t>& vector, const CStringBase& string)
 {
     vector.append(string.span());
 }
 
-static size_t deserializeLength(std::span<const uint8_t> span, size_t offset)
+static size_t LEGACY_NODELETE deserializeLength(std::span<const uint8_t> span, size_t offset)
 {
     return reinterpretCastSpanStartTo<const uint32_t>(span.subspan(offset));
 }
@@ -64,7 +64,7 @@ static String deserializeUTF8String(std::span<const uint8_t> span, size_t offset
     return String::fromUTF8(span.subspan(offset, length));
 }
 
-static void writeLengthToVectorAtOffset(Vector<uint8_t>& vector, size_t offset)
+static void LEGACY_NODELETE writeLengthToVectorAtOffset(Vector<uint8_t>& vector, size_t offset)
 {
     auto length = vector.size() - offset;
     RELEASE_ASSERT(length <= std::numeric_limits<uint32_t>::max());
@@ -73,9 +73,9 @@ static void writeLengthToVectorAtOffset(Vector<uint8_t>& vector, size_t offset)
     reinterpretCastSpanStartTo<uint32_t>(vector.mutableSpan().subspan(offset)) = integer;
 }
 
-Expected<ModifyHeadersAction, std::error_code> ModifyHeadersAction::parse(const JSON::Object& modifyHeaders)
+std::expected<ModifyHeadersAction, std::error_code> ModifyHeadersAction::parse(const JSON::Object& modifyHeaders)
 {
-    auto parseHeaders = [] (const JSON::Object& modifyHeaders, ASCIILiteral arrayName) -> Expected<Vector<ModifyHeaderInfo>, std::error_code> {
+    auto parseHeaders = [] (const JSON::Object& modifyHeaders, ASCIILiteral arrayName) -> std::expected<Vector<ModifyHeaderInfo>, std::error_code> {
         auto value = modifyHeaders.getValue(arrayName);
         if (!value)
             return { };
@@ -196,7 +196,7 @@ void ModifyHeadersAction::ModifyHeaderInfo::applyToRequest(ResourceRequest& requ
     }), operation);
 }
 
-auto ModifyHeadersAction::ModifyHeaderInfo::parse(const JSON::Value& infoValue) -> Expected<ModifyHeaderInfo, std::error_code>
+auto ModifyHeadersAction::ModifyHeaderInfo::parse(const JSON::Value& infoValue) -> std::expected<ModifyHeaderInfo, std::error_code>
 {
     auto object = infoValue.asObject();
     if (!object)
@@ -283,7 +283,7 @@ size_t ModifyHeadersAction::ModifyHeaderInfo::serializedLength(std::span<const u
     return deserializeLength(span, 0);
 }
 
-Expected<RedirectAction, std::error_code> RedirectAction::parse(const JSON::Object& redirectObject, const String& urlFilter)
+std::expected<RedirectAction, std::error_code> RedirectAction::parse(const JSON::Object& redirectObject, const String& urlFilter)
 {
     auto redirect = redirectObject.getObject("redirect"_s);
     if (!redirect)
@@ -416,16 +416,6 @@ auto RedirectAction::RegexSubstitutionAction::deserialize(std::span<const uint8_
     return { WTF::move(regexSubstitution), WTF::move(regexFilter) };
 }
 
-static JSRetainPtr<JSStringRef> makeJSString(ASCIILiteral literal)
-{
-    return adopt(JSStringCreateWithUTF8CString(literal));
-}
-
-static JSRetainPtr<JSStringRef> makeJSString(const String& string)
-{
-    return adopt(JSStringCreateWithUTF8CString(string.utf8().data()));
-}
-
 void RedirectAction::RegexSubstitutionAction::applyToURL(URL& url) const
 {
     static JSContextGroupRef contextGroup = nullptr;
@@ -439,25 +429,22 @@ void RedirectAction::RegexSubstitutionAction::applyToURL(URL& url) const
         return JSValueToObject(context, value, nullptr);
     };
     auto getProperty = [&] (JSValueRef value, ASCIILiteral name) {
-        return JSObjectGetProperty(context, toObject(value), makeJSString(name).get(), nullptr);
+        return JSObjectGetProperty(context, toObject(value), createJSString(name).get(), nullptr);
     };
     auto getArrayValue = [&] (JSValueRef value, size_t index) {
         return JSObjectGetPropertyAtIndex(context, toObject(value), index, nullptr);
     };
     auto valueToWTFString = [&] (JSValueRef value) {
-        auto string = adopt(JSValueToStringCopy(context, value, nullptr));
-        size_t bufferSize = JSStringGetMaximumUTF8CStringSize(string.get());
-        Vector<char> buffer(bufferSize);
-        JSStringGetUTF8CString(string.get(), buffer.mutableSpan().data(), buffer.size());
-        return String::fromUTF8(buffer.span().data());
+        RefPtr string = adoptRef(JSValueToStringCopy(context, value, nullptr));
+        return String { utf8CString(string.get()) };
     };
 
     // Effectively execute this JavaScript:
     // const regexp = new RegExp(regexFilter);
     // const result = url.match(regexp);
-    JSValueRef regexFilterValue = JSValueMakeString(context, makeJSString(regexFilter).get());
+    JSValueRef regexFilterValue = JSValueMakeString(context, createJSString(regexFilter).get());
     JSObjectRef regexp = JSObjectMakeRegExp(context, 1, &regexFilterValue, nullptr);
-    JSValueRef urlValue = JSValueMakeString(context, makeJSString(url.string()).get());
+    JSValueRef urlValue = JSValueMakeString(context, createJSString(url.string()).get());
     JSObjectRef matchFunction = JSValueToObject(context, getProperty(urlValue, "match"_s), nullptr);
     JSValueRef result = JSObjectCallAsFunction(context, matchFunction, toObject(urlValue), 1, &regexp, nullptr);
     if (!JSValueIsArray(context, result))
@@ -473,7 +460,7 @@ void RedirectAction::RegexSubstitutionAction::applyToURL(URL& url) const
         url = WTF::move(replacementURL);
 }
 
-auto RedirectAction::URLTransformAction::parse(const JSON::Object& transform) -> Expected<URLTransformAction, std::error_code>
+auto RedirectAction::URLTransformAction::parse(const JSON::Object& transform) -> std::expected<URLTransformAction, std::error_code>
 {
     URLTransformAction action;
     if (auto fragment = transform.getString("fragment"_s); !!fragment) {
@@ -541,7 +528,7 @@ void RedirectAction::URLTransformAction::serialize(Vector<uint8_t>& vector) cons
     uint8_t hasScheme = !!scheme;
     uint8_t hasUsername = !!username;
     auto* queryString = std::get_if<String>(&queryTransform);
-    auto queryStringUTF8 = queryString ? queryString->utf8() : CString();
+    auto queryStringUTF8 = queryString ? queryString->utf8() : UTF8CString();
     uint8_t hasQuery = !queryString || !!*queryString;
 
     auto fragmentUTF8 = fragment.utf8();
@@ -573,7 +560,7 @@ void RedirectAction::URLTransformAction::serialize(Vector<uint8_t>& vector) cons
         | hasUsername << 1
         | hasQuery << 0
     );
-    auto appendLengthAndString = [&] (const CString& string) {
+    auto appendLengthAndString = [&] (const CStringBase& string) {
         append(vector, string.length());
         append(vector, string);
     };
@@ -674,7 +661,7 @@ size_t RedirectAction::URLTransformAction::serializedLength(std::span<const uint
     return deserializeLength(span, 0);
 }
 
-auto RedirectAction::URLTransformAction::QueryTransform::parse(const JSON::Object& queryTransform) -> Expected<QueryTransform, std::error_code>
+auto RedirectAction::URLTransformAction::QueryTransform::parse(const JSON::Object& queryTransform) -> std::expected<QueryTransform, std::error_code>
 {
     QueryTransform parsedQueryTransform;
 
@@ -856,7 +843,7 @@ size_t RedirectAction::URLTransformAction::QueryTransform::serializedLength(std:
     return deserializeLength(span, 0);
 }
 
-auto RedirectAction::URLTransformAction::QueryTransform::QueryKeyValue::parse(const JSON::Value& keyValueValue) -> Expected<QueryKeyValue, std::error_code>
+auto RedirectAction::URLTransformAction::QueryTransform::QueryKeyValue::parse(const JSON::Value& keyValueValue) -> std::expected<QueryKeyValue, std::error_code>
 {
     auto keyValue = keyValueValue.asObject();
     if (!keyValue)

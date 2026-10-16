@@ -22,14 +22,17 @@
 
 import bisect
 import collections
+import importlib
 import math
 import os
 import signal
 import threading
 import time
-from unittest import mock
 
 from webkitcorepy import log, string_utils
+from webkitcorepy.call_by_need import CallByNeed
+
+mock = CallByNeed(lambda: importlib.import_module('unittest.mock'))
 
 ORIGINAL_SLEEP = time.sleep
 
@@ -49,7 +52,7 @@ class Timeout(object):
             if not other:
                 return False
             if not isinstance(other, Timeout.Data):
-                raise ValueError('Expected {} in comparison, received {}').format(Timeout.Data, type(other))
+                raise ValueError('Expected {} in comparison, received {}'.format(Timeout.Data, type(other)))
             return self.alarm_time < other.alarm_time
 
     class Exception(Exception):
@@ -57,6 +60,8 @@ class Timeout(object):
 
     class DisableAlarm(object):
         def __init__(self, patch=True):
+            from unittest import mock
+
             if patch:
                 self._patch = mock.patch('time.sleep', new=ORIGINAL_SLEEP)
             else:
@@ -148,6 +153,8 @@ class Timeout(object):
         return ORIGINAL_SLEEP(seconds)
 
     def __init__(self, seconds=1, handler=None, patch=True):
+        from unittest import mock
+
         if seconds <= 0:
             raise ValueError('Timeouts must be positive')
 

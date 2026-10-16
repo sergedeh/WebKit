@@ -29,13 +29,16 @@
 #include "HitTestRequest.h"
 #include "HitTestResult.h"
 #include "LayoutRepainter.h"
+#include "RenderElementInlines.h"
 #include "RenderElementStyleInlines.h"
 #include "RenderIterator.h"
 #include "RenderLayer.h"
+#include "RenderObjectInlines.h"
 #include "RenderTreeBuilder.h"
 #include "RenderView.h"
 #include "SVGContainerLayout.h"
-#include "SVGLayerTransformUpdater.h"
+#include "SVGRenderSupport.h"
+#include "SVGTransformLayoutScope.h"
 #include "SVGVisitedRendererTracking.h"
 #include <wtf/SetForScope.h>
 #include <wtf/StackStats.h>
@@ -45,12 +48,12 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderSVGContainer);
 
-RenderSVGContainer::RenderSVGContainer(Type type, Document& document, RenderStyle&& style, OptionSet<SVGModelObjectFlag> svgFlags)
+RenderSVGContainer::RenderSVGContainer(Type type, Document& document, Style::ComputedStyle&& style, OptionSet<SVGModelObjectFlag> svgFlags)
     : RenderSVGModelObject(type, document, WTF::move(style), svgFlags | SVGModelObjectFlag::IsContainer)
 {
 }
 
-RenderSVGContainer::RenderSVGContainer(Type type, SVGElement& element, RenderStyle&& style, OptionSet<SVGModelObjectFlag> svgFlags)
+RenderSVGContainer::RenderSVGContainer(Type type, SVGElement& element, Style::ComputedStyle&& style, OptionSet<SVGModelObjectFlag> svgFlags)
     : RenderSVGModelObject(type, element, WTF::move(style), svgFlags | SVGModelObjectFlag::IsContainer)
 {
 }
@@ -74,13 +77,28 @@ void RenderSVGContainer::layout()
         SetForScope trackLayoutSizeChanges(m_isLayoutSizeChanged, updateLayoutSizeIfNeeded());
 
         ASSERT(!m_didTransformToRootUpdate);
-        SVGLayerTransformUpdater transformUpdater(*this);
-        SetForScope trackTransformChanges(m_didTransformToRootUpdate, transformUpdater.layerTransformChanged() || SVGContainerLayout::transformToRootChanged(parent()));
+        SVGTransformLayoutScope transformScope(*this);
+        SetForScope trackTransformChanges(m_didTransformToRootUpdate, transformScope.layerTransformChanged() || SVGContainerLayout::transformToRootChanged(parent()));
         layoutChildren();
     }
 
     repainter.repaintAfterLayout();
     clearNeedsLayout();
+}
+
+TransformationMatrix RenderSVGContainer::transformToParentUserSpace() const
+{
+    // The layer transform is relative to the layout location, which moves with the children.
+    auto* transform = layerTransform();
+    if (!transform)
+        return { };
+    auto location = nominalSVGLayoutLocation();
+    auto childrenOrigin = SVGContainerLayout::containerLayoutLocation(*this);
+    TransformationMatrix result;
+    result.translate(location.x(), location.y());
+    result.multiply(*transform);
+    result.translate(-childrenOrigin.x(), -childrenOrigin.y());
+    return result;
 }
 
 void RenderSVGContainer::layoutChildren()
@@ -89,8 +107,13 @@ void RenderSVGContainer::layoutChildren()
     containerLayout.layoutChildren(selfNeedsLayout());
 
     SVGBoundingBoxComputation boundingBoxComputation(*this);
-    m_objectBoundingBox = boundingBoxComputation.computeDecoratedBoundingBox(SVGBoundingBoxComputation::objectBoundingBoxDecoration, &m_objectBoundingBoxValid);
+    // objectBoundingBox / strokeBoundingBox are recomputed lazily (see
+    // updateSVGTransformDependentBoundingBoxesIfNeeded). Layout only needs the without-transform
+    // box below for currentSVGLayoutRect, so just mark them dirty rather than pay a full subtree
+    // walk that is usually never read before the next layout.
+    m_transformDependentBoundingBoxesDirty = true;
     m_strokeBoundingBox = std::nullopt;
+    m_cachedVisualOverflowRect = std::nullopt;
 
     if (auto objectBoundingBoxWithoutTransformations = overridenObjectBoundingBoxWithoutTransformations())
         m_objectBoundingBoxWithoutTransformations = objectBoundingBoxWithoutTransformations.value();
@@ -104,8 +127,14 @@ void RenderSVGContainer::layoutChildren()
     containerLayout.positionChildrenRelativeToContainer();
 }
 
+void RenderSVGContainer::updateSVGTransformDependentBoundingBoxesIfNeeded() const
+{
+    SVGBoundingBoxComputation::recomputeTransformDependentBoundingBoxes(*this, m_transformDependentBoundingBoxesDirty, m_objectBoundingBox, m_strokeBoundingBox, &m_objectBoundingBoxValid);
+}
+
 FloatRect RenderSVGContainer::strokeBoundingBox() const
 {
+    updateSVGTransformDependentBoundingBoxesIfNeeded();
     if (!m_strokeBoundingBox) {
         // Initialize m_strokeBoundingBox before calling computeDecoratedBoundingBox, since recursively referenced markers can cause us to re-enter here.
         m_strokeBoundingBox = FloatRect { };
@@ -117,8 +146,8 @@ FloatRect RenderSVGContainer::strokeBoundingBox() const
 
 void RenderSVGContainer::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
 {
-    OptionSet<PaintPhase> relevantPaintPhases { PaintPhase::Foreground, PaintPhase::ClippingMask, PaintPhase::Mask, PaintPhase::Outline, PaintPhase::SelfOutline };
-    if (!shouldPaintSVGRenderer(paintInfo, relevantPaintPhases))
+    static constexpr OptionSet<PaintPhase> relevantPaintPhases { PaintPhase::Foreground, PaintPhase::ClippingMask, PaintPhase::Mask, PaintPhase::Outline, PaintPhase::SelfOutline, PaintPhase::EventRegion };
+    if (!shouldPaintSVGContainerRenderer(paintInfo, relevantPaintPhases))
         return;
 
     if (paintInfo.phase == PaintPhase::ClippingMask) {
@@ -132,17 +161,51 @@ void RenderSVGContainer::paint(PaintInfo& paintInfo, const LayoutPoint& paintOff
         return;
     }
 
-    auto visualOverflowRect = visualOverflowRectEquivalent();
-    visualOverflowRect.moveBy(adjustedPaintOffset);
-    if (!visualOverflowRect.intersects(paintInfo.rect))
-        return;
+    if (auto cachedVisualOverflowRect = cachedVisualOverflowRectIfAvailable()) {
+        auto visualOverflowRect = *cachedVisualOverflowRect;
+        visualOverflowRect.moveBy(adjustedPaintOffset);
+        if (!visualOverflowRect.intersects(paintInfo.rect))
+            return;
+    }
 
     if (paintInfo.phase == PaintPhase::Outline || paintInfo.phase == PaintPhase::SelfOutline) {
+        // Children's outlines are painted per-child during the Foreground phase, so later
+        // DOM siblings paint on top of earlier siblings' outlines.
         paintSVGOutline(paintInfo, adjustedPaintOffset);
         return;
     }
 
-    ASSERT(paintInfo.phase == PaintPhase::Foreground);
+    ASSERT(paintInfo.phase == PaintPhase::Foreground || paintInfo.phase == PaintPhase::EventRegion);
+
+    // With a self-painting layer, children are painted by paintChildrenInDOMOrderForSVG().
+    if (hasSelfPaintingLayer())
+        return;
+
+    PaintInfo childPaintInfo(paintInfo);
+    GraphicsContextStateSaver stateSaver(childPaintInfo.context());
+
+    // For layer-backed containers, clipping is handled by RenderLayer::calculateClipRects().
+    if (isRenderSVGViewportContainer() && SVGRenderSupport::isOverflowHidden(*this)) {
+        if (auto clipRect = overflowClipRectForPainting(adjustedPaintOffset); !clipRect.isInfinite()) {
+            // FIXME: Remove suppression once rdar://189998444 is fixed.
+            SUPPRESS_MEMORY_UNSAFE_CAST childPaintInfo.context().clip(FloatRect(clipRect));
+        }
+    }
+
+    childPaintInfo.updateSubtreePaintRootForChildren(this);
+    for (CheckedRef child : childrenOfType<RenderElement>(*this)) {
+        if (child->hasSelfPaintingLayer())
+            continue;
+
+        child->paint(childPaintInfo, adjustedPaintOffset);
+
+        if (paintInfo.phase == PaintPhase::Foreground && child->hasOutline()) {
+            // Paint each child's outline immediately so later DOM siblings paint on top of it.
+            PaintInfo outlinePaintInfo(childPaintInfo);
+            outlinePaintInfo.phase = PaintPhase::Outline;
+            child->paint(outlinePaintInfo, adjustedPaintOffset);
+        }
+    }
 }
 
 bool RenderSVGContainer::nodeAtPoint(const HitTestRequest& request, HitTestResult& result, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction hitTestAction)
@@ -162,7 +225,7 @@ bool RenderSVGContainer::nodeAtPoint(const HitTestRequest& request, HitTestResul
 
     SVGVisitedRendererTracking::Scope recursionScope(recursionTracking, *this);
 
-    auto localPoint = locationInContainer.point();
+    auto localPoint = locationInContainer.transformedPoint();
     auto coordinateSystemOriginTranslation = nominalSVGLayoutLocation() - adjustedLocation;
     localPoint.move(coordinateSystemOriginTranslation);
 
@@ -174,18 +237,20 @@ bool RenderSVGContainer::nodeAtPoint(const HitTestRequest& request, HitTestResul
         return false;
 
 
-    for (auto* child = lastChild(); child; child = child->previousSibling()) {
-        if (!child->hasLayer() && child->nodeAtPoint(request, result, locationInContainer, adjustedLocation, hitTestAction)) {
+    for (CheckedPtr child = lastChild(); child; child = child->previousSibling()) {
+        if (child->hasLayer() || (hasLayer() && child->isTransformed()))
+            continue;
+        if (child->nodeAtPoint(request, result, locationInContainer, adjustedLocation, hitTestAction)) {
             updateHitTestResult(result, locationInContainer.point() - toLayoutSize(adjustedLocation));
-            if (result.addNodeToListBasedTestResult(child->protectedNode().get(), request, locationInContainer, visualOverflowRect) == HitTestProgress::Stop)
+            if (result.addNodeToListBasedTestResult(protect(child->node()).get(), request, locationInContainer, visualOverflowRect) == HitTestProgress::Stop)
                 return true;
         }
     }
 
     // Accessibility wants to return SVG containers, if appropriate.
-    if (request.type() & HitTestRequest::Type::AccessibilityHitTest && m_objectBoundingBox.contains(localPoint)) {
+    if (request.type() & HitTestRequest::Type::AccessibilityHitTest && objectBoundingBox().contains(localPoint)) {
         updateHitTestResult(result, locationInContainer.point() - toLayoutSize(adjustedLocation));
-        if (result.addNodeToListBasedTestResult(protectedNodeForHitTest().get(), request, locationInContainer, visualOverflowRect) == HitTestProgress::Stop)
+        if (result.addNodeToListBasedTestResult(protect(nodeForHitTest()).get(), request, locationInContainer, visualOverflowRect) == HitTestProgress::Stop)
             return true;
     }
 
@@ -200,6 +265,16 @@ bool RenderSVGContainer::nodeAtPoint(const HitTestRequest& request, HitTestResul
     }
     // 16.4: "If there are no graphics elements whose relevant graphics content is under the pointer (i.e., there is no target element), the event is not dispatched."
     return false;
+}
+
+void RenderSVGContainer::addFocusRingRects(Vector<LayoutRect>& rects, const LayoutPoint& additionalOffset, const RenderLayerModelObject* container) const
+{
+    if (needsHasSVGTransformFlags())
+        return RenderSVGModelObject::addFocusRingRects(rects, additionalOffset, container);
+    auto repaintBoundingBox = enclosingLayoutRect(repaintRectInLocalCoordinates());
+    if (repaintBoundingBox.size().isEmpty())
+        return;
+    rects.append(repaintBoundingBox);
 }
 
 }

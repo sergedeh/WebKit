@@ -61,19 +61,12 @@ void GStreamerAudioCapturer::handleSample(GRefPtr<GstSample>&& sample)
 
 void GStreamerAudioCapturer::setSinkAudioCallback(SinkAudioDataCallback&& callback)
 {
-    if (m_sinkAudioDataCallback.first.newSampleSignalId) {
+    if (m_sinkAudioDataCallback.first.newSampleSignalId)
         g_signal_handler_disconnect(sink(), m_sinkAudioDataCallback.first.newSampleSignalId);
-        g_signal_handler_disconnect(sink(), m_sinkAudioDataCallback.first.prerollSignalId);
-    }
 
     m_sinkAudioDataCallback.second = WTF::move(callback);
     m_sinkAudioDataCallback.first.newSampleSignalId = g_signal_connect_swapped(sink(), "new-sample", G_CALLBACK(+[](GStreamerAudioCapturer* capturer, GstElement* sink) -> GstFlowReturn {
-        auto sample = adoptGRef(gst_app_sink_pull_sample(GST_APP_SINK(sink)));
-        capturer->handleSample(WTF::move(sample));
-        return GST_FLOW_OK;
-    }), this);
-    m_sinkAudioDataCallback.first.prerollSignalId = g_signal_connect_swapped(sink(), "new-preroll", G_CALLBACK(+[](GStreamerAudioCapturer* capturer, GstElement* sink) -> GstFlowReturn {
-        auto sample = adoptGRef(gst_app_sink_pull_preroll(GST_APP_SINK(sink)));
+        GRefPtr sample = adoptGRef(gst_app_sink_pull_sample(GST_APP_SINK(sink)));
         capturer->handleSample(WTF::move(sample));
         return GST_FLOW_OK;
     }), this);
@@ -87,18 +80,9 @@ GstElement* GStreamerAudioCapturer::createConverter()
     gst_bin_add_many(GST_BIN_CAST(bin), audioconvert, audioresample, nullptr);
     gst_element_link(audioconvert, audioresample);
 
-#if USE(GSTREAMER_WEBRTC)
-    if (auto audioFilter = makeGStreamerElement("audiornnoise"_s)) {
-        auto audioconvert2 = makeGStreamerElement("audioconvert"_s);
-        auto audioresample2 = makeGStreamerElement("audioresample"_s);
-        gst_bin_add_many(GST_BIN_CAST(bin), audioconvert2, audioresample2, audioFilter, nullptr);
-        gst_element_link_many(audioconvert2, audioresample2, audioFilter, audioconvert, nullptr);
-    }
-#endif
-
-    if (auto pad = adoptGRef(gst_bin_find_unlinked_pad(GST_BIN_CAST(bin), GST_PAD_SRC)))
+    if (GRefPtr pad = adoptGRef(gst_bin_find_unlinked_pad(GST_BIN_CAST(bin), GST_PAD_SRC)))
         gst_element_add_pad(GST_ELEMENT_CAST(bin), gst_ghost_pad_new("src", pad.get()));
-    if (auto pad = adoptGRef(gst_bin_find_unlinked_pad(GST_BIN_CAST(bin), GST_PAD_SINK)))
+    if (GRefPtr pad = adoptGRef(gst_bin_find_unlinked_pad(GST_BIN_CAST(bin), GST_PAD_SINK)))
         gst_element_add_pad(GST_ELEMENT_CAST(bin), gst_ghost_pad_new("sink", pad.get()));
 
     return bin;

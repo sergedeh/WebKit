@@ -56,7 +56,7 @@ RemoteLegacyCDMProxy::~RemoteLegacyCDMProxy()
 
 void RemoteLegacyCDMProxy::supportsMIMEType(const String& mimeType, SupportsMIMETypeCallback&& callback)
 {
-    callback(protectedCDM()->supportsMIMEType(mimeType));
+    callback(protect(m_cdm)->supportsMIMEType(mimeType));
 }
 
 void RemoteLegacyCDMProxy::createSession(uint64_t logIdentifier, CreateSessionCallback&& callback)
@@ -68,7 +68,7 @@ void RemoteLegacyCDMProxy::createSession(uint64_t logIdentifier, CreateSessionCa
     }
 
     auto sessionIdentifier = RemoteLegacyCDMSessionIdentifier::generate();
-    Ref session = RemoteLegacyCDMSessionProxy::create(*factory, logIdentifier, sessionIdentifier, protectedCDM());
+    Ref session = RemoteLegacyCDMSessionProxy::create(*factory, logIdentifier, sessionIdentifier, protect(m_cdm));
     factory->addSession(sessionIdentifier, WTF::move(session));
     callback(WTF::move(sessionIdentifier));
 }
@@ -83,12 +83,12 @@ RefPtr<MediaPlayer> RemoteLegacyCDMProxy::cdmMediaPlayer(const LegacyCDM*) const
     if (!gpuConnectionToWebProcess)
         return nullptr;
 
-    return gpuConnectionToWebProcess->protectedRemoteMediaPlayerManagerProxy()->mediaPlayer(*m_playerId);
+    return protect(gpuConnectionToWebProcess->remoteMediaPlayerManagerProxy())->mediaPlayer(*m_playerId);
 }
 
 std::optional<SharedPreferencesForWebProcess> RemoteLegacyCDMProxy::sharedPreferencesForWebProcess() const
 {
-    RefPtr factory = m_factory.get();
+    auto* factory = m_factory.get();
     if (!factory)
         return std::nullopt;
 

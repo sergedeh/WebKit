@@ -28,9 +28,9 @@
 
 #pragma once
 
+#include <WebCore/AgentClusterIdentifier.h>
 #include <WebCore/SecurityOriginData.h>
-#include <wtf/ArgumentCoder.h>
-#include <wtf/Hasher.h>
+#include <wtf/Ref.h>
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/text/WTFString.h>
 
@@ -73,9 +73,9 @@ public:
     void setDomainFromDOM(const String& newDomain);
     bool domainWasSetInDOM() const { return m_domainWasSetInDOM; }
 
-    const String& protocol() const { return m_data.protocol(); }
-    const String& host() const { return m_data.host(); }
-    const String& domain() const { return m_domain; }
+    const String& protocol() const LIFETIME_BOUND { return m_data.protocol(); }
+    const String& host() const LIFETIME_BOUND { return m_data.host(); }
+    const String& domain() const LIFETIME_BOUND { return m_domain; }
     std::optional<uint16_t> port() const { return m_data.port(); }
 
     static bool shouldIgnoreHost(const URL&);
@@ -123,19 +123,19 @@ public:
     //
     // Note: This method exists only to support backwards compatibility
     //       with older versions of WebKit.
-    void grantLoadLocalResources();
+    void LEGACY_NODELETE grantLoadLocalResources();
 
     // Explicitly grant the ability to access very other SecurityOrigin.
     //
     // WARNING: This is an extremely powerful ability. Use with caution!
-    WEBCORE_EXPORT void grantUniversalAccess();
+    WEBCORE_EXPORT void LEGACY_NODELETE grantUniversalAccess();
     bool hasUniversalAccess() const { return m_universalAccess; }
 
-    void grantStorageAccessFromFileURLsQuirk();
+    void LEGACY_NODELETE grantStorageAccessFromFileURLsQuirk();
     bool needsStorageAccessFromFileURLsQuirk() const { return m_needsStorageAccessFromFileURLsQuirk; }
 
     WEBCORE_EXPORT String domainForCachePartition() const;
-    Policy canShowNotifications() const;
+    Policy LEGACY_NODELETE canShowNotifications() const;
 
     // The local SecurityOrigin is the most privileged SecurityOrigin.
     // The local SecurityOrigin can script any document, navigate to local
@@ -153,7 +153,7 @@ public:
     // Marks a file:// origin as being in a domain defined by its path.
     // FIXME 81578: The naming of this is confusing. Files with restricted access to other local files
     // still can have other privileges that can be remembered, thereby not making them unique.
-    void setEnforcesFilePathSeparation();
+    void LEGACY_NODELETE setEnforcesFilePathSeparation();
     bool enforcesFilePathSeparation() const { return m_enforcesFilePathSeparation; }
 
     // Convert this SecurityOrigin into a string. The string
@@ -198,12 +198,11 @@ public:
     WEBCORE_EXPORT bool isMatchingRegistrableDomainSuffix(const String&, bool treatIPAddressAsDomain = false) const;
 
     WEBCORE_EXPORT bool isPotentiallyTrustworthy() const;
-    void setIsPotentiallyTrustworthy(bool value) { m_isPotentiallyTrustworthy = value; }
 
     WEBCORE_EXPORT static bool isLocalHostOrLoopbackIPAddress(StringView);
     WEBCORE_EXPORT static bool isLocalhostAddress(StringView);
 
-    const SecurityOriginData& data() const { return m_data; }
+    const SecurityOriginData& data() const LIFETIME_BOUND { return m_data; }
 
     // This method checks that the scheme for this origin is an HTTP-family
     // scheme, e.g. HTTP and HTTPS.
@@ -217,7 +216,7 @@ private:
     explicit SecurityOrigin(SecurityOriginData&&);
     void initializeShared(const URL&);
 
-    bool hasLocalUnseparatedPath(const SecurityOrigin&) const;
+    bool LEGACY_NODELETE hasLocalUnseparatedPath(const SecurityOrigin&) const;
 
     enum class ShouldAllowFromThirdParty : uint8_t { AlwaysAllowFromThirdParty, MaybeAllowFromThirdParty };
     WEBCORE_EXPORT bool canAccessStorage(const SecurityOrigin*, ShouldAllowFromThirdParty = ShouldAllowFromThirdParty::MaybeAllowFromThirdParty) const;
@@ -240,9 +239,34 @@ WEBCORE_EXPORT bool shouldTreatAsPotentiallyTrustworthy(const URL&);
 bool serializedOriginsMatch(const SecurityOrigin&, const SecurityOrigin&);
 bool serializedOriginsMatch(const SecurityOrigin*, const SecurityOrigin*);
 
+inline bool canAccessAgentCluster(const SecurityOrigin& origin, std::optional<AgentClusterIdentifier> agentClusterIdentifier, std::optional<AgentClusterIdentifier> targetAgentClusterIdentifier)
+{
+    return origin.hasUniversalAccess() || mayBeInSameAgentCluster(agentClusterIdentifier, targetAgentClusterIdentifier);
+}
+
+// https://html.spec.whatwg.org/multipage/browsers.html#isplatformobjectsameorigin-(-o-)
+// For checks that let one document reach another's objects or run script in it. Unlike HTML, this also
+// requires the same agent cluster: https://github.com/WICG/document-isolation-policy/issues/11
+inline bool isPlatformObjectSameOrigin(const SecurityOrigin& origin, std::optional<AgentClusterIdentifier> agentClusterIdentifier, const SecurityOrigin& targetOrigin, std::optional<AgentClusterIdentifier> targetAgentClusterIdentifier)
+{
+    return origin.isSameOriginDomain(targetOrigin) && canAccessAgentCluster(origin, agentClusterIdentifier, targetAgentClusterIdentifier);
+}
+
 inline void add(Hasher& hasher, const SecurityOrigin& origin)
 {
     add(hasher, origin.data());
 }
 
 } // namespace WebCore
+
+namespace WTF {
+
+// The content-based DefaultHash specialization for Ref<SecurityOrigin> is
+// declared here but intentionally defined only in SecurityOriginHash.h. Using
+// Ref<SecurityOrigin> as a hash-table key without including SecurityOriginHash.h
+// is therefore a hard compile error (instantiating an incomplete DefaultHash)
+// rather than a silent fall back to pointer hashing.
+template<typename> struct DefaultHash;
+template<> struct DefaultHash<Ref<WebCore::SecurityOrigin>>; // Defined in SecurityOriginHash.h
+
+} // namespace WTF

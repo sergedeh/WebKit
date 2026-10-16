@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Google Inc.
+ * Copyright 2023 Google LLC
  *
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
@@ -22,15 +22,16 @@
 #include "include/gpu/vk/VulkanExtensions.h"
 #include "include/gpu/vk/VulkanMutableTextureState.h"
 #include "include/gpu/vk/VulkanTypes.h"
-#include "src/base/SkAutoMalloc.h"
+#include "include/private/SkLog.h"
+#include "src/core/SkAutoMalloc.h"
 #include "src/gpu/graphite/ContextOptionsPriv.h"
-#include "src/gpu/graphite/Log.h"
 #include "src/gpu/graphite/TextureFormat.h"
 #include "src/gpu/graphite/vk/VulkanGraphiteUtils.h"
 #include "src/gpu/vk/VulkanInterface.h"
 #include "src/gpu/vk/vulkanmemoryallocator/VulkanAMDMemoryAllocator.h"
-#include "tools/ToolUtils.h"
 #include "tools/graphite/GraphiteToolUtils.h"
+#include "tools/graphite/TestOptions.h"
+#include "tools/window/GraphiteDisplayParams.h"
 
 #include <algorithm>
 
@@ -124,12 +125,16 @@ void GraphiteVulkanWindowContext::initializeContext() {
     GET_DEV_PROC(QueuePresentKHR);
     GET_DEV_PROC(GetDeviceQueue);
 
-    skgpu::graphite::ContextOptions contextOptions;
-    skgpu::graphite::ContextOptionsPriv contextOptionsPriv;
+    SkASSERT(fDisplayParams->graphiteTestOptions());
+    skiatest::graphite::TestOptions opts = *fDisplayParams->graphiteTestOptions();
+
     // Needed to make synchronous readPixels work
-    contextOptionsPriv.fStoreContextRefInRecorder = true;
-    contextOptions.fOptionsPriv = &contextOptionsPriv;
-    fGraphiteContext = skgpu::graphite::ContextFactory::MakeVulkan(backendContext, contextOptions);
+    opts.fOptionsPriv.fStoreContextRefInRecorder = true;
+
+    fDisplayParams =
+            GraphiteDisplayParamsBuilder(fDisplayParams.get()).graphiteTestOptions(opts).detach();
+    fGraphiteContext = skgpu::graphite::ContextFactory::MakeVulkan(
+            backendContext, fDisplayParams->graphiteTestOptions()->fContextOptions);
     fGraphiteRecorder = fGraphiteContext->makeRecorder(ToolUtils::CreateTestingRecorderOptions());
 
     fDeviceSurface = fCreateVkSurfaceFn(fInstance);
@@ -262,18 +267,6 @@ bool GraphiteVulkanWindowContext::createSwapchain(int width, int height) {
         return false;
     }
 
-    SkColorType colorType;
-    switch (surfaceFormat) {
-        case VK_FORMAT_R8G8B8A8_UNORM:
-            colorType = kRGBA_8888_SkColorType;
-            break;
-        case VK_FORMAT_B8G8R8A8_UNORM:
-            colorType = kBGRA_8888_SkColorType;
-            break;
-        default:
-            return false;
-    }
-
     // If mailbox mode is available, use it, as it is the lowest-latency non-tearing mode. If not,
     // fall back to FIFO which is always available.
     VkPresentModeKHR mode = VK_PRESENT_MODE_FIFO_KHR;
@@ -337,7 +330,6 @@ bool GraphiteVulkanWindowContext::createSwapchain(int width, int height) {
     // If buffer creation fails, destroy the swapchain.
     if (!this->populateSwapchainImages(swapchainCreateInfo.imageFormat,
                                        usageFlags,
-                                       colorType,
                                        swapchainCreateInfo.imageSharingMode)) {
         fDeviceWaitIdle(fDevice);
         this->resetSwapchainImages();
@@ -351,7 +343,6 @@ bool GraphiteVulkanWindowContext::createSwapchain(int width, int height) {
 
 bool GraphiteVulkanWindowContext::populateSwapchainImages(VkFormat format,
                                                           VkImageUsageFlags usageFlags,
-                                                          SkColorType colorType,
                                                           VkSharingMode sharingMode) {
     // Determine number of swapchain images
     uint32_t swapchainImgCount;
@@ -397,11 +388,10 @@ bool GraphiteVulkanWindowContext::populateSwapchainImages(VkFormat format,
                                                                        skgpu::VulkanAlloc());
         fImages[i].fSurface = SkSurfaces::WrapBackendTexture(this->graphiteRecorder(),
                                                              backendTex,
-                                                             colorType,
                                                              fDisplayParams->colorSpace(),
                                                              &fDisplayParams->surfaceProps());
         if (!fImages[i].fSurface) {
-            SKGPU_LOG_W("Failed to create Surface for swapchain image");
+            SKIA_LOG_W("Failed to create Surface for swapchain image");
             // Clean up any previously-created semaphores before returning false to indicate failure
             this->resetSwapchainImages();
             return false;
@@ -465,7 +455,7 @@ void GraphiteVulkanWindowContext::destroyContext() {
 
 bool GraphiteVulkanWindowContext::submitToGpu() {
     if (!fGraphiteContext) {
-        SKGPU_LOG_W("Cannot have null graphite context when submitting work to the GPU for "
+        SKIA_LOG_W("Cannot have null graphite context when submitting work to the GPU for "
                     "presentation.");
         return false;
     }
@@ -473,7 +463,7 @@ bool GraphiteVulkanWindowContext::submitToGpu() {
 
     std::unique_ptr<skgpu::graphite::Recording> recording = fGraphiteRecorder->snap();
     if (!recording) {
-        SKGPU_LOG_W("Failed to snap recording for submitting work to the GPU for presentation. "
+        SKIA_LOG_W("Failed to snap recording for submitting work to the GPU for presentation. "
                     "Will not submit the present operation to the present queue.");
         return false;
     }
@@ -514,7 +504,7 @@ bool GraphiteVulkanWindowContext::submitToGpu() {
                                                          skgpu::CallbackResult status) {
         // Regardless of the status, we need to destroy the waitSemaphore
         if (status != skgpu::CallbackResult::kSuccess) {
-            SKGPU_LOG_W("Recording insertion failed.");
+            SKIA_LOG_W("Recording insertion failed.");
         }
         const auto* context = reinterpret_cast<const FinishContext*>(c);
         VULKAN_CALL(context->fInterface, DestroySemaphore(context->fDevice,
@@ -572,7 +562,7 @@ sk_sp<SkSurface> GraphiteVulkanWindowContext::getBackbufferSurface() {
         return nullptr;
     }
     if (VK_ERROR_OUT_OF_DATE_KHR == res) {
-        SKGPU_LOG_W("Failed to acquire next image for swapchain. Tearing down and trying again.");
+        SKIA_LOG_W("Failed to acquire next image for swapchain. Tearing down and trying again.");
         if (!this->createSwapchain(-1, -1)) {
             VULKAN_CALL(fInterface,
                         DestroySemaphore(fDevice, fAcquireSemaphore, /*pAllocator=*/nullptr));

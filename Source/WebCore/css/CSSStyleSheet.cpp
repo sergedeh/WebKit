@@ -29,7 +29,9 @@
 #include "HTMLLinkElement.h"
 #include "HTMLStyleElement.h"
 #include "JSCSSStyleSheet.h"
+#include "JSDOMConvertInterface.h"
 #include "JSDOMPromiseDeferred.h"
+#include "JSNodeCustomInlines.h"
 #include "Logging.h"
 #include "MediaList.h"
 #include "MediaQueryParser.h"
@@ -39,9 +41,9 @@
 #include "SVGStyleElement.h"
 #include "SecurityOrigin.h"
 #include "ShadowRoot.h"
+#include "StyleDocumentScope.h"
 #include "StyleResolver.h"
 #include "StyleRule.h"
-#include "StyleScope.h"
 #include "StyleSheetContents.h"
 #include "StyleSheetContentsCache.h"
 #include <wtf/HexNumber.h>
@@ -50,7 +52,7 @@
 
 namespace WebCore {
 
-static Style::Scope& styleScopeFor(ContainerNode& treeScope)
+static Style::Scope& LEGACY_NODELETE styleScopeFor(ContainerNode& treeScope)
 {
     ASSERT(is<Document>(treeScope) || is<ShadowRoot>(treeScope));
     if (auto* shadowRoot = dynamicDowncast<ShadowRoot>(treeScope))
@@ -65,13 +67,13 @@ public:
     StyleSheetCSSRuleList(CSSStyleSheet* sheet) : m_styleSheet(sheet) { }
     
 private:
-    void ref() const final { m_styleSheet->ref(); }
+    void LEGACY_NODELETE ref() const final { m_styleSheet->ref(); }
     void deref() const final { m_styleSheet->deref(); }
 
     unsigned length() const final { return m_styleSheet->length(); }
-    CSSRule* item(unsigned index) const final { return m_styleSheet->item(index); }
+    CSSRule* item(unsigned index) const final { return protect(m_styleSheet)->item(index); }
 
-    CSSStyleSheet* styleSheet() const final { return m_styleSheet.get(); }
+    CSSStyleSheet* LEGACY_NODELETE styleSheet() const final { return m_styleSheet.get(); }
 
     SingleThreadWeakPtr<CSSStyleSheet> m_styleSheet;
 };
@@ -83,10 +85,8 @@ static bool isAcceptableCSSStyleSheetParent(Node* parentNode)
     // Only these nodes can be parents of StyleSheets, and they need to call clearOwnerNode() when moved out of document.
     return !parentNode
         || parentNode->isDocumentNode()
-        || is<HTMLLinkElement>(*parentNode)
-        || is<HTMLStyleElement>(*parentNode)
-        || is<SVGStyleElement>(*parentNode)
-        || parentNode->nodeType() == Node::PROCESSING_INSTRUCTION_NODE;
+        || isAnyOf<HTMLLinkElement, HTMLStyleElement, SVGStyleElement>(*parentNode)
+        || parentNode->nodeType() == NodeType::ProcessingInstruction;
 }
 #endif // ASSERT_ENABLED
 
@@ -111,7 +111,7 @@ ExceptionOr<Ref<CSSStyleSheet>> CSSStyleSheet::create(Document& document, Init&&
     if (init.baseURL.isNull())
         baseURL = document.baseURL();
     else {
-        baseURL = document.completeURL(init.baseURL);
+        baseURL = document.encodingParseURL(init.baseURL);
         if (!baseURL.isValid())
             return Exception { ExceptionCode::NotAllowedError, "Base URL is invalid"_s };
     }
@@ -129,7 +129,7 @@ CSSStyleSheet::CSSStyleSheet(Ref<StyleSheetContents>&& contents, CSSImportRule* 
     if (RefPtr parent = parentStyleSheet())
         m_styleScope = parent->styleScope();
 
-    m_contents->registerClient(this);
+    protect(m_contents)->registerClient(this);
 }
 
 CSSStyleSheet::CSSStyleSheet(Ref<StyleSheetContents>&& contents, Node& ownerNode, const TextPosition& startPosition, bool isInlineStylesheet, const std::optional<bool>& isOriginClean)
@@ -141,7 +141,7 @@ CSSStyleSheet::CSSStyleSheet(Ref<StyleSheetContents>&& contents, Node& ownerNode
     , m_startPosition(startPosition)
 {
     ASSERT(isAcceptableCSSStyleSheetParent(&ownerNode));
-    m_contents->registerClient(this);
+    protect(m_contents)->registerClient(this);
 }
 
 // https://w3c.github.io/csswg-drafts/cssom-1/#dom-cssstylesheet-cssstylesheet
@@ -152,15 +152,18 @@ CSSStyleSheet::CSSStyleSheet(Ref<StyleSheetContents>&& contents, Document& docum
     , m_isOriginClean(true)
     , m_constructorDocument(document)
 {
-    m_contents->registerClient(this);
-    m_contents->checkLoaded();
+    protect(m_contents)->registerClient(this);
+    protect(m_contents)->checkLoaded();
 
-    WTF::switchOn(WTF::move(options.media), [this](RefPtr<MediaList>&& mediaList) {
-        if (auto queries = mediaList->mediaQueries(); !queries.isEmpty())
-            setMediaQueries(WTF::move(queries));
-    }, [this](String&& mediaString) {
-        setMediaQueries(MQ::MediaQueryParser::parse(mediaString, strictCSSParserContext()));
-    });
+    WTF::switchOn(WTF::move(options.media),
+        [this](Ref<MediaList>&& mediaList) {
+            if (auto queries = mediaList->mediaQueries(); !queries.isEmpty())
+                setMediaQueries(WTF::move(queries));
+        },
+        [this](String&& mediaString) {
+            setMediaQueries(MQ::MediaQueryParser::parse(mediaString, strictCSSParserContext()));
+        }
+    );
 }
 
 CSSStyleSheet::~CSSStyleSheet()
@@ -173,13 +176,14 @@ CSSStyleSheet::~CSSStyleSheet()
             m_childRuleCSSOMWrappers[i]->setParentStyleSheet(nullptr);
     }
     if (m_mediaCSSOMWrapper)
-        m_mediaCSSOMWrapper->detachFromParent();
+        protect(m_mediaCSSOMWrapper)->detachFromParent();
 
-    m_contents->unregisterClient(this);
+    protect(m_contents)->unregisterClient(this);
 }
 
 Node* CSSStyleSheet::ownerNode() const
 {
+    assertIsOwnerThread();
     return m_ownerNode.get();
 }
 
@@ -207,9 +211,9 @@ auto CSSStyleSheet::willMutateRules() -> ContentsClonedForMutation {
     ASSERT(m_contents->isCacheable());
 
     // Copy-on-write.
-    m_contents->unregisterClient(this);
-    m_contents = m_contents->copy();
-    m_contents->registerClient(this);
+    protect(m_contents)->unregisterClient(this);
+    m_contents = protect(m_contents)->copy();
+    protect(m_contents)->registerClient(this);
 
     m_contents->setMutable();
 
@@ -271,12 +275,26 @@ void CSSStyleSheet::forEachStyleScope(NOESCAPE const Function<void(Style::Scope&
         return;
     }
     for (Ref treeScope : m_adoptingTreeScopes)
-        apply(styleScopeFor(treeScope));
+        apply(protect(styleScopeFor(treeScope)));
 }
 
 void CSSStyleSheet::clearOwnerNode()
 {
+    Locker locker { m_opaqueRootLockForGC };
     m_ownerNode = nullptr;
+}
+
+WebCoreOpaqueRoot CSSStyleSheet::opaqueRootForGCThread()
+{
+    Locker locker { m_opaqueRootLockForGC };
+    if (m_ownerNode)
+        return root(m_ownerNode.get());
+    if (SUPPRESS_UNCOUNTED_LOCAL SUPPRESS_UNCHECKED_LOCAL CSSImportRule* ownerRule = m_ownerRule.get()) {
+        // Cannot ref on the GC thread, same as ownerRule above.
+        if (SUPPRESS_UNCOUNTED_LOCAL auto* parentSheet = ownerRule->parentStyleSheet())
+            return parentSheet->opaqueRootForGCThread();
+    }
+    return WebCoreOpaqueRoot { this };
 }
 
 CSSImportRule* CSSStyleSheet::ownerRule() const
@@ -284,12 +302,18 @@ CSSImportRule* CSSStyleSheet::ownerRule() const
     return m_ownerRule.get();
 }
 
+void CSSStyleSheet::clearOwnerRule()
+{
+    Locker locker { m_opaqueRootLockForGC };
+    m_ownerRule = nullptr;
+}
+
 void CSSStyleSheet::reattachChildRuleCSSOMWrappers()
 {
     for (unsigned i = 0; i < m_childRuleCSSOMWrappers.size(); ++i) {
         if (!m_childRuleCSSOMWrappers[i])
             continue;
-        m_childRuleCSSOMWrappers[i]->reattach(*m_contents->ruleAt(i));
+        protect(m_childRuleCSSOMWrappers[i])->reattach(protect(*m_contents->ruleAt(i)));
     }
 }
 
@@ -326,7 +350,7 @@ CSSRule* CSSStyleSheet::item(unsigned index)
 
     RefPtr<CSSRule>& cssRule = m_childRuleCSSOMWrappers[index];
     if (!cssRule)
-        cssRule = m_contents->ruleAt(index)->createCSSOMWrapper(*this);
+        cssRule = protect(protect(m_contents)->ruleAt(index))->createCSSOMWrapper(*this);
     return cssRule.get();
 }
 
@@ -343,7 +367,7 @@ bool CSSStyleSheet::canAccessRules() const
     if (!document)
         return false;
 
-    return document->protectedSecurityOrigin()->canRequest(baseURL, OriginAccessPatternsForWebProcess::singleton());
+    return protect(document->securityOrigin())->canRequest(baseURL, OriginAccessPatternsForWebProcess::singleton());
 }
 
 ExceptionOr<unsigned> CSSStyleSheet::insertRule(const String& ruleString, unsigned index)
@@ -394,7 +418,7 @@ ExceptionOr<void> CSSStyleSheet::deleteRule(unsigned index)
         return Exception { ExceptionCode::IndexSizeError };
     RuleMutationScope mutationScope(this);
 
-    bool success = m_contents->wrapperDeleteRule(index);
+    bool success = protect(m_contents)->wrapperDeleteRule(index);
     if (!success)
         return Exception { ExceptionCode::InvalidStateError };
     if (!m_childRuleCSSOMWrappers.isEmpty()) {
@@ -459,34 +483,37 @@ bool CSSStyleSheet::isLoading() const
 
 MediaList* CSSStyleSheet::media() const 
 {
-    if (!m_mediaCSSOMWrapper)
-        m_mediaCSSOMWrapper = MediaList::create(const_cast<CSSStyleSheet*>(this));
+    if (!m_mediaCSSOMWrapper) {
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST m_mediaCSSOMWrapper = MediaList::create(const_cast<CSSStyleSheet*>(this));
+    }
     return m_mediaCSSOMWrapper.get();
 }
 
 CSSStyleSheet* CSSStyleSheet::parentStyleSheet() const 
 { 
-    RefPtr ownerRule = m_ownerRule.get();
+    auto* ownerRule = m_ownerRule.get();
     return ownerRule ? ownerRule->parentStyleSheet() : nullptr;
 }
 
-CSSStyleSheet& CSSStyleSheet::rootStyleSheet()
+Ref<CSSStyleSheet> CSSStyleSheet::rootStyleSheet()
 {
-    auto* root = this;
+    RefPtr root = this;
     while (root->parentStyleSheet())
         root = root->parentStyleSheet();
-    return *root;
+    return root.releaseNonNull();
 }
 
-const CSSStyleSheet& CSSStyleSheet::rootStyleSheet() const
+Ref<const CSSStyleSheet> CSSStyleSheet::rootStyleSheet() const
 {
-    return const_cast<CSSStyleSheet&>(*this).rootStyleSheet();
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<CSSStyleSheet&>(*this).rootStyleSheet();
 }
 
 Document* CSSStyleSheet::ownerDocument() const
 {
-    auto& root = rootStyleSheet();
-    return root.ownerNode() ? &root.ownerNode()->document() : nullptr;
+    Ref root = rootStyleSheet();
+    return root->ownerNode() ? &root->ownerNode()->document() : nullptr;
 }
 
 Style::Scope* CSSStyleSheet::styleScope()
@@ -540,35 +567,44 @@ ExceptionOr<void> CSSStyleSheet::replaceSync(String&& text)
     if (!m_wasConstructedByJS)
         return Exception { ExceptionCode::NotAllowedError, "This CSSStyleSheet object was not constructed by JavaScript"_s };
 
+    if (text.isNull())
+        return { };
+
     // Try to use the cache in the case where contents is replaced before the stylesheet is attached to the document.
     if (isDetached() && m_childRuleCSSOMWrappers.isEmpty()) {
         auto key = Style::StyleSheetContentsCache::Key { text, m_contents->parserContext() };
         auto cachedContents = Style::StyleSheetContentsCache::singleton().get(key);
         if (cachedContents) {
-            m_contents->unregisterClient(this);
+            protect(m_contents)->unregisterClient(this);
             m_contents = *cachedContents;
-            m_contents->registerClient(this);
+            protect(m_contents)->registerClient(this);
         } else {
-            m_contents->parseString(WTF::move(text));
-            if (m_contents->isCacheable())
-                Style::StyleSheetContentsCache::singleton().add(WTF::move(key), m_contents);
+            Ref contents = StyleSheetContents::create(m_contents->parserContext());
+            protect(m_contents)->unregisterClient(this);
+            m_contents = contents;
+            contents->registerClient(this);
+            contents->checkLoaded();
+            contents->parseString(WTF::move(text));
+            if (contents->isCacheable())
+                Style::StyleSheetContentsCache::singleton().add(WTF::move(key), contents);
         }
         return { };
     }
 
     RuleMutationScope mutationScope(this, RuleReplace);
-    m_contents->clearRules();
+    protect(m_contents)->clearRules();
     for (auto& childRuleWrapper : m_childRuleCSSOMWrappers)
         if (childRuleWrapper)
             childRuleWrapper->setParentStyleSheet(nullptr);
     m_childRuleCSSOMWrappers.clear();
 
-    m_contents->parseString(WTF::move(text));
+    protect(m_contents)->parseString(WTF::move(text));
     return { };
 }
 
 bool CSSStyleSheet::isDetached() const
 {
+    assertIsOwnerThread();
     return !m_ownerNode
         && !m_ownerRule
         && m_adoptingTreeScopes.isEmptyIgnoringNullReferences();
@@ -583,19 +619,14 @@ void CSSStyleSheet::addAdoptingTreeScope(ContainerNode& treeScope)
 {
     ASSERT(is<Document>(treeScope) || is<ShadowRoot>(treeScope));
     m_adoptingTreeScopes.add(treeScope);
-    styleScopeFor(treeScope).didChangeActiveStyleSheetCandidates();
+    protect(styleScopeFor(treeScope))->didChangeActiveStyleSheetCandidates();
 }
 
 void CSSStyleSheet::removeAdoptingTreeScope(ContainerNode& treeScope)
 {
     ASSERT(is<Document>(treeScope) || is<ShadowRoot>(treeScope));
     m_adoptingTreeScopes.remove(treeScope);
-    styleScopeFor(treeScope).didChangeStyleSheetContents();
-}
-
-Ref<StyleSheetContents> CSSStyleSheet::protectedContents()
-{
-    return m_contents;
+    protect(styleScopeFor(treeScope))->didChangeStyleSheetContents();
 }
 
 void CSSStyleSheet::getChildStyleSheets(HashSet<Ref<CSSStyleSheet>>& childStyleSheets)
@@ -629,15 +660,15 @@ CSSStyleSheet::RuleMutationScope::RuleMutationScope(CSSRule* rule)
         return cssKeyframeRule ? cssKeyframeRule->name() : emptyAtom();
     }())
 {
-    if (m_styleSheet)
-        m_contentsClonedForMutation = m_styleSheet->willMutateRules();
+    if (RefPtr styleSheet = m_styleSheet.get())
+        m_contentsClonedForMutation = styleSheet->willMutateRules();
 }
 
 CSSStyleSheet::RuleMutationScope::~RuleMutationScope()
 {
-    if (m_styleSheet) {
-        m_styleSheet->didMutateRules(m_mutationType, m_contentsClonedForMutation, m_insertedKeyframesRule.get(), m_modifiedKeyframesRuleName);
-        m_styleSheet->contents().clearHasNestingRulesCache();
+    if (RefPtr styleSheet = m_styleSheet.get()) {
+        styleSheet->didMutateRules(m_mutationType, m_contentsClonedForMutation, m_insertedKeyframesRule.get(), m_modifiedKeyframesRuleName);
+        styleSheet->contents().clearHasNestingRulesCache();
     }
 }
 

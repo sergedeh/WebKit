@@ -34,6 +34,7 @@
 #include <gio/gio.h>
 #include <wtf/Markable.h>
 #include <wtf/UUID.h>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/GRefPtr.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/text/MakeString.h>
@@ -46,10 +47,12 @@ NetworkMDNSRegister::NetworkMDNSRegister(NetworkConnectionToWebProcess& connecti
     m_cancellable = adoptGRef(g_cancellable_new());
     g_dbus_proxy_new_for_bus(G_BUS_TYPE_SYSTEM, G_DBUS_PROXY_FLAGS_NONE, nullptr, "org.freedesktop.Avahi", "/", "org.freedesktop.Avahi.Server", m_cancellable.get(), [](GObject*, GAsyncResult* result, gpointer userData) {
         GUniqueOutPtr<GError> error;
-        auto self = reinterpret_cast<NetworkMDNSRegister*>(userData);
-        self->m_dbusProxy = adoptGRef(g_dbus_proxy_new_for_bus_finish(result, &error.outPtr()));
-        if (!error)
+        auto proxy = adoptGRef(g_dbus_proxy_new_for_bus_finish(result, &error.outPtr()));
+        if (!error) {
+            auto self = static_cast<NetworkMDNSRegister*>(userData);
+            self->m_dbusProxy = WTF::move(proxy);
             return;
+        }
 
 #if PLATFORM(GTK)
         // Check if the connection to the system bus was refused, don't log an error when that
@@ -110,7 +113,8 @@ void NetworkMDNSRegister::registerMDNSName(WebCore::ScriptExecutionContextIdenti
         GUniqueOutPtr<char> objectPath;
         g_variant_get(variant.get(), "(o)", &objectPath.outPtr());
 
-        g_dbus_proxy_new_for_bus(G_BUS_TYPE_SYSTEM, G_DBUS_PROXY_FLAGS_NONE, nullptr, "org.freedesktop.Avahi", objectPath.get(), "org.freedesktop.Avahi.EntryGroup", request->cancellable.get(), [](GObject*, GAsyncResult* result, gpointer userData) {
+        auto* cancellable = request->cancellable.get();
+        g_dbus_proxy_new_for_bus(G_BUS_TYPE_SYSTEM, G_DBUS_PROXY_FLAGS_NONE, nullptr, "org.freedesktop.Avahi", objectPath.get(), "org.freedesktop.Avahi.EntryGroup", cancellable, [](GObject*, GAsyncResult* result, gpointer userData) {
             std::unique_ptr<PendingRegistrationRequest> request;
             request.reset(reinterpret_cast<PendingRegistrationRequest*>(userData));
 
@@ -128,7 +132,10 @@ void NetworkMDNSRegister::registerMDNSName(WebCore::ScriptExecutionContextIdenti
             int protocol = -1;
             uint32_t flags = 16; // AVAHI_PUBLISH_NO_REVERSE
 
-            g_dbus_proxy_call(dbusProxy.get(), "AddAddress", g_variant_new("(iiuss)", interface, protocol, flags, request->name.ascii().data(), request->address.ascii().data()), G_DBUS_CALL_FLAGS_NONE, -1, request->cancellable.get(), [](GObject* object, GAsyncResult* result, gpointer userData) {
+            auto* cancellable = request->cancellable.get();
+            auto requestName = request->name.ascii();
+            auto requestAddress = request->address.ascii();
+            g_dbus_proxy_call(dbusProxy.get(), "AddAddress", gVariantNew("(iiuss)", interface, protocol, flags, requestName, requestAddress), G_DBUS_CALL_FLAGS_NONE, -1, cancellable, [](GObject* object, GAsyncResult* result, gpointer userData) {
                 std::unique_ptr<PendingRegistrationRequest> request;
                 request.reset(reinterpret_cast<PendingRegistrationRequest*>(userData));
 
@@ -137,12 +144,13 @@ void NetworkMDNSRegister::registerMDNSName(WebCore::ScriptExecutionContextIdenti
                 auto finalResult = adoptGRef(g_dbus_proxy_call_finish(proxy, result, &error.outPtr()));
                 if (!finalResult) {
                     if (!g_error_matches(error.get(), G_IO_ERROR, G_IO_ERROR_CANCELLED))
-                        LOG_ERROR("Unable to register MDNS address %s to Avahi: %s", request->name.ascii().data(), error->message);
+                        LOG_ERROR("Unable to register MDNS address %s to Avahi: %s", request->name.utf8(), error->message);
                     request->completionHandler(request->name, WebCore::MDNSRegisterError::Internal);
                     return;
                 }
 
-                g_dbus_proxy_call(proxy, "Commit", g_variant_new("()"), G_DBUS_CALL_FLAGS_NONE, -1, request->cancellable.get(), [](GObject* object, GAsyncResult* result, gpointer userData) {
+                auto* cancellable = request->cancellable.get();
+                g_dbus_proxy_call(proxy, "Commit", g_variant_new("()"), G_DBUS_CALL_FLAGS_NONE, -1, cancellable, [](GObject* object, GAsyncResult* result, gpointer userData) {
                     std::unique_ptr<PendingRegistrationRequest> request;
                     request.reset(reinterpret_cast<PendingRegistrationRequest*>(userData));
 
@@ -150,7 +158,7 @@ void NetworkMDNSRegister::registerMDNSName(WebCore::ScriptExecutionContextIdenti
                     auto finalResult = adoptGRef(g_dbus_proxy_call_finish(G_DBUS_PROXY(object), result, &error.outPtr()));
                     if (!finalResult) {
                         if (!g_error_matches(error.get(), G_IO_ERROR, G_IO_ERROR_CANCELLED))
-                            LOG_ERROR("Unable to commit MDNS address %s to Avahi: %s", request->name.ascii().data(), error->message);
+                            LOG_ERROR("Unable to commit MDNS address %s to Avahi: %s", request->name.utf8(), error->message);
                         request->completionHandler(request->name, WebCore::MDNSRegisterError::Internal);
                         return;
                     }

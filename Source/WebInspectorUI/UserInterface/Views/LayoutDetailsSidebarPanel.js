@@ -40,8 +40,8 @@ WI.LayoutDetailsSidebarPanel = class LayoutDetailsSidebarPanel extends WI.DOMDet
     {
         super.attached();
 
-        WI.domManager.addEventListener(WI.DOMManager.Event.NodeInserted, this._handleNodeInserted, this);
-        WI.domManager.addEventListener(WI.DOMManager.Event.NodeRemoved, this._handleNodeRemoved, this);
+        WI.DOMNode.addEventListener(WI.DOMNode.Event.Inserted, this._handleNodeInserted, this);
+        WI.DOMNode.addEventListener(WI.DOMNode.Event.Removed, this._handleNodeRemoved, this);
 
         WI.DOMNode.addEventListener(WI.DOMNode.Event.LayoutFlagsChanged, this._handleLayoutFlagsChanged, this);
         WI.Frame.addEventListener(WI.Frame.Event.MainResourceDidChange, this._mainResourceDidChange, this);
@@ -55,8 +55,8 @@ WI.LayoutDetailsSidebarPanel = class LayoutDetailsSidebarPanel extends WI.DOMDet
     {
         WI.cssManager.layoutContextTypeChangedMode = WI.CSSManager.LayoutContextTypeChangedMode.Observed;
 
-        WI.domManager.removeEventListener(WI.DOMManager.Event.NodeInserted, this._handleNodeInserted, this);
-        WI.domManager.removeEventListener(WI.DOMManager.Event.NodeRemoved, this._handleNodeRemoved, this);
+        WI.DOMNode.removeEventListener(WI.DOMNode.Event.Inserted, this._handleNodeInserted, this);
+        WI.DOMNode.removeEventListener(WI.DOMNode.Event.Removed, this._handleNodeRemoved, this);
 
         WI.DOMNode.removeEventListener(WI.DOMNode.Event.LayoutFlagsChanged, this._handleLayoutFlagsChanged, this);
         WI.Frame.removeEventListener(WI.Frame.Event.MainResourceDidChange, this._mainResourceDidChange, this);
@@ -75,7 +75,7 @@ WI.LayoutDetailsSidebarPanel = class LayoutDetailsSidebarPanel extends WI.DOMDet
         gridSettingsGroup.addSetting(WI.settings.gridOverlayShowAreaNames, WI.UIString("Area Names", "Area names @ Layout Panel Overlay Options", "Label for option to toggle the area names setting for CSS grid overlays"));
         gridSettingsGroup.addSetting(WI.settings.gridOverlayShowExtendedGridLines, WI.UIString("Extended Grid Lines", "Show extended lines @ Layout Panel Overlay Options", "Label for option to toggle the extended lines setting for CSS grid overlays"));
 
-        // COMPATIBILITY (macOS X.Y, iOS X.Y): `DOM.GridOverlayConfig.showOrderNumbers` did not exist yet.
+        // COMPATIBILITY (macOS 26.2, iOS 26.2): `DOM.GridOverlayConfig.showOrderNumbers` did not exist yet.
         // Since support can't be tested directly, check for if the `Page.navigate` command has been removed.
         // FIXME: Use explicit version checking once https://webkit.org/b/148680 is fixed.
         if (!InspectorBackend.hasCommand("Page.navigate"))
@@ -153,7 +153,7 @@ WI.LayoutDetailsSidebarPanel = class LayoutDetailsSidebarPanel extends WI.DOMDet
 
     _handleNodeRemoved(event)
     {
-        let domNode = event.target.node;
+        let domNode = event.target;
         this._removeNodeFromNodeSets(domNode);
         this.needsLayout();
     }
@@ -197,6 +197,8 @@ WI.LayoutDetailsSidebarPanel = class LayoutDetailsSidebarPanel extends WI.DOMDet
         for (let node of WI.domManager.attachedNodes({filter: (node) => node.layoutContextType})) {
             switch (node.layoutContextType) {
             case WI.DOMNode.LayoutFlag.Grid:
+            case WI.DOMNode.LayoutFlag.Subgrid:
+            case WI.DOMNode.LayoutFlag.GridLanes:
                 this._gridNodeSet.add(node);
                 break;
 

@@ -55,6 +55,7 @@
 #include <wtf/Forward.h>
 #include <wtf/Lock.h>
 #include <wtf/LoggerHelper.h>
+#include <wtf/MonotonicTime.h>
 #include <wtf/NativePromise.h>
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/Vector.h>
@@ -133,10 +134,6 @@ public:
 
         // May be called on a background thread.
         virtual void videoFrameAvailable(VideoFrame&, VideoFrameTimeMetadata) = 0;
-
-#if USE(GSTREAMER_WEBRTC)
-        virtual /* transfer full */ GstStructure* queryAdditionalStats() { return nullptr; }
-#endif
     };
 
     virtual ~RealtimeMediaSource();
@@ -144,11 +141,11 @@ public:
     // Can be called in worker threads.
     virtual Ref<RealtimeMediaSource> clone() { return *this; }
 
-    const String& hashedId() const;
-    const String& hashedGroupId() const;
-    const MediaDeviceHashSalts& deviceIDHashSalts() const;
+    const String& LEGACY_NODELETE hashedId() const LIFETIME_BOUND;
+    const String& hashedGroupId() const LIFETIME_BOUND;
+    const MediaDeviceHashSalts& LEGACY_NODELETE deviceIDHashSalts() const LIFETIME_BOUND;
 
-    const String& persistentID() const { return m_device.persistentId(); }
+    const String& persistentID() const LIFETIME_BOUND { return m_device.persistentId(); }
 
     enum class Type : bool { Audio, Video };
     Type type() const { return m_type; }
@@ -171,7 +168,7 @@ public:
 
     virtual bool interrupted() const { return false; }
 
-    const String& name() const { return m_name; }
+    const String& name() const LIFETIME_BOUND { return m_name; }
 
     double fitnessScore() const { return m_fitnessScore; }
 
@@ -188,7 +185,7 @@ public:
     virtual const IntSize size() const;
     void setSize(const IntSize&);
 
-    IntSize intrinsicSize() const;
+    IntSize LEGACY_NODELETE intrinsicSize() const;
     void setIntrinsicSize(const IntSize&, bool notifyObservers = true);
 
     double frameRate() const { return m_frameRate; }
@@ -284,12 +281,14 @@ public:
     virtual void delaySamples(Seconds) { };
     virtual void setInterruptedForTesting(bool);
 
-    virtual bool setShouldApplyRotation();
+    virtual void setShouldApplyRotation();
+    bool LEGACY_NODELETE isApplyingRotation() const;
+
     virtual void setIsInBackground(bool);
 
     std::optional<PageIdentifier> pageIdentifier() const { return m_pageIdentifier.asOptional(); }
 
-    const CaptureDevice& captureDevice() const { return m_device; }
+    const CaptureDevice& captureDevice() const LIFETIME_BOUND { return m_device; }
     bool isEphemeral() const { return m_device.isEphemeral(); }
 
     virtual double facingModeFitnessScoreAdjustment() const { return 0; }
@@ -308,6 +307,8 @@ public:
 #endif
 
     virtual void configurationChanged();
+
+    size_t settingsCapabilitiesUpdateCount() const;
 
 protected:
     RealtimeMediaSource(const CaptureDevice&, MediaDeviceHashSalts&& hashSalts = { }, std::optional<PageIdentifier> = std::nullopt);
@@ -394,10 +395,17 @@ private:
     mutable Lock m_videoFrameObserversLock;
     HashMap<VideoFrameObserver*, std::unique_ptr<VideoFrameAdaptor>> m_videoFrameObservers WTF_GUARDED_BY_LOCK(m_videoFrameObserversLock);
 
+    struct PendingVideoFrame {
+        Ref<VideoFrame> frame;
+        VideoFrameTimeMetadata metadata;
+    };
+    static constexpr size_t maxPendingVideoFramesBeforeAddTrack = 30;
+    Vector<PendingVideoFrame> m_pendingVideoFrames WTF_GUARDED_BY_LOCK(m_videoFrameObserversLock);
+
     CaptureDevice m_device;
 
 #if PLATFORM(COCOA)
-    std::unique_ptr<ImageRotationSessionVT> m_rotationSession;
+    const std::unique_ptr<ImageRotationSessionVT> m_rotationSession;
     std::atomic<bool> m_canUseIOSurface { false };
 #endif
 
@@ -423,8 +431,9 @@ private:
     bool m_captureDidFailed { false };
     bool m_isEnded { false };
     bool m_hasStartedProducingData { false };
-    std::atomic<bool> m_shouldApplyRotation { false };
+    std::atomic<bool> m_isApplyingRotation { false };
 
+    size_t m_settingsCapabilitiesUpdateCount { 0 };
     unsigned m_videoFrameObserversWithAdaptors { 0 };
 };
 
@@ -497,6 +506,11 @@ inline void RealtimeMediaSource::setCanUseIOSurface()
 inline const AudioStreamDescription* RealtimeMediaSource::audioStreamDescription() const
 {
     return nullptr;
+}
+
+inline size_t RealtimeMediaSource::settingsCapabilitiesUpdateCount() const
+{
+    return m_settingsCapabilitiesUpdateCount;
 }
 
 } // namespace WebCore

@@ -108,7 +108,7 @@ void dumpAndVerifyGraph(Graph& graph, const char* text, bool forceDump = false)
         validate(graph, modeForFinalValidate);
 }
 
-Profiler::CompilationKind profilerCompilationKindForMode(JITCompilationMode mode)
+Profiler::CompilationKind LEGACY_NODELETE profilerCompilationKindForMode(JITCompilationMode mode)
 {
     switch (mode) {
     case JITCompilationMode::InvalidCompilation:
@@ -155,11 +155,11 @@ size_t Plan::codeSize() const
     return m_finalizer->codeSize();
 }
 
-void Plan::finalizeInGC()
+void Plan::reconcileWeakReferencesAtGCEnd()
 {
     ASSERT(m_vm);
     if (m_recordedStatuses)
-        m_recordedStatuses->finalizeWithoutDeleting(*m_vm);
+        m_recordedStatuses->reconcileWeakReferencesWithoutDeleting(*m_vm);
 }
 
 void Plan::notifyReady()
@@ -739,9 +739,12 @@ void Plan::cleanMustHandleValuesIfNecessary()
 
 std::unique_ptr<JITData> Plan::tryFinalizeJITData(const DFG::JITCode& jitCode)
 {
-    auto osrExitThunk = m_vm->getCTIStub(osrExitGenerationThunkGenerator).retagged<OSRExitPtrTag>();
-    auto exits = JITData::ExitVector::createWithSizeAndConstructorArguments(jitCode.m_osrExit.size(), osrExitThunk);
-    return JITData::tryCreate(*m_vm, m_codeBlock, jitCode, WTF::move(exits));
+    JITData::ExitJumpTable exitJumpTable;
+    if (isUnlinked()) {
+        auto osrExitThunk = m_vm->getCTIStub(osrExitGenerationThunkGenerator).retagged<OSRExitPtrTag>();
+        exitJumpTable = JITData::ExitJumpTable::createWithSizeAndConstructorArguments(jitCode.m_osrExits.size(), osrExitThunk.code());
+    }
+    return JITData::tryCreate(*m_vm, m_codeBlock, jitCode, WTF::move(exitJumpTable));
 }
 
 } } // namespace JSC::DFG

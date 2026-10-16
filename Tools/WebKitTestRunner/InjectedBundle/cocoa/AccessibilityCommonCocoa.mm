@@ -39,6 +39,10 @@
 #import <objc/runtime.h>
 #import <wtf/ObjCRuntimeExtras.h>
 
+#if PLATFORM(MAC)
+#import "../mac/AccessibilityUIElementMac.h"
+#endif
+
 @implementation NSString (JSStringRefAdditions)
 
 + (NSString *)stringWithJSStringRef:(JSStringRef)jsStringRef
@@ -49,9 +53,9 @@
     return adoptCF(JSStringCopyCFString(kCFAllocatorDefault, jsStringRef)).bridgingAutorelease();
 }
 
-- (JSRetainPtr<JSStringRef>)createJSStringRef
+- (RefPtr<OpaqueJSString>)createJSStringRef
 {
-    return adopt(JSStringCreateWithCFString((__bridge CFStringRef)self));
+    return adoptRef(JSStringCreateWithCFString((__bridge CFStringRef)self));
 }
 
 @end
@@ -116,8 +120,13 @@ NSDictionary *searchPredicateForSearchCriteria(JSContextRef context, Accessibili
 {
     NSMutableDictionary *parameterizedAttribute = [NSMutableDictionary dictionary];
 
+#if PLATFORM(MAC)
+    if (startElement && static_cast<AccessibilityUIElementMac*>(startElement)->platformUIElement())
+        [parameterizedAttribute setObject:static_cast<AccessibilityUIElementMac*>(startElement)->platformUIElement() forKey:@"AXStartElement"];
+#else
     if (startElement && startElement->platformUIElement())
         [parameterizedAttribute setObject:startElement->platformUIElement() forKey:@"AXStartElement"];
+#endif
 
     if (startRange)
         [parameterizedAttribute setObject:startRange->platformTextMarkerRange() forKey:@"AXStartRange"];

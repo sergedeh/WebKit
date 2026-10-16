@@ -28,6 +28,8 @@
 #include "SVGAnimatedPropertyImpl.h"
 #include "SVGAnimatedPropertyPairAnimator.h"
 #include "SVGMarkerTypes.h"
+#include "SVGPropertyTraits.h"
+#include <wtf/TypeCasts.h>
 
 namespace WebCore {
 
@@ -39,13 +41,22 @@ class SVGAnimatedAngleOrientAnimator final : public SVGAnimatedPropertyPairAnima
     using Base::Base;
 
 public:
-    static auto create(const QualifiedName& attributeName, Ref<SVGAnimatedAngle>& animated1, Ref<SVGAnimatedOrientType>& animated2, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive)
+    static auto create(const QualifiedName& attributeName, const Ref<SVGAnimatedAngle>& animated1, const Ref<SVGAnimatedOrientType>& animated2, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive)
     {
         return adoptRef(*new SVGAnimatedAngleOrientAnimator(attributeName, animated1, animated2, animationMode, calcMode, isAccumulated, isAdditive));
     }
 
 private:
-    void setFromAndToValues(SVGElement& targetElement, const String& from, const String& to) final
+    SVGAnimatorType animatorType() const final { return SVGAnimatorType::AngleOrient; }
+
+    bool setToAtEndOfDurationValue(SVGElement&, const String&) final
+    {
+        // SVGAnimationOrientTypeFunction is a discrete function which does not have toAtEndOfDuration
+        ASSERT_NOT_REACHED();
+        return false;
+    }
+
+    bool setFromAndToValues(SVGElement& targetElement, const String& from, const String& to) final
     {
         auto pairFrom = SVGPropertyTraits<std::pair<SVGAngleValue, SVGMarkerOrientType>>::fromString(targetElement, from);
         auto pairTo = SVGPropertyTraits<std::pair<SVGAngleValue, SVGMarkerOrientType>>::fromString(targetElement, to);
@@ -55,14 +66,17 @@ private:
 
         m_animatedPropertyAnimator2->m_function.m_from = pairFrom.second;
         m_animatedPropertyAnimator2->m_function.m_to = pairTo.second;
+        return true;
     }
 
-    void setFromAndByValues(SVGElement& targetElement, const String& from, const String& by) final
+    bool setFromAndByValues(SVGElement& targetElement, const String& from, const String& by) final
     {
-        setFromAndToValues(targetElement, from, by);
+        if (!setFromAndToValues(targetElement, from, by))
+            return false;
         if (m_animatedPropertyAnimator2->m_function.m_from != SVGMarkerOrientAngle || m_animatedPropertyAnimator2->m_function.m_to != SVGMarkerOrientAngle)
-            return;
+            return true;
         m_animatedPropertyAnimator1->m_function.addFromAndToValues(targetElement);
+        return true;
     }
 
     void animate(SVGElement& targetElement, float progress, unsigned repeatCount) final
@@ -113,41 +127,53 @@ class SVGAnimatedIntegerPairAnimator final : public SVGAnimatedPropertyPairAnima
     using Base::Base;
 
 public:
-    static auto create(const QualifiedName& attributeName, Ref<SVGAnimatedInteger>& animated1, Ref<SVGAnimatedInteger>& animated2, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive)
+    static auto create(const QualifiedName& attributeName, const Ref<SVGAnimatedInteger>& animated1, const Ref<SVGAnimatedInteger>& animated2, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive)
     {
         return adoptRef(*new SVGAnimatedIntegerPairAnimator(attributeName, animated1, animated2, animationMode, calcMode, isAccumulated, isAdditive));
     }
 
 private:
-    void setFromAndToValues(SVGElement& targetElement, const String& from, const String& to) final
+    SVGAnimatorType animatorType() const final { return SVGAnimatorType::IntegerPair; }
+
+    bool setFromAndToValues(SVGElement&, const String& from, const String& to) final
     {
-        auto pairFrom = SVGPropertyTraits<std::pair<int, int>>::fromString(targetElement, from);
-        auto pairTo = SVGPropertyTraits<std::pair<int, int>>::fromString(targetElement, to);
+        // In to-animation mode 'from' is empty; the start value is resolved at runtime.
+        auto pairFrom = !from.isEmpty() ? SVGPropertyTraits<std::pair<int, int>>::parse(from) : std::optional<std::pair<int, int>>(std::in_place);
+        auto pairTo = SVGPropertyTraits<std::pair<int, int>>::parse(to);
+        if (!pairFrom || !pairTo)
+            return false;
 
-        m_animatedPropertyAnimator1->m_function.m_from = pairFrom.first;
-        m_animatedPropertyAnimator1->m_function.m_to = pairTo.first;
+        m_animatedPropertyAnimator1->m_function.m_from = pairFrom->first;
+        m_animatedPropertyAnimator1->m_function.m_to = pairTo->first;
 
-        m_animatedPropertyAnimator2->m_function.m_from = pairFrom.second;
-        m_animatedPropertyAnimator2->m_function.m_to = pairTo.second;
+        m_animatedPropertyAnimator2->m_function.m_from = pairFrom->second;
+        m_animatedPropertyAnimator2->m_function.m_to = pairTo->second;
+        return true;
     }
 
-    void setFromAndByValues(SVGElement& targetElement, const String& from, const String& by) final
+    bool setFromAndByValues(SVGElement&, const String& from, const String& by) final
     {
-        auto pairFrom = SVGPropertyTraits<std::pair<int, int>>::fromString(targetElement, from);
-        auto pairBy = SVGPropertyTraits<std::pair<int, int>>::fromString(targetElement, by);
+        auto pairFrom = !from.isEmpty() ? SVGPropertyTraits<std::pair<int, int>>::parse(from) : std::optional<std::pair<int, int>>(std::in_place);
+        auto pairBy = SVGPropertyTraits<std::pair<int, int>>::parse(by);
+        if (!pairFrom || !pairBy)
+            return false;
 
-        m_animatedPropertyAnimator1->m_function.m_from = pairFrom.first;
-        m_animatedPropertyAnimator1->m_function.m_to = pairFrom.first + pairBy.first;
+        m_animatedPropertyAnimator1->m_function.m_from = pairFrom->first;
+        m_animatedPropertyAnimator1->m_function.m_to = pairFrom->first + pairBy->first;
 
-        m_animatedPropertyAnimator2->m_function.m_from = pairFrom.second;
-        m_animatedPropertyAnimator2->m_function.m_to = pairFrom.second + pairBy.second;
+        m_animatedPropertyAnimator2->m_function.m_from = pairFrom->second;
+        m_animatedPropertyAnimator2->m_function.m_to = pairFrom->second + pairBy->second;
+        return true;
     }
 
-    void setToAtEndOfDurationValue(SVGElement& targetElement, const String& toAtEndOfDuration) final
+    bool setToAtEndOfDurationValue(SVGElement&, const String& toAtEndOfDuration) final
     {
-        auto pairToAtEndOfDuration = SVGPropertyTraits<std::pair<int, int>>::fromString(targetElement, toAtEndOfDuration);
-        m_animatedPropertyAnimator1->m_function.m_toAtEndOfDuration = pairToAtEndOfDuration.first;
-        m_animatedPropertyAnimator2->m_function.m_toAtEndOfDuration = pairToAtEndOfDuration.second;
+        auto pair = SVGPropertyTraits<std::pair<int, int>>::parse(toAtEndOfDuration);
+        if (!pair)
+            return false;
+        m_animatedPropertyAnimator1->m_function.m_toAtEndOfDuration = pair->first;
+        m_animatedPropertyAnimator2->m_function.m_toAtEndOfDuration = pair->second;
+        return true;
     }
 };
 
@@ -157,42 +183,66 @@ class SVGAnimatedNumberPairAnimator final : public SVGAnimatedPropertyPairAnimat
     using Base::Base;
 
 public:
-    static auto create(const QualifiedName& attributeName, Ref<SVGAnimatedNumber>& animated1, Ref<SVGAnimatedNumber>& animated2, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive)
+    static auto create(const QualifiedName& attributeName, const Ref<SVGAnimatedNumber>& animated1, const Ref<SVGAnimatedNumber>& animated2, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive)
     {
         return adoptRef(*new SVGAnimatedNumberPairAnimator(attributeName, animated1, animated2, animationMode, calcMode, isAccumulated, isAdditive));
     }
 
 private:
-    void setFromAndToValues(SVGElement& targetElement, const String& from, const String& to) final
+    SVGAnimatorType animatorType() const final { return SVGAnimatorType::NumberPair; }
+
+    bool setFromAndToValues(SVGElement&, const String& from, const String& to) final
     {
-        auto pairFrom = SVGPropertyTraits<std::pair<float, float>>::fromString(targetElement, from);
-        auto pairTo = SVGPropertyTraits<std::pair<float, float>>::fromString(targetElement, to);
-        
-        m_animatedPropertyAnimator1->m_function.m_from = pairFrom.first;
-        m_animatedPropertyAnimator1->m_function.m_to = pairTo.first;
-        
-        m_animatedPropertyAnimator2->m_function.m_from = pairFrom.second;
-        m_animatedPropertyAnimator2->m_function.m_to = pairTo.second;
+        // In to-animation mode 'from' is empty; the start value is resolved at runtime.
+        auto pairFrom = !from.isEmpty() ? SVGPropertyTraits<std::pair<float, float>>::parse(from) : std::optional<std::pair<float, float>>(std::in_place);
+        auto pairTo = SVGPropertyTraits<std::pair<float, float>>::parse(to);
+        if (!pairFrom || !pairTo)
+            return false;
+
+        m_animatedPropertyAnimator1->m_function.m_from = pairFrom->first;
+        m_animatedPropertyAnimator1->m_function.m_to = pairTo->first;
+
+        m_animatedPropertyAnimator2->m_function.m_from = pairFrom->second;
+        m_animatedPropertyAnimator2->m_function.m_to = pairTo->second;
+        return true;
     }
 
-    void setFromAndByValues(SVGElement& targetElement, const String& from, const String& by) final
+    bool setFromAndByValues(SVGElement&, const String& from, const String& by) final
     {
-        auto pairFrom = SVGPropertyTraits<std::pair<float, float>>::fromString(targetElement, from);
-        auto pairBy = SVGPropertyTraits<std::pair<float, float>>::fromString(targetElement, by);
-        
-        m_animatedPropertyAnimator1->m_function.m_from = pairFrom.first;
-        m_animatedPropertyAnimator1->m_function.m_to = pairFrom.first + pairBy.first;
-        
-        m_animatedPropertyAnimator2->m_function.m_from = pairFrom.second;
-        m_animatedPropertyAnimator2->m_function.m_to = pairFrom.second + pairBy.second;
+        auto pairFrom = !from.isEmpty() ? SVGPropertyTraits<std::pair<float, float>>::parse(from) : std::optional<std::pair<float, float>>(std::in_place);
+        auto pairBy = SVGPropertyTraits<std::pair<float, float>>::parse(by);
+        if (!pairFrom || !pairBy)
+            return false;
+
+        m_animatedPropertyAnimator1->m_function.m_from = pairFrom->first;
+        m_animatedPropertyAnimator1->m_function.m_to = pairFrom->first + pairBy->first;
+
+        m_animatedPropertyAnimator2->m_function.m_from = pairFrom->second;
+        m_animatedPropertyAnimator2->m_function.m_to = pairFrom->second + pairBy->second;
+        return true;
     }
 
-    void setToAtEndOfDurationValue(SVGElement& targetElement, const String& toAtEndOfDuration) final
+    bool setToAtEndOfDurationValue(SVGElement&, const String& toAtEndOfDuration) final
     {
-        auto pairToAtEndOfDuration = SVGPropertyTraits<std::pair<float, float>>::fromString(targetElement, toAtEndOfDuration);
-        m_animatedPropertyAnimator1->m_function.m_toAtEndOfDuration = pairToAtEndOfDuration.first;
-        m_animatedPropertyAnimator2->m_function.m_toAtEndOfDuration = pairToAtEndOfDuration.second;
+        auto pair = SVGPropertyTraits<std::pair<float, float>>::parse(toAtEndOfDuration);
+        if (!pair)
+            return false;
+        m_animatedPropertyAnimator1->m_function.m_toAtEndOfDuration = pair->first;
+        m_animatedPropertyAnimator2->m_function.m_toAtEndOfDuration = pair->second;
+        return true;
     }
 };
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::SVGAnimatedAngleOrientAnimator)
+    static bool isType(const WebCore::SVGAttributeAnimator& animator) { return animator.animatorType() == WebCore::SVGAnimatorType::AngleOrient; }
+SPECIALIZE_TYPE_TRAITS_END()
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::SVGAnimatedIntegerPairAnimator)
+    static bool isType(const WebCore::SVGAttributeAnimator& animator) { return animator.animatorType() == WebCore::SVGAnimatorType::IntegerPair; }
+SPECIALIZE_TYPE_TRAITS_END()
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::SVGAnimatedNumberPairAnimator)
+    static bool isType(const WebCore::SVGAttributeAnimator& animator) { return animator.animatorType() == WebCore::SVGAnimatorType::NumberPair; }
+SPECIALIZE_TYPE_TRAITS_END()

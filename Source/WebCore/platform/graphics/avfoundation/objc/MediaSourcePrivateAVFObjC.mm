@@ -56,7 +56,7 @@ WorkQueue& MediaSourcePrivateAVFObjC::queueSingleton()
     static std::once_flag onceKey;
     static LazyNeverDestroyed<Ref<WorkQueue>> workQueue;
     std::call_once(onceKey, [] {
-        workQueue.construct(hasPlatformStrategies() && platformStrategies()->mediaStrategy()->hasRemoteRendererFor(MediaPlayerMediaEngineIdentifier::AVFoundationMSE) ? WorkQueue::create("MediaSourcePrivateAVFObjC"_s) : Ref { WorkQueue::mainSingleton() });
+        workQueue.construct(hasPlatformStrategies() && platformStrategies()->mediaStrategy()->hasThreadSafeMediaSourceSupport() ? WorkQueue::create("MediaSourcePrivateAVFObjC"_s) : Ref { WorkQueue::mainSingleton() });
     });
     return workQueue.get();
 }
@@ -98,7 +98,19 @@ void MediaSourcePrivateAVFObjC::setPlayer(MediaPlayerPrivateInterface* player)
     m_renderer = renderer.get();
     ensureOnDispatcher([protectedThis = Ref { *this }, renderer = WTF::move(renderer)] {
         for (Ref sourceBuffer : protectedThis->sourceBuffers())
-            downcast<SourceBufferPrivateAVFObjC>(sourceBuffer)->setAudioVideoRenderer(renderer);
+            downcast<SourceBufferPrivateAVFObjC>(sourceBuffer).setAudioVideoRenderer(renderer);
+    });
+}
+
+void MediaSourcePrivateAVFObjC::willShutdown()
+{
+    ALWAYS_LOG(LOGIDENTIFIER);
+
+    RefPtr renderer = m_renderer.get();
+    if (!renderer)
+        return;
+    ensureOnDispatcher([renderer = renderer.releaseNonNull()] {
+        renderer->shutdown();
     });
 }
 
@@ -106,27 +118,9 @@ MediaSourcePrivate::AddStatus MediaSourcePrivateAVFObjC::addSourceBuffer(const C
 {
     DEBUG_LOG(LOGIDENTIFIER, contentType);
 
-    MediaEngineSupportParameters parameters;
-    parameters.isMediaSource = true;
-    parameters.type = contentType;
-
-    AddStatus returnedStatus = AddStatus::InvalidState;
-    RefPtr<AudioVideoRenderer> renderer;
-
-    callOnMainRunLoopAndWait([&] {
-        RefPtr player = platformPlayer();
-        if (!player)
-            return;
-
-        if (MediaPlayerPrivateMediaSourceAVFObjC::supportsTypeAndCodecs(parameters) == MediaPlayer::SupportsType::IsNotSupported) {
-            returnedStatus = AddStatus::NotSupported;
-            return;
-        }
-        renderer = player->audioVideoRenderer();
-        returnedStatus = AddStatus::Ok;
-    });
-    if (returnedStatus != AddStatus::Ok)
-        return returnedStatus;
+    RefPtr renderer = m_renderer.get();
+    if (!renderer)
+        return AddStatus::InvalidState;
 
     RefPtr parser = SourceBufferParser::create(contentType, configuration);
     if (!parser)
@@ -135,7 +129,7 @@ MediaSourcePrivate::AddStatus MediaSourcePrivateAVFObjC::addSourceBuffer(const C
     parser->setLogger(m_logger, m_logIdentifier);
 #endif
 
-    Ref newSourceBuffer = SourceBufferPrivateAVFObjC::create(*this, configuration, parser.releaseNonNull(), *renderer);
+    Ref newSourceBuffer = SourceBufferPrivateAVFObjC::create(*this, configuration, parser.releaseNonNull(), renderer.releaseNonNull());
     newSourceBuffer->setResourceOwner(m_resourceOwner);
     outPrivate = newSourceBuffer.copyRef();
     newSourceBuffer->setMediaSourceDuration(duration());
@@ -246,13 +240,13 @@ bool MediaSourcePrivateAVFObjC::needsVideoLayer() const
 {
     assertIsMainThread();
     return std::ranges::any_of(sourceBuffers(), [](auto& sourceBuffer) {
-        return downcast<SourceBufferPrivateAVFObjC>(sourceBuffer)->needsVideoLayer();
+        return downcast<SourceBufferPrivateAVFObjC>(sourceBuffer).needsVideoLayer();
     });
 }
 
-void MediaSourcePrivateAVFObjC::bufferedChanged(const PlatformTimeRanges& buffered)
+void MediaSourcePrivateAVFObjC::bufferedChanged(PlatformTimeRanges&& buffered)
 {
-    MediaSourcePrivate::bufferedChanged(buffered);
+    MediaSourcePrivate::bufferedChanged(WTF::move(buffered));
     callOnMainThreadWithPlayer([](auto& player) {
         player.bufferedChanged();
     });
@@ -264,7 +258,7 @@ RefPtr<MediaPlayerPrivateMediaSourceAVFObjC> MediaSourcePrivateAVFObjC::platform
     return m_player.get();
 }
 
-MediaTime MediaSourcePrivateAVFObjC::currentTime() const
+MediaTime MediaSourcePrivateAVFObjC::platformCurrentTime() const
 {
     RefPtr renderer = m_renderer.get();
     return renderer ? renderer->currentTime() : MediaTime::zeroTime();

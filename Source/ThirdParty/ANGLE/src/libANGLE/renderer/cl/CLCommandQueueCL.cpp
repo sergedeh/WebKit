@@ -6,11 +6,8 @@
 // CLCommandQueueCL.cpp: Implements the class methods for CLCommandQueueCL.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #include "libANGLE/renderer/cl/CLCommandQueueCL.h"
+#include "common/unsafe_buffers.h"
 
 #include "libANGLE/renderer/cl/CLContextCL.h"
 #include "libANGLE/renderer/cl/CLEventCL.h"
@@ -479,10 +476,11 @@ angle::Result CLCommandQueueCL::enqueueMapImage(const cl::Image &image,
     return CreateEventBackend(nativeEvent, event);
 }
 
-angle::Result CLCommandQueueCL::enqueueUnmapMemObject(const cl::Memory &memory,
-                                                      void *mappedPtr,
-                                                      const cl::EventPtrs &waitEvents,
-                                                      cl::EventPtr &event)
+angle::Result CLCommandQueueCL::enqueueUnmapMemObject(
+    const cl::Memory &memory,
+    const cl::MappedRegionInfo<const void *> &mappedInfo,
+    const cl::EventPtrs &waitEvents,
+    cl::EventPtr &event)
 {
     const cl_mem nativeMemory                = memory.getImpl<CLMemoryCL>().getNative();
     const std::vector<cl_event> nativeEvents = CLEventCL::Cast(waitEvents);
@@ -491,8 +489,11 @@ angle::Result CLCommandQueueCL::enqueueUnmapMemObject(const cl::Memory &memory,
     cl_event nativeEvent                     = nullptr;
     cl_event *const nativeEventPtr           = event != nullptr ? &nativeEvent : nullptr;
 
+    // The native CL entry point takes a non-const void*. The pointer originally
+    // came from the user via clEnqueueMapBuffer/Image so the cast is safe.
     ANGLE_CL_TRY(mNative->getDispatch().clEnqueueUnmapMemObject(
-        mNative, nativeMemory, mappedPtr, numEvents, nativeEventsPtr, nativeEventPtr));
+        mNative, nativeMemory, const_cast<void *>(mappedInfo.key), numEvents, nativeEventsPtr,
+        nativeEventPtr));
 
     return CreateEventBackend(nativeEvent, event);
 }
@@ -578,7 +579,7 @@ angle::Result CLCommandQueueCL::enqueueNativeKernel(cl::UserFunc userFunc,
     {
         // If argument memory block contains buffers, make a copy.
         funcArgs.resize(cbArgs);
-        std::memcpy(funcArgs.data(), args, cbArgs);
+        ANGLE_UNSAFE_TODO(std::memcpy(funcArgs.data(), args, cbArgs));
 
         locs.reserve(bufferPtrOffsets.size());
         for (size_t offset : bufferPtrOffsets)

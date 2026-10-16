@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024, Alliance for Open Media. All rights reserved
+ * Copyright (c) 2016, Alliance for Open Media. All rights reserved.
  *
  * This source code is subject to the terms of the BSD 2 Clause License and
  * the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -9,11 +9,14 @@
  * PATENTS file, you can obtain it at www.aomedia.org/license/patent.
  */
 
+#ifndef AOM_VERSION_H_
+#define AOM_VERSION_H_
 #define VERSION_MAJOR 3
-#define VERSION_MINOR 9
-#define VERSION_PATCH 0
-#define VERSION_EXTRA "112-g77665fee93"
+#define VERSION_MINOR 15
+#define VERSION_PATCH 1
+#define VERSION_EXTRA "50-g7b6197cb8f"
 #define VERSION_PACKED \
   ((VERSION_MAJOR << 16) | (VERSION_MINOR << 8) | (VERSION_PATCH))
-#define VERSION_STRING_NOSP "3.9.0-112-g77665fee93"
-#define VERSION_STRING " 3.9.0-112-g77665fee93"
+#define VERSION_STRING_NOSP "3.15.1-50-g7b6197cb8f"
+#define VERSION_STRING " 3.15.1-50-g7b6197cb8f"
+#endif  // AOM_VERSION_H_

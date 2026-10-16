@@ -31,23 +31,24 @@
 
 namespace JSC {
 
-static JSC_DECLARE_HOST_FUNCTION(reflectObjectConstruct);
 static JSC_DECLARE_HOST_FUNCTION(reflectObjectDefineProperty);
 static JSC_DECLARE_HOST_FUNCTION(reflectObjectGetOwnPropertyDescriptor);
 static JSC_DECLARE_HOST_FUNCTION(reflectObjectGetPrototypeOf);
 static JSC_DECLARE_HOST_FUNCTION(reflectObjectIsExtensible);
-static JSC_DECLARE_HOST_FUNCTION(reflectObjectOwnKeys);
 static JSC_DECLARE_HOST_FUNCTION(reflectObjectPreventExtensions);
 static JSC_DECLARE_HOST_FUNCTION(reflectObjectSet);
 static JSC_DECLARE_HOST_FUNCTION(reflectObjectSetPrototypeOf);
+
+static JSValue initializeReflectConstructFunction(VM&, JSObject* object)
+{
+    return object->realm()->linkTimeConstant(LinkTimeConstant::reflectConstructFunction);
+}
 
 }
 
 #include "ReflectObject.lut.h"
 
 namespace JSC {
-
-const ASCIILiteral ReflectOwnKeysNonObjectArgumentError { "Reflect.ownKeys requires the first argument be an object"_s };
 
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(ReflectObject);
 
@@ -56,7 +57,7 @@ const ClassInfo ReflectObject::s_info = { "Reflect"_s, &Base::s_info, &reflectOb
 /* Source for ReflectObject.lut.h
 @begin reflectObjectTable
     apply                    JSBuiltin                             DontEnum|Function 3
-    construct                reflectObjectConstruct                DontEnum|Function 2
+    construct                initializeReflectConstructFunction    DontEnum|PropertyCallback
     defineProperty           reflectObjectDefineProperty           DontEnum|Function 3
     deleteProperty           JSBuiltin                             DontEnum|Function 2
     get                      JSBuiltin                             DontEnum|Function 2
@@ -107,7 +108,7 @@ JSC_DEFINE_HOST_FUNCTION(reflectObjectConstruct, (JSGlobalObject* globalObject, 
     }
 
     MarkedArgumentBuffer arguments;
-    JSObject* argumentsObject = jsDynamicCast<JSObject*>(callFrame->argument(1));
+    JSObject* argumentsObject = dynamicDowncast<JSObject>(callFrame->argument(1));
     if (!argumentsObject)
         return JSValue::encode(throwTypeError(globalObject, scope, "Reflect.construct requires the second argument be an object"_s));
 

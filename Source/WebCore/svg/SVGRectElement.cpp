@@ -28,6 +28,7 @@
 #include "NodeName.h"
 #include "RenderSVGRect.h"
 #include "SVGElementInlines.h"
+#include "SVGElementTypeHelpers.h"
 #include "SVGNames.h"
 #include "SVGParsingError.h"
 #include "SVGPropertyOwnerRegistry.h"
@@ -39,7 +40,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGRectElement);
 
 inline SVGRectElement::SVGRectElement(const QualifiedName& tagName, Document& document)
-    : SVGGeometryElement(tagName, document, makeUniqueRef<PropertyRegistry>(*this))
+    : SVGGeometryElement(tagName, document, PropertyRegistry::singleton())
 {
     ASSERT(hasTagName(SVGNames::rectTag));
 
@@ -60,7 +61,7 @@ Ref<SVGRectElement> SVGRectElement::create(const QualifiedName& tagName, Documen
     return adoptRef(*new SVGRectElement(tagName, document));
 }
 
-SVGAnimatedProperty* SVGRectElement::propertyForAttribute(const QualifiedName& name) const
+SVGAnimatedPropertyBase* SVGRectElement::propertyForAttribute(const QualifiedName& name) const
 {
     if (name == SVGNames::xAttr)
         return m_x.ptr();
@@ -119,7 +120,7 @@ void SVGRectElement::svgAttributeChanged(const QualifiedName& attrName)
     SVGGeometryElement::svgAttributeChanged(attrName);
 }
 
-RenderPtr<RenderElement> SVGRectElement::createElementRenderer(RenderStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> SVGRectElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
 {
     if (document().settings().layerBasedSVGEngineEnabled())
         return createRenderer<RenderSVGRect>(*this, WTF::move(style));

@@ -48,7 +48,7 @@ class WebImage final : public API::ObjectImpl<API::Object::Type::Image> {
 public:
     using ParametersAndHandle = std::pair<WebCore::ImageBufferParameters, WebCore::ShareableBitmap::Handle>;
 
-    static Ref<WebImage> create(const WebCore::FloatSize&, ImageOptions, const WebCore::DestinationColorSpace&, WebCore::ChromeClient* = nullptr);
+    static Ref<WebImage> create(const WebCore::FloatSize&, ImageOptions, const WebCore::ColorSpace&, WebCore::ChromeClient* = nullptr);
     static Ref<WebImage> create(std::optional<ParametersAndHandle>&&);
     static Ref<WebImage> create(Ref<WebCore::ImageBuffer>&&);
     static Ref<WebImage> createEmpty();
@@ -56,11 +56,11 @@ public:
     virtual ~WebImage();
 
     WebCore::IntSize size() const;
-    const WebCore::ImageBufferParameters* parameters() const;
+    const WebCore::ImageBufferParameters* LEGACY_NODELETE parameters() const LIFETIME_BOUND;
     std::optional<ParametersAndHandle> parametersAndHandle() const;
     bool isEmpty() const { return !m_buffer; }
 
-    WebCore::GraphicsContext* context() const;
+    WebCore::GraphicsContext* context() const LIFETIME_BOUND;
 
     RefPtr<WebCore::NativeImage> copyNativeImage(WebCore::BackingStoreCopy = WebCore::CopyBackingStore) const;
     RefPtr<WebCore::ShareableBitmap> bitmap() const;
@@ -75,7 +75,7 @@ public:
 private:
     WebImage(RefPtr<WebCore::ImageBuffer>&&);
 
-    RefPtr<WebCore::ImageBuffer> m_buffer;
+    const RefPtr<WebCore::ImageBuffer> m_buffer;
 };
 
 } // namespace WebKit

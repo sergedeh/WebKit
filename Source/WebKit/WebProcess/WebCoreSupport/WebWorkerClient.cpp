@@ -27,13 +27,16 @@
 #include "WebWorkerClient.h"
 
 #include "ImageBufferShareableBitmapBackend.h"
+#include "Logging.h"
 #include "ModelDowncastConvertToBackingContext.h"
 #include "RemoteGPUProxy.h"
 #include "RemoteImageBufferProxy.h"
+#include "RemotePlaceholderRenderingContextSource.h"
 #include "RemoteRenderingBackendProxy.h"
 #include "WebGPUDowncastConvertToBackingContext.h"
 #include "WebPage.h"
 #include "WebProcess.h"
+#include <WebCore/ImageBuffer.h>
 #include <WebCore/Page.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -55,7 +58,11 @@ public:
     using WebWorkerClient::WebWorkerClient;
     UniqueRef<WorkerClient> createNestedWorkerClient(SerialFunctionDispatcher&) final;
     RefPtr<WebCore::ImageBuffer> sinkIntoImageBuffer(std::unique_ptr<WebCore::SerializedImageBuffer>) final;
-    RefPtr<WebCore::ImageBuffer> createImageBuffer(const WebCore::FloatSize&, WebCore::RenderingMode, WebCore::RenderingPurpose, float resolutionScale, const WebCore::DestinationColorSpace&, WebCore::ImageBufferFormat) const final;
+    RefPtr<WebCore::ImageBuffer> createImageBufferFromTransferHandle(const WebCore::ImageBufferTransferHandle&) final;
+#if ENABLE(OFFSCREEN_CANVAS)
+    RefPtr<WebCore::PlaceholderRenderingContextSource> createPlaceholderRenderingContextSource(const WebCore::RemotePlaceholderRenderingContextIdentifier&) final;
+#endif
+    RefPtr<WebCore::ImageBuffer> createImageBuffer(const WebCore::FloatSize&, WebCore::RenderingMode, WebCore::RenderingPurpose, float resolutionScale, const WebCore::ColorSpace&, WebCore::ImageBufferFormat) const final;
 #if ENABLE(WEBGL)
     RefPtr<WebCore::GraphicsContextGL> createGraphicsContextGL(const WebCore::GraphicsContextGLAttributes&) const final;
 #endif
@@ -64,7 +71,6 @@ public:
 #endif
 private:
     RemoteRenderingBackendProxy& ensureRenderingBackend() const;
-    Ref<RemoteRenderingBackendProxy> ensureProtectedRenderingBackend() const { return ensureRenderingBackend(); }
 
     mutable RefPtr<RemoteRenderingBackendProxy> m_remoteRenderingBackendProxy;
 };
@@ -93,18 +99,39 @@ RefPtr<ImageBuffer> GPUProcessWebWorkerClient::sinkIntoImageBuffer(std::unique_p
         return nullptr;
     if (is<RemoteSerializedImageBufferProxy>(imageBuffer)) {
         auto remote = std::unique_ptr<RemoteSerializedImageBufferProxy>(static_cast<RemoteSerializedImageBufferProxy*>(imageBuffer.release()));
-        return RemoteSerializedImageBufferProxy::sinkIntoImageBuffer(WTF::move(remote), ensureProtectedRenderingBackend());
+        return RemoteSerializedImageBufferProxy::sinkIntoImageBuffer(WTF::move(remote), protect(ensureRenderingBackend()));
     }
     return WebWorkerClient::sinkIntoImageBuffer(WTF::move(imageBuffer));
 }
 
-RefPtr<ImageBuffer> GPUProcessWebWorkerClient::createImageBuffer(const FloatSize& size, RenderingMode renderingMode, RenderingPurpose purpose, float resolutionScale, const DestinationColorSpace& colorSpace, ImageBufferFormat pixelFormat) const
+RefPtr<ImageBuffer> GPUProcessWebWorkerClient::createImageBufferFromTransferHandle(const WebCore::ImageBufferTransferHandle& handle)
+{
+    RefPtr dispatcher = this->dispatcher();
+    if (!dispatcher)
+        return nullptr;
+    assertIsCurrent(*dispatcher);
+    return protect(ensureRenderingBackend())->takeTransferredBuffer(handle);
+}
+
+#if ENABLE(OFFSCREEN_CANVAS)
+RefPtr<PlaceholderRenderingContextSource> GPUProcessWebWorkerClient::createPlaceholderRenderingContextSource(const RemotePlaceholderRenderingContextIdentifier& identifier)
+{
+    return RemotePlaceholderRenderingContextSource::create(identifier);
+}
+#endif
+
+RefPtr<ImageBuffer> GPUProcessWebWorkerClient::createImageBuffer(const FloatSize& size, RenderingMode renderingMode, RenderingPurpose purpose, float resolutionScale, const ColorSpace& colorSpace, ImageBufferFormat pixelFormat) const
 {
     if (RefPtr dispatcher = this->dispatcher())
         assertIsCurrent(*dispatcher);
     if (WebProcess::singleton().shouldUseRemoteRenderingFor(purpose))
-        return ensureProtectedRenderingBackend()->createImageBuffer(size, renderingMode, purpose, resolutionScale, colorSpace, pixelFormat);
+        return protect(ensureRenderingBackend())->createImageBuffer(size, renderingMode, purpose, resolutionScale, colorSpace, pixelFormat);
+#if HAVE(IOSURFACE)
+    LOG_WITH_STREAM(RemoteLayerBuffers, stream << "GPUProcessWebWorkerClient::createImageBuffer - not remoting (purpose=" << purpose << "); using unaccelerated CPU buffer to avoid in-process IOSurface");
+    return ImageBuffer::create(size, RenderingMode::Unaccelerated, purpose, resolutionScale, colorSpace, pixelFormat);
+#else
     return nullptr;
+#endif
 }
 
 #if ENABLE(WEBGL)
@@ -114,9 +141,11 @@ RefPtr<GraphicsContextGL> GPUProcessWebWorkerClient::createGraphicsContextGL(con
     if (!dispatcher)
         return nullptr;
     assertIsCurrent(*dispatcher);
-    if (WebProcess::singleton().shouldUseRemoteRenderingForWebGL())
-        return RemoteGraphicsContextGLProxy::create(attributes, ensureProtectedRenderingBackend(), *dispatcher);
-    return WebWorkerClient::createGraphicsContextGL(attributes);
+    if (!WebProcess::singleton().shouldUseRemoteRenderingForWebGL()) {
+        // ANGLE does not support multithreading, so we cannot create in-process contexts in worker threads.
+        return nullptr;
+    }
+    return RemoteGraphicsContextGLProxy::create(attributes, protect(ensureRenderingBackend()), *dispatcher);
 }
 #endif
 
@@ -127,7 +156,7 @@ RefPtr<WebCore::WebGPU::GPU> GPUProcessWebWorkerClient::createGPUForWebGPU() con
     if (!dispatcher)
         return nullptr;
     assertIsCurrent(*dispatcher);
-    return RemoteGPUProxy::create(WebGPU::DowncastConvertToBackingContext::create(), DDModel::DowncastConvertToBackingContext::create(), ensureProtectedRenderingBackend(), *dispatcher);
+    return RemoteGPUProxy::create(WebGPU::DowncastConvertToBackingContext::create(), ModelDowncastConvertToBackingContext::create(), protect(ensureRenderingBackend()), *dispatcher);
 }
 #endif
 
@@ -171,7 +200,13 @@ RefPtr<ImageBuffer> WebWorkerClient::sinkIntoImageBuffer(std::unique_ptr<Seriali
     return SerializedImageBuffer::sinkIntoImageBuffer(WTF::move(imageBuffer));
 }
 
-RefPtr<ImageBuffer> WebWorkerClient::createImageBuffer(const FloatSize& size, RenderingMode renderingMode, RenderingPurpose purpose, float resolutionScale, const DestinationColorSpace& colorSpace, ImageBufferFormat pixelFormat) const
+RefPtr<ImageBuffer> WebWorkerClient::createImageBufferFromTransferHandle(const WebCore::ImageBufferTransferHandle&)
+{
+    assertIsCurrent(*dispatcher().get());
+    return nullptr;
+}
+
+RefPtr<ImageBuffer> WebWorkerClient::createImageBuffer(const FloatSize& size, RenderingMode renderingMode, RenderingPurpose purpose, float resolutionScale, const ColorSpace& colorSpace, ImageBufferFormat pixelFormat) const
 {
     assertIsCurrent(*dispatcher().get());
     return nullptr;
@@ -181,7 +216,8 @@ RefPtr<ImageBuffer> WebWorkerClient::createImageBuffer(const FloatSize& size, Re
 RefPtr<GraphicsContextGL> WebWorkerClient::createGraphicsContextGL(const GraphicsContextGLAttributes& attributes) const
 {
     assertIsCurrent(*dispatcher().get());
-    return WebCore::createWebProcessGraphicsContextGL(attributes);
+    // ANGLE does not support multithreading, so we cannot create in-process contexts in worker threads.
+    return nullptr;
 }
 #endif
 

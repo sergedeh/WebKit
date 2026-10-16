@@ -34,11 +34,11 @@
 namespace WebCore {
 
 struct RTCDataChannelInit {
-    std::optional<bool> ordered;
+    bool ordered;
     std::optional<unsigned short> maxPacketLifeTime;
     std::optional<unsigned short> maxRetransmits;
     String protocol;
-    std::optional<bool> negotiated;
+    bool negotiated;
     std::optional<unsigned short> id;
     RTCPriorityType priority { RTCPriorityType::Low };
 
@@ -68,7 +68,7 @@ public:
 
     virtual void setClient(RTCDataChannelHandlerClient&, std::optional<ScriptExecutionContextIdentifier>) = 0;
 
-    virtual bool sendStringData(const CString&) = 0;
+    virtual bool sendStringData(const UTF8CString&) = 0;
     virtual bool sendRawData(std::span<const uint8_t>) = 0;
     virtual void close() = 0;
 

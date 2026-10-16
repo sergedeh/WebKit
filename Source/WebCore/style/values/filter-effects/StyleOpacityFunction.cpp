@@ -41,7 +41,7 @@ namespace Style {
 
 OpacityParameters OpacityParameters::passthroughForInterpolation()
 {
-    return { .value = CSSFilterFunctionDescriptor<CSSValueOpacity>::initialValueForInterpolation };
+    return { .value = CSSFilterFunctionDescriptor<CSSValueID::Opacity>::initialValueForInterpolation };
 }
 
 bool OpacityParameters::transformColor(SRGBA<float>& color) const
@@ -52,7 +52,7 @@ bool OpacityParameters::transformColor(SRGBA<float>& color) const
 
 // MARK: - Conversion
 
-auto ToCSS<OpacityParameters>::operator()(const OpacityParameters& value, const RenderStyle& style) -> CSS::Opacity
+auto ToCSS<OpacityParameters>::operator()(const OpacityParameters& value, const Style::ComputedStyle& style) -> CSS::Opacity
 {
     return { .value = CSS::Opacity::Parameter { toCSS(value.value, style) } };
 }
@@ -69,7 +69,7 @@ auto ToStyle<CSS::Opacity>::operator()(const CSS::Opacity& value, const BuilderS
             }
         ) };
     }
-    return { .value = CSSFilterFunctionDescriptor<CSSValueOpacity>::defaultValue };
+    return { .value = CSSFilterFunctionDescriptor<CSSValueID::Opacity>::defaultValue };
 }
 
 // MARK: - Blending
@@ -79,7 +79,7 @@ auto Blending<OpacityParameters>::blend(const OpacityParameters& from, const Opa
     // Accumulate needs to be special cased for filter functions with "initial values
     // for interpolation of 1" to use the formula "Vresult = Va + Vb - 1".
     // https://drafts.csswg.org/filter-effects/#accumulation
-    static_assert(CSSFilterFunctionDescriptor<CSSValueOpacity>::initialValueForInterpolation == 1_css_number);
+    static_assert(CSSFilterFunctionDescriptor<CSSValueID::Opacity>::initialValueForInterpolation == 1_css_number);
 
     if (context.compositeOperation == CompositeOperation::Accumulate) {
         return { OpacityParameters::Parameter {

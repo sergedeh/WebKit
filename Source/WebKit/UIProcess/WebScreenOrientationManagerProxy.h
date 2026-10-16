@@ -31,6 +31,7 @@
 #include <WebCore/ScreenOrientationType.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/WeakHashSet.h>
 
 namespace WebCore {
 class Exception;
@@ -66,20 +67,19 @@ public:
     void currentOrientation(CompletionHandler<void(WebCore::ScreenOrientationType)>&&);
     void lock(WebCore::ScreenOrientationLockType, CompletionHandler<void(std::optional<WebCore::Exception>&&)>&&);
     void unlock();
-    void setShouldSendChangeNotification(bool);
+    void setShouldSendChangeNotification(IPC::Connection&, bool);
 
 private:
     WebScreenOrientationManagerProxy(WebPageProxy&, WebCore::ScreenOrientationType);
 
     std::optional<WebCore::Exception> platformShouldRejectLockRequest() const;
 
-    Ref<WebPageProxy> protectedPage() const;
 
     WeakRef<WebPageProxy> m_page;
     WebCore::ScreenOrientationType m_currentOrientation;
     std::optional<WebCore::ScreenOrientationType> m_currentlyLockedOrientation;
     CompletionHandler<void(std::optional<WebCore::Exception>&&)> m_currentLockRequest;
-    bool m_shouldSendChangeNotifications { false };
+    WeakHashSet<WebProcessProxy> m_processesNeedingChangeNotifications;
 };
 
 } // namespace WebKit

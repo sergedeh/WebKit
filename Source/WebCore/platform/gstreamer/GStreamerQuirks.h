@@ -98,15 +98,11 @@ public:
     // Returning rate.
     virtual std::optional<double> processWebKitMediaSrcCustomEvent(GRefPtr<GstEvent>, bool handledByAnyStream, bool handledByAllTheStreams) const;
 
-    // Subclass must return true if it wants to override the default behaviour of sibling platforms.
-    virtual bool processWebAudioSilentBuffer(GstBuffer* buffer) const
-    {
-        GST_BUFFER_FLAG_SET(buffer, GST_BUFFER_FLAG_GAP);
-        GST_BUFFER_FLAG_SET(buffer, GST_BUFFER_FLAG_DROPPABLE);
-        return false;
-    }
+    [[nodiscard]] virtual GRefPtr<GstCaps> videoSinkGLCapsFormat() const { return nullptr; }
+    virtual bool isVideoCapsGLCompatible(const GRefPtr<GstCaps>&) const { return true; }
 
-    [[nodiscard]] virtual GRefPtr<GstCaps> videoSinkGLCapsFormat() const { return nullptr;  }
+    virtual std::optional<GstState> eosMediaPlayerState() const { return { }; }
+
 };
 
 class GStreamerHolePunchQuirk : public GStreamerQuirkBase {
@@ -127,7 +123,7 @@ class GStreamerQuirksManager : public RefCounted<GStreamerQuirksManager> {
 public:
     static GStreamerQuirksManager& singleton();
 
-    static RefPtr<GStreamerQuirksManager> createForTesting()
+    static Ref<GStreamerQuirksManager> createForTesting()
     {
         return adoptRef(*new GStreamerQuirksManager(true, false));
     }
@@ -142,6 +138,9 @@ public:
     Vector<String> disallowedWebAudioDecoders() const;
 
     [[nodiscard]] GRefPtr<GstCaps> videoSinkGLCapsFormat() const;
+    bool isVideoCapsGLCompatible(const GRefPtr<GstCaps>&) const;
+
+    GstState eosMediaPlayerState() const;
 
     bool supportsVideoHolePunchRendering() const;
     GstElement* createHolePunchVideoSink(bool isLegacyPlaybin, const MediaPlayer*);
@@ -160,8 +159,6 @@ public:
     int correctBufferingPercentage(MediaPlayerPrivateGStreamer*, int originalBufferingPercentage, GstBufferingMode) const;
     void resetBufferingPercentage(MediaPlayerPrivateGStreamer*, int bufferingPercentage) const;
     void setupBufferingPercentageCorrection(MediaPlayerPrivateGStreamer*, GstState currentState, GstState newState, GRefPtr<GstElement>&&) const;
-
-    void processWebAudioSilentBuffer(GstBuffer*) const;
 
     bool needsCustomInstantRateChange() const;
     // Returning processed and didInstantRateChange.

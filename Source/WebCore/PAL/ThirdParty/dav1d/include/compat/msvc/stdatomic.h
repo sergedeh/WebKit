@@ -32,6 +32,10 @@
 #pragma warning(push)
 #pragma warning(disable:4067)    /* newline for __has_include_next */
 
+#ifndef __has_include_next
+#define __has_include_next(x) 0
+#endif
+
 #if defined(__clang__) && __has_include_next(<stdatomic.h>)
    /* use the clang stdatomic.h with clang-cl*/
 #  include_next <stdatomic.h>
@@ -55,6 +59,15 @@ typedef enum {
 #define atomic_exchange(p_a, v)       InterlockedExchange(p_a, v)
 #define atomic_load_explicit(p_a, mo) atomic_load(p_a)
 
+static inline int atomic_compare_exchange_strong_int(LONG *obj, LONG *expected,
+                                                     LONG desired)
+{
+    LONG orig = *expected;
+    *expected = InterlockedCompareExchange(obj, desired, orig);
+    return *expected == orig;
+}
+#define atomic_compare_exchange_strong(p_a, expected, desired) atomic_compare_exchange_strong_int((LONG *)p_a, (LONG *)expected, (LONG)desired)
+
 /*
  * TODO use a special call to increment/decrement
  * using InterlockedIncrement/InterlockedDecrement
@@ -62,6 +75,7 @@ typedef enum {
 #define atomic_fetch_add(p_a, inc)    InterlockedExchangeAdd(p_a, inc)
 #define atomic_fetch_sub(p_a, dec)    InterlockedExchangeAdd(p_a, -(dec))
 #define atomic_fetch_or(p_a, v)       InterlockedOr(p_a, v)
+#define atomic_fetch_add_explicit(p_a, inc, mo) atomic_fetch_add(p_a, inc)
 
 #endif /* ! stdatomic.h */
 

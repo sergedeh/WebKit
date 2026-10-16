@@ -29,15 +29,15 @@
 #include "LegacyRenderSVGRect.h"
 
 #include "LegacyRenderSVGShapeInlines.h"
-#include "RenderStyle+GettersInlines.h"
 #include "SVGElementTypeHelpers.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(LegacyRenderSVGRect);
 
-LegacyRenderSVGRect::LegacyRenderSVGRect(SVGRectElement& element, RenderStyle&& style)
+LegacyRenderSVGRect::LegacyRenderSVGRect(SVGRectElement& element, Style::ComputedStyle&& style)
     : LegacyRenderSVGShape(Type::LegacySVGRect, element, WTF::move(style))
 {
 }
@@ -58,6 +58,7 @@ void LegacyRenderSVGRect::updateShapeFromElement()
     m_fillBoundingBox = FloatRect();
     m_strokeBoundingBox = std::nullopt;
     m_approximateStrokeBoundingBox = std::nullopt;
+    m_hitTestStrokeBoundingBox = std::nullopt;
 
     Ref rectElement = this->rectElement();
     SVGLengthContext lengthContext(rectElement.ptr());
@@ -69,8 +70,8 @@ void LegacyRenderSVGRect::updateShapeFromElement()
     if (boundingBoxSize.isEmpty())
         return;
 
-    if (lengthContext.valueForLength(style->rx(), Style::ZoomNeeded { }, SVGLengthMode::Width) > 0
-        || lengthContext.valueForLength(style->ry(), Style::ZoomNeeded { }, SVGLengthMode::Height) > 0)
+    if (lengthContext.valueForLength(style->rx(), usedZoom, SVGLengthMode::Width) > 0
+        || lengthContext.valueForLength(style->ry(), usedZoom, SVGLengthMode::Height) > 0)
         m_shapeType = ShapeType::RoundedRectangle;
     else
         m_shapeType = ShapeType::Rectangle;
@@ -81,12 +82,12 @@ void LegacyRenderSVGRect::updateShapeFromElement()
         return;
     }
 
-    m_fillBoundingBox = FloatRect(FloatPoint(lengthContext.valueForLength(style->x(), Style::ZoomNeeded { }, SVGLengthMode::Width),
-        lengthContext.valueForLength(style->y(),  Style::ZoomNeeded { }, SVGLengthMode::Height)),
+    m_fillBoundingBox = FloatRect(FloatPoint(lengthContext.valueForLength(style->x(), usedZoom, SVGLengthMode::Width),
+        lengthContext.valueForLength(style->y(),  usedZoom, SVGLengthMode::Height)),
         boundingBoxSize);
 
     auto strokeBoundingBox = m_fillBoundingBox;
-    if (style->hasStroke())
+    if (!style->stroke().isNone())
         strokeBoundingBox.inflate(this->strokeWidth() / 2);
 
 #if USE(CG)
@@ -123,7 +124,7 @@ void LegacyRenderSVGRect::fillShape(GraphicsContext& context) const
 
 void LegacyRenderSVGRect::strokeShape(GraphicsContext& context) const
 {
-    if (!style().hasStroke() || !style().strokeWidth().isPossiblyPositive())
+    if (style().stroke().isNone() || !style().strokeWidth().isPossiblyPositive())
         return;
 
     if (hasPath()) {

@@ -74,7 +74,9 @@ PAS_DECLARE_SEGMENTED_VECTOR(pas_bitfit_directory_segmented_bitvectors,
                              pas_bitfit_directory_bitvector_segment,
                              4);
 
-struct PAS_ALIGNED(sizeof(pas_versioned_field)) pas_bitfit_directory {
+/* Also aligned for pas_compact_bitfit_directory_ptr, which needs more alignment than
+   pas_versioned_field when pointers are 32-bit. */
+struct PAS_ALIGNED(sizeof(pas_versioned_field)) PAS_ALIGNED(PAS_OVERALIGNED_COMPACT_PTR_ALIGN) pas_bitfit_directory {
     pas_versioned_field first_unprocessed_free;
     pas_versioned_field first_empty;
     pas_versioned_field last_empty_plus_one; /* Zero means there aren't any. */
@@ -86,6 +88,12 @@ struct PAS_ALIGNED(sizeof(pas_versioned_field)) pas_bitfit_directory {
     pas_compact_atomic_bitfit_size_class_ptr largest_size_class;
     pas_bitfit_page_config_kind config_kind : 8;
 };
+
+/* Bitfit directories are pointed at by pas_compact_bitfit_directory_ptr. */
+#if PAS_COMPILER(CLANG)
+_Static_assert(PAS_ALIGNOF(pas_bitfit_directory) >= PAS_OVERALIGNED_COMPACT_PTR_ALIGN,
+               "pas_bitfit_directory must be aligned enough for overaligned compact pointers");
+#endif
 
 PAS_API void pas_bitfit_directory_construct(pas_bitfit_directory* directory,
                                             const pas_bitfit_page_config* config,
@@ -176,19 +184,11 @@ static inline void pas_bitfit_directory_set_unprocessed_max_free(pas_bitfit_dire
     pas_bitfit_directory_set_max_free_not_empty_impl(directory, index, PAS_BITFIT_MAX_FREE_UNPROCESSED);
 }
 
-PAS_API void pas_bitfit_directory_update_biasing_eligibility(pas_bitfit_directory* directory,
-                                                             size_t index);
-
 PAS_API void pas_bitfit_directory_max_free_did_become_unprocessed(pas_bitfit_directory* directory,
                                                                   size_t index,
                                                                   const char* reason);
 
 PAS_API void pas_bitfit_directory_max_free_did_become_unprocessed_unchecked(
-    pas_bitfit_directory* directory,
-    size_t index,
-    const char* reason);
-
-PAS_API void pas_bitfit_directory_max_free_did_become_empty_without_biasing_update(
     pas_bitfit_directory* directory,
     size_t index,
     const char* reason);

@@ -36,6 +36,7 @@
 #include <WebCore/RTCDataChannel.h>
 #include <WebCore/RTCError.h>
 #include <WebCore/ScriptExecutionContext.h>
+#include <wtf/Borrow.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/Ref.h>
 
@@ -81,14 +82,14 @@ bool RTCDataChannelRemoteManager::connectToRemoteSource(WebCore::RTCDataChannelI
 WebCore::RTCDataChannelRemoteHandlerConnection& RTCDataChannelRemoteManager::remoteHandlerConnection()
 {
     if (!m_remoteHandlerConnection)
-        m_remoteHandlerConnection = RemoteHandlerConnection::create(m_queue.copyRef());
+        lazyInitialize(m_remoteHandlerConnection, RemoteHandlerConnection::create(m_queue.copyRef()));
     return *m_remoteHandlerConnection;
 }
 
 WebCore::RTCDataChannelRemoteSourceConnection& RTCDataChannelRemoteManager::remoteSourceConnection()
 {
     if (!m_remoteSourceConnection)
-        m_remoteSourceConnection = RemoteSourceConnection::create();
+        lazyInitialize(m_remoteSourceConnection, RemoteSourceConnection::create());
     return *m_remoteSourceConnection;
 }
 
@@ -103,8 +104,8 @@ void RTCDataChannelRemoteManager::postTaskToHandler(WebCore::RTCDataChannelIdent
         return;
     auto& remoteHandler = iterator->value;
 
-    WebCore::ScriptExecutionContext::postTaskTo(*remoteHandler.contextIdentifier, [handler = remoteHandler.handler, function = WTF::move(function)](auto&) mutable {
-        if (handler)
+    WebCore::ScriptExecutionContext::postTaskTo(*remoteHandler.contextIdentifier, [weakHandler = remoteHandler.handler, function = WTF::move(function)](auto&) mutable {
+        if (CheckedPtr handler = weakHandler)
             function(*handler);
     });
 }
@@ -124,7 +125,7 @@ void RTCDataChannelRemoteManager::sendData(WebCore::RTCDataChannelIdentifier sou
         if (isRaw)
             source->sendRawData(data);
         else
-            source->sendStringData(CString(byteCast<Latin1Character>(data)));
+            source->sendStringData(UTF8CString(byteCast<char8_t>(data)));
     }
 }
 
@@ -152,7 +153,7 @@ void RTCDataChannelRemoteManager::receiveData(WebCore::RTCDataChannelIdentifier 
 
     postTaskToHandler(handlerIdentifier, [isRaw, text = WTF::move(text).isolatedCopy(), buffer = WTF::move(buffer)](auto& handler) mutable {
         if (isRaw)
-            handler.didReceiveRawData(buffer.span());
+            handler.didReceiveRawData(borrow(buffer)->span());
         else
             handler.didReceiveStringData(WTF::move(text));
     });
@@ -228,7 +229,7 @@ void RTCDataChannelRemoteManager::RemoteSourceConnection::didChangeReadyState(We
 void RTCDataChannelRemoteManager::RemoteSourceConnection::didReceiveStringData(WebCore::RTCDataChannelIdentifier identifier, const String& string)
 {
     auto text = string.utf8();
-    m_connection->send(Messages::RTCDataChannelRemoteManagerProxy::ReceiveData { identifier, false, byteCast<uint8_t>(text.span()) }, 0);
+    m_connection->send(Messages::RTCDataChannelRemoteManagerProxy::ReceiveData { identifier, false, asByteSpan(text.span()) }, 0);
 }
 
 void RTCDataChannelRemoteManager::RemoteSourceConnection::didReceiveRawData(WebCore::RTCDataChannelIdentifier identifier, std::span<const uint8_t> data)

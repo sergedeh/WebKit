@@ -58,7 +58,7 @@ public:
 
 #if PLATFORM(MAC)
     static Ref<PageBanner> create(CALayer *, int height, std::unique_ptr<Client>&&);
-    CALayer *layer();
+    CALayer *LEGACY_NODELETE layer();
 #endif
 
     virtual ~PageBanner();
@@ -77,11 +77,9 @@ public:
 private:
 #if PLATFORM(MAC)
     explicit PageBanner(CALayer *, int height, std::unique_ptr<Client>&&);
-
-    RefPtr<WebPage> protectedWebPage();
 #endif
 
-    std::unique_ptr<Client> m_client;
+    const std::unique_ptr<Client> m_client;
 
 #if PLATFORM(MAC)
     Type m_type = NotSet;
@@ -89,7 +87,7 @@ private:
     bool m_mouseDownInBanner = false;
     bool m_isHidden = false;
 
-    RetainPtr<CALayer> m_layer;
+    const RetainPtr<CALayer> m_layer;
     int m_height;
 #endif
 };

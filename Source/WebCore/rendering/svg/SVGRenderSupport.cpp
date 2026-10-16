@@ -28,6 +28,7 @@
 #include "config.h"
 #include "SVGRenderSupport.h"
 
+#include "DashArray.h"
 #include "ElementAncestorIteratorInlines.h"
 #include "LegacyRenderSVGForeignObject.h"
 #include "LegacyRenderSVGImage.h"
@@ -43,6 +44,7 @@
 #include "PathOperation.h"
 #include "ReferencedSVGResources.h"
 #include "RenderChildIterator.h"
+#include "RenderDescendantIterator.h"
 #include "RenderElement.h"
 #include "RenderElementInlines.h"
 #include "RenderGeometryMap.h"
@@ -53,21 +55,25 @@
 #include "RenderSVGRoot.h"
 #include "RenderSVGShapeInlines.h"
 #include "RenderSVGText.h"
-#include "RenderStyle+GettersInlines.h"
 #include "SVGClipPathElement.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGGeometryElement.h"
 #include "SVGResources.h"
 #include "SVGResourcesCache.h"
 #include "Settings.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "TransformOperationData.h"
 #include "TransformState.h"
 #include "VisibleRectContext.h"
 #include <numbers>
 
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+#include <WebKitAdditions/AXCustomColorSVGClassifier.h>
+#endif
+
 namespace WebCore {
 
-LayoutRect SVGRenderSupport::clippedOverflowRectForRepaint(const RenderElement& renderer, const RenderLayerModelObject* repaintContainer, VisibleRectContext context)
+LayoutRect SVGRenderSupport::clippedOverflowRectForRepaint(const RenderElement& renderer, const RenderLayerModelObject* repaintContainer, const VisibleRectContext& context)
 {
     // Return early for any cases where we don't actually paint
     if (renderer.isInsideEntirelyHiddenLayer())
@@ -78,7 +84,7 @@ LayoutRect SVGRenderSupport::clippedOverflowRectForRepaint(const RenderElement& 
     return enclosingLayoutRect(renderer.computeFloatRectForRepaint(renderer.repaintRectInLocalCoordinates(context.repaintRectCalculation()), repaintContainer));
 }
 
-std::optional<FloatRect> SVGRenderSupport::computeFloatVisibleRectInContainer(const RenderElement& renderer, const FloatRect& rect, const RenderLayerModelObject* container, VisibleRectContext context)
+std::optional<FloatRect> SVGRenderSupport::computeFloatVisibleRectInContainer(const RenderElement& renderer, const FloatRect& rect, const RenderLayerModelObject* container, const VisibleRectContext& context, VisibleRectState state)
 {
     // Ensure our parent is an SVG object.
     ASSERT(renderer.parent());
@@ -87,12 +93,12 @@ std::optional<FloatRect> SVGRenderSupport::computeFloatVisibleRectInContainer(co
         return FloatRect();
 
     FloatRect adjustedRect = rect;
-    adjustedRect.inflate(Style::evaluate<float>(renderer.style().usedOutlineWidth(), Style::ZoomNeeded { }));
+    adjustedRect.inflate(renderer.usedStyle().outlineSize());
 
     // Translate to coords in our parent renderer, and then call computeFloatVisibleRectInContainer() on our parent.
     adjustedRect = renderer.localToParentTransform().mapRect(adjustedRect);
 
-    return parent.computeFloatVisibleRectInContainer(adjustedRect, container, context);
+    return parent.computeFloatVisibleRectInContainer(adjustedRect, container, context, state);
 }
 
 const RenderElement& SVGRenderSupport::localToParentTransform(const RenderElement& renderer, AffineTransform &transform)
@@ -120,7 +126,7 @@ void SVGRenderSupport::mapLocalToContainer(const RenderElement& renderer, const 
 
     transformState.applyTransform(transform);
 
-    OptionSet<MapCoordinatesMode> mode = UseTransforms;
+    OptionSet<MapCoordinatesMode> mode = MapCoordinatesMode::UseTransforms;
     parent.mapLocalToContainer(ancestorContainer, transformState, mode, wasFixed);
 }
 
@@ -262,9 +268,9 @@ static inline void invalidateResourcesOfChildren(RenderElement& renderer)
         invalidateResourcesOfChildren(child);
 }
 
-static inline bool layoutSizeOfNearestViewportChanged(const RenderElement& renderer)
+static inline bool LEGACY_NODELETE layoutSizeOfNearestViewportChanged(const RenderElement& renderer)
 {
-    for (CheckedPtr start = &renderer; start; start = start->parent()) {
+    for (auto* start = &renderer; start; start = start->parent()) {
         if (auto* svgRoot = dynamicDowncast<LegacyRenderSVGRoot>(*start))
             return svgRoot->isLayoutSizeChanged();
         if (auto* container = dynamicDowncast<LegacyRenderSVGViewportContainer>(*start))
@@ -305,7 +311,7 @@ void SVGRenderSupport::layoutChildren(RenderElement& start, bool selfNeedsLayout
 
         if (transformChanged) {
             // If the transform changed we need to update the text metrics (note: this also happens for layoutSizeChanged=true).
-            if (CheckedPtr text = dynamicDowncast<RenderSVGText>(child))
+            if (auto* text = dynamicDowncast<RenderSVGText>(child))
                 text->setNeedsTextMetricsUpdate();
             needsLayout = true;
         }
@@ -314,9 +320,9 @@ void SVGRenderSupport::layoutChildren(RenderElement& start, bool selfNeedsLayout
             // When selfNeedsLayout is false and the layout size changed, we have to check whether this child uses relative lengths
             if (RefPtr element = dynamicDowncast<SVGElement>(child.node()); element && element->hasRelativeLengths()) {
                 // When the layout size changed and when using relative values tell the LegacyRenderSVGShape to update its shape object
-                if (CheckedPtr shape = dynamicDowncast<LegacyRenderSVGShape>(child))
+                if (auto* shape = dynamicDowncast<LegacyRenderSVGShape>(child))
                     shape->setNeedsShapeUpdate();
-                else if (CheckedPtr svgText = dynamicDowncast<RenderSVGText>(child)) {
+                else if (auto* svgText = dynamicDowncast<RenderSVGText>(child)) {
                     svgText->setNeedsTextMetricsUpdate();
                     svgText->setNeedsPositioningValuesUpdate();
                 }
@@ -326,7 +332,7 @@ void SVGRenderSupport::layoutChildren(RenderElement& start, bool selfNeedsLayout
         }
 
         if (needsLayout)
-            child.setNeedsLayout(MarkOnlyThis);
+            child.setNeedsLayout(MarkingBehavior::MarkOnlyThis);
 
         if (child.needsLayout()) {
             CheckedRef childElement = downcast<RenderElement>(child);
@@ -422,9 +428,18 @@ bool SVGRenderSupport::filtersForceContainerLayout(const RenderElement& renderer
     return true;
 }
 
+FloatSize SVGRenderSupport::svgContentLocationOffset(const RenderObject& renderer)
+{
+    // A <foreignObject> keeps its bounding boxes origin-relative, but paints its content at location().
+    if (CheckedPtr foreignObject = dynamicDowncast<LegacyRenderSVGForeignObject>(renderer))
+        return toFloatSize(FloatPoint { foreignObject->location() });
+    return { };
+}
+
 inline FloatRect clipPathReferenceBox(const RenderElement& renderer, CSSBoxType boxType)
 {
     FloatRect referenceBox;
+    bool isBoxRelativeToRendererGeometry = true;
     switch (boxType) {
     case CSSBoxType::BorderBox:
     case CSSBoxType::MarginBox:
@@ -435,10 +450,12 @@ inline FloatRect clipPathReferenceBox(const RenderElement& renderer, CSSBoxType 
         break;
     case CSSBoxType::ViewBox:
         if (renderer.element()) {
-            auto viewportSize = SVGLengthContext(downcast<SVGElement>(renderer.element())).viewportSize();
-            if (viewportSize)
+            auto viewportSize = SVGLengthContext(downcast<SVGElement>(protect(renderer.element()))).viewportSize();
+            if (viewportSize) {
                 referenceBox.setSize(*viewportSize);
-            break;
+                isBoxRelativeToRendererGeometry = false;
+                break;
+            }
         }
         [[fallthrough]];
     case CSSBoxType::ContentBox:
@@ -447,6 +464,10 @@ inline FloatRect clipPathReferenceBox(const RenderElement& renderer, CSSBoxType 
         referenceBox = renderer.objectBoundingBox();
         break;
     }
+
+    if (isBoxRelativeToRendererGeometry)
+        referenceBox.move(SVGRenderSupport::svgContentLocationOffset(renderer));
+
     return referenceBox;
 }
 
@@ -457,7 +478,7 @@ inline bool isPointInCSSClippingArea(const RenderElement& renderer, const FloatP
             auto referenceBox = clipPathReferenceBox(renderer, clipPath.referenceBox());
             if (!referenceBox.contains(point))
                 return false;
-            return Style::path(clipPath.shape(), referenceBox).contains(point, Style::windRule(clipPath.shape()));
+            return Style::path(clipPath.shape(), referenceBox, renderer.style().usedZoomForLength()).contains(point, Style::windRule(clipPath.shape()));
         },
         [&](const Style::BoxPath& clipPath) {
             auto referenceBox = clipPathReferenceBox(renderer, clipPath.referenceBox());
@@ -475,15 +496,8 @@ void SVGRenderSupport::clipContextToCSSClippingArea(GraphicsContext& context, co
 {
     WTF::switchOn(renderer.style().clipPath(),
         [&](const Style::BasicShapePath& clipPath) {
-            auto localToParentTransform = renderer.localToParentTransform();
-
             auto referenceBox = clipPathReferenceBox(renderer, clipPath.referenceBox());
-            referenceBox = localToParentTransform.mapRect(referenceBox);
-
-            auto path = Style::path(clipPath.shape(), referenceBox);
-            path.transform(valueOrDefault(localToParentTransform.inverse()));
-
-            context.clipPath(path, Style::windRule(clipPath.shape()));
+            context.clipPath(Style::path(clipPath.shape(), referenceBox, renderer.style().usedZoomForLength()), Style::windRule(clipPath.shape()));
         },
         [&](const Style::BoxPath& clipPath) {
             auto referenceBox = clipPathReferenceBox(renderer, clipPath.referenceBox());
@@ -512,16 +526,17 @@ bool SVGRenderSupport::pointInClippingArea(const RenderElement& renderer, const 
     return true;
 }
 
-void SVGRenderSupport::applyStrokeStyleToContext(GraphicsContext& context, const RenderStyle& style, const RenderElement& renderer)
+void SVGRenderSupport::applyStrokeStyleToContext(GraphicsContext& context, const Style::ComputedStyle& style, const RenderElement& renderer)
 {
-    auto element = dynamicDowncast<SVGElement>(renderer.protectedElement());
+    auto element = dynamicDowncast<SVGElement>(protect(renderer.element()));
     if (!element) {
         ASSERT_NOT_REACHED();
         return;
     }
 
+    auto usedZoom = style.usedZoomForLength();
     SVGLengthContext lengthContext(element.get());
-    context.setStrokeThickness(lengthContext.valueForLength(style.strokeWidth(), Style::ZoomNeeded { }));
+    context.setStrokeThickness(lengthContext.valueForLength(style.strokeWidth(), usedZoom));
     context.setLineCap(style.capStyle());
     context.setLineJoin(style.joinStyle());
     if (style.joinStyle() == LineJoin::Miter)
@@ -535,39 +550,89 @@ void SVGRenderSupport::applyStrokeStyleToContext(GraphicsContext& context, const
 
         if (auto geometryElement = dynamicDowncast<SVGGeometryElement>(*element)) {
             ASSERT(renderer.isRenderOrLegacyRenderSVGShape());
-            // FIXME: A value of zero is valid. Need to differentiate this case from being unspecified.
-            if (float pathLength = geometryElement->pathLength()) {
-                if (CheckedPtr shape = dynamicDowncast<LegacyRenderSVGShape>(renderer))
-                    scaleFactor = shape->getTotalLength() / pathLength;
-                else if (CheckedPtr shape = dynamicDowncast<RenderSVGShape>(renderer))
-                    scaleFactor = shape->getTotalLength() / pathLength;
+            if (geometryElement->hasAttribute(SVGNames::pathLengthAttr)) {
+                float pathLength = geometryElement->pathLength();
+                if (!pathLength) {
+                    context.setStrokeStyle(StrokeStyle::SolidStroke);
+                    return;
+                }
+                if (pathLength > 0) {
+                    if (CheckedPtr shape = dynamicDowncast<LegacyRenderSVGShape>(renderer))
+                        scaleFactor = shape->getTotalLength() / pathLength;
+                    else if (CheckedPtr shape = dynamicDowncast<RenderSVGShape>(renderer))
+                        scaleFactor = shape->getTotalLength() / pathLength;
+                }
             }
         }
         
         bool canSetLineDash = false;
-        auto dashArray = DashArray::map(dashes, [&](auto& dash) -> DashArrayElement {
-            auto value = lengthContext.valueForLength(dash, Style::ZoomNeeded { }) * scaleFactor;
+        auto dashArray = DashArray::map(dashes, [&lengthContext, usedZoom, scaleFactor, &canSetLineDash](const Style::SVGStrokeDasharrayValue& dash) -> DashArrayElement {
+            auto value = lengthContext.valueForLength(dash, usedZoom) * scaleFactor;
             if (value > 0)
                 canSetLineDash = true;
             return value;
         });
 
         if (canSetLineDash)
-            context.setLineDash(dashArray, lengthContext.valueForLength(style.strokeDashOffset(), Style::ZoomNeeded { }) * scaleFactor);
+            context.setLineDash(dashArray, lengthContext.valueForLength(style.strokeDashOffset(), usedZoom) * scaleFactor);
         else
             context.setStrokeStyle(StrokeStyle::SolidStroke);
     }
 }
 
-void SVGRenderSupport::styleChanged(RenderElement& renderer, const RenderStyle* oldStyle)
+void SVGRenderSupport::styleChanged(RenderElement& renderer, const Style::ComputedStyle* oldStyle)
 {
-    if (renderer.element() && renderer.element()->isSVGElement() && (!oldStyle || renderer.style().hasBlendMode() != oldStyle->hasBlendMode()))
+    if (renderer.element() && renderer.element()->isSVGElement() && (!oldStyle || (protect(renderer.style())->usedBlendMode() != BlendMode::Normal) != (oldStyle->usedBlendMode() != BlendMode::Normal)))
         SVGRenderSupport::updateMaskedAncestorShouldIsolateBlending(renderer);
+
+    bool hadNonScalingStroke = oldStyle && oldStyle->vectorEffect() == VectorEffect::NonScalingStroke;
+    bool hasNonScalingStroke = renderer.style().vectorEffect() == VectorEffect::NonScalingStroke;
+    if (hadNonScalingStroke != hasNonScalingStroke)
+        updateAncestorNonScalingStrokeCounts(renderer, hasNonScalingStroke ? 1 : -1);
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    AXCustomColorSVGClassifier::styleDidChange(renderer, oldStyle);
+#endif
 }
 
-bool SVGRenderSupport::isolatesBlending(const RenderStyle& style)
+void SVGRenderSupport::updateAncestorNonScalingStrokeCounts(RenderElement& renderer, int delta)
 {
-    return style.hasPositionedMask() || style.hasFilter() || style.hasBlendMode() || !style.opacity().isOpaque();
+    for (auto* ancestor = renderer.parent(); ancestor; ancestor = ancestor->parent()) {
+        if (auto* container = dynamicDowncast<LegacyRenderSVGContainer>(*ancestor))
+            container->adjustNonScalingStrokeDescendantCount(delta);
+        else if (auto* root = dynamicDowncast<LegacyRenderSVGRoot>(*ancestor))
+            root->adjustNonScalingStrokeDescendantCount(delta);
+    }
+}
+
+bool SVGRenderSupport::computeHasScalingAncestor(const RenderElement& renderer)
+{
+    auto* parent = renderer.parent();
+    if (auto* svgModelObject = dynamicDowncast<LegacyRenderSVGModelObject>(parent))
+        return svgModelObject->hasScalingAncestor() || !svgModelObject->localToParentTransform().isIdentityOrTranslation();
+    if (auto* root = dynamicDowncast<LegacyRenderSVGRoot>(parent))
+        return !root->localToBorderBoxTransform().isIdentityOrTranslation();
+    return false;
+}
+
+void SVGRenderSupport::elementInsertedIntoTree(RenderElement& renderer)
+{
+    if (renderer.style().vectorEffect() == VectorEffect::NonScalingStroke)
+        updateAncestorNonScalingStrokeCounts(renderer, 1);
+}
+
+void SVGRenderSupport::elementWillBeRemovedFromTree(RenderElement& renderer)
+{
+    if (renderer.style().vectorEffect() == VectorEffect::NonScalingStroke)
+        updateAncestorNonScalingStrokeCounts(renderer, -1);
+}
+
+bool SVGRenderSupport::isolatesBlending(const Style::ComputedStyle& style)
+{
+    return style.hasPositionedMask()
+        || !style.filter().isNone()
+        || style.usedBlendMode() != BlendMode::Normal
+        || !style.opacity().isOpaque();
 }
 
 void SVGRenderSupport::updateMaskedAncestorShouldIsolateBlending(const RenderElement& renderer)
@@ -580,19 +645,19 @@ void SVGRenderSupport::updateMaskedAncestorShouldIsolateBlending(const RenderEle
         if (!style || !isolatesBlending(*style))
             continue;
         if (style->hasPositionedMask())
-            ancestor->setShouldIsolateBlending(renderer.style().hasBlendMode());
+            ancestor->setShouldIsolateBlending(protect(renderer.style())->usedBlendMode() != BlendMode::Normal);
         return;
     }
 }
 
-FloatRect SVGRenderSupport::calculateApproximateStrokeBoundingBox(const RenderElement& renderer)
+FloatRect SVGRenderSupport::calculateApproximateStrokeBoundingBox(const RenderElement& renderer, StrokeBoundingBoxPurpose purpose)
 {
     auto calculateApproximateScalingStrokeBoundingBox = [&]<typename Renderer>(const Renderer& renderer, FloatRect fillBoundingBox) -> FloatRect {
         // Implementation of
-        // https://drafts.fxtf.org/css-masking/#compute-stroke-bounding-box
+        // https://drafts.csswg.org/css-masking-1/#compute-stroke-bounding-box
         // except that we ignore whether the stroke is none.
 
-        ASSERT(renderer.style().hasStroke());
+        ASSERT(purpose == StrokeBoundingBoxPurpose::HitTesting || !renderer.style().stroke().isNone());
 
         auto strokeBoundingBox = fillBoundingBox;
         const float strokeWidth = renderer.strokeWidth();
@@ -638,7 +703,7 @@ FloatRect SVGRenderSupport::calculateApproximateStrokeBoundingBox(const RenderEl
 
     auto calculateApproximateNonScalingStrokeBoundingBox = [&](const auto& renderer, FloatRect fillBoundingBox) -> FloatRect {
         ASSERT(renderer.hasPath());
-        ASSERT(renderer.style().hasStroke());
+        ASSERT(purpose == StrokeBoundingBoxPurpose::HitTesting || !renderer.style().stroke().isNone());
         ASSERT(renderer.hasNonScalingStroke());
 
         auto strokeBoundingBox = fillBoundingBox;
@@ -654,18 +719,25 @@ FloatRect SVGRenderSupport::calculateApproximateStrokeBoundingBox(const RenderEl
     };
 
     auto calculate = [&](const auto& renderer) {
-        if (!renderer.style().hasStroke())
+        if (renderer.style().stroke().isNone() && purpose == StrokeBoundingBoxPurpose::Painting)
             return renderer.objectBoundingBox();
         if (renderer.hasNonScalingStroke())
             return calculateApproximateNonScalingStrokeBoundingBox(renderer, renderer.objectBoundingBox());
         return calculateApproximateScalingStrokeBoundingBox(renderer, renderer.objectBoundingBox());
     };
 
-    if (CheckedPtr shape = dynamicDowncast<LegacyRenderSVGShape>(renderer))
-        return shape->adjustStrokeBoundingBoxForMarkersAndZeroLengthLinecaps(RepaintRectCalculation::Fast, calculate(*shape));
+    if (CheckedPtr shape = dynamicDowncast<LegacyRenderSVGShape>(renderer)) {
+        auto strokeBoundingBox = calculate(*shape);
+        if (purpose == StrokeBoundingBoxPurpose::HitTesting)
+            return strokeBoundingBox;
+        return shape->adjustStrokeBoundingBoxForMarkersAndZeroLengthLinecaps(RepaintRectCalculation::Fast, strokeBoundingBox);
+    }
 
     const auto& shape = downcast<RenderSVGShape>(renderer);
-    return shape.adjustStrokeBoundingBoxForZeroLengthLinecaps(RepaintRectCalculation::Fast, calculate(shape));
+    auto strokeBoundingBox = calculate(shape);
+    if (purpose == StrokeBoundingBoxPurpose::HitTesting)
+        return strokeBoundingBox;
+    return shape.adjustStrokeBoundingBoxForZeroLengthLinecaps(RepaintRectCalculation::Fast, strokeBoundingBox);
 }
 
 }

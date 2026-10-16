@@ -23,7 +23,6 @@
 #include <WebCore/CSSValue.h>
 #include <array>
 #include <ranges>
-#include <unicode/umachine.h>
 #include <wtf/MallocSpan.h>
 
 namespace WebCore {
@@ -53,7 +52,8 @@ public:
         }
         constexpr bool operator==(const iterator& other) const { return index == other.index; }
 
-        const CSSValueContainingVector* vector { nullptr };
+        // The iterator is a short-lived view and the vector outlives it.
+        SUPPRESS_UNCOUNTED_MEMBER const CSSValueContainingVector* vector { nullptr };
         unsigned index { 0 };
     };
     using const_iterator = iterator;
@@ -62,7 +62,7 @@ public:
     iterator end() const LIFETIME_BOUND { return { this, size() }; }
 
     bool hasValue(CSSValue&) const;
-    bool hasValue(CSSValueID) const;
+    bool LEGACY_NODELETE hasValue(CSSValueID) const;
 
     void serializeItems(StringBuilder&, const CSS::SerializationContext&) const;
     String serializeItems(const CSS::SerializationContext&) const;
@@ -80,7 +80,6 @@ public:
     // Consider removing these functions and having callers use size() and operator[] instead.
     unsigned length() const { return size(); }
     const CSSValue* item(unsigned index) const LIFETIME_BOUND { return index < size() ? &(*this)[index] : nullptr; }
-    RefPtr<const CSSValue> protectedItem(unsigned index) const { return item(index); }
     const CSSValue* itemWithoutBoundsCheck(unsigned index) const LIFETIME_BOUND { return &(*this)[index]; }
 
     IterationStatus customVisitChildren(NOESCAPE const Function<IterationStatus(CSSValue&)>&) const;
@@ -113,7 +112,7 @@ public:
     static Ref<CSSValueList> createCommaSeparated(Ref<CSSValue>); // FIXME: Upgrade callers to not use a list at all.
 
     static Ref<CSSValueList> createSpaceSeparated(CSSValueListBuilder);
-    static Ref<CSSValueList> createSpaceSeparated(); // FIXME: Get rid of the caller that needs to create an empty list.
+    static Ref<CSSValueList> LEGACY_NODELETE createSpaceSeparated(); // FIXME: Get rid of the caller that needs to create an empty list.
     static Ref<CSSValueList> createSpaceSeparated(Ref<CSSValue>); // FIXME: Upgrade callers to not use a list at all.
     static Ref<CSSValueList> createSpaceSeparated(Ref<CSSValue>, Ref<CSSValue>);
     static Ref<CSSValueList> createSpaceSeparated(Ref<CSSValue>, Ref<CSSValue>, Ref<CSSValue>);
@@ -125,6 +124,8 @@ public:
 
     String customCSSText(const CSS::SerializationContext&) const;
     bool equals(const CSSValueList&) const;
+
+    Ref<DeprecatedCSSOMValue> customCreateDeprecatedCSSOMWrapper(CSSStyleDeclaration&) const;
 
 private:
     friend void add(Hasher&, const CSSValueList&);

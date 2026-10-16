@@ -29,6 +29,7 @@
 
 #pragma once
 
+#include <WebCore/IntRect.h>
 #include <wtf/Platform.h>
 #include <wtf/RefCounted.h>
 #include <wtf/Vector.h>
@@ -62,6 +63,7 @@ struct FileChooserSettings {
 #if ENABLE(MEDIA_CAPTURE)
     MediaCaptureType mediaCaptureType { MediaCaptureType::MediaCaptureTypeNone };
 #endif
+    IntRect elementRectInMainFrameViewCoordinates;
 };
 
 class FileChooserClient {
@@ -77,7 +79,7 @@ public:
     static Ref<FileChooser> create(FileChooserClient&, const FileChooserSettings&);
     WEBCORE_EXPORT ~FileChooser();
 
-    void invalidate();
+    void LEGACY_NODELETE invalidate();
 
     WEBCORE_EXPORT void chooseFile(const String& path);
     WEBCORE_EXPORT void chooseFiles(const Vector<String>& paths, const Vector<String>& replacementPaths = { });
@@ -91,7 +93,7 @@ public:
     // FIXME: We should probably just pass file paths that could be virtual paths with proper display names rather than passing structs.
     void chooseFiles(const Vector<FileChooserFileInfo>& files);
 
-    const FileChooserSettings& settings() const { return m_settings; }
+    const FileChooserSettings& settings() const LIFETIME_BOUND { return m_settings; }
 
 private:
     FileChooser(FileChooserClient&, const FileChooserSettings&);

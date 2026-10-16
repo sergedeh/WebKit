@@ -27,6 +27,10 @@
 #include "TestController.h"
 
 #include "PlatformWebView.h"
+#include "StringFunctions.h"
+#include "TestCommand.h"
+#include "WPTFunctions.h"
+#include <WebKit/WKTextCheckerGLib.h>
 #include <glib.h>
 #include <wtf/RunLoop.h>
 #include <wtf/WTFProcess.h>
@@ -34,24 +38,45 @@
 #include <wtf/text/Base64.h>
 #include <wtf/text/MakeString.h>
 
-#if USE(CAIRO)
-#include <cairo.h>
-#elif USE(SKIA)
+#if ENABLE(WPE_PLATFORM)
+#include <wpe/wpe-platform.h>
+#endif
+
+#if USE(LIBWPE)
+#include "PlatformWebViewClientLibWPE.h"
+#include <WPEToolingBackends/HeadlessViewBackend.h>
+#endif
+
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkData.h>
 #include <skia/encode/SkPngEncoder.h>
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
-#endif
 
 namespace WTR {
 
 void TestController::notifyDone()
 {
-    RunLoop::mainSingleton().stop();
 }
 
-void TestController::setHidden(bool)
+void TestController::setHidden(bool hidden)
 {
+    auto* view = mainWebView();
+    if (!view)
+        return;
+
+#if ENABLE(WPE_PLATFORM)
+    if (!useWPELegacyAPI()) {
+        wpe_view_set_visible(WKViewGetView(view->platformView()), !hidden);
+        return;
+    }
+#endif
+#if USE(LIBWPE)
+    auto* client = static_cast<PlatformWebViewClientLibWPE*>(view->platformWindow());
+    if (hidden)
+        client->backend()->removeActivityState(wpe_view_activity_state_visible);
+    else
+        client->backend()->addActivityState(wpe_view_activity_state_visible);
+#endif
 }
 
 void TestController::platformInitialize(const Options&)
@@ -72,9 +97,8 @@ void TestController::platformRunUntil(bool& done, WTF::Seconds timeout)
     class TimeoutTimer {
     public:
         TimeoutTimer(WTF::Seconds timeout, bool& timedOut)
-            : m_timer(RunLoop::mainSingleton(), "TestController::TimeoutTimer::Timer"_s, [&timedOut] {
+            : m_timer(RunLoop::mainSingleton(), "TestController::TimeoutTimer"_s, [&timedOut] {
                 timedOut = true;
-                RunLoop::mainSingleton().stop();
             })
         {
             m_timer.setPriority(G_PRIORITY_DEFAULT_IDLE);
@@ -85,8 +109,9 @@ void TestController::platformRunUntil(bool& done, WTF::Seconds timeout)
         RunLoop::Timer m_timer;
     } timeoutTimer(timeout, timedOut);
 
+    auto* mainContext = g_main_context_default();
     while (!done && !timedOut)
-        RunLoop::mainSingleton().run();
+        g_main_context_iteration(mainContext, TRUE);
 }
 
 void TestController::platformDidCommitLoadForFrame(WKPageRef, WKFrameRef)
@@ -135,31 +160,29 @@ void TestController::platformConfigureViewForTest(const TestInvocation&)
 
 bool TestController::platformResetStateToConsistentValues(const TestOptions&)
 {
+    WKTextCheckerContinuousSpellCheckingEnabledStateChanged(true);
     return true;
 }
 
-TestFeatures TestController::platformSpecificFeatureDefaultsForTest(const TestCommand&) const
+static bool shouldEnableAsyncOverflowScrolling(const std::string& pathOrURL)
+{
+    return isWebPlatformTestURL({ { }, String::fromUTF8(pathOrURL.c_str()) });
+}
+
+TestFeatures TestController::platformSpecificFeatureDefaultsForTest(const TestCommand& command) const
 {
     TestFeatures features;
-    features.boolWebPreferenceFeatures.insert({ "AsyncOverflowScrollingEnabled", true });
+    if (shouldEnableAsyncOverflowScrolling(command.pathOrURL))
+        features.boolWebPreferenceFeatures.insert({ "AsyncOverflowScrollingEnabled", true });
     return features;
 }
 
 WKRetainPtr<WKStringRef> TestController::takeViewPortSnapshot()
 {
-#if USE(CAIRO)
-    Vector<uint8_t> output;
-    cairo_surface_write_to_png_stream(mainWebView()->windowSnapshotImage(), [](void* output, const unsigned char* data, unsigned length) -> cairo_status_t {
-        reinterpret_cast<Vector<uint8_t>*>(output)->append(std::span { reinterpret_cast<const uint8_t*>(data), length });
-        return CAIRO_STATUS_SUCCESS;
-    }, &output);
-    auto uri = makeString("data:image/png;base64,"_s, base64Encoded(output.span()));
-#elif USE(SKIA)
     sk_sp<SkImage> image(mainWebView()->windowSnapshotImage());
     auto data = SkPngEncoder::Encode(nullptr, image.get(), { });
     auto uri = makeString("data:image/png;base64,"_s, base64Encoded(std::span { static_cast<const uint8_t*>(data->data()), data->size() }));
-#endif
-    return adoptWK(WKStringCreateWithUTF8CString(uri.utf8().data()));
+    return toWK(uri);
 }
 
 } // namespace WTR

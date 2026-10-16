@@ -23,20 +23,15 @@
 
 #if HAVE_UIINTELLIGENCESUPPORT_FRAMEWORK
 
-#if compiler(>=6.0)
-internal import WebKit_Internal
-internal import WebKit_Private
-#else
-@_implementationOnly import WebKit_Internal
-@_implementationOnly import WebKit_Private
-#endif
+import WebKit_Internal
+import WebKit_Private
 
-@_spiOnly import UIIntelligenceSupport
+@_spiOnly public import UIIntelligenceSupport
 
-#if canImport(UIKit)
-@_spi(UIIntelligenceSupport) import UIKit
+#if WTF_PLATFORM_IOS_FAMILY
+@_spi(UIIntelligenceSupport) public import UIKit
 #else
-@_spi(UIIntelligenceSupport) import AppKit
+@_spi(UIIntelligenceSupport) public import AppKit
 #endif
 
 private func createEditable(for editable: WKTextExtractionEditable?) -> IntelligenceElement.Text.Editable? {
@@ -44,13 +39,8 @@ private func createEditable(for editable: WKTextExtractionEditable?) -> Intellig
         return nil
     }
 
-    return .init(
-        label: editable.label,
-        prompt: editable.placeholder,
-        contentType: nil,
-        isSecure: editable.isSecure,
-        isFocused: editable.isFocused
-    )
+    let makeEditable = IntelligenceElement.Text.Editable.init as (String?, String?, String?, Bool, Bool) -> IntelligenceElement.Text.Editable
+    return makeEditable(editable.label, editable.placeholder, nil, editable.isSecure, editable.isFocused)
 }
 
 private func createElementContent(for item: WKTextExtractionItem) -> IntelligenceElement.Content {
@@ -75,9 +65,30 @@ private func createElementContent(for item: WKTextExtractionItem) -> Intelligenc
     }
 }
 
-private func createIntelligenceElement(item: WKTextExtractionItem) -> IntelligenceElement {
+private struct ContextMenuSource {
+    let nodeIdentifier: String
+    let remoteContextWrapper: UIIntelligenceCollectionRemoteContextWrapper
+
+    func applyExportableData(to element: inout IntelligenceElement) {
+        #if canImport(UIIntelligenceSupport, _version: "9127.1.2")
+        if #available(macOS 27.0, iOS 27.0, visionOS 27.0, *) {
+            element.exportableData = remoteContextWrapper.remoteContext.contextMenuInvocation?.exportableData
+        }
+        #endif
+    }
+}
+
+private func createIntelligenceElement(item: WKTextExtractionItem, contextMenuSource: ContextMenuSource?) -> IntelligenceElement {
     var element = IntelligenceElement(boundingBox: item.rectInWebView, content: createElementContent(for: item))
-    element.subelements = item.children.map { child in createIntelligenceElement(item: child) }
+    if let contextMenuSource, item.nodeIdentifier == contextMenuSource.nodeIdentifier {
+        #if canImport(UIIntelligenceSupport.Radar165004762)
+        element.isContextMenuSource = true
+        #endif
+        contextMenuSource.applyExportableData(to: &element)
+    }
+    element.subelements = item.children.map { child in
+        createIntelligenceElement(item: child, contextMenuSource: contextMenuSource)
+    }
     return element
 }
 
@@ -112,11 +123,18 @@ extension WKWebView {
             configuration.mergeParagraphs = true
             configuration.skipNearlyTransparentContent = true
             configuration.nodeIdentifierInclusion = .none
-            configuration.includeEventListeners = false
+            configuration.eventListenerCategories = []
             configuration.includeAccessibilityAttributes = false
             configuration.filterOptions = []
+            let contextMenuSource = _activeContextMenuTargetNodeIdentifier.map {
+                ContextMenuSource(nodeIdentifier: $0, remoteContextWrapper: remoteContextWrapper)
+            }
             if let rootItem = await _requestTextExtraction(configuration) {
-                collector.collect(createIntelligenceElement(item: rootItem))
+                let rootElement = createIntelligenceElement(
+                    item: rootItem,
+                    contextMenuSource: contextMenuSource
+                )
+                collector.collect(rootElement)
             }
 
             coordinator.finishCollection(collector)

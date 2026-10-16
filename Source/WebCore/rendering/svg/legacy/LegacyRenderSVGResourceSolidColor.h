@@ -39,13 +39,13 @@ public:
     void removeClientFromCache(RenderElement&) override { }
     void removeClientFromCacheAndMarkForInvalidation(RenderElement&, bool = true) override { }
 
-    OptionSet<ApplyResult> applyResource(RenderElement&, const RenderStyle&, GraphicsContext*&, OptionSet<RenderSVGResourceMode>) override;
+    OptionSet<ApplyResult> applyResource(RenderElement&, const Style::ComputedStyle&, GraphicsContext*&, OptionSet<RenderSVGResourceMode>) override;
     void postApplyResource(RenderElement&, GraphicsContext*&, OptionSet<RenderSVGResourceMode>, const Path*, const RenderElement*) override;
     FloatRect resourceBoundingBox(const RenderObject&, RepaintRectCalculation) override { return FloatRect(); }
 
     RenderSVGResourceType resourceType() const override { return SolidColorResourceType; }
 
-    const Color& color() const { return m_color; }
+    const Color& color() const LIFETIME_BOUND { return m_color; }
     void setColor(const Color& color) { m_color = color; }
 
 private:

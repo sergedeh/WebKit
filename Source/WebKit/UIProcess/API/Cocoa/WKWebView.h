@@ -33,6 +33,10 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+#if 0 // API_WEBKIT_ADDITIONS_REPLACEMENT
+#import <WebKitAdditions/WKWebViewAdditionsBefore.h>
+#endif
+
 #if TARGET_OS_IOS
 @class UIFindInteraction;
 @class UIConversationContext;
@@ -45,11 +49,18 @@ NS_ASSUME_NONNULL_BEGIN
 @class WKFindConfiguration;
 @class WKFindResult;
 @class WKFrameInfo;
+@class WKHitTestResult;
+@class WKImmersiveEnvironment;
 @class WKNavigation;
 @class WKPDFConfiguration;
 @class WKSnapshotConfiguration;
 @class WKWebViewConfiguration;
 
+#if TARGET_OS_OSX
+@class NSRefreshController;
+#endif
+
+@protocol WKImmersiveEnvironmentDelegate;
 @protocol WKNavigationDelegate;
 @protocol WKUIDelegate;
 
@@ -121,6 +132,12 @@ typedef NS_ENUM(NSInteger, WKFullscreenState) {
  @result A new navigation for the given request.
  */
 - (nullable WKNavigation *)loadRequest:(NSURLRequest *)request;
+
+/*! @abstract Navigates to a requested URL.
+ @param url The URL to which to navigate.
+ @result A new navigation for the given request.
+ */
+- (nullable WKNavigation *)loadURL:(NSURL *)url NS_SWIFT_NAME(load(_:)) WK_API_AVAILABLE(macos(27.0), ios(27.0), visionos(27.0));
 
 /*! @abstract Navigates to the requested file URL on the filesystem.
  @param URL The file URL to which to navigate.
@@ -200,6 +217,13 @@ typedef NS_ENUM(NSInteger, WKFullscreenState) {
  for this property.
  */
 @property (nonatomic, readonly, nullable) SecTrustRef serverTrust WK_API_AVAILABLE(macos(10.12), ios(10.0));
+
+/*! @abstract A SecTrustRef with a 2-QWAC for the currently committed navigation.
+ @discussion Since a separate fetch is needed to get the 2-QWAC data, this becomes available
+ after the serverTrust.  It will only become available if the server has a valid 2-QWAC.
+ This property is key-value observing (KVO) compliant.
+ */
+@property (nonatomic, readonly, nullable) SecTrustRef qualifiedServerTrust WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA), visionos(WK_XROS_TBA));
 
 /*! @abstract A Boolean value indicating whether there is a back item in
  the back-forward list that can be navigated to.
@@ -347,6 +371,26 @@ typedef NS_ENUM(NSInteger, WKFullscreenState) {
  The above function text will create a promise that will fulfull with the value 42 after a one second delay, wait for it to resolve, then return the fulfillment value of 42.
 */
 - (void)callAsyncJavaScript:(NSString *)functionBody arguments:(nullable NSDictionary<NSString *, id> *)arguments inFrame:(nullable WKFrameInfo *)frame inContentWorld:(WKContentWorld *)contentWorld completionHandler:(WK_SWIFT_UI_ACTOR void (^ _Nullable)(id WK_NULLABLE_RESULT result, NSError * _Nullable error))completionHandler NS_REFINED_FOR_SWIFT WK_API_AVAILABLE(macos(11.0), ios(14.0));
+
+/*! @abstract Finds the content at the given point in the webpage.
+ @param point The point to hit test, in the coordinate space of the given frame.
+ @param frame A WKFrameInfo identifying the frame whose coordinate space the point is in.
+ @param contentWorld The WKContentWorld in which the resulting WKHitTestResult's domNodeHandle can be used.
+ @param completionHandler A block to invoke when the hit test completes or fails.
+ @discussion Passing nil for the frame is equivalent to targeting the main frame.
+ Passing nil for the content world is equivalent to using the page's content world.
+ If the point is over a child frame, including a child frame from a different origin, the hit test continues into that child frame.
+
+ The completionHandler is passed a WKHitTestResult describing the content at the point, or an error if the hit test could not be performed.
+ The result's domNodeHandle refers to the DOM node that was hit and can be used as an argument to JavaScript run via
+ `callAsyncJavaScript:arguments:inFrame:inContentWorld:completionHandler:` in the handle's sourceFrame and the given contentWorld.
+ If no DOM node is at the point, the result's domNodeHandle is nil.
+
+ If the frame argument does not represent a valid frame in this web view, the completionHandler is passed a WKErrorJavaScriptInvalidFrameTarget error.
+ If the web view is closed or its web content process terminates before the hit test completes, the completionHandler is passed a
+ WKErrorWebViewInvalidated or WKErrorWebContentProcessTerminated error.
+*/
+- (void)hitTestAtPoint:(CGPoint)point inCoordinateSpaceOfFrame:(nullable WKFrameInfo *)frame inContentWorld:(nullable WKContentWorld *)contentWorld completionHandler:(NS_SWIFT_UI_ACTOR void (^)(WKHitTestResult * _Nullable result, NSError * _Nullable error))completionHandler NS_SWIFT_NAME(hitTest(at:inCoordinateSpaceOf:contentWorld:completionHandler:)) WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA), visionos(WK_XROS_TBA));
 
 /*! @abstract Closes all out-of-window media presentations in a WKWebView.
  @discussion Includes picture-in-picture and fullscreen.
@@ -714,6 +758,28 @@ typedef NS_OPTIONS(NSUInteger, WKWebViewDataType) {
 @property (nonatomic) NSEdgeInsets obscuredContentInsets WK_API_AVAILABLE(macos(26.0));
 #else
 @property (nonatomic) UIEdgeInsets obscuredContentInsets WK_API_AVAILABLE(ios(26.0), visionos(26.0));
+#endif
+
+#if defined(TARGET_OS_VISION) && TARGET_OS_VISION
+/*! @abstract The delegate that manages immersive environment presentation.
+ */
+@property (nullable, nonatomic, weak) id <WKImmersiveEnvironmentDelegate> immersiveEnvironmentDelegate WK_API_AVAILABLE(visionos(27.0));
+
+/*! @abstract Dismisses the currently presented immersive environment.
+ */
+- (void)dismissImmersiveEnvironmentWithCompletionHandler:(NS_SWIFT_UI_ACTOR void (^)(void))completionHandler NS_SWIFT_ASYNC_NAME(dismissImmersiveEnvironment()) WK_API_AVAILABLE(visionos(27.0));
+#endif
+
+#if TARGET_OS_OSX && __MAC_OS_X_VERSION_MIN_REQUIRED >= 270000
+/* @abstract The refresh controller associated with the web view.
+ @discussion Setting this property adds the refresh controller above the web
+ content when scrolling past the top of the page.
+ */
+@property (strong, nullable) NSRefreshController *refreshController WK_API_AVAILABLE(macos(27.0));
+#endif
+
+#if 0 // API_WEBKIT_ADDITIONS_REPLACEMENT
+#import <WebKitAdditions/WKWebViewAdditions.h>
 #endif
 
 @end

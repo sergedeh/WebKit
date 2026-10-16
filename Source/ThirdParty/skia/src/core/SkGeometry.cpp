@@ -11,15 +11,15 @@
 #include "include/core/SkPoint3.h"
 #include "include/core/SkRect.h"
 #include "include/core/SkScalar.h"
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkFloatingPoint.h"
-#include "include/private/base/SkTPin.h"
-#include "include/private/base/SkTo.h"
-#include "src/base/SkBezierCurves.h"
-#include "src/base/SkCubics.h"
-#include "src/base/SkUtils.h"
-#include "src/base/SkVx.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkFloatingPoint.h"
+#include "include/private/SkTPin.h"
+#include "include/private/SkTo.h"
+#include "src/core/SkBezierCurves.h"
+#include "src/core/SkCubics.h"
 #include "src/core/SkPointPriv.h"
+#include "src/core/SkUtils.h"
+#include "src/core/SkVx.h"
 
 #include <algorithm>
 #include <array>
@@ -952,7 +952,7 @@ static SkScalar SkScalarCubeRoot(SkScalar x) {
 }
 
 /*  Solve coeff(t) == 0, returning the number of roots that
-    lie withing 0 < t < 1.
+    lie within 0 < t < 1.
     coeff[0]t^3 + coeff[1]t^2 + coeff[2]t + coeff[3]
 
     Eliminates repeated roots (so that all tValues are distinct, and are always

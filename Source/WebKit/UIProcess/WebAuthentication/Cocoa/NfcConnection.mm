@@ -31,6 +31,8 @@
 #import "NfcService.h"
 #import "WKNFReaderSessionDelegate.h"
 #import <WebCore/FidoConstants.h>
+#import <wtf/BlockPtr.h>
+#import <wtf/Borrow.h>
 #import <wtf/StdLibExtras.h>
 #import <wtf/cocoa/VectorCocoa.h>
 #import <wtf/text/Base64.h>
@@ -89,7 +91,7 @@ NfcConnection::~NfcConnection()
 Vector<uint8_t> NfcConnection::transact(Vector<uint8_t>&& data) const
 {
     // The method will return an empty NSData if the tag is disconnected.
-    RetainPtr responseData = [m_session transceive:toNSData(data).get()];
+    RetainPtr responseData = [m_session transceive:toNSData(borrow(data)->span()).get()];
     return makeVector(responseData.get());
 }
 
@@ -98,6 +100,15 @@ void NfcConnection::stop() const
     [m_session disconnectTag];
     [m_session stopPolling];
     [m_session endSession];
+}
+
+void NfcConnection::stopWithCompletionHandler(Function<void()>&& completionHandler)
+{
+    [m_session disconnectTag];
+    [m_session stopPolling];
+    [m_session endSessionWithCompletion:makeBlockPtr([completionHandler = WTF::move(completionHandler)]() mutable {
+        completionHandler();
+    }).get()];
 }
 
 void NfcConnection::didDetectTags(NSArray *tags)
@@ -109,7 +120,8 @@ void NfcConnection::didDetectTags(NSArray *tags)
     // A physical NFC tag could have multiple interfaces.
     // Therefore, we use tagID to detect if there are multiple physical tags.
     RetainPtr<NSData> tagID = ((NFTag *)tags[0]).tagID;
-    for (NFTag *tag : tags) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NFTag *tag : tags) {
         if ([tagID isEqualToData:retainPtr(tag.tagID).get()])
             continue;
         service->didDetectMultipleTags();
@@ -118,7 +130,8 @@ void NfcConnection::didDetectTags(NSArray *tags)
     }
 
     // FIXME(203234): Tell users to switch to a different tag if the tag is not supported or can't speak U2F/FIDO2.
-    for (NFTag *tag : tags) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NFTag *tag : tags) {
         // FIDO tag is ISO-DEP which can be Tag4A, Tag4B, and DESFIRE (Tag4A).
         if ((tag.type != NFTagTypeGeneric4A && tag.type != NFTagTypeGeneric4B && tag.type != NFTagTypeMiFareDESFire) || ![m_session connectTag:tag])
             continue;

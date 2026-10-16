@@ -38,18 +38,19 @@ using namespace JSC;
 
 bool JSCSSRuleListOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
-    JSCSSRuleList* jsCSSRuleList = jsCast<JSCSSRuleList*>(handle.slot()->asCell());
+    JSCSSRuleList* jsCSSRuleList = downcast<JSCSSRuleList>(handle.slot()->asCell());
     if (!jsCSSRuleList->hasCustomProperties())
         return false;
 
-    if (CSSStyleSheet* styleSheet = jsCSSRuleList->wrapped().styleSheet()) {
+    // Cannot ref on the GC thread.
+    if (SUPPRESS_UNCOUNTED_LOCAL CSSStyleSheet* styleSheet = jsCSSRuleList->wrapped().styleSheet()) {
         if (reason) [[unlikely]]
             *reason = "CSSStyleSheet is opaque root"_s;
 
         return containsWebCoreOpaqueRoot(visitor, styleSheet);
     }
     
-    if (CSSRule* cssRule = jsCSSRuleList->wrapped().item(0)) {
+    if (SUPPRESS_UNCOUNTED_LOCAL CSSRule* cssRule = jsCSSRuleList->wrapped().item(0)) {
         if (reason) [[unlikely]]
             *reason = "CSSRule is opaque root"_s;
 

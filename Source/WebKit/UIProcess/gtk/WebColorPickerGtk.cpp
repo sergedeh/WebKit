@@ -35,15 +35,16 @@
 namespace WebKit {
 using namespace WebCore;
 
-Ref<WebColorPickerGtk> WebColorPickerGtk::create(WebPageProxy& page, const Color& initialColor, const IntRect& rect)
+Ref<WebColorPickerGtk> WebColorPickerGtk::create(WebPageProxy& page, const Color& initialColor, ColorControlSupportsAlpha supportsAlpha, std::optional<WebCore::FrameIdentifier> frameID)
 {
-    return adoptRef(*new WebColorPickerGtk(page, initialColor, rect));
+    return adoptRef(*new WebColorPickerGtk(page, initialColor, supportsAlpha, frameID));
 }
 
-WebColorPickerGtk::WebColorPickerGtk(WebPageProxy& page, const Color& initialColor, const IntRect&)
-    : WebColorPicker(&page.colorPickerClient())
+WebColorPickerGtk::WebColorPickerGtk(WebPageProxy& page, const Color& initialColor, ColorControlSupportsAlpha supportsAlpha, std::optional<WebCore::FrameIdentifier> frameID)
+    : WebColorPicker(&page.colorPickerClient(), frameID)
     , m_initialColor(colorToGdkRGBA(initialColor))
     , m_webView(page.viewWidget())
+    , m_supportsAlpha(supportsAlpha)
     , m_colorChooser(nullptr)
 {
 }
@@ -85,7 +86,7 @@ void WebColorPickerGtk::colorChooserDialogResponseCallback(GtkColorChooser*, int
     colorPicker->endPicker();
 }
 
-void WebColorPickerGtk::showColorPicker(const Color& color)
+void WebColorPickerGtk::showColorPicker(const Color& color, const IntRect&)
 {
     if (!client())
         return;
@@ -95,6 +96,7 @@ void WebColorPickerGtk::showColorPicker(const Color& color)
     if (!m_colorChooser) {
         GtkWidget* toplevel = gtk_widget_get_toplevel(m_webView);
         m_colorChooser = gtk_color_chooser_dialog_new(_("Select Color"), widgetIsOnscreenToplevelWindow(toplevel) ? GTK_WINDOW(toplevel) : nullptr);
+        gtk_color_chooser_set_use_alpha(GTK_COLOR_CHOOSER(m_colorChooser), m_supportsAlpha == ColorControlSupportsAlpha::Yes);
         gtk_color_chooser_set_rgba(GTK_COLOR_CHOOSER(m_colorChooser), &m_initialColor);
         g_signal_connect(m_colorChooser, "notify::rgba", G_CALLBACK(WebColorPickerGtk::colorChooserDialogRGBAChangedCallback), this);
         g_signal_connect(m_colorChooser, "response", G_CALLBACK(WebColorPickerGtk::colorChooserDialogResponseCallback), this);

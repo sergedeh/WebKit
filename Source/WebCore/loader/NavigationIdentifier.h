@@ -25,11 +25,12 @@
 
 #pragma once
 
+#include <WebCore/ProcessQualified.h>
 #include <wtf/ObjectIdentifier.h>
 
 namespace WebCore {
 
 struct NavigationIdentifierType;
-using NavigationIdentifier = ObjectIdentifier<NavigationIdentifierType, uint64_t>;
+using NavigationIdentifier = ProcessQualified<ObjectIdentifier<NavigationIdentifierType>>;
 
 }

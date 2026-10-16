@@ -28,16 +28,18 @@
 #if ENABLE(JIT)
 
 #include "CCallHelpers.h"
-#include "JITMathIC.h"
 #include "JITMathICInlineResult.h"
 
 namespace JSC {
+
+struct MathICGenerationState;
+class UnaryArithProfile;
 
 class JITNegGenerator {
 public:
     JITNegGenerator() = default;
 
-    JITNegGenerator(JSValueRegs result, JSValueRegs src, GPRReg scratchGPR)
+    JITNegGenerator(GPRReg result, GPRReg src, GPRReg scratchGPR)
         : m_result(result)
         , m_src(src)
         , m_scratchGPR(scratchGPR)
@@ -47,8 +49,8 @@ public:
     bool generateFastPath(CCallHelpers&, CCallHelpers::JumpList& endJumpList, CCallHelpers::JumpList& slowPathJumpList, const UnaryArithProfile*, bool shouldEmitProfiling);
 
 private:
-    JSValueRegs m_result;
-    JSValueRegs m_src;
+    GPRReg m_result { InvalidGPRReg };
+    GPRReg m_src { InvalidGPRReg };
     GPRReg m_scratchGPR;
 };
 

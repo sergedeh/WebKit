@@ -35,9 +35,12 @@ namespace CSSPropertyParserHelpers {
 struct LengthValidator {
     static constexpr std::optional<CSS::LengthUnit> validate(CSSUnitType unitType, CSS::PropertyParserState& state, CSSPropertyParserOptions options)
     {
-        if (unitType == CSSUnitType::CSS_QUIRKY_EM && !isUASheetBehavior(options.overrideParserMode.value_or(state.context.mode)))
+        if (unitType == CSSUnitType::QuirkyEm && !isUASheetBehavior(options.overrideParserMode.value_or(state.context.mode)))
             return std::nullopt;
-        return CSS::UnitTraits<CSS::LengthUnit>::validate(unitType);
+        auto result = CSS::UnitTraits<CSS::LengthUnit>::validate(unitType);
+        if (result && state.absoluteLengthUnitsOnly && CSS::conversionToCanonicalUnitRequiresConversionData(*result))
+            return std::nullopt;
+        return result;
     }
 
     template<auto R, typename V> static bool isValid(CSS::LengthRaw<R, V> raw, CSSPropertyParserOptions)
@@ -62,6 +65,11 @@ struct LengthValidator {
 
 template<auto R, typename V> struct ConsumerDefinition<CSS::Length<R, V>> {
     using FunctionToken = FunctionConsumerForCalcValues<CSS::Length<R, V>>;
+    using DimensionToken = DimensionConsumer<CSS::Length<R, V>, LengthValidator>;
+    using NumberToken = NumberConsumerForUnitlessValues<CSS::Length<R, V>, LengthValidator, CSS::LengthUnit::Px>;
+};
+
+template<auto R, typename V> struct ConsumerDefinition<CSS::LengthRaw<R, V>> {
     using DimensionToken = DimensionConsumer<CSS::Length<R, V>, LengthValidator>;
     using NumberToken = NumberConsumerForUnitlessValues<CSS::Length<R, V>, LengthValidator, CSS::LengthUnit::Px>;
 };

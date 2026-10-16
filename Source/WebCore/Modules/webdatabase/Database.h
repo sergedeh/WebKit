@@ -31,6 +31,7 @@
 #include "SQLiteDatabase.h"
 #include <wtf/Deque.h>
 #include <wtf/Lock.h>
+#include <wtf/ThreadSafeWeakPtr.h>
 #include <wtf/UniqueRef.h>
 
 namespace WebCore {
@@ -78,7 +79,7 @@ public:
     void didCommitWriteTransaction();
     bool didExceedQuota();
 
-    SQLTransactionCoordinator& transactionCoordinator();
+    SQLTransactionCoordinator& LEGACY_NODELETE transactionCoordinator();
 
     // Direct support for the DOM API
     String version() const;
@@ -90,22 +91,22 @@ public:
     String stringIdentifierIsolatedCopy() const;
     String displayNameIsolatedCopy() const;
     String expectedVersionIsolatedCopy() const;
-    unsigned long long estimatedSize() const;
+    unsigned long long LEGACY_NODELETE estimatedSize() const;
     String fileNameIsolatedCopy() const;
     DatabaseDetails details() const;
     SQLiteDatabase& sqliteDatabase() { return m_sqliteDatabase; }
 
-    void disableAuthorizer();
-    void enableAuthorizer();
-    void setAuthorizerPermissions(int);
-    bool lastActionChangedDatabase();
-    bool lastActionWasInsert();
-    void resetDeletes();
-    bool hadDeletes();
-    void resetAuthorizer();
+    void LEGACY_NODELETE disableAuthorizer();
+    void LEGACY_NODELETE enableAuthorizer();
+    void LEGACY_NODELETE setAuthorizerPermissions(int);
+    bool LEGACY_NODELETE lastActionChangedDatabase();
+    bool LEGACY_NODELETE lastActionWasInsert();
+    void LEGACY_NODELETE resetDeletes();
+    bool LEGACY_NODELETE hadDeletes();
+    void LEGACY_NODELETE resetAuthorizer();
 
     DatabaseContext& databaseContext() { return m_databaseContext; }
-    DatabaseThread& databaseThread();
+    DatabaseThread& LEGACY_NODELETE databaseThread();
     Document& document() { return m_document; }
     void logErrorMessage(const String& message);
 

@@ -34,8 +34,8 @@
 #include "RenderMathMLFenced.h"
 #include "RenderMathMLMenclose.h"
 #include "RenderMathMLRow.h"
-#include "RenderStyle+GettersInlines.h"
 #include "Settings.h"
+#include "StyleComputedStyle.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -59,14 +59,14 @@ void MathMLRowElement::childrenChanged(const ChildChange& change)
     // FIXME: Avoid this invalidation for valid MathMLFractionElement/MathMLScriptsElement.
     // See https://bugs.webkit.org/show_bug.cgi?id=276828.
     for (RefPtr child = firstChild(); child; child = child->nextSibling()) {
-        if (auto* mo = dynamicDowncast<MathMLOperatorElement>(child.get()))
+        if (RefPtr mo = dynamicDowncast<MathMLOperatorElement>(*child))
             mo->setOperatorFormDirty();
     }
 
     MathMLPresentationElement::childrenChanged(change);
 }
 
-RenderPtr<RenderElement> MathMLRowElement::createElementRenderer(RenderStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> MathMLRowElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
 {
     if (!document().settings().coreMathMLEnabled() && hasTagName(mfencedTag))
         return createRenderer<RenderMathMLFenced>(*this, WTF::move(style));
@@ -74,9 +74,9 @@ RenderPtr<RenderElement> MathMLRowElement::createElementRenderer(RenderStyle&& s
     return createRenderer<RenderMathMLRow>(RenderObject::Type::MathMLRow, *this, WTF::move(style));
 }
 
-bool MathMLRowElement::acceptsMathVariantAttribute()
+bool MathMLRowElement::acceptsLegacyMathVariantAttribute()
 {
-    return hasTagName(mstyleTag);
+    return !document().settings().coreMathMLDeprecateLegacyMathvariant() && hasTagName(mstyleTag);
 }
 
 }

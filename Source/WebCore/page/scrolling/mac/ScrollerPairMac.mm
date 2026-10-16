@@ -40,6 +40,7 @@
 #import <WebCore/ScrollableArea.h>
 #import <WebCore/ScrollingTreeScrollingNode.h>
 #import <pal/spi/mac/NSScrollerImpSPI.h>
+#import <wtf/BlockObjCExceptions.h>
 #import <wtf/TZoneMallocInlines.h>
 
 @interface WebScrollerImpPairDelegateMac : NSObject <NSScrollerImpPairDelegate> {
@@ -105,11 +106,7 @@
     if (!scrollerPair || !scrollerImp)
         return NSZeroPoint;
 
-    CheckedPtr<WebCore::ScrollerMac> scroller;
-    if ([scrollerImp isHorizontal])
-        scroller = &scrollerPair->horizontalScroller();
-    else
-        scroller = &scrollerPair->verticalScroller();
+    Ref<WebCore::ScrollerMac> scroller = [scrollerImp isHorizontal] ? scrollerPair->horizontalScroller() : scrollerPair->verticalScroller();
 
     ASSERT(scroller->isScrollerFor(scrollerImp));
 
@@ -139,14 +136,14 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(ScrollerPairMac);
 
 ScrollerPairMac::ScrollerPairMac(ScrollingTreeScrollingNode& node)
     : m_scrollingNode(node)
-    , m_verticalScroller(makeUniqueRef<ScrollerMac>(*this, ScrollbarOrientation::Vertical))
-    , m_horizontalScroller(makeUniqueRef<ScrollerMac>(*this, ScrollbarOrientation::Horizontal))
+    , m_verticalScroller(ScrollerMac::create(*this, ScrollbarOrientation::Vertical))
+    , m_horizontalScroller(ScrollerMac::create(*this, ScrollbarOrientation::Horizontal))
 {
 }
 
 void ScrollerPairMac::init()
 {
-    m_scrollerImpPairDelegate = adoptNS([[WebScrollerImpPairDelegateMac alloc] initWithScrollerPair:this]);
+    lazyInitialize(m_scrollerImpPairDelegate, adoptNS([[WebScrollerImpPairDelegateMac alloc] initWithScrollerPair:this]));
 
     m_scrollerImpPair = adoptNS([[NSScrollerImpPair alloc] init]);
     [m_scrollerImpPair setDelegate:m_scrollerImpPairDelegate.get()];
@@ -166,8 +163,7 @@ ScrollerPairMac::~ScrollerPairMac()
     m_verticalScroller->detach();
     m_horizontalScroller->detach();
 
-    ensureOnMainThread([scrollerImpPair = std::exchange(m_scrollerImpPair, nil), verticalScrollerImp = m_verticalScroller->takeScrollerImp(), horizontalScrollerImp = m_horizontalScroller->takeScrollerImp()] {
-    });
+    ensureOnMainThread([scrollerImpPair = std::exchange(m_scrollerImpPair, nil)] { });
 }
 
 void ScrollerPairMac::handleWheelEventPhase(PlatformWheelEventPhase phase)
@@ -257,7 +253,9 @@ void ScrollerPairMac::updateValues()
     auto offset = node->currentScrollOffset();
 
     if (offset != m_lastScrollOffset) {
-        if (m_lastScrollOffset) {
+        auto scrollbarRevealBehavior = node->takeScrollbarRevealBehaviorForNextScrollbarUpdate();
+
+        if (m_lastScrollOffset && scrollbarRevealBehavior == ScrollbarRevealBehavior::Default) {
             ensureOnMainThreadWithProtectedThis([delta = offset - *m_lastScrollOffset](auto& scrollerPair) {
                 [scrollerPair.m_scrollerImpPair contentAreaScrolledInDirection:NSMakePoint(delta.width(), delta.height())];
             });
@@ -370,7 +368,7 @@ void ScrollerPairMac::ensureOnMainThreadWithProtectedThis(Function<void(Scroller
 
 void ScrollerPairMac::mouseEnteredContentArea()
 {
-    LOG_WITH_STREAM(OverlayScrollbars, stream << "ScrollerPairMac for [" << protectedNode()->scrollingNodeID() << "] mouseEnteredContentArea");
+    LOG_WITH_STREAM(OverlayScrollbars, stream << "ScrollerPairMac for [" << protect(m_scrollingNode)->scrollingNodeID() << "] mouseEnteredContentArea");
 
     ensureOnMainThreadWithProtectedThis([](auto& scrollerPair) {
         if ([scrollerPair.m_scrollerImpPair overlayScrollerStateIsLocked])
@@ -383,7 +381,7 @@ void ScrollerPairMac::mouseEnteredContentArea()
 void ScrollerPairMac::mouseExitedContentArea()
 {
     m_mouseInContentArea = false;
-    LOG_WITH_STREAM(OverlayScrollbars, stream << "ScrollerPairMac for [" << protectedNode()->scrollingNodeID() << "] mouseExitedContentArea");
+    LOG_WITH_STREAM(OverlayScrollbars, stream << "ScrollerPairMac for [" << protect(m_scrollingNode)->scrollingNodeID() << "] mouseExitedContentArea");
 
     ensureOnMainThreadWithProtectedThis([](auto& scrollerPair) {
         if ([scrollerPair.m_scrollerImpPair overlayScrollerStateIsLocked])

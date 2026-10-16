@@ -62,6 +62,8 @@ SOFT_LINK_FUNCTION_MAY_FAIL_FOR_SOURCE_WITH_EXPORT(PAL, AudioToolbox, AudioGetDe
 
 SOFT_LINK_FUNCTION_FOR_SOURCE(PAL, AudioToolbox, AudioFileClose, OSStatus, (AudioFileID inAudioFile), (inAudioFile))
 SOFT_LINK_FUNCTION_FOR_SOURCE(PAL, AudioToolbox, AudioFileOpenWithCallbacks, OSStatus, (void *inClientData, AudioFile_ReadProc inReadFunc, AudioFile_WriteProc inWriteFunc, AudioFile_GetSizeProc inGetSizeFunc, AudioFile_SetSizeProc inSetSizeFunc, AudioFileTypeID inFileTypeHint, AudioFileID *outAudioFile), (inClientData, inReadFunc, inWriteFunc, inGetSizeFunc, inSetSizeFunc, inFileTypeHint, outAudioFile))
+SOFT_LINK_FUNCTION_FOR_SOURCE(PAL, AudioToolbox, AudioFileGetPropertyInfo, OSStatus, (AudioFileID inAudioFile, AudioFilePropertyID inPropertyID, UInt32 * outDataSize, UInt32 *isWritable), (inAudioFile, inPropertyID, outDataSize, isWritable))
+SOFT_LINK_FUNCTION_FOR_SOURCE(PAL, AudioToolbox, AudioFileGetProperty, OSStatus, (AudioFileID inAudioFile, AudioFilePropertyID inPropertyID, UInt32* ioDataSize, void *outPropertyData), (inAudioFile, inPropertyID, ioDataSize, outPropertyData))
 SOFT_LINK_FUNCTION_FOR_SOURCE(PAL, AudioToolbox, ExtAudioFileDispose, OSStatus, (ExtAudioFileRef inExtAudioFile), (inExtAudioFile))
 SOFT_LINK_FUNCTION_FOR_SOURCE(PAL, AudioToolbox, ExtAudioFileGetProperty, OSStatus, (ExtAudioFileRef inExtAudioFile, ExtAudioFilePropertyID inPropertyID, UInt32 *ioPropertyDataSize, void *outPropertyData), (inExtAudioFile, inPropertyID, ioPropertyDataSize, outPropertyData))
 SOFT_LINK_FUNCTION_FOR_SOURCE(PAL, AudioToolbox, ExtAudioFileRead, OSStatus, (ExtAudioFileRef inExtAudioFile, UInt32 *ioNumberFrames, AudioBufferList *ioData), (inExtAudioFile, ioNumberFrames, ioData))
@@ -74,6 +76,7 @@ SOFT_LINK_FUNCTION_FOR_SOURCE(PAL, AudioToolbox, AudioComponentInstanceNew, OSSt
 SOFT_LINK_FUNCTION_FOR_SOURCE(PAL, AudioToolbox, AudioUnitGetProperty, OSStatus, (AudioUnit inUnit, AudioUnitPropertyID inID, AudioUnitScope inScope, AudioUnitElement inElement, void* outData, UInt32* ioDataSize), (inUnit, inID, inScope, inElement, outData, ioDataSize))
 SOFT_LINK_FUNCTION_FOR_SOURCE(PAL, AudioToolbox, AudioUnitInitialize, OSStatus, (AudioUnit inUnit), (inUnit))
 SOFT_LINK_FUNCTION_FOR_SOURCE(PAL, AudioToolbox, AudioUnitSetProperty, OSStatus, (AudioUnit inUnit, AudioUnitPropertyID inID, AudioUnitScope inScope, AudioUnitElement inElement, const void* inData, UInt32 inDataSize), (inUnit, inID, inScope, inElement, inData, inDataSize))
+SOFT_LINK_FUNCTION_FOR_SOURCE(PAL, AudioToolbox, AudioUnitSetParameter, OSStatus, (AudioUnit inUnit, AudioUnitParameterID inID, AudioUnitScope inScope, AudioUnitElement inElement, AudioUnitParameterValue inValue, UInt32 inBufferOffsetInFrames), (inUnit, inID, inScope, inElement, inValue, inBufferOffsetInFrames))
 SOFT_LINK_FUNCTION_FOR_SOURCE(PAL, AudioToolbox, AudioUnitRender, OSStatus, (AudioUnit inUnit, AudioUnitRenderActionFlags* ioActionFlags, const AudioTimeStamp* inTimeStamp, UInt32 inOutputBusNumber, UInt32 inNumberFrames, AudioBufferList* ioData), (inUnit, ioActionFlags, inTimeStamp, inOutputBusNumber, inNumberFrames, ioData))
 SOFT_LINK_FUNCTION_FOR_SOURCE(PAL, AudioToolbox, AudioUnitUninitialize, OSStatus, (AudioUnit inUnit), (inUnit))
 

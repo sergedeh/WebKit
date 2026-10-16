@@ -1,5 +1,5 @@
 /*
- * Copyright 2020 Google Inc.
+ * Copyright 2020 Google LLC
  *
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
@@ -12,11 +12,12 @@
 #include "include/core/SkTypeface.h"
 #include "include/gpu/ganesh/GrDirectContext.h"
 #include "include/gpu/ganesh/GrRecordingContext.h"
-#include "src/base/SkUTF.h"
-#include "src/base/SkUtils.h"
 #include "src/core/SkStrikeCache.h"
-#include "src/gpu/ganesh/GrRecordingContextPriv.h"
+#include "src/core/SkUTF.h"
+#include "src/core/SkUtils.h"
+#include "src/gpu/ganesh/GrDirectContextPriv.h"
 #include "src/gpu/ganesh/SkGr.h"
+#include "src/gpu/ganesh/text/GlyphData.h"
 #include "src/text/GlyphRun.h"
 #include "src/text/gpu/StrikeCache.h"
 #include "src/text/gpu/TextBlob.h"
@@ -37,6 +38,9 @@ public:
 };
 
 class DirectMaskGlyphVertexFillBenchmark : public Benchmark {
+    using Glyph = skgpu::ganesh::Glyph;
+    using GlyphData = skgpu::ganesh::GlyphData;
+
     bool isSuitableFor(Backend backend) override {
         return backend == Backend::kGanesh;
     }
@@ -68,8 +72,20 @@ class DirectMaskGlyphVertexFillBenchmark : public Benchmark {
         const sktext::gpu::AtlasSubRun* subRun =
                 sktext::gpu::TextBlobTools::FirstSubRun(fBlob.get());
         SkASSERT_RELEASE(subRun);
-        subRun->testingOnly_packedGlyphIDToGlyph(&fCache);
-        fVertices.reset(new char[subRun->vertexStride(drawMatrix) * subRun->glyphCount() * 4]);
+        if (!subRun->glyphVector().hasBackendData()) {
+            // Since isSuitableFor() requires Ganesh and this is nanobench, we know the canvas
+            // will be backed by a direct context.
+            GrDirectContext* ctx = canvas->recordingContext()->asDirectContext();
+            GrAtlasManager* atlasMgr = ctx->priv().getAtlasManager();
+            subRun->glyphVector().initBackendData<GlyphData>(&fCache,
+                                                             atlasMgr,
+                                                             subRun->maskFormat(),
+                                                             subRun->glyphSrcPadding(),
+                                                             /*isSDF=*/false);
+        }
+        const auto& glyphData = subRun->glyphVector().accessBackendData<GlyphData>();
+        fVertices.reset(new char[glyphData.vertexStride(subRun->maskFormat(), drawMatrix) *
+                                 subRun->glyphCount() * 4]);
     }
 
     void onDraw(int loops, SkCanvas* canvas) override {
@@ -82,9 +98,17 @@ class DirectMaskGlyphVertexFillBenchmark : public Benchmark {
         SkPMColor4f pmColor = SkColorToPMColor4f(paint.getColor(), /*colorInfo=*/{});
         SkMatrix positionMatrix = SkMatrix::Translate(100, 100);
 
+        auto& glyphData = subRun->glyphVector().accessBackendData<GlyphData>();
+        SkSpan<const Glyph> glyphs = subRun->glyphVector().accessBackendGlyphs<Glyph>();
         for (int loop = 0; loop < loops; loop++) {
-            subRun->fillVertexData(fVertices.get(), 0, subRun->glyphCount(),
-                                   pmColor, positionMatrix, {0, 0}, clip);
+            glyphData.fillVertexData(subRun->vertexFiller(),
+                                     glyphs,
+                                     0,
+                                     subRun->glyphCount(),
+                                     pmColor,
+                                     positionMatrix,
+                                     clip,
+                                     fVertices.get());
         }
     }
 

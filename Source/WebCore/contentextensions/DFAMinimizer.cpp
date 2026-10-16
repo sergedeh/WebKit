@@ -41,7 +41,7 @@ namespace ContentExtensions {
 namespace {
 
 template<typename VectorType, typename Iterable, typename Function>
-static inline void iterateIntersections(const VectorType& singularTransitionsFirsts, const Iterable& iterableTransitionList, NOESCAPE const Function& intersectionHandler)
+static inline void LEGACY_NODELETE iterateIntersections(const VectorType& singularTransitionsFirsts, const Iterable& iterableTransitionList, NOESCAPE const Function& intersectionHandler)
 {
     ASSERT(!singularTransitionsFirsts.isEmpty());
     auto otherIterator = iterableTransitionList.begin();
@@ -102,7 +102,7 @@ public:
         m_sets.append(SetDescriptor { start, size, 0 });
     }
 
-    void setElementUnchecked(unsigned elementIndex, unsigned positionInPartition, unsigned setIndex)
+    void LEGACY_NODELETE setElementUnchecked(unsigned elementIndex, unsigned positionInPartition, unsigned setIndex)
     {
         ASSERT(setIndex < m_sets.size());
         m_partitionedElements[positionInPartition] = elementIndex;
@@ -110,7 +110,7 @@ public:
         m_elementToSetMap[elementIndex] = setIndex;
     }
 
-    unsigned startOffsetOfSet(unsigned setIndex) const
+    unsigned LEGACY_NODELETE startOffsetOfSet(unsigned setIndex) const
     {
         return m_sets[setIndex].start;
     }
@@ -189,18 +189,18 @@ public:
     }
 
     // Index of the set containing the Node.
-    unsigned setIndex(unsigned elementIndex) const
+    unsigned LEGACY_NODELETE setIndex(unsigned elementIndex) const
     {
         return m_elementToSetMap[elementIndex];
     }
 
     // NodeIndex of the first element in the set.
-    unsigned firstElementInSet(unsigned setIndex) const
+    unsigned LEGACY_NODELETE firstElementInSet(unsigned setIndex) const
     {
         return m_partitionedElements[m_sets[setIndex].start];
     }
 
-    unsigned size() const
+    unsigned LEGACY_NODELETE size() const
     {
         return m_sets.size();
     }
@@ -211,8 +211,8 @@ private:
         unsigned size;
         unsigned markedCount;
 
-        unsigned indexAfterMarkedElements() const { return start + markedCount; }
-        unsigned end() const { return start + size; }
+        unsigned LEGACY_NODELETE indexAfterMarkedElements() const { return start + markedCount; }
+        unsigned LEGACY_NODELETE end() const { return start + size; }
     };
 
     // List of sets.
@@ -291,7 +291,7 @@ public:
             counter = 0;
         m_flattenedTransitions.resize(flattenedTransitionsSize);
 
-        Vector<uint32_t> transitionPerRangeOffset(m_transitionPartition.size(), 0);
+        Vector<uint32_t> transitionPerRangeOffset(FillWith { }, m_transitionPartition.size(), 0);
 
         for (unsigned i = 0; i < dfa.nodes.size(); ++i) {
             const DFANode& node = dfa.nodes[i];
@@ -352,7 +352,7 @@ public:
         }
     }
 
-    unsigned nodeReplacement(unsigned nodeIndex)
+    unsigned LEGACY_NODELETE nodeReplacement(unsigned nodeIndex)
     {
         unsigned setIndex = m_nodePartition.setIndex(nodeIndex);
         return m_nodePartition.firstElementInSet(setIndex);
@@ -364,12 +364,12 @@ private:
     };
 
     struct CounterConverter {
-        uint32_t convert(uint32_t)
+        uint32_t LEGACY_NODELETE convert(uint32_t)
         {
             return 1;
         }
 
-        void extend(uint32_t& destination, uint32_t)
+        void LEGACY_NODELETE extend(uint32_t& destination, uint32_t)
         {
             ++destination;
         }
@@ -398,13 +398,13 @@ struct ActionKey {
         , actionsLength(actionsLength)
         , state(Valid)
     {
-        SuperFastHash hasher;
-        hasher.addCharactersAssumingAligned(reinterpret_cast<const char16_t*>(&dfa->actions[actionsStart]), actionsLength * sizeof(uint64_t) / sizeof(char16_t));
-        hash = hasher.hash();
+        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+        hash = SuperFastHash::computeHash(std::span { reinterpret_cast<const char16_t*>(&dfa->actions[actionsStart]), actionsLength * sizeof(uint64_t) / sizeof(char16_t) });
+        WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     }
 
-    bool isEmptyValue() const { return state == Empty; }
-    bool isDeletedValue() const { return state == Deleted; }
+    bool LEGACY_NODELETE isEmptyValue() const { return state == Empty; }
+    bool LEGACY_NODELETE isDeletedValue() const { return state == Deleted; }
 
     unsigned hash { 0 };
     
@@ -420,12 +420,12 @@ struct ActionKey {
 };
 
 struct ActionKeyHash {
-    static unsigned hash(const ActionKey& actionKey)
+    static unsigned LEGACY_NODELETE hash(const ActionKey& actionKey)
     {
         return actionKey.hash;
     }
 
-    static bool equal(const ActionKey& a, const ActionKey& b)
+    static bool LEGACY_NODELETE equal(const ActionKey& a, const ActionKey& b)
     {
         if (a.state != b.state
             || a.dfa != b.dfa

@@ -25,12 +25,13 @@
 #include "config.h"
 #include "WasmDebuggerDispatcher.h"
 
-#if ENABLE(REMOTE_INSPECTOR) && ENABLE(WEBASSEMBLY)
+#if ENABLE(WEBASSEMBLY_DEBUGGER) && ENABLE(REMOTE_INSPECTOR)
 
 #include "Connection.h"
 #include "Logging.h"
 #include "WasmDebuggerDispatcherMessages.h"
 #include "WebProcess.h"
+#include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/WasmDebugServer.h>
 #include <wtf/WorkQueue.h>
 
@@ -60,18 +61,26 @@ void WasmDebuggerDispatcher::deref() const
 void WasmDebuggerDispatcher::initializeConnection(IPC::Connection& connection)
 {
     // Register message receiver on WorkQueue (NOT main thread).
-    // This allows IPC messages to be processed even when main thread is blocked in infinite loop
+    // This allows IPC messages to be processed even when main thread is blocked
     connection.addMessageReceiver(m_queue.get(), *this, Messages::WasmDebuggerDispatcher::messageReceiverName());
+}
+
+void WasmDebuggerDispatcher::resetServer()
+{
+    JSC::Wasm::DebugServer& debugServer = JSC::Wasm::DebugServer::singleton();
+    if (!debugServer.isConnected())
+        return;
+    debugServer.reset();
 }
 
 void WasmDebuggerDispatcher::dispatchMessage(const String& message)
 {
     // This method runs on WorkQueue thread (NOT main thread).
-    // Safe to call even when main thread is blocked in infinite loop.
+    // Safe to call even when main thread is blocked.
     JSC::Wasm::DebugServer& debugServer = JSC::Wasm::DebugServer::singleton();
 
     if (!debugServer.isConnected()) {
-        RELEASE_LOG_ERROR(Inspector, "WasmDebugServer not connected");
+        RELEASE_LOG_ERROR(Inspector, "WasmDebugServer has no debug client");
         return;
     }
 
@@ -80,4 +89,4 @@ void WasmDebuggerDispatcher::dispatchMessage(const String& message)
 
 } // namespace WebKit
 
-#endif // ENABLE(REMOTE_INSPECTOR) && ENABLE(WEBASSEMBLY)
+#endif // ENABLE(WEBASSEMBLY_DEBUGGER) && ENABLE(REMOTE_INSPECTOR)

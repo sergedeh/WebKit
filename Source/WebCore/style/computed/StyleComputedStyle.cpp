@@ -23,20 +23,24 @@
 
 #include "config.h"
 #include "StyleComputedStyle.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "StyleComputedStyle+SettersInlines.h"
 
-#include "FontCascade.h"
+#include "ColorBlending.h"
+#include "FontCascadeInlines.h"
 #include "Pagination.h"
-#include "StyleComputedStyleBase+ConstructionInlines.h"
+#include "PlatformRenderTheme.h"
+#include "RenderBlock.h"
+#include "RenderTheme.h"
+#include "StyleComputedStyle+ConstructionInlines.h"
 #include "StyleCustomPropertyRegistry.h"
+#include "StyleLineHeight.h"
 #include "StylePrimitiveNumericTypes+Evaluation.h"
 #include "StyleScaleTransformFunction.h"
 #include <wtf/MathExtras.h>
 #include <wtf/StdLibExtras.h>
-
-#if ENABLE(TEXT_AUTOSIZING)
-#include <wtf/text/StringHash.h>
-#endif
+#include <wtf/TZoneMalloc.h>
+#include <wtf/unicode/CharacterNames.h>
 
 namespace WebCore {
 namespace Style {
@@ -49,24 +53,112 @@ struct SameSizeAsBorderValue {
 
 static_assert(sizeof(BorderValue) == sizeof(SameSizeAsBorderValue), "BorderValue should not grow");
 
+IGNORE_CLANG_WARNINGS_BEGIN("unused-private-field")
+
 struct SameSizeAsComputedStyle : CanMakeCheckedPtr<SameSizeAsComputedStyle> {
-    void* nonInheritedDataRefs[1];
+    WTF_MAKE_TZONE_ALLOCATED(SameSizeAsComputedStyle);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(SameSizeAsComputedStyle);
     struct NonInheritedFlags {
-        unsigned m_bitfields[2];
+        uint32_t m_bitfields[3];
     } m_nonInheritedFlags;
-    void* inheritedDataRefs[2];
     struct InheritedFlags {
-        unsigned m_bitfields[2];
+        uint32_t m_bitfields[2];
     } m_inheritedFlags;
-    HashMap<PseudoElementIdentifier, std::unique_ptr<RenderStyle>> pseudos;
+    void* nonInheritedDataRefs[1];
+    void* inheritedDataRefs[2];
     void* dataRefSvgStyle;
+    HashMap<PseudoElementIdentifier, std::unique_ptr<ComputedStyle>> pseudos;
 
 #if ASSERT_ENABLED || ENABLE(SECURITY_ASSERTIONS)
     bool deletionCheck;
 #endif
 };
 
+WTF_MAKE_TZONE_ALLOCATED_IMPL(SameSizeAsComputedStyle);
+
+IGNORE_CLANG_WARNINGS_END
+
 static_assert(sizeof(ComputedStyle) == sizeof(SameSizeAsComputedStyle), "ComputedStyle should stay small");
+
+ComputedStyle::ComputedStyle(ComputedStyle&&) = default;
+ComputedStyle& ComputedStyle::operator=(ComputedStyle&&) = default;
+
+SUPPRESS_NODELETE ComputedStyle& ComputedStyle::defaultStyleSingleton()
+{
+    static NeverDestroyed<ComputedStyle> style { CreateDefaultStyle };
+    return style;
+}
+
+ComputedStyle ComputedStyle::create()
+{
+    return clone(defaultStyleSingleton());
+}
+
+std::unique_ptr<ComputedStyle> ComputedStyle::createPtr()
+{
+    return clonePtr(defaultStyleSingleton());
+}
+
+std::unique_ptr<ComputedStyle> ComputedStyle::createPtrWithRegisteredInitialValues(const Style::CustomPropertyRegistry& registry)
+{
+    return clonePtr(registry.initialValuePrototypeStyle());
+}
+
+SUPPRESS_NODELETE ComputedStyle ComputedStyle::clone(const ComputedStyle& style)
+{
+    return ComputedStyle(style, Clone);
+}
+
+ComputedStyle ComputedStyle::cloneIncludingPseudoElements(const ComputedStyle& style)
+{
+    auto newStyle = ComputedStyle(style, Clone);
+    newStyle.copyPseudoElementsFrom(style);
+    return newStyle;
+}
+
+std::unique_ptr<ComputedStyle> ComputedStyle::clonePtr(const ComputedStyle& style)
+{
+    return makeUnique<ComputedStyle>(style, Clone);
+}
+
+ComputedStyle ComputedStyle::createAnonymousStyleWithDisplay(const ComputedStyle& parentStyle, Style::Display display)
+{
+    auto newStyle = create();
+    newStyle.inheritFrom(parentStyle);
+    newStyle.inheritUnicodeBidiFrom(parentStyle);
+    newStyle.setDisplay(display);
+    return newStyle;
+}
+
+ComputedStyle ComputedStyle::createStyleInheritingFromPseudoStyle(const ComputedStyle& pseudoStyle)
+{
+    ASSERT(pseudoStyle.pseudoElementType() == PseudoElementType::Before
+        || pseudoStyle.pseudoElementType() == PseudoElementType::After
+        || pseudoStyle.pseudoElementType() == PseudoElementType::Marker
+        || pseudoStyle.pseudoElementType() == PseudoElementType::Checkmark
+        || pseudoStyle.pseudoElementType() == PseudoElementType::PickerIcon);
+
+    auto style = create();
+    style.inheritFrom(pseudoStyle);
+    return style;
+}
+
+SUPPRESS_NODELETE ComputedStyle ComputedStyle::replace(ComputedStyle&& newStyle)
+{
+    return ComputedStyle { *this, WTF::move(newStyle) };
+}
+
+void ComputedStyle::copyPseudoElementsFrom(const ComputedStyle& other)
+{
+    for (auto& [key, pseudoElementStyle] : other.pseudoElementStyles()) {
+        if (!pseudoElementStyle) {
+            ASSERT_NOT_REACHED();
+            continue;
+        }
+        addPseudoElementStyle(makeUnique<ComputedStyle>(cloneIncludingPseudoElements(*pseudoElementStyle)));
+    }
+}
+
 
 void ComputedStyle::inheritFrom(const ComputedStyle& inheritParent)
 {
@@ -76,6 +168,11 @@ void ComputedStyle::inheritFrom(const ComputedStyle& inheritParent)
 
     if (m_svgData != inheritParent.m_svgData)
         m_svgData.access().inheritFrom(inheritParent.m_svgData.get());
+}
+
+bool ComputedStyle::isListItemType() const
+{
+    return display().isListItemType();
 }
 
 void ComputedStyle::inheritIgnoringCustomPropertiesFrom(const ComputedStyle& inheritParent)
@@ -129,6 +226,7 @@ void ComputedStyle::copyContentFrom(const ComputedStyle& other)
 void ComputedStyle::copyPseudoElementBitsFrom(const ComputedStyle& other)
 {
     m_nonInheritedFlags.pseudoBits = other.m_nonInheritedFlags.pseudoBits;
+    m_nonInheritedFlags.pseudoElementBoxGeneration = other.m_nonInheritedFlags.pseudoElementBoxGeneration;
 }
 
 bool ComputedStyle::operator==(const ComputedStyle& other) const
@@ -208,133 +306,15 @@ bool ComputedStyle::borderAndBackgroundEqual(const ComputedStyle& other) const
 {
     return border() == other.border()
         && backgroundLayers() == other.backgroundLayers()
-        && backgroundColor() == other.backgroundColor();
+        && usedBackgroundColor() == other.usedBackgroundColor();
 }
 
-#if ENABLE(TEXT_AUTOSIZING)
-
-static inline unsigned computeFontHash(const FontCascade& font)
+float ComputedStyle::usedLineHeight() const
 {
-    // FIXME: Would be better to hash the family name rather than hashing a hash of the family name. Also, should this use FontCascadeDescription::familyNameHash?
-    return computeHash(ASCIICaseInsensitiveHash::hash(font.fontDescription().firstFamily()), font.fontDescription().specifiedSize());
-}
-
-unsigned ComputedStyle::hashForTextAutosizing() const
-{
-    // FIXME: Not a very smart hash. Could be improved upon. See <https://bugs.webkit.org/show_bug.cgi?id=121131>.
-    unsigned hash = m_nonInheritedData->miscData->usedAppearance;
-    hash ^= m_nonInheritedData->rareData->lineClamp.valueForHash();
-    hash ^= m_inheritedRareData->overflowWrap;
-    hash ^= m_inheritedRareData->nbspMode;
-    hash ^= m_inheritedRareData->lineBreak;
-    hash ^= m_inheritedData->specifiedLineHeight.valueForHash();
-    hash ^= computeFontHash(m_inheritedData->fontData->fontCascade);
-    hash ^= WTF::FloatHash<float>::hash(m_inheritedData->borderHorizontalSpacing.unresolvedValue());
-    hash ^= WTF::FloatHash<float>::hash(m_inheritedData->borderVerticalSpacing.unresolvedValue());
-    hash ^= m_inheritedFlags.boxDirection;
-    hash ^= m_inheritedFlags.rtlOrdering;
-    hash ^= m_nonInheritedFlags.position;
-    hash ^= m_nonInheritedFlags.floating;
-    hash ^= m_nonInheritedData->miscData->textOverflow;
-    hash ^= m_inheritedRareData->textSecurity;
-    return hash;
-}
-
-bool ComputedStyle::equalForTextAutosizing(const ComputedStyle& other) const
-{
-    return m_nonInheritedData->miscData->usedAppearance == other.m_nonInheritedData->miscData->usedAppearance
-        && m_nonInheritedData->rareData->lineClamp == other.m_nonInheritedData->rareData->lineClamp
-        && m_inheritedRareData->textSizeAdjust == other.m_inheritedRareData->textSizeAdjust
-        && m_inheritedRareData->overflowWrap == other.m_inheritedRareData->overflowWrap
-        && m_inheritedRareData->nbspMode == other.m_inheritedRareData->nbspMode
-        && m_inheritedRareData->lineBreak == other.m_inheritedRareData->lineBreak
-        && m_inheritedRareData->textSecurity == other.m_inheritedRareData->textSecurity
-        && m_inheritedData->specifiedLineHeight == other.m_inheritedData->specifiedLineHeight
-        && m_inheritedData->fontData->fontCascade.equalForTextAutoSizing(other.m_inheritedData->fontData->fontCascade)
-        && m_inheritedData->borderHorizontalSpacing == other.m_inheritedData->borderHorizontalSpacing
-        && m_inheritedData->borderVerticalSpacing == other.m_inheritedData->borderVerticalSpacing
-        && m_inheritedFlags.boxDirection == other.m_inheritedFlags.boxDirection
-        && m_inheritedFlags.rtlOrdering == other.m_inheritedFlags.rtlOrdering
-        && m_nonInheritedFlags.position == other.m_nonInheritedFlags.position
-        && m_nonInheritedFlags.floating == other.m_nonInheritedFlags.floating
-        && m_nonInheritedData->miscData->textOverflow == other.m_nonInheritedData->miscData->textOverflow;
-}
-
-#endif
-
-float ComputedStyle::computedLineHeight() const
-{
-    return computeLineHeight(lineHeight());
-}
-
-float ComputedStyle::computeLineHeight(const LineHeight& lineHeight) const
-{
-    return WTF::switchOn(lineHeight,
-        [&](const CSS::Keyword::Normal&) -> float {
-            return metricsOfPrimaryFont().lineSpacing();
-        },
-        [&](const LineHeight::Fixed& fixed) -> float {
-            return evaluate<LayoutUnit>(fixed, usedZoomForLength()).toFloat();
-        },
-        [&](const LineHeight::Percentage& percentage) -> float {
-            return evaluate<LayoutUnit>(percentage, LayoutUnit { computedFontSize() }).toFloat();
-        },
-        [&](const LineHeight::Calc& calc) -> float {
-            return evaluate<LayoutUnit>(calc, LayoutUnit { computedFontSize() }, usedZoomForLength()).toFloat();
-        }
-    );
-}
-
-void ComputedStyle::setPageScaleTransform(float scale)
-{
-    if (scale == 1)
-        return;
-
-    setTransform(Style::Transform { Style::TransformFunction { Style::ScaleTransformFunction::create(scale, scale, Style::TransformFunctionType::Scale) } });
-    setTransformOriginX(0_css_px);
-    setTransformOriginY(0_css_px);
-}
-
-void ComputedStyle::setColumnStylesFromPaginationMode(PaginationMode paginationMode)
-{
-    if (paginationMode == Pagination::Mode::Unpaginated)
-        return;
-    
-    setColumnFill(ColumnFill::Auto);
-    
-    switch (paginationMode) {
-    case Pagination::Mode::LeftToRightPaginated:
-        setColumnAxis(ColumnAxis::Horizontal);
-        if (writingMode().isHorizontal())
-            setColumnProgression(writingMode().isBidiLTR() ? ColumnProgression::Normal : ColumnProgression::Reverse);
-        else
-            setColumnProgression(writingMode().isBlockFlipped() ? ColumnProgression::Reverse : ColumnProgression::Normal);
-        break;
-    case Pagination::Mode::RightToLeftPaginated:
-        setColumnAxis(ColumnAxis::Horizontal);
-        if (writingMode().isHorizontal())
-            setColumnProgression(writingMode().isBidiLTR() ? ColumnProgression::Reverse : ColumnProgression::Normal);
-        else
-            setColumnProgression(writingMode().isBlockFlipped() ? ColumnProgression::Normal : ColumnProgression::Reverse);
-        break;
-    case Pagination::Mode::TopToBottomPaginated:
-        setColumnAxis(ColumnAxis::Vertical);
-        if (writingMode().isHorizontal())
-            setColumnProgression(writingMode().isBlockFlipped() ? ColumnProgression::Reverse : ColumnProgression::Normal);
-        else
-            setColumnProgression(writingMode().isBidiLTR() ? ColumnProgression::Normal : ColumnProgression::Reverse);
-        break;
-    case Pagination::Mode::BottomToTopPaginated:
-        setColumnAxis(ColumnAxis::Vertical);
-        if (writingMode().isHorizontal())
-            setColumnProgression(writingMode().isBlockFlipped() ? ColumnProgression::Normal : ColumnProgression::Reverse);
-        else
-            setColumnProgression(writingMode().isBidiLTR() ? ColumnProgression::Reverse : ColumnProgression::Normal);
-        break;
-    case Pagination::Mode::Unpaginated:
-        ASSERT_NOT_REACHED();
-        break;
-    }
+    return evaluate<float>(textAutosizingAdjustedLineHeight(), LineHeightEvaluationContext {
+        usedFontSize(),
+        metricsOfPrimaryFont().lineSpacing()
+    }, usedZoomForLength());
 }
 
 bool ComputedStyle::scrollSnapDataEquivalent(const ComputedStyle& other) const
@@ -345,76 +325,379 @@ bool ComputedStyle::scrollSnapDataEquivalent(const ComputedStyle& other) const
 
     return m_nonInheritedData->rareData->scrollMargin == other.m_nonInheritedData->rareData->scrollMargin
         && m_nonInheritedData->rareData->scrollSnapAlign == other.m_nonInheritedData->rareData->scrollSnapAlign
-        && m_nonInheritedData->rareData->scrollSnapStop == other.m_nonInheritedData->rareData->scrollSnapStop
-        && m_nonInheritedData->rareData->scrollSnapAlign == other.m_nonInheritedData->rareData->scrollSnapAlign;
+        && m_nonInheritedData->rareData->scrollSnapStop == other.m_nonInheritedData->rareData->scrollSnapStop;
 }
 
-// MARK: - Style adjustment utilities
 
-void ComputedStyle::adjustAnimations()
+
+// MARK: - Specific style change queries
+
+bool ComputedStyle::scrollAnchoringSuppressionStyleDidChange(const ComputedStyle* other) const
 {
-    if (animations().isInitial())
-        return;
+    // https://drafts.csswg.org/css-scroll-anchoring/#suppression-triggers
+    // Determine if there are any style changes that should result in an scroll anchoring suppression
+    if (!other)
+        return false;
 
-    ensureAnimations().prepareForUse();
+    if (m_nonInheritedData->boxData.ptr() != other->m_nonInheritedData->boxData.ptr()) {
+        SUPPRESS_UNCOUNTED_LOCAL auto& boxData = m_nonInheritedData->boxData.get();
+        SUPPRESS_UNCOUNTED_LOCAL auto& otherBoxData = other->m_nonInheritedData->boxData.get();
+        if (boxData.width != otherBoxData.width
+            || boxData.minWidth != otherBoxData.minWidth
+            || boxData.maxWidth != otherBoxData.maxWidth
+            || boxData.height != otherBoxData.height
+            || boxData.minHeight != otherBoxData.minHeight
+            || boxData.maxHeight != otherBoxData.maxHeight)
+            return true;
+    }
+
+    if (overflowAnchor() != other->overflowAnchor() && overflowAnchor() == OverflowAnchor::None)
+        return true;
+
+    if (position() != other->position())
+        return true;
+
+    if (m_nonInheritedData->surroundData.ptr() != other->m_nonInheritedData->surroundData.ptr()) {
+        SUPPRESS_UNCOUNTED_LOCAL auto& surroundData = m_nonInheritedData->surroundData.get();
+        SUPPRESS_UNCOUNTED_LOCAL auto& otherSurroundData = other->m_nonInheritedData->surroundData.get();
+        if (surroundData.margin != otherSurroundData.margin)
+            return true;
+
+        if (surroundData.padding != otherSurroundData.padding)
+            return true;
+
+        if (position() != PositionType::Static) {
+            if (surroundData.inset != otherSurroundData.inset)
+                return true;
+        }
+    }
+
+    if (m_nonInheritedData->miscData.ptr() != other->m_nonInheritedData->miscData.ptr()) {
+        SUPPRESS_UNCOUNTED_LOCAL auto& miscData = m_nonInheritedData->miscData.get();
+        SUPPRESS_UNCOUNTED_LOCAL auto& otherMiscData = other->m_nonInheritedData->miscData.get();
+        if (miscData.transform != otherMiscData.transform)
+            return true;
+    }
+
+    // The spec doesn't list `translate`, `rotate`, `scale` but test them here.
+    // https://github.com/w3c/csswg-drafts/issues/13489
+    if (m_nonInheritedData->rareData.ptr() != other->m_nonInheritedData->rareData.ptr()) {
+        SUPPRESS_UNCOUNTED_LOCAL auto& rareData = m_nonInheritedData->rareData.get();
+        SUPPRESS_UNCOUNTED_LOCAL auto& otherRareData = other->m_nonInheritedData->rareData.get();
+        if (rareData.translate != otherRareData.translate
+            || rareData.rotate != otherRareData.rotate
+            || rareData.scale != otherRareData.scale) {
+            return true;
+        }
+    }
+    return false;
 }
 
-void ComputedStyle::adjustTransitions()
+bool ComputedStyle::outOfFlowPositionStyleDidChange(const ComputedStyle* other) const
 {
-    if (transitions().isInitial())
-        return;
-
-    ensureTransitions().prepareForUse();
+    // https://drafts.csswg.org/css-scroll-anchoring/#suppression-triggers
+    // Determine if there is a style change that causes an element to become or stop
+    // being absolutely or fixed positioned
+    return other && hasOutOfFlowPosition() != other->hasOutOfFlowPosition();
 }
 
-void ComputedStyle::adjustBackgroundLayers()
-{
-    if (backgroundLayers().isInitial())
-        return;
+// MARK: - Used Values
 
-    ensureBackgroundLayers().prepareForUse();
+const WTF::String& ComputedStyle::hyphenString() const
+{
+    ASSERT(hyphens() != Hyphens::None);
+
+    return WTF::switchOn(hyphenateCharacter(),
+        [&](const CSS::Keyword::Auto&) -> const WTF::String& {
+            // FIXME: This should depend on locale.
+            static MainThreadNeverDestroyed<const WTF::String> hyphenMinusString(span(hyphenMinus));
+            static MainThreadNeverDestroyed<const WTF::String> hyphenString(span(hyphen));
+
+            return protect(fontCascade().primaryFont())->glyphForCharacter(hyphen) ? hyphenString : hyphenMinusString;
+        },
+        [](const String& string) -> const WTF::String& {
+            return string.value;
+        }
+    );
 }
 
-void ComputedStyle::adjustMaskLayers()
+float ComputedStyle::usedStrokeWidth(const IntSize& viewportSize) const
 {
-    if (maskLayers().isInitial())
-        return;
+    // Use the stroke-width and stroke-color value combination only if stroke-color has been explicitly specified.
+    // Since there will be no visible stroke when stroke-color is not specified (transparent by default), we fall
+    // back to the legacy Webkit text stroke combination in that case.
+    if (!hasExplicitlySetStrokeColor())
+        return Style::evaluate<float>(textStrokeWidth(), usedZoomForLength());
 
-    ensureMaskLayers().prepareForUse();
+    return WTF::switchOn(strokeWidth(),
+        [&](const Style::StrokeWidth::Fixed& fixedStrokeWidth) -> float {
+            return Style::evaluate<float>(fixedStrokeWidth, usedZoomForLength());
+        },
+        [&](const Style::StrokeWidth::Percentage& percentageStrokeWidth) -> float {
+            // According to the spec, https://drafts.fxtf.org/paint/#stroke-width, the percentage is relative to the scaled viewport size.
+            // The scaled viewport size is the geometric mean of the viewport width and height.
+            return percentageStrokeWidth.value * (viewportSize.width() + viewportSize.height()) / 200.0f;
+        },
+        [&](const Style::StrokeWidth::Calc& calcStrokeWidth) -> float {
+            // FIXME: It is almost certainly wrong that calc and percentage are being handled differently - https://bugs.webkit.org/show_bug.cgi?id=296482
+            return Style::evaluate<float>(calcStrokeWidth, viewportSize.width(), usedZoomForLength());
+        }
+    );
 }
 
-void ComputedStyle::adjustScrollTimelines()
+WebCore::Color ComputedStyle::usedStrokeColor() const
 {
-    auto& names = scrollTimelineNames();
-    if (names.isNone() && scrollTimelines().isEmpty())
-        return;
-
-    auto& axes = scrollTimelineAxes();
-    auto numberOfAxes = axes.size();
-    ASSERT(numberOfAxes > 0);
-
-    m_nonInheritedData.access().rareData.access().scrollTimelines = { FixedVector<Ref<ScrollTimeline>>::createWithSizeFromGenerator(names.size(), [&](auto i) {
-        return ScrollTimeline::create(names[i].value.value, axes[i % numberOfAxes]);
-    }) };
+    return hasExplicitlySetStrokeColor() ? visitedDependentStrokeColor() : visitedDependentTextStrokeColor();
 }
 
-void ComputedStyle::adjustViewTimelines()
+WebCore::Color ComputedStyle::usedStrokeColorApplyingColorFilter() const
 {
-    auto& names = viewTimelineNames();
-    if (names.isNone() && viewTimelines().isEmpty())
-        return;
+    return hasExplicitlySetStrokeColor() ? visitedDependentStrokeColorApplyingColorFilter() : visitedDependentTextStrokeColorApplyingColorFilter();
+}
 
-    auto& axes = viewTimelineAxes();
-    auto numberOfAxes = axes.size();
-    ASSERT(numberOfAxes > 0);
+Style::Contain ComputedStyle::usedContain() const
+{
+    auto result = contain();
 
-    auto& insets = viewTimelineInsets();
-    auto numberOfInsets = insets.size();
-    ASSERT(numberOfInsets > 0);
+    if (containerType().hasSize())
+        result.add({ Style::ContainValue::Style, Style::ContainValue::Size });
+    else if (containerType().hasInlineSize())
+        result.add({ Style::ContainValue::Style, Style::ContainValue::InlineSize });
 
-    m_nonInheritedData.access().rareData.access().viewTimelines = { FixedVector<Ref<ViewTimeline>>::createWithSizeFromGenerator(names.size(), [&](auto i) {
-        return ViewTimeline::create(names[i].value.value, axes[i % numberOfAxes], insets[i % numberOfInsets]);
-    }) };
+    return result;
+}
+
+UserSelect ComputedStyle::usedUserSelect() const
+{
+    if (effectiveInert())
+        return UserSelect::None;
+
+    return static_cast<UserSelect>(m_inheritedRareData->usedUserSelect);
+}
+
+WebCore::Color ComputedStyle::usedScrollbarThumbColor() const
+{
+    return WTF::switchOn(scrollbarColor(),
+        [&](const CSS::Keyword::Auto&) -> WebCore::Color {
+            return { };
+        },
+        [&](const auto& parts) -> WebCore::Color {
+            Style::ColorResolver colorResolver { *this };
+            if (!appleColorFilter().isNone())
+                return colorResolver.colorResolvingCurrentColorApplyingColorFilter(parts.thumb);
+            return colorResolver.colorResolvingCurrentColor(parts.thumb);
+        }
+    );
+}
+
+WebCore::Color ComputedStyle::usedScrollbarTrackColor() const
+{
+    return WTF::switchOn(scrollbarColor(),
+        [&](const CSS::Keyword::Auto&) -> WebCore::Color {
+            return { };
+        },
+        [&](const auto& parts) -> WebCore::Color {
+            Style::ColorResolver colorResolver { *this };
+            if (!appleColorFilter().isNone())
+                return colorResolver.colorResolvingCurrentColorApplyingColorFilter(parts.track);
+            return colorResolver.colorResolvingCurrentColor(parts.track);
+        }
+    );
+}
+
+WebCore::Color ComputedStyle::usedAccentColor(OptionSet<StyleColorOptions> styleColorOptions) const
+{
+    return WTF::switchOn(accentColor(),
+        [](const CSS::Keyword::Auto&) -> WebCore::Color {
+            return { };
+        },
+        [&](const Color& color) -> WebCore::Color {
+            ColorResolver colorResolver { *this };
+
+            auto resolvedAccentColor = colorResolver.colorResolvingCurrentColorApplyingColorFilter(color);
+
+            if (!resolvedAccentColor.isOpaque()) {
+                auto computedCanvasColor = RenderTheme::singleton().systemColor(CSSValueID::Canvas, styleColorOptions);
+                resolvedAccentColor = blendSourceOver(computedCanvasColor, resolvedAccentColor);
+            }
+
+            return resolvedAccentColor;
+        }
+    );
+}
+
+Style::LineWidth effectiveColumnRuleWidth(const ComputedStyle& style)
+{
+    if (!isVisibleBorderStyle(style.columnRuleStyle()))
+        return 0_css_px;
+    return style.columnRuleWidth();
+}
+
+Style::UsedOutlineOffset effectiveOutlineOffset(const ComputedStyle& style)
+{
+    auto& outline = style.outline();
+    if (outline.outlineOffset.isInset())
+        return Style::Length<> { -effectiveOutlineWidth(style).unresolvedValue() };
+    return *outline.outlineOffset.tryLength();
+}
+
+Style::LineWidth effectiveOutlineWidth(const ComputedStyle& style)
+{
+    auto& outline = style.outline();
+    if (static_cast<OutlineStyle>(outline.outlineStyle) == OutlineStyle::None)
+        return 0_css_px;
+    if (static_cast<OutlineStyle>(outline.outlineStyle) == OutlineStyle::Auto)
+        return Style::LineWidth { RenderTheme::singleton().platformFocusRingWidth() };
+    return outline.outlineWidth;
+}
+
+float effectiveOutlineSize(const ComputedStyle& style, Style::ZoomFactor zoom, float deviceScaleFactor)
+{
+    return std::max(0.0f, Style::evaluate<float>(effectiveOutlineWidth(style), zoom, deviceScaleFactor) + Style::evaluate<float>(effectiveOutlineOffset(style), zoom, deviceScaleFactor));
+}
+
+BlendMode ComputedStyle::usedBlendMode() const
+{
+    if (m_nonInheritedData->rareData->overrideBlendMode) [[unlikely]]
+        return *m_nonInheritedData->rareData->overrideBlendMode;
+
+    return blendMode();
+}
+
+// MARK: - Used background color.
+
+Color ComputedStyle::usedBackgroundColor() const
+{
+    if (auto overrideColor = m_nonInheritedData->rareData->overrideBackgroundColor) [[unlikely]]
+        return *overrideColor;
+
+    return backgroundColor();
+}
+
+WebCore::Color ComputedStyle::usedBackgroundColorResolvingCurrentColor() const
+{
+    return ColorResolver { *this }.colorResolvingCurrentColor(usedBackgroundColor());
+}
+
+WebCore::Color ComputedStyle::usedBackgroundColorResolvingCurrentColorApplyingColorFilter() const
+{
+    return ColorResolver { *this }.colorResolvingCurrentColorApplyingColorFilter(usedBackgroundColor());
+}
+
+WebCore::Color ComputedStyle::visitedDependentUsedBackgroundColor(OptionSet<PaintBehavior> paintBehavior) const
+{
+    auto colorResolver = backgroundColorResolver();
+    auto unvisitedLinkColor = usedBackgroundColorResolvingCurrentColor();
+
+    if (colorResolver.visitedDependentShouldReturnUnvisitedLinkColor(paintBehavior))
+        return unvisitedLinkColor;
+
+    auto visitedLinkColor = visitedLinkBackgroundColorResolvingCurrentColor();
+    if (ColorPropertyTraits<PropertyNameConstant<CSSPropertyID::BackgroundColor>>::excludesVisitedLinkColor(visitedLinkColor))
+        return unvisitedLinkColor;
+
+    // Take the alpha from the unvisited color, but get the RGB values from the visited color.
+    return visitedLinkColor.colorWithAlpha(unvisitedLinkColor.alphaAsFloat());
+}
+
+WebCore::Color ComputedStyle::visitedDependentUsedBackgroundColorApplyingColorFilter(OptionSet<PaintBehavior> paintBehavior) const
+{
+    auto color = visitedDependentUsedBackgroundColor(paintBehavior);
+    appleColorFilter().transformColor(color);
+    return color;
+}
+
+// MARK: - Derived Values
+
+template<typename OutsetValue>
+static LayoutUnit computeOutset(const OutsetValue& outsetValue, const Style::LineWidth& borderWidth, Style::ZoomFactor zoom, float deviceScaleFactor)
+{
+    return WTF::switchOn(outsetValue,
+        [&](const typename OutsetValue::Number& number) {
+            return LayoutUnit(Style::evaluate<LayoutUnit>(borderWidth, zoom, deviceScaleFactor) * number.value);
+        },
+        [&](const typename OutsetValue::Length& length) {
+            return Style::evaluate<LayoutUnit>(length, zoom);
+        }
+    );
+}
+
+static LayoutBoxExtent computeOutsets(const auto& outsets, const auto& borderWidths, Style::ZoomFactor zoom, float deviceScaleFactor)
+{
+    return {
+        computeOutset(outsets.top(), borderWidths.top(), zoom, deviceScaleFactor),
+        computeOutset(outsets.right(), borderWidths.right(), zoom, deviceScaleFactor),
+        computeOutset(outsets.bottom(), borderWidths.bottom(), zoom, deviceScaleFactor),
+        computeOutset(outsets.left(), borderWidths.left(), zoom, deviceScaleFactor),
+    };
+}
+
+LayoutBoxExtent ComputedStyle::imageOutsets(const Style::BorderImage& image, float deviceScaleFactor) const
+{
+    return computeOutsets(image.outset().values, Style::effectiveBorderWidths(*this), usedZoomForLength(), deviceScaleFactor);
+}
+
+LayoutBoxExtent ComputedStyle::imageOutsets(const Style::MaskBorder& image, float deviceScaleFactor) const
+{
+    return computeOutsets(image.outset().values, Style::effectiveBorderWidths(*this), usedZoomForLength(), deviceScaleFactor);
+}
+
+LayoutBoxExtent ComputedStyle::borderImageOutsets(float deviceScaleFactor) const
+{
+    return imageOutsets(borderImage(), deviceScaleFactor);
+}
+
+LayoutBoxExtent ComputedStyle::maskBorderOutsets(float deviceScaleFactor) const
+{
+    return imageOutsets(maskBorder(), deviceScaleFactor);
+}
+
+// MARK: - Logical
+
+const BorderValue& ComputedStyle::borderBefore(const WritingMode writingMode) const
+{
+    switch (writingMode.blockDirection()) {
+    case FlowDirection::TopToBottom:
+        return borderTop();
+    case FlowDirection::BottomToTop:
+        return borderBottom();
+    case FlowDirection::LeftToRight:
+        return borderLeft();
+    case FlowDirection::RightToLeft:
+        return borderRight();
+    }
+    ASSERT_NOT_REACHED();
+    return borderTop();
+}
+
+const BorderValue& ComputedStyle::borderAfter(const WritingMode writingMode) const
+{
+    switch (writingMode.blockDirection()) {
+    case FlowDirection::TopToBottom:
+        return borderBottom();
+    case FlowDirection::BottomToTop:
+        return borderTop();
+    case FlowDirection::LeftToRight:
+        return borderRight();
+    case FlowDirection::RightToLeft:
+        return borderLeft();
+    }
+    ASSERT_NOT_REACHED();
+    return borderBottom();
+}
+
+const BorderValue& ComputedStyle::borderStart(const WritingMode writingMode) const
+{
+    if (writingMode.isHorizontal())
+        return writingMode.isInlineLeftToRight() ? borderLeft() : borderRight();
+    return writingMode.isInlineTopToBottom() ? borderTop() : borderBottom();
+}
+
+const BorderValue& ComputedStyle::borderEnd(const WritingMode writingMode) const
+{
+    if (writingMode.isHorizontal())
+        return writingMode.isInlineLeftToRight() ? borderRight() : borderLeft();
+    return writingMode.isInlineTopToBottom() ? borderBottom() : borderTop();
 }
 
 } // namespace Style

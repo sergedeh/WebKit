@@ -59,7 +59,7 @@ public:
     const WriteBarrier<Unknown>& internalField(Field field) const { return Base::internalField(static_cast<uint32_t>(field)); }
     WriteBarrier<Unknown>& internalField(Field field) { return Base::internalField(static_cast<uint32_t>(field)); }
 
-    JSObject* callback() const { return jsCast<JSObject*>(internalField(Field::Callback).get()); }
+    JSObject* callback() const { return uncheckedDowncast<JSObject>(internalField(Field::Callback).get()); }
 
     static JSFinalizationRegistry* create(VM&, Structure*, JSObject* callback);
     static JSFinalizationRegistry* createWithInitialValues(VM&, Structure*);
@@ -69,7 +69,7 @@ public:
 
     DECLARE_EXPORT_INFO;
 
-    void finalizeUnconditionally(VM&, CollectionScope);
+    void reconcileWeakReferencesAtGCEnd(VM&, CollectionScope);
     DECLARE_VISIT_CHILDREN;
     static void destroy(JSCell*);
     static constexpr DestructionMode needsDestruction = NeedsDestruction;

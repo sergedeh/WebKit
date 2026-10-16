@@ -50,14 +50,16 @@
 #include "MemoryCache.h"
 #include "Page.h"
 #include "PerformanceLogging.h"
+#include "PlatformRenderTheme.h"
 #include "PluginDocument.h"
 #include "RenderObjectInlines.h"
 #include "RenderTheme.h"
 #include "RenderView.h"
 #include "SVGPathElement.h"
 #include "ScrollingThread.h"
+#include "SelectorChecker.h"
 #include "SelectorQuery.h"
-#include "StyleScope.h"
+#include "StyleDocumentScope.h"
 #include "StyleSheetContentsCache.h"
 #include "StyledElement.h"
 #include "TextBreakingPositionCache.h"
@@ -99,7 +101,9 @@ static void releaseNoncriticalMemory(MaintainMemoryCache maintainMemoryCache)
         if (CheckedPtr renderView = document->renderView()) {
             LayoutIntegration::LineLayout::releaseCaches(*renderView);
             Layout::TextBreakingPositionCache::singleton().clear();
-            renderView->layoutContext().deleteDetachedRenderersNow();
+            CheckedRef layoutContext = renderView->layoutContext();
+            layoutContext->deleteDetachedRenderersNow();
+            layoutContext->deleteDetachedInlineContentNow();
         }
     }
 
@@ -109,6 +113,7 @@ static void releaseNoncriticalMemory(MaintainMemoryCache maintainMemoryCache)
     Style::StyleSheetContentsCache::singleton().clear();
     HTMLNameCache::clear();
     ImmutableStyleProperties::clearDeduplicationMap();
+    SelectorChecker::clearCompiledHasArgumentSelectors();
     SVGPathElement::clearCache();
 #if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
     InteractionRegion::clearCache();
@@ -129,6 +134,7 @@ static void releaseCriticalMemory(Synchronous synchronous, MaintainBackForwardCa
     }
 
     CSSValuePool::singleton().drain();
+    FontCache::releaseCriticalMemoryInAllFontCaches();
 #if ENABLE(WEB_AUDIO)
     HRTFElevation::clearCache();
 #endif
@@ -142,14 +148,17 @@ static void releaseCriticalMemory(Synchronous synchronous, MaintainBackForwardCa
         return document.get();
     });
     for (auto& document : protectedDocuments) {
-        document->clearQuerySelectorAllResults();
+        document->clearQuerySelectorResults();
         document->styleScope().releaseMemory();
         if (RefPtr fontSelector = document->fontSelectorIfExists())
             fontSelector->emptyCaches();
-        document->protectedCachedResourceLoader()->garbageCollectDocumentResources();
+        protect(document->cachedResourceLoader())->garbageCollectDocumentResources();
 
         if (RefPtr pluginDocument = dynamicDowncast<PluginDocument>(document))
             pluginDocument->releaseMemory();
+
+        if (RefPtr localFrame = document->frame())
+            protect(localFrame->editor())->releaseMemory();
     }
 
     if (synchronous == Synchronous::Yes)
@@ -259,7 +268,7 @@ void logMemoryStatistics(LogMemoryStatisticsReason reason)
         String tagName = displayNameForVMTag(i);
         if (!tagName)
             tagName = makeString("Tag "_s, i);
-        RELEASE_LOG(MemoryPressure, "  %" PUBLIC_LOG_STRING ": %lu MB in %zu regions", tagName.latin1().data(), dirty / MB, pages[i].regionCount);
+        RELEASE_LOG(MemoryPressure, "  %" PUBLIC_LOG_STRING ": %lu MB in %zu regions", tagName.utf8(), dirty / MB, pages[i].regionCount);
     }
 
     bool shouldLogJavaScriptObjectCounts = os_variant_allows_internal_security_policies("com.apple.WebKit");

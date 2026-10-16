@@ -47,8 +47,10 @@
 #import <SecurityInterface/SFCertificatePanel.h>
 #import <SecurityInterface/SFCertificateView.h>
 #import <WebCore/CertificateInfo.h>
+#import <WebCore/DiagnosticLoggingClient.h>
 #import <WebCore/InspectorFrontendClient.h>
 #import <WebCore/LocalFrame.h>
+#import <WebCore/LocalizedStrings.h>
 #import <WebCore/Page.h>
 #import <WebCore/PageInspectorController.h>
 #import <WebCore/ScriptController.h>
@@ -59,7 +61,6 @@
 #import <wtf/cocoa/SpanCocoa.h>
 #import <wtf/text/Base64.h>
 
-using namespace WebCore;
 using namespace Inspector;
 
 static const CGFloat minimumWindowWidth = 500;
@@ -108,7 +109,7 @@ void WebInspectorClient::inspectedPageDestroyed()
 {
 }
 
-FrontendChannel* WebInspectorClient::openLocalFrontend(PageInspectorController* inspectedPageController)
+FrontendChannel* WebInspectorClient::openLocalFrontend(WebCore::PageInspectorController* inspectedPageController)
 {
     RetainPtr<WebInspectorWindowController> windowController = adoptNS([[WebInspectorWindowController alloc] initWithInspectedWebView:m_inspectedWebView.get().get() isUnderTest:inspectedPageController->isUnderTest()]);
     [windowController.get() setInspectorClient:this];
@@ -133,7 +134,7 @@ void WebInspectorClient::bringFrontendToFront()
     m_frontendClient->bringToFront();
 }
 
-void WebInspectorClient::didResizeMainFrame(LocalFrame*)
+void WebInspectorClient::didResizeMainFrame(WebCore::LocalFrame*)
 {
     if (m_frontendClient)
         m_frontendClient->attachAvailabilityChanged(canAttach());
@@ -180,7 +181,7 @@ void WebInspectorClient::releaseFrontend()
     m_frontendPage = nullptr;
 }
 
-WebInspectorFrontendClient::WebInspectorFrontendClient(WebView* inspectedWebView, LegacyWebPageInspectorController& webPageInspectorController, WebInspectorWindowController* frontendWindowController, PageInspectorController* inspectedPageController, Page* frontendPage, std::unique_ptr<Settings> settings)
+WebInspectorFrontendClient::WebInspectorFrontendClient(WebView* inspectedWebView, LegacyWebPageInspectorController& webPageInspectorController, WebInspectorWindowController* frontendWindowController, WebCore::PageInspectorController* inspectedPageController, WebCore::Page* frontendPage, std::unique_ptr<Settings> settings)
     : InspectorFrontendClientLocal(inspectedPageController, frontendPage, WTF::move(settings))
     , m_inspectedWebView(inspectedWebView)
     , m_webPageInspectorController(&webPageInspectorController)
@@ -334,7 +335,7 @@ void WebInspectorFrontendClient::setAttachedWindowWidth(unsigned)
     // Dock to right is not implemented in WebKit 1.
 }
 
-void WebInspectorFrontendClient::setSheetRect(const FloatRect& rect)
+void WebInspectorFrontendClient::setSheetRect(const WebCore::FloatRect& rect)
 {
     m_sheetRect = rect;
 }
@@ -345,7 +346,7 @@ void WebInspectorFrontendClient::inspectedURLChanged(const String& newURL)
     updateWindowTitle();
 }
 
-void WebInspectorFrontendClient::showCertificate(const CertificateInfo& certificateInfo)
+void WebInspectorFrontendClient::showCertificate(const WebCore::CertificateInfo& certificateInfo)
 {
     ASSERT(!certificateInfo.isEmpty());
 
@@ -372,16 +373,16 @@ bool WebInspectorFrontendClient::supportsDiagnosticLogging()
     return page ? page->settings().diagnosticLoggingEnabled() : false;
 }
 
-void WebInspectorFrontendClient::logDiagnosticEvent(const String& eventName, const DiagnosticLoggingClient::ValueDictionary& dictionary)
+void WebInspectorFrontendClient::logDiagnosticEvent(const String& eventName, const WebCore::DiagnosticLoggingClient::ValueDictionary& dictionary)
 {
-    if (auto* page = frontendPage())
-        page->diagnosticLoggingClient().logDiagnosticMessageWithValueDictionary(eventName, "Legacy Web Inspector Frontend Diagnostics"_s, dictionary, ShouldSample::No);
+    if (RefPtr page = frontendPage())
+        protect(page->diagnosticLoggingClient())->logDiagnosticMessageWithValueDictionary(eventName, "Legacy Web Inspector Frontend Diagnostics"_s, dictionary, WebCore::ShouldSample::No);
 }
 #endif
 
 void WebInspectorFrontendClient::updateWindowTitle() const
 {
-    RetainPtr title = [NSString stringWithFormat:UI_STRING_INTERNAL("Web Inspector — %@", "Web Inspector window title"), m_inspectedURL.createNSString().get()];
+    RetainPtr title = WEB_UI_FORMAT_CFSTRING("Web Inspector — %@", "Web Inspector window title", m_inspectedURL.createNSString().get()).createNSString();
     [[m_frontendWindowController.get() window] setTitle:title.get()];
 }
 
@@ -635,7 +636,7 @@ void WebInspectorFrontendClient::sendMessageToBackend(const String& message)
 
 - (IBAction)attachWindow:(id)sender
 {
-    _frontendClient->attachWindow(InspectorFrontendClient::DockSide::Bottom);
+    _frontendClient->attachWindow(WebCore::InspectorFrontendClient::DockSide::Bottom);
 }
 
 - (IBAction)showWindow:(id)sender
@@ -682,7 +683,7 @@ void WebInspectorFrontendClient::sendMessageToBackend(const String& message)
         return;
 
     _inspectorClient->setInspectorStartsAttached(true);
-    _frontendClient->setAttachedWindow(InspectorFrontendClient::DockSide::Bottom);
+    _frontendClient->setAttachedWindow(WebCore::InspectorFrontendClient::DockSide::Bottom);
 
     [self close];
     [self showWindow:nil];
@@ -694,7 +695,7 @@ void WebInspectorFrontendClient::sendMessageToBackend(const String& message)
         return;
 
     _inspectorClient->setInspectorStartsAttached(false);
-    _frontendClient->setAttachedWindow(InspectorFrontendClient::DockSide::Undocked);
+    _frontendClient->setAttachedWindow(WebCore::InspectorFrontendClient::DockSide::Undocked);
 
     [self close];
     [self showWindow:nil];
@@ -747,7 +748,7 @@ void WebInspectorFrontendClient::sendMessageToBackend(const String& message)
 {
     RetainPtr<WebInspectorWindowController> protect(self);
 
-    if (Page* frontendPage = _frontendClient->frontendPage())
+    if (WebCore::Page* frontendPage = _frontendClient->frontendPage())
         frontendPage->inspectorController().setInspectorFrontendClient(nullptr);
     RefPtr { [_inspectedWebView.get() inspectorController] }->disconnectFrontend(*_inspectorClient);
 
@@ -784,7 +785,8 @@ void WebInspectorFrontendClient::sendMessageToBackend(const String& message)
 
         NSArray *URLs = panel.URLs;
         NSMutableArray *filenames = [NSMutableArray arrayWithCapacity:URLs.count];
-        for (NSURL *URL in URLs)
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL NSURL *URL in URLs)
             [filenames addObject:URL.path];
 
         [resultListener chooseFilenames:filenames];
@@ -806,7 +808,8 @@ void WebInspectorFrontendClient::sendMessageToBackend(const String& message)
 {
     auto menuItems = adoptNS([[NSMutableArray alloc] init]);
 
-    for (NSMenuItem *item in defaultMenuItems) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSMenuItem *item in defaultMenuItems) {
         switch (item.tag) {
         case WebMenuItemTagOpenLinkInNewWindow:
         case WebMenuItemTagOpenImageInNewWindow:
@@ -885,15 +888,15 @@ void WebInspectorFrontendClient::sendMessageToBackend(const String& message)
     if ([item action] == @selector(toggleDebuggingJavaScript:) && isMenuItem) {
         NSMenuItem *menuItem = (NSMenuItem *)item;
         if ([[_inspectedWebView.get() inspector] isDebuggingJavaScript])
-            [menuItem setTitle:UI_STRING_INTERNAL("Stop Debugging JavaScript", "title for Stop Debugging JavaScript menu item")];
+            [menuItem setTitle:protect(UI_STRING_INTERNAL("Stop Debugging JavaScript", "title for Stop Debugging JavaScript menu item"))];
         else
-            [menuItem setTitle:UI_STRING_INTERNAL("Start Debugging JavaScript", "title for Start Debugging JavaScript menu item")];
+            [menuItem setTitle:protect(UI_STRING_INTERNAL("Start Debugging JavaScript", "title for Start Debugging JavaScript menu item"))];
     } else if ([item action] == @selector(toggleProfilingJavaScript:) && isMenuItem) {
         NSMenuItem *menuItem = (NSMenuItem *)item;
         if ([[_inspectedWebView.get() inspector] isProfilingJavaScript])
-            [menuItem setTitle:UI_STRING_INTERNAL("Stop Profiling JavaScript", "title for Stop Profiling JavaScript menu item")];
+            [menuItem setTitle:protect(UI_STRING_INTERNAL("Stop Profiling JavaScript", "title for Stop Profiling JavaScript menu item"))];
         else
-            [menuItem setTitle:UI_STRING_INTERNAL("Start Profiling JavaScript", "title for Start Profiling JavaScript menu item")];
+            [menuItem setTitle:protect(UI_STRING_INTERNAL("Start Profiling JavaScript", "title for Start Profiling JavaScript menu item"))];
     }
 
     return YES;

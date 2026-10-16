@@ -30,7 +30,6 @@ interface TestRunner {
     readonly attribute boolean isMac;
     readonly attribute boolean isKeyboardImmediatelyAvailable;
     readonly attribute boolean keyboardAppearsOverContent;
-    readonly attribute boolean haveSecureCodingRequest;
     readonly attribute boolean haveSecureCodingDataDetectors;
 
     // The basics.
@@ -61,8 +60,6 @@ interface TestRunner {
     undefined dumpTitleChanges();
     undefined dumpFrameLoadCallbacks();
     undefined dumpProgressFinishedCallback();
-    undefined dumpResourceLoadCallbacks();
-    undefined dumpResourceResponseMIMETypes();
     undefined dumpWillCacheResponse();
     undefined dumpApplicationCacheDelegateCallbacks();
     undefined dumpDOMAsWebArchive();
@@ -118,10 +115,6 @@ interface TestRunner {
     // Printing
     boolean isPageBoxVisible(long pageIndex);
 
-    undefined dumpAllHTTPRedirectedResponseHeaders();
-
-    undefined setValueForUser(object element, DOMString value);
-
     // UserContent testing.
     undefined addUserScript(DOMString source, boolean runAtStart, boolean allFrames);
     undefined addUserStyleSheet(DOMString source, boolean allFrames);
@@ -131,6 +124,7 @@ interface TestRunner {
     undefined setDatabaseQuota(unsigned long long quota);
     DOMString pathToLocalResource(DOMString url);
     undefined syncLocalStorage();
+    readonly attribute unsigned long storageAreaMapCount;
 
     attribute double databaseDefaultQuota;
     attribute double databaseMaxQuota;
@@ -144,6 +138,7 @@ interface TestRunner {
     // For Web Inspector tests
     undefined showWebInspector();
     undefined closeWebInspector();
+    undefined disconnectFrameInspectorTarget();
     undefined evaluateInWebInspector(DOMString script);
     readonly attribute DOMString inspectorTestStubURL;
 
@@ -161,6 +156,8 @@ interface TestRunner {
 
     readonly attribute boolean didReceiveServerRedirectForProvisionalNavigation;
     undefined clearDidReceiveServerRedirectForProvisionalNavigation();
+
+    readonly attribute DOMString lastProvisionalNavigationFailureURL;
 
     // Window/view state
     undefined setWindowIsKey(boolean isKey);
@@ -189,6 +186,7 @@ interface TestRunner {
     undefined resumeBackgroundFetch(DOMString identifier);
     undefined simulateClickBackgroundFetch(DOMString identifier);
     undefined setBackgroundFetchPermission(boolean value);
+    undefined setVirtualWalletBehavior(DOMString action, DOMString protocol, DOMString responseJSON);
     DOMString lastAddedBackgroundFetchIdentifier();
     DOMString lastRemovedBackgroundFetchIdentifier();
     DOMString lastUpdatedBackgroundFetchIdentifier();
@@ -202,6 +200,10 @@ interface TestRunner {
 
     // Screen Wake Lock
     undefined setScreenWakeLockPermission(boolean value);
+
+    // Global Privacy Control
+    undefined setGlobalPrivacyControl(boolean value);
+    boolean getGlobalPrivacyControl();
 
     // MediaStream
     undefined setCameraPermission(boolean value);

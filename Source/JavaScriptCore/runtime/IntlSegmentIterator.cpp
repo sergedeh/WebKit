@@ -26,12 +26,10 @@
 #include "config.h"
 #include "IntlSegmentIterator.h"
 
+#include "IntlSegmentDataObject.h"
 #include "IteratorOperations.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
-#include <unicode/ucurr.h>
-#include <unicode/uloc.h>
-#include <wtf/unicode/icu/ICUHelpers.h>
 
 namespace JSC {
 
@@ -61,7 +59,7 @@ IntlSegmentIterator::IntlSegmentIterator(VM& vm, Structure* structure, std::uniq
 template<typename Visitor>
 void IntlSegmentIterator::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = jsCast<IntlSegmentIterator*>(cell);
+    auto* thisObject = uncheckedDowncast<IntlSegmentIterator>(cell);
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_string);
 }
@@ -77,7 +75,7 @@ JSObject* IntlSegmentIterator::next(JSGlobalObject* globalObject)
     int32_t endIndex = ubrk_next(m_segmenter.get());
     if (endIndex == UBRK_DONE)
         return createIteratorResultObject(globalObject, jsUndefined(), true);
-    JSObject* object = IntlSegmenter::createSegmentDataObject(globalObject, m_string.get(), startIndex, endIndex, *m_segmenter, m_granularity);
+    JSObject* object = createSegmentDataObject(globalObject, m_string.get(), startIndex, endIndex, *m_segmenter, m_granularity);
     RETURN_IF_EXCEPTION(scope, { });
     return createIteratorResultObject(globalObject, object, false);
 }

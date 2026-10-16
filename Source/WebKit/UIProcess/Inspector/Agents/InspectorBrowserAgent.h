@@ -42,9 +42,11 @@ class InspectorBrowserAgent final : public InspectorAgentBase, public Inspector:
     WTF_MAKE_TZONE_ALLOCATED(InspectorBrowserAgent);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(InspectorBrowserAgent);
 public:
+    OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeCheckedPtr);
+
     InspectorBrowserAgent(WebPageAgentContext&);
     ~InspectorBrowserAgent();
-    bool enabled() const;
+    bool LEGACY_NODELETE enabled() const;
 
     // InspectorAgentBase
     void didCreateFrontendAndBackend();

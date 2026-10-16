@@ -7,7 +7,7 @@
 	<key>CFBundleExecutable</key>
 	<string>${PRODUCT_NAME}</string>
 	<key>CFBundleGetInfoString</key>
-	<string>${BUNDLE_VERSION}, Copyright 2003-2025 Apple Inc.; Copyright 1999-2001 Harri Porten &lt;porten@kde.org&gt;; Copyright 2001 Peter Kelly &lt;pmk@post.com&gt;; Copyright 1997-2005 University of Cambridge; Copyright 1991, 2000, 2001 by Lucent Technologies.</string>
+	<string>${BUNDLE_VERSION}, Copyright 2003-2026 Apple Inc.; Copyright 1999-2001 Harri Porten &lt;porten@kde.org&gt;; Copyright 2001 Peter Kelly &lt;pmk@post.com&gt;; Copyright 1997-2005 University of Cambridge; Copyright 1991, 2000, 2001 by Lucent Technologies.</string>
 	<key>CFBundleIdentifier</key>
 	<string>${PRODUCT_BUNDLE_IDENTIFIER}</string>
 	<key>CFBundleInfoDictionaryVersion</key>
@@ -20,5 +20,18 @@
 	<string>${SHORT_VERSION_STRING}</string>
 	<key>CFBundleVersion</key>
 	<string>${BUNDLE_VERSION}</string>
+	<key>MinimumOSVersion</key>
+	<string>${IOS_DEPLOYMENT_TARGET}</string>
+	<key>CFBundleSupportedPlatforms</key>
+	<array>
+		<string>${PLATFORM_NAME}</string>
+	</array>
+	<key>UIDeviceFamily</key>
+	<array>
+		<integer>1</integer>
+		<integer>2</integer>
+	</array>
+	<key>DTPlatformName</key>
+	<string>${PLATFORM_NAME}</string>
 </dict>
 </plist>

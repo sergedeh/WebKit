@@ -26,24 +26,23 @@
 #include "config.h"
 #include "CompositeOperation.h"
 
-#include "CSSPrimitiveValue.h"
-#include "CSSValue.h"
-#include "CSSValueKeywords.h"
+#include "CSSKeywordValue.h"
 #include <wtf/text/TextStream.h>
 
 namespace WebCore {
 
 std::optional<CompositeOperation> toCompositeOperation(const CSSValue& value)
 {
-    if (!is<CSSPrimitiveValue>(value))
+    auto* keywordValue = dynamicDowncast<CSSKeywordValue>(value);
+    if (!keywordValue)
         return std::nullopt;
 
-    switch (value.valueID()) {
-    case CSSValueAdd:
+    switch (keywordValue->valueID()) {
+    case CSSValueID::Add:
         return CompositeOperation::Add;
-    case CSSValueAccumulate:
+    case CSSValueID::Accumulate:
         return CompositeOperation::Accumulate;
-    case CSSValueReplace:
+    case CSSValueID::Replace:
         return CompositeOperation::Replace;
     default:
         return std::nullopt;

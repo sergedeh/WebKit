@@ -1,5 +1,6 @@
 <html>
-<script src="../../../resources/js-test-pre.js"></script>
+<script src="../../../resources/js-test.js"></script>
+<script src="../../../resources/ui-helper.js"></script>
 <style>
 iframe {
   width: 100px;
@@ -39,6 +40,7 @@ top:150px;
 </div>
 <script type="text/javascript">
 description('Test multi-touch is sent to the same iframe.');
+window.jsTestIsAsync = true;
 
 var touchEventCount = 0;
 var title = 0;
@@ -99,13 +101,14 @@ function onTouch(event, receiver)
             shouldBe("ev.touches.length", "0");
             shouldBe("ev.targetTouches.length", "0");
             shouldBeEqualToString('ev.changedTouches[0].target.ownerDocument.title', 'iframe2');
-            isSuccessfullyParsed();
-            testRunner.notifyDone();
+            finishJSTest();
     }
     touchEventCount++;
 }
 
-function runTest() {
+async function runTest() {
+    await UIHelper.renderingComplete();
+
     document.getElementById("iframe1").contentWindow.document.title = "iframe1";
     document.getElementById("iframe2").contentWindow.document.title = "iframe2";
     if (window.eventSender) {
@@ -115,56 +118,53 @@ function runTest() {
         debug('First touch is on iframe1.');
         shouldBeEqualToString('document.elementFromPoint(101, 101).id', 'iframe1');
         eventSender.addTouchPoint(101, 101);
-        eventSender.touchStart();
+        await eventSender.asyncTouchStart();
         debug('');
 
         debug('Second touch is on iframe2, nothing should happen.');
         shouldBeEqualToString('document.elementFromPoint(251, 101).id', 'iframe2');
         eventSender.addTouchPoint(251, 101);
-        eventSender.touchStart();
+        await eventSender.asyncTouchStart();
         debug('');
 
         debug('Moves the first touch outside iframe1.');
         eventSender.updateTouchPoint(0, 201, 201);
-        eventSender.touchMove();
+        await eventSender.asyncTouchMove();
         debug('');
 
         debug('Release the first touch.');
         eventSender.releaseTouchPoint(0);
-        eventSender.touchEnd();
+        await eventSender.asyncTouchEnd();
         debug('');
 
         debug('Third touch is on iframe2, nothing should happen.');
         shouldBeEqualToString('document.elementFromPoint(261, 101).id', 'iframe2');
         eventSender.addTouchPoint(261, 101);
-        eventSender.touchStart();
+        await eventSender.asyncTouchStart();
         debug('');
 
         debug('Release all touches on iframe2, and touch iframe2 again.');
         eventSender.releaseTouchPoint(0);
         eventSender.releaseTouchPoint(1);
-        eventSender.touchEnd();
+        await eventSender.asyncTouchEnd();
         eventSender.addTouchPoint(251, 101);
-        eventSender.touchStart();
+        await eventSender.asyncTouchStart();
         debug('');
 
         debug('Touch iframe1, nothing shoud happen.');
         eventSender.addTouchPoint(101, 101);
-        eventSender.touchStart();
+        await eventSender.asyncTouchStart();
         debug('');
 
         debug('Release all touches.');
         eventSender.releaseTouchPoint(0);
         eventSender.releaseTouchPoint(1);
-        eventSender.touchEnd();
+        await eventSender.asyncTouchEnd();
     } else {
        debug('This test requires DRT.');
     }
 }
 
-if (window.testRunner) {
-    testRunner.waitUntilDone();
-}
 </script>
 </body>
 </html>

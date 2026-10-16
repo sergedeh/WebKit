@@ -93,6 +93,21 @@ class TVOSMediaControls extends MediaControls
         if (!this._isInitialized)
             return;
 
+        const children = [];
+
+        if (this.placard) {
+            children.push(this.placard);
+            if (this.placardPreventsControlsBarDisplay()) {
+                this.children = children;
+                return;
+            }
+        }
+
+        if (!this.visible) {
+            this.children = children;
+            return;
+        }
+
         this.closeButton.scaleFactor = TVOSMediaControls.topButtonsScaleFactor;
         this.muteButton.scaleFactor = TVOSMediaControls.topButtonsScaleFactor;
         this.playPauseButton.scaleFactor = TVOSMediaControls.playPauseButtonScaleFactor;
@@ -133,7 +148,17 @@ class TVOSMediaControls extends MediaControls
         this.bottomControlsBar.visible = true;
         this.overflowControlsBar.visible = true;
 
-        this.children = [this.topLeftControlsBar, this.topRightControlsBar, this.bottomControlsBar, this.metadataContainer, this.overflowControlsBar];
+        children.push(...[this.topLeftControlsBar, this.topRightControlsBar, this.bottomControlsBar, this.metadataContainer, this.overflowControlsBar]);
+        this.children = children;
+    }
+
+    commitProperty(propertyName)
+    {
+        // We override the default behavior of the "visible" property, which usually means the node
+        // will not be displayed if false, but we want to allow placards (e.g. the fullscreen placard)
+        // to be visible, even when controls are supposed to be hidden.
+        if (propertyName !== "visible")
+            super.commitProperty(propertyName);
     }
 
     // Private

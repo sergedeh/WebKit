@@ -30,6 +30,7 @@
 #include <WebKit/WKRetainPtr.h>
 #include <WebKit/WKString.h>
 #include <WebKit/WKStringPrivate.h>
+#include <WebKit/WKURL.h>
 #include <string>
 #include <wtf/Platform.h>
 #include <wtf/StdLibExtras.h>
@@ -50,7 +51,7 @@ inline WKRetainPtr<WKStringRef> toWK(JSStringRef string)
     return adoptWK(WKStringCreateWithJSString(string));
 }
 
-inline WKRetainPtr<WKStringRef> toWK(const JSRetainPtr<JSStringRef>& string)
+inline WKRetainPtr<WKStringRef> toWK(const RefPtr<OpaqueJSString>& string)
 {
     return toWK(string.get());
 }
@@ -65,17 +66,37 @@ inline WKRetainPtr<WKStringRef> toWK(const std::string& string)
     return toWK(string.c_str());
 }
 
+inline WKRetainPtr<WKStringRef> toWK(const WTF::UTF8CString& string)
+{
+    return adoptWK(WKStringCreateWithUTF8CString(string.legacyCStringPointer()));
+}
+
 inline WKRetainPtr<WKStringRef> toWK(const WTF::String& string)
 {
-    return toWK(string.utf8().data());
+    return toWK(string.utf8());
 }
 
-inline JSRetainPtr<JSStringRef> toJS(WKStringRef string)
+inline WKRetainPtr<WKURLRef> toWKURL(const WTF::UTF8CString& string)
 {
-    return adopt(WKStringCopyJSString(string));
+    return adoptWK(WKURLCreateWithUTF8CString(string.legacyCStringPointer()));
 }
 
-inline JSRetainPtr<JSStringRef> toJS(const WKRetainPtr<WKStringRef>& string)
+inline WKRetainPtr<WKURLRef> toWKURL(const WTF::String& string)
+{
+    return toWKURL(string.utf8());
+}
+
+inline WKRetainPtr<WKURLRef> toWKURL(WKURLRef baseURL, const WTF::String& relativeURL)
+{
+    return adoptWK(WKURLCreateWithBaseURL(baseURL, relativeURL.utf8().legacyCStringPointer()));
+}
+
+inline RefPtr<OpaqueJSString> toJS(WKStringRef string)
+{
+    return adoptRef(WKStringCopyJSString(string));
+}
+
+inline RefPtr<OpaqueJSString> toJS(const WKRetainPtr<WKStringRef>& string)
 {
     return toJS(string.get());
 }
@@ -115,7 +136,7 @@ inline WTF::String toWTFString(JSStringRef string)
     return toWTFString(toWK(string));
 }
 
-inline WTF::String toWTFString(const JSRetainPtr<JSStringRef>& string)
+inline WTF::String toWTFString(const RefPtr<OpaqueJSString>& string)
 {
     return toWTFString(string.get());
 }
@@ -175,3 +196,33 @@ inline WTF::String addLeadingSpaceStripTrailingSpacesAddNewline(const WTF::Strin
 }
 
 } // namespace WTR
+
+namespace WTF {
+
+template<> class StringTypeAdapter<WKStringRef> {
+public:
+    StringTypeAdapter(WKStringRef);
+    unsigned length() const { return m_string ? WKStringGetLength(m_string) : 0; }
+    bool is8Bit() const { return !m_string; }
+    template<typename CharacterType> void writeTo(std::span<CharacterType>) const;
+
+private:
+    WKStringRef m_string;
+};
+
+inline StringTypeAdapter<WKStringRef>::StringTypeAdapter(WKStringRef string)
+    : m_string { string }
+{
+}
+
+template<> inline void StringTypeAdapter<WKStringRef>::writeTo<Latin1Character>(std::span<Latin1Character>) const
+{
+}
+
+template<> inline void StringTypeAdapter<WKStringRef>::writeTo<char16_t>(std::span<char16_t> destination) const
+{
+    if (m_string)
+        WKStringGetCharacters(m_string, reinterpret_cast<WKChar*>(destination.data()), WKStringGetLength(m_string));
+}
+
+}

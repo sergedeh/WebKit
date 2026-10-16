@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,9 +28,6 @@
 #include <wtf/Compiler.h>
 #include <wtf/Platform.h>
 
-// FIXME: Remove when support for macOS 14 is no longer required.
-#if !__has_feature(modules) || !PLATFORM(MAC) || __MAC_OS_X_VERSION_MIN_REQUIRED >= 150000
-
 DECLARE_SYSTEM_HEADER
 
 #import <Network/Network.h>
@@ -39,15 +36,6 @@ typedef void (^nw_webtransport_drain_handler_t)(void);
 typedef void (^nw_webtransport_receive_error_handler_t)(uint64_t receive_error_code);
 typedef void (^nw_webtransport_send_error_handler_t)(uint64_t send_error_code);
 typedef void (^nw_http_optional_string_accessor_t)(const char * _Nullable string);
-
-#if OS_OBJECT_USE_OBJC
-NW_OBJECT_DECL(nw_http_fields);
-NW_OBJECT_DECL_SUBCLASS(nw_http_response, nw_http_fields);
-#else
-struct nw_http_fields;
-typedef struct nw_http_fields *nw_http_fields_t;
-typedef nw_http_fields_t nw_http_response_t;
-#endif // OS_OBJECT_USE_OBJC
 
 #if USE(APPLE_INTERNAL_SDK)
 
@@ -66,6 +54,17 @@ typedef nw_http_fields_t nw_http_response_t;
 // Only needed for running tests.
 #import <NetworkExtension/NEPolicySession.h>
 #endif
+
+#else // !USE(APPLE_INTERNAL_SDK)
+
+#if OS_OBJECT_USE_OBJC
+NW_OBJECT_DECL(nw_http_fields);
+NW_OBJECT_DECL_SUBCLASS(nw_http_response, nw_http_fields);
+#else
+struct nw_http_fields;
+typedef struct nw_http_fields *nw_http_fields_t;
+typedef nw_http_fields_t nw_http_response_t;
+#endif // OS_OBJECT_USE_OBJC
 
 #endif // USE(APPLE_INTERNAL_SDK)
 
@@ -103,11 +102,6 @@ void nw_parameters_set_traffic_class(nw_parameters_t, uint32_t traffic_class);
 
 OS_OBJECT_RETURNS_RETAINED nw_interface_t nw_path_copy_interface(nw_path_t);
 
-bool nw_settings_get_unified_http_enabled(void);
-#if HAVE(NWSETTINGS_UNIFIED_HTTP_WEBKIT)
-bool nw_settings_get_unified_http_enabled_webkit(void);
-#endif
-
 void nw_parameters_set_server_mode(nw_parameters_t, bool);
 OS_OBJECT_RETURNS_RETAINED nw_parameters_t nw_parameters_create_webtransport_http(nw_parameters_configure_protocol_block_t, nw_parameters_configure_protocol_block_t, nw_parameters_configure_protocol_block_t, nw_parameters_configure_protocol_block_t);
 OS_OBJECT_RETURNS_RETAINED nw_protocol_definition_t nw_protocol_copy_webtransport_definition(void);
@@ -134,11 +128,25 @@ OS_OBJECT_RETURNS_RETAINED nw_http_response_t nw_webtransport_metadata_copy_conn
 nw_webtransport_transport_mode_t nw_webtransport_metadata_get_transport_mode(nw_protocol_metadata_t);
 void nw_webtransport_metadata_set_remote_receive_error_handler(nw_protocol_metadata_t, nw_webtransport_receive_error_handler_t, dispatch_queue_t);
 void nw_webtransport_metadata_set_remote_send_error_handler(nw_protocol_metadata_t, nw_webtransport_send_error_handler_t, dispatch_queue_t);
+OS_OBJECT_RETURNS_RETAINED nw_protocol_definition_t nw_protocol_copy_quic_connection_definition();
+OS_OBJECT_RETURNS_RETAINED sec_protocol_metadata_t nw_quic_connection_copy_sec_protocol_metadata(nw_protocol_metadata_t);
 
 void nw_connection_abort_reads(nw_connection_t, uint64_t);
 void nw_connection_abort_writes(nw_connection_t, uint64_t);
 
-void nw_http_fields_access_value_by_name(nw_http_fields_t, const char*, nw_http_optional_string_accessor_t);
+#ifndef NW_NOESCAPE
+#if __has_attribute(noescape)
+#define NW_NOESCAPE __attribute__((__noescape__))
+#else
+#define NW_NOESCAPE
+#endif
+#endif
+
+
+void nw_http_fields_access_value_by_name(nw_http_fields_t, const char*, NW_NOESCAPE nw_http_optional_string_accessor_t);
+
+typedef bool (^nw_http_fields_enumerate_block_t)(const char* name, size_t nameLength, const char* value, size_t valueLength);
+bool nw_http_fields_enumerate(nw_http_fields_t, NW_NOESCAPE nw_http_fields_enumerate_block_t);
 
 WTF_EXTERN_C_END
 
@@ -192,5 +200,3 @@ typedef NS_ENUM(NSInteger, NEPolicySessionPriority) {
 // ------------------------------------------------------------
 
 #endif // !USE(APPLE_INTERNAL_SDK)
-
-#endif // !__has_feature(modules) || !PLATFORM(MAC) || __MAC_OS_X_VERSION_MIN_REQUIRED >= 150000

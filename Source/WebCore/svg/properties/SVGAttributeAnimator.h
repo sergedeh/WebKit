@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2018-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -53,6 +53,32 @@ enum class CalcMode : uint8_t {
     Spline
 };
 
+enum class SVGAnimatorType : uint8_t {
+    Angle,
+    AngleOrient,
+    Boolean,
+    Color,
+    CSSLength,
+    CSSLengthList,
+    CSSNumber,
+    CSSString,
+    Enumeration,
+    Integer,
+    IntegerPair,
+    Length,
+    LengthList,
+    Number,
+    NumberList,
+    NumberPair,
+    OrientType,
+    Path,
+    PointList,
+    PreserveAspectRatio,
+    Rect,
+    String,
+    TransformList
+};
+
 class SVGAttributeAnimator : public RefCountedAndCanMakeWeakPtr<SVGAttributeAnimator> {
     WTF_MAKE_TZONE_ALLOCATED(SVGAttributeAnimator);
 public:
@@ -63,11 +89,13 @@ public:
 
     virtual ~SVGAttributeAnimator() = default;
 
+    virtual SVGAnimatorType animatorType() const = 0;
+
     virtual bool isDiscrete() const { return false; }
 
-    virtual void setFromAndToValues(SVGElement&, const String&, const String&) { }
-    virtual void setFromAndByValues(SVGElement&, const String&, const String&) { }
-    virtual void setToAtEndOfDurationValue(SVGElement&, const String&) { }
+    virtual bool setFromAndToValues(SVGElement&, const String&, const String&) = 0;
+    virtual bool setFromAndByValues(SVGElement&, const String&, const String&) = 0;
+    virtual bool setToAtEndOfDurationValue(SVGElement&, const String&) = 0;
 
     virtual void start(SVGElement&) = 0;
     virtual void animate(SVGElement&, float progress, unsigned repeatCount) = 0;
@@ -88,7 +116,7 @@ protected:
     void removeAnimatedStyleProperty(SVGElement&);
     void applyAnimatedPropertyChange(SVGElement&);
 
-    const QualifiedName& m_attributeName;
+    QualifiedName m_attributeName;
 };
 
 } // namespace WebCore

@@ -43,8 +43,8 @@ public:
     GamepadLibWPE(struct wpe_gamepad_provider*, uintptr_t, unsigned);
     virtual ~GamepadLibWPE();
 
-    const Vector<SharedGamepadValue>& axisValues() const final { return m_axisValues; }
-    const Vector<SharedGamepadValue>& buttonValues() const final { return m_buttonValues; }
+    const Vector<SharedGamepadValue>& axisValues() const LIFETIME_BOUND final { return m_axisValues; }
+    const Vector<SharedGamepadValue>& buttonValues() const LIFETIME_BOUND final { return m_buttonValues; }
 
     const struct wpe_gamepad* wpeGamepad() const { return m_gamepad.get(); }
 
@@ -58,7 +58,7 @@ private:
     Vector<SharedGamepadValue> m_buttonValues;
     Vector<SharedGamepadValue> m_axisValues;
 
-    std::unique_ptr<struct wpe_gamepad, void(*)(struct wpe_gamepad*)> m_gamepad;
+    const std::unique_ptr<struct wpe_gamepad, void(*)(struct wpe_gamepad*)> m_gamepad;
 };
 
 } // namespace WebCore

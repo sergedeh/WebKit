@@ -38,20 +38,21 @@
 #import "WebExtensionTabIdentifier.h"
 #import "WebExtensionUtilities.h"
 #import "WebExtensionWindowIdentifier.h"
+#import "WebProcess/Extensions/API/WebExtensionAPIKeys.h"
 #import "_WKResourceLoadInfo.h"
+#import <wtf/cocoa/TypeCastsCocoa.h>
+#import <wtf/text/MakeString.h>
 
 using namespace WebKit;
 
-static NSString *urlsKey = @"urls";
-static NSString *typesKey = @"types";
+static NSString * const urlsKey = @"urls";
+static NSString * const typesKey = @"types";
 
-static NSString *windowIdKey = @"windowId";
-
-_WKWebExtensionWebRequestResourceType toWebExtensionWebRequestResourceType(const ResourceLoadInfo& resourceLoadInfo)
+_WKWebExtensionWebRequestResourceType LEGACY_NODELETE toWebExtensionWebRequestResourceType(const ResourceLoadInfo& resourceLoadInfo)
 {
     switch (resourceLoadInfo.type) {
     case ResourceLoadInfo::Type::Document:
-        return resourceLoadInfo.parentFrameID ? _WKWebExtensionWebRequestResourceTypeMainFrame : _WKWebExtensionWebRequestResourceTypeSubframe;
+        return resourceLoadInfo.parentFrameID ? _WKWebExtensionWebRequestResourceTypeSubframe : _WKWebExtensionWebRequestResourceTypeMainFrame;
     case ResourceLoadInfo::Type::Stylesheet:
         return _WKWebExtensionWebRequestResourceTypeStylesheet;
     case ResourceLoadInfo::Type::Script:
@@ -131,7 +132,7 @@ static NSArray<WKWebExtensionMatchPattern *> *toMatchPatterns(NSArray<NSString *
         WKWebExtensionMatchPattern *pattern = [[WKWebExtensionMatchPattern alloc] initWithString:rawPattern error:&error];
         if (!pattern) {
             if (outErrorMessage)
-                *outErrorMessage = toErrorString(nullString(), urlsKey, @"'%@' is an invalid match pattern. %@", rawPattern, error.localizedDescription).createNSString().autorelease();
+                *outErrorMessage = toErrorString(nullString(), urlsKey, makeString("'"_s, String(rawPattern), "' is an invalid match pattern. "_s, String(error.localizedDescription))).createNSString().autorelease();
             return nil;
         }
 
@@ -164,7 +165,7 @@ static NSNumber *toResourceType(NSString *typeString, NSString **outErrorMessage
 
     NSNumber *typeAsNumber = validTypes[typeString];
     if (!typeAsNumber) {
-        *outErrorMessage = toErrorString(nullString(), typesKey, @"'%@' is an unknown resource type", typeString).createNSString().autorelease();
+        *outErrorMessage = toErrorString(nullString(), typesKey, makeString("'"_s, String(typeString), "' is an unknown resource type"_s)).createNSString().autorelease();
         return nil;
     }
 
@@ -206,16 +207,16 @@ static std::optional<WebExtensionWindowIdentifier> toWindowID(NSNumber *rawValue
 - (NSString *)_initializeWithDictionary:(NSDictionary<NSString *, id> *)dictionary
 {
     NSString *errorMessage;
-    _urlPatterns = toMatchPatterns(dictionary[urlsKey], &errorMessage);
+    _urlPatterns = toMatchPatterns(checked_objc_cast<NSArray>(dictionary[urlsKey]), &errorMessage);
     if (errorMessage)
         return errorMessage;
 
-    _types = toResourceTypes(dictionary[typesKey], &errorMessage);
+    _types = toResourceTypes(checked_objc_cast<NSArray>(dictionary[typesKey]), &errorMessage);
     if (errorMessage)
         return errorMessage;
 
-    _tabID = toTabID(dictionary[@"tabId"]);
-    _windowID = toWindowID(dictionary[windowIdKey]);
+    _tabID = toTabID(checked_objc_cast<NSNumber>(dictionary[@"tabId"]));
+    _windowID = toWindowID(checked_objc_cast<NSNumber>(dictionary[windowIdKey]));
 
     return nil;
 }

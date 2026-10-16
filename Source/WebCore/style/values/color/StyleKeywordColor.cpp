@@ -28,11 +28,14 @@
 
 #include "CSSKeywordColor.h"
 #include "Document.h"
-#include "RenderStyle.h"
+#include "PlatformRenderTheme.h"
 #include "RenderTheme.h"
 #include "StyleBuilderState.h"
 #include "StyleColor.h"
 #include "StyleColorResolutionState.h"
+#include "StyleComputedStyle.h"
+#include "StyleContrastColor.h"
+#include "StyleCurrentAccentColor.h"
 #include "StyleCurrentColor.h"
 
 namespace WebCore {
@@ -40,21 +43,27 @@ namespace Style {
 
 Color toStyleColor(const CSS::KeywordColor& unresolved, ColorResolutionState& state)
 {
-    Ref protectedDocument = state.document;
-
     switch (unresolved.valueID) {
-    case CSSValueInternalDocumentTextColor:
-        return { protectedDocument->textColor() };
-    case CSSValueWebkitLink:
-        return { state.forVisitedLink == ForVisitedLink::Yes ? protectedDocument->visitedLinkColor(state.style) : protectedDocument->linkColor(state.style) };
-    case CSSValueWebkitActivelink:
-        return { protectedDocument->activeLinkColor(state.style) };
-    case CSSValueWebkitFocusRingColor:
-        return { RenderTheme::singleton().focusRingColor(protectedDocument->styleColorOptions(state.style.ptr())) };
-    case CSSValueCurrentcolor:
+    case CSSValueID::InternalDocumentTextColor:
+        return { state.document->textColor() };
+    case CSSValueID::WebkitLink:
+        // FIXME: resolve differently based on purpose (Style vs Rendering)
+        return { state.forVisitedLink == ForVisitedLink::Yes ? state.document->visitedLinkColor(state.style, StyleColorOptionsPurpose::Rendering) : state.document->linkColor(state.style, StyleColorOptionsPurpose::Rendering) };
+    case CSSValueID::WebkitActivelink:
+        // FIXME: resolve differently based on purpose (Style vs Rendering)
+        return { state.document->activeLinkColor(state.style, StyleColorOptionsPurpose::Rendering) };
+    case CSSValueID::WebkitFocusRingColor:
+        // FIXME: resolve differently based on purpose (Style vs Rendering)
+        return { RenderTheme::singleton().focusRingColor(state.document->styleColorOptions(state.style.ptr(), StyleColorOptionsPurpose::Rendering)) };
+    case CSSValueID::Currentcolor:
         return { CurrentColor() };
+    case CSSValueID::Accentcolor:
+        return { CurrentAccentColor() };
+    case CSSValueID::Accentcolortext:
+        return { ContrastColor { CurrentAccentColor() } };
     default:
-        return { CSS::colorFromKeyword(unresolved.valueID, protectedDocument->styleColorOptions(state.style.ptr())) };
+        // FIXME: resolve differently based on purpose (Style vs Rendering)
+        return { CSS::colorFromKeyword(unresolved.valueID, state.document->styleColorOptions(state.style.ptr(), StyleColorOptionsPurpose::Rendering)) };
     }
 }
 

@@ -21,6 +21,7 @@
 
 #include "InlineIteratorSVGTextBox.h"
 #include "Path.h"
+#include "PathArcLengthMapper.h"
 #include "SVGTextChunkBuilder.h"
 #include "SVGTextFragment.h"
 #include "SVGTextLayoutAttributes.h"
@@ -28,64 +29,82 @@
 namespace WebCore {
 
 class RenderObject;
-class RenderStyle;
 class RenderSVGInlineText;
 class RenderSVGTextPath;
 class SVGElement;
-class SVGInlineTextBox;
+
+namespace Style {
+class ComputedStyle;
+}
+
+// A text box as seen by SVGTextLayoutEngine.
+struct SVGTextLayoutBox {
+    CheckedRef<const RenderSVGInlineText> text;
+    unsigned start { 0 };
+    unsigned length { 0 };
+    // Display box index, where the fragments go when the engine stores them by box index.
+    size_t index { 0 };
+    // Renderer of the previous leaf box on the line.
+    CheckedPtr<const RenderObject> previousLeafRenderer;
+};
 
 // SVGTextLayoutEngine performs the second layout phase for SVG text.
 //
-// The InlineBox tree was created, containing the text chunk information, necessary to apply
+// The display boxes were created, containing the text chunk information, necessary to apply
 // certain SVG specific text layout properties (text-length adjustments and text-anchor).
 // The second layout phase uses the SVGTextLayoutAttributes stored in the individual
 // RenderSVGInlineText renderers to compute the final positions for each character
-// which are stored in the SVGInlineTextBox objects.
+// which are stored as SVGTextFragments of the text boxes.
 
 class SVGTextLayoutEngine {
 public:
+    // Keeps the fragments of each text box in engine-owned storage.
     SVGTextLayoutEngine(Vector<SVGTextLayoutAttributes*>&);
+    // Appends the fragments of each text box to fragmentsForBoxes[box.index]. The vector must not be resized while the engine exists.
+    SVGTextLayoutEngine(Vector<SVGTextLayoutAttributes*>&, Vector<Vector<SVGTextFragment>>& fragmentsForBoxes);
     SVGTextLayoutEngine(SVGTextLayoutEngine&&) = default;
     SVGTextLayoutEngine(const SVGTextLayoutEngine&) = delete;
 
-    Vector<SVGTextLayoutAttributes*>& layoutAttributes() { return m_layoutAttributes; }
+    Vector<SVGTextLayoutAttributes*>& layoutAttributes() LIFETIME_BOUND { return m_layoutAttributes; }
 
     void beginTextPathLayout(const RenderSVGTextPath&, SVGTextLayoutEngine& lineLayout);
     void endTextPathLayout();
 
-    void layoutInlineTextBox(InlineIterator::SVGTextBoxIterator);
+    void layoutInlineTextBox(const SVGTextLayoutBox&);
 
-    SVGTextFragmentMap finishLayout();
+    void finishLayout();
 
 private:
-    void updateCharacterPositionIfNeeded(float& x, float& y);
-    void updateCurrentTextPosition(float x, float y, float glyphAdvance);
-    void updateRelativePositionAdjustmentsIfNeeded(float dx, float dy);
+    void LEGACY_NODELETE updateCharacterPositionIfNeeded(float& x, float& y);
+    void LEGACY_NODELETE updateCurrentTextPosition(float x, float y, float glyphAdvance);
+    void LEGACY_NODELETE updateRelativePositionAdjustmentsIfNeeded(float dx, float dy);
 
-    void recordTextFragment(InlineIterator::SVGTextBoxIterator, const Vector<SVGTextMetrics>&);
+    void recordTextFragment(const SVGTextLayoutBox&, const Vector<SVGTextMetrics>&);
+    Vector<SVGTextFragment>& fragmentsForBox(const SVGTextLayoutBox&);
     bool parentDefinesTextLength(RenderObject*) const;
 
-    void layoutTextOnLineOrPath(InlineIterator::SVGTextBoxIterator, const RenderSVGInlineText&, const RenderStyle&);
-    void finalizeTransformMatrices(Vector<InlineIterator::SVGTextBoxIterator>&);
+    float computeTextPathStartOffset(const RenderSVGTextPath&) const;
 
-    bool currentLogicalCharacterAttributes(SVGTextLayoutAttributes*&);
-    bool currentLogicalCharacterMetrics(SVGTextLayoutAttributes*&, SVGTextMetrics&);
-    bool currentVisualCharacterMetrics(const InlineIterator::SVGTextBox&, const Vector<SVGTextMetrics>&, SVGTextMetrics&);
+    void layoutTextOnLineOrPath(const SVGTextLayoutBox&, const Style::ComputedStyle&);
 
-    void advanceToNextLogicalCharacter(const SVGTextMetrics&);
-    void advanceToNextVisualCharacter(const SVGTextMetrics&);
+    bool LEGACY_NODELETE currentLogicalCharacterAttributes(SVGTextLayoutAttributes*&);
+    bool LEGACY_NODELETE currentLogicalCharacterMetrics(SVGTextLayoutAttributes*&, SVGTextMetrics&);
+    bool currentVisualCharacterMetrics(const SVGTextLayoutBox&, const Vector<SVGTextMetrics>&, SVGTextMetrics&);
+
+    void LEGACY_NODELETE advanceToNextLogicalCharacter(const SVGTextMetrics&);
+    void LEGACY_NODELETE advanceToNextVisualCharacter(const SVGTextMetrics&);
 
 private:
     Vector<SVGTextLayoutAttributes*>& m_layoutAttributes;
 
-    Vector<InlineIterator::SVGTextBoxIterator> m_lineLayoutBoxes;
-    Vector<InlineIterator::SVGTextBoxIterator> m_pathLayoutBoxes;
+    Vector<SVGTextChunkBox> m_lineLayoutBoxes;
 
-    // Output.
-    HashMap<InlineIterator::SVGTextBox::Key, Vector<SVGTextFragment>> m_fragmentMap;
+    // Output. Fragments go to m_fragmentsForBoxes if set. Otherwise each laid out box appends its own entry to m_ownedFragments.
+    Vector<Vector<SVGTextFragment>>* m_fragmentsForBoxes { nullptr };
+    Vector<Vector<SVGTextFragment>> m_ownedFragments;
 
     SVGTextChunkBuilder m_chunkLayoutBuilder;
-    HashSet<InlineIterator::SVGTextBox::Key> m_lineLayoutChunkStarts;
+    Vector<unsigned> m_lineLayoutChunkStarts;
 
     SVGTextFragment m_currentTextFragment;
     unsigned m_layoutAttributesPosition { 0 };
@@ -105,11 +124,13 @@ private:
 
     // Text on path layout
     Path m_textPath;
+    PathArcLengthMapper m_textPathMapper;
     float m_textPathLength { 0.0f };
     float m_textPathStartOffset { 0.0f };
     float m_textPathCurrentOffset { 0.0f };
     float m_textPathSpacing { 0.0f };
     float m_textPathScaling { 1.0f };
+    bool m_textPathReversed { false };
 };
 
 } // namespace WebCore

@@ -24,44 +24,89 @@
 
 #pragma once
 
-#include <WebCore/StyleLengthWrapper.h>
+#include <WebCore/StylePrimitiveNumeric.h>
 #include <wtf/Hasher.h>
 
 namespace WebCore {
 namespace Style {
 
 // <'line-height'> = normal | <number [0,∞]> | <length-percentage [0,∞]>
-// NOTE: <number [0,∞]> gets converted to <length-percentage [0,∞]>.
+// NOTE: <length-percentage [0,∞]> gets converted to <length [0,∞]> at style building time by resolving any percentages against `font-size`.
 // https://drafts.csswg.org/css-inline/#propdef-line-height
-struct LineHeight : LengthWrapperBase<LengthPercentage<CSS::NonnegativeUnzoomed>, CSS::Keyword::Normal> {
-    using Base::Base;
+struct LineHeight {
+    using Number = Style::Number<CSS::Nonnegative, float>;
+    using Length = Style::Length<CSS::Nonnegative, float>;
 
-    bool isNormal() const { return holdsAlternative<CSS::Keyword::Normal>(); }
+    constexpr LineHeight(CSS::Keyword::Normal keyword) : m_value { keyword } { }
+    constexpr LineHeight(Number number) : m_value { number } { }
+    constexpr LineHeight(Length length) : m_value { length } { }
 
-    unsigned valueForHash() const
+    constexpr bool isNormal() const { return holdsAlternative<CSS::Keyword::Normal>(); }
+    constexpr bool isNumeric() const { return !holdsAlternative<CSS::Keyword::Normal>(); }
+
+    constexpr std::optional<Length> tryLength() const { return holdsAlternative<Length>() ? std::optional { get<Length>(m_value) } : std::nullopt; }
+    constexpr std::optional<Number> tryNumber() const { return holdsAlternative<Number>() ? std::optional { get<Number>(m_value) } : std::nullopt; }
+
+    template<typename... F> constexpr decltype(auto) switchOn(NOESCAPE F&&... f) const
+    {
+        return WTF::switchOn(m_value, std::forward<F>(f)...);
+    }
+
+    template<typename U> constexpr bool holdsAlternative() const
+    {
+        return WTF::holdsAlternative<U>(m_value);
+    }
+
+    constexpr unsigned valueForHash() const
     {
         return switchOn(
             [&](const CSS::Keyword::Normal&) -> unsigned { return computeHash(0); },
-            [&](const Fixed& fixed) -> unsigned { return computeHash(1, fixed.unresolvedValue()); },
-            [&](const Percentage& percentage) -> unsigned { return computeHash(2, percentage.value); },
-            [&](const Calc&) -> unsigned { return computeHash(3); }
+            [&](const Number& number) -> unsigned { return computeHash(1, number.value); },
+            [&](const Length& length) -> unsigned { return computeHash(2, length.unresolvedValue()); }
         );
     }
+
+    constexpr bool hasSameType(const LineHeight& other) const
+    {
+        return m_value.index() == other.m_value.index();
+    }
+
+    constexpr bool operator==(const LineHeight&) const = default;
+
+    // Legacy name support
+    using Fixed = Length;
+    constexpr std::optional<Length> tryFixed() const { return tryLength(); }
+    constexpr bool isFixed() const { return holdsAlternative<Length>(); }
+
+private:
+    friend struct Blending<LineHeight>;
+
+    Variant<CSS::Keyword::Normal, Number, Length> m_value;
 };
 
 // MARK: - Conversion
 
 template<> struct CSSValueConversion<LineHeight> {
     auto operator()(BuilderState&, const CSSValue&, float multiplier = 1.0f) -> LineHeight;
-    auto operator()(BuilderState&, const CSSPrimitiveValue&, float multiplier = 1.0f) -> LineHeight;
 };
 
 // MARK: - Blending
 
 template<> struct Blending<LineHeight> {
-    auto canBlend(const LineHeight&, const LineHeight&) -> bool;
-    auto requiresInterpolationForAccumulativeIteration(const LineHeight&, const LineHeight&) -> bool;
+    bool LEGACY_NODELETE canBlend(const LineHeight&, const LineHeight&);
+    bool LEGACY_NODELETE requiresInterpolationForAccumulativeIteration(const LineHeight&, const LineHeight&);
     auto blend(const LineHeight&, const LineHeight&, const BlendingContext&) -> LineHeight;
+};
+
+// MARK: - Evaluation
+
+struct LineHeightEvaluationContext {
+    float fontSize;
+    float lineSpacing;
+};
+
+template<> struct Evaluation<LineHeight, float> {
+    auto operator()(const LineHeight&, LineHeightEvaluationContext, ZoomFactor) -> float;
 };
 
 } // namespace Style

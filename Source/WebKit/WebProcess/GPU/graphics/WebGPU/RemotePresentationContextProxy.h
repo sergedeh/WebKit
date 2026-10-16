@@ -55,7 +55,6 @@ public:
 
     RemoteGPUProxy& parent() const { return m_parent; }
     RemoteGPUProxy& root() { return m_parent->root(); }
-    Ref<RemoteGPUProxy> protectedRoot() { return m_parent->root(); }
 
     void present(uint32_t frameIndex, bool = false) final;
 
@@ -78,7 +77,7 @@ private:
     template<typename T>
     [[nodiscard]] IPC::Error send(T&& message)
     {
-        return root().protectedStreamClientConnection()->send(WTF::move(message), backing());
+        return protect(root().streamClientConnection())->send(std::forward<T>(message), backing());
     }
 
     bool configure(const WebCore::WebGPU::CanvasConfiguration&) final;

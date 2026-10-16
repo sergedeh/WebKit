@@ -27,6 +27,7 @@
 #include "ScopedArguments.h"
 
 #include "GenericArgumentsImplInlines.h"
+#include "IndexingTypeInlines.h"
 #include "JSArray.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -36,6 +37,18 @@ namespace JSC {
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(ScopedArguments);
 
 const ClassInfo ScopedArguments::s_info = { "Arguments"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ScopedArguments) };
+
+uint32_t ScopedArguments::length(JSGlobalObject* globalObject) const
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (m_overrodeThings) [[unlikely]] {
+        auto value = get(globalObject, vm.propertyNames->length);
+        RETURN_IF_EXCEPTION(scope, 0);
+        RELEASE_AND_RETURN(scope, value.toUInt32(globalObject));
+    }
+    return internalLength();
+}
 
 ScopedArguments::ScopedArguments(VM& vm, Structure* structure, WriteBarrier<Unknown>* storage, unsigned totalLength, JSFunction* callee, ScopedArgumentsTable* table, JSLexicalEnvironment* scope)
     : GenericArgumentsImpl(vm, structure)
@@ -80,7 +93,7 @@ ScopedArguments* ScopedArguments::createByCopying(JSGlobalObject* globalObject, 
     return createByCopyingFrom(
         globalObject->vm(), globalObject->scopedArgumentsStructure(),
         callFrame->registers() + CallFrame::argumentOffset(0), callFrame->argumentCount(),
-        jsCast<JSFunction*>(callFrame->jsCallee()), table, scope);
+        uncheckedDowncast<JSFunction>(callFrame->jsCallee()), table, scope);
 }
 
 ScopedArguments* ScopedArguments::createByCopyingFrom(VM& vm, Structure* structure, Register* argumentsStart, unsigned totalLength, JSFunction* callee, ScopedArgumentsTable* table, JSLexicalEnvironment* scope)
@@ -166,7 +179,7 @@ void ScopedArguments::copyToArguments(JSGlobalObject* globalObject, JSValue* fir
 bool ScopedArguments::isIteratorProtocolFastAndNonObservable()
 {
     Structure* structure = this->structure();
-    JSGlobalObject* globalObject = structure->globalObject();
+    JSGlobalObject* globalObject = structure->realm();
     if (!globalObject->isArgumentsPrototypeIteratorProtocolFastAndNonObservable())
         return false;
 

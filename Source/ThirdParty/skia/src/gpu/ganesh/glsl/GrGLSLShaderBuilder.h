@@ -11,8 +11,8 @@
 #include "include/core/SkSpan.h"
 #include "include/core/SkString.h"
 #include "include/core/SkTypes.h"
-#include "include/private/base/SkTArray.h"
-#include "src/base/SkTBlockList.h"
+#include "include/private/SkTArray.h"
+#include "src/core/SkTBlockList.h"
 #include "src/gpu/ganesh/GrShaderVar.h"
 #include "src/gpu/ganesh/glsl/GrGLSLUniformHandler.h"
 #include "src/sksl/SkSLDefines.h"
@@ -165,7 +165,7 @@ public:
     GrGLSLProgramBuilder* getProgramBuilder() { return fProgramBuilder; }
 
     /**
-     * Helper for begining and ending a block in the shader code.
+     * Helper for beginning and ending a block in the shader code.
      */
     class ShaderBlock {
     public:

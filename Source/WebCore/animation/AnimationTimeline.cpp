@@ -43,6 +43,9 @@ AnimationTimeline::AnimationTimeline(std::optional<WebAnimationTime> duration)
 #endif
 {
     m_duration = duration;
+#if ENABLE(THREADED_ANIMATIONS)
+    m_couldBeAcceleratedDuringLastRenderingUpdate = canBeAccelerated();
+#endif
 }
 
 AnimationTimeline::~AnimationTimeline() = default;
@@ -56,7 +59,7 @@ void AnimationTimeline::animationTimingDidChange(WebAnimation& animation)
             controller->addPendingAnimation(animation);
     }
 
-    if (m_animations.add(animation)) {
+    if (m_animations.add(animation).isNewEntry) {
         RefPtr timeline = animation.timeline();
         if (timeline && timeline.get() != this)
             timeline->removeAnimation(animation);
@@ -145,8 +148,8 @@ Ref<AcceleratedTimeline> AnimationTimeline::createAcceleratedRepresentation() co
 
 void AnimationTimeline::runPostRenderingUpdateTasks()
 {
-    bool previousCanBeAccelerated = std::exchange(m_canBeAccelerated, computeCanBeAccelerated());
-    if (m_canBeAccelerated == previousCanBeAccelerated)
+    bool previousCanBeAccelerated = std::exchange(m_couldBeAcceleratedDuringLastRenderingUpdate, canBeAccelerated());
+    if (m_couldBeAcceleratedDuringLastRenderingUpdate == previousCanBeAccelerated)
         return;
 
     for (const auto& animation : m_animations) {

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2019-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -37,12 +37,12 @@
 #include "CSSTransitionEvent.h"
 #include "Element.h"
 #include "EventTargetInlines.h"
+#include "HTMLDialogElement.h"
 #include "KeyframeEffectStack.h"
 #include "NodeDocument.h"
-#include "RenderStyle.h"
-#include "RenderStyle+GettersInlines.h"
 #include "ScriptExecutionContext.h"
 #include "StyleAnimations.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "StyleOriginatedAnimation.h"
 #include "ViewTransition.h"
 #include "WebAnimation.h"
@@ -50,7 +50,7 @@
 
 namespace WebCore {
 
-static bool compareStyleOriginatedAnimationOwningElementPositionsInDocumentTreeOrder(const Styleable& a, const Styleable& b)
+bool compareStyleablePositionsInDocumentTreeOrder(const Styleable& a, const Styleable& b)
 {
     // We should not ever be calling this function with two Elements that are the same. If that were the case,
     // then comparing objects of this kind would yield inconsistent results when comparing A == B and B == A.
@@ -65,7 +65,13 @@ static bool compareStyleOriginatedAnimationOwningElementPositionsInDocumentTreeO
     //     - any other pseudo-elements not mentioned specifically in this list, sorted in ascending order by the Unicode codepoints that make up each selector
     //     - ::after
     //     - element children
-    enum SortingIndex : uint8_t { NotPseudo, Marker, Before, FirstLetter, FirstLine, GrammarError, Highlight, WebKitScrollbar, Selection, SpellingError, TargetText, After, ViewTransition, ViewTransitionGroup, ViewTransitionImagePair, ViewTransitionOld, ViewTransitionNew, Other };
+    //
+    // The enumerators below are listed in that sort order, since their numeric values are what
+    // the comparison uses. A new pseudo-element must therefore be inserted at its place in this
+    // list rather than appended at the end. For the "any other pseudo-elements" group, that place
+    // is where its selector falls in ascending codepoint order: "-" sorts before "c", "c" before
+    // "f", and so on.
+    enum SortingIndex : uint8_t { NotPseudo, Marker, Before, WebKitScrollbar, Checkmark, FirstLetter, FirstLine, GrammarError, Highlight, PickerIcon, Selection, SpellingError, TargetText, After, ViewTransition, ViewTransitionGroup, ViewTransitionImagePair, ViewTransitionOld, ViewTransitionNew, Other };
     auto sortingIndex = [](const std::optional<Style::PseudoElementIdentifier>& pseudoElementIdentifier) -> SortingIndex {
         if (!pseudoElementIdentifier)
             return NotPseudo;
@@ -93,6 +99,10 @@ static bool compareStyleOriginatedAnimationOwningElementPositionsInDocumentTreeO
             return TargetText;
         case PseudoElementType::After:
             return After;
+        case PseudoElementType::Checkmark:
+            return Checkmark;
+        case PseudoElementType::PickerIcon:
+            return PickerIcon;
         case PseudoElementType::ViewTransition:
             return ViewTransition;
         case PseudoElementType::ViewTransitionGroup:
@@ -113,13 +123,13 @@ static bool compareStyleOriginatedAnimationOwningElementPositionsInDocumentTreeO
     Ref bReferenceElement = b.element;
 
     if (aReferenceElement.ptr() == bReferenceElement.ptr()) {
-        if (isNamedViewTransitionPseudoElement(a.pseudoElementIdentifier) && isNamedViewTransitionPseudoElement(b.pseudoElementIdentifier) && a.pseudoElementIdentifier->nameArgument != b.pseudoElementIdentifier->nameArgument) {
-            RefPtr activeViewTransition = aReferenceElement->document().activeViewTransition();
+        if (isNamedViewTransitionPseudoElement(a.pseudoElementIdentifier) && isNamedViewTransitionPseudoElement(b.pseudoElementIdentifier) && a.pseudoElementIdentifier->nameOrPart != b.pseudoElementIdentifier->nameOrPart) {
+            auto* activeViewTransition = aReferenceElement->document().activeViewTransition();
             ASSERT(activeViewTransition);
             for (auto& key : activeViewTransition->namedElements().keys()) {
-                if (key == a.pseudoElementIdentifier->nameArgument)
+                if (key == a.pseudoElementIdentifier->nameOrPart)
                     return true;
-                if (key == b.pseudoElementIdentifier->nameArgument)
+                if (key == b.pseudoElementIdentifier->nameOrPart)
                     return false;
             }
             return false;
@@ -143,7 +153,7 @@ static bool compareCSSTransitions(const CSSTransition& a, const CSSTransition& b
 
     // If the owning element of A and B differs, sort A and B by tree order of their corresponding owning elements.
     if (*aOwningElement != *bOwningElement)
-        return compareStyleOriginatedAnimationOwningElementPositionsInDocumentTreeOrder(*aOwningElement, *bOwningElement);
+        return compareStyleablePositionsInDocumentTreeOrder(*aOwningElement, *bOwningElement);
 
     // Otherwise, if A and B have different transition generation values, sort by their corresponding transition generation in ascending order.
     if (a.generationTime() != b.generationTime())
@@ -164,7 +174,7 @@ static bool compareCSSAnimations(const CSSAnimation& a, const CSSAnimation& b)
 
     // If the owning element of A and B differs, sort A and B by tree order of their corresponding owning elements.
     if (*aOwningElement != *bOwningElement)
-        return compareStyleOriginatedAnimationOwningElementPositionsInDocumentTreeOrder(*aOwningElement, *bOwningElement);
+        return compareStyleablePositionsInDocumentTreeOrder(*aOwningElement, *bOwningElement);
 
     // Sort A and B based on their position in the computed value of the animation-name property of the (common) owning element.
     auto& cssAnimationList = aOwningElement->ensureKeyframeEffectStack().cssAnimationList();
@@ -243,7 +253,7 @@ static std::optional<bool> compareStyleOriginatedAnimationEvents(const Animation
 
     auto aStyleable = Styleable(*downcast<Element>(aTarget), aAsDStyleOriginatedAnimationEventAnimationEvent->pseudoElementIdentifier());
     auto bStyleable = Styleable(*downcast<Element>(bTarget), bAsDStyleOriginatedAnimationEventAnimationEvent->pseudoElementIdentifier());
-    return compareStyleOriginatedAnimationOwningElementPositionsInDocumentTreeOrder(aStyleable, bStyleable);
+    return compareStyleablePositionsInDocumentTreeOrder(aStyleable, bStyleable);
 }
 
 bool compareAnimationEventsByCompositeOrder(const AnimationEventBase& a, const AnimationEventBase& b)
@@ -328,6 +338,8 @@ String pseudoElementIdentifierAsString(const std::optional<Style::PseudoElementI
     static NeverDestroyed<const String> selection(MAKE_STATIC_STRING_IMPL("::selection"));
     static NeverDestroyed<const String> spellingError(MAKE_STATIC_STRING_IMPL("::spelling-error"));
     static NeverDestroyed<const String> targetText(MAKE_STATIC_STRING_IMPL("::target-text"));
+    static NeverDestroyed<const String> checkmark(MAKE_STATIC_STRING_IMPL("::checkmark"));
+    static NeverDestroyed<const String> pickerIcon(MAKE_STATIC_STRING_IMPL("::picker-icon"));
     static NeverDestroyed<const String> viewTransition(MAKE_STATIC_STRING_IMPL("::view-transition"));
     static NeverDestroyed<const String> webkitScrollbar(MAKE_STATIC_STRING_IMPL("::-webkit-scrollbar"));
     switch (pseudoElementIdentifier->type) {
@@ -342,7 +354,7 @@ String pseudoElementIdentifierAsString(const std::optional<Style::PseudoElementI
     case PseudoElementType::GrammarError:
         return grammarError;
     case PseudoElementType::Highlight:
-        return makeString("::highlight"_s, '(', pseudoElementIdentifier->nameArgument, ')');
+        return makeString("::highlight"_s, '(', pseudoElementIdentifier->nameOrPart, ')');
     case PseudoElementType::Marker:
         return marker;
     case PseudoElementType::Selection:
@@ -351,19 +363,24 @@ String pseudoElementIdentifierAsString(const std::optional<Style::PseudoElementI
         return spellingError;
     case PseudoElementType::TargetText:
         return targetText;
+    case PseudoElementType::Checkmark:
+        return checkmark;
+    case PseudoElementType::PickerIcon:
+        return pickerIcon;
     case PseudoElementType::ViewTransition:
         return viewTransition;
     case PseudoElementType::ViewTransitionGroup:
-        return makeString("::view-transition-group"_s, '(', pseudoElementIdentifier->nameArgument, ')');
+        return makeString("::view-transition-group"_s, '(', pseudoElementIdentifier->nameOrPart, ')');
     case PseudoElementType::ViewTransitionImagePair:
-        return makeString("::view-transition-image-pair"_s, '(', pseudoElementIdentifier->nameArgument, ')');
+        return makeString("::view-transition-image-pair"_s, '(', pseudoElementIdentifier->nameOrPart, ')');
     case PseudoElementType::ViewTransitionOld:
-        return makeString("::view-transition-old"_s, '(', pseudoElementIdentifier->nameArgument, ')');
+        return makeString("::view-transition-old"_s, '(', pseudoElementIdentifier->nameOrPart, ')');
     case PseudoElementType::ViewTransitionNew:
-        return makeString("::view-transition-new"_s, '(', pseudoElementIdentifier->nameArgument, ')');
+        return makeString("::view-transition-new"_s, '(', pseudoElementIdentifier->nameOrPart, ')');
     case PseudoElementType::WebKitScrollbar:
         return webkitScrollbar;
     default:
+        ASSERT(pseudoElementIdentifier->type != PseudoElementType::UserAgentPartFallback);
         return emptyString();
     }
 }
@@ -373,11 +390,15 @@ std::pair<bool, std::optional<Style::PseudoElementIdentifier>> pseudoElementIden
 {
     // https://drafts.csswg.org/web-animations-1/#dom-keyframeeffect-pseudoelement
     if (pseudoElement.isNull())
-        return { true, std::nullopt };
+        return { true, { } };
 
     // FIXME: We should always have a document for accurate settings.
     auto parserContext = document ? CSSSelectorParserContext { *document } : CSSSelectorParserContext { CSSParserContext { HTMLStandardMode } };
-    return CSSSelectorParser::parsePseudoElement(pseudoElement, parserContext);
+    auto identifier = CSSSelectorParser::parsePseudoElement(pseudoElement, parserContext);
+    // FIXME: Add API support for UserAgentPartFallback pseudo-elements like ::picker(select).
+    if (identifier && identifier->type == PseudoElementType::UserAgentPartFallback)
+        return { true, std::nullopt };
+    return { !!identifier, identifier };
 }
 
 AtomString animatablePropertyAsString(AnimatableCSSProperty property)
@@ -392,9 +413,14 @@ AtomString animatablePropertyAsString(AnimatableCSSProperty property)
     );
 }
 
-bool styleHasDisplayTransition(const RenderStyle& style)
+bool styleHasDisplayTransition(const Style::ComputedStyle& style, const Element& element)
 {
-    if (!style.hasTransitions())
+    // FIXME: Best-effort disablement of this feature for elements participating in the top layer as
+    // that requires some more specification design work that has not happened yet.
+    if (element.popoverState() != PopoverState::None || is<HTMLDialogElement>(element))
+        return false;
+
+    if (style.transitions().isInitial())
         return false;
 
     for (auto& transition : style.transitions().usedValues()) {
@@ -408,8 +434,11 @@ bool styleHasDisplayTransition(const RenderStyle& style)
             [&](const Style::SingleTransitionProperty::UnknownProperty&) {
                 return false;
             },
+            [&](const Style::SingleTransitionProperty::CustomProperty&) {
+                return false;
+            },
             [&](const Style::SingleTransitionProperty::SingleProperty& property) {
-                if (auto* ptr = std::get_if<CSSPropertyID>(&property.value); ptr && *ptr == CSSPropertyDisplay)
+                if (property.propertyID == CSSPropertyID::Display)
                     return transition.behavior() == TransitionBehavior::AllowDiscrete;
                 return false;
             }
@@ -424,10 +453,10 @@ bool styleHasDisplayTransition(const RenderStyle& style)
 
 bool animatablePropertiesContainTransformRelatedProperty(const HashSet<AnimatableCSSProperty>& properties)
 {
-    return properties.contains(CSSPropertyTranslate)
-        || properties.contains(CSSPropertyScale)
-        || properties.contains(CSSPropertyRotate)
-        || properties.contains(CSSPropertyTransform);
+    return properties.contains(CSSPropertyID::Translate)
+        || properties.contains(CSSPropertyID::Scale)
+        || properties.contains(CSSPropertyID::Rotate)
+        || properties.contains(CSSPropertyID::Transform);
 }
 
 } // namespace WebCore

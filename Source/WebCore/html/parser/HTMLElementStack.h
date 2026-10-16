@@ -55,17 +55,16 @@ public:
         ~ElementRecord();
 
         Element& element() const { return m_item.element(); }
-        Ref<Element> protectedElement() const { return m_item.element(); }
         ContainerNode& node() const { return m_item.node(); }
         ElementName elementName() const { return m_item.elementName(); }
-        HTMLStackItem& stackItem() { return m_item; }
-        const HTMLStackItem& stackItem() const { return m_item; }
+        HTMLStackItem& stackItem() LIFETIME_BOUND { return m_item; }
+        const HTMLStackItem& stackItem() const LIFETIME_BOUND { return m_item; }
 
         void replaceElement(HTMLStackItem&&);
 
-        bool isAbove(ElementRecord&) const;
+        bool LEGACY_NODELETE isAbove(ElementRecord&) const;
 
-        ElementRecord* next() const { return m_next.get(); }
+        ElementRecord* next() const LIFETIME_BOUND { return m_next.get(); }
 
     private:
         friend class HTMLElementStack;
@@ -84,13 +83,13 @@ public:
     Element& top() const { return m_top->element(); }
     ContainerNode& topNode() const { return m_top->node(); }
     ElementName topElementName() const { return m_top->elementName(); }
-    HTMLStackItem& topStackItem() const { return m_top->stackItem(); }
+    HTMLStackItem& topStackItem() const LIFETIME_BOUND { return m_top->stackItem(); }
 
-    HTMLStackItem* oneBelowTop() const;
-    ElementRecord& topRecord() const;
-    ElementRecord* find(Element&) const;
-    ElementRecord* furthestBlockForFormattingElement(Element&) const;
-    ElementRecord* topmost(ElementName) const;
+    HTMLStackItem* LEGACY_NODELETE oneBelowTop() const LIFETIME_BOUND;
+    ElementRecord& LEGACY_NODELETE topRecord() const LIFETIME_BOUND;
+    ElementRecord* LEGACY_NODELETE find(Element&) const LIFETIME_BOUND;
+    ElementRecord* LEGACY_NODELETE furthestBlockForFormattingElement(Element&) const LIFETIME_BOUND;
+    ElementRecord* LEGACY_NODELETE topmost(ElementName) const LIFETIME_BOUND;
 
     bool containsTemplateElement() const { return m_templateElementCount; }
 
@@ -116,32 +115,32 @@ public:
     void popHTMLBodyElement();
     void popAll();
 
-    static bool isMathMLTextIntegrationPoint(HTMLStackItem&);
+    static bool LEGACY_NODELETE isMathMLTextIntegrationPoint(HTMLStackItem&);
     static bool isHTMLIntegrationPoint(HTMLStackItem&);
 
     void remove(Element&);
     void removeHTMLHeadElement(Element&);
 
-    bool contains(Element&) const;
+    bool LEGACY_NODELETE contains(Element&) const;
 
-    bool inScope(Element&) const;
-    bool inScope(ElementName) const;
-    bool inListItemScope(ElementName) const;
-    bool inTableScope(ElementName) const;
-    bool hasAnyInTableScope(std::initializer_list<ElementName> targetElements) const;
-    bool inButtonScope(ElementName) const;
-    bool inSelectScope(ElementName) const;
+    bool LEGACY_NODELETE inScope(Element&) const;
+    bool LEGACY_NODELETE inScope(ElementName) const;
+    bool LEGACY_NODELETE inListItemScope(ElementName) const;
+    bool LEGACY_NODELETE inTableScope(ElementName) const;
+    bool LEGACY_NODELETE hasAnyInTableScope(std::initializer_list<ElementName> targetElements) const;
+    bool LEGACY_NODELETE inButtonScope(ElementName) const;
+    bool LEGACY_NODELETE inSelectScope(ElementName) const;
 
-    bool hasNumberedHeaderElementInScope() const;
+    bool LEGACY_NODELETE hasNumberedHeaderElementInScope() const;
 
-    bool hasOnlyOneElement() const;
-    bool secondElementIsHTMLBodyElement() const;
-    bool hasTemplateInHTMLScope() const;
-    Element& htmlElement() const;
-    Element& headElement() const;
-    Element& bodyElement() const;
+    bool LEGACY_NODELETE hasOnlyOneElement() const;
+    bool LEGACY_NODELETE secondElementIsHTMLBodyElement() const;
+    bool LEGACY_NODELETE hasTemplateInHTMLScope() const;
+    Element& LEGACY_NODELETE htmlElement() const;
+    Element& LEGACY_NODELETE headElement() const;
+    Element& LEGACY_NODELETE bodyElement() const;
 
-    ContainerNode& rootNode() const;
+    ContainerNode& LEGACY_NODELETE rootNode() const;
 
 #if ENABLE(TREE_DEBUGGING)
     void show();

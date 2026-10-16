@@ -1,5 +1,3 @@
 
-Harness Error (TIMEOUT), message = null
-
-TIMEOUT Clients.matchAll() should not list pages in BFCache Test timed out
+PASS Clients.matchAll() should not list pages in BFCache
 

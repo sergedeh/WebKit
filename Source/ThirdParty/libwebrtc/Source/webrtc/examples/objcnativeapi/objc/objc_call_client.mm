@@ -24,6 +24,7 @@
 #include "api/audio_codecs/builtin_audio_encoder_factory.h"
 #include "api/create_modular_peer_connection_factory.h"
 #include "api/enable_media.h"
+#include "api/environment/environment_factory.h"
 #include "api/peer_connection_interface.h"
 #include "api/rtc_event_log/rtc_event_log_factory.h"
 #include "sdk/objc/native/api/video_capturer.h"
@@ -62,7 +63,9 @@ class SetLocalSessionDescriptionObserver
 }  // namespace
 
 ObjCCallClient::ObjCCallClient()
-    : call_started_(false), pc_observer_(std::make_unique<PCObserver>(this)) {
+    : env_(webrtc::CreateEnvironment()),
+      call_started_(false),
+      pc_observer_(std::make_unique<PCObserver>(this)) {
   thread_checker_.Detach();
   CreatePeerConnectionFactory();
 }
@@ -81,7 +84,7 @@ void ObjCCallClient::Call(RTC_OBJC_TYPE(RTCVideoCapturer) * capturer,
   remote_sink_ = webrtc::ObjCToNativeVideoRenderer(remote_renderer);
 
   video_source_ = webrtc::ObjCToNativeVideoCapturer(
-      capturer, signaling_thread_.get(), worker_thread_.get());
+      capturer, env_, signaling_thread_.get(), network_thread_.get());
 
   CreatePeerConnection();
   Connect();
@@ -109,17 +112,13 @@ void ObjCCallClient::CreatePeerConnectionFactory() {
   network_thread_->SetName("network_thread", nullptr);
   RTC_CHECK(network_thread_->Start()) << "Failed to start thread";
 
-  worker_thread_ = webrtc::Thread::Create();
-  worker_thread_->SetName("worker_thread", nullptr);
-  RTC_CHECK(worker_thread_->Start()) << "Failed to start thread";
-
   signaling_thread_ = webrtc::Thread::Create();
   signaling_thread_->SetName("signaling_thread", nullptr);
   RTC_CHECK(signaling_thread_->Start()) << "Failed to start thread";
 
   webrtc::PeerConnectionFactoryDependencies dependencies;
+  dependencies.env = env_;
   dependencies.network_thread = network_thread_.get();
-  dependencies.worker_thread = worker_thread_.get();
   dependencies.signaling_thread = signaling_thread_.get();
   dependencies.audio_encoder_factory =
       webrtc::CreateBuiltinAudioEncoderFactory();

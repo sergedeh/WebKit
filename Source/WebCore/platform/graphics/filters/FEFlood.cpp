@@ -24,7 +24,6 @@
 #include "config.h"
 #include "FEFlood.h"
 
-#include "ColorSerialization.h"
 #include "FEFloodSoftwareApplier.h"
 #include "Filter.h"
 #include <wtf/text/TextStream.h>
@@ -35,7 +34,7 @@
 
 namespace WebCore {
 
-Ref<FEFlood> FEFlood::create(const Color& floodColor, float floodOpacity, DestinationColorSpace colorSpace)
+Ref<FEFlood> FEFlood::create(const Color& floodColor, float floodOpacity, ColorSpace colorSpace)
 {
 #if USE(CG) || USE(SKIA)
     return adoptRef(*new FEFlood(floodColor, floodOpacity, colorSpace));
@@ -45,7 +44,7 @@ Ref<FEFlood> FEFlood::create(const Color& floodColor, float floodOpacity, Destin
 #endif
 }
 
-FEFlood::FEFlood(const Color& floodColor, float floodOpacity, DestinationColorSpace colorSpace)
+FEFlood::FEFlood(const Color& floodColor, float floodOpacity, ColorSpace colorSpace)
     : FilterEffect(FilterEffect::Type::FEFlood, colorSpace)
     , m_floodColor(floodColor)
     , m_floodOpacity(floodOpacity)
@@ -108,7 +107,7 @@ TextStream& FEFlood::externalRepresentation(TextStream& ts, FilterRepresentation
     ts << indent << "[feFlood"_s;
     FilterEffect::externalRepresentation(ts, representation);
 
-    ts << " flood-color=\"" << serializationForRenderTreeAsText(floodColor()) << '"';
+    ts << " flood-color=\"" << floodColor() << '"';
     ts << " flood-opacity=\"" << floodOpacity() << '"';
 
     ts << "]\n"_s;

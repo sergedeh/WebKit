@@ -28,19 +28,21 @@
 
 #if USE(CG)
 
+#include "ColorConversion.h"
+#include "ColorSpace.h"
 #include "ColorSpaceCG.h"
-#include "DestinationColorSpace.h"
 #include <mutex>
 #include <pal/spi/cg/CoreGraphicsSPI.h>
 #include <wtf/Assertions.h>
 #include <wtf/Lock.h>
 #include <wtf/RetainPtr.h>
 #include <wtf/StdLibExtras.h>
+#include <wtf/ThreadSpecific.h>
 #include <wtf/TinyLRUCache.h>
 
 namespace WebCore {
 static RetainPtr<CGColorRef> createCGColor(const Color&);
-static RetainPtr<CGColorRef> createSDRCGColorForColorspace(const Color&, const DestinationColorSpace&);
+static RetainPtr<CGColorRef> createCGColorInDestinationStandardRange(const Color&, const ColorSpace&);
 }
 
 namespace WTF {
@@ -52,9 +54,9 @@ RetainPtr<CGColorRef> TinyLRUCachePolicy<WebCore::Color, RetainPtr<CGColorRef>>:
 }
 
 template<>
-RetainPtr<CGColorRef> TinyLRUCachePolicy<std::pair<WebCore::Color, std::optional<WebCore::DestinationColorSpace>>, RetainPtr<CGColorRef>>::createValueForKey(const std::pair<WebCore::Color, std::optional<WebCore::DestinationColorSpace>>& colorAndColorSpace)
+RetainPtr<CGColorRef> TinyLRUCachePolicy<std::pair<WebCore::Color, std::optional<WebCore::ColorSpace>>, RetainPtr<CGColorRef>>::createValueForKey(const std::pair<WebCore::Color, std::optional<WebCore::ColorSpace>>& colorAndColorSpace)
 {
-    return WebCore::createSDRCGColorForColorspace(colorAndColorSpace.first, *colorAndColorSpace.second);
+    return WebCore::createCGColorInDestinationStandardRange(colorAndColorSpace.first, *colorAndColorSpace.second);
 }
 
 } // namespace WTF
@@ -99,7 +101,7 @@ std::optional<SRGBA<uint8_t>> roundAndClampToSRGBALossy(CGColorRef color)
     return convertColor<SRGBA<uint8_t>>(makeFromComponentsClamping<SRGBA<float>>(r, g, b, a ));
 }
 
-template<ColorSpace space>
+template<ColorSpaceName space>
 static CGColorTransformRef cachedCGColorTransform()
 {
     static NeverDestroyed<RetainPtr<CGColorTransformRef>> transform = adoptCF(CGColorTransformCreate(cachedCGColorSpaceSingleton<space>(), nullptr));
@@ -109,7 +111,7 @@ static CGColorTransformRef cachedCGColorTransform()
 Color Color::createAndLosslesslyConvertToSupportedColorSpace(CGColorRef color, OptionSet<Flags> flags)
 {
     // FIXME: This should probably use ExtendedSRGBA rather than XYZ_D50, as it is a more commonly used color space and just as expressive.
-    constexpr auto destinationColorSpace = HasCGColorSpaceMapping<ColorSpace::XYZ_D50> ? ColorSpace::XYZ_D50 : ColorSpace::SRGB;
+    constexpr auto destinationColorSpace = HasCGColorSpaceMapping<ColorSpaceName::XYZ_D50> ? ColorSpaceName::XYZ_D50 : ColorSpaceName::SRGB;
     ASSERT(CGColorSpaceGetNumberOfComponents(cachedCGColorSpaceSingleton<destinationColorSpace>()) == 3);
 
     RetainPtr sourceCGColorSpace = CGColorGetColorSpace(color);
@@ -146,17 +148,17 @@ Color Color::createAndPreserveColorSpace(CGColorRef color, OptionSet<Flags> flag
     return Color(OutOfLineComponents::create({ a, b, c, alpha }), *colorSpace, flags);
 }
 
-static std::pair<CGColorSpaceRef, ColorComponents<float, 4>> convertToCGCompatibleComponents(ColorSpace colorSpace, ColorComponents<float, 4> components)
+static std::pair<RetainPtr<CGColorSpaceRef>, ColorComponents<float, 4>> convertToCGCompatibleComponents(ColorSpaceName colorSpace, ColorComponents<float, 4> components)
 {
     // Some CG ports don't support all the color spaces required and return
     // nullptr for unsupported color spaces. In those cases, we eagerly convert
     // the color into either extended sRGB or normal sRGB, if extended sRGB is
     // not supported.
 
-    using FallbackColorType = std::conditional_t<HasCGColorSpaceMapping<ColorSpace::ExtendedSRGB>, ExtendedSRGBA<float>, SRGBA<float>>;
+    using FallbackColorType = std::conditional_t<HasCGColorSpaceMapping<ColorSpaceName::ExtendedSRGB>, ExtendedSRGBA<float>, SRGBA<float>>;
 
     if (RetainPtr cgColorSpace = cachedNullableCGColorSpaceSingleton(colorSpace))
-        return { cgColorSpace.get(), components };
+        return { WTF::move(cgColorSpace), components };
 
     auto componentsConvertedToFallbackColorSpace = callWithColorType(components, colorSpace, [] (const auto& color) {
         return asColorComponents(convertColor<FallbackColorType>(color).resolved());
@@ -172,7 +174,7 @@ static RetainPtr<CGColorRef> createCGColor(const Color& color)
     auto [c1, c2, c3, c4] = cgCompatibleComponents;
     std::array<CGFloat, 4> cgFloatComponents { c1, c2, c3, c4 };
 
-    return adoptCF(CGColorCreate(cgColorSpace, cgFloatComponents.data()));
+    return adoptCF(CGColorCreate(cgColorSpace.get(), cgFloatComponents.data()));
 }
 
 RetainPtr<CGColorRef> cachedCGColor(const Color& color)
@@ -201,39 +203,65 @@ RetainPtr<CGColorRef> cachedCGColor(const Color& color)
     return cache.get().get(color);
 }
 
-RetainPtr<CGColorRef> createSDRCGColorForColorspace(const Color& color, const DestinationColorSpace& colorSpace)
+RetainPtr<CGColorRef> createCGColorInDestinationStandardRange(const Color& color, const ColorSpace& colorSpace)
 {
-    RetainPtr result = cachedCGColor(color);
-    RetainPtr standardRangeColorSpace = adoptCF(CGColorSpaceCreateCopyWithStandardRange(colorSpace.protectedPlatformColorSpace().get()));
-    return adoptCF(CGColorCreateCopyByMatchingToColorSpace(standardRangeColorSpace.get(), kCGRenderingIntentDefault, result.get(), nullptr));
+    auto clampingSpace = CGColorSpaceIsWideGamutRGB(protect(colorSpace.platformColorSpace()).get()) ? ColorSpaceName::DisplayP3 : ColorSpaceName::SRGB;
+    auto [r, g, b, a] = color.toResolvedColorComponentsInColorSpace(clampingSpace);
+
+    std::array<CGFloat, 4> sourceComponents { r, g, b, a };
+    return adoptCF(CGColorCreate(cachedNullableCGColorSpaceSingleton(clampingSpace), sourceComponents.data()));
 }
 
-RetainPtr<CGColorRef> cachedSDRCGColorForColorspace(const Color& color, const DestinationColorSpace& colorSpace)
+RetainPtr<CGColorRef> cachedCGColorInDestinationStandardRange(const Color& color, const ColorSpace& colorSpace)
 {
-    if (!colorSpace.usesExtendedRange() || color.tryGetAsSRGBABytes())
+    if (color.tryGetAsSRGBABytes())
         return cachedCGColor(color);
 
     static Lock cachedSDRColorLock;
     Locker locker { cachedSDRColorLock };
 
-    static NeverDestroyed<TinyLRUCache<std::pair<Color, std::optional<DestinationColorSpace>>, RetainPtr<CGColorRef>, 32>> cache;
+    static NeverDestroyed<TinyLRUCache<std::pair<Color, std::optional<ColorSpace>>, RetainPtr<CGColorRef>, 32>> cache;
     return cache.get().get(std::make_pair(color, colorSpace));
 }
 
-ColorComponents<float, 4> platformConvertColorComponents(ColorSpace inputColorSpace, ColorComponents<float, 4> inputColorComponents, const DestinationColorSpace& outputColorSpace)
+ColorComponents<float, 4> platformConvertColorComponents(ColorSpaceName inputColorSpace, ColorComponents<float, 4> inputColorComponents, const ColorSpace& outputColorSpace)
 {
-    // FIXME: Investigate optimizing this to use the builtin color conversion code for supported color spaces.
-
     auto [cgInputColorSpace, cgCompatibleComponents] = convertToCGCompatibleComponents(inputColorSpace, inputColorComponents);
     if (cgInputColorSpace == outputColorSpace.platformColorSpace())
         return cgCompatibleComponents;
 
+    // Fast path: use built-in conversion for well-known destination color spaces.
+    auto builtin = callWithColorType(inputColorComponents, inputColorSpace, [&](const auto& inputColor) -> std::optional<ColorComponents<float, 4>> {
+        if (outputColorSpace == ColorSpace::SRGB())
+            return asColorComponents(convertColor<SRGBA<float>>(inputColor).resolved());
+        if (outputColorSpace == ColorSpace::LinearSRGB())
+            return asColorComponents(convertColor<LinearSRGBA<float>>(inputColor).resolved());
+#if ENABLE(DESTINATION_COLOR_SPACE_DISPLAY_P3)
+        if (outputColorSpace == ColorSpace::DisplayP3())
+            return asColorComponents(convertColor<DisplayP3<float>>(inputColor).resolved());
+        if (outputColorSpace == ColorSpace::LinearDisplayP3())
+            return asColorComponents(convertColor<LinearDisplayP3<float>>(inputColor).resolved());
+#endif
+        return std::nullopt;
+    });
+    if (builtin)
+        return *builtin;
+
+    // Slow path: fall back to CoreGraphics caching the transform to avoid
+    // recreating the CGColorTransform on every call.
     auto [c1, c2, c3, c4] = cgCompatibleComponents;
     std::array<CGFloat, 4> sourceComponents { c1, c2, c3, c4 };
     std::array<CGFloat, 4> destinationComponents { };
 
-    auto transform = adoptCF(CGColorTransformCreate(outputColorSpace.protectedPlatformColorSpace().get(), nullptr));
-    auto result = CGColorTransformConvertColorComponents(transform.get(), cgInputColorSpace, kCGRenderingIntentDefault, sourceComponents.data(), destinationComponents.data());
+    static NeverDestroyed<ThreadSpecific<std::pair<RetainPtr<CGColorSpaceRef>, RetainPtr<CGColorTransformRef>>>> cachedTransform;
+    auto& [cachedSpace, transform] = *cachedTransform.get();
+    RetainPtr outputColorSpacePlatform = outputColorSpace.platformColorSpace();
+    if (!transform || !CGColorSpaceEqualToColorSpace(cachedSpace.get(), outputColorSpacePlatform.get())) {
+        cachedSpace = WTF::move(outputColorSpacePlatform);
+        transform = adoptCF(CGColorTransformCreate(cachedSpace.get(), nullptr));
+    }
+
+    auto result = CGColorTransformConvertColorComponents(transform.get(), cgInputColorSpace.get(), kCGRenderingIntentDefault, sourceComponents.data(), destinationComponents.data());
     ASSERT_UNUSED(result, result);
     // CGColorTransformConvertColorComponents doesn't copy over any alpha component.
     return { static_cast<float>(destinationComponents[0]), static_cast<float>(destinationComponents[1]), static_cast<float>(destinationComponents[2]), static_cast<float>(sourceComponents[3]) };

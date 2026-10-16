@@ -22,6 +22,7 @@
 
 #include <JavaScriptCore/EnumerationMode.h>
 #include <JavaScriptCore/Identifier.h>
+#include <JavaScriptCore/VM.h>
 #include <wtf/HashSet.h>
 #include <wtf/Vector.h>
 
@@ -33,7 +34,7 @@ public:
 
     static Ref<PropertyNameArray> create() { return adoptRef(*new PropertyNameArray); }
 
-    PropertyNameVector& propertyNameVector() { return m_propertyNameVector; }
+    PropertyNameVector& propertyNameVector() LIFETIME_BOUND { return m_propertyNameVector; }
 
 private:
     PropertyNameArray()

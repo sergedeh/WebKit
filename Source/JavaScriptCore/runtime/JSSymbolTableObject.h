@@ -41,7 +41,7 @@ public:
     using Base = JSScope;
     static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnSpecialPropertyNames;
 
-    SymbolTable* symbolTable() const { return m_symbolTable.get(); }
+    SymbolTable* symbolTable() const LIFETIME_BOUND { return m_symbolTable.get(); }
     
     JS_EXPORT_PRIVATE static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
     JS_EXPORT_PRIVATE static void getOwnSpecialPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
@@ -57,22 +57,11 @@ protected:
         : Base(vm, structure, scope)
     {
     }
-    
-    JSSymbolTableObject(VM& vm, Structure* structure, JSScope* scope, SymbolTable* symbolTable)
-        : Base(vm, structure, scope)
-        , m_symbolTable(symbolTable, WriteBarrierEarlyInit)
-    {
-        ASSERT(symbolTable);
-        symbolTable->notifyCreation(vm, this, "Allocated a scope");
-    }
-    
-    void setSymbolTable(VM& vm, SymbolTable* symbolTable)
-    {
-        ASSERT(!m_symbolTable);
-        symbolTable->notifyCreation(vm, this, "Allocated a scope");
-        m_symbolTable.set(vm, this, symbolTable);
-    }
-    
+
+    JSSymbolTableObject(VM&, Structure*, JSScope*, SymbolTable*);
+
+    void setSymbolTable(VM&, SymbolTable*);
+
 private:
     WriteBarrier<SymbolTable> m_symbolTable;
 };
@@ -100,7 +89,7 @@ inline bool symbolTableGet(
 
 template<typename SymbolTableObjectType>
 inline bool symbolTableGet(
-    SymbolTableObjectType* object, PropertyName propertyName, SymbolTableEntry& entry, PropertyDescriptor& descriptor)
+    SymbolTableObjectType* object, PropertyName propertyName, SymbolTableEntry::Fast& entry, PropertyDescriptor& descriptor)
 {
     SymbolTable& symbolTable = *object->symbolTable();
     ConcurrentJSLocker locker(symbolTable.m_lock);
@@ -120,7 +109,7 @@ inline bool symbolTableGet(
 }
 
 template<typename SymbolTableObjectType>
-ALWAYS_INLINE void symbolTablePutTouchWatchpointSet(VM& vm, SymbolTableObjectType* object, PropertyName propertyName, JSValue value, WriteBarrierBase<Unknown>* reg, WatchpointSet* set)
+ALWAYS_INLINE void symbolTablePutTouchWatchpointSet(VM& vm, SymbolTableObjectType* object, PropertyName propertyName, JSValue value, WriteBarrierBase<Unknown>* reg, InlineWatchpointSet* set)
 {
     reg->set(vm, object, value);
     if (set)
@@ -128,7 +117,7 @@ ALWAYS_INLINE void symbolTablePutTouchWatchpointSet(VM& vm, SymbolTableObjectTyp
 }
 
 template<typename SymbolTableObjectType>
-ALWAYS_INLINE void symbolTablePutInvalidateWatchpointSet(VM& vm, SymbolTableObjectType* object, PropertyName propertyName, JSValue value, WriteBarrierBase<Unknown>* reg, WatchpointSet* set)
+ALWAYS_INLINE void symbolTablePutInvalidateWatchpointSet(VM& vm, SymbolTableObjectType* object, PropertyName propertyName, JSValue value, WriteBarrierBase<Unknown>* reg, InlineWatchpointSet* set)
 {
     reg->set(vm, object, value);
     if (set)
@@ -146,7 +135,7 @@ inline bool symbolTablePut(SymbolTableObjectType* object, JSGlobalObject* global
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    WatchpointSet* set = nullptr;
+    InlineWatchpointSet* set = nullptr;
     WriteBarrierBase<Unknown>* reg;
     {
         SymbolTable& symbolTable = *object->symbolTable();

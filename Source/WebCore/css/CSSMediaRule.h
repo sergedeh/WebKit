@@ -26,6 +26,7 @@
 
 namespace WebCore {
 
+class Document;
 class MediaList;
 class StyleRuleMedia;
 
@@ -40,6 +41,7 @@ public:
     virtual ~CSSMediaRule();
 
     WEBCORE_EXPORT MediaList& media() const;
+    bool matches(const Document&) const;
 
 private:
     friend class MediaList;
@@ -51,7 +53,7 @@ private:
     String cssText(const CSS::SerializationContext&) const final;
     String conditionText() const final;
 
-    const MQ::MediaQueryList& mediaQueries() const;
+    const MQ::MediaQueryList& LEGACY_NODELETE mediaQueries() const;
     void setMediaQueries(MQ::MediaQueryList&&);
 
     mutable RefPtr<MediaList> m_mediaCSSOMWrapper;

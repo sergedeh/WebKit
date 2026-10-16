@@ -15,10 +15,11 @@
 #
 # Steps:
 #   1. Visit https://ci.chromium.org/p/angle/g/ci/console and find a builder with a similar OS and configuration.
-#      Replicating GN args exactly is not necessary. For example, linux-test:
-#         https://ci.chromium.org/p/angle/builders/ci/linux-test
+#      Replicating GN args exactly is not necessary. For example,
+#      angle-linux-x64-intel-uhd630-rel:
+#         https://ci.chromium.org/ui/p/angle/builders/ci/angle-linux-x64-intel-uhd630-rel
 #   2. Find a recent green build from the builder, for example:
-#         https://ci.chromium.org/ui/p/angle/builders/ci/linux-test/2443/overview
+#         https://ci.chromium.org/ui/p/angle/builders/ci/angle-linux-x64-intel-uhd630-rel/15/overview
 #   3. Find a test step shard that matches your test and intended target. For example, angle_unittests on Intel:
 #         https://chromium-swarm.appspot.com/task?id=5d6eecdda8e82210
 #   4. Now run this script without arguments to print the help message. For example:
@@ -28,7 +29,7 @@
 #      also need to find a value for "os_dim". For the above example:
 #         "os_dim" -> Ubuntu-18.04.6, "GPU" -> 8086:9bc5-20.0.8.
 #   6. For "gn_path" and "test", use your local GN out directory path and triggered test name. The test name must
-#      match an entry in infra/specs/gn_isolate_map.pyl. For example:
+#      match an entry in infra/config/generated/testing/gn_isolate_map.pyl. For example:
 #         trigger.py -g 8086:9bc5-20.0.8 out/Debug angle_unittests Ubuntu-18.04.6
 #   7. Finally, append the same arguments you'd run with locally when invoking this trigger script, e.g:
 #         --gtest_filter=*YourTest*
@@ -55,7 +56,8 @@ import sys
 DEFAULT_TASK_PRIORITY = 30
 DEFAULT_POOL = 'chromium.tests.gpu'
 DEFAULT_LOG_LEVEL = 'info'
-DEFAULT_REALM = 'chromium:try'
+DEFAULT_REALM = 'angle:try'
+SERVICE_ACCOUNT = 'chromium-tester@chops-service-accounts.iam.gserviceaccount.com'
 GOLD_SERVICE_ACCOUNT = 'chrome-gpu-gold@chops-service-accounts.iam.gserviceaccount.com'
 EXIT_SUCCESS = 0
 EXIT_FAILURE = 1
@@ -102,7 +104,10 @@ def invoke_mb(args, stdout=None):
 
     if is_standalone:
         logging.info('Standalone mode detected.')
-        mb_args += ['-i', os.path.join('infra', 'specs', 'gn_isolate_map.pyl')]
+        mb_args += [
+            '-i',
+            os.path.join('infra', 'config', 'generated', 'testing', 'gn_isolate_map.pyl')
+        ]
 
     logging.info('Invoking mb: %s' % ' '.join(mb_args))
     proc = subprocess.run(mb_args, stdout=stdout)
@@ -173,9 +178,11 @@ def main():
 
     cmd_args = ['-relative-cwd', args.gn_path, '--']
 
+    cmd_args += ['luci-auth', 'context', '--']
     if args.gold:
         swarming_args += ['-service-account', GOLD_SERVICE_ACCOUNT]
-        cmd_args += ['luci-auth', 'context', '--']
+    else:
+        swarming_args += ['-service-account', SERVICE_ACCOUNT]
 
     for env in args.env:
         swarming_args += ['-env', env]

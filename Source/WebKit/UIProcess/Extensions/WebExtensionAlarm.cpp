@@ -41,7 +41,7 @@ void WebExtensionAlarm::schedule()
 {
     m_parameters.nextScheduledTime = MonotonicTime::now() + initialInterval();
 
-    RELEASE_LOG_DEBUG(Extensions, "Scheduled alarm; initial = %{public}f seconds; repeat = %{public}f seconds", initialInterval().seconds(), repeatInterval().seconds());
+    RELEASE_LOG_DEBUG(Extensions, "Scheduled alarm; initial = %" PUBLIC_LOG "f seconds; repeat = %" PUBLIC_LOG "f seconds", initialInterval().seconds(), repeatInterval().seconds());
 
     m_timer = makeUnique<RunLoop::Timer>(RunLoop::currentSingleton(), "WebExtensionAlarm::Timer"_s, this, &WebExtensionAlarm::fire);
     m_timer->startOneShot(initialInterval());
@@ -49,6 +49,8 @@ void WebExtensionAlarm::schedule()
 
 void WebExtensionAlarm::fire()
 {
+    Ref protectedThis { *this };
+
     // Calculate the next scheduled time now, so the handler's work time does not count against it.
     auto nextScheduledTime = MonotonicTime::now() + repeatInterval();
     if (!m_hasFiredInitialTimer) {

@@ -56,6 +56,8 @@ class InspectorAnimationAgent final : public InspectorAgentBase, public Inspecto
     WTF_MAKE_TZONE_ALLOCATED(InspectorAnimationAgent);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(InspectorAnimationAgent);
 public:
+    OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeCheckedPtr);
+
     InspectorAnimationAgent(PageAgentContext&);
     ~InspectorAnimationAgent();
 
@@ -83,7 +85,7 @@ public:
     void frameNavigated(LocalFrame&);
 
 private:
-    String findAnimationId(WebAnimation&);
+    String LEGACY_NODELETE findAnimationId(WebAnimation&);
     WebAnimation* assertAnimation(Inspector::Protocol::ErrorString&, const String& animationId);
     void bindAnimation(WebAnimation&, RefPtr<Inspector::Protocol::Console::StackTrace> backtrace);
     void animationBindingTimerFired();
@@ -96,7 +98,7 @@ private:
     const UniqueRef<Inspector::AnimationFrontendDispatcher> m_frontendDispatcher;
     const Ref<Inspector::AnimationBackendDispatcher> m_backendDispatcher;
 
-    Inspector::InjectedScriptManager& m_injectedScriptManager;
+    const CheckedRef<Inspector::InjectedScriptManager> m_injectedScriptManager;
     WeakRef<Page> m_inspectedPage;
 
     // FIXME <https://webkit.org/b/303593>: Animation should not be destroyed before notifying this agent to unbind it.

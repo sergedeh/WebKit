@@ -54,7 +54,7 @@ public:
     void stopAnimation();
     void resetAnimation();
     bool isAnimating() const { return !!m_frameTimer; }
-    bool isAnimationAllowed() const;
+    bool LEGACY_NODELETE isAnimationAllowed() const;
 
     bool hasEverAnimated() const { return !!m_desiredFrameStartTime; }
     unsigned currentFrameIndex() const { return m_currentFrameIndex; }
@@ -70,7 +70,7 @@ private:
 
     unsigned nextFrameIndex() const { return (m_currentFrameIndex + 1) % m_frameCount; }
 
-    CString sourceUTF8() const;
+    UTF8CString sourceUTF8() const;
 
     ThreadSafeWeakRef<BitmapImageSource> m_source;
     unsigned m_frameCount { 0 };

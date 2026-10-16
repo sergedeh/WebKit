@@ -60,10 +60,10 @@ public:
 
     USING_CAN_MAKE_WEAKPTR(FontSelector);
 
-    unsigned version() const final { return m_version; }
+    unsigned LEGACY_NODELETE version() const final { return m_version; }
     unsigned uniqueId() const final { return m_uniqueId; }
 
-    FontRanges fontRangesForFamily(const FontDescription&, const AtomString&) final;
+    FontRanges fontRangesForFamily(const FontDescription&, const FontFamily&) final;
     size_t fallbackFontCount() final;
     RefPtr<Font> fallbackFontAt(const FontDescription&, size_t) final;
 
@@ -78,7 +78,7 @@ public:
 
     void fontCacheInvalidated() final;
 
-    bool isEmpty() const;
+    bool LEGACY_NODELETE isEmpty() const;
 
     void registerForInvalidationCallbacks(FontSelectorClient&) final;
     void unregisterForInvalidationCallbacks(FontSelectorClient&) final;
@@ -88,9 +88,8 @@ public:
     bool isCSSFontSelector() const final { return true; }
 
     ScriptExecutionContext* scriptExecutionContext() const { return m_context.get(); }
-    Ref<ScriptExecutionContext> protectedScriptExecutionContext() const { return *m_context; }
 
-    FontFaceSet* fontFaceSetIfExists();
+    FontFaceSet* LEGACY_NODELETE fontFaceSetIfExists();
     FontFaceSet& fontFaceSet();
     CSSFontFaceSet& cssFontFaceSet() { return m_cssFontFaceSet; }
 
@@ -126,7 +125,7 @@ private:
     Vector<PendingFontFaceRule> m_stagingArea;
 
     WeakPtr<ScriptExecutionContext> m_context;
-    RefPtr<FontFaceSet> m_fontFaceSet;
+    const RefPtr<FontFaceSet> m_fontFaceSet;
     const Ref<CSSFontFaceSet> m_cssFontFaceSet;
     HashSet<FontSelectorClient*> m_clients;
 
@@ -144,8 +143,8 @@ private:
     HashMap<std::pair<AtomString, AtomString>, FontPaletteValues, PaletteMapHash> m_paletteMap;
     HashMap<String, Ref<FontFeatureValues>> m_featureValues;
 
-    HashSet<RefPtr<CSSFontFace>> m_cssConnectionsPossiblyToRemove;
-    HashSet<RefPtr<StyleRuleFontFace>> m_cssConnectionsEncounteredDuringBuild;
+    HashSet<Ref<CSSFontFace>> m_cssConnectionsPossiblyToRemove;
+    HashSet<Ref<StyleRuleFontFace>> m_cssConnectionsEncounteredDuringBuild;
 
     const Ref<CSSFontFaceSet::FontModifiedObserver> m_fontModifiedObserver;
 

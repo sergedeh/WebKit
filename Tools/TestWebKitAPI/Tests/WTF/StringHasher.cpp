@@ -27,7 +27,9 @@
 #include <wtf/DataLog.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/Vector.h>
+#include <wtf/text/RapidHash.h>
 #include <wtf/text/StringHasherInlines.h>
+#include <wtf/text/SuperFastHash.h>
 
 
 namespace TestWebKitAPI {
@@ -50,7 +52,6 @@ TEST(WTF, StringHasher)
         return array;
     };
 
-    StringHasher hash;
     unsigned max8Bit = std::numeric_limits<uint8_t>::max();
     for (size_t size = 0; size <= max8Bit; size++) {
         std::unique_ptr<const Latin1Character[]> arr1 = generateLatin1Array(size);
@@ -58,15 +59,10 @@ TEST(WTF, StringHasher)
         unsigned left = StringHasher::computeHashAndMaskTop8Bits(std::span { arr1.get(), size });
         unsigned right = StringHasher::computeHashAndMaskTop8Bits(std::span { arr2.get(), size });
         ASSERT_EQ(left, right);
-
-        for (size_t i = 0; i < size; i++)
-            hash.addCharacter(arr2.get()[i]);
-        unsigned result1 = hash.hashWithTop8BitsMasked();
-        ASSERT_EQ(right, result1);
     }
 }
 
-TEST(WTF, StringHasher_SuperFastHash_VS_WYHash)
+TEST(WTF, StringHasher_SuperFastHash_VS_RapidHash)
 {
     if (!dumpHashingSpeedComparison)
         return;
@@ -78,7 +74,7 @@ TEST(WTF, StringHasher_SuperFastHash_VS_WYHash)
             return index & 0x7f;
         });
         sum += SuperFastHash::computeHashAndMaskTop8Bits(vector.span());
-        sum += WYHash::computeHashAndMaskTop8Bits(vector.span());
+        sum += RapidHash::computeHashAndMaskTop8Bits(vector.span());
         sum += StringHasher::computeHashAndMaskTop8Bits(vector.span());
         auto start = MonotonicTime::now();
         for (unsigned i = 0; i < 1e5; ++i)
@@ -86,8 +82,8 @@ TEST(WTF, StringHasher_SuperFastHash_VS_WYHash)
         dataLogLn("SFH ", size, " -> ", MonotonicTime::now() - start);
         start = MonotonicTime::now();
         for (unsigned i = 0; i < 1e5; ++i)
-            sum += WYHash::computeHashAndMaskTop8Bits(vector.span());
-        dataLogLn("WYH ", size, " -> ", MonotonicTime::now() - start);
+            sum += RapidHash::computeHashAndMaskTop8Bits(vector.span());
+        dataLogLn("RPH ", size, " -> ", MonotonicTime::now() - start);
         start = MonotonicTime::now();
         for (unsigned i = 0; i < 1e5; ++i)
             sum += StringHasher::computeHashAndMaskTop8Bits(vector.span());
@@ -100,7 +96,7 @@ TEST(WTF, StringHasher_SuperFastHash_VS_WYHash)
             return index & 0x7f;
         });
         sum += SuperFastHash::computeHashAndMaskTop8Bits(vector.span());
-        sum += WYHash::computeHashAndMaskTop8Bits(vector.span());
+        sum += RapidHash::computeHashAndMaskTop8Bits(vector.span());
         sum += StringHasher::computeHashAndMaskTop8Bits(vector.span());
         auto start = MonotonicTime::now();
         for (unsigned i = 0; i < 1e5; ++i)
@@ -108,8 +104,8 @@ TEST(WTF, StringHasher_SuperFastHash_VS_WYHash)
         dataLogLn("SFH ", size, " -> ", MonotonicTime::now() - start);
         start = MonotonicTime::now();
         for (unsigned i = 0; i < 1e5; ++i)
-            sum += WYHash::computeHashAndMaskTop8Bits(vector.span());
-        dataLogLn("WYH ", size, " -> ", MonotonicTime::now() - start);
+            sum += RapidHash::computeHashAndMaskTop8Bits(vector.span());
+        dataLogLn("RPH ", size, " -> ", MonotonicTime::now() - start);
         start = MonotonicTime::now();
         for (unsigned i = 0; i < 1e5; ++i)
             sum += StringHasher::computeHashAndMaskTop8Bits(vector.span());

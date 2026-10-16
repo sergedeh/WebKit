@@ -36,7 +36,7 @@ WI.ConsoleManager = class ConsoleManager extends WI.Object
 
         this._lastMessageLevel = null;
         this._clearMessagesRequested = false;
-        this._isNewPageOrReload = false;
+        this._legacyPendingMainFrameNavigationClear = false;
         this._remoteObjectsToRelease = null;
 
         this._customLoggingChannels = [];
@@ -70,9 +70,9 @@ WI.ConsoleManager = class ConsoleManager extends WI.Object
 
     // Static
 
-    static supportsLogChannels()
+    static supportsLogChannels(target)
     {
-        return InspectorBackend.hasCommand("Console.getLoggingChannels");
+        return (target || InspectorBackend).hasCommand("Console.setLoggingChannelLevel");
     }
 
     static issueMatchSourceCode(issue, sourceCode)
@@ -99,6 +99,11 @@ WI.ConsoleManager = class ConsoleManager extends WI.Object
         // See WI.Target.prototype.initialize.
 
         this._setConsoleClearAPIEnabled(target);
+
+        if (WI.ConsoleManager.supportsLogChannels(target)) {
+            for (let channel of this._customLoggingChannels)
+                target.ConsoleAgent.setLoggingChannelLevel(channel.source, channel.level);
+        }
     }
 
     // Public
@@ -169,14 +174,8 @@ WI.ConsoleManager = class ConsoleManager extends WI.Object
         if (Array.isArray(stackTrace))
             stackTrace = {callFrames: stackTrace};
 
-        if (stackTrace) {
-            let supportedTarget = target;
-            if (target.type === WI.TargetType.Frame) {
-                // FIXME: <https://webkit.org/b/298909> Add Debugger support for FrameTarget.
-                supportedTarget = WI.assumingMainTarget();
-            }
-            stackTrace = WI.StackTrace.fromPayload(supportedTarget, stackTrace);
-        }
+        if (stackTrace)
+            stackTrace = WI.StackTrace.fromPayload(target, stackTrace, {deliveredOnTarget: true});
 
         const request = null;
         let message = new WI.ConsoleMessage(target, source, level, text, type, url, line, column, repeatCount, parameters, stackTrace, request, timestamp);
@@ -206,7 +205,7 @@ WI.ConsoleManager = class ConsoleManager extends WI.Object
         WI.ConsoleCommandResultMessage.clearMaximumSavedResultIndex();
         WI.javaScriptRuntimeCompletionProvider.clearCachedPropertyNames();
 
-        // COMPATIBILITY (iOS 16.4, macOS 13.3): `Console.ClearReason` did not exist.
+        // COMPATIBILITY (iOS 16.4, macOS 13.3): `Console.messagesCleared` did not have a `reason` parameter yet.
         if (!reason) {
             if (this._clearMessagesRequested) {
                 // Frontend requested "clear console" and Backend successfully completed the request.
@@ -226,8 +225,8 @@ WI.ConsoleManager = class ConsoleManager extends WI.Object
 
         switch (reason) {
         case WI.ConsoleManager.ClearReason.Frontend:
-            // COMPATIBILITY (iOS 18.0, macOS 15.0): `Console.ClearReason.Frontend` did not exist yet.
-            // COMPATIBILITY (iOS 18.0, macOS 15.0): `Console.setConsoleClearAPIEnabled` did not exist yet.
+            // COMPATIBILITY (macOS 14.4, iOS 17.4): `Console.ClearReason.Frontend` did not exist yet.
+            // COMPATIBILITY (macOS 14.4, iOS 17.4): `Console.setConsoleClearAPIEnabled` did not exist yet.
             console.assert(InspectorBackend.hasCommand("Console.setConsoleClearAPIEnabled"));
             this._clearMessages();
             return;
@@ -238,9 +237,6 @@ WI.ConsoleManager = class ConsoleManager extends WI.Object
             return;
 
         case WI.ConsoleManager.ClearReason.MainFrameNavigation:
-            console.assert(this._isNewPageOrReload);
-            this._isNewPageOrReload = false;
-
             if (WI.settings.clearLogOnNavigate.value)
                 this._clearMessages();
 
@@ -271,7 +267,7 @@ WI.ConsoleManager = class ConsoleManager extends WI.Object
     {
         console.assert(target.hasDomain("Console"));
 
-        if (!WI.ConsoleManager.supportsLogChannels())
+        if (!WI.ConsoleManager.supportsLogChannels(target))
             return;
 
         if (this._customLoggingChannels.length)
@@ -314,7 +310,7 @@ WI.ConsoleManager = class ConsoleManager extends WI.Object
 
     _setConsoleClearAPIEnabled(target)
     {
-        // COMPATIBILITY (iOS 18.0, macOS 15.0): `Console.setConsoleClearAPIEnabled` did not exist yet.
+        // COMPATIBILITY (macOS 14.4, iOS 17.4): `Console.setConsoleClearAPIEnabled` did not exist yet.
         if (target.hasCommand("Console.setConsoleClearAPIEnabled"))
             target.ConsoleAgent.setConsoleClearAPIEnabled(WI.settings.consoleClearAPIEnabled.value);
     }
@@ -333,8 +329,8 @@ WI.ConsoleManager = class ConsoleManager extends WI.Object
 
     _delayedMessagesCleared()
     {
-        if (this._isNewPageOrReload) {
-            this._isNewPageOrReload = false;
+        if (this._legacyPendingMainFrameNavigationClear) {
+            this._legacyPendingMainFrameNavigationClear = false;
 
             if (!WI.settings.clearLogOnNavigate.value)
                 return;
@@ -365,7 +361,9 @@ WI.ConsoleManager = class ConsoleManager extends WI.Object
         if (!event.target.isMainFrame())
             return;
 
-        this._isNewPageOrReload = true;
+        // COMPATIBILITY (iOS 16.4, macOS 13.3): `Console.messagesCleared` did not have a `reason` parameter yet.
+        if (!InspectorBackend.hasEvent("Console.messagesCleared", "reason"))
+            this._legacyPendingMainFrameNavigationClear = true;
 
         let timestamp = Date.now();
         let wasReloaded = event.data.oldMainResource && event.data.oldMainResource.url === event.target.mainResource.url;

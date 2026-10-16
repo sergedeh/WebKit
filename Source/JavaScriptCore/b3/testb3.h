@@ -84,6 +84,7 @@
 #include <wtf/Threading.h>
 #include <wtf/WTFProcess.h>
 #include <wtf/text/StringCommon.h>
+#include <wtf/text/UTF8CStringView.h>
 
 // We don't have a NO_RETURN_DUE_TO_EXIT, nor should we. That's ridiculous.
 inline bool hiddenTruthBecauseNoReturnIsStupid() { return true; }
@@ -124,7 +125,7 @@ extern Lock crashLock;
     if (__x == __y) \
         break; \
     crashLock.lock(); \
-    WTFReportAssertionFailure(__FILE__, __LINE__, WTF_PRETTY_FUNCTION, toCString(#x " == " #y, " (" #x " == ", __x, ", " #y " == ", __y, ")").data()); \
+    WTFReportAssertionFailure(__FILE__, __LINE__, WTF_PRETTY_FUNCTION, toUTF8CString(#x " == " #y, " (" #x " == ", __x, ", " #y " == ", __y, ")").legacyCStringPointer()); \
     CRASH(); \
 } while (false)
 
@@ -132,50 +133,60 @@ extern Lock crashLock;
 
 #define RUN(test)                                           \
     do {                                                    \
-        CString testStr = toCString(PREFIX #test);          \
-        if (!shouldRun(config, testStr.data()))             \
+        auto testStr = toUTF8CString(PREFIX #test);          \
+        if (!shouldRun(config, testStr))                    \
             break;                                          \
         tasks.append(                                       \
             createSharedTask<void()>(                       \
                 [=]() {                                     \
-                    dataLog(toCString(testStr, "...\n"));   \
+                    dataLog(toUTF8CString(testStr, "...\n"));   \
                     test;                                   \
-                    dataLog(toCString(testStr, ": OK!\n")); \
+                    dataLog(toUTF8CString(testStr, ": OK!\n")); \
                 }));                                        \
     } while (false);
 
 #define RUN_UNARY(test, values) \
     for (auto a : values) {                             \
-        CString testStr = toCString(PREFIX #test, "(", a.name, ")"); \
-        if (!shouldRun(config, testStr.data()))         \
+        auto testStr = toUTF8CString(PREFIX #test, "(", a.name, ")"); \
+        if (!shouldRun(config, testStr))                \
             continue;                                   \
         tasks.append(createSharedTask<void()>(          \
             [=] () {                                    \
-                dataLog(toCString(testStr, "...\n"));   \
+                dataLog(toUTF8CString(testStr, "...\n"));   \
                 test(a.value);                          \
-                dataLog(toCString(testStr, ": OK!\n")); \
+                dataLog(toUTF8CString(testStr, ": OK!\n")); \
             }));                                        \
     }
 
+#if USE(PROTECTED_JIT)
+// Must be constructed before we allocate anything using SequesteredArenaMalloc
+#define B3_TEST_ARENA_LIFETIME ArenaLifetime b3TestArenaLifetime;
+#else
+#define B3_TEST_ARENA_LIFETIME
+#endif
+
 #define RUN_NOW(test) do {                      \
-        if (!shouldRun(config, #test))          \
+        if (!shouldRun(config, #test ""_s))     \
             break;                              \
         dataLog(PREFIX #test "...\n");          \
-        test;                                   \
+        {                                       \
+            B3_TEST_ARENA_LIFETIME              \
+            test;                               \
+        }                                       \
         dataLog(PREFIX #test ": OK!\n");        \
     } while (false)
 
 #define RUN_BINARY(test, valuesA, valuesB) \
     for (auto a : valuesA) {                                \
         for (auto b : valuesB) {                            \
-            CString testStr = toCString(PREFIX #test, "(", a.name, ", ", b.name, ")"); \
-            if (!shouldRun(config, testStr.data()))         \
+            auto testStr = toUTF8CString(PREFIX #test, "(", a.name, ", ", b.name, ")"); \
+            if (!shouldRun(config, testStr))                \
                 continue;                                   \
             tasks.append(createSharedTask<void()>(          \
                 [=] () {                                    \
-                    dataLog(toCString(testStr, "...\n"));   \
+                    dataLog(toUTF8CString(testStr, "...\n"));   \
                     test(a.value, b.value);                 \
-                    dataLog(toCString(testStr, ": OK!\n")); \
+                    dataLog(toUTF8CString(testStr, ": OK!\n")); \
                 }));                                        \
         }                                                   \
     }
@@ -183,14 +194,14 @@ extern Lock crashLock;
     for (auto a : valuesA) {                                    \
         for (auto b : valuesB) {                                \
             for (auto c : valuesC) {                            \
-                CString testStr = toCString(PREFIX #test, "(", a.name, ", ", b.name, ",", c.name, ")"); \
-                if (!shouldRun(config, testStr.data()))         \
+                auto testStr = toUTF8CString(PREFIX #test, "(", a.name, ", ", b.name, ",", c.name, ")"); \
+                if (!shouldRun(config, testStr))                \
                     continue;                                   \
                 tasks.append(createSharedTask<void()>(          \
                     [=] () {                                    \
-                        dataLog(toCString(testStr, "...\n"));   \
+                        dataLog(toUTF8CString(testStr, "...\n"));   \
                         test(a.value, b.value, c.value);        \
-                        dataLog(toCString(testStr, ": OK!\n")); \
+                        dataLog(toUTF8CString(testStr, ": OK!\n")); \
                     }));                                        \
             }                                                   \
         }                                                       \
@@ -215,40 +226,6 @@ struct ArgumentTweaker {
         return t;
     }
 };
-
-#if CPU(ARM_THUMB2)
-
-// Air and B3 (rightly) use the register names d0-d15 to refer to FPRs--this is
-// a useful simplification since any FPR in JSC will typically hold a
-// double-precision float.
-//
-// However, in the context of testb3, we do sometimes want to talk about
-// single-precision floats and, notably, to pass them as arguments between C and
-// the JITted code.
-//
-// This presents a problem since C will use the odd-numberd s1-s31 without
-// batting an eye; we need to prevent this from happening.
-//
-// To achieve this, we pass nominally `float` arguments as a `FrakenFloat`
-// instead--on armv7, this ensures that an argument `float x` will go into an
-// even-numbered FPR and the odd-numbered FPR will be occupied by the
-// `unusedUnaddressable` field of the FrankenFloat.
-
-struct FrankenFloat {
-    float real;
-    float unusedUnaddressable;
-};
-
-template<>
-struct ArgumentTweaker<float> {
-    using Result = FrankenFloat;
-    static Result tweak(float f)
-    {
-        return FrankenFloat { f, 0.0f };
-    }
-};
-
-#endif
 
 template <typename T>
 using TweakedArgument = typename ArgumentTweaker<T>::Result;
@@ -290,10 +267,10 @@ inline void lowerToAirForTesting(Procedure& proc)
 }
 
 template<typename Func>
-void checkDisassembly(Compilation& compilation, const Func& func, const CString& failText)
+void checkDisassembly(Compilation& compilation, NOESCAPE const Func& func, const UTF8CString& failText)
 {
-    CString disassembly = compilation.disassembly();
-    if (func(disassembly.data()))
+    auto disassembly = compilation.disassembly();
+    if (func(disassembly))
         return;
     
     crashLock.lock();
@@ -308,22 +285,22 @@ inline void checkUsesInstruction(Compilation& compilation, const char* text, boo
 {
     checkDisassembly(
         compilation,
-        [&] (const char* disassembly) -> bool {
+        [&] (UTF8CStringView disassembly) -> bool {
             if (regex)
-                return std::regex_match(disassembly, std::regex(text, std::regex::extended));
-            return strstr(disassembly, text);
+                return std::regex_match(disassembly.utf8(), std::regex(text, std::regex::extended));
+            return contains(disassembly.span(), byteCast<char8_t>(unsafeSpan(text)));
         },
-        toCString("Expected to find ", text, " but didnt!"));
+        toUTF8CString("Expected to find ", text, " but didnt!"));
 }
 
 inline void checkDoesNotUseInstruction(Compilation& compilation, const char* text)
 {
     checkDisassembly(
         compilation,
-        [&] (const char* disassembly) -> bool {
-            return !strstr(disassembly, text);
+        [&] (UTF8CStringView disassembly) -> bool {
+            return !contains(disassembly.span(), byteCast<char8_t>(unsafeSpan(text)));
         },
-        toCString("Did not expected to find ", text, " but it's there!"));
+        toUTF8CString("Did not expected to find ", text, " but it's there!"));
 }
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
@@ -592,6 +569,8 @@ void testUbfx32ShiftAnd();
 void testUbfx32AndShift();
 void testUbfx64ShiftAnd();
 void testUbfx64AndShift();
+void testUbfx32ArithmeticShiftAnd();
+void testUbfx64ArithmeticShiftAnd();
 void testUbfiz32AndShiftValueMask();
 void testUbfiz32AndShiftMaskValue();
 void testUbfiz32ShiftAnd();
@@ -624,10 +603,13 @@ void testInsertSignedBitfieldInZero32();
 void testInsertSignedBitfieldInZero64();
 void testExtractSignedBitfield32();
 void testExtractSignedBitfield64();
+void testExtractSignedBitfieldNonCanonical32();
+void testExtractSignedBitfieldNonCanonical64();
 void testBitAndZeroShiftRightArgImmMask32();
 void testBitAndZeroShiftRightArgImmMask64();
 void testBasicSelect();
 void testSelectTest();
+void testSelectTestHighBits();
 void testAddWithLeftShift32();
 void testAddWithRightShift32();
 void testAddWithUnsignedRightShift32();
@@ -675,10 +657,17 @@ void testSelectFloatCompareFloat(float, float);
 void testSelectDoubleCompareDoubleWithAliasing();
 void testSelectFloatCompareFloatWithAliasing();
 void testSelectFold(intptr_t value);
+void testSelectInt32WithZeroElse();
+void testSelectInt64WithZeroElse();
+void testSelectInt32ImmWithZeroElse();
+void testSelectTestWithZeroElse();
 void testSelectInvert();
 void testCheckSelect();
 void testCheckSelectCheckSelect();
 void testCheckSelectAndCSE();
+void testCheckSelectAndDeadCheckCSE();
+void testCheckSelectWithPhiBeforeCheck();
+void testCheckSelectWithUpsilonBeforeCheck();
 void testPowDoubleByIntegerLoop(double xOperand, int32_t yOperand);
 double b3Pow(double x, int y);
 void testTruncOrHigh();
@@ -717,6 +706,7 @@ void testBranchBitAndImmFusion(B3::Opcode valueModifier, Type valueType, int64_t
 void testTerminalPatchpointThatNeedsToBeSpilled();
 void testTerminalPatchpointThatNeedsToBeSpilled2();
 void testPatchpointTerminalReturnValue(bool successIsRare);
+void testPrologueGeneratorLatePath();
 void testMemoryFence();
 void testStoreFence();
 void testLoadFence();
@@ -975,6 +965,21 @@ void testBranchEqualOrUnorderedFloatImms(float, float);
 void testBranchEqualOrUnorderedFloatWithUselessDoubleConversion(float, float);
 void testBranchFold(int value);
 void testDiamondFold(int value);
+void testPhiFoldChain();
+void testPhiFoldKeepsUpsilonBeforeFoldedBranch();
+void testPhiFoldUpsilonAwayFromJoin();
+void testPhiFoldLoopUnderConstantBranch(bool enterLoop);
+void testPhiFoldLoopInvariantPhis();
+void testPhiFoldDeadLoopSelfReference(bool useBitXor);
+void testPhiFoldDeadIrreducibleCycle();
+void testPhiFoldDeadLoopFeedingBranch();
+void testPhiFoldCheckAlwaysExitsBeforePhi();
+void testPhiFoldEqualConstantFromBackEdge();
+void testPhiFoldDeadLoopWithStalePredecessor();
+void testPhiFoldInBlockReachedOnlyByRetreatingEdge(bool swapArms);
+void testPhiFoldConstantInBlockReachedOnlyByRetreatingEdge(bool swapArms);
+void testPhiFoldDeadLoopHeaderEnteredFromRoot();
+void testPhiFoldLoopPhiTrivialAfterLatch();
 void testBranchNotEqualFoldPtr(intptr_t value);
 void testBranchEqualFoldPtr(intptr_t value);
 void testBranchLoadPtr();
@@ -1013,6 +1018,7 @@ void testPatchpointWithAnyResult();
 void testSimpleCheck();
 void testCheckFalse();
 void testCheckTrue();
+void testCheckTrueBeforeTerminalWithResult();
 void testCheckLessThan();
 void testCheckMegaCombo();
 void testCheckTrickyMegaCombo();
@@ -1153,6 +1159,14 @@ void testMulArgDouble(double);
 void testMulArgsDouble(double, double);
 void testMulNegArgsDouble();
 void testMulNegArgsFloat();
+void testMulNegArgArgDouble();
+void testMulArgNegArgDouble();
+void testMulNegArgArgFloat();
+void testMulArgNegArgFloat();
+void testMulNegArgArgInt32();
+void testMulNegNegArgsDouble();
+void testMulNegArgArgDoubleMultiUse();
+void testMulNegArgArgDoubleAcrossBlocks(bool);
 void testCallSimpleDouble(double, double);
 void testCallSimpleFloat(float, float);
 void testCallFunctionWithHellaDoubleArguments();
@@ -1175,6 +1189,16 @@ void testMulImmsFloat(float, float);
 void testMulArgFloatWithUselessDoubleConversion(float);
 void testMulArgsFloatWithUselessDoubleConversion(float, float);
 void testMulArgsFloatWithEffectfulDoubleConversion(float, float);
+void testMulDoubleByTwo(double);
+void testMulFloatByTwo(float);
+void testMulDoubleByNegOne(double);
+void testMulFloatByNegOne(float);
+void testMulDoubleByNegTwo(double);
+void testMulFloatByNegTwo(float);
+void testDivDoubleByNegOne(double);
+void testDivFloatByNegOne(float);
+void testDivDoubleByPowerOfTwo(double);
+void testDivFloatByPowerOfTwo(float);
 void testDivArgDouble(double);
 void testDivArgsDouble(double, double);
 void testDivArgImmDouble(double, double);
@@ -1199,6 +1223,9 @@ void testSwitchSameCaseAsDefault();
 void testSwitchChillDiv(unsigned degree, unsigned gap);
 void testSwitchTargettingSameBlock();
 void testSwitchTargettingSameBlockFoldPathConstant();
+void testBranchOnPhiOfTakenComparesFoldPathConstant();
+void testSwitchOnConstant(int64_t key, bool is64Bit);
+void testSwitchSparseI64RangeOverflow();
 void testTruncFold(int64_t value);
 void testZExt32(int32_t value);
 void testZExt32Fold(int32_t value);
@@ -1220,6 +1247,28 @@ void testAddShl65();
 void testReduceStrengthReassociation(bool flip);
 void testReduceStrengthTruncInt64Constant(int64_t filler, int32_t value);
 void testReduceStrengthTruncDoubleConstant(double filler, float value);
+void testReduceStrengthMulDoubleByTwo();
+void testReduceStrengthMulFloatByTwo();
+void testReduceStrengthMulDoubleByNegOne();
+void testReduceStrengthMulFloatByNegOne();
+void testReduceStrengthMulDoubleByNegTwo();
+void testReduceStrengthMulFloatByNegTwo();
+void testReduceStrengthDivDoubleByNegOne();
+void testReduceStrengthDivFloatByNegOne();
+void testReduceStrengthDivDoubleByTwo();
+void testReduceStrengthDivFloatByTwo();
+void testReduceStrengthDivDoubleByFour();
+void testReduceStrengthDivFloatByFour();
+void testReduceStrengthDivDoubleByNegTwo();
+void testReduceStrengthDivFloatByNegTwo();
+void testReduceStrengthBelowEqualZeroInt32();
+void testReduceStrengthBelowEqualZeroInt64();
+void testReduceStrengthBelowOneInt32();
+void testReduceStrengthBelowOneInt64();
+void testReduceStrengthAboveEqualOneInt32();
+void testReduceStrengthAboveEqualOneInt64();
+void testReduceStrengthAboveZeroInt32();
+void testReduceStrengthAboveZeroInt64();
 void testLoadBaseIndexShift2();
 void testLoadBaseIndexShift32();
 void testOptimizeMaterialization();
@@ -1252,6 +1301,8 @@ void testLICMWritesPinned();
 void testLICMControlDependent();
 void testLICMControlDependentNotBackwardsDominant();
 void testLICMControlDependentSideExits();
+void testLICMControlDependentSideExitInPredecessor();
+void testLICMControlDependentSideExitInEarlierIteration();
 void testLICMReadsPinnedWritesPinned();
 void testLICMReadsWritesDifferentHeaps();
 void testLICMReadsWritesOverlappingHeaps();
@@ -1260,6 +1311,9 @@ void testDepend32();
 void testDepend64();
 void testWasmBoundsCheck(unsigned offset);
 void testWasmAddress();
+void testWasmAddressZeroExtendScaledIndex();
+void testWasmAddressZeroExtend32BitShiftWraps();
+void testWasmAddressScaledIndexWithLockedShlChild();
 void testFastTLSLoad();
 void testFastTLSStore();
 void testDoubleLiteralComparison(double, double);
@@ -1273,6 +1327,7 @@ void testShuffleDoesntTrashCalleeSaves();
 void testDemotePatchpointTerminal();
 void testReportUsedRegistersLateUseFollowedByEarlyDefDoesNotMarkUseAsDead();
 void testInfiniteLoopDoesntCauseBadHoisting();
+void testBackwardsDominatorsWithMultipleBackEdges();
 void testDivImmArgFloat(float, float);
 void testDivImmsFloat(float, float);
 void testModArgDouble(double);
@@ -1297,6 +1352,7 @@ void testUDivByConstantInt32PowerOf2(uint32_t);
 void testUDivByConstantInt32NonPowerOf2(uint32_t);
 void testUDivByConstantInt32EvenDivisors(uint32_t);
 void testUDivByConstantInt32EdgeCases(uint32_t);
+void testUDivByConstantInt32With33BitMagic(uint32_t);
 void testSubArg(int64_t);
 void testSubArgs(int64_t, int64_t);
 void testSubArgImm(int64_t, int64_t);
@@ -1353,8 +1409,18 @@ void addLoadTests(const TestConfig*, Deque<RefPtr<SharedTask<void()>>>&);
 void addTupleTests(const TestConfig*, Deque<RefPtr<SharedTask<void()>>>&);
 
 void testCSEStoreWithLoop();
+void testCSELoadAfterStoreDiamond(bool flag);
+void testCSELoadAcrossLoopBackEdge(unsigned count);
+void testCSELoopHeaderLoadFromBackEdgeStore(unsigned count);
 
-bool shouldRun(const TestConfig*, const char* testName);
+void testFixSSALocalOnly();
+void testFixSSADiamondSetInOneArm(bool flag);
+void testFixSSADiamondJoinPhi(bool flag);
+void testFixSSADominatorChain(bool flag);
+void testFixSSAGetBeforeSet(bool flag);
+void testFixSSASetFromGetInSameBlock(bool flag);
+
+bool shouldRun(const TestConfig*, UTF8CStringView testName);
 
 void testLoadPreIndex32();
 void testLoadPreIndex64();
@@ -1399,25 +1465,52 @@ void testVectorExtractLane0Float();
 void testVectorExtractLane0Double();
 void testVectorMulHigh();
 void testVectorMulLow();
+void testVectorMulAddLowSimple();
+void testVectorMulAddLowDoubled();
+void testVectorMulAddLowTwoMuls();
+void testVectorMulAddLowBlaMka();
+void testVectorMulAddHighSimple();
+void testVectorMulAddHighDoubled();
+void testVectorMulAddHighTwoMuls();
+void testVectorMulAddMixedLowHigh();
+void testVectorRelaxedMinMax();
+void testVectorRelaxedQ15Mulr();
+void testVectorRelaxedDotI8x16I7x16();
+void testVectorRelaxedDotI8x16I7x16Add();
 
 void testConstDoubleMove();
 void testConstFloatMove();
+
+void testConstDoubleZero();
+void testConstDoubleNegativeZero();
+void testConstFloatZero();
+void testConstFloatNegativeZero();
+void testConstDoubleAddZero();
+void testConstFloatAddZero();
+void testConstDoubleCompareZero();
+void testConstFloatCompareZero();
+void testConstDoubleSelectZero();
+void testConstFloatSelectZero();
+void testConstDoubleMultipleZeroUses();
+void testConstFloatMultipleZeroUses();
 
 void testSShrCompare32(int32_t);
 void testSShrCompare64(int64_t);
 
 void testInt52RoundTripUnary(int32_t);
 void testInt52RoundTripBinary();
+void testTruncSShrAddUnalignedConstant();
 
 void testMulHigh32();
 void testMulHigh64();
 void testUMulHigh32();
 void testUMulHigh64();
 
-void testMemoryCopy();
-void testMemoryCopyConstant();
+void testMemoryMove();
+void testMemoryMoveConstant();
 void testMemoryFill();
 void testMemoryFillConstant();
+void testGCSafeMemoryMove();
 
 void testLoadImmutable();
 
@@ -1449,5 +1542,82 @@ void testCCmpNegatedAnd32(int32_t, int32_t);
 void testCCmpNegatedOr32(int32_t, int32_t);
 void testCCmpMixedWidth32And64(int32_t, int64_t, int32_t);
 void testCCmpMixedWidth64And32(int64_t, int32_t);
+void testCCmpChainRollback(int32_t, int32_t, int32_t, int32_t, int32_t, int32_t);
+void testXorOrCompareChain32(B3::Opcode, int32_t, int32_t, int32_t, int32_t);
+void testXorOrCompareChain64(B3::Opcode, int64_t, int64_t, int64_t);
+void testXorOrCompareChainZExt64(int64_t, int32_t);
+void testXorOrCompareChainBitImmediate32(int32_t, int32_t);
+void testXorOrCompareChainBranch64(int64_t, int64_t, int64_t, int64_t);
+void testXorOrCompareChainBranchEqualZero32(int32_t, int32_t, int32_t, int32_t);
+void testXorOrCompareChainSharedLeaf32(int32_t, int32_t, int32_t, int32_t);
+void testXorOrCompareChainLoads64(unsigned, unsigned);
+
+// ARM64 fccmp tests (floating-point conditional compare)
+void testFCCmpAndDouble(double, double, double, double);
+void testFCCmpOrDouble(double, double, double, double);
+void testFCCmpAndFloat(float, float, float, float);
+void testFCCmpOrFloat(float, float, float, float);
+void testFCCmpAndAndDouble(double, double, double, double, double, double);
+void testFCCmpMixedIntDouble(int32_t, int32_t, double, double);
+void testFCCmpMixedDoubleInt(double, double, int32_t, int32_t);
+void testFCCmpLessThanAndDouble(double, double, double, double);
+void testFCCmpGreaterEqualOrDouble(double, double, double, double);
+void testFCCmpNaN(double, double, double, double);
+void testFCCmpNegatedAndDouble(double, double, double, double);
+
+// SIMD XOR+rotate pattern matching
+void testVectorXorRotateRight64();
+void testVectorXor3();
+void testVectorDotProductSplatOne();
+void testVectorShrZipToExtend();
+void testVectorShrZipToExtendI32();
+void testVectorShrZipToExtendI64();
+
+// SIMD VectorUnzip/Zip/Transpose/Reverse B3 opcodes
+void testVectorUnzipEven();
+void testVectorUnzipOdd();
+void testVectorZipLower();
+void testVectorZipHigher();
+void testVectorTransposeEven();
+void testVectorTransposeOdd();
+void testVectorReverse();
+
+// SIMD strength reduction: shift-by-1 → add
+void testVectorShlByOne();
+
+// SIMD vector shift by immediate
+void testVectorShlImmediate();
+void testVectorShrImmediate();
+void testVectorZipWithZeroIsZeroExtend();
+
+// SIMD shuffle → canonical instruction strength reduction
+void testVectorSwizzleToUnzipEven();
+void testVectorSwizzleBinaryToUnzipOdd();
+void testVectorSwizzleBinaryCanonical();
+void testVectorSwizzleUnaryCanonical();
+void testVectorExtractPair();
+void testVectorSwizzleBinaryToEXT();
+void testVectorSwizzleUnaryToEXT();
+void testVectorCanonicalSameInputFolding();
+void testVectorSwizzleToDupElement();
+void testVectorSwizzleComposition();
+void testVectorSwizzleUnaryComposition();
+void testVectorSwizzleCompositionMultiUse();
+void testVectorSwizzleCompositionRightImmOuter();
+void testVectorSwizzleBinaryOnlyOneSideSide0();
+void testVectorSwizzleBinaryOnlyOneSideSide1();
+void testVectorSwizzleBinaryOnlyOneSideSide0WithOOB();
+void testVectorSwizzleBinaryOnlyOneSideSide1WithOOB();
+void testVectorSwizzleBinaryOnlyOneSideAllOOB();
+void testVectorSwizzleBinaryOnlyOneSideMixed();
+void testVectorSwizzleBinaryOnlyOneSideSide1Scattered();
+
+void testRotRFromShiftXorChainSHA256Sigma1_32(int32_t);
+void testRotRFromShiftXorChainSHA512Sigma1_64(int64_t);
+void testRotRFromShiftXorChainSHA256sigma0_32(int32_t);
+void testRotRFromShiftOrChainSHA256Sigma1_32(int32_t);
+void testRotRFromShiftXorChainSharedShiftOperand(int32_t);
+void testShiftOrDifferentBasesNoRotate(int32_t, int32_t, int32_t);
+void testShiftOrMismatchedAmountsNoRotate(int32_t);
 
 #endif // ENABLE(B3_JIT)

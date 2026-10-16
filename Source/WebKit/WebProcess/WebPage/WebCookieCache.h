@@ -25,10 +25,10 @@
 
 #pragma once
 
+#include "NetworkStorageSession.h"
 #include "WebPageProxyIdentifier.h"
 #include <WebCore/CookieChangeListener.h>
 #include <WebCore/CookieJar.h>
-#include <WebCore/NetworkStorageSession.h>
 #include <WebCore/SameSiteInfo.h>
 #include <wtf/Forward.h>
 #include <wtf/HashSet.h>
@@ -58,13 +58,13 @@ public:
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 
-    bool isSupported();
+    bool LEGACY_NODELETE isSupported();
 
-    String cookiesForDOM(const URL& firstParty, const WebCore::SameSiteInfo&, const URL&, WebCore::FrameIdentifier, WebCore::PageIdentifier, WebPageProxyIdentifier, WebCore::IncludeSecureCookies);
-    void setCookiesFromDOM(const URL& firstParty, const WebCore::SameSiteInfo&, const URL&, WebCore::FrameIdentifier, WebCore::PageIdentifier, const String& cookieString, WebCore::ShouldRelaxThirdPartyCookieBlocking);
+    String cookiesForDOM(const URL& firstParty, const WebCore::SameSiteInfo&, const URL&, WebCore::FrameIdentifier, WebPageProxyIdentifier, WebCore::IncludeSecureCookies);
+    void setCookiesFromDOM(const URL& firstParty, const WebCore::SameSiteInfo&, const URL&, WebCore::FrameIdentifier, WebPageProxyIdentifier, const String& cookieString, WebCore::ShouldRelaxThirdPartyCookieBlocking);
 
     [[nodiscard]] PendingCookieUpdateCounter::Token willSetCookieFromDOM();
-    void didSetCookieFromDOM(PendingCookieUpdateCounter::Token, const URL& firstParty, const WebCore::SameSiteInfo&, const URL&, WebCore::FrameIdentifier, WebCore::PageIdentifier, const WebCore::Cookie&, WebCore::ShouldRelaxThirdPartyCookieBlocking);
+    void didSetCookieFromDOM(PendingCookieUpdateCounter::Token, const URL& firstParty, const WebCore::SameSiteInfo&, const URL&, WebCore::FrameIdentifier, WebPageProxyIdentifier, const WebCore::Cookie&, WebCore::ShouldRelaxThirdPartyCookieBlocking);
 
     void allCookiesDeleted();
 
@@ -76,18 +76,17 @@ public:
 private:
     WebCookieCache() = default;
 
-    WebCore::NetworkStorageSession& inMemoryStorageSession();
-    CheckedRef<WebCore::NetworkStorageSession> checkedInMemoryStorageSession() { return inMemoryStorageSession(); }
+    NetworkStorageSession& inMemoryStorageSession();
 
     void pruneCacheIfNecessary();
-    bool cacheMayBeOutOfSync() const;
+    bool LEGACY_NODELETE cacheMayBeOutOfSync() const;
 
     // CookieChangeListener
     void cookiesAdded(const String& host, const Vector<WebCore::Cookie>&) final;
     void cookiesDeleted(const String& host, const Vector<WebCore::Cookie>&) final;
 
     HashSet<String> m_hostsWithInMemoryStorage;
-    std::unique_ptr<WebCore::NetworkStorageSession> m_inMemoryStorageSession;
+    std::unique_ptr<NetworkStorageSession> m_inMemoryStorageSession;
 #if ENABLE(OPT_IN_PARTITIONED_COOKIES)
     bool m_optInCookiePartitioningEnabled { false };
 #endif

@@ -102,6 +102,15 @@ void PageConfiguration::copyDataFrom(const PageConfiguration& other)
     m_data = other.m_data;
 }
 
+void PageConfiguration::ensureLazyInitializedRefsAreInitialized()
+{
+    m_data.processPool.get();
+    m_data.userContentController.get();
+    m_data.preferences.get();
+    m_data.visitedLinkStore.get();
+    m_data.defaultWebsitePolicies.get();
+}
+
 const std::optional<WebCore::WindowFeatures>& PageConfiguration::windowFeatures() const
 {
     return m_data.windowFeatures;
@@ -164,11 +173,6 @@ WebProcessPool& PageConfiguration::processPool() const
     return m_data.processPool.get();
 }
 
-Ref<WebKit::WebProcessPool> PageConfiguration::protectedProcessPool() const
-{
-    return processPool();
-}
-
 void PageConfiguration::setProcessPool(RefPtr<WebProcessPool>&& processPool)
 {
     m_data.processPool = WTF::move(processPool);
@@ -177,11 +181,6 @@ void PageConfiguration::setProcessPool(RefPtr<WebProcessPool>&& processPool)
 WebUserContentControllerProxy& PageConfiguration::userContentController() const
 {
     return m_data.userContentController.get();
-}
-
-Ref<WebUserContentControllerProxy> PageConfiguration::protectedUserContentController() const
-{
-    return userContentController();
 }
 
 void PageConfiguration::setUserContentController(RefPtr<WebUserContentControllerProxy>&& userContentController)
@@ -205,11 +204,6 @@ WebExtensionController* PageConfiguration::webExtensionController() const
     return m_data.webExtensionController.get();
 }
 
-RefPtr<WebExtensionController> PageConfiguration::protectedWebExtensionController() const
-{
-    return webExtensionController();
-}
-
 void PageConfiguration::setWebExtensionController(RefPtr<WebExtensionController>&& webExtensionController)
 {
     m_data.webExtensionController = WTF::move(webExtensionController);
@@ -218,11 +212,6 @@ void PageConfiguration::setWebExtensionController(RefPtr<WebExtensionController>
 WebExtensionController* PageConfiguration::weakWebExtensionController() const
 {
     return m_data.weakWebExtensionController.get();
-}
-
-RefPtr<WebExtensionController> PageConfiguration::protectedWeakWebExtensionController() const
-{
-    return weakWebExtensionController();
 }
 
 void PageConfiguration::setWeakWebExtensionController(WebExtensionController* webExtensionController)
@@ -258,11 +247,6 @@ WebPreferences& PageConfiguration::preferences() const
     return m_data.preferences.get();
 }
 
-Ref<WebPreferences> PageConfiguration::protectedPreferences() const
-{
-    return preferences();
-}
-
 void PageConfiguration::setPreferences(RefPtr<WebPreferences>&& preferences)
 {
     m_data.preferences = WTF::move(preferences);
@@ -273,9 +257,29 @@ WebPageProxy* PageConfiguration::relatedPage() const
     return m_data.relatedPage.get();
 }
 
-RefPtr<WebPageProxy> PageConfiguration::protectedRelatedPage() const
+WebProcessProxy* PageConfiguration::preferredProcessFromOpener() const
 {
-    return relatedPage();
+    return m_data.preferredProcessFromOpener.get();
+}
+
+BrowsingContextGroup* PageConfiguration::preferredBrowsingContextGroup() const
+{
+    if (auto opener = openerInfo())
+        return opener->browsingContextGroup.ptr();
+
+    // Only an opener can bring a page into a cross-origin-isolated group.
+    if (auto relatedPage = this->relatedPage()) {
+        if (!relatedPage->isClosed() && relatedPage->browsingContextGroup().crossOriginMode() == WebCore::CrossOriginMode::Shared)
+            return &relatedPage->browsingContextGroup();
+    }
+
+    return nullptr;
+}
+
+WebCore::CrossOriginMode PageConfiguration::crossOriginMode() const
+{
+    RefPtr group = preferredBrowsingContextGroup();
+    return group ? group->crossOriginMode() : WebCore::CrossOriginMode::Shared;
 }
 
 WebPageProxy* PageConfiguration::pageToCloneSessionStorageFrom() const
@@ -303,11 +307,6 @@ WebKit::VisitedLinkStore& PageConfiguration::visitedLinkStore() const
     return m_data.visitedLinkStore.get();
 }
 
-Ref<WebKit::VisitedLinkStore> PageConfiguration::protectedVisitedLinkStore() const
-{
-    return visitedLinkStore();
-}
-
 void PageConfiguration::setVisitedLinkStore(RefPtr<WebKit::VisitedLinkStore>&& visitedLinkStore)
 {
     m_data.visitedLinkStore = WTF::move(visitedLinkStore);
@@ -325,16 +324,6 @@ WebKit::WebsiteDataStore* PageConfiguration::websiteDataStoreIfExists() const
     return m_data.websiteDataStore.get();
 }
 
-RefPtr<WebKit::WebsiteDataStore> PageConfiguration::protectedWebsiteDataStoreIfExists() const
-{
-    return websiteDataStoreIfExists();
-}
-
-Ref<WebsiteDataStore> PageConfiguration::protectedWebsiteDataStore() const
-{
-    return websiteDataStore();
-}
-
 void PageConfiguration::setWebsiteDataStore(RefPtr<WebsiteDataStore>&& websiteDataStore)
 {
     m_data.websiteDataStore = WTF::move(websiteDataStore);
@@ -343,11 +332,6 @@ void PageConfiguration::setWebsiteDataStore(RefPtr<WebsiteDataStore>&& websiteDa
 WebsitePolicies& PageConfiguration::defaultWebsitePolicies() const
 {
     return m_data.defaultWebsitePolicies.get();
-}
-
-Ref<WebsitePolicies> PageConfiguration::protectedDefaultWebsitePolicies() const
-{
-    return defaultWebsitePolicies();
 }
 
 void PageConfiguration::setDefaultWebsitePolicies(RefPtr<WebsitePolicies>&& policies)
@@ -374,9 +358,14 @@ bool PageConfiguration::lockdownModeEnabled() const
 
 bool PageConfiguration::isEnhancedSecurityEnabled() const
 {
-    if (RefPtr policies = m_data.defaultWebsitePolicies.getIfExists())
+    if (auto* policies = m_data.defaultWebsitePolicies.getIfExists())
         return policies->isEnhancedSecurityEnabled();
     return false;
+}
+
+bool PageConfiguration::isEnhancedSecurityEnabledByDefault(bool isLockdownModeActive) const
+{
+    return !isLockdownModeActive && protect(preferences())->enhancedSecurityEnabledByDefault();
 }
 
 void PageConfiguration::setAllowPostingLegacySynchronousMessages(bool allow)
@@ -395,31 +384,37 @@ void PageConfiguration::setDelaysWebProcessLaunchUntilFirstLoad(bool delaysWebPr
     m_data.delaysWebProcessLaunchUntilFirstLoad = delaysWebProcessLaunchUntilFirstLoad;
 }
 
+bool PageConfiguration::defaultDelaysWebProcessLaunchUntilFirstLoad() const
+{
+#if PLATFORM(IOS_FAMILY)
+    // Delayed process launch is currently disabled without Site Isolation for performance reasons (rdar://problem/49074131).
+    return protect(preferences())->siteIsolationEnabled();
+#else
+    return true;
+#endif
+}
+
 bool PageConfiguration::delaysWebProcessLaunchUntilFirstLoad() const
 {
-    if (protectedPreferences()->siteIsolationEnabled())
-        return true;
     if (RefPtr processPool = m_data.processPool.getIfExists(); processPool && isInspectorProcessPool(*processPool)) {
         // Never delay process launch for inspector pages as inspector pages do not know how to transition from a terminated process.
         RELEASE_LOG(Process, "%p - PageConfiguration::delaysWebProcessLaunchUntilFirstLoad() -> false because of WebInspector pool", this);
         return false;
     }
+
     if (m_data.delaysWebProcessLaunchUntilFirstLoad) {
         RELEASE_LOG(Process, "%p - PageConfiguration::delaysWebProcessLaunchUntilFirstLoad() -> %" PUBLIC_LOG_STRING " because of explicit client value", this, *m_data.delaysWebProcessLaunchUntilFirstLoad ? "true" : "false");
         // If the client explicitly enabled / disabled the feature, then obey their directives.
         return *m_data.delaysWebProcessLaunchUntilFirstLoad;
     }
-    if (RefPtr processPool = m_data.processPool.getIfExists()) {
-        RELEASE_LOG(Process, "%p - PageConfiguration::delaysWebProcessLaunchUntilFirstLoad() -> %" PUBLIC_LOG_STRING " because of associated processPool value", this, processPool->delaysWebProcessLaunchDefaultValue() ? "true" : "false");
-        return processPool->delaysWebProcessLaunchDefaultValue();
-    }
-    RELEASE_LOG(Process, "%p - PageConfiguration::delaysWebProcessLaunchUntilFirstLoad() -> %" PUBLIC_LOG_STRING " because of global default value", this, WebProcessPool::globalDelaysWebProcessLaunchDefaultValue() ? "true" : "false");
-    return WebProcessPool::globalDelaysWebProcessLaunchDefaultValue();
+
+    RELEASE_LOG(Process, "%p - PageConfiguration::delaysWebProcessLaunchUntilFirstLoad() -> %" PUBLIC_LOG_STRING " because of global default value", this, defaultDelaysWebProcessLaunchUntilFirstLoad() ? "true" : "false");
+    return defaultDelaysWebProcessLaunchUntilFirstLoad();
 }
 
 bool PageConfiguration::isLockdownModeExplicitlySet() const
 {
-    if (RefPtr policies = m_data.defaultWebsitePolicies.getIfExists())
+    if (auto* policies = m_data.defaultWebsitePolicies.getIfExists())
         return policies->isLockdownModeExplicitlySet();
     return false;
 }
@@ -428,11 +423,6 @@ bool PageConfiguration::isLockdownModeExplicitlySet() const
 ApplicationManifest* PageConfiguration::applicationManifest() const
 {
     return m_data.applicationManifest.get();
-}
-
-RefPtr<ApplicationManifest> PageConfiguration::protectedApplicationManifest() const
-{
-    return applicationManifest();
 }
 
 void PageConfiguration::setApplicationManifest(RefPtr<ApplicationManifest>&& applicationManifest)
@@ -448,7 +438,7 @@ bool PageConfiguration::applePayEnabled() const
     if (auto applePayEnabledOverride = m_data.applePayEnabledOverride)
         return *applePayEnabledOverride;
 
-    return protectedPreferences()->applePayEnabled();
+    return protect(preferences())->applePayEnabled();
 }
 
 void PageConfiguration::setApplePayEnabled(bool enabled)

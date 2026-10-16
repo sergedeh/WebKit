@@ -38,33 +38,33 @@ public:
     using AnimatorAnimatedProperty = AnimatedProperty;
 
     template<typename... Arguments>
-    SVGAnimatedPropertyAnimator(const QualifiedName& attributeName, Ref<AnimatedProperty>& animated, Arguments&&... arguments)
+    SVGAnimatedPropertyAnimator(const QualifiedName& attributeName, const Ref<AnimatedProperty>& animated, Arguments&&... arguments)
         : SVGAttributeAnimator(attributeName)
         , m_animated(animated.copyRef())
         , m_function(std::forward<Arguments>(arguments)...)
     {
     }
 
-    void appendAnimatedInstance(Ref<AnimatedProperty>& animated)
+    void appendAnimatedInstance(const Ref<AnimatedProperty>& animated)
     {
         m_animatedInstances.append(animated.copyRef());
     }
 
     bool isDiscrete() const override { return m_function.isDiscrete(); }
 
-    void setFromAndToValues(SVGElement& targetElement, const String& from, const String& to) override
+    bool setFromAndToValues(SVGElement& targetElement, const String& from, const String& to) override
     {
-        m_function.setFromAndToValues(targetElement, from, to);
+        return m_function.setFromAndToValues(targetElement, from, to);
     }
 
-    void setFromAndByValues(SVGElement& targetElement, const String& from, const String& by) override
+    bool setFromAndByValues(SVGElement& targetElement, const String& from, const String& by) override
     {
-        m_function.setFromAndByValues(targetElement, from, by);
+        return m_function.setFromAndByValues(targetElement, from, by);
     }
 
-    void setToAtEndOfDurationValue(SVGElement& targetElement, const String& toAtEndOfDuration) override
+    bool setToAtEndOfDurationValue(SVGElement& targetElement, const String& toAtEndOfDuration) override
     {
-        m_function.setToAtEndOfDurationValue(targetElement, toAtEndOfDuration);
+        return m_function.setToAtEndOfDurationValue(targetElement, toAtEndOfDuration);
     }
 
     void start(SVGElement&) override

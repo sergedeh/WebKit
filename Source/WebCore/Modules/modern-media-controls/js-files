@@ -40,8 +40,10 @@ controls/macos-fullscreen-media-controls.js
 controls/macos-layout-traits.js
 controls/placard.js
 controls/airplay-placard.js
+controls/fullscreen-placard.js
 controls/invalid-placard.js
 controls/pip-placard.js
+controls/tvos-media-controls.js
 controls/vision-layout-traits.js
 controls/vision-media-controls.js
 controls/vision-slider.js
@@ -66,6 +68,7 @@ media/seek-backward-support.js
 media/seek-forward-support.js
 media/skip-back-support.js
 media/skip-forward-support.js
+media/spatial-video-support.js
 media/start-support.js
 media/status-support.js
 media/time-control-support.js

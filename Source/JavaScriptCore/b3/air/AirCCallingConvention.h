@@ -43,8 +43,7 @@ class Code;
 
 Vector<Arg> computeCCallingConvention(Code&, CCallValue*);
 
-size_t cCallResultCount(Code&, CCallValue*);
-bool cCallArgumentEvenRegisterAlignment(Type);
+size_t LEGACY_NODELETE cCallResultCount(Code&, CCallValue*);
 
 /*
  * On some platforms (well, on 32-bit platforms,) C functions can take arguments
@@ -54,35 +53,31 @@ bool cCallArgumentEvenRegisterAlignment(Type);
  */
 
 // Return the number of Air::Args needed to marshall this Value to the C function
-size_t cCallArgumentRegisterCount(Type);
+size_t LEGACY_NODELETE cCallArgumentRegisterCount(Type);
 // Return the width of the individual Air::Args needed to marshall this value
-Width cCallArgumentRegisterWidth(Type);
+Width LEGACY_NODELETE cCallArgumentRegisterWidth(Type);
 
-Tmp cCallResult(Code&, CCallValue*, unsigned);
+Tmp LEGACY_NODELETE cCallResult(Code&, CCallValue*, unsigned);
 
 Inst buildCCall(Code&, Value* origin, const Vector<Arg>&);
 
-template<unsigned size> constexpr inline Type b3IntegerType;
-template<> constexpr inline Type b3IntegerType<4> = Int32;
-template<> constexpr inline Type b3IntegerType<8> = Int64;
+template<unsigned size> inline constexpr Type b3IntegerType;
+template<> inline constexpr Type b3IntegerType<4> = Int32;
+template<> inline constexpr Type b3IntegerType<8> = Int64;
 
-template<typename T> constexpr inline Type b3Type;
-template<> constexpr inline Type b3Type<int> = b3IntegerType<sizeof(int)>;
-template<> constexpr inline Type b3Type<long> = b3IntegerType<sizeof(long)>;
-template<> constexpr inline Type b3Type<long long> = b3IntegerType<sizeof(long long)>;
-template<> constexpr inline Type b3Type<unsigned> = b3IntegerType<sizeof(unsigned)>;
-template<> constexpr inline Type b3Type<unsigned long> = b3IntegerType<sizeof(unsigned long)>;
-template<> constexpr inline Type b3Type<unsigned long long> = b3IntegerType<sizeof(unsigned long long)>;
-template<> constexpr inline Type b3Type<float> = Float;
-template<> constexpr inline Type b3Type<double> = Double;
-template<typename T> constexpr inline Type b3Type<T*> = pointerType();
+template<typename T> inline constexpr Type b3Type;
+template<> inline constexpr Type b3Type<int> = b3IntegerType<sizeof(int)>;
+template<> inline constexpr Type b3Type<long> = b3IntegerType<sizeof(long)>;
+template<> inline constexpr Type b3Type<long long> = b3IntegerType<sizeof(long long)>;
+template<> inline constexpr Type b3Type<unsigned> = b3IntegerType<sizeof(unsigned)>;
+template<> inline constexpr Type b3Type<unsigned long> = b3IntegerType<sizeof(unsigned long)>;
+template<> inline constexpr Type b3Type<unsigned long long> = b3IntegerType<sizeof(unsigned long long)>;
+template<> inline constexpr Type b3Type<float> = Float;
+template<> inline constexpr Type b3Type<double> = Double;
+template<typename T> inline constexpr Type b3Type<T*> = pointerType();
 
 // This maps between B3 args and air args.
-// On 32-bit platforms only, this may be an n:m mapping.
 struct ArgumentValueList {
-#if CPU(ARM_THUMB2)
-    JS_EXPORT_PRIVATE Value* makeStitch(B3::BasicBlock*, Value* hi, Value* low) const;
-#endif
     JS_EXPORT_PRIVATE Value* makeCCallValue(B3::BasicBlock*, Type, Air::Arg) const;
     JS_EXPORT_PRIVATE Value* makeCCallValue(B3::BasicBlock*, size_t idx) const;
 

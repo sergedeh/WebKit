@@ -57,6 +57,12 @@ public:
 
     virtual bool isInitiatedByDedicatedWorker() const { return false; }
 
+    virtual bool navigationLosesFrameSpecificStorageAccess() const { return false; }
+
+#if ENABLE(OPT_IN_PARTITIONED_COOKIES)
+    bool hasBeenSetToAllowOnlyPartitionedCookies() const { return m_hasBeenSetToAllowOnlyPartitionedCookies; }
+#endif
+
 protected:
     NetworkTaskCocoa(NetworkSession&);
 
@@ -76,21 +82,22 @@ protected:
     WebCore::ThirdPartyCookieBlockingDecision requestThirdPartyCookieBlockingDecision(const WebCore::ResourceRequest&) const;
 #if ENABLE(OPT_IN_PARTITIONED_COOKIES)
     bool isOptInCookiePartitioningEnabled() const;
+    bool shouldAllowOnlyPartitionedCookies(const WebCore::ResourceRequest&);
 #endif
 
     bool isAlwaysOnLoggingAllowed() const { return m_isAlwaysOnLoggingAllowed; }
     virtual NSURLSessionTask* task() const = 0;
-    RetainPtr<NSURLSessionTask> protectedTask() const;
     virtual WebCore::StoredCredentialsPolicy storedCredentialsPolicy() const = 0;
 
 private:
     void setCookieTransformForFirstPartyRequest(const WebCore::ResourceRequest&);
     void setCookieTransformForThirdPartyRequest(const WebCore::ResourceRequest&, IsRedirect);
 
-    CheckedPtr<NetworkSession> checkedNetworkSession() const;
-
     WeakPtr<NetworkSession> m_networkSession;
     bool m_hasBeenSetToUseStatelessCookieStorage { false };
+#if ENABLE(OPT_IN_PARTITIONED_COOKIES)
+    bool m_hasBeenSetToAllowOnlyPartitionedCookies { false };
+#endif
     Seconds m_ageCapForCNAMECloakedCookies { 24_h * 7 };
     bool m_isAlwaysOnLoggingAllowed { false };
 };

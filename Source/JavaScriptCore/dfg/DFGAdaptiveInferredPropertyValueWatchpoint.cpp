@@ -29,6 +29,7 @@
 #if ENABLE(DFG_JIT)
 
 #include "CodeBlock.h"
+#include "CodeBlockInlines.h"
 #include "DFGCommon.h"
 #include <wtf/TZoneMallocInlines.h>
 
@@ -52,11 +53,9 @@ void AdaptiveInferredPropertyValueWatchpoint::handleFire(VM&, const FireDetail& 
 {
     dataLogLnIf(DFG::shouldDumpDisassembly(), "Firing watchpoint ", RawPointer(this), " (", key(), ") on ", *m_codeBlock);
 
-
-    auto lambda = scopedLambda<void(PrintStream&)>([&](PrintStream& out) {
+    LazyFireDetail lazyDetail([&](PrintStream& out) {
         out.print("Adaptation of ", key(), " failed: ", detail);
     });
-    LazyFireDetail lazyDetail(lambda);
     m_codeBlock->jettison(Profiler::JettisonDueToUnprofiledWatchpoint, CountReoptimization, &lazyDetail);
 }
 

@@ -170,7 +170,7 @@ void WebPopupMenuProxyGtk::createPopupMenu(const Vector<WebPopupItem>& items, in
     for (const auto& item : items) {
         if (item.m_isLabel) {
             gtk_tree_store_insert_with_values(model.get(), &parentIter, nullptr, -1,
-                Columns::Label, item.m_text.trim(deprecatedIsSpaceOrNewline).utf8().data(),
+                Columns::Label, item.m_text.trim(deprecatedIsSpaceOrNewline).utf8().legacyCStringPointer(),
                 Columns::IsGroup, TRUE,
                 Columns::IsEnabled, TRUE,
                 -1);
@@ -180,8 +180,8 @@ void WebPopupMenuProxyGtk::createPopupMenu(const Vector<WebPopupItem>& items, in
             GtkTreeIter iter;
             bool isSelected = selectedIndex && static_cast<unsigned>(selectedIndex) == index;
             gtk_tree_store_insert_with_values(model.get(), &iter, item.m_text.startsWith("    "_s) ? &parentIter : nullptr, -1,
-                Columns::Label, item.m_text.trim(deprecatedIsSpaceOrNewline).utf8().data(),
-                Columns::Tooltip, item.m_toolTip.isEmpty() ? nullptr : item.m_toolTip.utf8().data(),
+                Columns::Label, item.m_text.trim(deprecatedIsSpaceOrNewline).utf8().legacyCStringPointer(),
+                Columns::Tooltip, item.m_toolTip.isEmpty() ? nullptr : item.m_toolTip.utf8().legacyCStringPointer(),
                 Columns::IsGroup, FALSE,
                 Columns::IsSelected, isSelected,
                 Columns::IsEnabled, item.m_isEnabled,
@@ -395,6 +395,8 @@ void WebPopupMenuProxyGtk::hidePopupMenu()
     if (!m_popup)
         return;
 
+    g_signal_handlers_disconnect_by_data(m_popup, this);
+
 #if !USE(GTK4)
     if (m_device) {
         gdk_seat_ungrab(gdk_device_get_seat(m_device));
@@ -426,7 +428,6 @@ void WebPopupMenuProxyGtk::cancelTracking()
     if (!m_popup)
         return;
 
-    g_signal_handlers_disconnect_matched(m_popup, G_SIGNAL_MATCH_DATA, 0, 0, nullptr, nullptr, this);
     hidePopupMenu();
 }
 

@@ -39,6 +39,7 @@
 #import <WebCore/HTTPStatusCodes.h>
 #import <WebCore/ResourceResponse.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 
 @interface WKSOSecretDelegate : NSObject <WKNavigationDelegate, WKUIDelegate> {
 @private
@@ -134,7 +135,7 @@ void PopUpSOAuthorizationSession::fallBackToWebPathInternal()
 void PopUpSOAuthorizationSession::abortInternal()
 {
     AUTHORIZATIONSESSION_RELEASE_LOG("abortInternal: m_page=%p", page());
-    if (!page()) {
+    if (!page() || page()->isClosed()) {
         m_newPageCallback(nullptr);
         return;
     }
@@ -152,7 +153,7 @@ void PopUpSOAuthorizationSession::abortInternal()
 void PopUpSOAuthorizationSession::completeInternal(const WebCore::ResourceResponse& response, NSData *data)
 {
     AUTHORIZATIONSESSION_RELEASE_LOG("completeInternal: httpState=%d", response.httpStatusCode());
-    if (response.httpStatusCode() != httpStatus200OK || !page()) {
+    if (response.httpStatusCode() != httpStatus200OK || !page() || page()->isClosed()) {
         fallBackToWebPathInternal();
         return;
     }
@@ -185,7 +186,7 @@ void PopUpSOAuthorizationSession::initSecretWebView()
     AUTHORIZATIONSESSION_RELEASE_LOG("initSecretWebView");
     ASSERT(page());
     RetainPtr configuration = wrapper(m_configuration);
-    auto secretViewPreferences = adoptNS([[configuration preferences] copy]);
+    RetainPtr secretViewPreferences = checked_objc_cast<WKPreferences>(adoptNS([[configuration preferences] copy]));
     [secretViewPreferences _setExtensibleSSOEnabled:NO];
     [configuration setPreferences:secretViewPreferences.get()];
     m_secretWebView = adoptNS([[WKWebView alloc] initWithFrame:CGRectZero configuration:configuration.get()]);

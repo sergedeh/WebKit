@@ -31,6 +31,7 @@
 #include "DocumentView.h"
 #include "ElementIterator.h"
 #include "FloatRoundedRect.h"
+#include "FontSelector.h"
 #include "Gradient.h"
 #include "GraphicsContext.h"
 #include "GraphicsLayer.h"
@@ -68,10 +69,9 @@ public:
     virtual ~RegionOverlay();
 
     void recomputeRegion();
-    PageOverlay& overlay() { return *m_overlay; }
-    Ref<PageOverlay> protectedOverlay() { return *m_overlay; }
+    PageOverlay& LEGACY_NODELETE overlay() { return *m_overlay; }
 
-    void setRegionChanged() { m_regionChanged = true; }
+    void LEGACY_NODELETE setRegionChanged() { m_regionChanged = true; }
 
     virtual bool shouldPaintOverlayIntoLayer() const { return true; }
 
@@ -119,7 +119,7 @@ private:
 
 bool MouseWheelRegionOverlay::updateRegion()
 {
-    RefPtr page = m_page.get();
+    auto* page = m_page.get();
     if (!page)
         return false;
 #if ENABLE(WHEEL_EVENT_REGIONS)
@@ -137,7 +137,7 @@ bool MouseWheelRegionOverlay::updateRegion()
 
         Ref document = *localFrame->document();
         auto frameRegion = document->absoluteRegionForWheelEventTargets();
-        frameRegion.first.translate(toIntSize(localFrame->protectedView()->contentsToRootView(IntPoint())));
+        frameRegion.first.translate(toIntSize(protect(localFrame->view())->contentsToRootView(IntPoint())));
         region->unite(frameRegion.first);
     }
 
@@ -174,7 +174,7 @@ private:
 
 bool NonFastScrollableRegionOverlay::updateRegion()
 {
-    RefPtr page = m_page.get();
+    RefPtr page = m_page;
     if (!page)
         return false;
     bool regionChanged = false;
@@ -204,7 +204,7 @@ static void drawRightAlignedText(const String& text, GraphicsContext& context, c
 
 void NonFastScrollableRegionOverlay::drawRect(PageOverlay& pageOverlay, GraphicsContext& context, const IntRect&)
 {
-    constexpr SortedArrayMap colors { std::to_array<std::pair<EventTrackingRegions::EventType, SRGBA<uint8_t>>>({
+    constexpr SortedArrayMap colors { WTF::toArray<std::pair<EventTrackingRegions::EventType, SRGBA<uint8_t>>>({
         { EventTrackingRegions::EventType::Mousedown, { 80, 245, 80, 50 } },
         { EventTrackingRegions::EventType::Mousemove, { 245, 245, 80, 50 } },
         { EventTrackingRegions::EventType::Mouseup, { 80, 245, 176, 50 } },
@@ -224,8 +224,8 @@ void NonFastScrollableRegionOverlay::drawRect(PageOverlay& pageOverlay, Graphics
     
     FontCascadeDescription fontDescription;
     fontDescription.setOneFamily("Helvetica"_s);
-    fontDescription.setSpecifiedSize(12);
     fontDescription.setComputedSize(12);
+    fontDescription.setUsedSize(12);
     fontDescription.setWeight(FontSelectionValue(500));
     FontCascade font(WTF::move(fontDescription));
     font.update(nullptr);
@@ -312,7 +312,7 @@ private:
 
 bool InteractionRegionOverlay::updateRegion()
 {
-    protectedOverlay()->setNeedsDisplay();
+    protect(overlay())->setNeedsDisplay();
     return true;
 }
 
@@ -327,7 +327,7 @@ static Vector<Path> pathsForRect(const FloatRect& rect, float borderRadius)
 
 std::optional<std::pair<RenderLayer&, GraphicsLayer&>> InteractionRegionOverlay::activeLayer() const
 {
-    RefPtr page = m_page.get();
+    RefPtr page = m_page;
     if (!page)
         return std::nullopt;
     constexpr OptionSet<HitTestRequest::Type> hitType {
@@ -346,7 +346,7 @@ std::optional<std::pair<RenderLayer&, GraphicsLayer&>> InteractionRegionOverlay:
     if (!hitNode || !hitNode->renderer())
         return std::nullopt;
 
-    CheckedPtr rendererLayer = hitNode->checkedRenderer()->enclosingLayer();
+    CheckedPtr rendererLayer = protect(hitNode->renderer())->enclosingLayer();
     if (!rendererLayer)
         return std::nullopt;
 
@@ -365,10 +365,10 @@ std::optional<std::pair<RenderLayer&, GraphicsLayer&>> InteractionRegionOverlay:
     return { { *layer, *graphicsLayer } };
 }
 
-std::optional<InteractionRegion> InteractionRegionOverlay::activeRegion() const
+std::optional<InteractionRegion> LEGACY_NODELETE InteractionRegionOverlay::activeRegion() const
 {
 #if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
-    RefPtr page = m_page.get();
+    RefPtr page = m_page;
     if (!page)
         return std::nullopt;
     auto layerPair = activeLayer();
@@ -463,7 +463,7 @@ static void drawCheckbox(const String& text, GraphicsContext& context, const Fon
 
 FloatRect InteractionRegionOverlay::rectForSettingAtIndex(unsigned index) const
 {
-    RefPtr mainFrameView = RefPtr { m_page.get() }->protectedMainFrame()->virtualView();
+    RefPtr mainFrameView = protect(m_page->mainFrame())->virtualView();
     if (!mainFrameView)
         return FloatRect();
     auto viewSize = mainFrameView->layoutSize();
@@ -505,8 +505,8 @@ void InteractionRegionOverlay::drawSettings(GraphicsContext& context)
 
     FontCascadeDescription fontDescription;
     fontDescription.setOneFamily("Helvetica"_s);
-    fontDescription.setSpecifiedSize(12);
     fontDescription.setComputedSize(12);
+    fontDescription.setUsedSize(12);
     fontDescription.setWeight(FontSelectionValue(500));
     FontCascade font(WTF::move(fontDescription));
     font.update(nullptr);
@@ -564,14 +564,14 @@ void InteractionRegionOverlay::drawRect(PageOverlay&, GraphicsContext& context, 
                 AffineTransform transform;
 
                 transform.translate(rectInLayerCoordinates.location());
-                if (RefPtr page = m_page.get())
+                if (auto* page = m_page.get())
                     transform.scale(page->pageScaleFactor());
 
                 existingClip.transform(transform);
                 clipPaths.append(existingClip);
             } else {
                 auto scaleFactor = 1.f;
-                if (RefPtr page = m_page.get())
+                if (auto* page = m_page.get())
                     scaleFactor = page->pageScaleFactor();
 
                 if (region->useContinuousCorners) {
@@ -620,8 +620,8 @@ void InteractionRegionOverlay::drawRect(PageOverlay&, GraphicsContext& context, 
 #if ENABLE(INTERACTION_REGION_TEXT_CONTENT)
         FontCascadeDescription fontDescription;
         fontDescription.setOneFamily("Helvetica"_s);
-        fontDescription.setSpecifiedSize(10);
         fontDescription.setComputedSize(10);
+        fontDescription.setUsedSize(10);
         fontDescription.setWeight(FontSelectionValue(500));
         FontCascade font(WTF::move(fontDescription));
         font.update(nullptr);
@@ -639,7 +639,7 @@ void InteractionRegionOverlay::drawRect(PageOverlay&, GraphicsContext& context, 
 
 bool InteractionRegionOverlay::mouseEvent(PageOverlay& overlay, const PlatformMouseEvent& event)
 {
-    RefPtr page = m_page.get();
+    RefPtr page = m_page;
     if (!page)
         return false;
     RefPtr localMainFrame = page->localMainFrame();
@@ -697,7 +697,7 @@ private:
 
     bool updateRegion() final
     {
-        protectedOverlay()->setNeedsDisplay();
+        protect(overlay())->setNeedsDisplay();
         return true;
     }
     void drawRect(PageOverlay&, GraphicsContext&, const IntRect& dirtyRect) final;
@@ -705,7 +705,7 @@ private:
 
 void EnhancedSecurityOverlay::drawRect(PageOverlay&, GraphicsContext& context, const IntRect& dirtyRect)
 {
-    RefPtr page = m_page.get();
+    RefPtr page = m_page;
     if (!page)
         return;
 
@@ -751,7 +751,7 @@ RegionOverlay::RegionOverlay(Page& page, Color regionColor)
 
 RegionOverlay::~RegionOverlay()
 {
-    RefPtr page = m_page.get();
+    RefPtr page = m_page;
     if (!page)
         return;
     if (RefPtr overlay = m_overlay)
@@ -764,7 +764,7 @@ void RegionOverlay::willMoveToPage(PageOverlay&, Page* page)
         m_overlay = nullptr;
 }
 
-void RegionOverlay::didMoveToPage(PageOverlay&, Page* page)
+void LEGACY_NODELETE RegionOverlay::didMoveToPage(PageOverlay&, Page* page)
 {
     if (page)
         setRegionChanged();
@@ -790,12 +790,12 @@ void RegionOverlay::drawRegion(GraphicsContext& context, const Region& region, c
     }
 }
 
-bool RegionOverlay::mouseEvent(PageOverlay&, const PlatformMouseEvent&)
+bool LEGACY_NODELETE RegionOverlay::mouseEvent(PageOverlay&, const PlatformMouseEvent&)
 {
     return false;
 }
 
-void RegionOverlay::didScrollFrame(PageOverlay&, LocalFrame&)
+void LEGACY_NODELETE RegionOverlay::didScrollFrame(PageOverlay&, LocalFrame&)
 {
 }
 
@@ -805,7 +805,7 @@ void RegionOverlay::recomputeRegion()
         return;
 
     if (updateRegion())
-        protectedOverlay()->setNeedsDisplay();
+        protect(overlay())->setNeedsDisplay();
 
     m_regionChanged = false;
 }
@@ -822,7 +822,7 @@ DebugPageOverlays& DebugPageOverlays::singleton()
     return *sharedDebugOverlays;
 }
 
-static inline size_t indexOf(DebugPageOverlays::RegionType regionType)
+static inline size_t LEGACY_NODELETE indexOf(DebugPageOverlays::RegionType regionType)
 {
     return static_cast<size_t>(regionType);
 }
@@ -847,7 +847,7 @@ Ref<RegionOverlay> DebugPageOverlays::ensureRegionOverlayForPage(Page& page, Reg
 void DebugPageOverlays::showRegionOverlay(Page& page, RegionType regionType)
 {
     Ref visualizer = ensureRegionOverlayForPage(page, regionType);
-    page.pageOverlayController().installPageOverlay(visualizer->protectedOverlay(), PageOverlay::FadeMode::DoNotFade);
+    page.pageOverlayController().installPageOverlay(protect(visualizer->overlay()), PageOverlay::FadeMode::DoNotFade);
 }
 
 void DebugPageOverlays::hideRegionOverlay(Page& page, RegionType regionType)
@@ -858,17 +858,17 @@ void DebugPageOverlays::hideRegionOverlay(Page& page, RegionType regionType)
     auto& visualizer = it->value[indexOf(regionType)];
     if (!visualizer)
         return;
-    page.pageOverlayController().uninstallPageOverlay(visualizer->protectedOverlay(), PageOverlay::FadeMode::DoNotFade);
+    page.pageOverlayController().uninstallPageOverlay(protect(visualizer->overlay()), PageOverlay::FadeMode::DoNotFade);
     visualizer = nullptr;
 }
 
 void DebugPageOverlays::regionChanged(LocalFrame& frame, RegionType regionType)
 {
-    RefPtr page = frame.page();
+    auto* page = frame.page();
     if (!page)
         return;
 
-    if (RefPtr visualizer = regionOverlayForPage(*page, regionType))
+    if (auto* visualizer = regionOverlayForPage(*page, regionType))
         visualizer->setRegionChanged();
 }
 

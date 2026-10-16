@@ -71,11 +71,13 @@ public:
     WEBCORE_EXPORT ~ValidationBubble();
 #endif
 
-    const String& message() const { return m_message; }
+    const String& message() const LIFETIME_BOUND { return m_message; }
     double fontSize() const { return m_fontSize; }
+    const IntRect& anchorRect() const { return m_anchorRect; }
 
 #if PLATFORM(IOS_FAMILY)
     WEBCORE_EXPORT void setAnchorRect(const IntRect& anchorRect, UIViewController* presentingViewController = nullptr);
+    WEBCORE_EXPORT void setShouldSuppressPresentation(bool);
     WEBCORE_EXPORT void show();
 #elif PLATFORM(GTK)
     WEBCORE_EXPORT virtual void showRelativeTo(const IntRect&) = 0;
@@ -95,14 +97,16 @@ protected:
 #endif
     String m_message;
     double m_fontSize { 0 };
+    IntRect m_anchorRect;
 #if PLATFORM(MAC)
-    RetainPtr<NSPopover> m_popover;
+    const RetainPtr<NSPopover> m_popover;
 #elif PLATFORM(IOS_FAMILY)
-    RetainPtr<WebValidationBubbleViewController> m_popoverController;
+    const RetainPtr<WebValidationBubbleViewController> m_popoverController;
     RetainPtr<WebValidationBubbleTapRecognizer> m_tapRecognizer;
     RetainPtr<WebValidationBubbleDelegate> m_popoverDelegate;
     WeakObjCPtr<UIViewController> m_presentingViewController;
     bool m_startingToPresentViewController { false };
+    bool m_shouldSuppressPresentation { false };
 #endif
 };
 

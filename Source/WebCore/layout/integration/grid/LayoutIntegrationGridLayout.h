@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "GridTypeAliases.h"
 #include "LayoutState.h"
 #include <wtf/CheckedPtr.h>
 
@@ -38,6 +39,8 @@ class RenderGrid;
 
 namespace Layout {
 class ElementBox;
+struct GridLayoutConstraints;
+struct UsedTrackSizes;
 }
 
 namespace LayoutIntegration {
@@ -45,16 +48,27 @@ namespace LayoutIntegration {
 class GridLayout {
 public:
     GridLayout(RenderGrid&);
+    ~GridLayout();
 
     void updateFormattingContextGeometries();
 
     void layout();
 
+    static void invalidateFormattingContextRootRenderer(RenderGrid&);
+
+    std::pair<LayoutUnit, LayoutUnit> computeIntrinsicWidths();
+
     friend WTF::TextStream& operator<<(WTF::TextStream&, const GridLayout&);
 
 private:
-    void updateGridItemRenderers();
-    void updateFormattingContextRootRenderer();
+    using GridItemBorderBoxRects = Vector<LayoutRect, 4>;
+    GridItemBorderBoxRects gridItemBorderBoxRects() const;
+
+    void updateGridItemRenderers(const GridItemBorderBoxRects& previousGridItemRects);
+    void updateFormattingContextRootRenderer(LayoutUnit usedBlockContentSize, const Layout::GridItemRects&, size_t autoRepeatColumnsCount, size_t autoRepeatRowsCount, size_t leadingImplicitColumnsCount, size_t leadingImplicitRowsCount);
+    void layoutOutOfFlowBoxes(const Layout::UsedTrackSizes&);
+    void updateOverflow(RenderGrid&);
+    void populateGridPositionsForOutOfFlowLayout(const Layout::UsedTrackSizes&);
 
     const Layout::ElementBox& gridBox() const { return *m_gridBox; }
     Layout::ElementBox& gridBox() { return *m_gridBox; }
@@ -62,8 +76,8 @@ private:
     const RenderGrid& gridBoxRenderer() const { return downcast<RenderGrid>(*m_gridBox->rendererForIntegration()); }
     RenderGrid& gridBoxRenderer() { return downcast<RenderGrid>(*m_gridBox->rendererForIntegration()); }
 
-    Layout::LayoutState& layoutState() { return m_layoutState; }
-    const Layout::LayoutState& layoutState() const { return m_layoutState; }
+    Layout::LayoutState& layoutState() LIFETIME_BOUND { return m_layoutState; }
+    const Layout::LayoutState& layoutState() const LIFETIME_BOUND { return m_layoutState; }
 
     const CheckedPtr<Layout::ElementBox> m_gridBox;
     CheckedRef<Layout::LayoutState> m_layoutState;

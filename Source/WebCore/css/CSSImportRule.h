@@ -22,6 +22,7 @@
 #pragma once
 
 #include <WebCore/CSSRule.h>
+#include <wtf/CheckedPtr.h>
 
 namespace WebCore {
 
@@ -33,18 +34,19 @@ struct MediaQuery;
 using MediaQueryList = Vector<MediaQuery>;
 }
 
-class CSSImportRule final : public CSSRule {
+class CSSImportRule final : public CSSRule, public CanMakeCheckedPtr<CSSImportRule> {
+    WTF_MAKE_TZONE_ALLOCATED(CSSImportRule);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(CSSImportRule);
 public:
     static Ref<CSSImportRule> create(StyleRuleImport& rule, CSSStyleSheet* sheet) { return adoptRef(*new CSSImportRule(rule, sheet)); }
 
     virtual ~CSSImportRule();
 
-    WEBCORE_EXPORT String href() const;
+    WEBCORE_EXPORT String LEGACY_NODELETE href() const;
     WEBCORE_EXPORT MediaList& media() const;
     WEBCORE_EXPORT CSSStyleSheet* styleSheet() const;
-    RefPtr<CSSStyleSheet> protectedStyleSheet() const;
     String layerName() const;
-    String supportsText() const;
+    String LEGACY_NODELETE supportsText() const;
 
 private:
     friend class MediaList;
@@ -54,11 +56,11 @@ private:
     StyleRuleType styleRuleType() const final { return StyleRuleType::Import; }
     String cssText() const final;
     String cssText(const CSS::SerializationContext&) const final;
-    void reattach(StyleRuleBase&) final;
+    void LEGACY_NODELETE reattach(StyleRuleBase&) final;
     void getChildStyleSheets(HashSet<Ref<CSSStyleSheet>>&) final;
 
-    String cssTextInternal(const String& urlString) const;
-    const MQ::MediaQueryList& mediaQueries() const;
+    String cssTextInternal(const String& urlString, const CSS::SerializationContext&) const;
+    const MQ::MediaQueryList& LEGACY_NODELETE mediaQueries() const;
     void setMediaQueries(MQ::MediaQueryList&&);
 
     const Ref<StyleRuleImport> m_importRule;

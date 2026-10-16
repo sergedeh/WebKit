@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2020-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,23 +25,47 @@
 
 #pragma once
 
+#import <wtf/Platform.h>
+
 #if ENABLE(PDF_HUD)
 
-#import "PDFPluginIdentifier.h"
-#import <WebCore/FrameIdentifier.h>
+#import <AppKit/AppKit.h>
 
-namespace WebKit {
-class WebPageProxy;
-}
+#if ENABLE(AX_PDF_SUPPORT)
+#import <WebKitAdditions/WKPDFHUDViewAdditions.h>
+#endif
 
-@interface WKPDFHUDView : NSView
+NS_HEADER_AUDIT_BEGIN(nullability, sendability)
 
-- (instancetype)initWithFrame:(NSRect)frame pluginIdentifier:(WebKit::PDFPluginIdentifier)pluginIdentifier frameIdentifier:(WebCore::FrameIdentifier)frameID page:(WebKit::WebPageProxy&)page;
-- (void)setDeviceScaleFactor:(CGFloat)deviceScaleFactor;
+typedef NS_ENUM(NSInteger, WKPDFHUDViewControlAction) {
+    WKPDFHUDViewControlActionZoomIn,
+    WKPDFHUDViewControlActionZoomOut,
+    WKPDFHUDViewControlActionToggleAccessibilityDisplayMode,
+    WKPDFHUDViewControlActionOpenInPreview,
+    WKPDFHUDViewControlActionSavePDF,
+};
 
-- (BOOL)handleMouseDown:(NSEvent *)event;
-- (BOOL)handleMouseUp:(NSEvent *)event;
+typedef NS_ENUM(NSInteger, WKPDFHUDViewAccessibilityDisplayModeState) {
+    WKPDFHUDViewAccessibilityDisplayModeStateUnavailable,
+    WKPDFHUDViewAccessibilityDisplayModeStateInactive,
+    WKPDFHUDViewAccessibilityDisplayModeStateActive,
+};
+
+NS_SWIFT_UI_ACTOR
+@protocol WKPDFHUDView
+
+@property (nonatomic, readonly) uint64_t frameIdentifier;
+
+// FIXME: Ideally this initializer would be a requirement of this protocol, but Swift 6.3 has a bug
+// when dealing with `required` initializers of internal protocol types.
+// - (instancetype)initWithFrame:(NSRect)frame frameIdentifier:(uint64_t)frameIdentifier compositingBordersVisible:(BOOL)compositingBordersVisible actionHandler:(NS_SWIFT_UI_ACTOR void(^)(WKPDFHUDViewControlAction))actionHandler;
+
+- (void)show;
+
+- (void)setAccessibilityDisplayModeState:(WKPDFHUDViewAccessibilityDisplayModeState)state;
 
 @end
+
+NS_HEADER_AUDIT_END(nullability, sendability)
 
 #endif // ENABLE(PDF_HUD)

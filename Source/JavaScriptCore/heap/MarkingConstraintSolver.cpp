@@ -26,17 +26,18 @@
 #include "config.h"
 #include "MarkingConstraintSolver.h"
 
+#include "Collector.h"
+#include "CollectorInlines.h"
 #include "JSCInlines.h"
 #include "MarkingConstraintSet.h"
 
 namespace JSC { 
 
-MarkingConstraintSolver::MarkingConstraintSolver(MarkingConstraintSet& set)
-    : m_heap(set.m_heap)
-    , m_mainVisitor(m_heap.collectorSlotVisitor())
+MarkingConstraintSolver::MarkingConstraintSolver(MarkingConstraintSet& set, SlotVisitor& mainVisitor)
+    : m_mainVisitor(mainVisitor)
     , m_set(set)
 {
-    m_heap.forEachSlotVisitor(
+    m_mainVisitor.collector().forEachSlotVisitor(
         [&] (SlotVisitor& visitor) {
             m_visitCounters.append(VisitCounter(visitor));
         });
@@ -53,7 +54,7 @@ bool MarkingConstraintSolver::didVisitSomething() const
     return false;
 }
 
-void MarkingConstraintSolver::execute(SchedulerPreference preference, ScopedLambda<std::optional<unsigned>()> pickNext)
+void MarkingConstraintSolver::execute(SchedulerPreference preference, const ScopedLambda<std::optional<unsigned>()>& pickNext)
 {
     m_pickNextIsStillActive = true;
     RELEASE_ASSERT(!m_numThreadsThatMayProduceWork);
@@ -61,7 +62,7 @@ void MarkingConstraintSolver::execute(SchedulerPreference preference, ScopedLamb
     if (Options::useParallelMarkingConstraintSolver()) {
         dataLogIf(Options::logGC(), preference == ParallelWorkFirst ? "P" : "N", "<");
         
-        m_heap.runFunctionInParallel(
+        m_mainVisitor.collector().runFunctionInParallel(
             [&] (SlotVisitor& visitor) { runExecutionThread(visitor, preference, pickNext); });
         
         dataLogIf(Options::logGC(), ">");
@@ -86,12 +87,11 @@ void MarkingConstraintSolver::drain(BitVector& unexecuted)
     auto end = unexecuted.end();
     if (iter == end)
         return;
-    auto pickNext = scopedLambda<std::optional<unsigned>()>(
-        [&] () -> std::optional<unsigned> {
-            if (iter == end)
-                return std::nullopt;
-            return *iter++;
-        });
+    auto pickNext = [&] () -> std::optional<unsigned> {
+        if (iter == end)
+            return std::nullopt;
+        return *iter++;
+    };
     execute(NextConstraintFirst, pickNext);
     unexecuted.clearAll();
 }
@@ -123,17 +123,16 @@ void MarkingConstraintSolver::converge(const Vector<MarkingConstraint*>& order)
             return;
     }
     
-    auto pickNext = scopedLambda<std::optional<unsigned>()>(
-        [&] () -> std::optional<unsigned> {
-            if (didVisitSomething())
-                return std::nullopt;
-            
-            if (index >= order.size())
-                return std::nullopt;
-            
-            MarkingConstraint& constraint = *order[index++];
-            return constraint.index();
-        });
+    auto pickNext = [&] () -> std::optional<unsigned> {
+        if (didVisitSomething())
+            return std::nullopt;
+
+        if (index >= order.size())
+            return std::nullopt;
+
+        MarkingConstraint& constraint = *order[index++];
+        return constraint.index();
+    };
     
     execute(ParallelWorkFirst, pickNext);
 }
@@ -154,7 +153,7 @@ void MarkingConstraintSolver::addParallelTask(RefPtr<SharedTask<void(SlotVisitor
     m_toExecuteInParallel.append(TaskWithConstraint(WTF::move(task), &constraint));
 }
 
-void MarkingConstraintSolver::runExecutionThread(SlotVisitor& visitor, SchedulerPreference preference, ScopedLambda<std::optional<unsigned>()> pickNext)
+void MarkingConstraintSolver::runExecutionThread(SlotVisitor& visitor, SchedulerPreference preference, NOESCAPE const ScopedLambda<std::optional<unsigned>()>& pickNext)
 {
     for (;;) {
         bool doParallelWorkMode;

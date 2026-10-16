@@ -48,10 +48,13 @@ class LocalFrame;
 class Page;
 class SecurityOrigin;
 
-class PageRuntimeAgent final : public Inspector::InspectorRuntimeAgent {
+class PageRuntimeAgent final : public Inspector::InspectorRuntimeAgent, public CanMakeCheckedPtr<PageRuntimeAgent> {
     WTF_MAKE_NONCOPYABLE(PageRuntimeAgent);
     WTF_MAKE_TZONE_ALLOCATED(PageRuntimeAgent);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(PageRuntimeAgent);
 public:
+    OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeCheckedPtr);
+
     PageRuntimeAgent(PageAgentContext&);
     ~PageRuntimeAgent();
 
@@ -64,6 +67,8 @@ public:
     // InspectorInstrumentation
     void frameNavigated(LocalFrame&);
     void didClearWindowObjectInWorld(LocalFrame&, DOMWrapperWorld&);
+
+    bool ignoreDidClearWindowObject() const { return m_ignoreDidClearWindowObject; }
 
 private:
     Inspector::InjectedScript injectedScriptForEval(Inspector::Protocol::ErrorString&, std::optional<Inspector::Protocol::Runtime::ExecutionContextId>&&);
@@ -78,6 +83,8 @@ private:
     WeakRef<InstrumentingAgents> m_instrumentingAgents;
 
     WeakRef<Page> m_inspectedPage;
+
+    bool m_ignoreDidClearWindowObject { false };
 };
 
 } // namespace WebCore

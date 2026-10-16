@@ -95,17 +95,6 @@ function from(items /*, mapFn, thisArg */)
     return result;
 }
 
-function isArray(array)
-{
-    "use strict";
-
-    if (@isJSArray(array) || @isDerivedArray(array))
-        return true;
-    if (!@isProxyObject(array))
-        return false;
-    return @isArraySlow(array);
-}
-
 @linkTimeConstant
 @visibility=PrivateRecursive
 async function defaultAsyncFromAsyncIterator(iterator, mapFn, thisArg)
@@ -130,6 +119,53 @@ async function defaultAsyncFromAsyncIterator(iterator, mapFn, thisArg)
             @putByValDirect(result, k, value);
         else
             @putByValDirect(result, k, await (thisArg === @undefined ? mapFn(value, k) : mapFn.@call(thisArg, value, k)));
+        k += 1;
+    }
+
+    result.length = k;
+    return result;
+}
+
+@linkTimeConstant
+@visibility=PrivateRecursive
+async function defaultAsyncFromAsyncIteratorWithNext(iterator, mapFn, thisArg)
+{
+    "use strict";
+
+    if (!@isObject(iterator))
+        @throwTypeError("Iterator result interface is not an object.");
+
+    var nextMethod = iterator.next;
+
+    var result = this !== @Array && @isConstructor(this) ? new this() : [];
+
+    var k = 0;
+    for (;;) {
+        var nextResult = await nextMethod.@call(iterator);
+        if (!@isObject(nextResult))
+            @throwTypeError("Iterator result interface is not an object.");
+        if (nextResult.done)
+            break;
+
+        var value = nextResult.value;
+        try {
+            if (k >= @MAX_SAFE_INTEGER)
+                @throwTypeError("Length exceeded the maximum array length");
+            if (mapFn === @undefined)
+                @putByValDirect(result, k, value);
+            else
+                @putByValDirect(result, k, await (thisArg === @undefined ? mapFn(value, k) : mapFn.@call(thisArg, value, k)));
+        } catch (error) {
+            try {
+                var returnMethod = iterator.return;
+                if (!@isUndefinedOrNull(returnMethod)) {
+                    var returnResult = await returnMethod.@call(iterator);
+                    if (!@isObject(returnResult))
+                        @throwTypeError("Iterator result interface is not an object.");
+                }
+            } catch { }
+            throw error;
+        }
         k += 1;
     }
 
@@ -192,12 +228,14 @@ function fromAsync(asyncItems  /*, mapFn, thisArg */)
             }
         }
 
-        if (!@isUndefinedOrNull(usingAsyncIterator))
-            return @defaultAsyncFromAsyncIterator.@call(this, usingAsyncIterator.@call(asyncItems), mapFn, thisArg);
+        if (!@isUndefinedOrNull(usingAsyncIterator)) {
+            var iterator = usingAsyncIterator.@call(asyncItems);
+            return @defaultAsyncFromAsyncIteratorWithNext.@call(this, iterator, mapFn, thisArg);
+        }
 
         if (!@isUndefinedOrNull(usingSyncIterator)) {
             var iterator = usingSyncIterator.@call(asyncItems);
-            return @defaultAsyncFromAsyncIterator.@call(this, @createAsyncFromSyncIterator(iterator, iterator.next), mapFn, thisArg);
+            return @defaultAsyncFromAsyncIterator.@call(this, @asyncFromSyncIteratorCreate(iterator), mapFn, thisArg);
         }
 
         return @defaultAsyncFromAsyncArrayLike.@call(this, asyncItems, mapFn, thisArg);

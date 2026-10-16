@@ -29,11 +29,14 @@
 #include "RenderBlockInlines.h"
 #include "RenderButton.h"
 #include "RenderChildIterator.h"
+#include "RenderListItem.h"
 #include "RenderMultiColumnFlow.h"
 #include "RenderObjectInlines.h"
-#include "RenderStyle+GettersInlines.h"
 #include "RenderTextControl.h"
+#include "RenderTreeBuilderList.h"
 #include "RenderTreeBuilderMultiColumn.h"
+#include "Settings.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -46,14 +49,14 @@ static void moveAllChildrenToInternal(RenderBoxModelObject& from, RenderElement&
         newParent.attachRendererInternal(from.detachRendererInternal(*from.firstChild()), &from);
 }
 
-static bool canDropAnonymousBlock(const RenderBlock& anonymousBlock)
+static bool LEGACY_NODELETE canDropAnonymousBlock(const RenderBlock& anonymousBlock)
 {
-    if (anonymousBlock.beingDestroyed() || anonymousBlock.continuation())
+    if (anonymousBlock.beingDestroyed())
         return false;
     return true;
 }
 
-static bool canMergeContiguousAnonymousBlocks(const RenderObject& rendererToBeRemoved, const RenderObject* previous, const RenderObject* next, const RenderObject* anonymousDestroyRoot)
+static bool canMergeContiguousAnonymousBlocks(const RenderObject& rendererToBeRemoved, const RenderObject* previous, const RenderObject* next, const RenderObject*)
 {
     ASSERT(!rendererToBeRemoved.renderTreeBeingDestroyed());
 
@@ -72,96 +75,43 @@ static bool canMergeContiguousAnonymousBlocks(const RenderObject& rendererToBeRe
             return false;
     }
 
-    auto* boxToBeRemoved = dynamicDowncast<RenderBoxModelObject>(rendererToBeRemoved);
-    if (!boxToBeRemoved || !boxToBeRemoved->continuation())
-        return true;
-
-    // Let's merge pre and post anonymous block containers when the continuation triggering box (rendererToBeRemoved) is going away.
-    return previous && next && previous != anonymousDestroyRoot && next != anonymousDestroyRoot;
-}
-
-RenderBlock* RenderTreeBuilder::Block::continuationBefore(RenderBlock& parent, RenderObject* beforeChild)
-{
-    if (beforeChild && beforeChild->parent() == &parent)
-        return &parent;
-
-    RenderBlock* nextToLast = &parent;
-    RenderBlock* last = &parent;
-    for (auto* current = downcast<RenderBlock>(parent.continuation()); current; current = downcast<RenderBlock>(current->continuation())) {
-        if (beforeChild && beforeChild->parent() == current) {
-            if (current->firstChild() == beforeChild)
-                return last;
-            return current;
-        }
-
-        nextToLast = last;
-        last = current;
-    }
-
-    if (!beforeChild && !last->firstChild())
-        return nextToLast;
-    return last;
+    return true;
 }
 
 RenderTreeBuilder::Block::Block(RenderTreeBuilder& builder)
     : m_builder(builder)
+    , m_buildsSimpleAnonymousBlocks(!builder.view().settings().anonymousBlockGenerationDisabled())
 {
-}
-
-void RenderTreeBuilder::Block::attach(RenderBlock& parent, RenderPtr<RenderObject> child, RenderObject* beforeChild)
-{
-    if (parent.continuation() && !parent.isAnonymousBlock())
-        insertChildToContinuation(parent, WTF::move(child), beforeChild);
-    else
-        attachIgnoringContinuation(parent, WTF::move(child), beforeChild);
-}
-
-void RenderTreeBuilder::Block::insertChildToContinuation(RenderBlock& parent, RenderPtr<RenderObject> child, RenderObject* beforeChild)
-{
-    RenderBlock* flow = continuationBefore(parent, beforeChild);
-    ASSERT(!beforeChild || is<RenderBlock>(*beforeChild->parent()));
-    RenderBoxModelObject* beforeChildParent = nullptr;
-    if (beforeChild)
-        beforeChildParent = downcast<RenderBoxModelObject>(beforeChild->parent());
-    else {
-        RenderBoxModelObject* continuation = flow->continuation();
-        if (continuation)
-            beforeChildParent = continuation;
-        else
-            beforeChildParent = flow;
-    }
-
-    if (child->isFloatingOrOutOfFlowPositioned()) {
-        m_builder.attachIgnoringContinuation(*beforeChildParent, WTF::move(child), beforeChild);
-        return;
-    }
-
-    bool childIsNormal = child->isInline() || child->style().columnSpan() == ColumnSpan::None;
-    bool bcpIsNormal = beforeChildParent->isInline() || beforeChildParent->style().columnSpan() == ColumnSpan::None;
-    bool flowIsNormal = flow->isInline() || flow->style().columnSpan() == ColumnSpan::None;
-
-    if (flow == beforeChildParent) {
-        m_builder.attachIgnoringContinuation(*flow, WTF::move(child), beforeChild);
-        return;
-    }
-
-    // The goal here is to match up if we can, so that we can coalesce and create the
-    // minimal # of continuations needed for the inline.
-    if (childIsNormal == bcpIsNormal) {
-        m_builder.attachIgnoringContinuation(*beforeChildParent, WTF::move(child), beforeChild);
-        return;
-    }
-    if (flowIsNormal == childIsNormal) {
-        m_builder.attachIgnoringContinuation(*flow, WTF::move(child)); // Just treat like an append.
-        return;
-    }
-    m_builder.attachIgnoringContinuation(*beforeChildParent, WTF::move(child), beforeChild);
 }
 
 struct ParentAndBeforeChild {
     RenderElement* parent { nullptr };
     RenderObject* beforeChild { nullptr };
 };
+
+static bool isExcludedMarker(const RenderBlock& parent, const RenderObject& child)
+{
+    CheckedPtr marker = dynamicDowncast<RenderListOutsideMarker>(child);
+    if (!marker || !marker->document().settings().listMarkerPositionedPostLayoutEnabled())
+        return false;
+    return is<RenderListItem>(parent);
+}
+
+static bool hasInlineInFlowChild(const RenderBlock& parent)
+{
+    for (CheckedPtr child = parent.firstChild(); child; child = child->nextSibling()) {
+        if (child->isFloatingOrOutOfFlowPositioned())
+            continue;
+        // An excluded marker takes no part in in-flow layout, so it does not make the children inline. A
+        // list item left holding nothing but its marker still has the marker's line though.
+        if (isExcludedMarker(parent, *child) && (child->previousSibling() || child->nextSibling()))
+            continue;
+        if (child->isInline())
+            return true;
+    }
+    return false;
+}
+
 static std::optional<ParentAndBeforeChild> findParentAndBeforeChildForNonSibling(RenderBlock& parent, const RenderObject& child, RenderObject& beforeChild)
 {
     auto* beforeChildContainer = beforeChild.parent();
@@ -215,7 +165,7 @@ static std::optional<ParentAndBeforeChild> findParentAndBeforeChildForNonSibling
     return ParentAndBeforeChild { };
 }
 
-void RenderTreeBuilder::Block::attachIgnoringContinuation(RenderBlock& parent, RenderPtr<RenderObject> child, RenderObject* beforeChild)
+void RenderTreeBuilder::Block::attach(RenderBlock& parent, RenderPtr<RenderObject> child, RenderObject* beforeChild)
 {
     auto parentAndBeforeChildMayNeedAdjustment = beforeChild && beforeChild->parent() != &parent;
     if (parentAndBeforeChildMayNeedAdjustment) {
@@ -227,6 +177,43 @@ void RenderTreeBuilder::Block::attachIgnoringContinuation(RenderBlock& parent, R
             beforeChild = m_builder.splitAnonymousBoxesAroundChild(parent, *beforeChild);
             RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(beforeChild->parent() == &parent);
         }
+    }
+
+    auto shouldBuildAnonymousBlock = [&] {
+        if (m_buildsSimpleAnonymousBlocks)
+            return true;
+
+        // A flex or grid container's children are its items, and CSS requires a box around a run of inline content
+        // to make one out of it, so this is not the anonymous block generation the feature is about.
+        if (parent.style().display().isFlexibleBoxIncludingDeprecatedOrGridFormattingContextBox())
+            return true;
+        if (parent.isAnonymousBlock() && (parent.isGridItem() || parent.isFlexItemIncludingDeprecated())) {
+            // An anonymous flex or grid item takes its display value from the box it wraps, not from the flex or grid container it is an item of.
+            return true;
+        }
+#if ENABLE(MATHML)
+        if (parent.isRenderMathMLBlock())
+            return true;
+#endif
+        return parent.isFieldset() || parent.isRenderMultiColumnFlow();
+    };
+
+    if (!shouldBuildAnonymousBlock()) {
+        auto hasInFlowChild = [&](auto& container) {
+            CheckedPtr firstInFlowChild = container.firstInFlowChild();
+            if (!firstInFlowChild)
+                return false;
+            // An excluded marker takes no part in in-flow layout either, so it leaves the decision to the content.
+            return !isExcludedMarker(container, *firstInFlowChild) || firstInFlowChild->nextInFlowSibling();
+        };
+        if (!child->isFloatingOrOutOfFlowPositioned() && !hasInFlowChild(parent))
+            parent.setChildrenInline(child->isInline());
+        else if (child->isInline() && !isExcludedMarker(parent, *child)) {
+            // An excluded marker takes no part in in-flow layout, so it does not make the children inline.
+            parent.setChildrenInline(true);
+        }
+        m_builder.attachToRenderElement(parent, WTF::move(child), beforeChild);
+        return;
     }
 
     if (child->isFloatingOrOutOfFlowPositioned()) {
@@ -244,8 +231,9 @@ void RenderTreeBuilder::Block::attachIgnoringContinuation(RenderBlock& parent, R
         return;
     }
 
-    // Parent and inflow child match.
-    if ((parent.childrenInline() && child->isInline()) || (!parent.childrenInline() && !child->isInline()))
+    // Parent and inflow child match. An excluded marker matches either way: it takes no part in in-flow layout, so
+    // it stays a direct child of the list item whatever the other children are, never forcing an anonymous block.
+    if ((parent.childrenInline() && child->isInline()) || (!parent.childrenInline() && !child->isInline()) || isExcludedMarker(parent, *child))
         return m_builder.attachToRenderElement(parent, WTF::move(child), beforeChild);
 
     // Inline parent with block child.
@@ -279,7 +267,7 @@ void RenderTreeBuilder::Block::attachIgnoringContinuation(RenderBlock& parent, R
     }
 
     // No suitable existing anonymous box - create a new one.
-    auto newBox = Block::createAnonymousBlockWithStyle(parent.protectedDocument(), parent.style());
+    auto newBox = Block::createAnonymousBlockWithStyle(protect(parent.document()), parent.style());
     auto& box = *newBox;
     m_builder.attachToRenderElement(parent, WTF::move(newBox), beforeChild);
     m_builder.attach(box, WTF::move(child));
@@ -299,11 +287,11 @@ void RenderTreeBuilder::Block::removeLeftoverAnonymousBlock(RenderBlock& anonymo
     ASSERT(!anonymousBlock.childrenInline());
     ASSERT(anonymousBlock.parent());
 
-    if (anonymousBlock.continuation())
+    if (anonymousBlock.beingDestroyed())
         return;
 
     auto* parent = anonymousBlock.parent();
-    if (is<RenderButton>(*parent) || is<RenderTextControl>(*parent))
+    if (isAnyOf<RenderButton, RenderTextControl>(*parent))
         return;
 
     m_builder.removeFloatingObjects(anonymousBlock);
@@ -328,11 +316,27 @@ RenderPtr<RenderObject> RenderTreeBuilder::Block::detach(RenderBlock& parent, Re
 
     auto takenChild = m_builder.detachFromRenderElement(parent, child, willBeDestroyed);
 
+    if (canCollapseAnonymousBlock == CanCollapseAnonymousBlock::Yes && previousSibling && nextSibling) {
+        // When removing a block between an anonymous block and a float, the float should be reparented into the anonymous block
+        // (matching the attach logic in RenderBlock::addChildIgnoringContinuation).
+        auto moveFloatsUnderAnonymousBlockIfApplicable = [&] {
+            CheckedPtr previousBlock = dynamicDowncast<RenderBlock>(previousSibling.get());
+            if (!previousBlock || !previousBlock->isAnonymousBlock())
+                return;
+            while (nextSibling && nextSibling->isFloating()) {
+                auto* floatToMove = nextSibling.get();
+                nextSibling = floatToMove->nextSibling();
+                m_builder.move(parent, *previousBlock, *floatToMove, RenderTreeBuilder::NormalizeAfterInsertion::No);
+            }
+        };
+        moveFloatsUnderAnonymousBlockIfApplicable();
+    }
+
     if (canMergeAnonymousBlocks && previousSibling && nextSibling) {
         auto& previousBlock = downcast<RenderBlock>(*previousSibling);
         auto& nextBlock = downcast<RenderBlock>(*nextSibling);
 
-        previousBlock.setNeedsLayoutAndPreferredWidthsUpdate();
+        previousBlock.setNeedsLayoutAndInvalidateContentLogicalWidths();
         if (previousBlock.childrenInline() != nextBlock.childrenInline()) {
             auto& inlineChildrenBlock = previousBlock.childrenInline() ? previousBlock : nextBlock;
             auto& blockChildrenBlock = previousBlock.childrenInline() ? nextBlock : previousBlock;
@@ -341,15 +345,14 @@ RenderPtr<RenderObject> RenderTreeBuilder::Block::detach(RenderBlock& parent, Re
             // In order to reuse it, we have to reset it to just be a generic anonymous block. Make sure
             // to clear out inherited column properties by just making a new style, and to also clear the
             // column span flag if it is set.
-            ASSERT(!inlineChildrenBlock.continuation());
             // Cache this value as it might get changed in setStyle() call.
-            inlineChildrenBlock.setStyle(RenderStyle::createAnonymousStyleWithDisplay(parent.style(), DisplayType::Block));
+            inlineChildrenBlock.setStyle(Style::ComputedStyle::createAnonymousStyleWithDisplay(parent.style(), Style::DisplayType::BlockFlow));
             auto blockToMove = m_builder.detachFromRenderElement(parent, inlineChildrenBlock, WillBeDestroyed::No);
 
             // Now just put the inlineChildrenBlock inside the blockChildrenBlock.
             RenderObject* beforeChild = &previousBlock == &inlineChildrenBlock ? blockChildrenBlock.firstChild() : nullptr;
             m_builder.attachToRenderElementInternal(blockChildrenBlock, WTF::move(blockToMove), beforeChild);
-            nextBlock.setNeedsLayoutAndPreferredWidthsUpdate();
+            nextBlock.setNeedsLayoutAndInvalidateContentLogicalWidths();
 
             // inlineChildrenBlock got reparented to blockChildrenBlock, so it is no longer a child
             // of "this". we null out previousSibling or nextSibling so that is not used later in the function.
@@ -406,13 +409,16 @@ RenderPtr<RenderObject> RenderTreeBuilder::Block::detach(RenderBlock& parent, Re
         // If this was our last child be sure to clear out our line boxes.
         if (CheckedPtr blockFlow = dynamicDowncast<RenderBlockFlow>(parent); blockFlow && blockFlow->childrenInline())
             blockFlow->invalidateLineLayout(RenderBlockFlow::InvalidationReason::InternalMove);
+    } else if (!m_buildsSimpleAnonymousBlocks) {
+        if (auto hasInlineChild = hasInlineInFlowChild(parent); parent.childrenInline() != hasInlineChild)
+            parent.setChildrenInline(hasInlineChild);
     }
     return takenChild;
 }
 
 void RenderTreeBuilder::Block::dropAnonymousBoxChild(RenderBlock& parent, RenderBlock& child)
 {
-    parent.setNeedsLayoutAndPreferredWidthsUpdate();
+    parent.setNeedsLayoutAndInvalidateContentLogicalWidths();
     parent.setChildrenInline(child.childrenInline());
 
     // FIXME: This should really just be a moveAllChilrenTo (see webkit.org/b/182495)
@@ -434,9 +440,9 @@ RenderPtr<RenderObject> RenderTreeBuilder::Block::detach(RenderBlockFlow& parent
     return detach(static_cast<RenderBlock&>(parent), child, willBeDestroyed, canCollapseAnonymousBlock);
 }
 
-RenderPtr<RenderBlockFlow> RenderTreeBuilder::Block::createAnonymousBlockWithStyle(Document& document, const RenderStyle& style)
+RenderPtr<RenderBlockFlow> RenderTreeBuilder::Block::createAnonymousBlockWithStyle(Document& document, const Style::ComputedStyle& style)
 {
-    RenderPtr<RenderBlockFlow> newBox = createRenderer<RenderBlockFlow>(RenderObject::Type::BlockFlow, document, RenderStyle::createAnonymousStyleWithDisplay(style, DisplayType::Block));
+    RenderPtr<RenderBlockFlow> newBox = createRenderer<RenderBlockFlow>(RenderObject::Type::BlockFlow, document, Style::ComputedStyle::createAnonymousStyleWithDisplay(style, Style::DisplayType::BlockFlow));
     newBox->initializeStyle();
     return newBox;
 }

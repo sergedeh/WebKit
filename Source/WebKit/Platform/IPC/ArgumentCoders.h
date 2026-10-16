@@ -29,24 +29,24 @@
 #include "Decoder.h"
 #include "Encoder.h"
 #include "GeneratedSerializers.h"
+#include <expected>
 #include <utility>
+#include <variant>
 #include <wtf/ArgumentCoder.h>
 #include <wtf/Box.h>
 #include <wtf/CheckedArithmetic.h>
-#include <wtf/Expected.h>
 #include <wtf/Forward.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/OptionSet.h>
 #include <wtf/SHA1.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Unexpected.h>
+#include <wtf/Variant.h>
 #include <wtf/WallTime.h>
 
 #if OS(ANDROID)
 #include "ArgumentCodersAndroid.h"
 #endif
 #if USE(GLIB)
-#include "ArgumentCodersGlib.h"
 #include "RendererBufferFormat.h"
 #endif
 #if USE(UNIX_DOMAIN_SOCKETS)
@@ -296,7 +296,7 @@ template<typename T> struct ArgumentCoder<Ref<T>> {
         // std::optional<Ref<U>>.
         // We cannot use `decoder.template decode<U>()`
         // Currently expect "modern decoder" -like decode function.
-        return ArgumentCoder<U>::decode(decoder);
+        return ArgumentCoder<std::remove_const_t<U>>::decode(decoder);
     }
 };
 
@@ -599,6 +599,10 @@ template<typename KeyArg, typename MappedArg, typename HashArg, typename KeyTrai
             return std::nullopt;
 
         HashMapType hashMap;
+        // Calls to reserveInitialCapacity with untrusted large sizes can cause allocator crashes.
+        // Limit allocations from untrusted sources to 1MB.
+        if (*hashMapSize < 1024 * 1024 / (sizeof(KeyArg) + sizeof(MappedArg))) [[likely]]
+            hashMap.reserveInitialCapacity(*hashMapSize);
         for (unsigned i = 0; i < *hashMapSize; ++i) {
             auto key = decoder.template decode<KeyArg>();
             if (!key) [[unlikely]]
@@ -628,8 +632,8 @@ template<typename KeyArg, typename HashArg, typename KeyTraitsArg, typename Hash
     static void encode(Encoder& encoder, const HashSetType& hashSet)
     {
         encoder << static_cast<unsigned>(hashSet.size());
-        for (typename HashSetType::const_iterator it = hashSet.begin(), end = hashSet.end(); it != end; ++it)
-            encoder << *it;
+        for (auto& entry : hashSet)
+            encoder << entry;
     }
 
     template<typename Decoder>
@@ -640,6 +644,10 @@ template<typename KeyArg, typename HashArg, typename KeyTraitsArg, typename Hash
             return std::nullopt;
 
         HashSetType hashSet;
+        // Calls to reserveInitialCapacity with untrusted large sizes can cause allocator crashes.
+        // Limit allocations from untrusted sources to 1MB.
+        if (*hashSetSize < 1024 * 1024 / sizeof(KeyArg)) [[likely]]
+            hashSet.reserveInitialCapacity(*hashSetSize);
         for (unsigned i = 0; i < *hashSetSize; ++i) {
             auto key = decoder.template decode<KeyArg>();
             if (!key)
@@ -691,7 +699,7 @@ template<typename KeyArg, typename HashArg, typename KeyTraitsArg> struct Argume
             if (!HashCountedSetType::isValidValue(*key)) [[unlikely]]
                 return std::nullopt;
 
-            if (!tempHashCountedSet.add(*key, *count).isNewEntry) [[unlikely]] {
+            if (!tempHashCountedSet.add(WTF::move(*key), *count).isNewEntry) [[unlikely]] {
                 // The hash counted set already has the specified key, bail.
                 return std::nullopt;
             }
@@ -701,33 +709,23 @@ template<typename KeyArg, typename HashArg, typename KeyTraitsArg> struct Argume
     }
 };
 
-template<typename ValueType, typename ErrorType> struct ArgumentCoder<Expected<ValueType, ErrorType>> {
-    template<typename Encoder>
-    static void encode(Encoder& encoder, const Expected<ValueType, ErrorType>& expected)
+template<typename ValueType, typename ErrorType> struct ArgumentCoder<std::expected<ValueType, ErrorType>> {
+    template<typename Encoder, typename T>
+    static void encode(Encoder& encoder, T&& expected)
     {
-        if (!expected.has_value()) {
-            encoder << false;
-            encoder << expected.error();
-            return;
-        }
-        encoder << true;
-        encoder << expected.value();
-    }
+        static_assert(std::is_same_v<std::remove_cvref_t<T>, std::expected<ValueType, ErrorType>>);
 
-    template<typename Encoder>
-    static void encode(Encoder& encoder, Expected<ValueType, ErrorType>&& expected)
-    {
         if (!expected.has_value()) {
             encoder << false;
-            encoder << WTF::move(expected.error());
+            encoder << std::forward<T>(expected).error();
             return;
         }
         encoder << true;
-        encoder << WTF::move(expected.value());
+        encoder << std::forward<T>(expected).value();
     }
 
     template<typename Decoder>
-    static std::optional<Expected<ValueType, ErrorType>> decode(Decoder& decoder)
+    static std::optional<std::expected<ValueType, ErrorType>> decode(Decoder& decoder)
     {
         auto hasValue = decoder.template decode<bool>();
         if (!hasValue)
@@ -738,18 +736,18 @@ template<typename ValueType, typename ErrorType> struct ArgumentCoder<Expected<V
             if (!value)
                 return std::nullopt;
 
-            return std::make_optional<Expected<ValueType, ErrorType>>(WTF::move(*value));
+            return std::make_optional<std::expected<ValueType, ErrorType>>(WTF::move(*value));
         }
 
         auto error = decoder.template decode<ErrorType>();
         if (!error)
             return std::nullopt;
-        return std::make_optional<Expected<ValueType, ErrorType>>(makeUnexpected(WTF::move(*error)));
+        return std::make_optional<std::expected<ValueType, ErrorType>>(makeUnexpected(WTF::move(*error)));
     }
 };
 
-template<typename ErrorType> struct ArgumentCoder<Expected<void, ErrorType>> {
-    template<typename Encoder> static void encode(Encoder& encoder, const Expected<void, ErrorType>& expected)
+template<typename ErrorType> struct ArgumentCoder<std::expected<void, ErrorType>> {
+    template<typename Encoder> static void encode(Encoder& encoder, const std::expected<void, ErrorType>& expected)
     {
         if (!expected.has_value()) {
             encoder << false;
@@ -760,19 +758,19 @@ template<typename ErrorType> struct ArgumentCoder<Expected<void, ErrorType>> {
         encoder << true;
     }
 
-    template<typename Decoder> static std::optional<Expected<void, ErrorType>> decode(Decoder& decoder)
+    template<typename Decoder> static std::optional<std::expected<void, ErrorType>> decode(Decoder& decoder)
     {
         auto hasValue = decoder.template decode<bool>();
         if (!hasValue)
             return std::nullopt;
 
         if (*hasValue)
-            return std::make_optional<Expected<void, ErrorType>>();
+            return std::make_optional<std::expected<void, ErrorType>>();
 
         auto error = decoder.template decode<ErrorType>();
         if (!error)
             return std::nullopt;
-        return std::make_optional<Expected<void, ErrorType>>(makeUnexpected(WTF::move(*error)));
+        return std::make_optional<std::expected<void, ErrorType>>(makeUnexpected(WTF::move(*error)));
     }
 };
 
@@ -845,6 +843,12 @@ template<> struct ArgumentCoder<std::nullptr_t> {
     template<typename Encoder>
     static void encode(Encoder&, const std::nullptr_t&) { }
     static std::optional<std::nullptr_t> decode(Decoder&) { return nullptr; }
+};
+
+template<> struct ArgumentCoder<std::monostate> {
+    template<typename Encoder>
+    static void encode(Encoder&, const std::monostate&) { }
+    static std::optional<std::monostate> decode(Decoder&) { return std::monostate { }; }
 };
 
 template<typename T, typename Traits> struct ArgumentCoder<WTF::Markable<T, Traits>> {

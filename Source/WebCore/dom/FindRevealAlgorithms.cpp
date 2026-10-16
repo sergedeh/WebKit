@@ -33,8 +33,8 @@
 #include "HTMLDetailsElement.h"
 #include "HTMLSlotElement.h"
 #include "NodeRenderStyle.h"
-#include "RenderStyle+GettersInlines.h"
 #include "Settings.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "UserAgentParts.h"
 
 namespace WebCore {
@@ -47,7 +47,7 @@ enum class RevealType : bool {
 // https://html.spec.whatwg.org/#ancestor-revealing-algorithm
 bool revealClosedDetailsAndHiddenUntilFoundAncestors(Node& node)
 {
-    node.protectedDocument()->updateStyleIfNeeded();
+    protect(node.document())->updateStyleIfNeeded();
 
     // Bail out if there is neither a hidden=until-found or details ancestor.
     if (node.renderStyle() && !node.renderStyle()->autoRevealsWhenFound())
@@ -56,9 +56,9 @@ bool revealClosedDetailsAndHiddenUntilFoundAncestors(Node& node)
     auto closedDetailsElementAncestor = [](Node& node) -> RefPtr<HTMLDetailsElement> {
         RefPtr slot = node.assignedSlot();
         if (slot && slot->userAgentPart() == UserAgentParts::detailsContent() && slot->shadowHost()) {
-            Ref details = downcast<HTMLDetailsElement>(*slot->shadowHost());
-            if (!details->hasAttributeWithoutSynchronization(HTMLNames::openAttr))
-                return details;
+            auto& details = downcast<HTMLDetailsElement>(*slot->shadowHost());
+            if (!details.hasAttributeWithoutSynchronization(HTMLNames::openAttr))
+                return &details;
         }
         return nullptr;
     };

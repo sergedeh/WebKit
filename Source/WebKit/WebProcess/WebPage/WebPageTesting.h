@@ -56,12 +56,18 @@ private:
     void didReceiveSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&) override;
 
     void isLayerTreeFrozen(CompletionHandler<void(bool)>&&);
+    void numberOfLiveDocuments(CompletionHandler<void(uint64_t)>&&);
+    void preferredRenderingUpdateIntervalInMilliseconds(CompletionHandler<void(double)>&&);
     void setPermissionLevel(const String& origin, bool allowed);
     void isEditingCommandEnabled(const String& commandName, CompletionHandler<void(bool)>&&);
     void resetStateBetweenTests();
     void clearCachedBackForwardListCounts(CompletionHandler<void()>&&);
     void setTracksRepaints(bool, CompletionHandler<void()>&&);
     void displayAndTrackRepaints(CompletionHandler<void()>&&);
+
+#if PLATFORM(IOS_FAMILY)
+    void screenIsBeingCaptured(CompletionHandler<void(bool)>&&);
+#endif
 
 #if ENABLE(NOTIFICATIONS)
     void clearNotificationPermissionState();
@@ -70,6 +76,8 @@ private:
     void setObscuredContentInsets(float top, float right, float bottom, float left, CompletionHandler<void()>&&);
 
     void clearWheelEventTestMonitor();
+    void startMonitoringWheelEventsForTesting(CompletionHandler<void()>&&);
+    void waitForWheelEventsToCompleteForTesting(bool expectMomentumEnd, CompletionHandler<void()>&&);
 
     WeakPtr<WebPage> m_page;
     WebCore::PageIdentifier m_pageIdentifier;

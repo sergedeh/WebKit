@@ -28,6 +28,7 @@
 #include <WebCore/CachedResourceClient.h>
 #include <WebCore/CachedResourceHandle.h>
 #include <WebCore/CachedScriptFetcher.h>
+#include <WebCore/CachedStyleSheetClient.h>
 #include <WebCore/ModuleScriptLoader.h>
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
@@ -45,7 +46,7 @@ class DeferredPromise;
 class Document;
 class JSDOMGlobalObject;
 
-class CachedModuleScriptLoader final : public ModuleScriptLoader, private CachedResourceClient {
+class CachedModuleScriptLoader final : public ModuleScriptLoader, private CachedStyleSheetClient {
 public:
     static Ref<CachedModuleScriptLoader> create(ModuleScriptLoaderClient&, DeferredPromise&, CachedScriptFetcher&, RefPtr<JSC::ScriptFetchParameters>&&);
 
@@ -55,10 +56,10 @@ public:
     void ref() const final { ModuleScriptLoader::ref(); }
     void deref() const final { ModuleScriptLoader::deref(); }
 
-    bool load(Document&, URL&& sourceURL, std::optional<ServiceWorkersMode>);
+    bool load(Document&, URL&& sourceURL, std::optional<ServiceWorkersMode>, const URL& referrer);
 
-    CachedScript* cachedScript() { return m_cachedScript.get(); }
-    CachedScriptFetcher& scriptFetcher() { return static_cast<CachedScriptFetcher&>(ModuleScriptLoader::scriptFetcher()); }
+    CachedResource* cachedResource() { return m_cachedResource.get(); }
+    CachedScriptFetcher& scriptFetcher() { return downcast<CachedScriptFetcher>(ModuleScriptLoader::scriptFetcher()); }
 
 private:
     CachedModuleScriptLoader(ModuleScriptLoaderClient&, DeferredPromise&, CachedScriptFetcher&, RefPtr<JSC::ScriptFetchParameters>&&);
@@ -66,8 +67,11 @@ private:
     bool isCachedModuleScriptLoader() const final { return true; }
 
     void notifyFinished(CachedResource&, const NetworkLoadMetrics&, LoadWillContinueInAnotherProcess) final;
+    // CachedStyleSheetClient clients uses setCSSStyleSheet instead of notifyFinished.
+    void setCSSStyleSheet(const String&, const URL&, ASCIILiteral, const CachedCSSStyleSheet&) final;
+    void notifyFinishedInternal(const CachedResource&);
 
-    CachedResourceHandle<CachedScript> m_cachedScript;
+    CachedResourceHandle<CachedResource> m_cachedResource;
     URL m_sourceURL;
 };
 

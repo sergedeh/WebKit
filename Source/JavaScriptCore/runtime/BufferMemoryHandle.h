@@ -26,22 +26,19 @@
 #pragma once
 
 #include <JavaScriptCore/MemoryMode.h>
-#include <JavaScriptCore/Options.h>
 #include <JavaScriptCore/PageCount.h>
 
 #include <atomic>
-#include <set>
 
+#include <bmalloc/Gigacage.h>
 #include <wtf/CagedPtr.h>
-#include <wtf/Expected.h>
-#include <wtf/Function.h>
+#include <wtf/Lock.h>
 #include <wtf/RAMSize.h>
-#include <wtf/RefCounted.h>
-#include <wtf/RefPtr.h>
 #include <wtf/StdSet.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/ThreadSafeRefCounted.h>
+#include <wtf/ThreadSafeWeakHashSet.h>
 #include <wtf/Vector.h>
-#include <wtf/WeakPtr.h>
 
 namespace WTF {
 class PrintStream;
@@ -62,6 +59,14 @@ enum class GrowFailReason : uint8_t {
     OutOfMemory,
     GrowSharedUnavailable,
 };
+
+// The most address space one growable buffer may reserve. A growable buffer reserves its whole maximum
+// up front while only its initial size is charged against the physical budget, so without a bound one
+// buffer could claim every Primitive allocation the process will ever hand out.
+// FIXME: Nothing bounds the total across buffers; see https://bugs.webkit.org/show_bug.cgi?id=170825.
+constexpr uint64_t maxGrowableBufferReservationBytes = Gigacage::primitiveAddressSpaceBudget / 4;
+static_assert(maxGrowableBufferReservationBytes >= PageCount::maxMemory32Bytes,
+    "A memory32, and any buffer that can address one, must stay reservable in full on every platform");
 
 struct BufferMemoryResult {
     enum class Kind {
@@ -97,6 +102,9 @@ public:
 
     void freeGrowableBoundsCheckingMemory(void* basePtr, size_t mappedCapacity);
 
+    // Windows commits the range at this point, so this fails there when the commit limit is reached.
+    static bool tryMakeReadableAndWritable(void* address, size_t bytes);
+
     bool isInGrowableOrFastMemory(void* address);
 
     // We allow people to "commit" more wasm memory than there is on the system since most of the time
@@ -120,10 +128,10 @@ public:
     static BufferMemoryManager& singleton();
 
 private:
-    BufferMemoryManager() = default;
+    BufferMemoryManager();
 
     Lock m_lock;
-    unsigned m_maxFastMemoryCount { Options::maxNumWasmFastMemories() };
+    unsigned m_maxFastMemoryCount;
     Vector<void*> m_fastMemories;
     StdSet<std::pair<uintptr_t, size_t>> m_growableBoundsCheckingMemories;
     size_t m_physicalBytes { 0 };
@@ -137,7 +145,7 @@ public:
     BufferMemoryHandle(void*, size_t size, size_t mappedCapacity, PageCount initial, PageCount maximum, MemorySharingMode, MemoryMode);
     JS_EXPORT_PRIVATE ~BufferMemoryHandle();
 
-    void* memory() const;
+    JS_EXPORT_PRIVATE void* memory() const;
     size_t size(std::memory_order order = std::memory_order_seq_cst) const
     {
         if (m_sharingMode == MemorySharingMode::Default)
@@ -153,20 +161,20 @@ public:
     MemorySharingMode sharingMode() const { return m_sharingMode; }
     MemoryMode mode() const { return m_mode; }
     static constexpr ptrdiff_t offsetOfSize() { return OBJECT_OFFSETOF(BufferMemoryHandle, m_size); }
-    Lock& lock() { return m_lock; }
+    Lock& lock() LIFETIME_BOUND { return m_lock; }
 
     void updateSize(size_t size, std::memory_order order = std::memory_order_seq_cst)
     {
         m_size.store(size, order);
     }
 
-    static size_t fastMappedRedzoneBytes();
-    static size_t fastMappedBytes();
+    static size_t LEGACY_NODELETE fastMappedRedzoneBytes();
+    static size_t LEGACY_NODELETE fastMappedBytes();
 
     static void* nullBasePointer();
 
 #if ENABLE(WEBASSEMBLY)
-    const ThreadSafeWeakHashSet<Wasm::InstanceAnchor>& anchors(const AbstractLocker&) const { return m_anchors; }
+    const ThreadSafeWeakHashSet<Wasm::InstanceAnchor>& anchors(const AbstractLocker&) const LIFETIME_BOUND { return m_anchors; }
     void transferAnchors(BufferMemoryHandle& newHandle);
     void registerInstance(JSWebAssemblyInstance&);
 #endif

@@ -62,6 +62,7 @@ public:
     unsigned selectorListIndex() const { return m_selectorListIndex; }
 
     bool canMatchPseudoElement() const { return m_canMatchPseudoElement; }
+    PseudoElementBoxGeneration pseudoElementBoxGeneration() const { return static_cast<PseudoElementBoxGeneration>(m_pseudoElementBoxGeneration); }
     MatchBasedOnRuleHash matchBasedOnRuleHash() const { return static_cast<MatchBasedOnRuleHash>(m_matchBasedOnRuleHash); }
     unsigned linkMatchType() const { return m_linkMatchType; }
     void setLinkMatchType(unsigned value) { m_linkMatchType = value; }
@@ -70,7 +71,7 @@ public:
     bool isEnabled() const { return m_isEnabled; }
     void setEnabled(bool value) { m_isEnabled = value; }
 
-    const SelectorFilter::Hashes& descendantSelectorIdentifierHashes() const { return m_descendantSelectorIdentifierHashes; }
+    const SelectorFilter::Hashes& descendantSelectorIdentifierHashes() const LIFETIME_BOUND { return m_descendantSelectorIdentifierHashes; }
 
     void disableSelectorFiltering() { m_descendantSelectorIdentifierHashes[0] = 0; }
 
@@ -81,9 +82,10 @@ private:
     unsigned m_matchBasedOnRuleHash : 3;
     unsigned m_canMatchPseudoElement : 1;
     unsigned m_linkMatchType : 2; //  SelectorChecker::LinkMatchMask
-    unsigned m_propertyAllowlist : 2;
+    unsigned m_propertyAllowlist : 3;
     unsigned m_isStartingStyle : 1;
     unsigned m_isEnabled : 1;
+    unsigned m_pseudoElementBoxGeneration : 1;
     // If we have more rules than 2^bitcount here we'll get confused about rule order.
     unsigned m_position : 21;
     SelectorFilter::Hashes m_descendantSelectorIdentifierHashes;

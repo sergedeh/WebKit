@@ -35,16 +35,17 @@ namespace WebCore {
 using namespace JSC;
 
 template<typename Visitor>
-void JSAudioBufferSourceNode::visitAdditionalChildren(Visitor& visitor)
+void JSAudioBufferSourceNode::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
     Locker locker { wrapped().processLock() };
     // The AudioBufferSourceNode's buffer may hold on to a large amount of memory. This memory is
     // reported to GC via the JSAudioBuffer wrapper so we need to make sure that the buffer's
     // wrapper stays alive as long as the buffer is used by the AudioBufferSourceNode.
-    addWebCoreOpaqueRoot(visitor, wrapped().buffer());
+    // Cannot ref on the GC thread.
+    SUPPRESS_UNCOUNTED_ARG addWebCoreOpaqueRoot(visitor, wrapped().buffer());
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSAudioBufferSourceNode);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSAudioBufferSourceNode);
 
 } // namespace WebCore
 

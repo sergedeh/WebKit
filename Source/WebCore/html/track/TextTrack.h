@@ -32,6 +32,7 @@
 #include <WebCore/PlatformTimeRanges.h>
 #include <WebCore/TextTrackCue.h>
 #include <WebCore/TrackBase.h>
+#include <wtf/CheckedRef.h>
 #include <wtf/WeakHashSet.h>
 
 namespace WebCore {
@@ -43,8 +44,9 @@ class TextTrackClient;
 class TextTrackCueList;
 class VTTRegionList;
 
-class TextTrack : public TrackBase, public EventTarget, public ActiveDOMObject {
+class TextTrack : public TrackBase, public EventTarget, public ActiveDOMObject, public CanMakeCheckedPtr<TextTrack> {
     WTF_MAKE_TZONE_ALLOCATED(TextTrack);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(TextTrack);
 public:
     static Ref<TextTrack> create(ScriptExecutionContext*, const AtomString& kind, TrackID, const AtomString& label, const AtomString& language);
     static Ref<TextTrack> create(ScriptExecutionContext*, const AtomString& kind, const AtomString& id, const AtomString& label, const AtomString& language);
@@ -54,6 +56,7 @@ public:
     void ref() const override { TrackBase::ref(); }
     void deref() const override { TrackBase::deref(); }
     USING_CAN_MAKE_WEAKPTR(EventTarget);
+    WebCoreOpaqueRoot opaqueRoot() const final { return TrackBase::opaqueRoot(); }
 
     void didMoveToNewDocument(Document& newDocument) final;
 
@@ -63,7 +66,7 @@ public:
 
     static bool isValidKindKeyword(const AtomString&);
 
-    TextTrackList* textTrackList() const;
+    TextTrackList* LEGACY_NODELETE textTrackList() const;
 
     enum class Kind { Subtitles, Captions, Descriptions, Chapters, Metadata, Forced };
     Kind kind() const;
@@ -78,18 +81,18 @@ public:
 
     enum class Mode { Disabled, Hidden, Showing };
     Mode mode() const;
-    virtual void setMode(Mode);
+
+    enum class ModeChangeType { AutomaticSelection, JavascriptAPI };
+    virtual void setMode(Mode, ModeChangeType = ModeChangeType::JavascriptAPI);
 
     enum ReadinessState { NotLoaded = 0, Loading = 1, Loaded = 2, FailedToLoad = 3 };
     ReadinessState readinessState() const { return m_readinessState; }
     void setReadinessState(ReadinessState state) { m_readinessState = state; }
 
     TextTrackCueList* cues();
-    RefPtr<TextTrackCueList> protectedCues();
     TextTrackCueList* activeCues() const LIFETIME_BOUND;
 
     TextTrackCueList* cuesInternal() const { return m_cues.get(); }
-    inline RefPtr<TextTrackCueList> protectedCues() const;
 
     void addClient(TextTrackClient&);
     void clearClient(TextTrackClient&);
@@ -98,7 +101,6 @@ public:
     virtual ExceptionOr<void> removeCue(TextTrackCue&);
 
     VTTRegionList* regions();
-    RefPtr<VTTRegionList> protectedRegions();
 
     void cueWillChange(TextTrackCue&);
     void cueDidChange(TextTrackCue&, bool);
@@ -111,6 +113,7 @@ public:
     virtual bool containsOnlyForcedSubtitles() const;
     virtual bool isMainProgramContent() const;
     virtual bool isEasyToRead() const { return false; }
+    virtual bool isMachineGenerated() const { return false; }
 
     int trackIndex();
     void invalidateTrackIndex()
@@ -119,12 +122,13 @@ public:
         m_renderedTrackIndex = std::nullopt;
     }
 
-    bool isRendered();
-    bool isSpoken();
-    int trackIndexRelativeToRenderedTracks();
+    bool LEGACY_NODELETE isRendered();
+    bool LEGACY_NODELETE isSpoken();
+    int LEGACY_NODELETE trackIndexRelativeToRenderedTracks();
 
-    bool hasBeenConfigured() const { return m_hasBeenConfigured; }
-    void setHasBeenConfigured(bool flag) { m_hasBeenConfigured = flag; }
+    enum class ConfigurationState { Unconfigured, ConfiguredByJavascript, ConfiguredAutomatically };
+    ConfigurationState configurationState() const { return m_configurationState; }
+    void setConfigurationState(ConfigurationState state) { m_configurationState = state; }
 
     virtual bool isDefault() const { return false; }
 
@@ -139,13 +143,12 @@ public:
 
     virtual MediaTime startTimeVariance() const { return MediaTime::zeroTime(); }
 
-    const std::optional<Vector<String>>& styleSheets() const { return m_styleSheets; }
+    const std::optional<Vector<String>>& styleSheets() const LIFETIME_BOUND { return m_styleSheets; }
 
     virtual bool shouldPurgeCuesFromUnbufferedRanges() const { return false; }
     virtual void removeCuesNotInTimeRanges(const PlatformTimeRanges&);
 
     ScriptExecutionContext* scriptExecutionContext() const final;
-    RefPtr<ScriptExecutionContext> protectedScriptExecutionContext() const;
 
 protected:
     TextTrack(ScriptExecutionContext*, const AtomString& kind, TrackID, const AtomString& label, const AtomString& language, TextTrackType);
@@ -174,10 +177,9 @@ private:
 #endif
 
     VTTRegionList& ensureVTTRegionList();
-    RefPtr<VTTRegionList> m_regions;
+    const RefPtr<VTTRegionList> m_regions;
 
     TextTrackCueList& ensureTextTrackCueList();
-    Ref<TextTrackCueList> ensureProtectedTextTrackCueList();
     Kind convertKind(const AtomString&);
 
     Mode m_mode { Mode::Disabled };
@@ -186,7 +188,7 @@ private:
     ReadinessState m_readinessState { NotLoaded };
     std::optional<int> m_trackIndex;
     std::optional<int> m_renderedTrackIndex;
-    bool m_hasBeenConfigured { false };
+    ConfigurationState m_configurationState { ConfigurationState::Unconfigured };
 };
 
 inline auto TextTrack::mode() const -> Mode

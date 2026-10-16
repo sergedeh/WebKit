@@ -39,7 +39,7 @@ namespace WebCore {
 
 static std::optional<MRMediaRemoteCommand> mediaRemoteCommandForPlatformCommand(PlatformMediaSession::RemoteControlCommandType command)
 {
-    static constexpr SortedArrayMap map { std::to_array<std::pair<PlatformMediaSession::RemoteControlCommandType, MRMediaRemoteCommand>>({
+    static constexpr SortedArrayMap map { WTF::toArray<std::pair<PlatformMediaSession::RemoteControlCommandType, MRMediaRemoteCommand>>({
         { PlatformMediaSession::RemoteControlCommandType::PlayCommand, MRMediaRemoteCommandPlay },
         { PlatformMediaSession::RemoteControlCommandType::PauseCommand, MRMediaRemoteCommandPause },
         { PlatformMediaSession::RemoteControlCommandType::StopCommand, MRMediaRemoteCommandStop },
@@ -90,7 +90,7 @@ static RemoteCommandListener::RemoteCommandsSet& minimalCommands()
     return commands;
 }
 
-static bool isSeekCommand(PlatformMediaSession::RemoteControlCommandType command)
+static bool LEGACY_NODELETE isSeekCommand(PlatformMediaSession::RemoteControlCommandType command)
 {
     return command == PlatformMediaSession::RemoteControlCommandType::SeekToPlaybackPositionCommand
         || command == PlatformMediaSession::RemoteControlCommandType::SkipForwardCommand
@@ -105,7 +105,7 @@ void RemoteCommandListenerCocoa::updateSupportedCommands()
         return;
 
     auto currentCommands = !supportedCommands().isEmpty() ? supportedCommands().unionWith(minimalCommands()) : defaultCommands();
-    if (m_currentCommands == currentCommands)
+    if (m_currentCommands == currentCommands && m_currentSupportsSeeking == supportsSeeking())
         return;
 
     auto commandInfoArray = adoptCF(CFArrayCreateMutable(kCFAllocatorDefault, currentCommands.size(), &kCFTypeArrayCallBacks));
@@ -128,6 +128,7 @@ void RemoteCommandListenerCocoa::updateSupportedCommands()
 
     MRMediaRemoteSetSupportedCommands(commandInfoArray.get(), MRMediaRemoteGetLocalOrigin(), nullptr, nullptr);
     m_currentCommands = currentCommands;
+    m_currentSupportsSeeking = supportsSeeking();
 }
 
 RemoteCommandListenerCocoa::RemoteCommandListenerCocoa(RemoteCommandListenerClient& client)
@@ -140,6 +141,11 @@ RemoteCommandListenerCocoa::RemoteCommandListenerCocoa(RemoteCommandListenerClie
 
     ThreadSafeWeakPtr weakThis { *this };
     m_commandHandler = MRMediaRemoteAddAsyncCommandHandlerBlock(^(MRMediaRemoteCommand command, CFDictionaryRef options, void(^completion)(CFArrayRef)) {
+        RefPtr protectedThis = weakThis.get();
+        if (!protectedThis) {
+            completion((__bridge CFArrayRef)@[@(MRMediaRemoteCommandHandlerStatusCommandFailed)]);
+            return;
+        }
 
         LOG(Media, "RemoteCommandListenerCocoa::RemoteCommandListenerCocoa - received command %u", command);
 
@@ -173,12 +179,12 @@ RemoteCommandListenerCocoa::RemoteCommandListenerCocoa(RemoteCommandListenerClie
             platformCommand = PlatformMediaSession::RemoteControlCommandType::EndSeekingBackwardCommand;
             break;
         case MRMediaRemoteCommandSeekToPlaybackPosition: {
-            if (!supportsSeeking()) {
+            if (!protectedThis->supportsSeeking()) {
                 status = MRMediaRemoteCommandHandlerStatusCommandFailed;
                 break;
             }
 
-            CFNumberRef positionRef = static_cast<CFNumberRef>(CFDictionaryGetValue(options, kMRMediaRemoteOptionPlaybackPosition));
+            RetainPtr positionRef = static_cast<CFNumberRef>(CFDictionaryGetValue(options, kMRMediaRemoteOptionPlaybackPosition));
             if (!positionRef) {
                 status = MRMediaRemoteCommandHandlerStatusCommandFailed;
                 break;
@@ -192,12 +198,12 @@ RemoteCommandListenerCocoa::RemoteCommandListenerCocoa(RemoteCommandListenerClie
         }
         case MRMediaRemoteCommandSkipForward:
         case MRMediaRemoteCommandSkipBackward:
-            if (!supportsSeeking()) {
+            if (!protectedThis->supportsSeeking()) {
                 status = MRMediaRemoteCommandHandlerStatusCommandFailed;
                 break;
             }
 
-            if (auto positionRef = static_cast<CFNumberRef>(CFDictionaryGetValue(options, kMRMediaRemoteOptionSkipInterval))) {
+            if (RetainPtr positionRef = static_cast<CFNumberRef>(CFDictionaryGetValue(options, kMRMediaRemoteOptionSkipInterval))) {
                 double position = 0;
                 CFNumberGetValue(positionRef, kCFNumberDoubleType, &position);
                 argument.time = position;
@@ -216,9 +222,8 @@ RemoteCommandListenerCocoa::RemoteCommandListenerCocoa(RemoteCommandListenerClie
             status = MRMediaRemoteCommandHandlerStatusCommandFailed;
         };
 
-        ensureOnMainThread([weakThis, platformCommand, argument] {
-            if (RefPtr protectedThis = weakThis.get())
-                protectedThis->client().didReceiveRemoteControlCommand(platformCommand, argument);
+        ensureOnMainThread([protectedThis = WTF::move(protectedThis), platformCommand, argument] {
+            protectedThis->client().didReceiveRemoteControlCommand(platformCommand, argument);
         });
 
         completion((__bridge CFArrayRef)@[@(status)]);

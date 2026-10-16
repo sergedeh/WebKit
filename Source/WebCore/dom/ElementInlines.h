@@ -28,11 +28,12 @@
 #include <WebCore/CustomElementDefaultARIA.h>
 #include <WebCore/Element.h>
 #include <WebCore/ElementData.h>
+#include <WebCore/ElementInlinesLight.h>
 #include <WebCore/HTMLNames.h>
 #include <WebCore/NodeDocument.h>
 #include <WebCore/NodeInlines.h>
-#include <WebCore/RenderStyle.h>
 #include <WebCore/StyleChange.h>
+#include <WebCore/StyleComputedStyle.h>
 
 namespace WebCore {
 
@@ -87,6 +88,11 @@ inline const AtomString& Element::attributeWithDefaultARIA(const QualifiedName& 
     return defaultARIA ? defaultARIA->valueForAttribute(*this, name) : nullAtom();
 }
 
+inline bool Element::isDrawable() const
+{
+    return hasAttributeWithoutSynchronization(HTMLNames::drawableAttr);
+}
+
 inline String Element::attributeTrimmedWithDefaultARIA(const QualifiedName& name) const
 {
     const auto& originalValue = attributeWithDefaultARIA(name);
@@ -113,7 +119,7 @@ inline const URL& Document::maskedURLForBindingsIfNeeded(const URL& url) const
 
 inline URL Element::getURLAttributeForBindings(const QualifiedName& name) const
 {
-    return protectedDocument()->maskedURLForBindingsIfNeeded(getURLAttribute(name));
+    return protect(document())->maskedURLForBindingsIfNeeded(getURLAttribute(name));
 }
 
 inline bool Element::hasAttributesWithoutUpdate() const
@@ -159,6 +165,29 @@ inline bool Element::hasClassName(const AtomString& className) const
     return elementData()->classNames().contains(className);
 }
 
+// A class token matches a prefix (e.g. ".foo-*") if it starts with the prefix, has at least
+// one character beyond it, and that character isn't also a hyphen.
+// https://drafts.csswg.org/selectors-5/#class-prefix
+static inline bool classNameMatchesPrefix(StringView className, StringView prefix)
+{
+    if (className.length() <= prefix.length())
+        return false;
+    if (!className.startsWith(prefix))
+        return false;
+    return className[prefix.length()] != '-';
+}
+
+inline bool Element::hasClassNamePrefix(StringView prefix) const
+{
+    if (!elementData())
+        return false;
+    for (auto& className : elementData()->classNames()) {
+        if (classNameMatchesPrefix(className, prefix))
+            return true;
+    }
+    return false;
+}
+
 inline unsigned Element::attributeCount() const
 {
     ASSERT(elementData());
@@ -196,7 +225,8 @@ inline UniqueElementData& Element::ensureUniqueElementData()
 {
     if (!elementData() || !elementData()->isUnique())
         createUniqueElementData();
-    return static_cast<UniqueElementData&>(*m_elementData);
+    // The element data was just made unique above.
+    return uncheckedDowncast<UniqueElementData>(*m_elementData);
 }
 
 inline bool shouldIgnoreAttributeCase(const Element& element)
@@ -234,9 +264,9 @@ inline const AtomString& Element::getAttribute(const QualifiedName& name, const 
     return getAttribute(names...);
 }
 
-inline bool isInTopLayerOrBackdrop(const RenderStyle& style, const Element* element)
+inline bool isInTopLayerOrBackdrop(const Style::ComputedStyle& style, const Element* element)
 {
-    return (element && element->isInTopLayer()) || style.pseudoElementType() == PseudoElementType::Backdrop;
+    return (element && element->isInTopLayer()) || pseudoElementType(style) == PseudoElementType::Backdrop;
 }
 
 inline void Element::hideNonce()

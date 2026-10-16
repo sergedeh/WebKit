@@ -26,6 +26,8 @@
 #include "config.h"
 #include "StyleGridAutoFlow.h"
 
+#include "CSSGridAutoFlowValue.h"
+#include "CSSKeywordValue.h"
 #include "StyleBuilderChecking.h"
 
 namespace WebCore {
@@ -35,74 +37,32 @@ namespace Style {
 
 auto CSSValueConversion<GridAutoFlow>::operator()(BuilderState& state, const CSSValue& value) -> GridAutoFlow
 {
-    if (RefPtr primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value)) {
-        switch (primitiveValue->valueID()) {
-        case CSSValueNormal:
+    if (auto* keywordValue = dynamicDowncast<CSSKeywordValue>(value)) {
+        switch (keywordValue->valueID()) {
+        case CSSValueID::Normal:
             return CSS::Keyword::Normal { };
-        case CSSValueRow:
+        case CSSValueID::Row:
             return CSS::Keyword::Row { };
-        case CSSValueColumn:
+        case CSSValueID::Column:
             return CSS::Keyword::Column { };
-        case CSSValueDense:
+        case CSSValueID::Dense:
             return CSS::Keyword::Dense { };
         default:
             state.setCurrentPropertyInvalidAtComputedValueTime();
-            return CSS::Keyword::Row { };
+            return CSS::Keyword::Normal { };
         }
     }
 
-    auto list = requiredListDowncast<CSSValueList, CSSPrimitiveValue, 1>(state, value);
-    if (!list)
+    RefPtr autoFlowValue = requiredDowncast<CSSGridAutoFlowValue>(state, value);
+    if (!autoFlowValue)
         return CSS::Keyword::Normal { };
 
-    Ref first = list->item(0);
-    switch (first->valueID()) {
-    case CSSValueRow:
-        if (list->size() == 2) {
-            Ref second = list->item(1);
-            switch (second->valueID()) {
-            case CSSValueDense:
-                return { CSS::Keyword::Row { }, CSS::Keyword::Dense { } };
-            default:
-                state.setCurrentPropertyInvalidAtComputedValueTime();
-                return CSS::Keyword::Row { };
-            }
-        }
-        return CSS::Keyword::Row { };
-    case CSSValueColumn:
-        if (list->size() == 2) {
-            Ref second = list->item(1);
-            switch (second->valueID()) {
-            case CSSValueDense:
-                return { CSS::Keyword::Column { }, CSS::Keyword::Dense { } };
-            default:
-                state.setCurrentPropertyInvalidAtComputedValueTime();
-                return CSS::Keyword::Column { };
-            }
-        }
-        return CSS::Keyword::Column { };
-    case CSSValueDense:
-        if (list->size() == 2) {
-            Ref second = list->item(1);
-            switch (second->valueID()) {
-            case CSSValueRow:
-                return { CSS::Keyword::Row { }, CSS::Keyword::Dense { } };
-            case CSSValueColumn:
-                return { CSS::Keyword::Column { }, CSS::Keyword::Dense { } };
-            default:
-                state.setCurrentPropertyInvalidAtComputedValueTime();
-                return CSS::Keyword::Dense { };
-            }
-        }
-        return CSS::Keyword::Dense { };
-    case CSSValueNormal:
-        if (list->size() != 1)
-            state.setCurrentPropertyInvalidAtComputedValueTime();
-        return CSS::Keyword::Normal { };
-    default:
-        state.setCurrentPropertyInvalidAtComputedValueTime();
-        return CSS::Keyword::Row { };
-    }
+    return autoFlowValue->autoFlow();
+}
+
+Ref<CSSValue> CSSValueCreation<GridAutoFlow>::operator()(CSSValuePool& pool, const Style::ComputedStyle&, const GridAutoFlow& value)
+{
+    return CSS::createCSSValue(pool, value);
 }
 
 } // namespace Style

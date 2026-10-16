@@ -97,11 +97,6 @@ StorageAreaImpl::StorageAreaImpl(const StorageAreaImpl& area)
     ASSERT(!m_isShutdown);
 }
 
-StorageType StorageAreaImpl::storageType() const
-{
-    return m_storageType;
-}
-
 unsigned StorageAreaImpl::length()
 {
     ASSERT(!m_isShutdown);
@@ -141,7 +136,7 @@ void StorageAreaImpl::setItem(LocalFrame& sourceFrame, const String& key, const 
         return;
 
     if (m_storageAreaSync)
-        m_storageAreaSync->scheduleItemForSync(key, value);
+        protect(m_storageAreaSync)->scheduleItemForSync(key, value);
 
     dispatchStorageEvent(key, oldValue, value, sourceFrame);
 }
@@ -157,7 +152,7 @@ void StorageAreaImpl::removeItem(LocalFrame& sourceFrame, const String& key)
         return;
 
     if (m_storageAreaSync)
-        m_storageAreaSync->scheduleItemForSync(key, String());
+        protect(m_storageAreaSync)->scheduleItemForSync(key, String());
 
     dispatchStorageEvent(key, oldValue, String(), sourceFrame);
 }
@@ -173,7 +168,7 @@ void StorageAreaImpl::clear(LocalFrame& sourceFrame)
     m_storageMap.clear();
 
     if (m_storageAreaSync)
-        m_storageAreaSync->scheduleClear();
+        protect(m_storageAreaSync)->scheduleClear();
 
     dispatchStorageEvent(String(), String(), String(), sourceFrame);
 }
@@ -197,7 +192,7 @@ void StorageAreaImpl::importItems(HashMap<String, String>&& items)
 void StorageAreaImpl::close()
 {
     if (m_storageAreaSync)
-        m_storageAreaSync->scheduleFinalSync();
+        protect(m_storageAreaSync)->scheduleFinalSync();
 
 #if ASSERT_ENABLED
     m_isShutdown = true;
@@ -211,9 +206,9 @@ void StorageAreaImpl::clearForOriginDeletion()
 
     m_storageMap.clear();
 
-    if (m_storageAreaSync) {
-        m_storageAreaSync->scheduleClear();
-        m_storageAreaSync->scheduleCloseDatabase();
+    if (RefPtr storageAreaSync = m_storageAreaSync) {
+        storageAreaSync->scheduleClear();
+        storageAreaSync->scheduleCloseDatabase();
     }
 }
 
@@ -223,13 +218,13 @@ void StorageAreaImpl::sync()
     blockUntilImportComplete();
 
     if (m_storageAreaSync)
-        m_storageAreaSync->scheduleSync();
+        protect(m_storageAreaSync)->scheduleSync();
 }
 
 void StorageAreaImpl::blockUntilImportComplete() const
 {
     if (m_storageAreaSync)
-        m_storageAreaSync->blockUntilImportComplete();
+        protect(m_storageAreaSync)->blockUntilImportComplete();
 }
 
 size_t StorageAreaImpl::memoryBytesUsedByCache()
@@ -261,7 +256,7 @@ void StorageAreaImpl::closeDatabaseTimerFired()
 {
     blockUntilImportComplete();
     if (m_storageAreaSync)
-        m_storageAreaSync->scheduleCloseDatabase();
+        protect(m_storageAreaSync)->scheduleCloseDatabase();
 }
 
 void StorageAreaImpl::closeDatabaseIfIdle()
@@ -276,7 +271,7 @@ void StorageAreaImpl::closeDatabaseIfIdle()
 
 void StorageAreaImpl::dispatchStorageEvent(const String& key, const String& oldValue, const String& newValue, LocalFrame& sourceFrame)
 {
-    auto* page = sourceFrame.page();
+    RefPtr page = sourceFrame.page();
     if (!page)
         return;
 
@@ -304,7 +299,7 @@ void StorageAreaImpl::sessionChanged(bool isNewSessionPersistent)
     }
 
     if (!isNewSessionPersistent && m_storageAreaSync) {
-        m_storageAreaSync->scheduleFinalSync();
+        protect(m_storageAreaSync)->scheduleFinalSync();
         m_storageAreaSync = nullptr;
     }
 }

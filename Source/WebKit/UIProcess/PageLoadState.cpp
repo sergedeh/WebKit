@@ -112,6 +112,7 @@ void PageLoadState::commitChanges()
     bool estimatedProgressChanged = estimatedProgress(m_committedState) != estimatedProgress(m_uncommittedState);
     bool networkRequestsInProgressChanged = m_committedState.networkRequestsInProgress != m_uncommittedState.networkRequestsInProgress;
     bool certificateInfoChanged = m_committedState.certificateInfo != m_uncommittedState.certificateInfo;
+    bool qualifiedServerTrustChanged = m_committedState.qualifiedServerTrust != m_uncommittedState.qualifiedServerTrust;
 
     if (canGoBackChanged)
         callObserverCallback(&Observer::willChangeCanGoBack);
@@ -135,12 +136,16 @@ void PageLoadState::commitChanges()
         callObserverCallback(&Observer::willChangeNetworkRequestsInProgress);
     if (certificateInfoChanged)
         callObserverCallback(&Observer::willChangeCertificateInfo);
+    if (qualifiedServerTrustChanged)
+        callObserverCallback(&Observer::willChangeQualifiedServerTrust);
 
     m_committedState = m_uncommittedState;
 
     protect(page())->isLoadingChanged();
 
     // The "did" ordering is the reverse of the "will". This is a requirement of Cocoa Key-Value Observing.
+    if (qualifiedServerTrustChanged)
+        callObserverCallback(&Observer::didChangeQualifiedServerTrust);
     if (certificateInfoChanged)
         callObserverCallback(&Observer::didChangeCertificateInfo);
     if (networkRequestsInProgressChanged)
@@ -173,12 +178,12 @@ void PageLoadState::reset(const Transaction::Token& token)
     m_uncommittedState.hasInsecureContent = false;
 
     m_uncommittedState.pendingAPIRequest = { };
-    m_uncommittedState.provisionalURL = String();
-    m_uncommittedState.url = String();
+    m_uncommittedState.provisionalURL = { };
+    m_uncommittedState.url = { };
     m_uncommittedState.origin = { };
 
-    m_uncommittedState.unreachableURL = String();
-    m_lastUnreachableURL = String();
+    m_uncommittedState.unreachableURL = { };
+    m_lastUnreachableURL = { };
 
     m_uncommittedState.title = String();
     m_uncommittedState.titleFromBrowsingWarning = { };
@@ -187,7 +192,7 @@ void PageLoadState::reset(const Transaction::Token& token)
     m_uncommittedState.networkRequestsInProgress = false;
 }
 
-String PageLoadState::activeURL(const Data& data)
+const URL& PageLoadState::activeURL(const Data& data)
 {
     // If there is a currently pending URL, it is the active URL,
     // even when there's no main frame yet, as it might be the
@@ -207,7 +212,7 @@ String PageLoadState::activeURL(const Data& data)
     }
 
     ASSERT_NOT_REACHED();
-    return String();
+    return aboutBlankURL();
 }
 
 bool PageLoadState::hasOnlySecureContent(const Data& data)
@@ -216,9 +221,9 @@ bool PageLoadState::hasOnlySecureContent(const Data& data)
         return false;
 
     if (data.state == State::Provisional)
-        return WTF::protocolIs(data.provisionalURL, "https"_s);
+        return data.provisionalURL.protocolIs("https"_s);
 
-    return WTF::protocolIs(data.url, "https"_s);
+    return data.url.protocolIs("https"_s);
 }
 
 bool PageLoadState::hasOnlySecureContent() const
@@ -263,15 +268,21 @@ void PageLoadState::clearPendingAPIRequest(const Transaction::Token& token)
     m_uncommittedState.pendingAPIRequest = { };
 }
 
-void PageLoadState::didExplicitOpen(const Transaction::Token& token, const String& url)
+void PageLoadState::setHadSafeBrowsingWarning(const Transaction::Token& token)
+{
+    ASSERT_UNUSED(token, &token.m_pageLoadState == this);
+    m_uncommittedState.hadSafeBrowsingWarning = true;
+}
+
+void PageLoadState::didExplicitOpen(const Transaction::Token& token, const URL& url)
 {
     ASSERT_UNUSED(token, &token.m_pageLoadState == this);
 
     m_uncommittedState.url = url;
-    m_uncommittedState.provisionalURL = String();
+    m_uncommittedState.provisionalURL = { };
 }
 
-void PageLoadState::didStartProvisionalLoad(const Transaction::Token& token, const String& url, const String& unreachableURL)
+void PageLoadState::didStartProvisionalLoad(const Transaction::Token& token, const URL& url, const URL& unreachableURL)
 {
     ASSERT_UNUSED(token, &token.m_pageLoadState == this);
     ASSERT(m_uncommittedState.provisionalURL.isEmpty());
@@ -283,7 +294,7 @@ void PageLoadState::didStartProvisionalLoad(const Transaction::Token& token, con
     setUnreachableURL(token, unreachableURL);
 }
 
-void PageLoadState::didReceiveServerRedirectForProvisionalLoad(const Transaction::Token& token, const String& url)
+void PageLoadState::didReceiveServerRedirectForProvisionalLoad(const Transaction::Token& token, const URL& url)
 {
     ASSERT_UNUSED(token, &token.m_pageLoadState == this);
     ASSERT(m_uncommittedState.state == State::Provisional);
@@ -298,21 +309,22 @@ void PageLoadState::didFailProvisionalLoad(const Transaction::Token& token)
 
     m_uncommittedState.state = State::Finished;
 
-    m_uncommittedState.provisionalURL = String();
+    m_uncommittedState.provisionalURL = { };
     m_uncommittedState.unreachableURL = m_lastUnreachableURL;
 }
 
 void PageLoadState::didCommitLoad(const Transaction::Token& token, const WebCore::CertificateInfo& certificateInfo, bool hasInsecureContent, bool usedLegacyTLS, bool wasPrivateRelayed, const String& proxyName, const WebCore::ResourceResponseSource source, const WebCore::SecurityOriginData& origin)
 {
     ASSERT_UNUSED(token, &token.m_pageLoadState == this);
-    ASSERT(m_uncommittedState.state == State::Provisional);
+    // State might be set to Finished in didFailProvisionalLoad with content filter error,
+    // but the load might commit with replacement data from content fitler.
+    ASSERT(m_uncommittedState.state == State::Provisional || m_uncommittedState.state == State::Finished);
 
     m_uncommittedState.state = State::Committed;
     m_uncommittedState.hasInsecureContent = hasInsecureContent;
     m_uncommittedState.certificateInfo = certificateInfo;
 
-    ASSERT(!m_uncommittedState.provisionalURL.isNull());
-    m_uncommittedState.url = m_uncommittedState.provisionalURL.isNull() ? aboutBlankURL().string() : std::exchange(m_uncommittedState.provisionalURL, { });
+    m_uncommittedState.url = m_uncommittedState.provisionalURL.isNull() ? aboutBlankURL() : std::exchange(m_uncommittedState.provisionalURL, { });
     m_uncommittedState.negotiatedLegacyTLS = usedLegacyTLS;
     m_uncommittedState.wasPrivateRelayed = wasPrivateRelayed;
     m_uncommittedState.origin = origin;
@@ -321,6 +333,7 @@ void PageLoadState::didCommitLoad(const Transaction::Token& token, const WebCore
     m_uncommittedState.titleFromBrowsingWarning = { };
     m_uncommittedState.proxyName = proxyName;
     m_uncommittedState.source = source;
+    m_uncommittedState.qualifiedServerTrust = { };
 }
 
 void PageLoadState::didFinishLoad(const Transaction::Token& token)
@@ -340,7 +353,7 @@ void PageLoadState::didFailLoad(const Transaction::Token& token)
     m_uncommittedState.state = State::Finished;
 }
 
-void PageLoadState::didSameDocumentNavigation(const Transaction::Token& token, const String& url)
+void PageLoadState::didSameDocumentNavigation(const Transaction::Token& token, const URL& url)
 {
     ASSERT_UNUSED(token, &token.m_pageLoadState == this);
     ASSERT(!m_uncommittedState.url.isEmpty());
@@ -348,7 +361,7 @@ void PageLoadState::didSameDocumentNavigation(const Transaction::Token& token, c
     m_uncommittedState.url = url;
 }
 
-void PageLoadState::setUnreachableURL(const Transaction::Token& token, const String& unreachableURL)
+void PageLoadState::setUnreachableURL(const Transaction::Token& token, const URL& unreachableURL)
 {
     ASSERT_UNUSED(token, &token.m_pageLoadState == this);
 
@@ -470,14 +483,29 @@ void PageLoadState::callObserverCallback(void (Observer::*callback)())
 {
     Ref protectedPage { m_webPageProxy.get() };
 
-    for (auto& observer : copyToVector(m_observers)) {
+    for (auto& weakObserver : copyToVector(m_observers)) {
         // This appears potentially inefficient on the surface (searching in a Vector)
         // but in practice - using only API - there will only ever be (1) observer.
-        if (RefPtr protectedObserver = observer.get(); !protectedObserver || !m_observers.contains(*protectedObserver))
+        RefPtr observer = weakObserver;
+        if (!observer || !m_observers.contains(*observer))
             continue;
 
         ((*observer).*callback)();
     }
+}
+
+void PageLoadState::receivedQualifiedServerTrust(const Transaction::Token& token, WebCore::CertificateInfo&& serverTrust, WebCore::CertificateInfo&& qualifiedServerTrust)
+{
+    ASSERT_UNUSED(token, &token.m_pageLoadState == this);
+
+#if PLATFORM(COCOA)
+    // QualifiedServerTrustFetch and IPC can take enough time that the page has navigated away.
+    // Make sure we are still exposing the server trust for which the qualifiedServerTrust is valid.
+    if (!WebCore::certificatesMatch(serverTrust.trust(), this->certificateInfo().trust()))
+        return;
+#endif
+
+    m_uncommittedState.qualifiedServerTrust = WTF::move(qualifiedServerTrust);
 }
 
 } // namespace WebKit

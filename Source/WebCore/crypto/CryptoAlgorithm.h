@@ -47,7 +47,7 @@ template<typename> class ExceptionOr;
 enum class ExceptionCode : uint8_t;
 
 using KeyData = Variant<Vector<uint8_t>, JsonWebKey>;
-using KeyOrKeyPair = Variant<RefPtr<CryptoKey>, CryptoKeyPair>;
+using KeyOrKeyPair = Variant<Ref<CryptoKey>, CryptoKeyPair>;
 
 class CryptoAlgorithm : public ThreadSafeRefCounted<CryptoAlgorithm> {
 public:
@@ -80,7 +80,7 @@ public:
 
     static void dispatchOperationInWorkQueue(WorkQueue&, ScriptExecutionContext&, VectorCallback&&, ExceptionCallback&&, Function<ExceptionOr<Vector<uint8_t>>()>&&);
     static void dispatchOperationInWorkQueue(WorkQueue&, ScriptExecutionContext&, BoolCallback&&, ExceptionCallback&&, Function<ExceptionOr<bool>()>&&);
-    static void dispatchDigest(WorkQueue&, ScriptExecutionContext&, VectorCallback&&, ExceptionCallback&&, Vector<uint8_t>&& message, PAL::CryptoDigest::Algorithm);
+    static void dispatchDigest(WorkQueue&, ScriptExecutionContext&, VectorCallback&&, ExceptionCallback&&, Vector<uint8_t>&& message, PAL::Crypto::CryptoDigest::Algorithm);
 };
 
 } // namespace WebCore

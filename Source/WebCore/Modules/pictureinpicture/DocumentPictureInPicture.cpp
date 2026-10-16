@@ -34,6 +34,7 @@
 #include "JSDOMPromiseDeferred.h"
 #include "PictureInPictureSupport.h"
 #include <wtf/TZoneMallocInlines.h>
+#include "HTMLVideoElement.h"
 
 namespace WebCore {
 
@@ -55,7 +56,7 @@ void DocumentPictureInPicture::exitPictureInPicture(Document& document, Ref<Defe
         return;
     }
 
-    HTMLVideoElementPictureInPicture::protectedFrom(*element)->exitPictureInPicture(WTF::move(promise));
+    protect(HTMLVideoElementPictureInPicture::from(*element))->exitPictureInPicture(WTF::move(promise));
 }
 
 DocumentPictureInPicture* DocumentPictureInPicture::from(Document& document)

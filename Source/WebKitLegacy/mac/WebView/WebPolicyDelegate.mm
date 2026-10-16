@@ -31,14 +31,13 @@
 #import <WebCore/FrameLoaderTypes.h>
 #import <wtf/ObjCRuntimeExtras.h>
 
-using namespace WebCore;
 
-NSString *WebActionButtonKey = @"WebActionButtonKey"; 
-NSString *WebActionElementKey = @"WebActionElementKey";
-NSString *WebActionFormKey = @"WebActionFormKey";
-NSString *WebActionModifierFlagsKey = @"WebActionModifierFlagsKey";
-NSString *WebActionNavigationTypeKey = @"WebActionNavigationTypeKey";
-NSString *WebActionOriginalURLKey = @"WebActionOriginalURLKey";
+NSString * const WebActionButtonKey = @"WebActionButtonKey";
+NSString * const WebActionElementKey = @"WebActionElementKey";
+NSString * const WebActionFormKey = @"WebActionFormKey";
+NSString * const WebActionModifierFlagsKey = @"WebActionModifierFlagsKey";
+NSString * const WebActionNavigationTypeKey = @"WebActionNavigationTypeKey";
+NSString * const WebActionOriginalURLKey = @"WebActionOriginalURLKey";
 
 @interface WebPolicyDecisionListenerPrivate : NSObject
 {
@@ -65,24 +64,20 @@ NSString *WebActionOriginalURLKey = @"WebActionOriginalURLKey";
 
 @end
 
-@implementation WebPolicyDecisionListener
+@implementation WebPolicyDecisionListener {
+    RetainPtr<WebPolicyDecisionListenerPrivate> _private;
+}
 
 - (id)_initWithTarget:(id)target action:(SEL)action
 {
     self = [super init];
     if (!self)
         return nil;
-    _private = [[WebPolicyDecisionListenerPrivate alloc] initWithTarget:target action:action];
+    _private = adoptNS([[WebPolicyDecisionListenerPrivate alloc] initWithTarget:target action:action]);
     return self;
 }
 
--(void)dealloc
-{
-    [_private release];
-    [super dealloc];
-}
-
-- (void)_usePolicy:(PolicyAction)policy
+- (void)_usePolicy:(WebCore::PolicyAction)policy
 {
     if (_private->target)
         wtfObjCMsgSend<void>(_private->target.get(), _private->action, policy);
@@ -97,17 +92,17 @@ NSString *WebActionOriginalURLKey = @"WebActionOriginalURLKey";
 
 - (void)use
 {
-    [self _usePolicy:PolicyAction::Use];
+    [self _usePolicy:WebCore::PolicyAction::Use];
 }
 
 - (void)ignore
 {
-    [self _usePolicy:PolicyAction::Ignore];
+    [self _usePolicy:WebCore::PolicyAction::Ignore];
 }
 
 - (void)download
 {
-    [self _usePolicy:PolicyAction::Download];
+    [self _usePolicy:WebCore::PolicyAction::Download];
 }
 
 @end

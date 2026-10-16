@@ -33,11 +33,12 @@ namespace WebCore {
 using namespace JSC;
 
 template<typename Visitor>
-void JSIDBTransaction::visitAdditionalChildren(Visitor& visitor)
+void JSIDBTransaction::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
-    static_cast<IDBTransaction&>(wrapped()).visitReferencedObjectStores(visitor);
+    // Cannot ref on the GC thread.
+    SUPPRESS_UNCOUNTED_ARG wrapped().visitReferencedObjectStoresInGCThread(visitor);
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSIDBTransaction);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSIDBTransaction);
 
 } // namespace WebCore

@@ -41,7 +41,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(EXTDisjointTimerQueryWebGL2);
 EXTDisjointTimerQueryWebGL2::EXTDisjointTimerQueryWebGL2(WebGLRenderingContextBase& context)
     : WebGLExtension(context, WebGLExtensionName::EXTDisjointTimerQueryWebGL2)
 {
-    context.graphicsContextGL()->enableExtension(GCGLExtension::EXT_disjoint_timer_query);
+    protect(context.graphicsContextGL())->enableExtension(GCGLExtension::EXT_disjoint_timer_query);
 }
 
 EXTDisjointTimerQueryWebGL2::~EXTDisjointTimerQueryWebGL2() = default;
@@ -51,13 +51,11 @@ bool EXTDisjointTimerQueryWebGL2::supported(GraphicsContextGL& context)
     return context.supportsExtension(GCGLExtension::EXT_disjoint_timer_query);
 }
 
-void EXTDisjointTimerQueryWebGL2::queryCounterEXT(WebGLQuery& query, GCGLenum target)
+void EXTDisjointTimerQueryWebGL2::queryCounterEXT(ScriptExecutionContext& scriptExecutionContext, WebGLQuery& query, GCGLenum target)
 {
     if (isContextLost())
         return;
     Ref context = this->context();
-    if (!context->scriptExecutionContext())
-        return;
 
     if (!context->validateWebGLObject("queryCounterEXT"_s, query))
         return;
@@ -74,11 +72,11 @@ void EXTDisjointTimerQueryWebGL2::queryCounterEXT(WebGLQuery& query, GCGLenum ta
 
     query.setTarget(target);
 
-    context->graphicsContextGL()->queryCounterEXT(query.object(), target);
+    protect(context->graphicsContextGL())->queryCounterEXT(query.object(), target);
 
     // A query's result must not be made available until control has returned to the user agent's main loop.
-    context->protectedScriptExecutionContext()->checkedEventLoop()->queueMicrotask([&] {
-        query.makeResultAvailable();
+    protect(scriptExecutionContext.eventLoop())->queueMicrotask(scriptExecutionContext.vm(), [query = protect(query)] {
+        query->makeResultAvailable();
     });
 }
 

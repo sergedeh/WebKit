@@ -38,6 +38,7 @@
 #include "ResourceRequest.h"
 #include "ScriptController.h"
 #include "ScriptSourceCode.h"
+#include "Settings.h"
 
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringConcatenate.h>
@@ -57,11 +58,11 @@ LoadableSpeculationRules::LoadableSpeculationRules(Document& document, const URL
 
 LoadableSpeculationRules::~LoadableSpeculationRules()
 {
-    if (m_cachedScript)
-        m_cachedScript->removeClient(*this);
+    if (RefPtr cachedScript = m_cachedScript)
+        cachedScript->removeClient(*this);
 }
 
-CachedResourceHandle<CachedScript> LoadableSpeculationRules::requestSpeculationRules(Document& document, const URL& sourceURL)
+RefPtr<CachedScript> LoadableSpeculationRules::requestSpeculationRules(Document& document, const URL& sourceURL)
 {
     // https://html.spec.whatwg.org/C#the-speculation-rules-header
     // 3.4.2.2.1. Let request be a new request whose URL is url, destination is "speculationrules", and mode is "cors".
@@ -81,7 +82,8 @@ CachedResourceHandle<CachedScript> LoadableSpeculationRules::requestSpeculationR
     request.upgradeInsecureRequestIfNeeded(document);
     request.setPriority(ResourceLoadPriority::Low);
 
-    return document.protectedCachedResourceLoader()->requestScript(WTF::move(request)).value_or(nullptr);
+    auto result = protect(document.cachedResourceLoader())->requestScript(WTF::move(request));
+    return result ? RefPtr { WTF::move(result.value()) } : nullptr;
 }
 
 bool LoadableSpeculationRules::load(Document& document, const URL& url)
@@ -91,28 +93,28 @@ bool LoadableSpeculationRules::load(Document& document, const URL& url)
     if (!url.isValid())
         return false;
 
-    CachedResourceHandle cachedScript = requestSpeculationRules(document, m_url);
-    m_cachedScript = cachedScript;
-    if (!cachedScript)
+    m_cachedScript = requestSpeculationRules(document, m_url);
+    if (!m_cachedScript)
         return false;
-    cachedScript->addClient(*this);
+    protect(m_cachedScript)->addClient(*this);
 
     return true;
 }
 
-// https://html.spec.whatwg.org/C#the-speculation-rules-header
+// https://html.spec.whatwg.org/C#process-the-speculation-rules-header
 // 3.4.2.2. processResponseConsumeBody
 void LoadableSpeculationRules::notifyFinished(CachedResource& resource, const NetworkLoadMetrics&, LoadWillContinueInAnotherProcess)
 {
     ASSERT(&resource == m_cachedScript.get());
 
-    RefPtr document = m_document.get();
+    RefPtr document = m_document;
     if (!document)
         return;
 
     // 1. If bodyBytes is null or failure, then abort these steps.
     // 2. If response's status is not an ok status, then abort these steps.
-    if (m_cachedScript->errorOccurred()) {
+    RefPtr cachedScript = m_cachedScript;
+    if (cachedScript->errorOccurred()) {
         document->addConsoleMessage(MessageSource::Other, MessageLevel::Error, makeString("Failed to load speculation rules from "_s, m_url.string()));
         return;
     }
@@ -124,12 +126,7 @@ void LoadableSpeculationRules::notifyFinished(CachedResource& resource, const Ne
     }
 
     // 4. Let bodyText be the result of UTF-8 decoding bodyBytes.
-    if (resource.encoding() != "UTF-8"_s) {
-        document->addConsoleMessage(MessageSource::Other, MessageLevel::Error, makeString("Invalid speculation rules encoding "_s, m_url.string()));
-        return;
-    }
-
-    String speculationRulesText = m_cachedScript->script().toString();
+    String speculationRulesText = cachedScript->script(CachedScript::ShouldDecodeAsUTF8Only::Yes).toString();
     if (speculationRulesText.isEmpty())
         return;
 
@@ -138,7 +135,7 @@ void LoadableSpeculationRules::notifyFinished(CachedResource& resource, const Ne
         // 5. Let ruleSet be the result of parsing a speculation rule set string given bodyText, document, and response's URL. If this throws an exception, then abort these steps.
         // 6. Append ruleSet to document's speculation rule sets.
         // Header-based rules use the Document as the source node.
-        if (frame->checkedScript()->registerSpeculationRules(*document, sourceCode, m_url)) {
+        if (protect(frame->script())->registerSpeculationRules(*document, sourceCode, m_url)) {
             // 7. Consider speculative loads for document.
             document->considerSpeculationRules();
         }

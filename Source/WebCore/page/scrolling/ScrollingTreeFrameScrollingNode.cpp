@@ -72,6 +72,14 @@ bool ScrollingTreeFrameScrollingNode::commitStateBeforeChildren(const ScrollingS
     if (state->hasChangedProperty(ScrollingStateNode::Property::ObscuredContentInsets))
         m_obscuredContentInsets = state->obscuredContentInsets();
 
+    if (state->hasChangedProperty(ScrollingStateNode::Property::InsetForLeftScrollbarSpace))
+        m_insetForLeftScrollbarSpace = state->insetForLeftScrollbarSpace();
+
+#if HAVE(NSREFRESHCONTROLLER)
+    if (state->hasChangedProperty(ScrollingStateNode::Property::TopScrollStretchForRefreshController))
+        m_topScrollStretchForRefreshController = state->topScrollStretchForRefreshController();
+#endif
+
     if (state->hasChangedProperty(ScrollingStateNode::Property::VisualViewportIsSmallerThanLayoutViewport))
         m_visualViewportIsSmallerThanLayoutViewport = state->visualViewportIsSmallerThanLayoutViewport();
 
@@ -138,10 +146,47 @@ FloatRect ScrollingTreeFrameScrollingNode::layoutViewportRespectingRubberBanding
     return layoutViewportForScrollPosition(currentScrollPosition(), frameScaleFactor(), ScrollBehaviorForFixedElements::StickToViewportBounds);
 }
 
+float ScrollingTreeFrameScrollingNode::delegatedPageScaleFactor() const
+{
+    return m_delegatedPageScaleFactor;
+}
+
+void ScrollingTreeFrameScrollingNode::setDelegatedPageScaleFactor(float scale)
+{
+    m_delegatedPageScaleFactor = scale;
+}
+
+void ScrollingTreeFrameScrollingNode::repositionScrollingLayersForDelegatedScaleChange()
+{
+    repositionScrollingLayers();
+}
+
+int ScrollingTreeFrameScrollingNode::insetForLeftScrollbarSpace() const
+{
+    return m_insetForLeftScrollbarSpace;
+}
+
+FloatSize ScrollingTreeFrameScrollingNode::sizeForVisibleContent() const
+{
+    return m_sizeForVisibleContent;
+}
+
 FloatSize ScrollingTreeFrameScrollingNode::viewToContentsOffset(const FloatPoint& scrollPosition) const
 {
     auto obscuredContentInsets = this->obscuredContentInsets();
-    return toFloatSize(scrollPosition) - FloatSize(obscuredContentInsets.left(), headerHeight() + obscuredContentInsets.top());
+    return toFloatSize(scrollPosition) - FloatSize(insetForLeftScrollbarSpace() + obscuredContentInsets.left(), headerHeight() + obscuredContentInsets.top());
+}
+
+FloatPoint ScrollingTreeFrameScrollingNode::viewToContentsPoint(const FloatPoint& pointInViewCoordinates, const FloatPoint& scrollPosition) const
+{
+    // The insets and the header aren't zoomed, so they come off before undoing the zoom. The scroll position
+    // is already in contents coordinates, so it goes on after. A no-op at scale 1.
+    auto obscuredContentInsets = this->obscuredContentInsets();
+    auto point = pointInViewCoordinates;
+    point.move(-(insetForLeftScrollbarSpace() + obscuredContentInsets.left()), -(headerHeight() + obscuredContentInsets.top()));
+    point.scale(1 / delegatedPageScaleFactor());
+    point.moveBy(scrollPosition);
+    return point;
 }
 
 void ScrollingTreeFrameScrollingNode::dumpProperties(TextStream& ts, OptionSet<ScrollingStateTreeAsTextBehavior> behavior) const
@@ -171,6 +216,10 @@ void ScrollingTreeFrameScrollingNode::dumpProperties(TextStream& ts, OptionSet<S
         ts.dumpProperty("left content inset"_s, m_obscuredContentInsets.left());
     if (m_obscuredContentInsets.right())
         ts.dumpProperty("right content inset"_s, m_obscuredContentInsets.right());
+#if HAVE(NSREFRESHCONTROLLER)
+    if (m_topScrollStretchForRefreshController)
+        ts.dumpProperty("top scroll stretch for refresh controller"_s, m_topScrollStretchForRefreshController);
+#endif
 
     if (m_headerHeight)
         ts.dumpProperty("header height"_s, m_headerHeight);

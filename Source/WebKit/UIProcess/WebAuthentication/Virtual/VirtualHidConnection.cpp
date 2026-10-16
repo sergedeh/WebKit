@@ -35,6 +35,7 @@
 #include <WebCore/FidoConstants.h>
 #include <WebCore/WebAuthenticationUtils.h>
 #include <wtf/BlockPtr.h>
+#include <wtf/Borrow.h>
 #include <wtf/CryptographicallyRandomNumber.h>
 #include <wtf/RunLoop.h>
 #include <wtf/darwin/DispatchExtras.h>
@@ -81,12 +82,13 @@ void VirtualHidConnection::send(Vector<uint8_t>&& data, DataSentCallback&& callb
     auto task = makeBlockPtr([weakThis = WeakPtr { *this }, data = WTF::move(data), callback = WTF::move(callback)]() mutable {
         ASSERT(!RunLoop::isMain());
         RunLoop::mainSingleton().dispatch([weakThis, data = WTF::move(data), callback = WTF::move(callback)]() mutable {
-            if (!weakThis) {
+            RefPtr protectedThis = weakThis;
+            if (!protectedThis) {
                 callback(DataSent::No);
                 return;
             }
 
-            weakThis->assembleRequest(WTF::move(data));
+            protectedThis->assembleRequest(WTF::move(data));
 
             callback(DataSent::Yes);
         });
@@ -113,9 +115,8 @@ void VirtualHidConnection::receiveHidMessage(fido::FidoHidMessage&& message)
     while (message.numPackets()) {
         auto report = message.popNextPacket();
         RunLoop::mainSingleton().dispatch([report = WTF::move(report), weakThis = WeakPtr { *this }]() mutable {
-            if (!weakThis)
-                return;
-            weakThis->receiveReport(WTF::move(report));
+            if (RefPtr protectedThis = weakThis)
+                protectedThis->receiveReport(WTF::move(report));
         });
     }
 }
@@ -146,7 +147,7 @@ void VirtualHidConnection::parseRequest()
         payload.appendVector(m_nonce);
         size_t writePosition = payload.size();
         payload.grow(kHidInitResponseSize);
-        cryptographicallyRandomValues(payload.mutableSpan().subspan(writePosition, CtapChannelIdSize));
+        cryptographicallyRandomValues(borrow(payload)->mutableSpan().subspan(writePosition, CtapChannelIdSize));
         auto channel = kHidBroadcastChannel;
         FidoHidInitPacket initPacket(channel, FidoHidDeviceCommand::kInit, WTF::move(payload), payload.size());
         receiveReport(initPacket.getSerializedData());
@@ -157,7 +158,7 @@ void VirtualHidConnection::parseRequest()
         ASSERT(payload.size());
         auto cmd = static_cast<CtapRequestCommand>(payload[0]);
         payload.removeAt(0);
-        auto requestMap = CBORReader::read(payload);
+        auto requestMap = CBORReader::read(borrow(payload)->span());
         ASSERT(requestMap || cmd == CtapRequestCommand::kAuthenticatorGetNextAssertion);
         if (cmd == CtapRequestCommand::kAuthenticatorMakeCredential) {
             VirtualCredential credential;
@@ -222,7 +223,7 @@ void VirtualHidConnection::parseRequest()
             credential.credentialId = credentialIdAndCosePubKey.first;
             manager->addCredential(m_authenticatorId, credential);
 
-            auto attestedCredentialData = buildAttestedCredentialData(Vector<uint8_t>(aaguidLength, 0), credentialIdAndCosePubKey.first, credentialIdAndCosePubKey.second);
+            auto attestedCredentialData = buildAttestedCredentialData(Vector<uint8_t>(FillWith { }, aaguidLength, 0), credentialIdAndCosePubKey.first, credentialIdAndCosePubKey.second);
 
             auto authenticatorData = buildAuthData(credential.rpId, flagsForConfig(m_configuration), credential.signCount, attestedCredentialData);
             CBORValue::MapValue response;
@@ -262,7 +263,7 @@ void VirtualHidConnection::parseRequest()
                     return;
                 }
 
-                for (const auto& cborCredential : cborAllowList) {
+                for (const auto& cborCredential : borrow(cborAllowList)) {
                     auto& credMap = cborCredential.getMap();
                     auto itr = credMap.find(CBORValue(fido::kEntityIdMapKey));
                     if (itr == credMap.end() || !itr->second.isByteString()) {
@@ -299,7 +300,7 @@ void VirtualHidConnection::parseRequest()
                     }
                 }
             }
-            auto matchingCredentials = manager->credentialsMatchingList(m_authenticatorId, rpId, allowList);
+            const Vector matchingCredentials = manager->credentialsMatchingList(m_authenticatorId, rpId, allowList);
             if (matchingCredentials.isEmpty()) {
                 recieveResponseCode(CtapDeviceResponseCode::kCtap2ErrNoCredentials);
                 return;
@@ -310,7 +311,7 @@ void VirtualHidConnection::parseRequest()
             response[CBORValue(1)] = CBORValue(buildCredentialDescriptor(credential.credentialId));
             auto key = privateKeyFromBase64(credential.privateKey);
             auto credentialIdAndCosePubKey = credentialIdAndCosePubKeyForPrivateKey(key);
-            auto attestedCredentialData = buildAttestedCredentialData(Vector<uint8_t>(aaguidLength, 0), credentialIdAndCosePubKey.first, credentialIdAndCosePubKey.second);
+            auto attestedCredentialData = buildAttestedCredentialData(Vector<uint8_t>(FillWith { }, aaguidLength, 0), credentialIdAndCosePubKey.first, credentialIdAndCosePubKey.second);
             auto authData = buildAuthData(rpId, flagsForConfig(m_configuration), credential.signCount, attestedCredentialData);
             response[CBORValue(2)] = CBORValue(authData);
             response[CBORValue(3)] = CBORValue(signatureForPrivateKey(key, authData, clientDataHash));

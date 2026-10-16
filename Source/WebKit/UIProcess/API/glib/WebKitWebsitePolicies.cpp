@@ -22,7 +22,7 @@
 
 #include "APIWebsitePolicies.h"
 #include "WebKitEnumTypes.h"
-#include "WebsitePoliciesData.h"
+#include <WebCore/HTTPSByDefaultMode.h>
 #include <glib/gi18n-lib.h>
 #include <wtf/glib/WTFGType.h>
 
@@ -35,7 +35,8 @@ using namespace WebKit;
  * View specific website policies.
  *
  * WebKitWebsitePolicies allows you to configure per-page policies,
- * currently only autoplay policies are supported.
+ * currently autoplay, custom user agent and upgrade to HTTPS policies
+ * are supported.
  *
  * Since: 2.30
  */
@@ -45,7 +46,9 @@ using namespace WebKit;
 enum {
     PROP_0,
 
-    PROP_AUTOPLAY_POLICY
+    PROP_AUTOPLAY_POLICY,
+    PROP_CUSTOM_USER_AGENT,
+    PROP_UPGRADE_TO_HTTPS_POLICY,
 };
 
 struct _WebKitWebsitePoliciesPrivate {
@@ -54,6 +57,7 @@ struct _WebKitWebsitePoliciesPrivate {
     {
     }
     RefPtr<API::WebsitePolicies> websitePolicies;
+    UTF8CString customUserAgent;
 };
 
 WEBKIT_DEFINE_FINAL_TYPE(WebKitWebsitePolicies, webkit_website_policies, G_TYPE_OBJECT, GObject)
@@ -63,27 +67,6 @@ API::WebsitePolicies& webkitWebsitePoliciesGetWebsitePolicies(WebKitWebsitePolic
     return *policies->priv->websitePolicies.get();
 }
 
-WebsitePoliciesData webkitWebsitePoliciesGetPoliciesData(WebKitWebsitePolicies* policies)
-{
-    WebsitePoliciesData policiesData;
-
-    switch (webkit_website_policies_get_autoplay_policy(policies)) {
-    case WEBKIT_AUTOPLAY_ALLOW:
-        policiesData.autoplayPolicy = WebsiteAutoplayPolicy::Allow;
-        break;
-    case WEBKIT_AUTOPLAY_ALLOW_WITHOUT_SOUND:
-        policiesData.autoplayPolicy = WebsiteAutoplayPolicy::AllowWithoutSound;
-        break;
-    case WEBKIT_AUTOPLAY_DENY:
-        policiesData.autoplayPolicy = WebsiteAutoplayPolicy::Deny;
-        break;
-    default:
-        policiesData.autoplayPolicy = WebsiteAutoplayPolicy::Default;
-    }
-
-    return policiesData;
-}
-
 static void webkitWebsitePoliciesGetProperty(GObject* object, guint propID, GValue* value, GParamSpec* paramSpec)
 {
     WebKitWebsitePolicies* policies = WEBKIT_WEBSITE_POLICIES(object);
@@ -91,6 +74,12 @@ static void webkitWebsitePoliciesGetProperty(GObject* object, guint propID, GVal
     switch (propID) {
     case PROP_AUTOPLAY_POLICY:
         g_value_set_enum(value, webkit_website_policies_get_autoplay_policy(policies));
+        break;
+    case PROP_CUSTOM_USER_AGENT:
+        g_value_set_string(value, webkit_website_policies_get_custom_user_agent(policies));
+        break;
+    case PROP_UPGRADE_TO_HTTPS_POLICY:
+        g_value_set_enum(value, webkit_website_policies_get_upgrade_to_https_policy(policies));
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID(object, propID, paramSpec);
@@ -114,6 +103,21 @@ void webkitWebsitePoliciesSetAutoplayPolicy(WebKitWebsitePolicies* policies, Web
     }
 }
 
+static void webkitWebsitePoliciesSetUpgradeToHTTPSPolicy(WebKitWebsitePolicies* policies, WebKitUpgradeToHTTPSPolicy policy)
+{
+    switch (policy) {
+    case WEBKIT_UPGRADE_TO_HTTPS_POLICY_KEEP_AS_REQUESTED:
+        policies->priv->websitePolicies->setHTTPSByDefault(WebCore::HTTPSByDefaultMode::Disabled);
+        break;
+    case WEBKIT_UPGRADE_TO_HTTPS_POLICY_AUTOMATIC_FALLBACK_TO_HTTP:
+        policies->priv->websitePolicies->setHTTPSByDefault(WebCore::HTTPSByDefaultMode::UpgradeWithAutomaticFallback);
+        break;
+    case WEBKIT_UPGRADE_TO_HTTPS_POLICY_ERROR_ON_FAILURE:
+        policies->priv->websitePolicies->setHTTPSByDefault(WebCore::HTTPSByDefaultMode::UpgradeAndNoFallback);
+        break;
+    }
+}
+
 static void webkitWebsitePoliciesSetProperty(GObject* object, guint propID, const GValue* value, GParamSpec* paramSpec)
 {
     WebKitWebsitePolicies* policies = WEBKIT_WEBSITE_POLICIES(object);
@@ -121,6 +125,13 @@ static void webkitWebsitePoliciesSetProperty(GObject* object, guint propID, cons
     switch (propID) {
     case PROP_AUTOPLAY_POLICY:
         webkitWebsitePoliciesSetAutoplayPolicy(policies, static_cast<WebKitAutoplayPolicy>(g_value_get_enum(value)));
+        break;
+    case PROP_CUSTOM_USER_AGENT:
+        if (const auto* customUserAgent = g_value_get_string(value))
+            policies->priv->websitePolicies->setCustomUserAgent(String::fromUTF8(customUserAgent));
+        break;
+    case PROP_UPGRADE_TO_HTTPS_POLICY:
+        webkitWebsitePoliciesSetUpgradeToHTTPSPolicy(policies, static_cast<WebKitUpgradeToHTTPSPolicy>(g_value_get_enum(value)));
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID(object, propID, paramSpec);
@@ -149,6 +160,41 @@ static void webkit_website_policies_class_init(WebKitWebsitePoliciesClass* findC
             nullptr, nullptr,
             WEBKIT_TYPE_AUTOPLAY_POLICY,
             WEBKIT_AUTOPLAY_ALLOW_WITHOUT_SOUND,
+            static_cast<GParamFlags>(WEBKIT_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY)));
+
+    /**
+     * WebKitWebsitePolicies:custom-user-agent: (getter get_custom_user_agent) (attributes org.gtk.Property.get=webkit_website_policies_get_custom_user_agent):
+     *
+     * The custom user agent string to send for navigations governed by these
+     * #WebKitWebsitePolicies, or %NULL to use the default user agent.
+     *
+     * Since: 2.54
+     */
+    g_object_class_install_property(
+        gObjectClass,
+        PROP_CUSTOM_USER_AGENT,
+        g_param_spec_string(
+            "custom-user-agent",
+            nullptr, nullptr,
+            nullptr,
+            static_cast<GParamFlags>(WEBKIT_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY)));
+
+    /**
+     * WebKitWebsitePolicies:upgrade-to-https-policy: (getter get_upgrade_to_https_policy):
+     *
+     * How HTTP navigations governed by these [class@WebsitePolicies] are
+     * upgraded to HTTPS.
+     *
+     * Since: 2.56
+     */
+    g_object_class_install_property(
+        gObjectClass,
+        PROP_UPGRADE_TO_HTTPS_POLICY,
+        g_param_spec_enum(
+            "upgrade-to-https-policy",
+            nullptr, nullptr,
+            WEBKIT_TYPE_UPGRADE_TO_HTTPS_POLICY,
+            WEBKIT_UPGRADE_TO_HTTPS_POLICY_KEEP_AS_REQUESTED,
             static_cast<GParamFlags>(WEBKIT_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY)));
 }
 
@@ -181,6 +227,7 @@ WebKitWebsitePolicies* webkit_website_policies_new(void)
  * ```c
  * WebKitWebsitePolicies *default_website_policies = webkit_website_policies_new_with_policies(
  *     "autoplay", WEBKIT_AUTOPLAY_DENY,
+ *     "custom-user-agent", "Foo/1.0 (custom)",
  *     NULL);
  *
  * // ...
@@ -234,3 +281,51 @@ WebKitAutoplayPolicy webkit_website_policies_get_autoplay_policy(WebKitWebsitePo
     }
 }
 
+/**
+ * webkit_website_policies_get_custom_user_agent: (get-property custom-user-agent):
+ * @policies: a #WebKitWebsitePolicies
+ *
+ * Get the #WebKitWebsitePolicies:custom-user-agent property.
+ *
+ * Returns: (transfer none) (nullable): the custom user agent string, or %NULL if the default
+ *    user agent is used
+ *
+ * Since: 2.54
+ */
+const gchar* webkit_website_policies_get_custom_user_agent(WebKitWebsitePolicies* policies)
+{
+    g_return_val_if_fail(WEBKIT_IS_WEBSITE_POLICIES(policies), nullptr);
+
+    if (policies->priv->customUserAgent.isNull()) {
+        const auto& newCustomUserAgent = policies->priv->websitePolicies->customUserAgent();
+        policies->priv->customUserAgent = newCustomUserAgent.isEmpty() ? UTF8CString() : newCustomUserAgent.utf8();
+    }
+    return policies->priv->customUserAgent.legacyCStringPointer();
+}
+
+/**
+ * webkit_website_policies_get_upgrade_to_https_policy: (get-property upgrade-to-https-policy):
+ * @policies: a #WebKitWebsitePolicies
+ *
+ * Get the [property@WebsitePolicies:upgrade-to-https-policy] property.
+ *
+ * Returns: a [enum@UpgradeToHTTPSPolicy]
+ *
+ * Since: 2.56
+ */
+WebKitUpgradeToHTTPSPolicy webkit_website_policies_get_upgrade_to_https_policy(WebKitWebsitePolicies* policies)
+{
+    g_return_val_if_fail(WEBKIT_IS_WEBSITE_POLICIES(policies), WEBKIT_UPGRADE_TO_HTTPS_POLICY_KEEP_AS_REQUESTED);
+
+    switch (policies->priv->websitePolicies->httpsByDefaultMode()) {
+    case WebCore::HTTPSByDefaultMode::Disabled:
+        return WEBKIT_UPGRADE_TO_HTTPS_POLICY_KEEP_AS_REQUESTED;
+    case WebCore::HTTPSByDefaultMode::UpgradeWithAutomaticFallback:
+        return WEBKIT_UPGRADE_TO_HTTPS_POLICY_AUTOMATIC_FALLBACK_TO_HTTP;
+    case WebCore::HTTPSByDefaultMode::UpgradeWithUserMediatedFallback:
+    case WebCore::HTTPSByDefaultMode::UpgradeAndNoFallback:
+        return WEBKIT_UPGRADE_TO_HTTPS_POLICY_ERROR_ON_FAILURE;
+    }
+
+    RELEASE_ASSERT_NOT_REACHED();
+}

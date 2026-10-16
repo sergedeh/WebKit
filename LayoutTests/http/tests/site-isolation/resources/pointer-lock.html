@@ -19,7 +19,7 @@
         console.log("Pointer lock failed");
     });
 
-    window.onload = (event) => {
+    window.onload = async (event) => {
         const element = document.getElementById('pointer-lock-element');
         if (element) {
             element.addEventListener('click', () => {
@@ -30,8 +30,12 @@
             console.error("Element still not found after timeout!");
         }
 
-        if (window.eventSender) {
-            UIHelper.activateElement(element);
+        // Only activate when pointer lock is actually supported (i.e. not iOS). There is nothing to
+        // activate otherwise, and on iOS UIHelper.activateElement() posts a UI script that relies on
+        // window.webkit.createJSHandle, which is unavailable in this cross-origin subframe under site
+        // isolation and would surface as an unhandled promise rejection.
+        if (window.eventSender && 'pointerLockElement' in document) {
+            await UIHelper.activateElement(element);
         }
     };
 </script>

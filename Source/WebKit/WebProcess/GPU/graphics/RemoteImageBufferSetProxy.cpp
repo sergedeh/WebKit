@@ -42,7 +42,7 @@ class RemoteImageBufferSetProxyFlushFence : public ThreadSafeRefCounted<RemoteIm
     WTF_MAKE_NONCOPYABLE(RemoteImageBufferSetProxyFlushFence);
     WTF_MAKE_TZONE_ALLOCATED_INLINE(RemoteImageBufferSetProxyFlushFence);
 public:
-    static Ref<RemoteImageBufferSetProxyFlushFence> create(RenderingUpdateID renderingUpdateID, Seconds timeoutDuration)
+    static Ref<RemoteImageBufferSetProxyFlushFence> LEGACY_NODELETE create(RenderingUpdateID renderingUpdateID, Seconds timeoutDuration)
     {
         return adoptRef(*new RemoteImageBufferSetProxyFlushFence { renderingUpdateID, timeoutDuration });
     }
@@ -69,7 +69,7 @@ public:
         return std::exchange(m_handles, std::nullopt);
     }
 
-    RenderingUpdateID renderingUpdateID() const { return m_renderingUpdateID; }
+    RenderingUpdateID LEGACY_NODELETE renderingUpdateID() const { return m_renderingUpdateID; }
 
 private:
     RemoteImageBufferSetProxyFlushFence(RenderingUpdateID renderingUpdateID, Seconds timeoutDuration)
@@ -237,6 +237,15 @@ void RemoteImageBufferSetProxy::setConfiguration(RemoteImageBufferSetConfigurati
     m_remoteNeedsConfigurationUpdate = true;
 }
 
+void RemoteImageBufferSetProxy::submitDrawingCommands()
+{
+    RefPtr connection = this->connection();
+    if (!connection)
+        return;
+
+    send(Messages::RemoteImageBufferSet::SubmitDrawingCommands());
+}
+
 std::unique_ptr<ThreadSafeImageBufferSetFlusher> RemoteImageBufferSetProxy::flushFrontBufferAsync(ThreadSafeImageBufferSetFlusher::FlushType flushType)
 {
     RefPtr connection = this->connection();
@@ -244,8 +253,13 @@ std::unique_ptr<ThreadSafeImageBufferSetFlusher> RemoteImageBufferSetProxy::flus
         return nullptr;
     Ref pendingFlush = RemoteImageBufferSetProxyFlushFence::create(m_remoteRenderingBackendProxy->renderingUpdateID(), connection->defaultTimeoutDuration());
 
-    sendWithAsyncReply(Messages::RemoteImageBufferSet::EndPrepareForDisplay(m_remoteRenderingBackendProxy->renderingUpdateID()), [pendingFlush, generation = m_generation](ImageBufferSetPrepareBufferForDisplayOutputData outputData, RenderingUpdateID renderingUpdateID) {
+    sendWithAsyncReply(Messages::RemoteImageBufferSet::EndPrepareForDisplay(m_remoteRenderingBackendProxy->renderingUpdateID()), [protectedThis = Ref { *this }, pendingFlush, generation = m_generation](ImageBufferSetPrepareBufferForDisplayOutputData outputData, RenderingUpdateID renderingUpdateID) {
         RELEASE_ASSERT(!isMainRunLoop());
+
+        if (outputData.displayRequirement == SwapBuffersDisplayRequirement::NeedsFullDisplay) {
+            Locker locker { protectedThis->m_lock };
+            protectedThis->m_remoteFrontBufferIsMissing = true;
+        }
 
         BufferSetBackendHandle handle;
         handle.bufferHandle = WTF::move(outputData.backendHandle);
@@ -278,14 +292,15 @@ void RemoteImageBufferSetProxy::willPrepareForDisplay()
     if (m_remoteNeedsConfigurationUpdate) {
         send(Messages::RemoteImageBufferSet::UpdateConfiguration(m_configuration));
         ImageBufferParameters parameters { m_configuration.logicalSize, m_configuration.resolutionScale, m_configuration.colorSpace, m_configuration.bufferFormat, m_configuration.renderingPurpose };
-        auto transform = ImageBufferBackend::calculateBaseTransform(ImageBuffer::backendParameters(parameters));
-        m_context.emplace(m_configuration.colorSpace, m_configuration.contentsFormat, m_configuration.renderingMode, FloatRect { { }, m_configuration.logicalSize }, transform, m_contextIdentifier, *renderingBackend);
+        auto transform = ImageBufferBackend::calculateBaseTransform(parameters);
+        m_context.emplace(FloatRect { { }, m_configuration.logicalSize }, transform, m_configuration.colorSpace, m_configuration.contentsFormat, m_configuration.renderingMode, m_contextIdentifier, *renderingBackend);
     }
     m_remoteNeedsConfigurationUpdate = false;
 
     Locker locker { m_lock };
 
     m_prepareForDisplayIsPending = true;
+    m_remoteFrontBufferIsMissing = false;
 }
 
 void RemoteImageBufferSetProxy::setNeedsDisplay()
@@ -294,10 +309,17 @@ void RemoteImageBufferSetProxy::setNeedsDisplay()
         client->setNeedsDisplay();
 }
 
+bool RemoteImageBufferSetProxy::remoteFrontBufferIsMissing()
+{
+    Locker locker { m_lock };
+    return m_remoteFrontBufferIsMissing;
+}
+
 void RemoteImageBufferSetProxy::disconnect()
 {
     Locker locker { m_lock };
     m_prepareForDisplayIsPending = false;
+    m_remoteFrontBufferIsMissing = false;
     m_generation++;
     m_remoteNeedsConfigurationUpdate = true;
     m_context = std::nullopt;

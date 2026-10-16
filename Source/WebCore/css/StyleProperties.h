@@ -22,6 +22,7 @@
 #pragma once
 
 #include <WebCore/CSSProperty.h>
+#include <wtf/RefCounted.h>
 
 namespace WebCore {
 
@@ -30,7 +31,7 @@ class Color;
 class ImmutableStyleProperties;
 class MutableStyleProperties;
 
-enum CSSValueID : uint16_t;
+enum class CSSValueID : uint16_t;
 enum CSSParserMode : uint8_t;
 
 namespace CSS {
@@ -58,20 +59,20 @@ public:
         bool isImportant() const { return m_metadata.m_important; }
         bool isImplicit() const { return m_metadata.m_implicit; }
 
-        String cssName() const;
+        const AtomString& cssName() const LIFETIME_BOUND;
         String cssText(const CSS::SerializationContext&) const;
 
         const CSSValue* value() const { return m_value; }
         // FIXME: We should try to remove this mutable overload.
         CSSValue* value() { return const_cast<CSSValue*>(m_value); }
-        Ref<CSSValue> protectedValue() const { return const_cast<CSSValue&>(*m_value); }
 
         // FIXME: Remove this.
-        CSSProperty toCSSProperty() const { return CSSProperty(id(), protectedValue(), isImportant() ? IsImportant::Yes : IsImportant::No, m_metadata.m_isSetFromShorthand, m_metadata.m_indexInShorthandsVector, isImplicit() ? IsImplicit::Yes : IsImplicit::No); }
+        CSSProperty toCSSProperty() const { return CSSProperty(id(), protect(*const_cast<CSSValue*>(value())), isImportant() ? IsImportant::Yes : IsImportant::No, m_metadata.m_isSetFromShorthand, m_metadata.m_indexInShorthandsVector, isImplicit() ? IsImplicit::Yes : IsImplicit::No); }
 
     private:
         const StylePropertyMetadata& m_metadata;
-        const CSSValue* m_value;
+        // PropertyReference is a short-lived view and the StyleProperties outlives it.
+        SUPPRESS_UNCOUNTED_MEMBER const CSSValue* m_value;
     };
 
     template<typename T>
@@ -92,7 +93,8 @@ public:
         bool operator==(std::nullptr_t) const { return index >= properties.propertyCount(); }
 
     private:
-        const T& properties;
+        // The iterator is a short-lived view and the StyleProperties outlives it.
+        SUPPRESS_UNCOUNTED_MEMBER const T& properties;
         unsigned index { 0 };
     };
 
@@ -130,13 +132,13 @@ public:
     String asText(const CSS::SerializationContext&) const;
     AtomString asTextAtom(const CSS::SerializationContext&) const;
 
-    bool hasCSSOMWrapper() const;
+    bool LEGACY_NODELETE hasCSSOMWrapper() const;
     bool isMutable() const { return m_isMutable; }
 
     bool traverseSubresources(NOESCAPE const Function<bool(const CachedResource&)>& handler) const;
     bool mayDependOnBaseURL() const;
 
-    static unsigned averageSizeInBytes();
+    static unsigned LEGACY_NODELETE averageSizeInBytes();
 
 #ifndef NDEBUG
     void showStyle();
@@ -144,6 +146,7 @@ public:
 
     bool propertyMatches(CSSPropertyID, const CSSValue*) const;
 
+    inline bool hasProperty(CSSPropertyID) const;
     inline int findPropertyIndex(CSSPropertyID) const;
     inline int findCustomPropertyIndex(StringView propertyName) const;
 

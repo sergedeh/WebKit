@@ -28,6 +28,7 @@
 #include "AdvancedPrivacyProtections.h"
 #include "EventLoop.h"
 #include "Microtasks.h"
+#include "NetworkLoadPolicy.h"
 #include "ReferrerPolicy.h"
 #include "ScriptExecutionContext.h"
 #include "SecurityOrigin.h"
@@ -52,14 +53,15 @@ public:
 
     bool isSecureContext() const final { return false; }
     bool isJSExecutionForbidden() const final { return false; }
+    String agentClusterID() const final { return nullString(); }
     EventLoopTaskGroup& eventLoop() final
     {
         ASSERT_NOT_REACHED();
         return m_eventLoopTaskGroup;
     }
-    const URL& url() const final { return m_url; }
+    const URL& url() const LIFETIME_BOUND final { return m_url; }
     const URL& cookieURL() const final { return url(); }
-    URL completeURL(const String&, ForceUTF8 = ForceUTF8::No) const final { return { }; }
+    URL parseURL(const String&) const final { return { }; }
     String userAgent(const URL&) const final { return emptyString(); }
     ReferrerPolicy referrerPolicy() const final { return ReferrerPolicy::EmptyString; }
 
@@ -99,14 +101,14 @@ private:
         , m_eventLoop(EmptyEventLoop::create(vm))
         , m_eventLoopTaskGroup(makeUniqueRef<EventLoopTaskGroup>(m_eventLoop))
     {
-        relaxAdoptionRequirement();
         m_eventLoop->addAssociatedContext(*this);
     }
 
     void addMessage(MessageSource, MessageLevel, const String&, const String&, unsigned, unsigned, RefPtr<Inspector::ScriptCallStack>&&, JSC::JSGlobalObject* = nullptr, unsigned long = 0) final { }
     void logExceptionToConsole(const String&, const String&, int, int, RefPtr<Inspector::ScriptCallStack>&&) final { }
 
-    const SettingsValues& settingsValues() const final { return m_settingsValues; }
+    const SettingsValues& LEGACY_NODELETE settingsValues() const LIFETIME_BOUND final { return m_settingsValues; }
+    const NetworkLoadPolicy& networkLoadPolicy() const final { return NetworkLoadPolicy::unrestricted(); }
 
 #if ENABLE(NOTIFICATIONS)
     NotificationClient* notificationClient() final { return nullptr; }
@@ -119,18 +121,18 @@ private:
             return adoptRef(*new EmptyEventLoop(vm));
         }
 
-        MicrotaskQueue& microtaskQueue() final { return m_queue; }
+        MicrotaskQueue& microtaskQueue() final { return m_queue.get(); }
 
     private:
         explicit EmptyEventLoop(JSC::VM& vm)
-            : m_queue(MicrotaskQueue(vm, *this))
+            : m_queue(MicrotaskQueue::create(vm, *this))
         {
         }
 
         void scheduleToRun() final { ASSERT_NOT_REACHED(); }
         bool isContextThread() const final { return true; }
 
-        MicrotaskQueue m_queue;
+        const Ref<MicrotaskQueue> m_queue;
     };
 
     const Ref<JSC::VM> m_vm;

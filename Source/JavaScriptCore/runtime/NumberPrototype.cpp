@@ -26,7 +26,7 @@
 #include "IntegrityInlines.h"
 #include "IntlNumberFormat.h"
 #include "JSCInlines.h"
-#include "Operations.h"
+#include "OperationsInlines.h"
 #include "ParseInt.h"
 #include "Uint16WithFraction.h"
 #include <wtf/Assertions.h>
@@ -84,11 +84,12 @@ void NumberPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
     putDirectWithoutTransition(vm, vm.propertyNames->toString, globalObject->numberProtoToStringFunction(), static_cast<unsigned>(PropertyAttribute::DontEnum));
     ASSERT(inherits(info()));
     globalObject->installNumberPrototypeWatchpoint(this);
+    structure()->setMayBePrototype(true);
 }
 
 // ------------------------------ Functions ---------------------------
 
-static ALWAYS_INLINE bool toThisNumber(JSValue thisValue, double& x)
+static ALWAYS_INLINE bool LEGACY_NODELETE toThisNumber(JSValue thisValue, double& x)
 {
     if (thisValue.isInt32()) {
         x = thisValue.asInt32();
@@ -100,7 +101,7 @@ static ALWAYS_INLINE bool toThisNumber(JSValue thisValue, double& x)
         return true;
     }
 
-    if (auto* numberObject = jsDynamicCast<NumberObject*>(thisValue)) {
+    if (auto* numberObject = dynamicDowncast<NumberObject>(thisValue)) {
         Integrity::auditStructureID(numberObject->structureID());
         x = numberObject->internalValue().asNumber();
         return true;
@@ -128,7 +129,7 @@ static ALWAYS_INLINE EncodedJSValue throwVMToThisNumberError(JSGlobalObject* glo
 // fo any number of digits an IEEE number may require to represent.
 typedef char RadixBuffer[2180];
 
-static inline char* int52ToStringWithRadix(char* startOfResultString, int64_t int52Value, unsigned radix)
+static inline char* LEGACY_NODELETE int52ToStringWithRadix(char* startOfResultString, int64_t int52Value, unsigned radix)
 {
     bool negative = false;
     uint64_t positiveNumber = int52Value;
@@ -374,7 +375,7 @@ String toStringWithRadix(double doubleValue, int32_t radix)
 {
     ASSERT(2 <= radix && radix <= 36);
 
-    int32_t integerValue = static_cast<int32_t>(doubleValue);
+    int32_t integerValue = truncateDoubleToInt32(doubleValue);
     if (integerValue == doubleValue)
         return toStringWithRadixInternal(integerValue, radix);
 
@@ -400,15 +401,16 @@ JSC_DEFINE_HOST_FUNCTION(numberProtoFuncToExponential, (JSGlobalObject* globalOb
 
     JSValue arg = callFrame->argument(0);
     // Perform ToInteger on the argument before remaining steps.
-    int decimalPlaces = static_cast<int>(arg.toIntegerOrInfinity(globalObject));
+    double decimalPlacesDouble = arg.toIntegerOrInfinity(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
 
     // Handle NaN and Infinity.
     if (!std::isfinite(x))
         return JSValue::encode(jsNontrivialString(vm, String::number(x)));
 
-    if (decimalPlaces < 0 || decimalPlaces > 100)
+    if (decimalPlacesDouble < 0 || decimalPlacesDouble > 100)
         return throwVMRangeError(globalObject, scope, "toExponential() argument must be between 0 and 100"_s);
+    int decimalPlaces = static_cast<int>(decimalPlacesDouble);
 
     // Round if the argument is not undefined, always format as exponential.
     NumberToStringBuffer buffer;
@@ -420,7 +422,7 @@ JSC_DEFINE_HOST_FUNCTION(numberProtoFuncToExponential, (JSGlobalObject* globalOb
         const DoubleToStringConverter& converter = DoubleToStringConverter::EcmaScriptConverter();
         converter.ToExponential(x, decimalPlaces, &builder);
     }
-    return JSValue::encode(jsString(vm, String { builder.Finalize() }));
+    return JSValue::encode(jsString(vm, String::fromLatin1(builder.Finalize())));
 }
 
 // toFixed converts a number to a string, always formatting as an a decimal fraction.
@@ -436,10 +438,11 @@ JSC_DEFINE_HOST_FUNCTION(numberProtoFuncToFixed, (JSGlobalObject* globalObject, 
     if (!toThisNumber(callFrame->thisValue(), x))
         return throwVMToThisNumberError(globalObject, scope, callFrame->thisValue());
 
-    int decimalPlaces = static_cast<int>(callFrame->argument(0).toIntegerOrInfinity(globalObject));
+    double decimalPlacesDouble = callFrame->argument(0).toIntegerOrInfinity(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
-    if (decimalPlaces < 0 || decimalPlaces > 100)
+    if (decimalPlacesDouble < 0 || decimalPlacesDouble > 100)
         return throwVMRangeError(globalObject, scope, "toFixed() argument must be between 0 and 100"_s);
+    int decimalPlaces = static_cast<int>(decimalPlacesDouble);
 
     // 15.7.4.5.7 states "If x >= 10^21, then let m = ToString(x)"
     // This also covers Ininity, and structure the check so that NaN
@@ -476,15 +479,16 @@ JSC_DEFINE_HOST_FUNCTION(numberProtoFuncToPrecision, (JSGlobalObject* globalObje
         return JSValue::encode(jsString(vm, String::number(x)));
 
     // Perform ToInteger on the argument before remaining steps.
-    int significantFigures = static_cast<int>(arg.toIntegerOrInfinity(globalObject));
+    double significantFiguresDouble = arg.toIntegerOrInfinity(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
 
     // Handle NaN and Infinity.
     if (!std::isfinite(x))
         return JSValue::encode(jsNontrivialString(vm, String::number(x)));
 
-    if (significantFigures < 1 || significantFigures > 100)
+    if (significantFiguresDouble < 1 || significantFiguresDouble > 100)
         return throwVMRangeError(globalObject, scope, "toPrecision() argument must be between 1 and 100"_s);
+    int significantFigures = static_cast<int>(significantFiguresDouble);
 
     return JSValue::encode(jsString(vm, String::numberToStringFixedPrecision(x, significantFigures, TrailingZerosPolicy::Keep)));
 }
@@ -559,7 +563,7 @@ static ALWAYS_INLINE JSString* numberToStringInternal(VM& vm, double doubleValue
 {
     ASSERT(!(radix < 2 || radix > 36));
 
-    int32_t integerValue = static_cast<int32_t>(doubleValue);
+    int32_t integerValue = truncateDoubleToInt32(doubleValue);
     if (integerValue == doubleValue)
         return int32ToStringInternal(vm, integerValue, radix);
 
@@ -638,6 +642,8 @@ JSC_DEFINE_HOST_FUNCTION(numberProtoFuncToLocaleString, (JSGlobalObject* globalO
     IntlNumberFormat* numberFormat = nullptr;
     if (locales.isUndefined() && options.isUndefined())
         numberFormat = globalObject->defaultNumberFormat();
+    else if (locales.isString() && options.isUndefined())
+        numberFormat = globalObject->cachedToLocaleStringNumberFormat(asString(locales));
     else {
         numberFormat = IntlNumberFormat::create(vm, globalObject->numberFormatStructure());
         numberFormat->initializeNumberFormat(globalObject, locales, options);

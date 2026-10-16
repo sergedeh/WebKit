@@ -32,6 +32,7 @@
 #include "WebGPUConvertToBackingContext.h"
 #include <WebCore/WebGPUBindGroupDescriptor.h>
 #include <WebCore/WebGPUBindGroupLayout.h>
+#include <wtf/Borrow.h>
 
 namespace WebKit::WebGPU {
 
@@ -41,11 +42,11 @@ std::optional<BindGroupDescriptor> ConvertToBackingContext::convertToBacking(con
     if (!base)
         return std::nullopt;
 
-    auto identifier = convertToBacking(bindGroupDescriptor.protectedLayout().get());
+    auto identifier = convertToBacking(protect(bindGroupDescriptor.layout).get());
 
     Vector<BindGroupEntry> entries;
     entries.reserveInitialCapacity(bindGroupDescriptor.entries.size());
-    for (const auto& entry : bindGroupDescriptor.entries) {
+    for (const auto& entry : borrow(bindGroupDescriptor.entries)) {
         auto convertedEntry = convertToBacking(entry);
         if (!convertedEntry)
             return std::nullopt;
@@ -67,7 +68,7 @@ std::optional<WebCore::WebGPU::BindGroupDescriptor> ConvertFromBackingContext::c
 
     Vector<WebCore::WebGPU::BindGroupEntry> entries;
     entries.reserveInitialCapacity(bindGroupDescriptor.entries.size());
-    for (const auto& backingEntry : bindGroupDescriptor.entries) {
+    for (const auto& backingEntry : borrow(bindGroupDescriptor.entries)) {
         auto entry = convertFromBacking(backingEntry);
         if (!entry)
             return std::nullopt;

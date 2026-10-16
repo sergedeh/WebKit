@@ -36,12 +36,13 @@ public:
     typedef typename M::value_type value_type;
     bool operator()(const value_type& value, const MediaTime& time)
     {
-        MediaTime presentationEndTime = Ref { value.second }->presentationTime() + Ref { value.second }->duration();
+        Ref sample { value.second };
+        MediaTime presentationEndTime = sample->presentationTime() + sample->duration();
         return presentationEndTime <= time;
     }
     bool operator()(const MediaTime& time, const value_type& value)
     {
-        MediaTime presentationStartTime = Ref { value.second }->presentationTime();
+        MediaTime presentationStartTime = protect(value.second)->presentationTime();
         return time < presentationStartTime;
     }
 };
@@ -52,12 +53,13 @@ public:
     typedef typename M::value_type value_type;
     bool operator()(const value_type& value, const MediaTime& time)
     {
-        MediaTime presentationStartTime = Ref { value.second }->presentationTime();
+        MediaTime presentationStartTime = protect(value.second)->presentationTime();
         return presentationStartTime > time;
     }
     bool operator()(const MediaTime& time, const value_type& value)
     {
-        MediaTime presentationEndTime = Ref { value.second }->presentationTime() + Ref { value.second }->duration();
+        Ref sample { value.second };
+        MediaTime presentationEndTime = sample->presentationTime() + sample->duration();
         return time >= presentationEndTime;
     }
 };
@@ -66,7 +68,7 @@ class SampleIsRandomAccess {
 public:
     bool operator()(DecodeOrderSampleMap::MapType::value_type& value)
     {
-        return Ref { value.second }->isSync();
+        return protect(value.second)->isSync();
     }
 };
 
@@ -127,6 +129,37 @@ void SampleMap::removeSample(const MediaSample& sample)
     auto decodeKey = DecodeOrderSampleMap::KeyType(sample.decodeTime(), presentationTime);
     presentationOrder().m_samples.erase(presentationTime);
     decodeOrder().m_samples.erase(decodeKey);
+}
+
+void SampleMap::replaceSample(const MediaSample& original, Ref<MediaSample>&& replacement)
+{
+    // Swap an already-buffered sample for a replacement carrying nearly-identical
+    // keys (typically a small timing shift). The erase() return iterator is a
+    // valid insertion-point hint for the new entry as long as the replacement's
+    // key still sorts just ahead of the erased position; this holds for the
+    // small shifts that `createCopyWithAdjustedStartTime` produces. A wrong
+    // hint is merely a performance regression, not a correctness issue.
+    // The replacement carries the same payload as the original, so the total
+    // size is unchanged.
+    ASSERT(original.sizeInBytes() == replacement->sizeInBytes());
+    ASSERT(original.trackID() == replacement->trackID());
+
+    MediaTime originalPts = original.presentationTime();
+    auto originalDecodeKey = DecodeOrderSampleMap::KeyType(original.decodeTime(), originalPts);
+    MediaTime replacementPts = replacement->presentationTime();
+    auto replacementDecodeKey = DecodeOrderSampleMap::KeyType(replacement->decodeTime(), replacementPts);
+
+    auto& presentationSamples = presentationOrder().m_samples;
+    if (auto pIt = presentationSamples.find(originalPts); pIt != presentationSamples.end()) {
+        auto hint = presentationSamples.erase(pIt);
+        presentationSamples.insert(hint, { replacementPts, replacement.copyRef() });
+    }
+
+    auto& decodeSamples = decodeOrder().m_samples;
+    if (auto dIt = decodeSamples.find(originalDecodeKey); dIt != decodeSamples.end()) {
+        auto hint = decodeSamples.erase(dIt);
+        decodeSamples.insert(hint, { replacementDecodeKey, WTF::move(replacement) });
+    }
 }
 
 PresentationOrderSampleMap::iterator PresentationOrderSampleMap::findSampleWithPresentationTime(const MediaTime& time) LIFETIME_BOUND
@@ -240,7 +273,7 @@ DecodeOrderSampleMap::reverse_iterator DecodeOrderSampleMap::findSyncSamplePrior
     reverse_iterator foundSample = findSyncSamplePriorToDecodeIterator(reverseCurrentSampleDTS);
     if (foundSample == rend())
         return rend();
-    if (Ref { foundSample->second }->presentationTime() < time - threshold)
+    if (protect(foundSample->second)->presentationTime() < time - threshold)
         return rend();
     return foundSample;
 }
@@ -263,7 +296,7 @@ DecodeOrderSampleMap::iterator DecodeOrderSampleMap::findSyncSampleAfterPresenta
     iterator foundSample = std::find_if(currentSampleDTS, end(), SampleIsRandomAccess());
     if (foundSample == end())
         return end();
-    if (Ref { foundSample->second }->presentationTime() > upperBound)
+    if (protect(foundSample->second)->presentationTime() > upperBound)
         return end();
     return foundSample;
 }
@@ -291,6 +324,9 @@ DecodeOrderSampleMap::iterator DecodeOrderSampleMap::findSyncSampleAfterDecodeIt
 
 PresentationOrderSampleMap::iterator_range PresentationOrderSampleMap::findSamplesBetweenPresentationTimes(const MediaTime& beginTime, const MediaTime& endTime) LIFETIME_BOUND
 {
+    if (endTime <= beginTime)
+        return { end(), end() };
+
     // startTime is inclusive, so use lower_bound to include samples wich start exactly at startTime.
     // endTime is not inclusive, so use lower_bound to exclude samples which start exactly at endTime.
     auto lower_bound = m_samples.lower_bound(beginTime);
@@ -302,6 +338,9 @@ PresentationOrderSampleMap::iterator_range PresentationOrderSampleMap::findSampl
 
 PresentationOrderSampleMap::iterator_range PresentationOrderSampleMap::findSamplesBetweenPresentationTimesFromEnd(const MediaTime& beginTime, const MediaTime& endTime) LIFETIME_BOUND
 {
+    if (endTime <= beginTime)
+        return { end(), end() };
+
     reverse_iterator rangeEnd = std::find_if(rbegin(), rend(), [&endTime](const auto& value) {
         return value.first < endTime;
     });

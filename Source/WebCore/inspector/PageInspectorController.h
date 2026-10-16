@@ -33,10 +33,14 @@
 
 #include <JavaScriptCore/InspectorAgentRegistry.h>
 #include <JavaScriptCore/InspectorEnvironment.h>
+#include <WebCore/DebuggerPauseSessionIdentifier.h>
+#include <WebCore/InspectorBackendClient.h>
+#include <WebCore/InspectorFrontendClient.h>
 #include <WebCore/InspectorOverlay.h>
 #include <wtf/CheckedRef.h>
 #include <wtf/Forward.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/Ref.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakRef.h>
 #include <wtf/text/WTFString.h>
@@ -45,16 +49,16 @@ namespace Inspector {
 class BackendDispatcher;
 class FrontendChannel;
 class FrontendRouter;
+class IdentifierRegistry;
 class InspectorAgent;
 }
 
 namespace WebCore {
 
 class DOMWrapperWorld;
+class DebuggerSuspensionController;
 class GraphicsContext;
-class InspectorBackendClient;
 class InspectorDOMAgent;
-class InspectorFrontendClient;
 class InspectorInstrumentation;
 class InspectorPageAgent;
 class InstrumentingAgents;
@@ -65,7 +69,7 @@ class PageDebugger;
 class WebInjectedScriptManager;
 struct PageAgentContext;
 
-class PageInspectorController final : public Inspector::InspectorEnvironment, public CanMakeCheckedPtr<PageInspectorController> {
+class PageInspectorController final : public Inspector::InspectorEnvironment, public InspectorOverlayOwner, public CanMakeCheckedPtr<PageInspectorController> {
     WTF_MAKE_NONCOPYABLE(PageInspectorController);
     WTF_MAKE_TZONE_ALLOCATED(PageInspectorController);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(PageInspectorController);
@@ -73,25 +77,26 @@ public:
     PageInspectorController(Page&, std::unique_ptr<InspectorBackendClient>&&);
     ~PageInspectorController() override;
 
-    // AbstractCanMakeCheckedPtr overrides
-    uint32_t checkedPtrCount() const final { return CanMakeCheckedPtr::checkedPtrCount(); }
-    uint32_t checkedPtrCountWithoutThreadCheck() const final { return CanMakeCheckedPtr::checkedPtrCountWithoutThreadCheck(); }
-    void incrementCheckedPtrCount() const final { CanMakeCheckedPtr::incrementCheckedPtrCount(); }
-    void decrementCheckedPtrCount() const final { CanMakeCheckedPtr::decrementCheckedPtrCount(); }
-    void setDidBeginCheckedPtrDeletion() final { CanMakeCheckedPtr::setDidBeginCheckedPtrDeletion(); }
+    OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeCheckedPtr);
 
-    WEBCORE_EXPORT void ref() const;
+    WEBCORE_EXPORT void LEGACY_NODELETE ref() const;
     WEBCORE_EXPORT void deref() const;
+
+    // InspectorOverlayOwner. Reports no frame, so the overlay uses the local main frame as before.
+    void LEGACY_NODELETE overlayOwnerRef() const final { ref(); }
+    void overlayOwnerDeref() const final { deref(); }
+    Page* LEGACY_NODELETE overlayOwnerPage() const final;
+    InspectorBackendClient* LEGACY_NODELETE overlayOwnerBackendClient() const final { return m_inspectorBackendClient.get(); }
+    Vector<size_t> overlayOwnerFlexLineStarts(const RenderObject&) const final;
 
     void inspectedPageDestroyed();
 
     WEBCORE_EXPORT bool enabled() const;
-    Page& inspectedPage() const;
-    Ref<Page> protectedInspectedPage() const;
+    Page& LEGACY_NODELETE inspectedPage() const;
 
     WEBCORE_EXPORT void show();
 
-    WEBCORE_EXPORT void setInspectorFrontendClient(InspectorFrontendClient*);
+    WEBCORE_EXPORT void LEGACY_NODELETE setInspectorFrontendClient(InspectorFrontendClient*);
     unsigned inspectionLevel() const;
     void didClearWindowObjectInWorld(LocalFrame&, DOMWrapperWorld&);
 
@@ -104,12 +109,15 @@ public:
     WEBCORE_EXPORT void disconnectFrontend(Inspector::FrontendChannel&);
     WEBCORE_EXPORT void disconnectAllFrontends();
 
+    WEBCORE_EXPORT void connectRemoteInstrumentation();
+    WEBCORE_EXPORT void disconnectRemoteInstrumentation();
+
     void inspect(Node*);
-    WEBCORE_EXPORT bool shouldShowOverlay() const;
+    WEBCORE_EXPORT bool LEGACY_NODELETE shouldShowOverlay() const;
     WEBCORE_EXPORT void drawHighlight(GraphicsContext&) const;
     WEBCORE_EXPORT void getHighlight(InspectorOverlay::Highlight&, InspectorOverlay::CoordinateSystem) const;
     void hideHighlight();
-    Node* highlightedNode() const;
+    Node* LEGACY_NODELETE highlightedNode() const;
 
     WEBCORE_EXPORT void setIndicating(bool);
 
@@ -120,20 +128,27 @@ public:
     bool isUnderTest() const { return m_isUnderTest; }
     void setIsUnderTest(bool isUnderTest) { m_isUnderTest = isUnderTest; }
     WEBCORE_EXPORT void evaluateForTestInFrontend(const String& script);
-    WEBCORE_EXPORT unsigned gridOverlayCount() const;
-    WEBCORE_EXPORT unsigned flexOverlayCount() const;
+    WEBCORE_EXPORT unsigned LEGACY_NODELETE gridOverlayCount() const;
+    WEBCORE_EXPORT unsigned LEGACY_NODELETE flexOverlayCount() const;
     WEBCORE_EXPORT unsigned paintRectCount() const;
 
-    InspectorBackendClient* inspectorBackendClient() const { return m_inspectorBackendClient.get(); }
+    InspectorBackendClient* inspectorBackendClient() const LIFETIME_BOUND { return m_inspectorBackendClient.get(); }
     InspectorFrontendClient* inspectorFrontendClient() const { return m_inspectorFrontendClient; }
 
     InstrumentingAgents& instrumentingAgents() const { return m_instrumentingAgents.get(); }
+    Inspector::FrontendRouter& frontendRouter() const { return m_frontendRouter.get(); }
     Inspector::BackendDispatcher& backendDispatcher() const { return m_backendDispatcher.get(); }
     WebInjectedScriptManager& injectedScriptManager() const { return m_injectedScriptManager.get(); }
+    DebuggerSuspensionController& debuggerSuspensionController() const { return m_debuggerSuspensionController.get(); }
+    WEBCORE_EXPORT void suspendForDebuggerSession(DebuggerPauseSessionIdentifier);
+    WEBCORE_EXPORT void resumeFromDebuggerSession(DebuggerPauseSessionIdentifier);
 
     Inspector::InspectorAgent& ensureInspectorAgent();
     InspectorDOMAgent& ensureDOMAgent();
     WEBCORE_EXPORT InspectorPageAgent& ensurePageAgent();
+
+    Inspector::IdentifierRegistry& identifierRegistry() const { return m_identifierRegistry.get(); }
+    WEBCORE_EXPORT void siteIsolationFirstEnabled();
 
     // InspectorEnvironment
     bool developerExtrasEnabled() const override;
@@ -141,8 +156,9 @@ public:
     Inspector::InspectorFunctionCallHandler functionCallHandler() const override;
     Inspector::InspectorEvaluateHandler evaluateHandler() const override;
     void frontendInitialized() override;
-    WTF::Stopwatch& executionStopwatch() const final;
+    WEBCORE_EXPORT WTF::Stopwatch& LEGACY_NODELETE executionStopwatch() const final;
     JSC::Debugger* debugger() override;
+    void forEachDebugger(NOESCAPE const WTF::Function<void(JSC::Debugger&)>&) override;
     JSC::VM& vm() override;
 
 private:
@@ -159,9 +175,11 @@ private:
     const UniqueRef<InspectorOverlay> m_overlay;
     const Ref<WTF::Stopwatch> m_executionStopwatch;
     std::unique_ptr<PageDebugger> m_debugger;
+    const UniqueRef<DebuggerSuspensionController> m_debuggerSuspensionController;
     Inspector::AgentRegistry m_agents;
 
     std::unique_ptr<InspectorBackendClient> m_inspectorBackendClient;
+    Ref<Inspector::IdentifierRegistry> m_identifierRegistry;
     InspectorFrontendClient* m_inspectorFrontendClient { nullptr };
 
     // Lazy, but also on-demand agents.

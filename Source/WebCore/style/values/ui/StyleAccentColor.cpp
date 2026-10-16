@@ -27,20 +27,25 @@
 #include "StyleAccentColor.h"
 
 #include "AnimationUtilities.h"
+#include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
 namespace Style {
 
-const Color& AccentColor::colorOrCurrentColor() const
+const Color& AccentColor::colorOrDefaultColor() const
 {
     if (m_value)
         return *m_value;
-    return Color::currentColor();
+
+    // Get the default accent color, which is a constant regardless of StyleColorOptions.
+    // Hence the StyleColorOptions can be a default empty one.
+    static NeverDestroyed<Style::Color> defaultColor { CSS::colorFromKeyword(CSSValueID::Accentcolor, { }) };
+    return defaultColor;
 }
 
 // MARK: - Blending
 
-auto Blending<AccentColor>::equals(const AccentColor& a, const AccentColor& b, const RenderStyle& aStyle, const RenderStyle& bStyle) -> bool
+auto Blending<AccentColor>::equals(const AccentColor& a, const AccentColor& b, const Style::ComputedStyle& aStyle, const Style::ComputedStyle& bStyle) -> bool
 {
     bool aAuto = a.isAuto();
     bool bAuto = b.isAuto();
@@ -56,7 +61,7 @@ auto Blending<AccentColor>::canBlend(const AccentColor& a, const AccentColor& b)
     return !a.isAuto() && !b.isAuto() && Style::canBlend(*a.tryColor(), *b.tryColor());
 }
 
-auto Blending<AccentColor>::blend(const AccentColor& a, const AccentColor& b, const RenderStyle& aStyle, const RenderStyle& bStyle, const BlendingContext& context) -> AccentColor
+auto Blending<AccentColor>::blend(const AccentColor& a, const AccentColor& b, const Style::ComputedStyle& aStyle, const Style::ComputedStyle& bStyle, const BlendingContext& context) -> AccentColor
 {
     if (context.isDiscrete) {
         ASSERT(!context.progress || context.progress == 1);

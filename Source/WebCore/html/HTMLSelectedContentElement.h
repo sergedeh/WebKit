@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2025-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,18 +25,34 @@
 
 #pragma once
 
-#include <WebCore/HTMLElement.h>
+#include "HTMLElement.h"
 
 namespace WebCore {
 
-class HTMLSelectedContentElement : public HTMLElement {
+class HTMLSelectElement;
+
+class HTMLSelectedContentElement final : public HTMLElement {
     WTF_MAKE_TZONE_ALLOCATED(HTMLSelectedContentElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(HTMLSelectedContentElement);
 public:
     static Ref<HTMLSelectedContentElement> create(const QualifiedName&, Document&);
 
+    bool isDisabled() const { return m_isDisabled; }
+    void updateClonedOptionSelectedStates();
+
 private:
-    HTMLSelectedContentElement(Document&);
+    HTMLSelectedContentElement(const QualifiedName&, Document&);
+
+    NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode&) final;
+    void postConnectionSteps() final;
+    void removingSteps(RemovalType, ContainerNode&) final;
+    void movingSteps(MovingType, ContainerNode&) final;
+    void childrenChanged(const ChildChange&) final;
+
+    RefPtr<HTMLSelectElement> recalculateDisabledness();
+
+    bool m_isDisabled { false };
+    WeakPtr<HTMLSelectElement, WeakPtrImplWithEventTargetData> m_owningSelect;
 };
 
 } // namespace WebCore

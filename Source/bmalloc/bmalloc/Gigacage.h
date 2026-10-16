@@ -34,9 +34,7 @@
 #include "BPlatform.h"
 #include "GigacageConfig.h"
 #include "Sizes.h"
-#include <bit>
 #include <cstddef>
-#include <inttypes.h>
 
 #if BOS(DARWIN)
 #include <mach/vm_param.h>
@@ -62,9 +60,17 @@ constexpr bool hasCapacityToUseLargeGigacage = false;
 constexpr bool hasCapacityToUseLargeGigacage = true;
 #endif
 
+// How much address space this process will hand out for Primitive allocations in total. Where there
+// is a Gigacage this is the size of the cage; where there is not, the same figure still tracks what
+// the platform can spare, so clients that must bound a reservation can use it either way. It exceeds
+// what size_t can hold where size_t is 32 bits, hence uint64_t.
+constexpr uint64_t primitiveAddressSpaceBudget = (hasCapacityToUseLargeGigacage ? 64 : 16) * static_cast<uint64_t>(bmalloc::Sizes::GB);
+
 #if GIGACAGE_ENABLED
 
-constexpr size_t primitiveGigacageSize = (hasCapacityToUseLargeGigacage ? 64 : 16) * bmalloc::Sizes::GB;
+// A cage is a real mapping, so it only exists on a platform whose size_t can address the whole budget.
+static_assert(primitiveAddressSpaceBudget == static_cast<size_t>(primitiveAddressSpaceBudget));
+constexpr size_t primitiveGigacageSize = static_cast<size_t>(primitiveAddressSpaceBudget);
 constexpr size_t maximumCageSizeReductionForSlide = hasCapacityToUseLargeGigacage ? 4 * bmalloc::Sizes::GB : bmalloc::Sizes::GB / 4;
 
 
@@ -88,6 +94,8 @@ constexpr size_t primitiveGigacageMask = gigacageSizeToMask(primitiveGigacageSiz
 constexpr ptrdiff_t offsetOfPrimitiveGigacageBasePtr = static_cast<ptrdiff_t>(Primitive) * sizeof(void*);
 
 extern "C" BEXPORT bool disablePrimitiveGigacageRequested;
+
+BALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 BINLINE bool isEnabled() { return g_gigacageConfig.isEnabled; }
 
@@ -126,10 +134,8 @@ BINLINE void* basePtr(Kind kind)
 
 BINLINE void* addressOfBasePtr(Kind kind)
 {
-BALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     RELEASE_BASSERT(kind < NumberOfKinds);
     return &g_gigacageConfig.basePtrs[static_cast<size_t>(kind)];
-BALLOW_UNSAFE_BUFFER_USAGE_END
 }
 
 BINLINE constexpr size_t maxSize(Kind kind)
@@ -195,6 +201,8 @@ BINLINE bool contains(const void* ptr)
     auto* p = reinterpret_cast<const uint8_t*>(ptr);
     return static_cast<size_t>(p - start) < g_gigacageConfig.totalSize;
 }
+
+BALLOW_UNSAFE_BUFFER_USAGE_END
 
 BEXPORT bool shouldBeEnabled();
 

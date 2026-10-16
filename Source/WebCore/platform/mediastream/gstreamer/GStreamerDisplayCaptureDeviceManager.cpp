@@ -39,9 +39,7 @@ GStreamerDisplayCaptureDeviceManager& GStreamerDisplayCaptureDeviceManager::sing
     return manager;
 }
 
-GStreamerDisplayCaptureDeviceManager::GStreamerDisplayCaptureDeviceManager()
-{
-}
+GStreamerDisplayCaptureDeviceManager::GStreamerDisplayCaptureDeviceManager() = default;
 
 GStreamerDisplayCaptureDeviceManager::~GStreamerDisplayCaptureDeviceManager()
 {
@@ -99,7 +97,7 @@ CaptureSourceOrError GStreamerDisplayCaptureDeviceManager::createDisplayCaptureS
     GUniqueOutPtr<char> objectPathChars;
     g_variant_get(result.get(), "(o)", &objectPathChars.outPtr());
     auto objectPath = GMallocString::unsafeAdoptFromUTF8(WTF::move(objectPathChars));
-    m_portal->waitResponseSignal(toCStringView(objectPath));
+    m_portal->waitResponseSignal(toUTF8CStringView(objectPath));
 
     result = session->start();
     if (!result)
@@ -108,7 +106,7 @@ CaptureSourceOrError GStreamerDisplayCaptureDeviceManager::createDisplayCaptureS
     std::optional<uint32_t> nodeId;
     g_variant_get(result.get(), "(o)", &objectPathChars.outPtr());
     objectPath = GMallocString::unsafeAdoptFromUTF8(WTF::move(objectPathChars));
-    m_portal->waitResponseSignal(toCStringView(objectPath), [&nodeId](GVariant* parameters) mutable {
+    m_portal->waitResponseSignal(toUTF8CStringView(objectPath), [&nodeId](GVariant* parameters) mutable {
         uint32_t portalResponse;
         GRefPtr<GVariant> responseData;
         g_variant_get(parameters, "(u@a{sv})", &portalResponse, &responseData.outPtr());
@@ -121,7 +119,7 @@ CaptureSourceOrError GStreamerDisplayCaptureDeviceManager::createDisplayCaptureS
         // The portal interface allows multiple streams but we care only about the first one.
         GUniqueOutPtr<GVariantIter> iter;
         if (g_variant_lookup(responseData.get(), "streams", "a(ua{sv})", &iter.outPtr())) {
-            auto variant = adoptGRef(g_variant_iter_next_value(iter.get()));
+            GRefPtr variant = adoptGRef(g_variant_iter_next_value(iter.get()));
             if (!variant) {
                 WTFLogAlways("Stream list is empty");
                 return;

@@ -51,23 +51,23 @@ bool isDelimiter(char16_t c)
         || c == '}' || c == '"';
 }
 
-static bool isVisibleCharacter(char16_t c)
+static bool LEGACY_NODELETE isVisibleCharacter(char16_t c)
 {
     return isTokenCharacter(c) || isDelimiter(c);
 }
 
 template<size_t min, size_t max>
-static bool isInRange(char16_t c)
+static bool LEGACY_NODELETE isInRange(char16_t c)
 {
     return c >= min && c <= max;
 }
 
-static bool isOBSText(char16_t c)
+static bool LEGACY_NODELETE isOBSText(char16_t c)
 {
     return isInRange<0x80, 0xFF>(c);
 }
 
-static bool isQuotedTextCharacter(char16_t c)
+static bool LEGACY_NODELETE isQuotedTextCharacter(char16_t c)
 {
     return isTabOrSpace(c)
         || c == 0x21
@@ -103,6 +103,7 @@ bool isValidName(StringView name)
     return true;
 }
 
+// See RFC 7230, Section 3.2 and Section 3.2.6.
 bool isValidValue(StringView value)
 {
     enum class State {
@@ -141,6 +142,8 @@ bool isValidValue(StringView value)
         case State::Token:
             if (isTokenCharacter(c))
                 continue;
+            if (!isTabOrSpace(c) && !isVisibleCharacter(c) && !isOBSText(c))
+                return false;
             state = State::OptionalWhitespace;
             continue;
         case State::QuotedString:

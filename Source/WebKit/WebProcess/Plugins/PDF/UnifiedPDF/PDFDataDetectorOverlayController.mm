@@ -41,6 +41,7 @@
 #include <WebCore/Page.h>
 #include <pal/spi/cocoa/DataDetectorsCoreSPI.h>
 #include <pal/spi/mac/DataDetectorsSPI.h>
+#include <wtf/Borrow.h>
 #include <wtf/IteratorRange.h>
 #include <wtf/OptionSet.h>
 #include <wtf/RefPtr.h>
@@ -71,18 +72,13 @@ PDFDataDetectorOverlayController::PDFDataDetectorOverlayController(UnifiedPDFPlu
 
 PDFDataDetectorOverlayController::~PDFDataDetectorOverlayController() = default;
 
-RefPtr<UnifiedPDFPlugin> PDFDataDetectorOverlayController::protectedPlugin() const
-{
-    return m_plugin.get();
-}
-
 Ref<PageOverlay> PDFDataDetectorOverlayController::installProtectedOverlayIfNeeded()
 {
     if (m_overlay)
         return *m_overlay;
 
     m_overlay = PageOverlay::create(*this, PageOverlay::OverlayType::Document);
-    protectedPlugin()->installDataDetectorOverlay(Ref { *m_overlay });
+    protect(m_plugin)->installDataDetectorOverlay(Ref { *m_overlay });
 
     return *m_overlay;
 }
@@ -117,7 +113,7 @@ static RetainPtr<DDHighlightRef> createPlatformDataDetectorHighlight(Vector<Floa
     BOOL drawFlipped = YES;
     float targetSurfaceBackingScaleFactor = 0;
 
-    return adoptCF(PAL::softLink_DataDetectors_DDHighlightCreateWithRectsInVisibleRectWithStyleScaleAndDirection(nullptr, highlightBoundsCG.mutableSpan().data(), highlightBounds.size(), visibleContentRect, style, drawButton, writingDirection, endsWithEOL, drawFlipped, targetSurfaceBackingScaleFactor));
+    return adoptCF(PAL::softLink_DataDetectors_DDHighlightCreateWithRectsInVisibleRectWithStyleScaleAndDirection(nullptr, borrow(highlightBoundsCG)->mutableSpan().data(), highlightBounds.size(), visibleContentRect, style, drawButton, writingDirection, endsWithEOL, drawFlipped, targetSurfaceBackingScaleFactor));
 }
 
 RetainPtr<DDHighlightRef> PDFDataDetectorOverlayController::createPlatformDataDetectorHighlight(PDFDataDetectorItem& dataDetectorItem) const
@@ -126,16 +122,16 @@ RetainPtr<DDHighlightRef> PDFDataDetectorOverlayController::createPlatformDataDe
     if (!plugin)
         return { };
 
-    RefPtr mainFrameView = plugin->mainFrameView();
-    if (!mainFrameView)
+    RefPtr rootView { plugin->rootView() };
+    if (!rootView)
         return { };
 
-    auto rectForSelectionInMainFrameContentsSpace = plugin->rectForSelectionInMainFrameContentsSpace(dataDetectorItem.selection().get());
+    auto rectForSelectionInRootViewContentsSpace { plugin->rectForSelectionInRootViewContentsSpace(dataDetectorItem.selection().get()) };
 
-    return ::WebKit::createPlatformDataDetectorHighlight(Vector<FloatRect>::from(WTF::move(rectForSelectionInMainFrameContentsSpace)), mainFrameView->visibleContentRect());
+    return ::WebKit::createPlatformDataDetectorHighlight(Vector<FloatRect>::from(WTF::move(rectForSelectionInRootViewContentsSpace)), rootView->visibleContentRect());
 }
 
-bool PDFDataDetectorOverlayController::handleMouseEvent(const WebMouseEvent& event, PDFDocumentLayout::PageIndex pageIndex)
+bool PDFDataDetectorOverlayController::handleMouseEvent(const WebCore::PlatformMouseEvent& event, PDFDocumentLayout::PageIndex pageIndex)
 {
     RefPtr plugin = m_plugin.get();
     if (!plugin)
@@ -144,8 +140,8 @@ bool PDFDataDetectorOverlayController::handleMouseEvent(const WebMouseEvent& eve
     if (plugin->isLocked())
         return false;
 
-    RefPtr mainFrameView = plugin->mainFrameView();
-    if (!mainFrameView)
+    RefPtr rootView { plugin->rootView() };
+    if (!rootView)
         return false;
 
     if (!PAL::isDataDetectorsFrameworkAvailable())
@@ -154,15 +150,15 @@ bool PDFDataDetectorOverlayController::handleMouseEvent(const WebMouseEvent& eve
     updateDataDetectorHighlightsIfNeeded(pageIndex);
 
     auto mousePositionInWindowSpace = event.position();
-    auto mousePositionInMainFrameContentsSpace = mainFrameView->windowToContents(mousePositionInWindowSpace);
+    auto mousePositionInRootViewContentsSpace { rootView->windowToContents(mousePositionInWindowSpace) };
     bool mouseIsOverActiveHighlightButton = false;
     m_staleDataDetectorItemWithHighlight = std::exchange(m_activeDataDetectorItemWithHighlight, { { }, { } });
     RefPtr<PDFDataDetectorItem> dataDetectorItemForActiveHighlight;
 
     if (auto iterator = m_pdfDataDetectorItemsWithHighlightsMap.find(pageIndex); iterator != m_pdfDataDetectorItemsWithHighlightsMap.end()) {
-        for (auto& [dataDetectorItem, coreHighlight] : iterator->value) {
+        for (auto& [dataDetectorItem, coreHighlight] : borrow(iterator->value)) {
             Boolean isOverButton = NO;
-            if (!PAL::softLink_DataDetectors_DDHighlightPointIsOnHighlight(coreHighlight->protectedHighlight().get(), mousePositionInMainFrameContentsSpace, &isOverButton))
+            if (!PAL::softLink_DataDetectors_DDHighlightPointIsOnHighlight(protect(coreHighlight->highlight()).get(), mousePositionInRootViewContentsSpace, &isOverButton))
                 continue;
 
             mouseIsOverActiveHighlightButton = isOverButton;
@@ -180,14 +176,14 @@ bool PDFDataDetectorOverlayController::handleMouseEvent(const WebMouseEvent& eve
             previousActiveHighlight->fadeOut();
 
         if (activeHighlight) {
-            installProtectedOverlayIfNeeded()->protectedLayer()->addChild(activeHighlight->layer());
+            protect(installProtectedOverlayIfNeeded()->layer())->addChild(activeHighlight->layer());
             activeHighlight->fadeIn();
         }
 
         didInvalidateHighlightOverlayRects(pageIndex, ShouldUpdatePlatformHighlightData::No, ActiveHighlightChanged::Yes);
     }
 
-    if (event.type() == WebEventType::MouseDown && mouseIsOverActiveHighlightButton)
+    if (event.type() == WebCore::PlatformEventType::MousePressed && mouseIsOverActiveHighlightButton)
         return handleDataDetectorAction(flooredIntPoint(mousePositionInWindowSpace), Ref { *m_activeDataDetectorItemWithHighlight.first });
 
     return false;
@@ -199,13 +195,13 @@ bool PDFDataDetectorOverlayController::handleDataDetectorAction(const IntPoint& 
     if (!plugin)
         return false;
 
-    RefPtr mainFrameView = plugin->mainFrameView();
-    if (!mainFrameView)
+    if (!plugin->rootView())
         return false;
 
-    auto rectForSelectionInMainFrameContentsSpace = roundedIntRect(plugin->rectForSelectionInMainFrameContentsSpace(dataDetectorItem.selection().get()));
+    auto rectForSelectionInMainFrameView { roundedIntRect(plugin->convertFromRootViewToMainFrameView(plugin->rectForSelectionInRootView(dataDetectorItem.selection().get()))) };
+    auto clickPointInMainFrameView { roundedIntPoint(plugin->convertFromRootViewToMainFrameView(FloatPoint { mousePositionInWindowSpace })) };
 
-    plugin->handleClickForDataDetectionResult({ dataDetectorItem.scannerResult(), mainFrameView->contentsToWindow(rectForSelectionInMainFrameContentsSpace) }, mousePositionInWindowSpace);
+    plugin->handleClickForDataDetectionResult({ dataDetectorItem.scannerResult(), rectForSelectionInMainFrameView }, clickPointInMainFrameView);
     return true;
 }
 

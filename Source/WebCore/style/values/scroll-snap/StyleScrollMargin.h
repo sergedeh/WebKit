@@ -38,7 +38,7 @@ namespace Style {
 // <'scroll-margin-*'> = <length>
 // https://drafts.csswg.org/css-scroll-snap-1/#margin-longhands-physical
 struct ScrollMarginEdge {
-    using Fixed = Length<CSS::AllUnzoomed>;
+    using Fixed = Length<>;
 
     ScrollMarginEdge(Fixed&& fixed) : m_value(fixed) { }
     ScrollMarginEdge(const Fixed& fixed) : m_value(fixed) { }
@@ -49,7 +49,7 @@ struct ScrollMarginEdge {
     ALWAYS_INLINE bool isPositive() const { return m_value.isPositive(); }
     ALWAYS_INLINE bool isNegative() const { return m_value.isNegative(); }
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
@@ -71,22 +71,22 @@ using ScrollMarginBox = MinimallySerializingSpaceSeparatedRectEdges<ScrollMargin
 
 // MARK: - Conversion
 
-template<> struct CSSValueConversion<ScrollMarginEdge> { auto operator()(BuilderState&, const CSSValue&) -> ScrollMarginEdge; };
+template<> struct CSSValueConversion<ScrollMarginEdge> { ScrollMarginEdge operator()(BuilderState&, const CSSValue&); };
 
 // MARK: - Evaluation
 
 template<> struct Evaluation<ScrollMarginEdge, LayoutUnit> {
-    auto operator()(const ScrollMarginEdge&, LayoutUnit referenceLength, ZoomFactor) -> LayoutUnit;
-    auto operator()(const ScrollMarginEdge&, ZoomFactor) -> LayoutUnit;
+    LayoutUnit LEGACY_NODELETE operator()(const ScrollMarginEdge&, LayoutUnit referenceLength, ZoomFactor);
+    LayoutUnit LEGACY_NODELETE operator()(const ScrollMarginEdge&, ZoomFactor);
 };
 template<> struct Evaluation<ScrollMarginEdge, float> {
-    auto operator()(const ScrollMarginEdge&, float referenceLength, ZoomFactor) -> float;
-    auto operator()(const ScrollMarginEdge&, ZoomFactor) -> float;
+    float LEGACY_NODELETE operator()(const ScrollMarginEdge&, float referenceLength, ZoomFactor);
+    float LEGACY_NODELETE operator()(const ScrollMarginEdge&, ZoomFactor);
 };
 
 // MARK: - Extent
 
-LayoutBoxExtent extentForRect(const ScrollMarginBox&, const LayoutRect&, ZoomFactor);
+LayoutBoxExtent LEGACY_NODELETE extentForRect(const ScrollMarginBox&, const LayoutRect&, ZoomFactor);
 
 } // namespace Style
 } // namespace WebCore

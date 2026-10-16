@@ -35,6 +35,7 @@
 #import "SharedBuffer.h"
 #import <objc/runtime.h>
 #import <pal/spi/cocoa/NEFilterSourceSPI.h>
+#import <wtf/BlockPtr.h>
 #import <wtf/CompletionHandler.h>
 #import <wtf/CrossThreadCopier.h>
 #import <wtf/RunLoop.h>
@@ -42,12 +43,14 @@
 #import <wtf/TZoneMallocInlines.h>
 #import <wtf/URL.h>
 #import <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
+#import <wtf/darwin/DispatchExtras.h>
 #import <wtf/threads/BinarySemaphore.h>
 
-static inline NSData *replacementDataFromDecisionInfo(NSDictionary *decisionInfo)
+static inline RetainPtr<NSData> replacementDataFromDecisionInfo(NSDictionary *decisionInfo)
 {
     ASSERT_WITH_SECURITY_IMPLICATION(!decisionInfo || [decisionInfo isKindOfClass:[NSDictionary class]]);
-    return decisionInfo[NEFilterSourceOptionsPageData];
+    return dynamic_objc_cast<NSData>(decisionInfo[NEFilterSourceOptionsPageData]);
 }
 
 namespace WebCore {
@@ -68,7 +71,7 @@ void NetworkExtensionContentFilter::initialize(const URL* url)
 {
     ASSERT(!m_queue);
     ASSERT(!m_neFilterSource);
-    m_queue = adoptOSObject(dispatch_queue_create("WebKit NetworkExtension Filtering", DISPATCH_QUEUE_SERIAL));
+    m_queue = adoptOSObject(dispatch_queue_create("WebKit NetworkExtension Filtering", serialQueueWithAutoreleasePoolAttrSingleton()));
     ASSERT_UNUSED(url, !url);
     m_neFilterSource = adoptNS([[NEFilterSource alloc] initWithDecisionQueue:m_queue.get()]);
     [m_neFilterSource setSourceAppIdentifier:applicationBundleIdentifier().createNSString().get()];
@@ -93,7 +96,7 @@ void NetworkExtensionContentFilter::willSendRequest(ResourceRequest& request, co
 
     BinarySemaphore semaphore;
     RetainPtr<NSString> modifiedRequestURLString;
-    [m_neFilterSource willSendRequest:request.protectedNSURLRequest(DoNotUpdateHTTPBody).get() decisionHandler:[this, &modifiedRequestURLString, &semaphore](NEFilterSourceStatus status, NSDictionary *decisionInfo) {
+    [m_neFilterSource willSendRequest:protect(request.nsURLRequest(DoNotUpdateHTTPBody)).get() decisionHandler:[this, protectedThis = Ref { *this }, &modifiedRequestURLString, &semaphore](NEFilterSourceStatus status, NSDictionary *decisionInfo) {
         modifiedRequestURLString = decisionInfo[NEFilterSourceOptionsRedirectURL];
         ASSERT(!modifiedRequestURLString || [modifiedRequestURLString isKindOfClass:[NSString class]]);
         handleDecision(status, replacementDataFromDecisionInfo(decisionInfo));
@@ -137,7 +140,7 @@ void NetworkExtensionContentFilter::willSendRequest(ResourceRequest&& request, c
         }
     }
 
-    RetainPtr nsRequest = request.protectedNSURLRequest(DoNotUpdateHTTPBody);
+    RetainPtr nsRequest = request.nsURLRequest(DoNotUpdateHTTPBody);
 
     auto blockPtr = makeBlockPtr([protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler)](NEFilterSourceStatus status, NSDictionary *decisionInfo) mutable {
         ASSERT(!RunLoop::isMain());
@@ -175,7 +178,7 @@ void NetworkExtensionContentFilter::responseReceived(const ResourceResponse& res
     }
 
     BinarySemaphore semaphore;
-    [m_neFilterSource receivedResponse:response.protectedNSURLResponse().get() decisionHandler:[this, &semaphore](NEFilterSourceStatus status, NSDictionary *decisionInfo) {
+    [m_neFilterSource receivedResponse:protect(response.nsURLResponse()).get() decisionHandler:[this, protectedThis = Ref { *this }, &semaphore](NEFilterSourceStatus status, NSDictionary *decisionInfo) {
         handleDecision(status, replacementDataFromDecisionInfo(decisionInfo));
         semaphore.signal();
     }];
@@ -191,7 +194,7 @@ void NetworkExtensionContentFilter::addData(const SharedBuffer& data)
     auto nsData = data.createNSData();
 
     BinarySemaphore semaphore;
-    [m_neFilterSource receivedData:nsData.get() decisionHandler:[this, &semaphore](NEFilterSourceStatus status, NSDictionary *decisionInfo) {
+    [m_neFilterSource receivedData:nsData.get() decisionHandler:[this, protectedThis = Ref { *this }, &semaphore](NEFilterSourceStatus status, NSDictionary *decisionInfo) {
         handleDecision(status, replacementDataFromDecisionInfo(decisionInfo));
         semaphore.signal();
     }];
@@ -205,7 +208,7 @@ void NetworkExtensionContentFilter::addData(const SharedBuffer& data)
 void NetworkExtensionContentFilter::finishedAddingData()
 {
     BinarySemaphore semaphore;
-    [m_neFilterSource finishedLoadingWithDecisionHandler:[this, &semaphore](NEFilterSourceStatus status, NSDictionary *decisionInfo) {
+    [m_neFilterSource finishedLoadingWithDecisionHandler:[this, protectedThis = Ref { *this }, &semaphore](NEFilterSourceStatus status, NSDictionary *decisionInfo) {
         handleDecision(status, replacementDataFromDecisionInfo(decisionInfo));
         semaphore.signal();
     }];
@@ -260,7 +263,7 @@ void NetworkExtensionContentFilter::handleDecision(NEFilterSourceStatus status, 
         m_replacementData = replacementData;
 #if !LOG_DISABLED
     if (!needsMoreData())
-        LOG(ContentFiltering, "NetworkExtensionContentFilter stopped buffering with status %zd and replacement data length %zu.\n", status, replacementData.length);
+        LOG(ContentFiltering, "NetworkExtensionContentFilter stopped buffering with status %zd and replacement data length %zu.\n", static_cast<ssize_t>(status), static_cast<size_t>(replacementData.length));
 #endif
 }
 

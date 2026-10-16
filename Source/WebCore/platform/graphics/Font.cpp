@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2005-2026 Apple Inc. All rights reserved.
  * Copyright (C) 2006 Alexey Proskuryakov
  *
  * Redistribution and use in source and binary forms, with or without
@@ -30,6 +30,8 @@
 #include "config.h"
 #include "Font.h"
 
+#include "FontInlines.h"
+
 #if PLATFORM(COCOA)
 #include <pal/spi/cf/CoreTextSPI.h>
 #endif
@@ -38,7 +40,9 @@
 #include "FontCache.h"
 #include "FontCascade.h"
 #include "FontCustomPlatformData.h"
+#include "GlyphPage.h"
 #include "SharedBuffer.h"
+
 #include <wtf/MathExtras.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -52,7 +56,12 @@
 
 namespace WebCore {
 
-unsigned GlyphPage::s_count = 0;
+std::atomic<unsigned> GlyphPage::s_count = 0;
+
+unsigned GlyphPage::count()
+{
+    return s_count.load(std::memory_order_relaxed);
+}
 
 const float smallCapsFontSizeMultiplier = 0.7f;
 const float emphasisMarkFontSizeMultiplier = 0.5f;
@@ -64,14 +73,14 @@ Ref<Font> Font::create(const FontPlatformData& platformData, Origin origin, IsIn
     return adoptRef(*new Font(platformData, origin, interstitial, visibility, orientationFallback, identifier));
 }
 
-Ref<Font> Font::create(Ref<SharedBuffer>&& fontFaceData, Font::Origin origin, float fontSize, bool syntheticBold, bool syntheticItalic, DownloadableBinaryFontTrustedTypes trustedType)
+Ref<Font> Font::create(Ref<SharedBuffer>&& fontFaceData, Font::Origin origin, float fontSize, bool, bool, DownloadableBinaryFontTrustedTypes trustedType)
 {
     bool wrapping;
     auto customFontData = CachedFont::createCustomFontData(fontFaceData.get(), { }, wrapping, trustedType);
     FontDescription description;
-    description.setComputedSize(fontSize);
+    description.setUsedSize(fontSize);
     // FIXME: Why doesn't this pass in any meaningful data for the last few arguments?
-    auto platformData = CachedFont::platformDataFromCustomData(*customFontData, description, syntheticBold, syntheticItalic, { });
+    auto platformData = CachedFont::platformDataFromCustomData(*customFontData, description, { });
     return Font::create(WTF::move(platformData), origin);
 }
 
@@ -81,27 +90,14 @@ Ref<Font> Font::create(FontInternalAttributes&& attributes, FontPlatformData&& p
 }
 
 Font::Font(const FontPlatformData& platformData, Origin origin, IsInterstitial interstitial, Visibility visibility, IsOrientationFallback orientationFallback, std::optional<RenderingResourceIdentifier> renderingResourceIdentifier)
-    : m_platformData(platformData)
-    , m_attributes({ renderingResourceIdentifier, origin, interstitial, visibility, orientationFallback })
-    , m_treatAsFixedPitch(false)
-    , m_isBrokenIdeographFallback(false)
-    , m_hasVerticalGlyphs(false)
-    , m_isUsedInSystemFallbackFontCache(false)
-    , m_allowsAntialiasing(true)
-#if PLATFORM(IOS_FAMILY)
-    , m_shouldNotBeUsedForArabic(false)
-#endif
+    : FontBase(platformData, origin, interstitial, visibility, orientationFallback, renderingResourceIdentifier)
 {
-    relaxAdoptionRequirement();
     platformInit();
     platformGlyphInit();
     platformCharWidthInit();
-#if ENABLE(OPENTYPE_VERTICAL)
-    if (platformData.orientation() == FontOrientation::Vertical && orientationFallback == IsOrientationFallback::No) {
-        m_verticalData = FontCache::forCurrentThread()->verticalData(platformData);
-        m_hasVerticalGlyphs = m_verticalData.get() && m_verticalData->hasVerticalMetrics();
-    }
-#endif
+    platformCharHeightInit();
+    platformVerticalDataInit();
+    applyFontMetricsOverrides();
 }
 
 Font::Font(IsSystemFallbackFontPlaceholder isSystemFontFallbackPlaceholder)
@@ -162,7 +158,7 @@ void Font::platformGlyphInit()
     if (RefPtr page = glyphPage(GlyphPage::pageNumberForCodePoint('0')))
         zeroGlyph = page->glyphDataForCharacter('0').glyph;
     if (zeroGlyph)
-        m_fontMetrics.setZeroWidth(widthForGlyph(zeroGlyph));
+        initZeroWidth(zeroGlyph);
 
     // Use the width of the CJK water ideogram (U+6C34) as the
     // approximated width of ideograms in the font, as mentioned in
@@ -175,29 +171,33 @@ void Font::platformGlyphInit()
     } else
         m_fontMetrics.setIdeogramWidth(platformData().size());
 
-    m_spaceWidth = widthForGlyph(m_spaceGlyph, SyntheticBoldInclusion::Exclude); // spaceWidth() handles adding in the synthetic bold.
+    m_spaceWidth = widthForGlyph(m_spaceGlyph);
     auto amountToAdjustLineGap = std::min(m_fontMetrics.lineGap(), 0.0f);
     m_fontMetrics.setLineGap(m_fontMetrics.lineGap() - amountToAdjustLineGap);
     m_fontMetrics.setLineSpacing(m_fontMetrics.lineSpacing() - amountToAdjustLineGap);
     determinePitch();
 }
 
+void Font::initZeroWidth(Glyph zeroGlyph)
+{
+#if ENABLE(OPENTYPE_VERTICAL)
+    // For upright vertical text the CSS 'ch' unit is the '0' glyph's vertical advance.
+    // Use the advance height from the fon't vertical metrics (vmtx) when present, otherwise fall back
+    // to the horizontal advance.
+    RefPtr<OpenTypeVerticalData> verticalData;
+    if (platformData().orientation() == FontOrientation::Vertical && !isTextOrientationFallback())
+        verticalData = FontCache::forCurrentThread().verticalData(platformData());
+    if (verticalData && verticalData->hasVerticalMetrics())
+        m_fontMetrics.setZeroWidth(verticalData->advanceHeight(this, zeroGlyph));
+    else
+#endif
+        m_fontMetrics.setZeroWidth(widthForGlyph(zeroGlyph));
+}
+
 Font::~Font()
 {
     if (auto* cache = SystemFallbackFontCache::forCurrentThreadIfExists())
         cache->remove(this);
-}
-
-RenderingResourceIdentifier Font::renderingResourceIdentifier() const
-{
-    return m_attributes.ensureRenderingResourceIdentifier();
-}
-
-RenderingResourceIdentifier FontInternalAttributes::ensureRenderingResourceIdentifier() const
-{
-    if (!renderingResourceIdentifier)
-        renderingResourceIdentifier = RenderingResourceIdentifier::generate();
-    return *renderingResourceIdentifier;
 }
 
 static bool fillGlyphPage(GlyphPage& pageToFill, std::span<const char16_t> buffer, const Font& font)
@@ -212,7 +212,7 @@ static bool fillGlyphPage(GlyphPage& pageToFill, std::span<const char16_t> buffe
     return hasGlyphs;
 }
 
-static std::optional<size_t> codePointSupportIndex(char32_t codePoint)
+static std::optional<size_t> LEGACY_NODELETE codePointSupportIndex(char32_t codePoint)
 {
     // FIXME: Consider reordering these so the most common ones are at the front.
     // Doing this could cause the BitVector to fit inside inline storage and therefore
@@ -288,7 +288,7 @@ static std::optional<size_t> codePointSupportIndex(char32_t codePoint)
     }
 
 #ifndef NDEBUG
-    auto codePointOrder = std::to_array<char32_t>({
+    auto codePointOrder = WTF::toArray<char32_t>({
         0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
         0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
         0x7F,
@@ -419,11 +419,9 @@ static RefPtr<GlyphPage> createAndFillGlyphPage(unsigned pageNumber, const Font&
 
 const GlyphPage* Font::glyphPage(unsigned pageNumber) const
 {
-    auto addResult = m_glyphPages.add(pageNumber, nullptr);
-    if (addResult.isNewEntry)
-        addResult.iterator->value = createAndFillGlyphPage(pageNumber, *this);
-
-    return addResult.iterator->value.get();
+    return m_glyphPages.ensure(pageNumber, [&] {
+        return createAndFillGlyphPage(pageNumber, *this);
+    }).iterator->value.get();
 }
 
 Glyph Font::glyphForCharacter(char32_t character) const
@@ -535,6 +533,10 @@ const Font& Font::brokenIdeographFont() const
 
 #if !USE(CORE_TEXT)
 
+void Font::platformCharHeightInit()
+{
+}
+
 bool Font::isProbablyOnlyUsedToRenderIcons() const
 {
     // FIXME: Not implemented yet.
@@ -550,20 +552,6 @@ String Font::description() const
         return "[custom font]"_s;
 
     return platformData().description();
-}
-#endif
-
-#if ENABLE(MATHML)
-const OpenTypeMathData* Font::mathData() const
-{
-    if (isInterstitial())
-        return nullptr;
-    if (!m_mathData) {
-        Ref mathData = OpenTypeMathData::create(m_platformData);
-        if (mathData->hasMathData())
-            m_mathData = WTF::move(mathData);
-    }
-    return m_mathData.get();
 }
 #endif
 
@@ -694,13 +682,13 @@ WTF::TextStream& operator<<(WTF::TextStream& ts, const GlyphBuffer& glyphBuffer)
     ts << ", initial advance: width:" <<  width(initialAdvance) << " height:" << height(initialAdvance);
     for (size_t index = 0; index < glyphBuffer.size(); ++index) {
         auto advance = glyphBuffer.advanceAt(index);
-        auto& font = glyphBuffer.fontAt(index);
+        Ref font = glyphBuffer.fontAt(index);
         auto glyph =  glyphBuffer.glyphAt(index);
-        auto bounds = font.boundsForGlyph(glyph);
+        auto bounds = font->boundsForGlyph(glyph);
         ts << "\n"_s;
         ts << "glyph index: " << index;
         ts << ", glyph: " << glyph;
-        ts << ", font: " <<  &font;
+        ts << ", font: " <<  font.ptr();
         ts << ", advance: width:" <<  width(advance) << " height:" << height(advance);
         ts << ", string index: "  << glyphBuffer.uncheckedStringOffsetAt(index);
         ts << ", origin: " << DoublePoint(glyphBuffer.originAt(index));

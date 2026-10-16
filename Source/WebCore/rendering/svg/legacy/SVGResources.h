@@ -36,8 +36,11 @@ class Document;
 class LegacyRenderSVGResourceContainer;
 class RenderElement;
 class RenderObject;
-class RenderStyle;
 class LegacyRenderSVGRoot;
+
+namespace Style {
+class ComputedStyle;
+}
 
 // Holds a set of resources associated with a RenderObject
 class SVGResources {
@@ -46,7 +49,7 @@ class SVGResources {
 public:
     SVGResources();
 
-    static std::unique_ptr<SVGResources> buildCachedResources(const RenderElement&, const RenderStyle&);
+    static std::unique_ptr<SVGResources> buildCachedResources(const RenderElement&, const Style::ComputedStyle&);
     void layoutDifferentRootIfNeeded(const RenderElement& resourcesClient);
 
     bool markerReverseStart() const;
@@ -82,15 +85,15 @@ private:
     friend class SVGResourcesCycleSolver;
 
     // Only used by SVGResourcesCache cycle detection logic
-    void resetClipper();
-    void resetFilter();
-    void resetMarkerStart();
-    void resetMarkerMid();
-    void resetMarkerEnd();
-    void resetMasker();
-    void resetFill();
-    void resetStroke();
-    void resetLinkedResource();
+    void LEGACY_NODELETE resetClipper();
+    void LEGACY_NODELETE resetFilter();
+    void LEGACY_NODELETE resetMarkerStart();
+    void LEGACY_NODELETE resetMarkerMid();
+    void LEGACY_NODELETE resetMarkerEnd();
+    void LEGACY_NODELETE resetMasker();
+    void LEGACY_NODELETE resetFill();
+    void LEGACY_NODELETE resetStroke();
+    void LEGACY_NODELETE resetLinkedResource();
 
 private:
     bool setClipper(LegacyRenderSVGResourceClipper*);
@@ -101,7 +104,7 @@ private:
     bool setMasker(LegacyRenderSVGResourceMasker*);
     bool setFill(LegacyRenderSVGResourceContainer*);
     bool setStroke(LegacyRenderSVGResourceContainer*);
-    bool setLinkedResource(LegacyRenderSVGResourceContainer*);
+    bool LEGACY_NODELETE setLinkedResource(LegacyRenderSVGResourceContainer*);
 
     bool isEmpty() const { return !m_clipperFilterMaskerData && !m_markerData && !m_fillStrokeData && !m_linkedResource; }
 
@@ -142,9 +145,9 @@ private:
         SingleThreadWeakPtr<LegacyRenderSVGResourceContainer> stroke;
     };
 
-    std::unique_ptr<ClipperFilterMaskerData> m_clipperFilterMaskerData;
-    std::unique_ptr<MarkerData> m_markerData;
-    std::unique_ptr<FillStrokeData> m_fillStrokeData;
+    const std::unique_ptr<ClipperFilterMaskerData> m_clipperFilterMaskerData;
+    const std::unique_ptr<MarkerData> m_markerData;
+    const std::unique_ptr<FillStrokeData> m_fillStrokeData;
     SingleThreadWeakPtr<LegacyRenderSVGResourceContainer> m_linkedResource;
     bool m_inLayoutForDifferentRoot { false };
 };

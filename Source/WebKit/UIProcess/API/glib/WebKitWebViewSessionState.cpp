@@ -22,6 +22,7 @@
 
 #include "WebKitWebViewSessionStatePrivate.h"
 #include <WebCore/BackForwardItemIdentifier.h>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/GRefPtr.h>
 #include <wtf/glib/GUniquePtr.h>
 
@@ -49,9 +50,10 @@ struct _WebKitWebViewSessionState {
 G_DEFINE_BOXED_TYPE(WebKitWebViewSessionState, webkit_web_view_session_state, webkit_web_view_session_state_ref, webkit_web_view_session_state_unref)
 
 // Version information:
+//  - Version 3: added navigated frame ID to backforward list items.
 //  - Version 2: removed backforward list item identifier since it's always regenerated.
 //  - Version 1: initial version.
-static const guint16 g_sessionStateVersion = 2;
+static const guint16 g_sessionStateVersion = 3;
 #define HTTP_BODY_ELEMENT_TYPE_STRING_V1 "(uaysxmxmds)"
 #define HTTP_BODY_ELEMENT_FORMAT_STRING_V1 "(uay&sxmxmd&s)"
 #define HTTP_BODY_TYPE_STRING_V1 "m(sa" HTTP_BODY_ELEMENT_TYPE_STRING_V1 ")"
@@ -60,10 +62,13 @@ static const guint16 g_sessionStateVersion = 2;
 #define FRAME_STATE_FORMAT_STRING_V1  "(&s&s&s&sasmayxx(ii)d@" HTTP_BODY_TYPE_STRING_V1 "av)"
 #define BACK_FORWARD_LIST_ITEM_TYPE_STRING_V1  "(ts" FRAME_STATE_TYPE_STRING_V1 "u)"
 #define BACK_FORWARD_LIST_ITEM_TYPE_STRING_V2  "(s" FRAME_STATE_TYPE_STRING_V1 "u)"
+#define BACK_FORWARD_LIST_ITEM_TYPE_STRING_V3  "(s" FRAME_STATE_TYPE_STRING_V1 "mtu)"
 #define BACK_FORWARD_LIST_ITEM_FORMAT_STRING_V1  "(t&s@" FRAME_STATE_TYPE_STRING_V1 "u)"
 #define BACK_FORWARD_LIST_ITEM_FORMAT_STRING_V2  "(&s@" FRAME_STATE_TYPE_STRING_V1 "u)"
+#define BACK_FORWARD_LIST_ITEM_FORMAT_STRING_V3  "(&s@" FRAME_STATE_TYPE_STRING_V1 "mtu)"
 #define SESSION_STATE_TYPE_STRING_V1 "(qa" BACK_FORWARD_LIST_ITEM_TYPE_STRING_V1 "mu)"
 #define SESSION_STATE_TYPE_STRING_V2 "(qa" BACK_FORWARD_LIST_ITEM_TYPE_STRING_V2 "mu)"
+#define SESSION_STATE_TYPE_STRING_V3 "(qa" BACK_FORWARD_LIST_ITEM_TYPE_STRING_V3 "mu)"
 
 static constexpr uint32_t maximumFrameStateTargetLength = 16 * 1024;
 
@@ -125,7 +130,7 @@ static inline unsigned toHTMLBodyElementType(size_t index)
 static inline void encodeHTTPBody(GVariantBuilder* sessionBuilder, const HTTPBody& httpBody)
 {
     g_variant_builder_open(sessionBuilder, G_VARIANT_TYPE("(sa" HTTP_BODY_ELEMENT_TYPE_STRING_V1 ")"));
-    g_variant_builder_add(sessionBuilder, "s", httpBody.contentType.utf8().data());
+    gVariantBuilderAdd(sessionBuilder, "s", httpBody.contentType.utf8());
     g_variant_builder_open(sessionBuilder, G_VARIANT_TYPE("a" HTTP_BODY_ELEMENT_TYPE_STRING_V1));
     for (const auto& element : httpBody.elements) {
         g_variant_builder_open(sessionBuilder, G_VARIANT_TYPE(HTTP_BODY_ELEMENT_TYPE_STRING_V1));
@@ -139,7 +144,7 @@ static inline void encodeHTTPBody(GVariantBuilder* sessionBuilder, const HTTPBod
         g_variant_builder_close(sessionBuilder);
 
         if (auto* fileData = std::get_if<HTTPBody::Element::FileData>(&element.data)) {
-            g_variant_builder_add(sessionBuilder, "s", fileData->filePath.utf8().data());
+            gVariantBuilderAdd(sessionBuilder, "s", fileData->filePath.utf8());
             g_variant_builder_add(sessionBuilder, "x", fileData->fileStart);
             if (fileData->fileLength)
                 g_variant_builder_add(sessionBuilder, "mx", TRUE, fileData->fileLength.value());
@@ -158,7 +163,7 @@ static inline void encodeHTTPBody(GVariantBuilder* sessionBuilder, const HTTPBod
         }
 
         if (auto* blobURLString = std::get_if<String>(&element.data))
-            g_variant_builder_add(sessionBuilder, "s", blobURLString->utf8().data());
+            gVariantBuilderAdd(sessionBuilder, "s", blobURLString->utf8());
         else
             g_variant_builder_add(sessionBuilder, "s", "");
 
@@ -170,14 +175,14 @@ static inline void encodeHTTPBody(GVariantBuilder* sessionBuilder, const HTTPBod
 
 static inline void encodeFrameState(GVariantBuilder* sessionBuilder, const FrameState& frameState)
 {
-    g_variant_builder_add(sessionBuilder, "s", frameState.urlString.utf8().data());
-    g_variant_builder_add(sessionBuilder, "s", frameState.originalURLString.utf8().data());
-    g_variant_builder_add(sessionBuilder, "s", frameState.referrer.utf8().data());
+    gVariantBuilderAdd(sessionBuilder, "s", frameState.urlString.utf8());
+    gVariantBuilderAdd(sessionBuilder, "s", frameState.originalURLString.utf8());
+    gVariantBuilderAdd(sessionBuilder, "s", frameState.referrer.utf8());
     const auto frameStateTarget = frameState.target.string();
-    g_variant_builder_add(sessionBuilder, "s", (frameStateTarget.length() < maximumFrameStateTargetLength) ? frameStateTarget.utf8().data() : "");
+    gVariantBuilderAdd(sessionBuilder, "s", (frameStateTarget.length() < maximumFrameStateTargetLength) ? UTF8CStringView { frameStateTarget.utf8() } : ""_s);
     g_variant_builder_open(sessionBuilder, G_VARIANT_TYPE("as"));
     for (const auto& state : frameState.documentState())
-        g_variant_builder_add(sessionBuilder, "s", state.string().utf8().data());
+        gVariantBuilderAdd(sessionBuilder, "s", state.string().utf8());
     g_variant_builder_close(sessionBuilder);
     if (!frameState.stateObjectData)
         g_variant_builder_add(sessionBuilder, "may", FALSE);
@@ -210,25 +215,29 @@ static inline void encodeFrameState(GVariantBuilder* sessionBuilder, const Frame
     g_variant_builder_close(sessionBuilder);
 }
 
-static inline void encodeMainFrameState(GVariantBuilder* sessionBuilder, const FrameState& mainFrameState)
+static inline void encodeMainFrameState(GVariantBuilder* sessionBuilder, const BackForwardListItemState& state)
 {
-    g_variant_builder_add(sessionBuilder, "s", mainFrameState.title.utf8().data());
+    gVariantBuilderAdd(sessionBuilder, "s", state.frameState->title.utf8());
     g_variant_builder_open(sessionBuilder, G_VARIANT_TYPE(FRAME_STATE_TYPE_STRING_V1));
-    encodeFrameState(sessionBuilder, mainFrameState);
+    encodeFrameState(sessionBuilder, state.frameState);
     g_variant_builder_close(sessionBuilder);
-    g_variant_builder_add(sessionBuilder, "u", toExternalURLsPolicy(mainFrameState.shouldOpenExternalURLsPolicy));
+    if (state.navigatedFrameID)
+        g_variant_builder_add(sessionBuilder, "mt", TRUE, state.navigatedFrameID->toUInt64());
+    else
+        g_variant_builder_add(sessionBuilder, "mt", FALSE);
+    g_variant_builder_add(sessionBuilder, "u", toExternalURLsPolicy(state.frameState->shouldOpenExternalURLsPolicy));
 }
 
-static inline void encodeBackForwardListItemState(GVariantBuilder* sessionBuilder, const FrameState& mainFrameState)
+static inline void encodeBackForwardListItemState(GVariantBuilder* sessionBuilder, const BackForwardListItemState& state)
 {
-    g_variant_builder_open(sessionBuilder, G_VARIANT_TYPE(BACK_FORWARD_LIST_ITEM_TYPE_STRING_V2));
-    encodeMainFrameState(sessionBuilder, mainFrameState);
+    g_variant_builder_open(sessionBuilder, G_VARIANT_TYPE(BACK_FORWARD_LIST_ITEM_TYPE_STRING_V3));
+    encodeMainFrameState(sessionBuilder, state);
     g_variant_builder_close(sessionBuilder);
 }
 
 static inline void encodeBackForwardListState(GVariantBuilder* sessionBuilder, const BackForwardListState& backForwardListState)
 {
-    g_variant_builder_open(sessionBuilder, G_VARIANT_TYPE("a" BACK_FORWARD_LIST_ITEM_TYPE_STRING_V2));
+    g_variant_builder_open(sessionBuilder, G_VARIANT_TYPE("a" BACK_FORWARD_LIST_ITEM_TYPE_STRING_V3));
     for (const auto& item : backForwardListState.items)
         encodeBackForwardListItemState(sessionBuilder, item);
     g_variant_builder_close(sessionBuilder);
@@ -242,7 +251,7 @@ static inline void encodeBackForwardListState(GVariantBuilder* sessionBuilder, c
 static GBytes* encodeSessionState(const SessionState& sessionState)
 {
     GVariantBuilder sessionBuilder;
-    g_variant_builder_init(&sessionBuilder, G_VARIANT_TYPE(SESSION_STATE_TYPE_STRING_V2));
+    g_variant_builder_init(&sessionBuilder, G_VARIANT_TYPE(SESSION_STATE_TYPE_STRING_V3));
     g_variant_builder_add(&sessionBuilder, "q", g_sessionStateVersion);
     encodeBackForwardListState(&sessionBuilder, sessionState.backForwardListState);
     GRefPtr<GVariant> variant = g_variant_builder_end(&sessionBuilder);
@@ -375,7 +384,21 @@ static inline void decodeBackForwardListItemStateV1(GVariantIter* backForwardLis
         mainFrameState->title = String::fromUTF8(title);
         decodeFrameState(frameStateVariant, mainFrameState);
         mainFrameState->shouldOpenExternalURLsPolicy = toWebCoreExternalURLsPolicy(shouldOpenExternalURLsPolicy);
-        backForwardListState.items.append(WTF::move(mainFrameState));
+        backForwardListState.items.append({ WTF::move(mainFrameState), std::nullopt });
+    }
+}
+
+static inline void decodeBackForwardListItemStateV2(GVariantIter* backForwardListStateIter, BackForwardListState& backForwardListState)
+{
+    const char* title;
+    GVariant* frameStateVariant;
+    unsigned shouldOpenExternalURLsPolicy;
+    while (g_variant_iter_loop(backForwardListStateIter, BACK_FORWARD_LIST_ITEM_FORMAT_STRING_V2, &title, &frameStateVariant, &shouldOpenExternalURLsPolicy)) {
+        Ref mainFrameState = FrameState::create();
+        mainFrameState->title = String::fromUTF8(title);
+        decodeFrameState(frameStateVariant, mainFrameState);
+        mainFrameState->shouldOpenExternalURLsPolicy = toWebCoreExternalURLsPolicy(shouldOpenExternalURLsPolicy);
+        backForwardListState.items.append({ WTF::move(mainFrameState), std::nullopt });
     }
 }
 
@@ -389,30 +412,37 @@ static inline void decodeBackForwardListItemState(GVariantIter* backForwardListS
     if (version == 1) {
         decodeBackForwardListItemStateV1(backForwardListStateIter, backForwardListState);
         return;
+    } else if (version == 2) {
+        decodeBackForwardListItemStateV2(backForwardListStateIter, backForwardListState);
+        return;
     }
 
     const char* title;
     GVariant* frameStateVariant;
     unsigned shouldOpenExternalURLsPolicy;
-    while (g_variant_iter_loop(backForwardListStateIter, BACK_FORWARD_LIST_ITEM_FORMAT_STRING_V2, &title, &frameStateVariant, &shouldOpenExternalURLsPolicy)) {
+    gboolean hasNavigatedFrameID;
+    uint64_t navigatedFrameID;
+
+    while (g_variant_iter_loop(backForwardListStateIter, BACK_FORWARD_LIST_ITEM_FORMAT_STRING_V3, &title, &frameStateVariant, &hasNavigatedFrameID, &navigatedFrameID, &shouldOpenExternalURLsPolicy)) {
         Ref mainFrameState = FrameState::create();
         mainFrameState->title = String::fromUTF8(title);
         decodeFrameState(frameStateVariant, mainFrameState);
         mainFrameState->shouldOpenExternalURLsPolicy = toWebCoreExternalURLsPolicy(shouldOpenExternalURLsPolicy);
-        backForwardListState.items.append(WTF::move(mainFrameState));
+        backForwardListState.items.append({ WTF::move(mainFrameState), hasNavigatedFrameID ? std::optional<WebCore::FrameIdentifier>(navigatedFrameID) : std::nullopt });
     }
 }
 
 static bool decodeSessionState(GBytes* data, SessionState& sessionState)
 {
-    static constexpr std::array<ASCIILiteral, 2> sessionStateTypeStringVersions = {
+    static constexpr std::array<ASCIILiteral, 3> sessionStateTypeStringVersions = {
+        SESSION_STATE_TYPE_STRING_V3,
         SESSION_STATE_TYPE_STRING_V2,
         SESSION_STATE_TYPE_STRING_V1,
     };
 
     GRefPtr<GVariant> variant;
     for (const auto& typeString : sessionStateTypeStringVersions) {
-        GRefPtr<GVariant> variantToCheck = g_variant_new_from_bytes(G_VARIANT_TYPE(typeString), data, FALSE);
+        GRefPtr<GVariant> variantToCheck = g_variant_new_from_bytes(G_VARIANT_TYPE(typeString.characters()), data, FALSE);
         if (g_variant_is_normal_form(variantToCheck.get())) {
             variant = WTF::move(variantToCheck);
             break;

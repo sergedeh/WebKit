@@ -28,6 +28,8 @@
 #if ENABLE(WEB_AUDIO)
 
 #include "BiquadFilterNode.h"
+
+#include "BaseAudioContext.h"
 #include "ExceptionOr.h"
 #include <JavaScriptCore/Float32Array.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -57,7 +59,7 @@ BiquadFilterNode::BiquadFilterNode(BaseAudioContext& context)
     : AudioBasicProcessorNode(context, NodeTypeBiquadFilter)
 {
     // Initially setup as lowpass filter.
-    m_processor = makeUnique<BiquadProcessor>(context, context.sampleRate(), 1, false);
+    lazyInitialize(m_processor, makeUnique<BiquadProcessor>(context, context.sampleRate(), 1, false));
 
     // Initialize so that AudioParams can be processed.
     initialize();
@@ -65,22 +67,28 @@ BiquadFilterNode::BiquadFilterNode(BaseAudioContext& context)
 
 BiquadFilterType BiquadFilterNode::type() const
 {
-    return const_cast<BiquadFilterNode*>(this)->biquadProcessor()->type();
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<BiquadFilterNode*>(this)->biquadProcessor()->type();
 }
 
 void BiquadFilterNode::setType(BiquadFilterType type)
 {
-    checkedBiquadProcessor()->setType(type);
+    ASSERT(isMainThread());
+
+    // Synchronize with any graph changes or changes to channel configuration since
+    // BiquadProcessor::setType() may iterate the processor's kernels via reset().
+    Locker contextLocker { context().graphLock() };
+    protect(biquadProcessor())->setType(type);
 }
 
 ExceptionOr<void> BiquadFilterNode::getFrequencyResponse(const Ref<Float32Array>& frequencyHz, const Ref<Float32Array>& magResponse, const Ref<Float32Array>& phaseResponse)
 {
-    unsigned length = frequencyHz->length();
+    auto length = frequencyHz->length();
     if (magResponse->length() != length || phaseResponse->length() != length)
         return Exception { ExceptionCode::InvalidAccessError, "The arrays passed as arguments must have the same length"_s };
 
     if (length)
-        checkedBiquadProcessor()->getFrequencyResponse(length, frequencyHz->typedSpan(), magResponse->typedMutableSpan(), phaseResponse->typedMutableSpan());
+        protect(biquadProcessor())->getFrequencyResponse(frequencyHz->typedSpan(), magResponse->typedMutableSpan(), phaseResponse->typedMutableSpan());
     return { };
 }
 

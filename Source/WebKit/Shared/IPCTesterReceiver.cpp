@@ -26,7 +26,11 @@
 #include "config.h"
 #include "IPCTesterReceiver.h"
 
+#include <wtf/CompletionHandler.h>
+
 #if ENABLE(IPC_TESTING_API) && !ENABLE(IPC_TESTING_SWIFT)
+
+#include <wtf/CompletionHandler.h>
 
 namespace WebKit {
 
@@ -38,6 +42,18 @@ Ref<IPCTesterReceiver> IPCTesterReceiver::create()
 void IPCTesterReceiver::asyncMessage(uint32_t arg0, CompletionHandler<void(uint32_t)>&& completionHandler)
 {
     completionHandler(arg0 + 1u);
+}
+
+void IPCTesterReceiver::deferredReplyMessage(uint32_t arg0, CompletionHandler<void(uint64_t)>&& completionHandler)
+{
+    m_deferredReplyArgument = arg0;
+    m_deferredReply = WTF::move(completionHandler);
+}
+
+void IPCTesterReceiver::completeDeferredReply(uint32_t arg0)
+{
+    if (auto completionHandler = std::exchange(m_deferredReply, nullptr))
+        completionHandler(static_cast<uint64_t>(m_deferredReplyArgument) + arg0 + 1u);
 }
 
 }

@@ -113,7 +113,7 @@ JSDOMGlobalObject* InspectorFrontendAPIDispatcher::frontendGlobalObject()
     if (!localMainFrame)
         return nullptr;
     
-    return localMainFrame->script().globalObject(mainThreadNormalWorldSingleton());
+    return protect(localMainFrame->script())->globalObject(mainThreadNormalWorldSingleton());
 }
 
 static String expressionForEvaluatingCommand(const String& command, Vector<Ref<JSON::Value>>&& arguments)
@@ -184,7 +184,7 @@ void InspectorFrontendAPIDispatcher::evaluateOrQueueExpression(const String& exp
     
     JSC::JSLockHolder lock(globalObject);
     
-    auto* castedPromise = JSC::jsDynamicCast<JSC::JSPromise*>(result.value());
+    auto* castedPromise = dynamicDowncast<JSC::JSPromise>(result.value());
     if (!castedPromise) {
         // Simple case: result is NOT a promise, just return the JSValue.
         optionalResultHandler(result);
@@ -264,10 +264,10 @@ ValueOrException InspectorFrontendAPIDispatcher::evaluateExpression(const String
     ASSERT(!m_suspended);
     ASSERT(m_queuedEvaluations.isEmpty());
 
-    JSC::SuspendExceptionScope scope(m_frontendPage->inspectorController().vm());
+    JSC::SuspendExceptionScope scope(protect(m_frontendPage->inspectorController())->vm());
 
     RefPtr localMainFrame = m_frontendPage->localMainFrame();
-    return localMainFrame->script().evaluateInWorld(ScriptSourceCode(expression, JSC::SourceTaintedOrigin::Untainted), mainThreadNormalWorldSingleton());
+    return protect(localMainFrame->script())->evaluateInWorld(ScriptSourceCode(expression, JSC::SourceTaintedOrigin::Untainted), mainThreadNormalWorldSingleton());
 }
 
 void InspectorFrontendAPIDispatcher::evaluateExpressionForTesting(const String& expression)

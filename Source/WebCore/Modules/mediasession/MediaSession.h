@@ -45,6 +45,7 @@
 
 namespace WebCore {
 
+class CaptionUserPreferences;
 class Document;
 class HTMLMediaElement;
 class MediaMetadata;
@@ -53,9 +54,12 @@ class MediaSessionCoordinatorPrivate;
 class MediaSessionManagerInterface;
 class Navigator;
 class PlatformMediaSession;
+struct MediaSessionCaptionTrack;
 struct NowPlayingInfo;
 template<typename> class DOMPromiseDeferred;
 template<typename> class ExceptionOr;
+
+enum class CaptionUserPreferencesDisplayMode : uint8_t;
 
 class MediaSessionObserver : public AbstractRefCountedAndCanMakeWeakPtr<MediaSessionObserver> {
 public:
@@ -95,7 +99,7 @@ public:
 
     void callActionHandler(const MediaSessionActionDetails&, DOMPromiseDeferred<void>&&);
 
-    template <typename Visitor> void visitActionHandlers(Visitor&) const;
+    template <typename Visitor> void visitActionHandlersInGCThread(Visitor&) const;
 
     ExceptionOr<void> setPositionState(std::optional<MediaPositionState>&&);
     std::optional<MediaPositionState> positionState() const { return m_positionState; }
@@ -104,8 +108,7 @@ public:
     void willBeginPlayback();
     void willPausePlayback();
 
-    WEBCORE_EXPORT Document* document() const;
-    RefPtr<Document> protectedDocument() const;
+    WEBCORE_EXPORT Document* LEGACY_NODELETE document() const;
 
 #if ENABLE(MEDIA_SESSION_COORDINATOR)
     MediaSessionReadyState readyState() const { return m_readyState; };
@@ -115,7 +118,7 @@ public:
 #endif
 
 #if ENABLE(MEDIA_SESSION_PLAYLIST)
-    const Vector<Ref<MediaMetadata>>& playlist() const { return m_playlist; }
+    const Vector<Ref<MediaMetadata>>& playlist() const LIFETIME_BOUND { return m_playlist; }
     ExceptionOr<void> setPlaylist(ScriptExecutionContext&, Vector<Ref<MediaMetadata>>&&);
 #endif
 
@@ -131,7 +134,7 @@ public:
     const Logger& logger() const { return *m_logger.get(); }
 #endif
 
-    bool hasObserver(MediaSessionObserver&) const;
+    bool LEGACY_NODELETE hasObserver(MediaSessionObserver&) const;
     WEBCORE_EXPORT void addObserver(MediaSessionObserver&);
     void removeObserver(MediaSessionObserver&);
 
@@ -146,6 +149,18 @@ public:
 #endif
 
     WEBCORE_EXPORT bool hasActionHandler(const MediaSessionAction) const;
+
+    RefPtr<CaptionUserPreferences> captionPreferences();
+    void captionPreferencesChanged();
+    CaptionUserPreferencesDisplayMode captionDisplayMode();
+
+    void setCaptionTracks(Vector<MediaSessionCaptionTrack>&&);
+    const Vector<MediaSessionCaptionTrack>& captionTracks() const { return m_captionTracks; }
+
+    void setCaptionsEnabled(bool);
+    bool captionsEnabled() const { return m_captionsEnabled; }
+
+    void presentationModeChanged();
 
 private:
     explicit MediaSession(Navigator&);
@@ -176,7 +191,7 @@ private:
     PlatformMediaSessionMediaType presentationType() const final { return PlatformMediaSessionMediaType::DOMMediaSession; }
     void mayResumePlayback(bool shouldResume) final;
     void suspendPlayback() final;
-    bool isPlaying() const final;
+    bool LEGACY_NODELETE isPlaying() const final;
     bool isAudible() const final { return false; }
     bool isEnded() const final;
     MediaTime mediaSessionDuration() const final;
@@ -187,15 +202,15 @@ private:
     std::optional<MediaSessionGroupIdentifier> mediaSessionGroupIdentifier() const final;
 
     WeakPtr<Navigator> m_navigator;
-    Ref<PlatformMediaSession> m_platformSession;
+    const Ref<PlatformMediaSession> m_platformSession;
     RefPtr<MediaMetadata> m_metadata;
-    RefPtr<MediaMetadata> m_defaultMetadata;
+    const RefPtr<MediaMetadata> m_defaultMetadata;
     MediaSessionPlaybackState m_playbackState { MediaSessionPlaybackState::None };
     std::optional<MediaPositionState> m_positionState;
     std::optional<double> m_lastReportedPosition;
     MonotonicTime m_timeAtLastPositionUpdate;
-    HashMap<MediaSessionAction, RefPtr<MediaSessionActionHandler>, IntHash<MediaSessionAction>, WTF::StrongEnumHashTraits<MediaSessionAction>> m_actionHandlers WTF_GUARDED_BY_LOCK(m_actionHandlersLock);
-    RefPtr<const Logger> m_logger;
+    HashMap<MediaSessionAction, Ref<MediaSessionActionHandler>, IntHash<MediaSessionAction>, WTF::StrongEnumHashTraits<MediaSessionAction>> m_actionHandlers WTF_GUARDED_BY_LOCK(m_actionHandlersLock);
+    const RefPtr<const Logger> m_logger;
     uint64_t m_logIdentifier { 0 };
 
     WeakHashSet<MediaSessionObserver> m_observers;
@@ -210,6 +225,14 @@ private:
 #endif
     mutable Lock m_actionHandlersLock;
     mutable bool m_defaultArtworkAttempted { false };
+
+    std::optional<CaptionUserPreferencesDisplayMode> m_captionDisplayMode;
+    Vector<MediaSessionCaptionTrack> m_captionTracks;
+    bool m_captionsEnabled { false };
+#if PLATFORM(COCOA)
+    bool m_shouldSuppressMediaSessionPauseActionOnInterruption { false };
+#endif
+    bool m_needsYouTubeCaptionsQuirk { false };
 };
 
 String convertEnumerationToString(MediaSessionPlaybackState);
@@ -222,14 +245,12 @@ inline bool MediaSession::hasActiveActionHandlers() const
 }
 
 template <typename Visitor>
-void MediaSession::visitActionHandlers(Visitor& visitor) const
+void MediaSession::visitActionHandlersInGCThread(Visitor& visitor) const
 {
     Locker lock { m_actionHandlersLock };
     for (auto& actionHandler : m_actionHandlers) {
-        if (actionHandler.value) {
-            // We are not ref'ing here as this function may get called from the GC thread.
-            SUPPRESS_UNCOUNTED_ARG actionHandler.value->visitJSFunction(visitor);
-        }
+        // We are not ref'ing here as this function may get called from a GC thread.
+        SUPPRESS_UNCOUNTED_ARG actionHandler.value->visitJSFunctionInGCThread(visitor);
     }
 }
 

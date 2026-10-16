@@ -62,9 +62,7 @@ AudioSampleDataSource::AudioSampleDataSource(size_t maximumSampleCount, LoggerHe
 #endif
 }
 
-AudioSampleDataSource::~AudioSampleDataSource()
-{
-}
+AudioSampleDataSource::~AudioSampleDataSource() = default;
 
 OSStatus AudioSampleDataSource::setupConverter()
 {
@@ -214,7 +212,7 @@ bool AudioSampleDataSource::pullSamples(AudioBufferList& buffer, size_t sampleCo
     if (seekTo != NoSeek)
         m_readCount = seekTo;
 
-    auto [startFrame, endFrame] = m_ringBuffer->getFetchTimeBounds();
+    auto [startFrame, endFrame, writeAhead] = m_ringBuffer->getFetchTimeBounds();
     startFrame = std::max(m_readCount, startFrame);
 
     ASSERT(m_waitToStartForPushCount);
@@ -271,8 +269,7 @@ bool AudioSampleDataSource::pullSamplesInternal(AudioBufferList& buffer, size_t 
         return false;
 
     scratchBuffer->applyGain(m_volume);
-    scratchBuffer->mixFrom(buffer, sampleCount);
-    if (scratchBuffer->copyTo(buffer, sampleCount))
+    if (scratchBuffer->mixTo(buffer, sampleCount))
         return false;
 
     return true;
@@ -297,13 +294,13 @@ bool AudioSampleDataSource::pullAvailableSampleChunk(AudioBufferList& buffer, si
     return pullSamplesInternal(buffer, sampleCount, timeStamp, mode);
 }
 
-bool AudioSampleDataSource::pullAvailableSamplesAsChunks(AudioBufferList& buffer, size_t sampleCountPerChunk, uint64_t timeStamp, Function<void()>&& consumeFilledBuffer)
+bool AudioSampleDataSource::pullAvailableSamplesAsChunks(AudioBufferList& buffer, size_t sampleCountPerChunk, uint64_t timeStamp, NOESCAPE const Function<void()>& consumeFilledBuffer)
 {
     ASSERT(buffer.mNumberBuffers == m_ringBuffer->channelCount());
     if (buffer.mNumberBuffers != m_ringBuffer->channelCount())
         return false;
 
-    auto [startFrame, endFrame] = m_ringBuffer->getFetchTimeBounds();
+    auto [startFrame, endFrame, writeAhead] = m_ringBuffer->getFetchTimeBounds();
     if (m_shouldComputeOutputSampleOffset) {
         m_outputSampleOffset = timeStamp + (endFrame - sampleCountPerChunk);
         m_shouldComputeOutputSampleOffset = false;

@@ -59,30 +59,30 @@ PlaybackSessionInterfaceIOS::~PlaybackSessionInterfaceIOS()
 
 void PlaybackSessionInterfaceIOS::initialize()
 {
-    auto& model = *m_playbackSessionModel;
+    CheckedRef model = *m_playbackSessionModel;
 
-    durationChanged(model.duration());
-    currentTimeChanged(model.currentTime(), [[NSProcessInfo processInfo] systemUptime]);
-    bufferedTimeChanged(model.bufferedTime());
+    durationChanged(model->duration());
+    currentTimeChanged(model->currentTime(), [[NSProcessInfo processInfo] systemUptime]);
+    bufferedTimeChanged(model->bufferedTime());
     OptionSet<PlaybackSessionModel::PlaybackState> playbackState;
-    if (model.isPlaying())
+    if (model->isPlaying())
         playbackState.add(PlaybackSessionModel::PlaybackState::Playing);
-    if (model.isStalled())
+    if (model->isStalled())
         playbackState.add(PlaybackSessionModel::PlaybackState::Stalled);
-    rateChanged(playbackState, model.playbackRate(), model.defaultPlaybackRate());
-    seekableRangesChanged(model.seekableRanges(), model.seekableTimeRangesLastModifiedTime(), model.liveUpdateInterval());
-    canPlayFastReverseChanged(model.canPlayFastReverse());
-    audioMediaSelectionOptionsChanged(model.audioMediaSelectionOptions(), model.audioMediaSelectedIndex());
-    legibleMediaSelectionOptionsChanged(model.legibleMediaSelectionOptions(), model.legibleMediaSelectedIndex());
-    externalPlaybackChanged(model.externalPlaybackEnabled(), model.externalPlaybackTargetType(), model.externalPlaybackLocalizedDeviceName());
-    wirelessVideoPlaybackDisabledChanged(model.wirelessVideoPlaybackDisabled());
+    rateChanged(playbackState, model->playbackRate(), model->defaultPlaybackRate());
+    seekableRangesChanged(model->seekableRanges(), model->seekableTimeRangesLastModifiedTime(), model->liveUpdateInterval());
+    canPlayFastReverseChanged(model->canPlayFastReverse());
+    audioMediaSelectionOptionsChanged(model->audioMediaSelectionOptions(), model->audioMediaSelectedIndex());
+    legibleMediaSelectionOptionsChanged(model->legibleMediaSelectionOptions(), model->legibleMediaSelectedIndex());
+    externalPlaybackChanged(model->externalPlaybackEnabled(), model->externalPlaybackTargetType(), model->externalPlaybackLocalizedDeviceName(), model->externalPlaybackLocalizedRouteName());
+    wirelessVideoPlaybackDisabledChanged(model->wirelessVideoPlaybackDisabled());
 }
 
 void PlaybackSessionInterfaceIOS::invalidate()
 {
     if (!m_playbackSessionModel)
         return;
-    m_playbackSessionModel->removeClient(*this);
+    protect(m_playbackSessionModel)->removeClient(*this);
     m_playbackSessionModel = nullptr;
 }
 
@@ -121,15 +121,22 @@ void PlaybackSessionInterfaceIOS::stopObservingNowPlayingMetadata()
 {
 }
 
+#if HAVE(AVEXPERIENCECONTROLLER)
+WKAVContentSource *PlaybackSessionInterfaceIOS::contentSource() const
+{
+    return nullptr;
+}
+#endif
+
 #if !RELEASE_LOG_DISABLED
 uint64_t PlaybackSessionInterfaceIOS::logIdentifier() const
 {
-    return m_playbackSessionModel ? m_playbackSessionModel->logIdentifier() : 0;
+    return m_playbackSessionModel ? protect(m_playbackSessionModel)->logIdentifier() : 0;
 }
 
 const Logger* PlaybackSessionInterfaceIOS::loggerPtr() const
 {
-    return m_playbackSessionModel ? m_playbackSessionModel->loggerPtr() : nullptr;
+    return m_playbackSessionModel ? protect(m_playbackSessionModel)->loggerPtr() : nullptr;
 }
 
 WTFLogChannel& PlaybackSessionInterfaceIOS::logChannel() const

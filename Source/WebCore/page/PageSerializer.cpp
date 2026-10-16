@@ -94,7 +94,7 @@ static bool shouldIgnoreElement(const Element& element)
     return element.hasTagName(HTMLNames::scriptTag) || element.hasTagName(HTMLNames::noscriptTag) || isCharsetSpecifyingNode(element);
 }
 
-static const QualifiedName& frameOwnerURLAttributeName(const HTMLFrameOwnerElement& frameOwner)
+static const QualifiedName& LEGACY_NODELETE frameOwnerURLAttributeName(const HTMLFrameOwnerElement& frameOwner)
 {
     // FIXME: We should support all frame owners including applets.
     return is<HTMLObjectElement>(frameOwner) ? HTMLNames::dataAttr : HTMLNames::srcAttr;
@@ -115,13 +115,13 @@ private:
 };
 
 PageSerializer::SerializerMarkupAccumulator::SerializerMarkupAccumulator(PageSerializer& serializer, Document& document, Vector<Ref<Node>>* nodes)
-    : MarkupAccumulator(nodes, ResolveURLs::Yes, MarkupAccumulator::serializationSyntax(document))
+    : MarkupAccumulator(nodes, ResolveURLs::YesExcludingURLsForPrivacy, MarkupAccumulator::serializationSyntax(document))
     , m_serializer(serializer)
     , m_document(document)
 {
     // MarkupAccumulator does not serialize the <?xml ... line, so we add it explicitly to ensure the right encoding is specified.
     if (m_document->isXMLDocument() || m_document->xmlStandalone())
-        append("<?xml version=\""_s, m_document->xmlVersion(), "\" encoding=\""_s, m_document->charset(), "\"?>"_s);
+        append("<?xml version=\""_s, m_document->xmlVersion(), "\" encoding=\""_s, protect(m_document)->charset(), "\"?>"_s);
 }
 
 void PageSerializer::SerializerMarkupAccumulator::appendText(StringBuilder& out, const Text& text)
@@ -137,7 +137,7 @@ void PageSerializer::SerializerMarkupAccumulator::appendStartTag(StringBuilder& 
         MarkupAccumulator::appendStartTag(out, element, namespaces);
 
     if (element.hasTagName(HTMLNames::headTag))
-        out.append("<meta charset=\""_s, m_document->charset(), "\">"_s);
+        out.append("<meta charset=\""_s, protect(m_document)->charset(), "\">"_s);
 
     // FIXME: For object (plugins) tags and video tag we could replace them by an image of their current contents.
 }
@@ -152,7 +152,7 @@ void PageSerializer::SerializerMarkupAccumulator::appendCustomAttributes(StringB
     if (!frame)
         return;
 
-    auto url = frame->document()->url();
+    auto url = protect(frame->document())->url();
     if (url.isValid() && !url.protocolIsAbout())
         return;
 
@@ -202,7 +202,7 @@ void PageSerializer::serializeFrame(LocalFrame* frame)
 
     Vector<Ref<Node>> serializedNodes;
     SerializerMarkupAccumulator accumulator(*this, *document, &serializedNodes);
-    String text = accumulator.serializeNodes(*document->protectedDocumentElement(), SerializedNodes::SubtreeIncludingNode);
+    String text = accumulator.serializeNodes(*protect(document->documentElement()), SerializedNodes::SubtreeIncludingNode);
     m_resources.append({ url, document->suggestedMIMEType(), SharedBuffer::create(textEncoding.encode(text, PAL::UnencodableHandling::Entities)) });
     m_resourceURLs.add(url);
 
@@ -212,15 +212,15 @@ void PageSerializer::serializeFrame(LocalFrame* frame)
             continue;
         // We have to process in-line style as it might contain some resources (typically background images).
         if (RefPtr styledElement = dynamicDowncast<StyledElement>(*element))
-            retrieveResourcesForProperties(styledElement->protectedInlineStyle().get(), document.get());
+            retrieveResourcesForProperties(protect(styledElement->inlineStyle()).get(), document.get());
 
         if (RefPtr imageElement = dynamicDowncast<HTMLImageElement>(*element)) {
-            auto url = document->completeURL(imageElement->attributeWithoutSynchronization(HTMLNames::srcAttr));
-            auto* cachedImage = imageElement->cachedImage();
-            addImageToResources(cachedImage, imageElement->renderer(), url);
+            auto url = document->encodingParseURL(imageElement->attributeWithoutSynchronization(HTMLNames::srcAttr));
+            RefPtr cachedImage = imageElement->cachedImage();
+            addImageToResources(cachedImage, protect(imageElement->renderer()), url);
         } else if (RefPtr linkElement = dynamicDowncast<HTMLLinkElement>(*element)) {
             if (RefPtr sheet = linkElement->sheet()) {
-                auto url = document->completeURL(linkElement->attributeWithoutSynchronization(HTMLNames::hrefAttr));
+                auto url = document->encodingParseURL(linkElement->attributeWithoutSynchronization(HTMLNames::hrefAttr));
                 serializeCSSStyleSheet(sheet.get(), url);
                 ASSERT(m_resourceURLs.contains(url));
             }
@@ -252,15 +252,15 @@ void PageSerializer::serializeCSSStyleSheet(CSSStyleSheet* styleSheet, const URL
         RefPtr document = styleSheet->ownerDocument();
         // Some rules have resources associated with them that we need to retrieve.
         if (RefPtr importRule = dynamicDowncast<CSSImportRule>(*rule)) {
-            auto importURL = document->completeURL(importRule->href());
+            auto importURL = document->encodingParseURL(importRule->href());
             if (m_resourceURLs.contains(importURL))
                 continue;
-            serializeCSSStyleSheet(importRule->protectedStyleSheet().get(), importURL);
+            serializeCSSStyleSheet(protect(importRule->styleSheet()).get(), importURL);
         } else if (is<CSSFontFaceRule>(*rule)) {
             // FIXME: Add support for font face rule. It is not clear to me at this point if the actual otf/eot file can
             // be retrieved from the CSSFontFaceRule object.
         } else if (RefPtr styleRule = dynamicDowncast<CSSStyleRule>(*rule))
-            retrieveResourcesForRule(styleRule->styleRule(), document.get());
+            retrieveResourcesForRule(protect(styleRule->styleRule()), document.get());
     }
 
     if (url.isValid() && !m_resourceURLs.contains(url)) {
@@ -280,12 +280,12 @@ void PageSerializer::addImageToResources(CachedImage* image, RenderElement* imag
     if (!image || image->image() == &Image::nullImage())
         return;
 
-    RefPtr<FragmentedSharedBuffer> data = imageRenderer ? image->imageForRenderer(imageRenderer)->data() : 0;
+    RefPtr<FragmentedSharedBuffer> data = imageRenderer ? image->image()->data() : 0;
     if (!data)
         data = image->image()->data();
 
     if (!data) {
-        LOG_ERROR("No data for image %s", url.string().utf8().data());
+        LOG_ERROR("No data for image %s", url.string().utf8());
         return;
     }
 
@@ -295,7 +295,7 @@ void PageSerializer::addImageToResources(CachedImage* image, RenderElement* imag
 
 void PageSerializer::retrieveResourcesForRule(StyleRule& rule, Document* document)
 {
-    retrieveResourcesForProperties(rule.protectedProperties().ptr(), document);
+    retrieveResourcesForProperties(protect(rule.properties()).ptr(), document);
 }
 
 void PageSerializer::retrieveResourcesForProperties(const StyleProperties* styleDeclaration, Document* document)
@@ -311,11 +311,11 @@ void PageSerializer::retrieveResourcesForProperties(const StyleProperties* style
         if (!cssValue)
             continue;
 
-        auto* image = cssValue->cachedImage();
+        RefPtr image = cssValue->cachedImage();
         if (!image)
             continue;
 
-        addImageToResources(image, nullptr, document->completeURL(image->url().string()));
+        addImageToResources(image, nullptr, document->encodingParseURL(image->url().string()));
     }
 }
 

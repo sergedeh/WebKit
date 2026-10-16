@@ -1,17 +1,18 @@
 diagnostic(off, derivative_uniformity);
 diagnostic(off, chromium.unreachable_code);
+enable f16;
 struct FSOut {
-  @location(0) sk_FragColor: vec4<f32>,
+  @location(0) sk_FragColor: vec4<f16>,
 };
 struct _GlobalUniforms {
-  colorGreen: vec4<f32>,
-  colorRed: vec4<f32>,
-  unknownInput: f32,
+  colorGreen: vec4<f16>,
+  colorRed: vec4<f16>,
+  unknownInput: f16,
 };
 @group(0) @binding(0) var<uniform> _globalUniforms : _GlobalUniforms;
 fn return_on_both_sides_b() -> bool {
   {
-    if _globalUniforms.unknownInput == 1.0 {
+    if _globalUniforms.unknownInput == 1.0h {
       return true;
     } else {
       return true;
@@ -23,13 +24,9 @@ fn for_inside_body_b() -> bool {
   {
     {
       var x: i32 = 0;
-      loop {
+      for (; x <= 10; x = x + i32(1)) {
         {
           return true;
-        }
-        continuing {
-          x = x + i32(1);
-          break if x > 10;
         }
       }
     }
@@ -40,12 +37,8 @@ fn after_for_body_b() -> bool {
   {
     {
       var x: i32 = 0;
-      loop {
+      for (; x <= 10; x = x + i32(1)) {
         {
-        }
-        continuing {
-          x = x + i32(1);
-          break if x > 10;
         }
       }
     }
@@ -56,17 +49,13 @@ fn for_with_double_sided_conditional_return_b() -> bool {
   {
     {
       var x: i32 = 0;
-      loop {
+      for (; x <= 10; x = x + i32(1)) {
         {
-          if _globalUniforms.unknownInput == 1.0 {
+          if _globalUniforms.unknownInput == 1.0h {
             return true;
           } else {
             return true;
           }
-        }
-        continuing {
-          x = x + i32(1);
-          break if x > 10;
         }
       }
     }
@@ -75,16 +64,16 @@ fn for_with_double_sided_conditional_return_b() -> bool {
 }
 fn if_else_chain_b() -> bool {
   {
-    if _globalUniforms.unknownInput == 1.0 {
+    if _globalUniforms.unknownInput == 1.0h {
       return true;
     } else {
-      if _globalUniforms.unknownInput == 2.0 {
+      if _globalUniforms.unknownInput == 2.0h {
         return false;
       } else {
-        if _globalUniforms.unknownInput == 3.0 {
+        if _globalUniforms.unknownInput == 3.0h {
           return true;
         } else {
-          if _globalUniforms.unknownInput == 4.0 {
+          if _globalUniforms.unknownInput == 4.0h {
             return false;
           } else {
             return true;
@@ -95,9 +84,9 @@ fn if_else_chain_b() -> bool {
   }
   return bool();
 }
-fn _skslMain(coords: vec2<f32>) -> vec4<f32> {
+fn _skslMain(coords: vec2<f32>) -> vec4<f16> {
   {
-    var _skTemp0: vec4<f32>;
+    var _skTemp0: vec4<f16>;
     var _skTemp1: bool;
     var _skTemp2: bool;
     var _skTemp3: bool;

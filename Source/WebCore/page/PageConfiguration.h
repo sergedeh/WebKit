@@ -85,6 +85,7 @@ class MediaSessionManagerInterface;
 class ModelPlayerProvider;
 class PaymentCoordinatorClient;
 class PerformanceLoggingClient;
+class PhoneNumberPossessionCoordinatorClient;
 class PluginInfoProvider;
 class DocumentSyncClient;
 class ProgressTrackerClient;
@@ -173,6 +174,10 @@ public:
     std::unique_ptr<AuthenticatorCoordinatorClient> authenticatorCoordinatorClient;
 #endif
 
+#if ENABLE(PHONE_NUMBER_POSSESSION)
+    std::unique_ptr<PhoneNumberPossessionCoordinatorClient> phoneNumberPossessionCoordinatorClient;
+#endif
+
 #if ENABLE(APPLICATION_MANIFEST)
     std::optional<ApplicationManifest> applicationManifest;
 #endif
@@ -253,6 +258,9 @@ public:
 #if ENABLE(IMAGE_ANALYSIS)
     std::optional<ImageTranslationLanguageIdentifiers> imageTranslationLanguageIdentifiers;
 #endif
+
+    // Non-empty if this page is being created while the user agent is presenting a machine translation.
+    String displayedTranslationLocaleIdentifier;
 
 #if ENABLE(WEB_AUTHN)
     Ref<CredentialRequestCoordinatorClient> credentialRequestCoordinatorClient;

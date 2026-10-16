@@ -68,14 +68,14 @@ static unsigned long maximumNumberOfOutputChannels()
             }
         }
 
-        auto monitor = adoptGRef(gst_device_monitor_new());
-        auto caps = adoptGRef(gst_caps_new_empty_simple("audio/x-raw"));
+        GRefPtr monitor = adoptGRef(gst_device_monitor_new());
+        GRefPtr caps = adoptGRef(gst_caps_new_empty_simple("audio/x-raw"));
         gst_device_monitor_add_filter(monitor.get(), "Audio/Sink", caps.get());
         bool started = gst_device_monitor_start(monitor.get());
         auto* devices = gst_device_monitor_get_devices(monitor.get());
         while (devices) {
-            auto device = adoptGRef(GST_DEVICE_CAST(devices->data));
-            auto caps = adoptGRef(gst_device_get_caps(device.get()));
+            GRefPtr device = adoptGRef(GST_DEVICE_CAST(devices->data));
+            GRefPtr caps = adoptGRef(gst_device_get_caps(device.get()));
             unsigned size = gst_caps_get_size(caps.get());
             for (unsigned i = 0; i < size; i++) {
                 auto* structure = gst_caps_get_structure(caps.get(), i);
@@ -145,8 +145,11 @@ void AudioDestinationGStreamer::initializePipeline()
     static Atomic<uint32_t> pipelineId;
     m_pipeline = gst_pipeline_new(makeString("audio-destination-"_s, pipelineId.exchangeAdd(1)).ascii().data());
     registerActivePipeline(m_pipeline);
-    connectSimpleBusMessageCallback(m_pipeline.get(), [this](GstMessage* message) {
-        this->handleMessage(message);
+    connectSimpleBusMessageCallback(m_pipeline.get(), [weakThis = ThreadSafeWeakPtr { *this }](GstMessage* message) {
+        RefPtr destination = weakThis.get();
+        if (!destination)
+            return;
+        destination->handleMessage(message, false);
     });
 
     m_src = GST_ELEMENT_CAST(g_object_new(WEBKIT_TYPE_WEB_AUDIO_SRC, nullptr));
@@ -183,14 +186,16 @@ void AudioDestinationGStreamer::initializePipeline()
     GstElement* audioConvert = makeGStreamerElement("audioconvert"_s);
     GstElement* audioResample = makeGStreamerElement("audioresample"_s);
     auto clockSync = gst_element_factory_make("clocksync", nullptr);
+    auto queue = gst_element_factory_make("queue", nullptr);
 
-    gst_bin_add_many(GST_BIN_CAST(m_pipeline.get()), m_src.get(), audioConvert, audioResample, clockSync, audioSink.get(), nullptr);
+    gst_bin_add_many(GST_BIN_CAST(m_pipeline.get()), m_src.get(), audioConvert, audioResample, clockSync, queue, audioSink.get(), nullptr);
 
-    // Link src pads from webkitAudioSrc to clocksync ! audioConvert ! audioResample ! audiosink.
+    // Link src pads from webkitAudioSrc to clocksync ! audioConvert ! audioResample ! queue ! audiosink.
     gst_element_link_pads_full(m_src.get(), "src", clockSync, "sink", GST_PAD_LINK_CHECK_NOTHING);
     gst_element_link_pads_full(clockSync, "src", audioConvert, "sink", GST_PAD_LINK_CHECK_NOTHING);
     gst_element_link_pads_full(audioConvert, "src", audioResample, "sink", GST_PAD_LINK_CHECK_NOTHING);
-    gst_element_link_pads_full(audioResample, "src", audioSink.get(), "sink", GST_PAD_LINK_CHECK_NOTHING);
+    gst_element_link_pads_full(audioResample, "src", queue, "sink", GST_PAD_LINK_CHECK_NOTHING);
+    gst_element_link_pads_full(queue, "src", audioSink.get(), "sink", GST_PAD_LINK_CHECK_NOTHING);
 }
 
 unsigned AudioDestinationGStreamer::framesPerBuffer() const
@@ -198,14 +203,18 @@ unsigned AudioDestinationGStreamer::framesPerBuffer() const
     return AudioUtilities::renderQuantumSize;
 }
 
-bool AudioDestinationGStreamer::handleMessage(GstMessage* message)
+bool AudioDestinationGStreamer::handleMessage(GstMessage* message, bool handleLatencyMessage)
 {
     switch (GST_MESSAGE_TYPE(message)) {
     case GST_MESSAGE_ERROR:
         notifyIsPlaying(false);
         break;
     case GST_MESSAGE_LATENCY:
-        gst_bin_recalculate_latency(GST_BIN_CAST(m_pipeline.get()));
+        if (!handleLatencyMessage)
+            break;
+        gst_element_call_async(m_pipeline.get(), reinterpret_cast<GstElementCallAsyncFunc>(+[](GstElement* pipeline, gpointer) {
+            gst_bin_recalculate_latency(GST_BIN_CAST(pipeline));
+        }), nullptr, nullptr);
         break;
     default:
         break;
@@ -238,8 +247,11 @@ void AudioDestinationGStreamer::startRendering(CompletionHandler<void(bool)>&& c
         return;
     }
 
-    notifyStartupResult(webkitGstSetElementStateSynchronously(m_pipeline.get(), GST_STATE_PLAYING, [this](GstMessage* message) -> bool {
-        return handleMessage(message);
+    notifyStartupResult(webkitGstSetElementStateSynchronously(m_pipeline.get(), GST_STATE_PLAYING, [weakThis = ThreadSafeWeakPtr { *this }](GstMessage* message) -> bool {
+        RefPtr destination = weakThis.get();
+        if (!destination)
+            return false;
+        return destination->handleMessage(message, true);
     }));
 }
 
@@ -272,8 +284,11 @@ void AudioDestinationGStreamer::stopRendering(CompletionHandler<void(bool)>&& co
         return;
     }
 
-    notifyStopResult(webkitGstSetElementStateSynchronously(m_pipeline.get(), GST_STATE_READY, [this](GstMessage* message) -> bool {
-        return handleMessage(message);
+    notifyStopResult(webkitGstSetElementStateSynchronously(m_pipeline.get(), GST_STATE_READY, [weakThis = ThreadSafeWeakPtr { *this }](GstMessage* message) -> bool {
+        RefPtr destination = weakThis.get();
+        if (!destination)
+            return false;
+        return destination->handleMessage(message, true);
     }));
 }
 
@@ -315,8 +330,12 @@ void AudioDestinationGStreamer::notifyIsPlaying(bool isPlaying)
 
     GST_DEBUG("Is playing: %s", boolForPrinting(isPlaying));
     m_isPlaying = isPlaying;
-    if (m_callback)
-        m_callback->isPlayingDidChange();
+
+    {
+        Locker locker { m_callbackLock };
+        if (m_callback)
+            m_callback->isPlayingDidChange();
+    }
 }
 
 #undef GST_CAT_DEFAULT

@@ -45,14 +45,14 @@ struct ConnectionTraits {
 
 class Connection final : public Daemon::ConnectionToMachService<ConnectionTraits> {
 public:
-    static Ref<Connection> create(CString&& machServiceName, NetworkSession&);
+    static Ref<Connection> create(UTF8CString&& machServiceName, NetworkSession&);
 
 private:
-    Connection(CString&& machServiceName, NetworkSession&);
+    Connection(UTF8CString&& machServiceName, NetworkSession&);
 
     void newConnectionWasInitialized() const final;
 #if PLATFORM(COCOA)
-    XPCObjectPtr<xpc_object_t> dictionaryFromMessage(MessageType, Daemon::EncodedMessage&&) const final;
+    OSObjectPtr<xpc_object_t> dictionaryFromMessage(MessageType, Daemon::EncodedMessage&&) const final;
     void connectionReceivedEvent(xpc_object_t) final;
 #endif
 

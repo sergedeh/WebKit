@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <JavaScriptCore/JSCJSValueCell.h>
 #include <JavaScriptCore/JSObject.h>
 
 namespace JSC {
@@ -61,7 +62,7 @@ public:
 
     DECLARE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE);
 
-    JSGlobalObject* target() const { return m_target.get(); }
+    JSGlobalObject* target() const LIFETIME_BOUND { return m_target.get(); }
     static constexpr ptrdiff_t targetOffset() { return OBJECT_OFFSETOF(JSGlobalProxy, m_target); }
 
     JS_EXPORT_PRIVATE void setTarget(VM&, JSGlobalObject*);
@@ -91,5 +92,21 @@ protected:
 private:
     WriteBarrier<JSGlobalObject> m_target;
 };
+
+// Defined here rather than in JSCJSValue.h because it needs JSGlobalProxy to be complete.
+ALWAYS_INLINE bool isThisValueAltered(const PutPropertySlot& slot, JSObject* baseObject)
+{
+    JSValue thisValue = slot.thisValue();
+    if (thisValue == baseObject) [[likely]]
+        return false;
+
+    if (!thisValue.isObject())
+        return true;
+    JSObject* thisObject = asObject(thisValue);
+    // Only GlobalProxyType can be seen as the same to the original target object.
+    if (thisObject->type() == GlobalProxyType && static_cast<void*>(uncheckedDowncast<JSGlobalProxy>(thisObject)->target()) == static_cast<void*>(baseObject))
+        return false;
+    return true;
+}
 
 } // namespace JSC

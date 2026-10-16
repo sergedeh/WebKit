@@ -74,7 +74,7 @@ struct RenderGeometryMapStep {
 class RenderGeometryMap {
     WTF_MAKE_NONCOPYABLE(RenderGeometryMap);
 public:
-    explicit RenderGeometryMap(OptionSet<MapCoordinatesMode> = UseTransforms);
+    explicit RenderGeometryMap(OptionSet<MapCoordinatesMode> = MapCoordinatesMode::UseTransforms);
     ~RenderGeometryMap();
 
     OptionSet<MapCoordinatesMode> mapCoordinatesFlags() const { return m_mapCoordinatesFlags; }
@@ -110,8 +110,8 @@ public:
 private:
     void mapToContainer(TransformState&, const RenderLayerModelObject* container = nullptr) const;
 
-    void stepInserted(const RenderGeometryMapStep&);
-    void stepRemoved(const RenderGeometryMapStep&);
+    void LEGACY_NODELETE stepInserted(const RenderGeometryMapStep&);
+    void LEGACY_NODELETE stepRemoved(const RenderGeometryMapStep&);
     
     bool hasNonUniformStep() const { return m_nonUniformStepsCount; }
     bool hasTransformStep() const { return m_transformedStepsCount; }

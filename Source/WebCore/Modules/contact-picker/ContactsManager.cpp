@@ -34,6 +34,8 @@
 #include "Document.h"
 #include "DocumentPage.h"
 #include "JSContactInfo.h"
+#include "JSDOMConvertEnumeration.h"
+#include "JSDOMConvertSequences.h"
 #include "JSDOMPromiseDeferred.h"
 #include "LocalFrameInlines.h"
 #include "Navigator.h"
@@ -102,7 +104,7 @@ void ContactsManager::select(const Vector<ContactProperty>& properties, const Co
     ContactsRequestData requestData;
     requestData.properties = properties;
     requestData.multiple = options.multiple;
-    requestData.url = frame->document()->url().truncatedForUseAsBase().string();
+    requestData.url = protect(frame->document())->url().truncatedForUseAsBase().string();
 
     m_contactPickerIsShowing = true;
 

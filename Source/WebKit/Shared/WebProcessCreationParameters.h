@@ -31,6 +31,7 @@
 #include "CacheModel.h"
 #include "SandboxExtension.h"
 #include "ScriptTrackingPrivacyFilter.h"
+#include "SharedPreferencesForWebProcess.h"
 #include "TextCheckerState.h"
 #include "UserData.h"
 
@@ -55,7 +56,8 @@
 #endif
 
 #if PLATFORM(IOS_FAMILY)
-#include <WebCore/RenderThemeIOS.h>
+#include <WebCore/CSSValueKey.h>
+#include <WebCore/ColorHash.h>
 #include <pal/system/ios/UserInterfaceIdiom.h>
 #endif
 
@@ -73,6 +75,12 @@
 namespace API {
 class Data;
 }
+
+#if PLATFORM(IOS_FAMILY)
+namespace WebCore {
+using CSSValueToSystemColorMap = HashMap<CSSValueKey, Color>;
+}
+#endif
 
 namespace WebKit {
 
@@ -133,6 +141,11 @@ struct WebProcessCreationParameters {
     bool shouldThrowExceptionForGlobalConstantRedeclaration { true };
     WebCore::CrossOriginMode crossOriginMode { WebCore::CrossOriginMode::Shared }; // Cross-origin isolation via COOP+COEP headers.
 
+    // JSC feature-flag options delivered from the launching page's preferences and
+    // applied to the process-global JSC::Options before the first VM freezes them.
+    // See WebProcess::initializeWebProcess.
+    JSCOptionsForWebProcess jscOptions;
+
 #if ENABLE(SERVICE_CONTROLS)
     bool hasImageServices { false };
     bool hasSelectionServices { false };
@@ -164,16 +177,13 @@ struct WebProcessCreationParameters {
     HashMap<String, bool> notificationPermissions;
 #endif
 
-#if PLATFORM(COCOA)
-    RetainPtr<CFDataRef> networkATSContext;
-#endif
-
 #if PLATFORM(WAYLAND)
     String waylandCompositorDisplayName;
 #endif
 
 #if PLATFORM(COCOA)
     Vector<String> mediaMIMETypes;
+    HashMap<String, bool> mediaSourceTypesSupported;
 #endif
 
 #if PLATFORM(COCOA) || PLATFORM(GTK) || (PLATFORM(WPE) && ENABLE(WPE_PLATFORM))
@@ -191,15 +201,17 @@ struct WebProcessCreationParameters {
 #if USE(WPE_RENDERER)
     bool isServiceWorkerProcess { false };
     UnixFileDescriptor hostClientFileDescriptor;
-    CString implementationLibraryName;
+    UTF8CString implementationLibraryName;
 #endif
 
     std::optional<WebProcessDataStoreParameters> websiteDataStoreParameters;
 
-    std::optional<SandboxExtension::Handle> mobileGestaltExtensionHandle;
+#if (PLATFORM(MAC) || PLATFORM(MACCATALYST)) && !ENABLE(LAUNCHSERVICES_SANDBOX_EXTENSION_BLOCKING)
     std::optional<SandboxExtension::Handle> launchServicesExtensionHandle;
+#endif
+
 #if HAVE(VIDEO_RESTRICTED_DECODING)
-#if PLATFORM(MAC) || PLATFORM(MACCATALYST)
+#if (PLATFORM(MAC) || PLATFORM(MACCATALYST)) && !ENABLE(TRUSTD_BLOCKING_IN_WEBCONTENT)
     SandboxExtension::Handle trustdExtensionHandle;
 #endif
     bool enableDecodingHEIC { false };
@@ -219,7 +231,7 @@ struct WebProcessCreationParameters {
 #if PLATFORM(IOS_FAMILY)
     PAL::UserInterfaceIdiom currentUserInterfaceIdiom { PAL::UserInterfaceIdiom::Default };
     bool supportsPictureInPicture { false };
-    WebCore::RenderThemeIOS::CSSValueToSystemColorMap cssValueToSystemColorMap;
+    WebCore::CSSValueToSystemColorMap cssValueToSystemColorMap;
     WebCore::Color focusRingColor;
     String localizedDeviceModel;
     String contentSizeCategory;
@@ -259,7 +271,7 @@ struct WebProcessCreationParameters {
     String applicationID;
     String applicationName;
 #if ENABLE(REMOTE_INSPECTOR)
-    CString inspectorServerAddress;
+    UTF8CString inspectorServerAddress;
 #endif
 #endif
 
@@ -274,8 +286,11 @@ struct WebProcessCreationParameters {
     HashSet<WebCore::RegistrableDomain> storageAccessPromptQuirksDomains;
     ScriptTrackingPrivacyRules scriptTrackingPrivacyRules;
 
+    Seconds hiddenPageDOMTimerThrottlingIncreaseLimit;
     Seconds memoryFootprintPollIntervalForTesting;
     Vector<uint64_t> memoryFootprintNotificationThresholds;
+
+    std::optional<Seconds> overridePersistentNotificationMinimumLifetime;
 
 #if ENABLE(NOTIFY_BLOCKING)
     Vector<std::pair<String, uint64_t>> notifyState;
@@ -291,6 +306,10 @@ struct WebProcessCreationParameters {
 
 #if ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
     bool isDebugLoggingEnabled { false };
+#endif
+
+#if ENABLE(WEBASSEMBLY_DEBUGGER) && ENABLE(REMOTE_INSPECTOR)
+    bool shouldEnableWebAssemblyDebugger { false };
 #endif
 };
 

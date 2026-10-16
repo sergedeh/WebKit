@@ -49,6 +49,7 @@ typedef uint32_t RenderTreeExternalRepresentationBehavior;
 
 WK_EXPORT void WKBundlePageSetDefersLoading(WKBundlePageRef page, bool defersLoading) WK_C_API_DEPRECATED;
 WK_EXPORT void WKBundlePageClose(WKBundlePageRef page);
+WK_EXPORT bool WKBundlePageIsClosed(WKBundlePageRef page);
 WK_EXPORT WKStringRef WKBundlePageCopyRenderTreeExternalRepresentation(WKBundlePageRef page, RenderTreeExternalRepresentationBehavior);
 WK_EXPORT WKStringRef WKBundlePageCopyRenderTreeExternalRepresentationForPrinting(WKBundlePageRef page);
 
@@ -99,11 +100,6 @@ WK_EXPORT WKArrayRef WKBundlePageCopyContextMenuAtPointInWindow(WKBundlePageRef,
 WK_EXPORT void WKBundlePageInsertNewlineInQuotedContent(WKBundlePageRef page);
 
 WK_EXPORT bool WKBundlePageIsSuspended(WKBundlePageRef page);
-
-// This only works if the SuppressesIncrementalRendering preference is set as well.
-typedef unsigned WKRenderingSuppressionToken;
-WK_EXPORT WKRenderingSuppressionToken WKBundlePageExtendIncrementalRenderingSuppression(WKBundlePageRef);
-WK_EXPORT void WKBundlePageStopExtendingIncrementalRenderingSuppression(WKBundlePageRef, WKRenderingSuppressionToken);
 
 // UserContent API (compatible with Modern API, for WKTR)
 WK_EXPORT void WKBundlePageAddUserScript(WKBundlePageRef page, WKStringRef source, _WKUserScriptInjectionTime injectionTime, WKUserContentInjectedFrames injectedFrames);

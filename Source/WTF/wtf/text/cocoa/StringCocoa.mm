@@ -18,10 +18,13 @@
  *
  */
 
+#if !__has_feature(objc_arc)
+#error This file requires ARC. Add the "-fobjc-arc" compiler flag for this file.
+#endif
+
 #import "config.h"
 #import <wtf/text/WTFString.h>
 
-#import <CoreFoundation/CFString.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
 
 namespace WTF {

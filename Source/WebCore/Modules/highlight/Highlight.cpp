@@ -41,10 +41,17 @@ void Highlight::repaintRange(const AbstractRange& range)
     auto sortedRange = makeSimpleRange(range);
     if (is_gt(treeOrder<ComposedTree>(sortedRange.start, sortedRange.end)))
         std::swap(sortedRange.start, sortedRange.end);
+    // Highlight decorations can paint outside a renderer's ink overflow, so also repaint containing blocks (collected to avoid redundant repaints of shared containers).
+    SingleThreadWeakHashSet<RenderBlock> containingBlocks;
     for (Ref node : intersectingNodes(sortedRange)) {
-        if (CheckedPtr renderer = node->renderer())
+        if (CheckedPtr renderer = node->renderer()) {
             renderer->repaint();
+            if (CheckedPtr containingBlock = renderer->containingBlock())
+                containingBlocks.add(*containingBlock);
+        }
     }
+    for (CheckedRef containingBlock : containingBlocks)
+        containingBlock->repaint();
 }
 
 Ref<Highlight> Highlight::create(FixedVector<std::reference_wrapper<AbstractRange>>&& initialRanges)
@@ -55,7 +62,6 @@ Ref<Highlight> Highlight::create(FixedVector<std::reference_wrapper<AbstractRang
 Highlight::Highlight(FixedVector<std::reference_wrapper<AbstractRange>>&& initialRanges)
 {
     m_highlightRanges = WTF::map(initialRanges, [&](std::reference_wrapper<AbstractRange>& range) {
-        repaintRange(Ref { range.get() }.get());
         return HighlightRange::create(range.get());
     });
 }
@@ -76,9 +82,8 @@ bool Highlight::removeFromSetLike(const AbstractRange& range)
 
 void Highlight::clearFromSetLike()
 {
-    for (auto& highlightRange : m_highlightRanges)
+    for (auto& highlightRange : std::exchange(m_highlightRanges, { }))
         repaintRange(highlightRange->range());
-    m_highlightRanges.clear();
 }
 
 bool Highlight::addToSetLike(AbstractRange& range)
@@ -101,6 +106,12 @@ void Highlight::repaint()
 {
     for (auto& highlightRange : m_highlightRanges)
         repaintRange(highlightRange->range());
+}
+
+void Highlight::setAllRangesNeedPositionUpdate()
+{
+    for (auto& highlightRange : m_highlightRanges)
+        highlightRange->setNeedsPositionUpdate();
 }
 
 void Highlight::setPriority(int priority)

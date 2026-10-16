@@ -44,9 +44,9 @@ public:
     void serialize(StringBuilder&) const final;
     ExceptionOr<Ref<DOMMatrix>> toMatrix() final;
 
-    CSSNumberish x() const { return m_x.ptr(); }
-    CSSNumberish y() const { return m_y.ptr(); }
-    CSSNumberish z() const { return m_z.ptr(); }
+    CSSNumberish x() const { return m_x; }
+    CSSNumberish y() const { return m_y; }
+    CSSNumberish z() const { return m_z; }
 
     void setX(CSSNumberish);
     void setY(CSSNumberish);
@@ -57,7 +57,7 @@ public:
     RefPtr<CSSValue> toCSSValue() const final;
 
 private:
-    CSSScale(CSSTransformComponent::Is2D, Ref<CSSNumericValue>, Ref<CSSNumericValue>, Ref<CSSNumericValue>);
+    CSSScale(CSSTransformComponent::Is2D, Ref<CSSNumericValue>&&, Ref<CSSNumericValue>&&, Ref<CSSNumericValue>&&);
 
     Ref<CSSNumericValue> m_x;
     Ref<CSSNumericValue> m_y;

@@ -27,8 +27,8 @@
 #include "WebCookieManager.h"
 
 #include "NetworkProcess.h"
+#include "NetworkStorageSession.h"
 #include <WebCore/HTTPCookieAcceptPolicy.h>
-#include <WebCore/NetworkStorageSession.h>
 
 namespace WebKit {
 
@@ -52,7 +52,7 @@ void WebCookieManager::platformSetHTTPCookieAcceptPolicy(PAL::SessionID sessionI
         break;
     }
 
-    if (CheckedPtr storageSession = protectedProcess()->storageSession(sessionID))
+    if (CheckedPtr storageSession = protect(m_process)->storageSession(sessionID))
         storageSession->setCookieAcceptPolicy(curlPolicy);
 
     completionHandler();

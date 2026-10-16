@@ -45,7 +45,7 @@ class Location final : public ScriptWrappable, public RefCounted<Location> {
 public:
     static Ref<Location> create(DOMWindow& window) { return adoptRef(*new Location(window)); }
 
-    ~Location();
+    WEBCORE_EXPORT ~Location();
 
     ExceptionOr<void> setHref(LocalDOMWindow& incumbentWindow, LocalDOMWindow& firstWindow, const String&);
     String href() const;
@@ -73,20 +73,21 @@ public:
     String toString() const { return href(); }
 
     Ref<DOMStringList> ancestorOrigins() const;
+    DOMStringList* cachedAncestorOrigins() const { return m_ancestorOrigins.get(); }
 
     DOMWindow* window() { return m_window.get(); }
-    RefPtr<DOMWindow> protectedWindow();
 
-    const URL& url() const;
+    const URL& url() const LIFETIME_BOUND;
 
 private:
     explicit Location(DOMWindow&);
 
     ExceptionOr<void> setLocation(LocalDOMWindow& incumbentWindow, LocalDOMWindow& firstWindow, const String&);
 
-    Frame* frame();
-    const Frame* frame() const;
+    Frame* LEGACY_NODELETE frame();
+    const Frame* LEGACY_NODELETE frame() const;
 
+    mutable RefPtr<DOMStringList> m_ancestorOrigins;
     WeakPtr<DOMWindow, WeakPtrImplWithEventTargetData> m_window;
 };
 

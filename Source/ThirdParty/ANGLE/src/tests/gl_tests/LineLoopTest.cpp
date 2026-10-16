@@ -4,10 +4,9 @@
 // found in the LICENSE file.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
+#include <array>
 
+#include "common/unsafe_buffers.h"
 #include "test_utils/ANGLETest.h"
 
 #include "test_utils/gl_raii.h"
@@ -59,11 +58,14 @@ class LineLoopTest : public ANGLETest<>
         {
             for (int x = 0; x < getWindowWidth(); x++)
             {
-                const GLubyte *pixel = &pixels[0] + ((y * getWindowWidth() + x) * 4);
+                const GLubyte *pixel =
+                    ANGLE_UNSAFE_TODO(&pixels[0] + ((y * getWindowWidth() + x) * 4));
 
                 EXPECT_EQ(pixel[0], 0) << "Failed at " << x << ", " << y << std::endl;
-                EXPECT_EQ(pixel[1], pixel[2]) << "Failed at " << x << ", " << y << std::endl;
-                ASSERT_EQ(pixel[3], 255) << "Failed at " << x << ", " << y << std::endl;
+                ANGLE_UNSAFE_TODO(EXPECT_EQ(pixel[1], pixel[2]))
+                    << "Failed at " << x << ", " << y << std::endl;
+                ANGLE_UNSAFE_TODO(ASSERT_EQ(pixel[3], 255))
+                    << "Failed at " << x << ", " << y << std::endl;
             }
         }
     }
@@ -198,8 +200,8 @@ TEST_P(LineLoopTest, LineLoopUByteIndicesBlend)
     // This doesn't occur on Windows 10 (Version 1511) though.
     ignoreD3D11SDKLayersWarnings();
 
-    static const GLubyte indices[] = {0, 7, 6, 9, 8, 0};
-    runTestBlend(GL_UNSIGNED_BYTE, 0, indices + 1);
+    static const std::array<GLubyte, 6> indices = {0, 7, 6, 9, 8, 0};
+    runTestBlend(GL_UNSIGNED_BYTE, 0, &indices[1]);
 }
 
 // Line loop test that draws a loop and a strip, blends the colors, and checks they're correct. No
@@ -209,8 +211,8 @@ TEST_P(LineLoopTest, LineLoopUShortIndicesBlend)
     // http://anglebug.com/42265165: Disable D3D11 SDK Layers warnings checks.
     ignoreD3D11SDKLayersWarnings();
 
-    static const GLushort indices[] = {0, 7, 6, 9, 8, 0};
-    runTestBlend(GL_UNSIGNED_SHORT, 0, indices + 1);
+    static const std::array<GLushort, 6> indices = {0, 7, 6, 9, 8, 0};
+    runTestBlend(GL_UNSIGNED_SHORT, 0, &indices[1]);
 }
 
 // Line loop test that draws a loop and a strip, blends the colors, and checks they're correct. No
@@ -225,8 +227,8 @@ TEST_P(LineLoopTest, LineLoopUIntIndicesBlend)
     // http://anglebug.com/42265165: Disable D3D11 SDK Layers warnings checks.
     ignoreD3D11SDKLayersWarnings();
 
-    static const GLuint indices[] = {0, 7, 6, 9, 8, 0};
-    runTestBlend(GL_UNSIGNED_INT, 0, indices + 1);
+    static const std::array<GLuint, 6> indices = {0, 7, 6, 9, 8, 0};
+    runTestBlend(GL_UNSIGNED_INT, 0, &indices[1]);
 }
 
 // Line loop test that draws a loop and a strip, blends the colors, and checks they're correct.
@@ -291,8 +293,8 @@ TEST_P(LineLoopTest, LineLoopUByteIndicesNoBlend)
     // This doesn't occur on Windows 10 (Version 1511) though.
     ignoreD3D11SDKLayersWarnings();
 
-    static const GLubyte indices[] = {0, 7, 6, 9, 8, 0};
-    runTestNoBlend(GL_UNSIGNED_BYTE, 0, indices + 1);
+    static const std::array<GLubyte, 6> indices = {0, 7, 6, 9, 8, 0};
+    runTestNoBlend(GL_UNSIGNED_BYTE, 0, &indices[1]);
 }
 
 // Line loop test that draws a loop, reads it, then a strip, reads it, and confirms the pixels are
@@ -302,8 +304,8 @@ TEST_P(LineLoopTest, LineLoopUShortIndicesNoBlend)
     // http://anglebug.com/42265165: Disable D3D11 SDK Layers warnings checks.
     ignoreD3D11SDKLayersWarnings();
 
-    static const GLushort indices[] = {0, 7, 6, 9, 8, 0};
-    runTestNoBlend(GL_UNSIGNED_SHORT, 0, indices + 1);
+    static const std::array<GLushort, 6> indices = {0, 7, 6, 9, 8, 0};
+    runTestNoBlend(GL_UNSIGNED_SHORT, 0, &indices[1]);
 }
 
 // Line loop test that draws a loop, reads it, then a strip, reads it, and confirms the pixels are
@@ -318,8 +320,8 @@ TEST_P(LineLoopTest, LineLoopUIntIndicesNoBlend)
     // http://anglebug.com/42265165: Disable D3D11 SDK Layers warnings checks.
     ignoreD3D11SDKLayersWarnings();
 
-    static const GLuint indices[] = {0, 7, 6, 9, 8, 0};
-    runTestNoBlend(GL_UNSIGNED_INT, 0, indices + 1);
+    static const std::array<GLuint, 6> indices = {0, 7, 6, 9, 8, 0};
+    runTestNoBlend(GL_UNSIGNED_INT, 0, &indices[1]);
 }
 
 // Line loop test that draws a loop, reads it, then a strip, reads it, and confirms the pixels are
@@ -461,7 +463,166 @@ TEST_P(LineLoopTest, SimpleDrawArrays)
 }
 
 class LineLoopTestES3 : public LineLoopTest
-{};
+{
+  protected:
+    void runTestInstanced(std::function<void(void)> definePositionBuffer,
+                          std::function<void(void)> defineColorBuffer,
+                          std::function<void(void)> draw)
+    {
+        // http://anglebug.com/42265165: Disable D3D11 SDK Layers warnings checks.
+        ignoreD3D11SDKLayersWarnings();
+
+        constexpr char kVS[] = R"(#version 300 es
+    precision mediump float;
+    in vec2 position;
+    in vec2 colorIn;
+    out vec2 color;
+    void main()
+    {
+        gl_Position = vec4(position, 0, 1);
+        if ((gl_InstanceID / 2) % 2 == 1)
+        {
+            gl_Position.y += 1.0;
+        }
+        if (gl_InstanceID % 2 == 1)
+        {
+            gl_Position.x += 1.0;
+        }
+        color = colorIn;
+    })";
+
+        constexpr char kFS[] = R"(#version 300 es
+    precision mediump float;
+    in vec2 color;
+    out vec4 colorOut;
+    void main()
+    {
+        colorOut = vec4(color, 0, 1);
+    })";
+
+        ANGLE_GL_PROGRAM(program, kVS, kFS);
+        glUseProgram(program);
+
+        const GLint posLoc = glGetAttribLocation(program, "position");
+        const GLint colLoc = glGetAttribLocation(program, "colorIn");
+
+        // Draw 4 squares.  With a divisor of 2 on color, 2 of them will be one color, two the
+        // other.
+
+        GLBuffer position;
+        glBindBuffer(GL_ARRAY_BUFFER, position);
+        definePositionBuffer();
+        glEnableVertexAttribArray(posLoc);
+        glVertexAttribPointer(posLoc, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+
+        GLBuffer color;
+        glBindBuffer(GL_ARRAY_BUFFER, color);
+        defineColorBuffer();
+        glEnableVertexAttribArray(colLoc);
+        glVertexAttribPointer(colLoc, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+        glVertexAttribDivisor(colLoc, 2);
+
+        glClear(GL_COLOR_BUFFER_BIT);
+        draw();
+
+        // Verify pixels.  The result looks like the following:
+        //
+        //      +-----------------------+
+        //      |                       |
+        //      |   +----+     +----+   |
+        //      |   |    |     |    |   |  <-- two red squares
+        //      |   |    |     |    |   |
+        //      |   +----+     +----+   |
+        //      |                       |
+        //      |                       |
+        //      |   +----+     +----+   |
+        //      |   |    |     |    |   |  <-- two green squares
+        //      |   |    |     |    |   |
+        //      |   +----+     +----+   |
+        //      |                       |
+        //      +-----------------------+
+        //            |
+        //            V
+        //  Black inside and outside the squares
+        //
+        const int w = getWindowWidth();
+        const int h = getWindowHeight();
+        // Don't check too close to the lines to account for precision issues.  This is the margin
+        // from the middle of the lines.
+        const int m = 2;
+        const GLColor green(51, 153, 0, 255);
+
+        // Left of squares
+        EXPECT_PIXEL_RECT_EQ(0, 0, w / 8 - m, h, GLColor::black);
+        // Between squares
+        EXPECT_PIXEL_RECT_EQ(w / 2 - w / 8 + m, 0, w / 4 - m * 2, h, GLColor::black);
+        // Right of squares
+        EXPECT_PIXEL_RECT_EQ(w - w / 8 + m, 0, w / 8 - m, h, GLColor::black);
+
+        // Above squares
+        EXPECT_PIXEL_RECT_EQ(0, 0, w, h / 8 - m, GLColor::black);
+        // Between squares
+        EXPECT_PIXEL_RECT_EQ(0, h / 2 - h / 8 + m, w, h / 4 - m * 2, GLColor::black);
+        // Below squares
+        EXPECT_PIXEL_RECT_EQ(0, h - h / 8 + m, w, h / 8 - m, GLColor::black);
+
+        // Check the lines of the squares, leaving a margin for precision errors.
+        std::vector<GLColor> result(w * h);
+        glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, result.data());
+
+        auto checkHorizontalLine = [&result, w](int x, int y, int width, GLColor expect) {
+            for (int c = 0; c < width; ++c)
+            {
+                if (result[y * w + x + c] != expect)
+                {
+                    return false;
+                }
+            }
+            return true;
+        };
+        auto checkVerticalLine = [&result, w](int x, int y, int height, GLColor expect) {
+            for (int r = 0; r < height; ++r)
+            {
+                if (result[(y + r) * w + x] != expect)
+                {
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        for (int x : {w / 8, w / 2 - w / 8, w / 2 + w / 8, w - w / 8})
+        {
+            const int y      = h / 8 + m;
+            const int length = h / 4 - m * 2;
+            // The line may not exactly land on |x|, check around it too, one of them should be
+            // non-black.
+            EXPECT_TRUE(checkVerticalLine(x - 1, y, length, GLColor::red) ^
+                        checkVerticalLine(x, y, length, GLColor::red) ^
+                        checkVerticalLine(x + 1, y, length, GLColor::red));
+            EXPECT_TRUE(checkVerticalLine(x - 1, h / 2 + y, length, green) ^
+                        checkVerticalLine(x, h / 2 + y, length, green) ^
+                        checkVerticalLine(x + 1, h / 2 + y, length, green));
+        }
+        for (int y : {h / 8, h / 2 - h / 8, h / 2 + h / 8, h - h / 8})
+        {
+            const int x          = w / 8 + m;
+            const int length     = w / 4 - m * 2;
+            const GLColor expect = y < h / 2 ? GLColor::red : green;
+            EXPECT_PIXEL_RECT_EQ(x, y, length, 1, expect);
+            EXPECT_PIXEL_RECT_EQ(w / 2 + x, y, length, 1, expect);
+
+            EXPECT_TRUE(checkHorizontalLine(x, y - 1, length, expect) ^
+                        checkHorizontalLine(x, y, length, expect) ^
+                        checkHorizontalLine(x, y + 1, length, expect));
+            EXPECT_TRUE(checkHorizontalLine(w / 2 + x, y - 1, length, expect) ^
+                        checkHorizontalLine(w / 2 + x, y, length, expect) ^
+                        checkHorizontalLine(w / 2 + x, y + 1, length, expect));
+        }
+
+        ASSERT_GL_NO_ERROR();
+    }
+};
 
 // Test that uploading data to buffer that's in use then using it for line loop elements works.
 TEST_P(LineLoopTestES3, UseAsUBOThenUpdateThenLineLoopUByteIndexBuffer)
@@ -485,6 +646,163 @@ TEST_P(LineLoopTestES3, UseAsUBOThenUpdateThenLineLoopUByteIndexBuffer)
 
     glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
     EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
+}
+
+// Test glDrawArraysInstanced with a line loop and a non-zero divisor.
+TEST_P(LineLoopTestES3, LineLoopDrawArraysInstanced)
+{
+    const int w        = getWindowWidth();
+    const int h        = getWindowHeight();
+    const float left   = static_cast<float>(w / 8) / (w - 1) * 2.0 - 1.0;
+    const float right  = static_cast<float>(w / 2 - w / 8) / (w - 1) * 2.0 - 1.0;
+    const float top    = static_cast<float>(h / 8) / (h - 1) * 2.0 - 1.0;
+    const float bottom = static_cast<float>(h / 2 - h / 8) / (h - 1) * 2.0 - 1.0;
+
+    const GLfloat kPositions[] = {
+        // Top left.  Instances 1 and 3 shift this square to the right.  Instances 2 and 3 shift it
+        // down.
+        left, top, left, bottom, right, bottom, right, top,
+    };
+    constexpr GLfloat kColors[] = {
+        // Top
+        1.0f,
+        0.0f,
+        // Bottom
+        0.2f,
+        0.6f,
+    };
+    runTestInstanced(
+        [&kPositions]() {
+            glBufferData(GL_ARRAY_BUFFER, sizeof(kPositions), kPositions, GL_STATIC_DRAW);
+        },
+        [&kColors]() { glBufferData(GL_ARRAY_BUFFER, sizeof(kColors), kColors, GL_STATIC_DRAW); },
+        []() { glDrawArraysInstanced(GL_LINE_LOOP, 0, 4, 4); });
+}
+
+// Test glDrawArraysInstancedBaseInstance with a line loop and a non-zero divisor.
+TEST_P(LineLoopTestES3, LineLoopDrawArraysInstancedBaseInstance)
+{
+    const bool hasEXT   = IsGLExtensionEnabled("GL_EXT_base_instance");
+    const bool hasANGLE = IsGLExtensionEnabled("GL_ANGLE_base_vertex_base_instance");
+    ANGLE_SKIP_TEST_IF(!hasEXT && !hasANGLE);
+
+    const int w        = getWindowWidth();
+    const int h        = getWindowHeight();
+    const float left   = static_cast<float>(w / 8) / (w - 1) * 2.0 - 1.0;
+    const float right  = static_cast<float>(w / 2 - w / 8) / (w - 1) * 2.0 - 1.0;
+    const float top    = static_cast<float>(h / 8) / (h - 1) * 2.0 - 1.0;
+    const float bottom = static_cast<float>(h / 2 - h / 8) / (h - 1) * 2.0 - 1.0;
+
+    const GLfloat kPositions[] = {
+        // Top left.  Instances 1 and 3 shift this square to the right.  Instances 2 and 3 shift it
+        // down.
+        left, top, left, bottom, right, bottom, right, top,
+    };
+    constexpr GLfloat kColors[] = {
+        // 5 unused attributes, skipped by base instance
+        // clang-format off
+        0.1f, 0.2f,
+        0.3f, 0.4f,
+        0.5f, 0.6f,
+        0.7f, 0.8f,
+        0.9f, 0.95f,
+        // Top
+        1.0f, 0.0f,
+        // Bottom
+        0.2f, 0.6f,
+        // clang-format on
+    };
+    runTestInstanced(
+        [&kPositions]() {
+            glBufferData(GL_ARRAY_BUFFER, sizeof(kPositions), kPositions, GL_STATIC_DRAW);
+        },
+        [&kColors]() { glBufferData(GL_ARRAY_BUFFER, sizeof(kColors), kColors, GL_STATIC_DRAW); },
+        [hasEXT]() {
+            if (hasEXT)
+            {
+                glDrawArraysInstancedBaseInstanceEXT(GL_LINE_LOOP, 0, 4, 4, 5);
+            }
+            else
+            {
+                glDrawArraysInstancedBaseInstanceANGLE(GL_LINE_LOOP, 0, 4, 4, 5);
+            }
+        });
+}
+
+// Test glDrawElementsInstancedBaseVertexBaseInstance with a line loop and a non-zero divisor.
+TEST_P(LineLoopTestES3, LineLoopDrawElementsInstancedBaseVertexBaseInstance)
+{
+    const bool hasEXT   = IsGLExtensionEnabled("GL_EXT_base_instance");
+    const bool hasANGLE = IsGLExtensionEnabled("GL_ANGLE_base_vertex_base_instance");
+    ANGLE_SKIP_TEST_IF(!hasEXT && !hasANGLE);
+
+    const int w        = getWindowWidth();
+    const int h        = getWindowHeight();
+    const float left   = static_cast<float>(w / 8) / (w - 1) * 2.0 - 1.0;
+    const float right  = static_cast<float>(w / 2 - w / 8) / (w - 1) * 2.0 - 1.0;
+    const float top    = static_cast<float>(h / 8) / (h - 1) * 2.0 - 1.0;
+    const float bottom = static_cast<float>(h / 2 - h / 8) / (h - 1) * 2.0 - 1.0;
+
+    const GLfloat kPositions[] = {
+        // 5 unused vertices, skipped by base vertex
+        // clang-format off
+        0.1f, 0.4f,
+        0.3f, 0.6f,
+        0.5f, 0.8f,
+        0.7f, 0.6f,
+        0.9f, 0.4f,
+        // Top left.  Instances 1 and 3 shift this square to the right.  Instances 2 and 3 shift it
+        // down.  The 2nd and 3rd vertices are swapped, but are reordered by the index buffer.
+        left, top, right, bottom, left, bottom, right, top,
+        // clang-format on
+    };
+    constexpr GLfloat kColors[] = {
+        // 9 unused attributes, skipped by base instance.
+        // clang-format off
+        0.1f, 0.2f,
+        0.3f, 0.4f,
+        0.5f, 0.6f,
+        0.7f, 0.8f,
+        0.9f, 0.95f,
+        0.85f, 0.75f,
+        0.65f, 0.55f,
+        0.45f, 0.35f,
+        0.25f, 0.15f,
+        // Top
+        1.0f, 0.0f,
+        // Bottom
+        0.2f, 0.6f,
+        // clang-format on
+    };
+    constexpr GLint kIndices[] = {
+        // The square
+        2,
+        1,
+        3,
+        0,
+    };
+
+    GLBuffer index;
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, index);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(kIndices), kIndices, GL_STATIC_DRAW);
+
+    runTestInstanced(
+        [&kPositions]() {
+            glBufferData(GL_ARRAY_BUFFER, sizeof(kPositions), kPositions, GL_STATIC_DRAW);
+        },
+        [&kColors]() { glBufferData(GL_ARRAY_BUFFER, sizeof(kColors), kColors, GL_STATIC_DRAW); },
+        [hasEXT]() {
+            if (hasEXT)
+            {
+                glDrawElementsInstancedBaseVertexBaseInstanceEXT(GL_LINE_LOOP, 4, GL_UNSIGNED_INT,
+                                                                 nullptr, 4, 5, 9);
+            }
+            else
+            {
+                glDrawElementsInstancedBaseVertexBaseInstanceANGLE(GL_LINE_LOOP, 4, GL_UNSIGNED_INT,
+                                                                   nullptr, 4, 5, 9);
+            }
+        });
 }
 
 // Test that uploading data to buffer that's in use then using it for line loop elements works.
@@ -544,6 +862,147 @@ TEST_P(LineLoopTestES3, UseAsUBOThenUpdateThenLineLoopUIntIndexBuffer)
 
     glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
     EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
+}
+
+// Test that the closing segment of a line loop is rendered when drawing into a framebuffer object.
+// Backends that emulate line loops as a line strip plus a separate draw for the closing segment
+// have to issue that second draw; this reads back texels that only the closing edge covers.
+TEST_P(LineLoopTestES3, LineLoopClosingSegmentIntoFramebuffer)
+{
+    constexpr GLsizei kSize = 8;
+
+    GLTexture texture;
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, kSize, kSize);
+
+    GLFramebuffer framebuffer;
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
+    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+
+    glViewport(0, 0, kSize, kSize);
+    glDisable(GL_BLEND);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+
+    // An axis-aligned square whose corners land exactly on the pixel centers of columns and rows 1
+    // and 6. The vertices are ordered so that the three explicit segments are the bottom, right and
+    // top edges; the left edge, column 1, is covered only by the closing segment.
+    constexpr GLfloat kLow     = (1.5f / kSize) * 2.0f - 1.0f;
+    constexpr GLfloat kHigh    = (6.5f / kSize) * 2.0f - 1.0f;
+    const GLfloat kPositions[] = {kLow, kLow, kHigh, kLow, kHigh, kHigh, kLow, kHigh};
+
+    constexpr GLushort kIndices[] = {0, 1, 2, 3};
+    GLBuffer indexBuffer;
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indexBuffer);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(kIndices), kIndices, GL_STATIC_DRAW);
+
+    glUseProgram(mProgram);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glEnableVertexAttribArray(mPositionLocation);
+    glVertexAttribPointer(mPositionLocation, 2, GL_FLOAT, GL_FALSE, 0, kPositions);
+    glUniform4f(mColorLocation, 1.0f, 0.0f, 0.0f, 1.0f);
+
+    // Both the array and the element draw paths generate the closing segment separately.
+    for (bool indexed : {false, true})
+    {
+        glClear(GL_COLOR_BUFFER_BIT);
+        if (indexed)
+        {
+            glDrawElements(GL_LINE_LOOP, 4, GL_UNSIGNED_SHORT, nullptr);
+        }
+        else
+        {
+            glDrawArrays(GL_LINE_LOOP, 0, 4);
+        }
+        ASSERT_GL_NO_ERROR();
+
+        // The three explicit segments.
+        EXPECT_PIXEL_COLOR_EQ(3, 1, GLColor::red) << "indexed: " << indexed;
+        EXPECT_PIXEL_COLOR_EQ(6, 3, GLColor::red) << "indexed: " << indexed;
+        EXPECT_PIXEL_COLOR_EQ(3, 6, GLColor::red) << "indexed: " << indexed;
+
+        // The closing segment, away from the corners it shares with the bottom and top edges.
+        EXPECT_PIXEL_COLOR_EQ(1, 3, GLColor::red) << "indexed: " << indexed;
+        EXPECT_PIXEL_COLOR_EQ(1, 4, GLColor::red) << "indexed: " << indexed;
+
+        // Nothing was drawn inside the loop.
+        EXPECT_PIXEL_COLOR_EQ(3, 3, GLColor::black) << "indexed: " << indexed;
+    }
+}
+
+// Test that a line loop draw into a framebuffer whose draw buffer 0 has no attachment does not
+// crash. The framebuffer is complete, but the draw renders nowhere, so a backend may skip it
+// entirely; the draw for the closing segment has to be skipped along with it, otherwise it is
+// recorded on a render pass that was never set up for drawing.
+TEST_P(LineLoopTestES3, LineLoopWithNothingBoundToDrawBufferZero)
+{
+    GLTexture texture;
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, 16, 16);
+
+    // Attach the texture to COLOR_ATTACHMENT1 only. Draw buffer 0 is COLOR_ATTACHMENT0, which has
+    // no attachment, and draw buffer 1 is NONE.
+    GLFramebuffer framebuffer;
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, framebuffer);
+    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, texture, 0);
+    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER));
+
+    const GLfloat kPositions[] = {-0.5f, -0.5f, 0.5f, -0.5f, 0.5f, 0.5f, -0.5f, 0.5f};
+
+    glUseProgram(mProgram);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glEnableVertexAttribArray(mPositionLocation);
+    glVertexAttribPointer(mPositionLocation, 2, GL_FLOAT, GL_FALSE, 0, kPositions);
+    glUniform4f(mColorLocation, 1.0f, 0.0f, 0.0f, 1.0f);
+
+    glDrawArrays(GL_LINE_LOOP, 0, 4);
+
+    static const GLushort kIndices[] = {0, 1, 2, 3};
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+    glDrawElements(GL_LINE_LOOP, 4, GL_UNSIGNED_SHORT, kIndices);
+
+    glFinish();
+    EXPECT_GL_NO_ERROR();
+}
+
+// Test an edge case in the D3D11 backend where a large index array of GL_UNSIGNED_BYTE
+// drawn as a GL_LINE_LOOP is widened to 32-bits internally and overflows.
+// Disabled because it slow and triggers an internal error.
+TEST_P(LineLoopTestES3, DISABLED_LargeLoopUnsignedByte)
+{
+    size_t count = 805306368;
+
+    glLinkProgram(mProgram);
+    glUseProgram(mProgram);
+    ASSERT_GL_NO_ERROR();
+
+    GLBuffer ebo;
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, count, nullptr, GL_STATIC_DRAW);
+    ASSERT_GL_NO_ERROR();
+
+    glDrawElements(GL_LINE_LOOP, count, GL_UNSIGNED_BYTE, 0);
+    EXPECT_GL_ERROR(GL_OUT_OF_MEMORY);
+}
+
+// Test an edge case in the D3D11 backend where a large index array of GL_UNSIGNED_BYTE
+// drawn as a GL_TRIANGLE_FAN is widened to 32-bits internally and overflows.
+// Disabled because it slow and triggers an internal error.
+TEST_P(LineLoopTestES3, DISABLED_LargeFanUnsignedByte)
+{
+    size_t count = 805306368;
+
+    glLinkProgram(mProgram);
+    glUseProgram(mProgram);
+    ASSERT_GL_NO_ERROR();
+
+    GLBuffer ebo;
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, count, nullptr, GL_STATIC_DRAW);
+    ASSERT_GL_NO_ERROR();
+
+    glDrawElements(GL_TRIANGLE_FAN, count, GL_UNSIGNED_BYTE, 0);
+    EXPECT_GL_ERROR(GL_OUT_OF_MEMORY);
 }
 
 // Tests an edge case with a very large line loop element count.
@@ -606,14 +1065,14 @@ void main()
     ASSERT_GL_NO_ERROR();
 
     // clang-format off
-    constexpr GLfloat vertices[] = {
+    constexpr auto vertices = std::to_array<GLfloat>({
         0.1, 0.1, -0.1, 0.1, -0.1, -0.1, 0.1, -0.1,
         0.1, 0.1, -0.1, 0.1, -0.1, -0.1, 0.1, -0.1,
         0.1, 0.1, -0.1, 0.1, -0.1, -0.1, 0.1, -0.1,
         0.1, 0.1, -0.1, 0.1, -0.1, -0.1, 0.1, -0.1,
-    };
+    });
 
-    constexpr GLfloat transform[] = {
+    constexpr auto transform = std::to_array<GLfloat>({
         // first loop transform
         0, 0, 9,
         0, 0, 9,
@@ -634,7 +1093,7 @@ void main()
         -0.8, -0.5, 1,
         -0.8, -0.5, 1,
         -0.8, -0.5, 1,
-    };
+    });
 
     constexpr GLushort lineloopAsStripIndices[] = {
         // first strip
@@ -672,8 +1131,8 @@ void main()
 
     for (int loop = 0; loop < 4; ++loop)
     {
-        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, vertices + 8 * loop);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, transform + 12 * loop);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, &vertices[8 * loop]);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, &transform[12 * loop]);
 
         glDrawElements(GL_LINE_STRIP, 5, GL_UNSIGNED_SHORT, lineloopAsStripIndices);
     }
@@ -693,12 +1152,12 @@ void main()
                  lineloopWithRestartIndices, GL_STATIC_DRAW);
 
     glBindBuffer(GL_ARRAY_BUFFER, vertexBuffer[0]);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices.data(), GL_STATIC_DRAW);
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, 0);
 
     glBindBuffer(GL_ARRAY_BUFFER, vertexBuffer[1]);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(transform), transform, GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(transform), transform.data(), GL_STATIC_DRAW);
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, 0);
 
@@ -790,14 +1249,14 @@ void main()
     ASSERT_GL_NO_ERROR();
 
     // clang-format off
-    constexpr GLfloat vertices[] = {
+    constexpr auto vertices = std::to_array<GLfloat>({
         0.1, 0.1, -0.1, 0.1, -0.1, -0.1, 0.1, -0.1,
         0.4, 0.1, -0.5, 0.1, -0.6, -0.1, 0.7, -0.1,
         0.8, 0.1, -0.9, 0.1, -1.0, -0.1, 1.1, -0.1,
         0.1, 0.1, -0.1, 0.1, -0.1, -0.1, 0.1, -0.1,
-    };
+    });
 
-    constexpr GLfloat transform[] = {
+    constexpr auto transform = std::to_array<GLfloat>({
         // first loop transform
         0, 0, 9,
         0, 0, 9,
@@ -818,7 +1277,7 @@ void main()
         -0.8, -0.5, 1,
         -0.8, -0.5, 1,
         -0.8, -0.5, 1,
-    };
+    });
 
     constexpr GLushort lineloopAsStripIndices[] = {
         // first strip
@@ -853,8 +1312,8 @@ void main()
 
     for (int loop = 1; loop < 3; ++loop)
     {
-        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, vertices + 8 * loop);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, transform + 12 * loop);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, &vertices[8 * loop]);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, &transform[12 * loop]);
 
         glDrawElements(GL_LINE_STRIP, 5, GL_UNSIGNED_SHORT, lineloopAsStripIndices);
     }
@@ -874,19 +1333,19 @@ void main()
                  lineloopWithRestartIndices, GL_STATIC_DRAW);
 
     glBindBuffer(GL_ARRAY_BUFFER, vertexBuffer[0]);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices.data(), GL_STATIC_DRAW);
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, 0);
 
     glBindBuffer(GL_ARRAY_BUFFER, vertexBuffer[1]);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(transform), transform, GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(transform), transform.data(), GL_STATIC_DRAW);
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, 0);
 
     // For xfb
-    const GLfloat expected[16] = {0.4, -0.5, -0.5, -0.6, -0.6, 0.7, 0.7, 0.4,
-                                  0.8, -0.9, -0.9, -1.0, -1.0, 1.1, 1.1, 0.8};
-    unsigned expected_count    = sizeof(expected) / sizeof(expected[0]);
+    const std::array<GLfloat, 16> expected = {0.4, -0.5, -0.5, -0.6, -0.6, 0.7, 0.7, 0.4,
+                                              0.8, -0.9, -0.9, -1.0, -1.0, 1.1, 1.1, 0.8};
+    unsigned expected_count                = expected.size();
     GLuint xfbBuffer;
     glGenBuffers(1, &xfbBuffer);
     glBindBuffer(GL_TRANSFORM_FEEDBACK_BUFFER, xfbBuffer);
@@ -923,7 +1382,7 @@ void main()
     {
         for (unsigned j = 0; j < expected_count; j++)
         {
-            EXPECT_EQ(mappedBufferData[j], expected[j])
+            ANGLE_UNSAFE_TODO(EXPECT_EQ(mappedBufferData[j], expected[j]))
                 << "Expected pixel at " << j << " to be " << expected[j] << std::endl;
         }
     }
@@ -1334,19 +1793,24 @@ TEST_P(LineLoopIndirectTest, IndirectAndElementDrawsShareIndexBuffer)
     {
         for (int x = 0; x < getWindowWidth() / 2; x++)
         {
-            const GLubyte *pixel = &pixels[0] + ((y * getWindowWidth() + x) * 4);
+            const GLubyte *pixel = ANGLE_UNSAFE_TODO(&pixels[0] + ((y * getWindowWidth() + x) * 4));
 
-            EXPECT_TRUE(pixel[0] == pixel[2]) << "Failed at " << x << ", " << y << std::endl;
-            EXPECT_TRUE(pixel[1] == 0) << "Failed at " << x << ", " << y << std::endl;
-            ASSERT_EQ(pixel[3], 255) << "Failed at " << x << ", " << y << std::endl;
+            ANGLE_UNSAFE_TODO(EXPECT_TRUE(pixel[0] == pixel[2]))
+                << "Failed at " << x << ", " << y << std::endl;
+            ANGLE_UNSAFE_TODO(EXPECT_TRUE(pixel[1] == 0))
+                << "Failed at " << x << ", " << y << std::endl;
+            ANGLE_UNSAFE_TODO(ASSERT_EQ(pixel[3], 255))
+                << "Failed at " << x << ", " << y << std::endl;
         }
         for (int x = getWindowWidth() / 2; x < getWindowWidth(); x++)
         {
-            const GLubyte *pixel = &pixels[0] + ((y * getWindowWidth() + x) * 4);
+            const GLubyte *pixel = ANGLE_UNSAFE_TODO(&pixels[0] + ((y * getWindowWidth() + x) * 4));
 
             EXPECT_TRUE(pixel[0] == 0) << "Failed at " << x << ", " << y << std::endl;
-            EXPECT_TRUE(pixel[1] == pixel[2]) << "Failed at " << x << ", " << y << std::endl;
-            ASSERT_EQ(pixel[3], 255) << "Failed at " << x << ", " << y << std::endl;
+            ANGLE_UNSAFE_TODO(EXPECT_TRUE(pixel[1] == pixel[2]))
+                << "Failed at " << x << ", " << y << std::endl;
+            ANGLE_UNSAFE_TODO(ASSERT_EQ(pixel[3], 255))
+                << "Failed at " << x << ", " << y << std::endl;
         }
     }
 }
@@ -1446,7 +1910,7 @@ void main()
     ASSERT_GL_NO_ERROR();
     for (size_t i = 0; i < expected.size(); i++)
     {
-        EXPECT_EQ(mapped[i], expected[i]);
+        ANGLE_UNSAFE_TODO(EXPECT_EQ(mapped[i], expected[i]));
     }
 }
 ANGLE_INSTANTIATE_TEST_ES2_AND(LineLoopTest,

@@ -21,9 +21,11 @@
 #include "config.h"
 #include "RenderCombineText.h"
 
+#include "FontCascadeFonts.h"
+#include "FontCascadeInlines.h"
 #include "RenderBlock.h"
 #include "RenderObjectInlines.h"
-#include "RenderStyle+GettersInlines.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -35,22 +37,26 @@ const float textCombineMargin = 1.15f; // Allow em + 15% margin
 
 RenderCombineText::RenderCombineText(Text& textNode, const String& string)
     : RenderText(Type::CombineText, textNode, string)
-    , m_isCombined(false)
-    , m_needsFontUpdate(false)
+{
+    ASSERT(isRenderCombineText());
+}
+
+RenderCombineText::RenderCombineText(Document& document, const String& string)
+    : RenderText(Type::CombineText, document, string)
 {
     ASSERT(isRenderCombineText());
 }
 
 RenderCombineText::~RenderCombineText() = default;
 
-void RenderCombineText::styleDidChange(Style::Difference diff, const RenderStyle* oldStyle)
+void RenderCombineText::styleDidChange(Style::Difference diff, const Style::ComputedStyle* oldStyle)
 {
     // FIXME: This is pretty hackish.
     // Only cache a new font style if our old one actually changed. We do this to avoid
     // clobbering width variants and shrink-to-fit changes, since we won't recombine when
     // the font doesn't change.
     if (!oldStyle || !oldStyle->fontCascadeEqual(style()))
-        m_combineFontStyle = RenderStyle::clonePtr(style());
+        m_combineFontStyle = Style::ComputedStyle::clonePtr(style());
 
     RenderText::styleDidChange(diff, oldStyle);
 
@@ -113,7 +119,7 @@ void RenderCombineText::combineTextIfNeeded()
         return;
 
     auto description = originalFont().fontDescription();
-    float emWidth = description.computedSize() * textCombineMargin;
+    float emWidth = description.usedSize() * textCombineMargin;
 
     RefPtr fontSelector = style().fontCascade().fontSelector();
 
@@ -137,7 +143,7 @@ void RenderCombineText::combineTextIfNeeded()
         m_combineFontStyle->mutableFontCascadeWithoutUpdate().setLetterSpacing(0);
     } else {
         // Need to try compressed glyphs.
-        static constexpr auto widthVariants = std::to_array<FontWidthVariant>({ FontWidthVariant::HalfWidth, FontWidthVariant::ThirdWidth, FontWidthVariant::QuarterWidth });
+        static constexpr auto widthVariants = WTF::toArray<FontWidthVariant>({ FontWidthVariant::HalfWidth, FontWidthVariant::ThirdWidth, FontWidthVariant::QuarterWidth });
         for (auto widthVariant : widthVariants) {
             description.setWidthVariant(widthVariant); // When modifying this, make sure to keep it in sync with FontPlatformData::isForTextCombine()!
 
@@ -167,10 +173,10 @@ void RenderCombineText::combineTextIfNeeded()
 
     if (!m_isCombined) {
         float scaleFactor = std::max(0.4f, emWidth / (emWidth + bestFitDelta));
-        float originalSize = bestFitDescription.computedSize();
+        float originalSize = bestFitDescription.usedSize();
         do {
             float computedSize = originalSize * scaleFactor;
-            bestFitDescription.setComputedSize(computedSize);
+            bestFitDescription.setUsedSize(computedSize);
             m_combineFontStyle->setFontDescription(FontCascadeDescription { bestFitDescription });
         
             FontCascade compressedFont(FontCascadeDescription { bestFitDescription }, style().fontCascade());

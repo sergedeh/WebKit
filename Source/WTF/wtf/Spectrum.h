@@ -43,11 +43,14 @@ public:
     void add(const T& key, CounterType count = 1)
     {
         Locker locker(m_lock);
+        add(locker, key, count);
+    }
+
+    void add(const AbstractLocker&, const T& key, CounterType count = 1)
+    {
         if (!count)
             return;
-        typename HashMap<T, CounterType>::AddResult result = m_map.add(key, count);
-        if (!result.isNewEntry)
-            result.iterator->value += count;
+        m_map.add(key, CounterType { }).iterator->value += count;
     }
     
     template<typename U>
@@ -95,7 +98,7 @@ public:
         CounterType count;
     };
 
-    Lock& getLock() { return m_lock; }
+    Lock& getLock() LIFETIME_BOUND { return m_lock; }
     
     // Returns a list ordered from lowest-count to highest-count.
     Vector<KeyAndCount> buildList(AbstractLocker&) const
@@ -115,7 +118,7 @@ public:
     }
     
     template<typename Functor>
-    void removeIf(const Functor& functor)
+    void removeIf(NOESCAPE const Functor& functor)
     {
         Locker locker(m_lock);
         m_map.removeIf([&functor] (typename HashMap<T, CounterType>::KeyValuePairType& pair) {

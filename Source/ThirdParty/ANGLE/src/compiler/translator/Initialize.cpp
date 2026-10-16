@@ -157,10 +157,6 @@ void InitExtensionBehavior(const ShBuiltInResources &resources, TExtensionBehavi
     {
         extBehavior[TExtension::ANGLE_base_vertex_base_instance_shader_builtin] = EBhUndefined;
     }
-    if (resources.WEBGL_video_texture)
-    {
-        extBehavior[TExtension::WEBGL_video_texture] = EBhUndefined;
-    }
     if (resources.APPLE_clip_distance)
     {
         extBehavior[TExtension::APPLE_clip_distance] = EBhUndefined;
@@ -253,6 +249,17 @@ void ResetExtensionBehavior(const ShBuiltInResources &resources,
             // enabled by default.
             extBehavior[TExtension::ARB_texture_rectangle] = EBhEnable;
         }
+    }
+    // ANGLE_multi_draw and ANGLE_base_vertex_base_instance are always emulated, so remove them if
+    // emulation is not enabled.
+    if (resources.ANGLE_multi_draw && !compileOptions.emulateGLDrawID)
+    {
+        extBehavior.erase(TExtension::ANGLE_multi_draw);
+    }
+    if (resources.ANGLE_base_vertex_base_instance_shader_builtin &&
+        !compileOptions.emulateGLBaseVertexBaseInstance)
+    {
+        extBehavior.erase(TExtension::ANGLE_base_vertex_base_instance_shader_builtin);
     }
 }
 

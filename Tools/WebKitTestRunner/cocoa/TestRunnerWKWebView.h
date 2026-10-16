@@ -44,6 +44,7 @@
 @property (nonatomic, copy) void (^didShowKeyboardCallback)(void);
 @property (nonatomic, copy) void (^didHideKeyboardCallback)(void);
 @property (nonatomic, copy) void (^willStartInputSessionCallback)(void);
+@property (nonatomic, copy) void (^didStartInputSessionCallback)(void);
 @property (nonatomic, copy) void (^willPresentPopoverCallback)(void);
 @property (nonatomic, copy) void (^didDismissPopoverCallback)(void);
 @property (nonatomic, copy) void (^didPresentViewControllerCallback)(void);
@@ -74,6 +75,8 @@
 @property (nonatomic, readonly, getter=isInteractingWithFormControl) BOOL interactingWithFormControl;
 @property (nonatomic) _WKFocusStartsInputSessionPolicy focusStartsInputSessionPolicy;
 
+@property (nonatomic) NSTimeInterval showKeyboardAfterElementFocusDelay;
+
 @property (nonatomic, readonly) BOOL didCallEnsurePositionInformationIsUpToDateSinceLastCheck;
 - (void)clearEnsurePositionInformationIsUpToDateTracking;
 
@@ -98,6 +101,10 @@
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
 @property (nonatomic, assign) BOOL shouldAcceptImmersiveEnvironmentRequests;
 #endif
+
+// Drives this view's fake _WKTranslationDelegate. One of "immediate", "async", "reverse", "fail",
+// "delayed", "hang", or "drop". Anything else, including the default, translates immediately.
+@property (nonatomic, copy) NSString *announcementTranslationMode;
 
 - (void)dismissActiveMenu;
 - (void)resetInteractionCallbacks;

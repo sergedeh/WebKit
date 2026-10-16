@@ -29,8 +29,11 @@
 #include "NavigatingToAppBoundDomain.h"
 #include "SafeBrowsingCheckOngoing.h"
 #include "SandboxExtension.h"
+#include "SessionState.h"
 #include "WebsitePoliciesData.h"
+#include <WebCore/AgentClusterAssignment.h>
 #include <WebCore/NavigationIdentifier.h>
+#include <WebCore/RegistrableDomain.h>
 
 namespace JSC {
 enum class MessageLevel : uint8_t;
@@ -54,6 +57,9 @@ struct PolicyDecision {
     std::optional<SandboxExtension::Handle> sandboxExtensionHandle { std::nullopt };
     std::optional<PolicyDecisionConsoleMessage> consoleMessage { std::nullopt };
     SafeBrowsingCheckOngoing isSafeBrowsingCheckOngoing { SafeBrowsingCheckOngoing::No };
+    RefPtr<FrameState> backForwardFrameState { nullptr };
+    WebCore::AgentClusterAssignment agentClusterAssignment { };
+    std::optional<WebCore::RegistrableDomain> unpartitionedStorageSite { std::nullopt };
 };
 
 } // namespace WebKit

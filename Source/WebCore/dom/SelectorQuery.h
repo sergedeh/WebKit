@@ -50,12 +50,12 @@ class SelectorDataList {
 public:
     explicit SelectorDataList(const CSSSelectorList&);
     bool matches(Element&) const;
-    Element* closest(Element&) const;
+    RefPtr<Element> closest(Element&) const;
     Ref<NodeList> queryAll(ContainerNode& rootNode) const;
     Element* queryFirst(ContainerNode& rootNode) const;
 
     bool shouldStoreInDocument() const { return m_matchType == MatchType::TagNameMatch || m_matchType == MatchType::ClassNameMatch; }
-    AtomString classNameToMatch() const;
+    AtomString LEGACY_NODELETE classNameToMatch() const;
 
 private:
     struct SelectorData {
@@ -66,7 +66,6 @@ private:
     };
 
     bool selectorMatches(const SelectorData&, Element&, const ContainerNode& rootNode, Style::SelectorMatchingState* = nullptr) const;
-    Element* selectorClosest(const SelectorData&, Element&, const ContainerNode& rootNode, Style::SelectorMatchingState* = nullptr) const;
 
     template <typename OutputType> void execute(ContainerNode& rootNode, OutputType&) const;
     template <typename OutputType> void executeFastPathForIdSelector(const ContainerNode& rootNode, const SelectorData&, const CSSSelector* idSelector, OutputType&) const;
@@ -83,7 +82,7 @@ private:
 #endif // ENABLE(CSS_SELECTOR_JIT)
 
     FixedVector<SelectorData> m_selectors;
-    mutable enum MatchType {
+    enum class MatchType : uint8_t {
         CompilableSingle,
         CompilableSingleWithRootFilter,
         CompilableMultipleSelectorMatch,
@@ -97,7 +96,8 @@ private:
         ClassNameMatch,
         AttributeExactMatch,
         MultipleSelectorMatch,
-    } m_matchType;
+    };
+    mutable MatchType m_matchType;
 };
 
 class SelectorQuery {
@@ -107,7 +107,7 @@ class SelectorQuery {
 public:
     explicit SelectorQuery(CSSSelectorList&&);
     bool matches(Element&) const;
-    Element* closest(Element&) const;
+    RefPtr<Element> closest(Element&) const;
     Ref<NodeList> queryAll(ContainerNode& rootNode) const;
     Element* queryFirst(ContainerNode& rootNode) const;
 
@@ -122,7 +122,7 @@ private:
 class SelectorQueryCache {
     WTF_MAKE_TZONE_ALLOCATED(SelectorQueryCache);
 public:
-    static SelectorQueryCache& singleton();
+    static SelectorQueryCache& LEGACY_NODELETE singleton();
 
     SelectorQuery* add(const String&, const Document&);
     void clear();
@@ -137,7 +137,7 @@ inline bool SelectorQuery::matches(Element& element) const
     return m_selectors.matches(element);
 }
 
-inline Element* SelectorQuery::closest(Element& element) const
+inline RefPtr<Element> SelectorQuery::closest(Element& element) const
 {
     return m_selectors.closest(element);
 }

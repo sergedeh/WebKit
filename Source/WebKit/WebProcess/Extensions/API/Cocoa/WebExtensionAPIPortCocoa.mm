@@ -41,13 +41,16 @@
 #import "WebExtensionContextMessages.h"
 #import "WebExtensionControllerProxy.h"
 #import "WebExtensionUtilities.h"
+#import "WebFrame.h"
 #import "WebProcess.h"
+#import <WebCore/LocalFrameInlines.h>
+#import <WebCore/UserGestureIndicator.h>
 
 namespace WebKit {
 
 using PortChannelPortMap = HashMap<WebExtensionPortChannelIdentifier, HashSet<WeakRef<WebExtensionAPIPort>>>;
 
-static PortChannelPortMap& webExtensionPorts()
+static PortChannelPortMap& LEGACY_NODELETE webExtensionPorts()
 {
     static MainRunLoopNeverDestroyed<PortChannelPortMap> ports;
     return ports;
@@ -106,19 +109,21 @@ NSString *WebExtensionAPIPort::name()
     return m_name.createNSString().autorelease();
 }
 
-NSDictionary *WebExtensionAPIPort::sender()
+JSValueRef WebExtensionAPIPort::sender(JSContextRef context)
 {
-    return m_senderParameters ? toWebAPI(m_senderParameters.value()) : nil;
+    return m_senderParameters ? toWebAPI(context, m_senderParameters.value()) : JSValueMakeNull(context);
 }
 
 JSValue *WebExtensionAPIPort::error()
 {
-    return m_error.get();
+    if (!m_error)
+        return nil;
+    return [JSValue valueWithJSValueRef:m_error.get() inContext:toJSContext(m_error.context().get())];
 }
 
-void WebExtensionAPIPort::setError(JSValue *error)
+void WebExtensionAPIPort::setError(JSContextRef context, JSValueRef error)
 {
-    m_error = error;
+    m_error = Protected(JSContextGetGlobalContext(context), error);
 }
 
 void WebExtensionAPIPort::postMessage(WebFrame& frame, const String& message, NSString **outExceptionString)
@@ -140,7 +145,8 @@ void WebExtensionAPIPort::postMessage(WebFrame& frame, const String& message, NS
 
     RELEASE_LOG_DEBUG(Extensions, "Sent port message for channel %{public}llu from %{public}@ world", channelIdentifier().toUInt64(), toDebugString(contentWorldType()).createNSString().get());
 
-    WebProcess::singleton().send(Messages::WebExtensionContext::PortPostMessage(contentWorldType(), targetContentWorldType(), owningPageProxyIdentifier(), channelIdentifier(), message), extensionContext().identifier());
+    bool userGesture = WebCore::UserGestureIndicator::processingUserGesture();
+    WebProcess::singleton().send(Messages::WebExtensionContext::PortPostMessage(contentWorldType(), targetContentWorldType(), owningPageProxyIdentifier(), channelIdentifier(), message, userGesture), extensionContext().identifier());
 }
 
 void WebExtensionAPIPort::disconnect()
@@ -150,15 +156,25 @@ void WebExtensionAPIPort::disconnect()
     fireDisconnectEventIfNeeded();
 }
 
-void WebExtensionAPIPort::fireMessageEventIfNeeded(id message)
+void WebExtensionAPIPort::fireMessageEventIfNeeded(id message, bool userGesture)
 {
     if (isDisconnected() || isQuarantined() || !m_onMessage || m_onMessage->listeners().isEmpty())
         return;
 
     RELEASE_LOG_DEBUG(Extensions, "Fired port message event for channel %{public}llu in %{public}@ world", channelIdentifier().toUInt64(), toDebugString(contentWorldType()).createNSString().get());
 
-    for (auto& listener : m_onMessage->listeners()) {
+    // Copy the listeners since call() can trigger a mutation of the listeners.
+    auto listenersCopy = m_onMessage->listeners();
+
+    for (RefPtr listener : listenersCopy) {
         auto globalContext = listener->globalContext();
+
+        std::optional<WebCore::UserGestureIndicator> gestureIndicator;
+        if (userGesture) {
+            RefPtr frame = toWebFrame(globalContext);
+            RefPtr coreFrame = frame ? frame->coreLocalFrame() : nullptr;
+            gestureIndicator.emplace(WebCore::IsProcessingUserGesture::Yes, coreFrame ? coreFrame->document() : nullptr);
+        }
 
         listener->call(
             toJSValueRef(globalContext, message),
@@ -186,7 +202,10 @@ void WebExtensionAPIPort::fireDisconnectEventIfNeeded()
 
     RELEASE_LOG_DEBUG(Extensions, "Fired port disconnect event for channel %{public}llu in %{public}@ world", m_channelIdentifier ? m_channelIdentifier->toUInt64() : 0, toDebugString(contentWorldType()).createNSString().get());
 
-    for (auto& listener : m_onDisconnect->listeners()) {
+    // Copy the listeners since call() can trigger a mutation of the listeners.
+    auto listenersCopy = m_onDisconnect->listeners();
+
+    for (RefPtr listener : listenersCopy) {
         auto globalContext = listener->globalContext();
 
         listener->call(toJS(globalContext, this));
@@ -215,7 +234,7 @@ WebExtensionAPIEvent& WebExtensionAPIPort::onDisconnect()
     return *m_onDisconnect;
 }
 
-void WebExtensionContextProxy::dispatchPortMessageEvent(std::optional<WebPageProxyIdentifier> sendingPageProxyIdentifier, WebExtensionPortChannelIdentifier channelIdentifier, const String& messageJSON)
+void WebExtensionContextProxy::dispatchPortMessageEvent(std::optional<WebPageProxyIdentifier> sendingPageProxyIdentifier, WebExtensionPortChannelIdentifier channelIdentifier, const String& messageJSON, bool userGesture)
 {
     auto ports = WebExtensionAPIPort::get(channelIdentifier);
     if (ports.isEmpty())
@@ -228,7 +247,7 @@ void WebExtensionContextProxy::dispatchPortMessageEvent(std::optional<WebPagePro
         if (sendingPageProxyIdentifier && sendingPageProxyIdentifier == port->owningPageProxyIdentifier())
             continue;
 
-        port->fireMessageEventIfNeeded(message);
+        port->fireMessageEventIfNeeded(message, userGesture);
     }
 }
 

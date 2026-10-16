@@ -102,6 +102,7 @@ CookieJarDB::CookieJarDB(const String& databasePath)
 CookieJarDB::~CookieJarDB()
 {
     closeDatabase();
+    m_database.setDidBeginCheckedPtrDeletion();
 }
 
 void CookieJarDB::open()
@@ -133,7 +134,7 @@ bool CookieJarDB::openDatabase()
                 existsDatabaseFile = false;
             }
         } else {
-            LOG_ERROR("Failed to open cookie database: %s, attempting to recreate the database", m_databasePath.utf8().data());
+            LOG_ERROR("Failed to open cookie database: %s, attempting to recreate the database", m_databasePath.utf8());
             deleteAllDatabaseFiles();
             existsDatabaseFile = false;
         }
@@ -141,7 +142,7 @@ bool CookieJarDB::openDatabase()
 
     if (!existsDatabaseFile) {
         if (!isOnMemory() && !FileSystem::makeAllDirectories(FileSystem::parentPath(m_databasePath)))
-            LOG_ERROR("Unable to create the Cookie Database path %s", m_databasePath.utf8().data());
+            LOG_ERROR("Unable to create the Cookie Database path %s", m_databasePath.utf8());
 
         m_database.open(m_databasePath);
     }
@@ -294,7 +295,7 @@ bool CookieJarDB::checkDatabaseValidity()
     String resultText = integrity->columnText(0);
 
     if (resultText != "ok"_s) {
-        LOG_ERROR("Cookie database integrity check failed - %s", resultText.ascii().data());
+        LOG_ERROR("Cookie database integrity check failed - %s", resultText.utf8());
         return false;
     }
 
@@ -427,7 +428,7 @@ std::optional<Vector<Cookie>> CookieJarDB::searchCookies(const URL& firstParty, 
         // https://tools.ietf.org/html/rfc6265#section-5.1.4 "Paths and Path-Match"
         bool isPathMatched = cookiePath == requestPath
             || (requestPath.startsWith(cookiePath) && cookiePath.endsWith('/'))
-            || (requestPath.startsWith(cookiePath) && (requestPath.characterAt(cookiePath.length()) == '/'));
+            || (requestPath.startsWith(cookiePath) && (requestPath.codeUnitAt(cookiePath.length()) == '/'));
 
         if (!isPathMatched)
             continue;

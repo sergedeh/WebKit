@@ -26,6 +26,7 @@
 
 #pragma once
 
+#include <array>
 #include <span>
 #include <string>
 #include <type_traits>
@@ -70,6 +71,15 @@ public:
         RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(m_charactersWithNullTerminator[length - 1] == '\0');
     }
 
+    // Only usable on constexpr arrays with static storage duration, since the result of a consteval
+    // call cannot point to a temporary, a local, or a non-constexpr object.
+    template<size_t length> requires (length > 0)
+    consteval explicit ASCIILiteral(const std::array<char, length>& characters)
+        : m_charactersWithNullTerminator(characters)
+    {
+        RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(m_charactersWithNullTerminator[length - 1] == '\0');
+    }
+
     constexpr unsigned hash() const;
     constexpr bool isNull() const { return m_charactersWithNullTerminator.empty(); }
 
@@ -78,10 +88,10 @@ public:
     constexpr std::span<const char> span() const { return m_charactersWithNullTerminator.first(length()); }
     std::span<const Latin1Character> span8() const { return byteCast<Latin1Character>(m_charactersWithNullTerminator.first(length())); }
     std::span<const char> spanIncludingNullTerminator() const { return m_charactersWithNullTerminator; }
-    size_t isEmpty() const { return m_charactersWithNullTerminator.size() <= 1; }
+    constexpr bool isEmpty() const { return m_charactersWithNullTerminator.size() <= 1; }
 
     constexpr char operator[](size_t index) const { return m_charactersWithNullTerminator[index]; }
-    constexpr char characterAt(size_t index) const { return m_charactersWithNullTerminator[index]; }
+    constexpr char codeUnitAt(size_t index) const { return m_charactersWithNullTerminator[index]; }
 
 #ifdef __OBJC__
     // This function convert null strings to empty strings.
@@ -122,9 +132,7 @@ inline constexpr unsigned ASCIILiteral::hash() const
 {
     if (isNull())
         return 0;
-    SuperFastHash hasher;
-    hasher.addCharacters(characters(), length());
-    return hasher.hash();
+    return SuperFastHash::computeHash(span());
 }
 
 struct ASCIILiteralHash {

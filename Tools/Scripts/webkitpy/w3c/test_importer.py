@@ -80,7 +80,7 @@ from webkitpy.common.host import Host
 from webkitpy.common.system.filesystem import FileSystem
 from webkitpy.common.webkit_finder import WebKitFinder
 from webkitpy.layout_tests.controllers.layout_test_finder_legacy import LayoutTestFinder
-from webkitpy.w3c.common import TEMPLATED_TEST_HEADER, WPT_GH_URL, WPTPaths
+from webkitpy.w3c.common import TEMPLATED_TEST_GLOBAL_SUFFIXES, TEMPLATED_TEST_HEADER, WPT_GH_URL, WPTPaths, case_mismatches
 from webkitpy.w3c.test_converter import convert_for_webkit
 from webkitpy.w3c.test_downloader import TestDownloader
 from webkitpy.w3c.test_parser import TestParser
@@ -195,15 +195,6 @@ class TestImporter(object):
 
         self._to_skip_new_directories = set()
 
-        self.globalToSuffixes = {
-            'window': ('html',),
-            'worker': ('worker.html', 'serviceworker.html', 'sharedworker.html'),
-            'dedicatedworker': ('worker.html',),
-            'serviceworker': ('serviceworker.html',),
-            'serviceworker-module': ('serviceworker-module.html',),
-            'sharedworker': ('sharedworker.html',)
-        }
-
     def do_import(self):
         finder = WebKitFinder(self.filesystem)
         self.source_directory = self.source_directory or WPTPaths.ensure_wpt_repository(finder, self.source_directory)
@@ -238,8 +229,24 @@ class TestImporter(object):
             else []
         )
 
+        mismatches = case_mismatches(self.filesystem, self.source_directory, test_paths)
+        for path, upstream_path in sorted(mismatches.items()):
+            _log.error(f'{path} differs only in case from {upstream_path} in the WPT checkout.')
+        if mismatches:
+            return
+
         for test_path in test_paths:
             self.find_importable_tests(self.filesystem.join(self.source_directory, test_path))
+
+        # A case-insensitive file system would write into the existing path and git would keep its case.
+        mismatches = case_mismatches(self.filesystem, self.destination_directory, [
+            self.filesystem.join(self.filesystem.relpath(dir_to_copy['dirname'], self.source_directory), file_to_copy['dest'])
+            for dir_to_copy in self.import_list for file_to_copy in dir_to_copy['copy_list']
+        ])
+        for upstream_path, path in sorted(mismatches.items()):
+            _log.error(f'{self.filesystem.join(self.destination_directory, path)} differs only in case from {upstream_path} in the WPT checkout. Rename it to match before importing.')
+        if mismatches:
+            return
 
         if self.options.clean_destination_directory:
             for test_path in test_paths:
@@ -423,7 +430,7 @@ class TestImporter(object):
 
                 mimetype = mimetypes.guess_type(fullpath)
                 if 'html' not in str(mimetype[0]) and 'application/xhtml+xml' not in str(mimetype[0]) and 'application/xml' not in str(mimetype[0]) and 'image/svg+xml' not in str(mimetype[0]):
-                    copy_list.append({'src': fullpath, 'dest': filename})
+                    copy_list.append({'src': fullpath, 'dest': filename, 'is_resource': True})
                     continue
 
                 test_parser = TestParser(vars(self.options), filename=fullpath, host=self.host, source_root_directory=source_root_directory)
@@ -432,7 +439,7 @@ class TestImporter(object):
                     # This is probably a resource file, but we should generate WPT manifest instead and get the list of resource files from it.
                     if not self._is_in_resources_directory(fullpath):
                         self._new_resource_files.add(relpath)
-                    copy_list.append({'src': fullpath, 'dest': filename})
+                    copy_list.append({'src': fullpath, 'dest': filename, 'is_resource': True})
                     continue
                 elif self._is_in_resources_directory(fullpath):
                     _log.warning('%s is a test located in a "resources" folder. This test will be skipped by WebKit test runners.', fullpath)
@@ -545,7 +552,7 @@ class TestImporter(object):
                 items = line.split('META: global=', 1)[1].split(',')
                 suffixes = set()
                 for item in items:
-                    suffixes_for_item = self.globalToSuffixes.get(item.strip(), ())
+                    suffixes_for_item = TEMPLATED_TEST_GLOBAL_SUFFIXES.get(item.strip(), ())
                     if len(suffixes_for_item) == 0:
                         suffixes.add('')
                     else:
@@ -555,10 +562,12 @@ class TestImporter(object):
 
     def write_html_files_for_templated_js_tests(self, orig_filepath, new_filepath):
         if (orig_filepath.endswith('.window.js')):
-            self._write_html_template(new_filepath.replace('.window.js', '.window.html'))
+            _, variants = self._read_environments_and_variants_for_template_test(orig_filepath)
+            self._write_html_template(new_filepath.replace('.window.js', '.window.html'), variants)
             return
         if (orig_filepath.endswith('.worker.js')):
-            self._write_html_template(new_filepath.replace('.worker.js', '.worker.html'))
+            _, variants = self._read_environments_and_variants_for_template_test(orig_filepath)
+            self._write_html_template(new_filepath.replace('.worker.js', '.worker.html'), variants)
             return
         if (orig_filepath.endswith('.any.js')):
             environments, variants = self._read_environments_and_variants_for_template_test(orig_filepath)
@@ -572,7 +581,6 @@ class TestImporter(object):
         total_imported_jstests = 0
         total_imported_crashtests = 0
         total_prefixed_properties = {}
-        total_prefixed_property_values = {}
 
         failed_conversion_files = []
 
@@ -587,7 +595,6 @@ class TestImporter(object):
             total_imported_crashtests += dir_to_copy['crashtests']
 
             prefixed_properties = []
-            prefixed_property_values = []
 
             if not dir_to_copy['copy_list']:
                 continue
@@ -601,6 +608,17 @@ class TestImporter(object):
             for folder_needing_file_rewriting in folders_needing_file_rewriting:
                 if subpath.startswith(folder_needing_file_rewriting):
                     should_rewrite_files = True
+                    break
+
+            downloader = self.test_downloader()
+            paths_to_not_rewrite = {PurePath(p) for p in downloader.paths_to_not_rewrite}
+            paths_to_import = {PurePath(p) for p in downloader.paths_to_import}
+            subpath_as_path = PurePath(subpath)
+            for parent in itertools.chain([subpath_as_path], subpath_as_path.parents):
+                if parent in paths_to_not_rewrite:
+                    should_rewrite_files = False
+                    break
+                if parent in paths_to_import:
                     break
 
             if not(self.filesystem.exists(new_path)):
@@ -647,8 +665,9 @@ class TestImporter(object):
                 # Only html, xml, or css should be converted
                 # FIXME: Eventually, so should js when support is added for this type of conversion
                 mimetype = mimetypes.guess_type(orig_filepath)
-                if should_rewrite_files and ('text/' in str(mimetype[0]) or 'application/' in str(mimetype[0])) \
-                                        and ('html' in str(mimetype[0]) or 'xml' in str(mimetype[0])  or 'css' in str(mimetype[0]) or 'javascript' in str(mimetype[0])):
+                is_resource = file_to_copy.get('is_resource', False)
+                if should_rewrite_files and not is_resource and ('text/' in str(mimetype[0]) or 'application/' in str(mimetype[0])) \
+                                        and ('html' in str(mimetype[0]) or 'xml' in str(mimetype[0])  or 'css' in str(mimetype[0])):
                     _log.info("Rewriting: %s" % new_filepath)
                     try:
                         converted_file = convert_for_webkit(new_path, filename=orig_filepath, reference_support_info=reference_support_info, reference_file_renames=reference_file_renames, host=self.host, webkit_test_runner_options=self._webkit_test_runner_options(new_filepath))
@@ -666,13 +685,7 @@ class TestImporter(object):
 
                         prefixed_properties.extend(set(converted_file[0]) - set(prefixed_properties))
 
-                        for prefixed_value in converted_file[1]:
-                            total_prefixed_property_values.setdefault(prefixed_value, 0)
-                            total_prefixed_property_values[prefixed_value] += 1
-
-                        prefixed_property_values.extend(set(converted_file[1]) - set(prefixed_property_values))
-
-                        self.filesystem.write_binary_file(new_filepath, converted_file[2])
+                        self.filesystem.write_binary_file(new_filepath, converted_file[1])
                 elif orig_filepath.endswith('__init__.py') and not self.filesystem.getsize(orig_filepath):
                     # Some bots dislike empty __init__.py.
                     self.write_init_py(new_filepath)
@@ -686,7 +699,7 @@ class TestImporter(object):
                 copied_files.append(new_filepath.replace(self._webkit_root, ''))
 
             self.remove_deleted_files(new_path, copied_files)
-            self.write_import_log(new_path, copied_files, prefixed_properties, prefixed_property_values)
+            self.write_import_log(new_path, copied_files, prefixed_properties)
 
         _log.info('Import complete')
         _log.info('IMPORTED %d TOTAL TESTS', total_imported_tests)
@@ -701,11 +714,6 @@ class TestImporter(object):
 
         for prefixed_property in sorted(total_prefixed_properties, key=lambda p: total_prefixed_properties[p]):
             _log.info('  %s: %s', prefixed_property, total_prefixed_properties[prefixed_property])
-        _log.info('')
-        _log.info('Property values needing prefixes (by count):')
-
-        for prefixed_value in sorted(total_prefixed_property_values, key=lambda p: total_prefixed_property_values[p]):
-            _log.info('  %s: %s', prefixed_value, total_prefixed_property_values[prefixed_value])
 
         if self.upstream_revision:
             _log.info('\n--------- Please include the following in your commit message: ---------\n')
@@ -801,7 +809,7 @@ class TestImporter(object):
                 continue
             self.filesystem.remove(deleted_file)
 
-    def write_import_log(self, import_directory, file_list, prop_list, property_values_list):
+    def write_import_log(self, import_directory, file_list, prop_list):
         """ Writes a w3c-import.log file in each directory with imported files. """
 
         import_log = []
@@ -816,12 +824,6 @@ class TestImporter(object):
         if prop_list:
             for prop in prop_list:
                 import_log.append(prop + '\n')
-        else:
-            import_log.append('None\n')
-        import_log.append('Property values requiring vendor prefixes:\n')
-        if property_values_list:
-            for value in property_values_list:
-                import_log.append(value + '\n')
         else:
             import_log.append('None\n')
         import_log.append('------------------------------------------------------------------------\n')

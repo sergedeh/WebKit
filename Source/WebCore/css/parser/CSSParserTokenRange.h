@@ -85,10 +85,13 @@ public:
     }
 
     // The returned range doesn't include the brackets
-    CSSParserTokenRange consumeBlock();
+    CSSParserTokenRange LEGACY_NODELETE consumeBlock();
     CSSParserTokenRange consumeBlockCheckingForEditability(StyleSheetContents*);
 
-    void consumeComponentValue();
+    void LEGACY_NODELETE consumeComponentValue();
+
+    // https://drafts.csswg.org/css-syntax-3/#typedef-any-value
+    bool LEGACY_NODELETE consumeAnyValue();
 
     void consumeWhitespace()
     {
@@ -97,8 +100,8 @@ public:
         skip(m_tokens, i);
     }
 
-    void trimTrailingWhitespace();
-    const CSSParserToken& consumeLast() LIFETIME_BOUND;
+    void LEGACY_NODELETE trimTrailingWhitespace();
+    const CSSParserToken& LEGACY_NODELETE consumeLast() LIFETIME_BOUND;
 
     CSSParserTokenRange consumeAll() { return { std::exchange(m_tokens, std::span<const CSSParserToken> { }) }; }
 
@@ -106,7 +109,7 @@ public:
 
     std::span<const CSSParserToken> span() const LIFETIME_BOUND { return m_tokens; }
 
-    static CSSParserToken& eofToken();
+    static CSSParserToken& LEGACY_NODELETE eofToken();
 
 private:
     std::span<const CSSParserToken> m_tokens;

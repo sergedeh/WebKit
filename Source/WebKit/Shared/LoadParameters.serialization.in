@@ -43,23 +43,32 @@ enum class WebCore::LockBackForwardList : bool;
     WebKit::UserData userData;
     WebCore::LockHistory lockHistory;
     WebCore::LockBackForwardList lockBackForwardList;
+    WebCore::NavigationHistoryBehavior navigationHistoryBehavior;
     WebCore::SubstituteData::SessionHistoryVisibility sessionHistoryVisibility
     String clientRedirectSourceForHistory;
-    WebCore::SandboxFlags effectiveSandboxFlags;
+    std::optional<WebCore::SandboxFlags> effectiveSandboxFlags;
     WebCore::ReferrerPolicy effectiveReferrerPolicy;
     std::optional<WebCore::OwnerPermissionsPolicyData> ownerPermissionsPolicy;
     std::optional<WebKit::NavigatingToAppBoundDomain> isNavigatingToAppBoundDomain;
     std::optional<WebKit::NetworkResourceLoadIdentifier> existingNetworkResourceLoadIdentifierToResume;
+    MonotonicTime originalNavigationStartTime;
     bool isServiceWorkerLoad;
 
 #if PLATFORM(COCOA)
     std::optional<double> dataDetectionReferenceDate;
 #endif
     bool isRequestFromClientOrUserInput;
+    bool hasCrossOriginRedirect;
+    bool hadUserGesture;
     WebCore::NavigationUpgradeToHTTPSBehavior navigationUpgradeToHTTPSBehavior;
     bool isHandledByAboutSchemeHandler;
+    bool isHistoryItemNavigation;
+    bool shouldConsiderEnhancedSecurityForInsecureResponse;
 
     std::optional<OptionSet<WebCore::AdvancedPrivacyProtections>> advancedPrivacyProtections;
     uint64_t requiredCookiesVersion;
     std::optional<WebCore::NavigationRequester> requester;
+    std::optional<WebCore::ResourceRequest> originalRequest;
+    std::optional<WebCore::RegistrableDomain> unpartitionedStorageSite;
+    std::optional<WebCore::AgentClusterAssignment> agentClusterAssignment;
 };

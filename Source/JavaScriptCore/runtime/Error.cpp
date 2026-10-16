@@ -24,12 +24,14 @@
 #include "config.h"
 #include "Error.h"
 
+#include "ErrorInstanceInlines.h"
 #include "ExecutableBaseInlines.h"
 #include "Interpreter.h"
 #include "JSCJSValueInlines.h"
 #include "JSGlobalObject.h"
 #include "SourceCode.h"
 #include "StackFrame.h"
+#include "TopExceptionScope.h"
 #include <wtf/text/MakeString.h>
 
 namespace JSC {
@@ -153,8 +155,8 @@ public:
         return IterationStatus::Done;
     }
 
-    CodeBlock* codeBlock() const { return m_codeBlock; }
-    BytecodeIndex bytecodeIndex() const { return m_bytecodeIndex; }
+    CodeBlock* LEGACY_NODELETE codeBlock() const { return m_codeBlock; }
+    BytecodeIndex LEGACY_NODELETE bytecodeIndex() const { return m_bytecodeIndex; }
 
 private:
     CallFrame* m_startCallFrame;
@@ -165,13 +167,13 @@ private:
 
 std::unique_ptr<Vector<StackFrame>> getStackTrace(VM& vm, JSObject* obj, bool useCurrentFrame, JSCell* ownerOfCallLinkInfo, CallLinkInfo* callLinkInfo, JSCell* subclassCaller)
 {
-    JSGlobalObject* globalObject = obj->globalObject();
-    if (!globalObject->stackTraceLimit())
+    std::optional<unsigned> stackTraceLimit = obj->realm()->stackTraceLimit();
+    if (!stackTraceLimit)
         return nullptr;
 
     size_t framesToSkip = useCurrentFrame ? 0 : 1;
     std::unique_ptr<Vector<StackFrame>> stackTrace = makeUnique<Vector<StackFrame>>();
-    vm.interpreter.getStackTrace(obj, *stackTrace, framesToSkip, globalObject->stackTraceLimit().value_or(0), subclassCaller, ownerOfCallLinkInfo, callLinkInfo);
+    vm.interpreter.getStackTrace(obj, *stackTrace, framesToSkip, *stackTraceLimit, subclassCaller, ownerOfCallLinkInfo, callLinkInfo);
     return stackTrace;
 }
 
@@ -249,7 +251,7 @@ JSObject* addErrorInfo(VM& vm, JSObject* error, int line, const SourceCode& sour
     // ErrorInstance to materialize whatever it needs to. There's a chance that we get passed some
     // other kind of object, which also has materializable properties. But this code is heuristic-ey
     // enough that if we're wrong in such corner cases, it's not the end of the world.
-    if (ErrorInstance* errorInstance = jsDynamicCast<ErrorInstance*>(error))
+    if (ErrorInstance* errorInstance = dynamicDowncast<ErrorInstance>(error))
         errorInstance->materializeErrorInfoIfNeeded(vm);
     
     // FIXME: This does not modify the column property, which confusingly continues to reflect
@@ -291,16 +293,14 @@ JSObject* createTypeErrorCopy(JSGlobalObject* globalObject, JSValue error)
     return createTypeError(globalObject, errorString);
 }
 
-String makeDOMAttributeGetterTypeErrorMessage(const char* interfaceName, const String& attributeName)
+String makeDOMAttributeGetterTypeErrorMessage(StringView interfaceName, const String& attributeName)
 {
-    auto interfaceNameSpan = unsafeSpan(interfaceName);
-    return makeString("The "_s, interfaceNameSpan, '.', attributeName, " getter can only be used on instances of "_s, interfaceNameSpan);
+    return makeString("The "_s, interfaceName, '.', attributeName, " getter can only be used on instances of "_s, interfaceName);
 }
 
-String makeDOMAttributeSetterTypeErrorMessage(const char* interfaceName, const String& attributeName)
+String makeDOMAttributeSetterTypeErrorMessage(StringView interfaceName, const String& attributeName)
 {
-    auto interfaceNameSpan = unsafeSpan(interfaceName);
-    return makeString("The "_s, interfaceNameSpan, '.', attributeName, " setter can only be used on instances of "_s, interfaceNameSpan);
+    return makeString("The "_s, interfaceName, '.', attributeName, " setter can only be used on instances of "_s, interfaceName);
 }
 
 Exception* throwConstructorCannotBeCalledAsFunctionTypeError(JSGlobalObject* globalObject, ThrowScope& scope, ASCIILiteral constructorName)
@@ -396,7 +396,7 @@ JSObject* createURIError(JSGlobalObject* globalObject, const String& message)
 JSObject* createOutOfMemoryError(JSGlobalObject* globalObject)
 {
     auto* error = createRangeError(globalObject, "Out of memory"_s, nullptr);
-    jsCast<ErrorInstance*>(error)->setOutOfMemoryError();
+    uncheckedDowncast<ErrorInstance>(error)->setOutOfMemoryError();
     return error;
 }
 
@@ -405,7 +405,7 @@ JSObject* createOutOfMemoryError(JSGlobalObject* globalObject, const String& mes
     if (message.isEmpty())
         return createOutOfMemoryError(globalObject);
     auto* error = createRangeError(globalObject, makeString("Out of memory: "_s, message), nullptr);
-    jsCast<ErrorInstance*>(error)->setOutOfMemoryError();
+    uncheckedDowncast<ErrorInstance>(error)->setOutOfMemoryError();
     return error;
 }
 

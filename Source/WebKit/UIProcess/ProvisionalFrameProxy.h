@@ -26,6 +26,7 @@
 #pragma once
 
 #include "WebPageProxyIdentifier.h"
+#include <WebCore/NavigationIdentifier.h>
 #include <WebCore/PageIdentifier.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/TZoneMalloc.h>
@@ -42,14 +43,13 @@ enum class CommitTiming : bool;
 class ProvisionalFrameProxy : public RefCountedAndCanMakeWeakPtr<ProvisionalFrameProxy> {
     WTF_MAKE_TZONE_ALLOCATED(ProvisionalFrameProxy);
 public:
-    explicit ProvisionalFrameProxy(WebFrameProxy&, Ref<FrameProcess>&&, CommitTiming);
+    explicit ProvisionalFrameProxy(WebFrameProxy&, Ref<FrameProcess>&&, CommitTiming, WebCore::NavigationIdentifier);
 
     ~ProvisionalFrameProxy();
 
     WebFrameProxy& frame() const { return m_frame.get(); }
-    Ref<WebFrameProxy> protectedFrame() const;
-    WebProcessProxy& process() const;
-    Ref<WebProcessProxy> protectedProcess() const;
+    WebProcessProxy& LEGACY_NODELETE process() const;
+    WebCore::NavigationIdentifier navigationID() const { return m_navigationID; }
 
     RefPtr<FrameProcess> takeFrameProcess();
 
@@ -57,6 +57,7 @@ private:
     WeakRef<WebFrameProxy> m_frame;
     RefPtr<FrameProcess> m_frameProcess;
     const Ref<VisitedLinkStore> m_visitedLinkStore;
+    const WebCore::NavigationIdentifier m_navigationID;
 };
 
 } // namespace WebKit

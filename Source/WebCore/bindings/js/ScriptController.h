@@ -47,7 +47,6 @@ namespace JSC {
 class AbstractModuleRecord;
 class CallFrame;
 class JSGlobalObject;
-class JSInternalPromise;
 
 namespace Bindings {
 class Instance;
@@ -80,7 +79,7 @@ enum class ReasonForCallingCanExecuteScripts : uint8_t {
     NotAboutToExecuteScript
 };
 
-using ValueOrException = Expected<JSC::JSValue, ExceptionDetails>;
+using ValueOrException = std::expected<JSC::JSValue, ExceptionDetails>;
 
 class ScriptController final : public CanMakeWeakPtr<ScriptController>, public CanMakeCheckedPtr<ScriptController> {
     WTF_MAKE_TZONE_ALLOCATED(ScriptController);
@@ -104,8 +103,8 @@ public:
 
     using ResolveFunction = CompletionHandler<void(ValueOrException)>;
 
-    WEBCORE_EXPORT JSC::JSValue executeScriptIgnoringException(const String& script, JSC::SourceTaintedOrigin, bool forceUserGesture = false);
-    WEBCORE_EXPORT JSC::JSValue executeScriptInWorldIgnoringException(DOMWrapperWorld&, const String& script, JSC::SourceTaintedOrigin, bool forceUserGesture = false);
+    WEBCORE_EXPORT JSC::JSValue executeScriptIgnoringException(const String& script, JSC::SourceTaintedness, bool forceUserGesture = false);
+    WEBCORE_EXPORT JSC::JSValue executeScriptInWorldIgnoringException(DOMWrapperWorld&, const String& script, JSC::SourceTaintedness, bool forceUserGesture = false);
     WEBCORE_EXPORT JSC::JSValue executeUserAgentScriptInWorldIgnoringException(DOMWrapperWorld&, const String& script, bool forceUserGesture);
     WEBCORE_EXPORT ValueOrException executeUserAgentScriptInWorld(DOMWrapperWorld&, const String& script, bool forceUserGesture);
     WEBCORE_EXPORT void executeAsynchronousUserAgentScriptInWorld(DOMWrapperWorld&, RunJavaScriptParameters&&, ResolveFunction&&);
@@ -116,6 +115,8 @@ public:
     // This asserts that URL argument is a JavaScript URL.
     void executeJavaScriptURL(const URL&, const NavigationAction&, bool& didReplaceDocument);
 
+    static uint64_t LEGACY_NODELETE scriptExecutionCount();
+
     static void initializeMainThread();
 
     void loadModuleScriptInWorld(LoadableModuleScript&, const URL& topLevelModuleURL, Ref<JSC::ScriptFetchParameters>&&, DOMWrapperWorld&);
@@ -123,8 +124,8 @@ public:
     void loadModuleScriptInWorld(LoadableModuleScript&, const ScriptSourceCode&, DOMWrapperWorld&);
     void loadModuleScript(LoadableModuleScript&, const ScriptSourceCode&);
 
-    JSC::JSValue linkAndEvaluateModuleScriptInWorld(LoadableModuleScript& , DOMWrapperWorld&);
-    JSC::JSValue linkAndEvaluateModuleScript(LoadableModuleScript&);
+    JSC::JSPromise* linkAndEvaluateModuleScriptInWorld(LoadableModuleScript&, DOMWrapperWorld&);
+    JSC::JSPromise* linkAndEvaluateModuleScript(LoadableModuleScript&);
 
     JSC::JSValue evaluateModule(const URL&, JSC::AbstractModuleRecord&, DOMWrapperWorld&, JSC::JSValue awaitedValue, JSC::JSValue resumeMode);
     JSC::JSValue evaluateModule(const URL&, JSC::AbstractModuleRecord&, JSC::JSValue awaitedValue, JSC::JSValue resumeMode);
@@ -135,7 +136,7 @@ public:
     void setWebAssemblyEnabled(bool, const String& errorMessage = String());
     void setTrustedTypesEnforcement(JSC::TrustedTypesEnforcement);
 
-    static bool canAccessFromCurrentOrigin(LocalFrame*, Document& accessingDocument);
+    static bool canAccessFromCurrentOrigin(Frame*, Document& accessingDocument);
     WEBCORE_EXPORT bool canExecuteScripts(ReasonForCallingCanExecuteScripts, DOMWrapperWorld* = nullptr);
 
     void setPaused(bool b) { m_paused = b; }
@@ -144,6 +145,10 @@ public:
     const URL* sourceURL() const { return m_sourceURL; } // nullptr if we are not evaluating any script
 
     void updateDocument();
+
+    // Re-runs the runtime-enable conditions for interface members whose controlling quirk is resolved
+    // after the prototype may already have been created, and removes any that are no longer enabled.
+    void reevaluateQuirkDependentProperties();
 
     void namedItemAdded(HTMLDocument*, const AtomString&) { }
     void namedItemRemoved(HTMLDocument*, const AtomString&) { }
@@ -155,7 +160,6 @@ public:
 
     RefPtr<JSC::Bindings::Instance>  createScriptInstanceForWidget(Widget*);
     WEBCORE_EXPORT JSC::Bindings::RootObject* bindingRootObject();
-    RefPtr<JSC::Bindings::RootObject> protectedBindingRootObject();
     JSC::Bindings::RootObject* cacheableBindingRootObject();
     JSC::Bindings::RootObject* existingCacheableBindingRootObject() const { return m_cacheableBindingRootObject.get(); }
 
@@ -183,15 +187,12 @@ private:
     ValueOrException executeScriptInWorld(DOMWrapperWorld&, RunJavaScriptParameters&&);
     ValueOrException callInWorld(RunJavaScriptParameters&&, DOMWrapperWorld&);
     
-    void setupModuleScriptHandlers(LoadableModuleScript&, JSC::JSInternalPromise&, DOMWrapperWorld&);
+    void setupModuleScriptHandlers(LoadableModuleScript&, JSC::JSPromise&, DOMWrapperWorld&);
 
     void disconnectPlatformScriptObjects();
 
-    Ref<WindowProxy> protectedWindowProxy() { return windowProxy(); }
-    WEBCORE_EXPORT WindowProxy& windowProxy();
+    WEBCORE_EXPORT WindowProxy& LEGACY_NODELETE windowProxy();
     WEBCORE_EXPORT JSWindowProxy& jsWindowProxy(DOMWrapperWorld&);
-
-    Ref<LocalFrame> protectedFrame() const;
 
     WeakRef<LocalFrame> m_frame;
     const URL* m_sourceURL { nullptr };
@@ -208,7 +209,7 @@ private:
     RefPtr<JSC::Bindings::RootObject> m_cacheableBindingRootObject;
     RootObjectMap m_rootObjects;
 #if PLATFORM(COCOA)
-    RetainPtr<WebScriptObject> m_windowScriptObject;
+    const RetainPtr<WebScriptObject> m_windowScriptObject;
 #endif
 
 };

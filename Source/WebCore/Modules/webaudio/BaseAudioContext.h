@@ -37,13 +37,13 @@
 #include "OscillatorType.h"
 #include "PeriodicWaveConstraints.h"
 #include <atomic>
+#include <wtf/CurrentThread.h>
 #include <wtf/Forward.h>
 #include <wtf/LoggerHelper.h>
 #include <wtf/MainThread.h>
 #include <wtf/RecursiveLockAdapter.h>
 #include <wtf/RobinHoodHashMap.h>
 #include <wtf/ThreadSafeRefCounted.h>
-#include <wtf/Threading.h>
 
 namespace JSC {
 class ArrayBuffer;
@@ -106,15 +106,12 @@ public:
     WEBCORE_EXPORT static bool isContextAlive(uint64_t contextID);
     uint64_t contextID() const { return m_contextID; }
 
-    Document* document() const;
-    RefPtr<Document> protectedDocument() const;
+    Document* LEGACY_NODELETE document() const;
     bool isInitialized() const { return m_isInitialized; }
     
     virtual bool isOfflineContext() const = 0;
     virtual AudioDestinationNode& destination() = 0;
-    Ref<AudioDestinationNode> protectedDestination() { return destination(); }
     virtual const AudioDestinationNode& destination() const = 0;
-    Ref<const AudioDestinationNode> protectedDestination() const { return destination(); }
 #if PLATFORM(IOS_FAMILY)
     virtual const String& sceneIdentifier() const { return nullString(); }
 #endif
@@ -131,6 +128,7 @@ public:
     using State = AudioContextState;
     State state() const { return m_state; }
     bool isClosed() const { return m_state == State::Closed; }
+    bool isRunning() const { return m_state == State::Running; }
 
     AudioWorklet& audioWorklet() { return m_worklet.get(); }
 
@@ -191,13 +189,13 @@ public:
     // Thread Safety and Graph Locking:
     //
     
-    void setAudioThread(Thread& thread) { m_audioThreadUID = thread.uid(); } // FIXME: check either not initialized or the same
-    bool isAudioThread() const { return m_audioThreadUID == Thread::currentSingleton().uid(); }
+    void setAudioThread(uint32_t threadUID) { m_audioThreadUID = threadUID; } // FIXME: check either not initialized or the same
+    bool isAudioThread() const { return m_audioThreadUID == currentThreadID(); }
 
     // Returns true only after the audio thread has been started and then shutdown.
     bool isAudioThreadFinished() const { return m_isAudioThreadFinished; }
 
-    RecursiveLock& graphLock() const { return m_graphLock; }
+    RecursiveLock& graphLock() const LIFETIME_BOUND { return m_graphLock; }
 
     // Returns true if this thread owns the context's lock.
     bool isGraphOwner() const { return m_graphLock.isOwner(); }
@@ -209,6 +207,9 @@ public:
     // In AudioNode::decrementConnectionCount() a tryLock() is used for calling decrementConnectionCountWithLock(), but if it fails keep track here.
     void addDeferredDecrementConnectionCount(AudioNode*);
 
+    // In AudioNode::deref() a tryLock() is used for calling derefWithLock(), but if it fails keep track here.
+    void addDeferredDeref(const AudioNode*);
+
     // Only accessed when the graph lock is held.
     void markSummingJunctionDirty(AudioSummingJunction*);
     void markAudioNodeOutputDirty(AudioNodeOutput*);
@@ -217,17 +218,16 @@ public:
     void removeMarkedSummingJunction(AudioSummingJunction*);
 
     // EventTarget
-    ScriptExecutionContext* scriptExecutionContext() const final;
-    using ActiveDOMObject::protectedScriptExecutionContext;
+    ScriptExecutionContext* LEGACY_NODELETE scriptExecutionContext() const final;
 
     virtual void sourceNodeWillBeginPlayback(AudioNode&);
     // When a source node has no more processing to do (has finished playing), then it tells the context to dereference it.
-    void sourceNodeDidFinishPlayback(AudioNode&);
+    void LEGACY_NODELETE sourceNodeDidFinishPlayback(AudioNode&);
 
 #if !RELEASE_LOG_DISABLED
     const Logger& logger() const override { return m_logger.get(); }
     uint64_t logIdentifier() const override { return m_logIdentifier; }
-    WTFLogChannel& logChannel() const final;
+    WTFLogChannel& LEGACY_NODELETE logChannel() const final;
     uint64_t nextAudioNodeLogIdentifier() { return childLogIdentifier(m_logIdentifier, ++m_nextAudioNodeIdentifier); }
     uint64_t nextAudioParameterLogIdentifier() { return childLogIdentifier(m_logIdentifier, ++m_nextAudioParameterIdentifier); }
 #endif
@@ -239,12 +239,12 @@ public:
 
     virtual void lazyInitialize();
 
-    static bool isSupportedSampleRate(float sampleRate);
+    static bool LEGACY_NODELETE isSupportedSampleRate(float sampleRate);
 
     PeriodicWave& periodicWave(OscillatorType);
 
     void addAudioParamDescriptors(const String& processorName, Vector<AudioParamDescriptor>&&);
-    const MemoryCompactRobinHoodHashMap<String, Vector<AudioParamDescriptor>>& parameterDescriptorMap() const { return m_parameterDescriptorMap; }
+    const MemoryCompactRobinHoodHashMap<String, Vector<AudioParamDescriptor>>& parameterDescriptorMap() const LIFETIME_BOUND { return m_parameterDescriptorMap; }
 
     OptionSet<NoiseInjectionPolicy> noiseInjectionPolicies() const { return m_noiseInjectionPolicies; }
 
@@ -262,12 +262,15 @@ protected:
 
     void clear();
 
-    RefPtr<MediaSessionManagerInterface> mediaSessionManagerIfExists() const;
+    RefPtr<MediaSessionManagerInterface> LEGACY_NODELETE mediaSessionManagerIfExists() const;
     RefPtr<MediaSessionManagerInterface> mediaSessionManager() const;
+
+    // ActiveDOMObject.
+    void stop() override;
 
 protected:
     // Only accessed when the graph lock is held.
-    const Vector<AudioConnectionRef<AudioNode>>& referencedSourceNodes() const { return m_referencedSourceNodes; }
+    const Vector<AudioConnectionRef<AudioNode>>& referencedSourceNodes() const LIFETIME_BOUND { return m_referencedSourceNodes; }
 
 private:
     void scheduleNodeDeletion();
@@ -278,14 +281,12 @@ private:
 
     // In the audio thread at the start of each render cycle, we'll call handleDeferredDecrementConnectionCounts().
     void handleDeferredDecrementConnectionCounts();
+    void handleDeferredDerefs();
 
     // EventTarget
     enum EventTargetInterfaceType eventTargetInterface() const final;
     void refEventTarget() override { ref(); }
     void derefEventTarget() override { deref(); }
-
-    // ActiveDOMObject.
-    void stop() override;
 
     // When the context goes away, there might still be some sources which haven't finished playing.
     // Make sure to dereference them here.
@@ -337,8 +338,8 @@ private:
         }
         TailProcessingNode& operator=(const TailProcessingNode&) = delete;
         TailProcessingNode& operator=(TailProcessingNode&&) = delete;
-        CheckedPtr<AudioNode> checkedNode() const { return m_node.get(); }
         AudioNode* operator->() const { return m_node.get(); }
+        AudioNode* node() const { return m_node.get(); }
         friend bool operator==(const TailProcessingNode&, const TailProcessingNode&) = default;
         bool operator==(const AudioNode& node) const { return m_node == &node; }
     private:
@@ -364,6 +365,7 @@ private:
     Vector<CheckedPtr<AudioNode>> m_renderingAutomaticPullNodes;
     // Only accessed in the audio thread.
     Vector<CheckedPtr<AudioNode>> m_deferredBreakConnectionList;
+    Vector<CheckedPtr<AudioNode>> m_deferredDerefList;
     Vector<Vector<DOMPromiseDeferred<void>>> m_stateReactions;
 
     const Ref<AudioListener> m_listener;
@@ -372,7 +374,7 @@ private:
 
     mutable RecursiveLock m_graphLock;
 
-    std::unique_ptr<AsyncAudioDecoder> m_audioDecoder;
+    const std::unique_ptr<AsyncAudioDecoder> m_audioDecoder;
 
     AudioIOPosition m_outputPosition;
 
@@ -380,10 +382,10 @@ private:
 
     // These are cached per audio context for performance reasons. They cannot be
     // static because they rely on the sample rate.
-    RefPtr<PeriodicWave> m_cachedPeriodicWaveSine;
-    RefPtr<PeriodicWave> m_cachedPeriodicWaveSquare;
-    RefPtr<PeriodicWave> m_cachedPeriodicWaveSawtooth;
-    RefPtr<PeriodicWave> m_cachedPeriodicWaveTriangle;
+    const RefPtr<PeriodicWave> m_cachedPeriodicWaveSine;
+    const RefPtr<PeriodicWave> m_cachedPeriodicWaveSquare;
+    const RefPtr<PeriodicWave> m_cachedPeriodicWaveSawtooth;
+    const RefPtr<PeriodicWave> m_cachedPeriodicWaveTriangle;
 
     State m_state { State::Suspended };
     bool m_isDeletionScheduled { false };

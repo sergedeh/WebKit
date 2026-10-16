@@ -42,6 +42,7 @@
 #if ENABLE(PICTURE_IN_PICTURE_API)
 #include "NotImplemented.h"
 #endif
+#include "LocalDOMWindow.h"
 #include "RenderElement.h"
 #include "SerializedNode.h"
 #include "Settings.h"
@@ -61,6 +62,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(ShadowRoot);
 struct SameSizeAsShadowRoot : public DocumentFragment, public TreeScope {
     uint8_t flagsAndModes[3];
     WeakPtr<Element, WeakPtrImplWithEventTargetData> host;
+    WeakPtr<Node, WeakPtrImplWithEventTargetData> shadowIncludingRoot;
     void* styleSheetList;
     void* styleScope;
     void* slotAssignment;
@@ -69,7 +71,7 @@ struct SameSizeAsShadowRoot : public DocumentFragment, public TreeScope {
 };
 
 static_assert(sizeof(ShadowRoot) == sizeof(SameSizeAsShadowRoot), "shadowroot should stay small");
-#if !ASSERT_ENABLED
+#if !ASSERT_ENABLED && ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
 static_assert(sizeof(WeakPtr<Element, WeakPtrImplWithEventTargetData>) == sizeof(void*), "WeakPtr should be same size as raw pointer");
 #endif
 
@@ -83,6 +85,7 @@ ShadowRoot::ShadowRoot(Document& document, ShadowRootMode mode, SlotAssignmentMo
     , m_hasScopedCustomElementRegistry(scopedRegistry == ShadowRootScopedCustomElementRegistry::Yes)
     , m_mode(mode)
     , m_slotAssignmentMode(assignmentMode)
+    , m_shadowIncludingRoot(this)
     , m_styleScope(makeUnique<Style::Scope>(*this))
     , m_referenceTarget(referenceTarget)
 {
@@ -128,37 +131,32 @@ ShadowRoot::~ShadowRoot()
     removeDetachedChildren();
 }
 
-Node::InsertedIntoAncestorResult ShadowRoot::insertedIntoAncestor(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
+Node::NeedsPostConnectionSteps ShadowRoot::insertionSteps(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
 {
-    DocumentFragment::insertedIntoAncestor(insertionType, parentOfInsertedTree);
+    DocumentFragment::insertionSteps(insertionType, parentOfInsertedTree);
     if (!m_hasScopedCustomElementRegistry && usesNullCustomElementRegistry() && !parentOfInsertedTree.usesNullCustomElementRegistry()) {
-        if (RefPtr registry = CustomElementRegistry::registryForElement(*host())) {
+        if (RefPtr registry = CustomElementRegistry::registryForElement(protect(*host()))) {
             clearUsesNullCustomElementRegistry();
             setCustomElementRegistry(WTF::move(registry));
         }
     }
     if (insertionType.connectedToDocument) {
-        protectedDocument()->didInsertInDocumentShadowRoot(*this);
+        protect(document())->didInsertInDocumentShadowRoot(*this);
         if (m_hasScopedCustomElementRegistry) {
             if (RefPtr registry = customElementRegistry())
-                registry->didAssociateWithDocument(protectedDocument());
+                registry->didAssociateWithDocument(protect(document()));
         }
     }
     if (!adoptedStyleSheets().empty() && document().frame())
-        checkedStyleScope()->didChangeActiveStyleSheetCandidates();
-    return InsertedIntoAncestorResult::Done;
+        protect(styleScope())->didChangeActiveStyleSheetCandidates();
+    return NeedsPostConnectionSteps::No;
 }
 
-CheckedRef<Style::Scope> ShadowRoot::checkedStyleScope() const
+void ShadowRoot::removingSteps(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
 {
-    return *m_styleScope;
-}
-
-void ShadowRoot::removedFromAncestor(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
-{
-    DocumentFragment::removedFromAncestor(removalType, oldParentOfRemovedTree);
+    DocumentFragment::removingSteps(removalType, oldParentOfRemovedTree);
     if (removalType.disconnectedFromDocument)
-        protectedDocument()->didRemoveInDocumentShadowRoot(*this);
+        protect(document())->didRemoveInDocumentShadowRoot(*this);
 }
 
 void ShadowRoot::childrenChanged(const ChildChange& childChange)
@@ -171,15 +169,22 @@ void ShadowRoot::childrenChanged(const ChildChange& childChange)
     // FIXME: Avoid always invalidating style just for first-child, etc... as done in Element::childrenChanged.
     switch (childChange.type) {
     case ChildChange::Type::ElementInserted:
+    case ChildChange::Type::ElementAndTextInserted:
     case ChildChange::Type::ElementRemoved:
-        m_host->invalidateStyleForSubtreeInternal();
+        protect(m_host)->invalidateStyleForSubtree();
         break;
+    case ChildChange::Type::ElementMovedFrom:
+    case ChildChange::Type::ElementMovedInto:
     case ChildChange::Type::TextInserted:
     case ChildChange::Type::TextRemoved:
     case ChildChange::Type::TextChanged:
+    case ChildChange::Type::TextMovedFrom:
+    case ChildChange::Type::TextMovedInto:
     case ChildChange::Type::AllChildrenRemoved:
     case ChildChange::Type::NonContentsChildRemoved:
     case ChildChange::Type::NonContentsChildInserted:
+    case ChildChange::Type::NonContentsChildMovedFrom:
+    case ChildChange::Type::NonContentsChildMovedInto:
     case ChildChange::Type::AllChildrenReplaced:
         break;
     }
@@ -211,7 +216,7 @@ void ShadowRoot::moveShadowRootToNewDocument(Document& oldDocument, Document& ne
 StyleSheetList& ShadowRoot::styleSheets()
 {
     if (!m_styleSheetList)
-        m_styleSheetList = StyleSheetList::create(*this);
+        lazyInitialize(m_styleSheetList, StyleSheetList::create(*this));
     return *m_styleSheetList;
 }
 
@@ -235,19 +240,19 @@ ExceptionOr<void> ShadowRoot::replaceChildrenWithMarkup(const String& markup, Op
         return { };
     }
 
-    auto fragment = createFragmentForInnerOuterHTML(*protectedHost(), markup, policy, customElementRegistry());
+    auto fragment = createFragmentForInnerOuterHTML(*protect(host()), markup, policy, protect(customElementRegistry()), usesNullCustomElementRegistry() ? Element::CustomElementRegistryKind::Null : Element::CustomElementRegistryKind::Window);
     if (fragment.hasException())
         return fragment.releaseException();
     bool usedFastPath = fragment.returnValue()->hasWasParsedWithFastPath();
     auto result = replaceChildrenWithFragment(*this, fragment.releaseReturnValue());
     if (!result.hasException() && usedFastPath)
-        document().updateCachedSetInnerHTML(markup, *this, *protectedHost());
+        protect(document())->updateCachedSetInnerHTML(markup, *this, *protect(host()));
     return result;
 }
 
-ExceptionOr<void> ShadowRoot::setHTMLUnsafe(Variant<RefPtr<TrustedHTML>, String>&& html)
+ExceptionOr<void> ShadowRoot::setHTMLUnsafe(Variant<Ref<TrustedHTML>, String>&& html)
 {
-    auto stringValueHolder = trustedTypeCompliantString(document().contextDocument(), WTF::move(html), "ShadowRoot setHTMLUnsafe"_s);
+    auto stringValueHolder = trustedTypeCompliantString(protect(document().contextDocument()), WTF::move(html), "ShadowRoot setHTMLUnsafe"_s);
 
     if (stringValueHolder.hasException())
         return stringValueHolder.releaseException();
@@ -265,28 +270,14 @@ String ShadowRoot::innerHTML() const
     return serializeFragment(*this, SerializedNodes::SubtreesOfChildren, nullptr, ResolveURLs::NoExcludingURLsForPrivacy);
 }
 
-ExceptionOr<void> ShadowRoot::setInnerHTML(Variant<RefPtr<TrustedHTML>, String>&& html)
+ExceptionOr<void> ShadowRoot::setInnerHTML(Variant<Ref<TrustedHTML>, String>&& html)
 {
-    auto stringValueHolder = trustedTypeCompliantString(document().contextDocument(), WTF::move(html), "ShadowRoot innerHTML"_s);
+    auto stringValueHolder = trustedTypeCompliantString(protect(document().contextDocument()), WTF::move(html), "ShadowRoot innerHTML"_s);
 
     if (stringValueHolder.hasException())
         return stringValueHolder.releaseException();
 
     return replaceChildrenWithMarkup(stringValueHolder.releaseReturnValue(), { });
-}
-
-bool ShadowRoot::childTypeAllowed(NodeType type) const
-{
-    switch (type) {
-    case ELEMENT_NODE:
-    case PROCESSING_INSTRUCTION_NODE:
-    case COMMENT_NODE:
-    case TEXT_NODE:
-    case CDATA_SECTION_NODE:
-        return true;
-    default:
-        return false;
-    }
 }
 
 Ref<Node> ShadowRoot::cloneNodeInternal(Document& document, CloningOperation type, CustomElementRegistry*) const
@@ -339,13 +330,6 @@ void ShadowRoot::removeAllEventListeners()
         node->removeAllEventListeners();
 }
 
-
-HTMLSlotElement* ShadowRoot::findAssignedSlot(const Node& node)
-{
-    ASSERT(node.parentNode() == host());
-    return m_slotAssignment ? m_slotAssignment->findAssignedSlot(node) : nullptr;
-}
-
 void ShadowRoot::renameSlotElement(HTMLSlotElement& slot, const AtomString& oldName, const AtomString& newName)
 {
     ASSERT(m_slotAssignment);
@@ -357,9 +341,9 @@ void ShadowRoot::addSlotElementByName(const AtomString& name, HTMLSlotElement& s
     ASSERT(&slot.rootNode() == this);
     if (!m_slotAssignment) {
         if (m_slotAssignmentMode == SlotAssignmentMode::Named)
-            m_slotAssignment = makeUnique<NamedSlotAssignment>();
+            lazyInitialize(m_slotAssignment, makeUnique<NamedSlotAssignment>());
         else
-            m_slotAssignment = makeUnique<ManualSlotAssignment>();
+            lazyInitialize(m_slotAssignment, makeUnique<ManualSlotAssignment>());
     }
 
     return m_slotAssignment->addSlotElementByName(name, slot, *this);
@@ -486,14 +470,14 @@ Vector<Ref<ShadowRoot>> assignedShadowRootsIfSlotted(const Node& node)
     Vector<Ref<ShadowRoot>> result;
     for (CheckedPtr slot = node.assignedSlot(); slot; slot = slot->assignedSlot()) {
         ASSERT(slot->containingShadowRoot());
-        result.append(*slot->containingShadowRoot());
+        result.append(protect(*slot->containingShadowRoot()));
     }
     return result;
 }
 
 Vector<Ref<WebAnimation>> ShadowRoot::getAnimations()
 {
-    return document().matchingAnimations([&](Element& target) {
+    return protect(document())->matchingAnimations([&](Element& target) {
         return target.containingShadowRoot() == this;
     });
 }
@@ -508,7 +492,7 @@ void ShadowRoot::setReferenceTarget(const AtomString& referenceTarget)
 
     m_referenceTarget = referenceTarget;
 
-    if (CheckedPtr cache = document().existingAXObjectCache())
+    if (CheckedPtr cache = protect(document())->existingAXObjectCache())
         cache->handleReferenceTargetChanged();
 }
 

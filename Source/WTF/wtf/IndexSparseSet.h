@@ -92,8 +92,8 @@ public:
     unsigned size() const;
     bool isEmpty() const;
     bool contains(unsigned) const;
-    const EntryType* get(unsigned) const;
-    EntryType* get(unsigned);
+    const EntryType* get(unsigned) const LIFETIME_BOUND;
+    EntryType* get(unsigned) LIFETIME_BOUND;
 
     typedef typename ValueList::const_iterator const_iterator;
     const_iterator begin() const LIFETIME_BOUND;
@@ -152,9 +152,8 @@ inline bool IndexSparseSet<EntryType, EntryTypeTraits, OverflowHandler>::remove(
         return false;
 
     if (EntryTypeTraits::key(m_values[position]) == value) {
-        EntryType lastValue = m_values.last();
-        m_values[position] = WTF::move(lastValue);
-        m_map[EntryTypeTraits::key(lastValue)] = position;
+        m_map[EntryTypeTraits::key(m_values.last())] = position;
+        m_values[position] = WTF::move(m_values.last());
         m_values.removeLast();
         return true;
     }

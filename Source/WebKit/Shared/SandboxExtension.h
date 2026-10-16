@@ -57,23 +57,23 @@ enum class SandboxExtensionType : uint8_t {
 class SandboxExtensionImpl {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(SandboxExtensionImpl);
 public:
-    static std::unique_ptr<SandboxExtensionImpl> create(const char* path, SandboxExtensionType, std::optional<audit_token_t> = std::nullopt, OptionSet<SandboxExtensionFlags> = SandboxExtensionFlags::Default);
-    SandboxExtensionImpl(std::span<const uint8_t>);
+    static std::unique_ptr<SandboxExtensionImpl> create(const UTF8CString& path, SandboxExtensionType, std::optional<audit_token_t> = std::nullopt, OptionSet<SandboxExtensionFlags> = SandboxExtensionFlags::Default);
+    SandboxExtensionImpl(UTF8CString&&);
     ~SandboxExtensionImpl();
 
     [[nodiscard]] bool consume();
     bool invalidate();
-    [[nodiscard]] std::span<const uint8_t> getSerializedFormat();
+    [[nodiscard]] const UTF8CString& getSerializedFormat() LIFETIME_BOUND;
 
     SandboxExtensionImpl(SandboxExtensionImpl&& other)
-        : m_token(std::exchange(other.m_token, CString()))
+        : m_token(std::exchange(other.m_token, UTF8CString()))
         , m_handle(std::exchange(other.m_handle, 0)) { }
 private:
-    CString sandboxExtensionForType(const char* path, SandboxExtensionType, std::optional<audit_token_t>, OptionSet<SandboxExtensionFlags>);
+    UTF8CString sandboxExtensionForType(const UTF8CString& path, SandboxExtensionType, std::optional<audit_token_t>, OptionSet<SandboxExtensionFlags>);
 
-    SandboxExtensionImpl(const char* path, SandboxExtensionType, std::optional<audit_token_t>, OptionSet<SandboxExtensionFlags>);
+    SandboxExtensionImpl(const UTF8CString& path, SandboxExtensionType, std::optional<audit_token_t>, OptionSet<SandboxExtensionFlags>);
 
-    CString m_token;
+    UTF8CString m_token;
     int64_t m_handle { 0 };
 };
 #endif
@@ -160,7 +160,7 @@ String resolveAndCreateReadWriteDirectoryForSandboxExtension(StringView path);
 
 inline SandboxExtensionHandle::SandboxExtensionHandle() { }
 inline SandboxExtensionHandle::SandboxExtensionHandle(const SandboxExtensionHandle&) { }
-inline SandboxExtensionHandle::~SandboxExtensionHandle() { }
+inline SandboxExtensionHandle::~SandboxExtensionHandle() = default;
 inline RefPtr<SandboxExtension> SandboxExtension::create(Handle&&) { return nullptr; }
 inline auto SandboxExtension::createHandle(StringView, Type) -> std::optional<Handle> { return Handle { }; }
 inline auto SandboxExtension::createReadOnlyHandlesForFiles(ASCIILiteral, const Vector<String>&) -> Vector<Handle> { return { }; }
@@ -168,7 +168,7 @@ inline auto SandboxExtension::createHandleWithoutResolvingPath(StringView, Type)
 inline auto SandboxExtension::createHandleForReadWriteDirectory(StringView) -> std::optional<Handle> { return Handle { }; }
 inline auto SandboxExtension::createHandleForTemporaryFile(StringView, Type) -> std::optional<std::pair<Handle, String>> { return std::pair<Handle, String> { }; }
 inline auto SandboxExtension::createHandleForGenericExtension(ASCIILiteral) -> std::optional<Handle> { return Handle { }; }
-inline SandboxExtension::~SandboxExtension() { }
+inline SandboxExtension::~SandboxExtension() = default;
 inline bool SandboxExtension::revoke() { return true; }
 inline bool SandboxExtension::consume() { return true; }
 inline bool SandboxExtension::consumePermanently() { return true; }

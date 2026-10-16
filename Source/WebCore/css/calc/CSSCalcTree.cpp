@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 Samuel Weinig <sam@webkit.org>
+ * Copyright (C) 2024-2026 Samuel Weinig <sam@webkit.org>
  * Copyright (C) 2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -42,8 +42,10 @@ WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(AnchorSize);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Asin);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Atan);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Atan2);
+WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(CalcMix);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Clamp);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Cos);
+WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Deg2Rad);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Exp);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Hypot);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Invert);
@@ -55,6 +57,7 @@ WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Negate);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Pow);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Product);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Progress);
+WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(ProgressNoClamp);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Random);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Rem);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(RoundDown);
@@ -67,114 +70,262 @@ WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Sqrt);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Sum);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Tan);
 
+// MARK: - Child
+
+Child::Child(Child&&) = default;
+Child& Child::operator=(Child&&) = default;
+Child::~Child() = default;
+bool Child::operator==(const Child&) const = default;
+
+static_assert(sizeof(Child) <= 24, "Child should stay small");
+
+// MARK: - ChildOrNone
+
+ChildOrNone::ChildOrNone(Child&& child)
+    : value(WTF::move(child))
+{
+}
+
+ChildOrNone::ChildOrNone(CSS::Keyword::None none)
+    : value(none)
+{
+}
+
+// MARK: - Children
+
+Children::Children(Vector<Child>&& other)
+    : value(WTF::move(other))
+{
+}
+
+Children& Children::operator=(Vector<Child>&& other)
+{
+    value = WTF::move(other);
+    return *this;
+}
+
+Children::iterator Children::begin()
+{
+    return value.begin();
+}
+
+Children::iterator Children::end()
+{
+    return value.end();
+}
+
+Children::reverse_iterator Children::rbegin()
+{
+    return value.rbegin();
+}
+
+Children::reverse_iterator Children::rend()
+{
+    return value.rend();
+}
+
+Children::const_iterator Children::begin() const
+{
+    return value.begin();
+}
+
+Children::const_iterator Children::end() const
+{
+    return value.end();
+}
+
+Children::const_reverse_iterator Children::rbegin() const
+{
+    return value.rbegin();
+}
+
+Children::const_reverse_iterator Children::rend() const
+{
+    return value.rend();
+}
+
+bool Children::isEmpty() const
+{
+    return value.isEmpty();
+}
+
+size_t Children::size() const
+{
+    return value.size();
+}
+
+Child& Children::operator[](size_t i)
+{
+    return value[i];
+}
+
+const Child& Children::operator[](size_t i) const
+{
+    return value[i];
+}
+
+// MARK: - AnchorSide
+
+AnchorSide::AnchorSide(CSSValueID valueID)
+    : value(valueID)
+{
+}
+
+AnchorSide::AnchorSide(Child&& child)
+    : value(WTF::move(child))
+{
+}
+
+bool isNumeric(const Child& root)
+{
+    return WTF::switchOn(root,
+        []<Numeric T>(const T&) { return true; },
+        [](const auto&) { return false; }
+    );
+}
+
 Child makeNumeric(double value, CSSUnitType unit)
 {
     switch (unit) {
     // Number
-    case CSSUnitType::CSS_NUMBER:
-    case CSSUnitType::CSS_INTEGER:
+    case CSSUnitType::Number:
+    case CSSUnitType::Integer:
         return makeChild(Number { .value = value });
 
     // Percentage
-    case CSSUnitType::CSS_PERCENTAGE:
+    case CSSUnitType::Percentage:
         return makeChild(Percentage { .value = value, .hint = { } });
 
     // Canonical Dimension
-    case CSSUnitType::CSS_PX:
+    case CSSUnitType::Px:
         return makeChild(CanonicalDimension { .value = value, .dimension = CanonicalDimension::Dimension::Length });
-    case CSSUnitType::CSS_DEG:
+    case CSSUnitType::Deg:
         return makeChild(CanonicalDimension { .value = value, .dimension = CanonicalDimension::Dimension::Angle });
-    case CSSUnitType::CSS_S:
+    case CSSUnitType::S:
         return makeChild(CanonicalDimension { .value = value, .dimension = CanonicalDimension::Dimension::Time });
-    case CSSUnitType::CSS_HZ:
+    case CSSUnitType::Hz:
         return makeChild(CanonicalDimension { .value = value, .dimension = CanonicalDimension::Dimension::Frequency });
-    case CSSUnitType::CSS_DPPX:
+    case CSSUnitType::Dppx:
         return makeChild(CanonicalDimension { .value = value, .dimension = CanonicalDimension::Dimension::Resolution });
-    case CSSUnitType::CSS_FR:
+    case CSSUnitType::Fr:
         return makeChild(CanonicalDimension { .value = value, .dimension = CanonicalDimension::Dimension::Flex });
 
     // <length>
-    case CSSUnitType::CSS_CM:
-    case CSSUnitType::CSS_MM:
-    case CSSUnitType::CSS_Q:
-    case CSSUnitType::CSS_IN:
-    case CSSUnitType::CSS_PT:
-    case CSSUnitType::CSS_PC:
-    case CSSUnitType::CSS_EM:
-    case CSSUnitType::CSS_EX:
-    case CSSUnitType::CSS_LH:
-    case CSSUnitType::CSS_CAP:
-    case CSSUnitType::CSS_CH:
-    case CSSUnitType::CSS_IC:
-    case CSSUnitType::CSS_RCAP:
-    case CSSUnitType::CSS_RCH:
-    case CSSUnitType::CSS_REM:
-    case CSSUnitType::CSS_REX:
-    case CSSUnitType::CSS_RIC:
-    case CSSUnitType::CSS_RLH:
-    case CSSUnitType::CSS_VW:
-    case CSSUnitType::CSS_VH:
-    case CSSUnitType::CSS_VMIN:
-    case CSSUnitType::CSS_VMAX:
-    case CSSUnitType::CSS_VB:
-    case CSSUnitType::CSS_VI:
-    case CSSUnitType::CSS_SVW:
-    case CSSUnitType::CSS_SVH:
-    case CSSUnitType::CSS_SVMIN:
-    case CSSUnitType::CSS_SVMAX:
-    case CSSUnitType::CSS_SVB:
-    case CSSUnitType::CSS_SVI:
-    case CSSUnitType::CSS_LVW:
-    case CSSUnitType::CSS_LVH:
-    case CSSUnitType::CSS_LVMIN:
-    case CSSUnitType::CSS_LVMAX:
-    case CSSUnitType::CSS_LVB:
-    case CSSUnitType::CSS_LVI:
-    case CSSUnitType::CSS_DVW:
-    case CSSUnitType::CSS_DVH:
-    case CSSUnitType::CSS_DVMIN:
-    case CSSUnitType::CSS_DVMAX:
-    case CSSUnitType::CSS_DVB:
-    case CSSUnitType::CSS_DVI:
-    case CSSUnitType::CSS_CQW:
-    case CSSUnitType::CSS_CQH:
-    case CSSUnitType::CSS_CQI:
-    case CSSUnitType::CSS_CQB:
-    case CSSUnitType::CSS_CQMIN:
-    case CSSUnitType::CSS_CQMAX:
+    case CSSUnitType::Cm:
+    case CSSUnitType::Mm:
+    case CSSUnitType::Q:
+    case CSSUnitType::In:
+    case CSSUnitType::Pt:
+    case CSSUnitType::Pc:
+    case CSSUnitType::Em:
+    case CSSUnitType::Ex:
+    case CSSUnitType::Lh:
+    case CSSUnitType::Cap:
+    case CSSUnitType::Ch:
+    case CSSUnitType::Ic:
+    case CSSUnitType::Rcap:
+    case CSSUnitType::Rch:
+    case CSSUnitType::Rem:
+    case CSSUnitType::Rex:
+    case CSSUnitType::Ric:
+    case CSSUnitType::Rlh:
+    case CSSUnitType::Vw:
+    case CSSUnitType::Vh:
+    case CSSUnitType::Vmin:
+    case CSSUnitType::Vmax:
+    case CSSUnitType::Vb:
+    case CSSUnitType::Vi:
+    case CSSUnitType::Svw:
+    case CSSUnitType::Svh:
+    case CSSUnitType::Svmin:
+    case CSSUnitType::Svmax:
+    case CSSUnitType::Svb:
+    case CSSUnitType::Svi:
+    case CSSUnitType::Lvw:
+    case CSSUnitType::Lvh:
+    case CSSUnitType::Lvmin:
+    case CSSUnitType::Lvmax:
+    case CSSUnitType::Lvb:
+    case CSSUnitType::Lvi:
+    case CSSUnitType::Dvw:
+    case CSSUnitType::Dvh:
+    case CSSUnitType::Dvmin:
+    case CSSUnitType::Dvmax:
+    case CSSUnitType::Dvb:
+    case CSSUnitType::Dvi:
+    case CSSUnitType::Cqw:
+    case CSSUnitType::Cqh:
+    case CSSUnitType::Cqi:
+    case CSSUnitType::Cqb:
+    case CSSUnitType::Cqmin:
+    case CSSUnitType::Cqmax:
     // <angle>
-    case CSSUnitType::CSS_RAD:
-    case CSSUnitType::CSS_GRAD:
-    case CSSUnitType::CSS_TURN:
+    case CSSUnitType::Rad:
+    case CSSUnitType::Grad:
+    case CSSUnitType::Turn:
     // <time>
-    case CSSUnitType::CSS_MS:
+    case CSSUnitType::Ms:
     // <frequency>
-    case CSSUnitType::CSS_KHZ:
+    case CSSUnitType::Khz:
     // <resolution>
-    case CSSUnitType::CSS_X:
-    case CSSUnitType::CSS_DPI:
-    case CSSUnitType::CSS_DPCM:
+    case CSSUnitType::X:
+    case CSSUnitType::Dpi:
+    case CSSUnitType::Dpcm:
         return makeChild(NonCanonicalDimension { .value = value, .unit = unit });
 
     // Non-numeric types are not supported.
-    case CSSUnitType::CSS_ATTR:
-    case CSSUnitType::CSS_CALC:
-    case CSSUnitType::CSS_CALC_PERCENTAGE_WITH_ANGLE:
-    case CSSUnitType::CSS_CALC_PERCENTAGE_WITH_LENGTH:
-    case CSSUnitType::CSS_DIMENSION:
-    case CSSUnitType::CSS_FONT_FAMILY:
-    case CSSUnitType::CSS_IDENT:
-    case CSSUnitType::CSS_PROPERTY_ID:
-    case CSSUnitType::CSS_QUIRKY_EM:
-    case CSSUnitType::CSS_STRING:
-    case CSSUnitType::CSS_UNKNOWN:
-    case CSSUnitType::CSS_VALUE_ID:
-    case CSSUnitType::CustomIdent:
+    case CSSUnitType::Calc:
+    case CSSUnitType::CalcPercentageWithAngle:
+    case CSSUnitType::CalcPercentageWithLength:
+    case CSSUnitType::QuirkyEm:
+    case CSSUnitType::Unknown:
         break;
     }
 
     ASSERT_NOT_REACHED();
     return makeChild(Number { .value = 0 });
+}
+
+Sum add(Child&& a, Child&& b)
+{
+    Vector<Child> sumChildren;
+    sumChildren.append(WTF::move(a));
+    sumChildren.append(WTF::move(b));
+    return Sum { .children = WTF::move(sumChildren) };
+}
+
+Product multiply(Child&& a, Child&& b)
+{
+    Vector<Child> productChildren;
+    productChildren.append(WTF::move(a));
+    productChildren.append(WTF::move(b));
+    return Product { .children = WTF::move(productChildren) };
+}
+
+Sum subtract(Child&& a, Child&& b)
+{
+    auto type = getType(b);
+    return add(WTF::move(a), makeChild(Negate { .a = WTF::move(b) }, type));
+}
+
+Child makeChildWithValueBasedOn(double value, const Number&)
+{
+    return makeChild(Number { .value = value });
+}
+
+Child makeChildWithValueBasedOn(double value, const Percentage& a)
+{
+    return makeChild(Percentage { .value = value, .hint = a.hint });
+}
+
+Child makeChildWithValueBasedOn(double value, const CanonicalDimension& a)
+{
+    return makeChild(CanonicalDimension { .value = value, .dimension = a.dimension });
+}
+
+Child makeChildWithValueBasedOn(double value, const NonCanonicalDimension& a)
+{
+    return makeChild(NonCanonicalDimension { .value = value, .unit = a.unit });
 }
 
 Type getType(CanonicalDimension::Dimension dimension)
@@ -261,6 +412,12 @@ std::optional<Type> toType(const Invert& root)
     return Type::invert(getType(root.a));
 }
 
+std::optional<Type> toType(const Deg2Rad&)
+{
+    // Deg2Rad wraps an <angle> and produces a <number> (radians).
+    return Type { };
+}
+
 // Utilities to deduce the right input/merge/output policies from the operation.
 
 template<typename Op> static std::optional<Type> getValidatedTypeFor(const Op&, const Child& child)
@@ -271,12 +428,12 @@ template<typename Op> static std::optional<Type> getValidatedTypeFor(const Op&, 
     return std::nullopt;
 }
 
-template<typename Op> static std::optional<Type> mergeTypesFor(const Op&, std::optional<Type> a, std::optional<Type> b)
+template<typename Op> static std::optional<Type> LEGACY_NODELETE mergeTypesFor(const Op&, std::optional<Type> a, std::optional<Type> b)
 {
     return mergeTypes<Op::merge>(a, b);
 }
 
-template<typename Op, typename... Args> static std::optional<Type> transformTypeFor(const Op&, std::optional<Type> a)
+template<typename Op, typename... Args> static std::optional<Type> LEGACY_NODELETE transformTypeFor(const Op&, std::optional<Type> a)
 {
     return transformType<Op::output>(a);
 }
@@ -439,6 +596,22 @@ std::optional<Type> toType(const Progress& root)
     auto type = getValidatedTypeFor(root, root.value);
     type = mergeTypesFor(root, type, getValidatedTypeFor(root, root.start));
     type = mergeTypesFor(root, type, getValidatedTypeFor(root, root.end));
+    return transformTypeFor(root, type);
+}
+
+std::optional<Type> toType(const ProgressNoClamp& root)
+{
+    auto type = getValidatedTypeFor(root, root.value);
+    type = mergeTypesFor(root, type, getValidatedTypeFor(root, root.start));
+    type = mergeTypesFor(root, type, getValidatedTypeFor(root, root.end));
+    return transformTypeFor(root, type);
+}
+
+std::optional<Type> toType(const CalcMix& root)
+{
+    auto type = getValidatedTypeFor(root, root.children[0].value);
+    for (size_t i = 1; i < root.children.size(); ++i)
+        type = mergeTypesFor(root, type, getValidatedTypeFor(root, root.children[i].value));
     return transformTypeFor(root, type);
 }
 

@@ -38,6 +38,8 @@
 
 #import <pal/cocoa/PassKitSoftLink.h>
 
+SPECIALIZE_OBJC_TYPE_TRAITS(PKPaymentInstallmentItem, PAL::getPKPaymentInstallmentItemClassSingleton())
+
 namespace WebCore {
 
 static String fromDecimalNumber(NSDecimalNumber *number)
@@ -50,7 +52,7 @@ static String fromDecimalNumber(NSDecimalNumber *number)
     return [numberFormatter stringFromNumber:number];
 }
 
-static std::optional<ApplePaySetupFeatureType> applePaySetupFeatureType(PKPaymentSetupFeatureType featureType)
+static std::optional<ApplePaySetupFeatureType> LEGACY_NODELETE applePaySetupFeatureType(PKPaymentSetupFeatureType featureType)
 {
     switch (featureType) {
     case PKPaymentSetupFeatureTypeApplePay:
@@ -65,7 +67,7 @@ static std::optional<ApplePaySetupFeatureType> applePaySetupFeatureType(PKPaymen
     }
 }
 
-static PKPaymentSetupFeatureType platformFeatureType(ApplePaySetupFeatureType featureType)
+static PKPaymentSetupFeatureType LEGACY_NODELETE platformFeatureType(ApplePaySetupFeatureType featureType)
 {
     switch (featureType) {
     case ApplePaySetupFeatureType::ApplePay:
@@ -75,7 +77,7 @@ static PKPaymentSetupFeatureType platformFeatureType(ApplePaySetupFeatureType fe
     }
 }
 
-static ApplePayInstallmentItemType applePayItemType(PKInstallmentItemType itemType)
+static ApplePayInstallmentItemType LEGACY_NODELETE applePayItemType(PKInstallmentItemType itemType)
 {
     switch (itemType) {
     case PKInstallmentItemTypeGeneric:
@@ -91,7 +93,7 @@ static ApplePayInstallmentItemType applePayItemType(PKInstallmentItemType itemTy
     }
 }
 
-static PKInstallmentItemType platformItemType(ApplePayInstallmentItemType itemType)
+static PKInstallmentItemType LEGACY_NODELETE platformItemType(ApplePayInstallmentItemType itemType)
 {
     switch (itemType) {
     case ApplePayInstallmentItemType::Generic:
@@ -107,7 +109,7 @@ static PKInstallmentItemType platformItemType(ApplePayInstallmentItemType itemTy
     }
 }
 
-static ApplePayInstallmentRetailChannel applePayRetailChannel(PKInstallmentRetailChannel retailChannel)
+static ApplePayInstallmentRetailChannel LEGACY_NODELETE applePayRetailChannel(PKInstallmentRetailChannel retailChannel)
 {
     switch (retailChannel) {
     case PKInstallmentRetailChannelUnknown:
@@ -121,7 +123,7 @@ static ApplePayInstallmentRetailChannel applePayRetailChannel(PKInstallmentRetai
     }
 }
 
-static PKInstallmentRetailChannel platformRetailChannel(ApplePayInstallmentRetailChannel retailChannel)
+static PKInstallmentRetailChannel LEGACY_NODELETE platformRetailChannel(ApplePayInstallmentRetailChannel retailChannel)
 {
     switch (retailChannel) {
     case ApplePayInstallmentRetailChannel::Unknown:
@@ -138,24 +140,22 @@ static PKInstallmentRetailChannel platformRetailChannel(ApplePayInstallmentRetai
 static RetainPtr<id> makeNSArrayElement(const ApplePayInstallmentItem& item)
 {
     ASSERT(PAL::getPKPaymentInstallmentItemClassSingleton());
-    // FIXME: This is a safer cpp false positive.
-    SUPPRESS_UNRETAINED_ARG auto installmentItem = adoptNS([PAL::allocPKPaymentInstallmentItemInstance() init]);
+    RetainPtr installmentItem = adoptNS([PAL::allocPKPaymentInstallmentItemInstance() init]);
     [installmentItem setInstallmentItemType:platformItemType(item.type)];
-    [installmentItem setAmount:toProtectedDecimalNumber(item.amount).get()];
+    [installmentItem setAmount:protect(toDecimalNumber(item.amount)).get()];
     [installmentItem setCurrencyCode:item.currencyCode.createNSString().get()];
     [installmentItem setProgramIdentifier:item.programIdentifier.createNSString().get()];
-    [installmentItem setApr:toProtectedDecimalNumber(item.apr).get()];
+    [installmentItem setApr:protect(toDecimalNumber(item.apr)).get()];
     [installmentItem setProgramTerms:item.programTerms.createNSString().get()];
     return installmentItem;
 }
 
 static std::optional<ApplePayInstallmentItem> makeVectorElement(const ApplePayInstallmentItem*, id arrayElement)
 {
-    // FIXME: This is a static analysis false positive (rdar://160259918).
-    SUPPRESS_UNRETAINED_ARG if (![arrayElement isKindOfClass:PAL::getPKPaymentInstallmentItemClassSingleton()])
+    RetainPtr item = dynamic_objc_cast<PKPaymentInstallmentItem>(arrayElement);
+    if (!item)
         return std::nullopt;
 
-    PKPaymentInstallmentItem *item = arrayElement;
     return ApplePayInstallmentItem {
         applePayItemType([item installmentItemType]),
         fromDecimalNumber(retainPtr([item amount]).get()),
@@ -189,13 +189,10 @@ static RetainPtr<PKPaymentInstallmentConfiguration> createPlatformConfiguration(
 
     [configuration setFeature:platformFeatureType(coreConfiguration.featureType)];
 
-    [configuration setBindingTotalAmount:toProtectedDecimalNumber(coreConfiguration.bindingTotalAmount).get()];
+    [configuration setBindingTotalAmount:protect(toDecimalNumber(coreConfiguration.bindingTotalAmount)).get()];
     [configuration setCurrencyCode:coreConfiguration.currencyCode.createNSString().get()];
     [configuration setInStorePurchase:coreConfiguration.isInStorePurchase];
-    [configuration setOpenToBuyThresholdAmount:toProtectedDecimalNumber(coreConfiguration.openToBuyThresholdAmount).get()];
-
-    RetainPtr merchandisingImageData = adoptNS([[NSData alloc] initWithBase64EncodedString:coreConfiguration.merchandisingImageData.createNSString().get() options:0]);
-    [configuration setMerchandisingImageData:merchandisingImageData.get()];
+    [configuration setOpenToBuyThresholdAmount:protect(toDecimalNumber(coreConfiguration.openToBuyThresholdAmount)).get()];
     [configuration setInstallmentMerchantIdentifier:coreConfiguration.merchantIdentifier.createNSString().get()];
     [configuration setReferrerIdentifier:coreConfiguration.referrerIdentifier.createNSString().get()];
 
@@ -240,7 +237,7 @@ PaymentInstallmentConfiguration::PaymentInstallmentConfiguration(RetainPtr<PKPay
 {
 }
 
-const std::optional<ApplePayInstallmentConfiguration>& PaymentInstallmentConfiguration::applePayInstallmentConfiguration() const
+const std::optional<ApplePayInstallmentConfiguration>& LEGACY_NODELETE PaymentInstallmentConfiguration::applePayInstallmentConfiguration() const
 {
     return m_configuration;
 }
@@ -269,7 +266,6 @@ std::optional<ApplePayInstallmentConfiguration> PaymentInstallmentConfiguration:
     installmentConfiguration.isInStorePurchase = [configuration isInStorePurchase];
     installmentConfiguration.openToBuyThresholdAmount = fromDecimalNumber(retainPtr([configuration openToBuyThresholdAmount]).get());
 
-    installmentConfiguration.merchandisingImageData = [retainPtr([configuration merchandisingImageData]) base64EncodedStringWithOptions:0];
     installmentConfiguration.merchantIdentifier = [configuration installmentMerchantIdentifier];
     installmentConfiguration.referrerIdentifier = [configuration referrerIdentifier];
 

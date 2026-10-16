@@ -52,7 +52,7 @@ struct SVGPathData {
     bool isPath() const { return !!m_path; }
     const std::optional<PathFunction>& tryPath() const LIFETIME_BOUND { return m_path; }
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
@@ -70,11 +70,11 @@ private:
 // MARK: - Conversion
 
 template<> struct CSSValueConversion<SVGPathData> { auto operator()(BuilderState&, const CSSValue&) -> SVGPathData; };
-template<> struct CSSValueCreation<SVGPathData> { auto operator()(CSSValuePool&, const RenderStyle&, const SVGPathData&) -> Ref<CSSValue>; };
+template<> struct CSSValueCreation<SVGPathData> { auto operator()(CSSValuePool&, const Style::ComputedStyle&, const SVGPathData&) -> Ref<CSSValue>; };
 
 // MARK: - Serialization
 
-template<> struct Serialize<SVGPathData> { void operator()(StringBuilder&, const CSS::SerializationContext&, const RenderStyle&, const SVGPathData&); };
+template<> struct Serialize<SVGPathData> { void operator()(StringBuilder&, const CSS::SerializationContext&, const Style::ComputedStyle&, const SVGPathData&); };
 
 // MARK: - Blending
 

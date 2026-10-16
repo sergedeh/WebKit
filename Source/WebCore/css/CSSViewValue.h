@@ -28,8 +28,9 @@
 
 #pragma once
 
-#include <WebCore/CSSPrimitiveValue.h>
-#include <WebCore/RenderStyleConstants.h>
+#include "CSSPrimitiveValue.h"
+#include "RenderStyleConstants.h"
+#include <wtf/Function.h>
 
 namespace WebCore {
 
@@ -49,9 +50,9 @@ public:
 
     String customCSSText(const CSS::SerializationContext&) const;
 
-    const RefPtr<CSSValue>& axis() const { return m_axis; }
-    const RefPtr<CSSValue>& startInset() const { return m_startInset; }
-    const RefPtr<CSSValue>& endInset() const { return m_endInset; }
+    CSSValue* axis() const { return m_axis; }
+    CSSValue* startInset() const { return m_startInset; }
+    CSSValue* endInset() const { return m_endInset; }
 
     bool equals(const CSSViewValue&) const;
 
@@ -82,9 +83,9 @@ private:
     {
     }
 
-    RefPtr<CSSValue> m_axis;
-    RefPtr<CSSValue> m_startInset;
-    RefPtr<CSSValue> m_endInset;
+    const RefPtr<CSSValue> m_axis;
+    const RefPtr<CSSValue> m_startInset;
+    const RefPtr<CSSValue> m_endInset;
 };
 
 } // namespace WebCore

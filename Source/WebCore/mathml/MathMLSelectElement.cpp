@@ -39,6 +39,8 @@
 #include "RenderMathMLRow.h"
 #include "RenderTreeUpdater.h"
 #include "SVGElement.h"
+#include "Settings.h"
+#include "StyleComputedStyle.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -57,7 +59,7 @@ Ref<MathMLSelectElement> MathMLSelectElement::create(const QualifiedName& tagNam
     return adoptRef(*new MathMLSelectElement(tagName, document));
 }
 
-RenderPtr<RenderElement> MathMLSelectElement::createElementRenderer(RenderStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> MathMLSelectElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
 {
     return createRenderer<RenderMathMLRow>(RenderObject::Type::MathMLRow, *this, WTF::move(style));
 }
@@ -110,7 +112,7 @@ void MathMLSelectElement::attributeChanged(const QualifiedName& name, const Atom
     MathMLRowElement::attributeChanged(name, oldValue, newValue, reason);
 }
 
-int MathMLSelectElement::getSelectedActionChildAndIndex(Element*& selectedChild)
+int MathMLSelectElement::getSelectedActionChildAndIndex(RefPtr<Element>& selectedChild)
 {
     ASSERT(hasTagName(mactionTag));
 
@@ -125,7 +127,7 @@ int MathMLSelectElement::getSelectedActionChildAndIndex(Element*& selectedChild)
         RefPtr nextChild = selectedChild->nextElementSibling();
         if (!nextChild)
             break;
-        selectedChild = nextChild.get();
+        selectedChild = WTF::move(nextChild);
     }
 
     return i;
@@ -149,9 +151,7 @@ RefPtr<Element> MathMLSelectElement::getSelectedActionChild()
         { }
     } else {
         // For the "toggle" action type or any unknown action type, we rely on the value of the selection attribute to determine the visible child.
-        Element* selectedChild;
-        getSelectedActionChildAndIndex(selectedChild);
-        child = selectedChild;
+        getSelectedActionChildAndIndex(child);
     }
 
     return child;
@@ -212,7 +212,7 @@ void MathMLSelectElement::updateSelectedChild()
         return;
 
     if (m_selectedChild && m_selectedChild->renderer())
-        RenderTreeUpdater::tearDownRenderers(*m_selectedChild);
+        RenderTreeUpdater::tearDownRenderers(protect(*m_selectedChild));
 
     m_selectedChild = newSelectedChild;
     invalidateStyleForSubtree();
@@ -240,7 +240,7 @@ void MathMLSelectElement::toggle()
 {
     // Select the successor of the currently selected child
     // or the first child if the currently selected child is the last.
-    Element* selectedChild;
+    RefPtr<Element> selectedChild;
     int newSelectedChildIndex = getSelectedActionChildAndIndex(selectedChild) + 1;
     if (!selectedChild || !selectedChild->nextElementSibling())
         newSelectedChildIndex = 1;

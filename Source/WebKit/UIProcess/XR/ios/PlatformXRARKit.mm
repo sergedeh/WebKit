@@ -37,7 +37,7 @@
 #import <WebCore/PlatformXRPose.h>
 #import <wtf/TZoneMallocInlines.h>
 
-#import "ARKitSoftLink.h"
+#import <pal/cocoa/ARKitSoftLink.h>
 
 namespace WebKit {
 
@@ -55,7 +55,7 @@ static std::tuple<MachSendRight, bool> makeMachSendRight(id<MTLTexture> texture)
     RetainPtr<MTLSharedTextureHandle> sharedTextureHandle = adoptNS([texture newSharedTextureHandle]);
     if (sharedTextureHandle)
         return { MachSendRight::adopt([sharedTextureHandle.get() createMachPort]), true };
-    auto surface = WebCore::IOSurface::createFromSurface(texture.iosurface, WebCore::DestinationColorSpace::SRGB());
+    auto surface = WebCore::IOSurface::createFromSurface(texture.iosurface, WebCore::ColorSpace::SRGB());
     if (!surface)
         return { MachSendRight(), false };
     return { surface->createSendRight(), false };
@@ -246,7 +246,7 @@ void ARKitCoordinator::createSessionIfNeeded()
     if (m_session)
         return;
 
-    m_session = adoptNS([WebKit::allocARSessionInstance() init]);
+    lazyInitialize(m_session, adoptNS([WebKit::allocARSessionInstance() init]));
 }
 
 void ARKitCoordinator::renderLoop(Box<RenderState> active)

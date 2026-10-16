@@ -47,13 +47,13 @@ constexpr float interpolate2Point = 0.3;
 constexpr float interpolate3Point = 0.16;
 
 // Convert the detune value (in cents) to a frequency scale multiplier: 2^(d/1200).
-static inline float detuneToFrequencyMultiplier(float detuneValue)
+static inline float LEGACY_NODELETE detuneToFrequencyMultiplier(float detuneValue)
 {
     return std::exp2(detuneValue / 1200);
 }
 
 // Clamp the frequency value to lie within Nyquist frequency. For NaN, arbitrarily clamp to +Nyquist.
-static void clampFrequency(std::span<float> frequencies, float nyquist)
+static void LEGACY_NODELETE clampFrequency(std::span<float> frequencies, float nyquist)
 {
     for (auto& frequency : frequencies)
         frequency = std::isnan(frequency) ? nyquist : clampTo(frequency, -nyquist, nyquist);
@@ -72,7 +72,7 @@ ExceptionOr<Ref<OscillatorNode>> OscillatorNode::create(BaseAudioContext& contex
         return result.releaseException();
     
     if (options.periodicWave)
-        oscillator->setPeriodicWave(*options.periodicWave);
+        oscillator->setPeriodicWave(*protect(options.periodicWave));
     else {
         result = oscillator->setTypeForBindings(options.type);
         if (result.hasException())
@@ -110,7 +110,7 @@ ExceptionOr<void> OscillatorNode::setTypeForBindings(OscillatorType type)
         return { };
     }
 
-    setPeriodicWave(context().periodicWave(type));
+    setPeriodicWave(protect(protect(context())->periodicWave(type)));
     m_type = type;
 
     return { };
@@ -170,7 +170,7 @@ bool OscillatorNode::calculateSampleAccuratePhaseIncrements(size_t framesToProce
     }
 
     if (hasSampleAccurateValues) {
-        clampFrequency(phaseIncrements, context().sampleRate() / 2);
+        clampFrequency(phaseIncrements, protect(context())->sampleRate() / 2);
         // Convert from frequency to wave increment.
         VectorMath::multiplyByScalar(phaseIncrements, finalScale, phaseIncrements);
     }
@@ -178,7 +178,7 @@ bool OscillatorNode::calculateSampleAccuratePhaseIncrements(size_t framesToProce
     return hasSampleAccurateValues;
 }
 
-static float doInterpolation(double virtualReadIndex, float incr, unsigned readIndexMask, float tableInterpolationFactor, std::span<const float> lowerWaveData, std::span<const float> higherWaveData)
+static float LEGACY_NODELETE doInterpolation(double virtualReadIndex, float incr, unsigned readIndexMask, float tableInterpolationFactor, std::span<const float> lowerWaveData, std::span<const float> higherWaveData)
 {
     ASSERT(incr >= 0);
     ASSERT(std::isfinite(virtualReadIndex));
@@ -274,9 +274,10 @@ static float doInterpolation(double virtualReadIndex, float incr, unsigned readI
 
 double OscillatorNode::processARate(int n, std::span<float> destination, double virtualReadIndex, std::span<float> phaseIncrements)
 {
-    float rateScale = m_periodicWave->rateScale();
+    Ref periodicWave = *m_periodicWave;
+    float rateScale = periodicWave->rateScale();
     float invRateScale = 1 / rateScale;
-    unsigned periodicWaveSize = m_periodicWave->periodicWaveSize();
+    unsigned periodicWaveSize = periodicWave->periodicWaveSize();
     double invPeriodicWaveSize = 1.0 / periodicWaveSize;
     unsigned readIndexMask = periodicWaveSize - 1;
 
@@ -288,7 +289,7 @@ double OscillatorNode::processARate(int n, std::span<float> destination, double 
         float increment = phaseIncrements[k];
 
         float frequency = invRateScale * increment;
-        m_periodicWave->waveDataForFundamentalFrequency(frequency, lowerWaveData, higherWaveData, tableInterpolationFactor);
+        periodicWave->waveDataForFundamentalFrequency(frequency, lowerWaveData, higherWaveData, tableInterpolationFactor);
 
         float sample = doInterpolation(virtualReadIndex, std::abs(increment), readIndexMask, tableInterpolationFactor, lowerWaveData, higherWaveData);
 
@@ -305,7 +306,8 @@ double OscillatorNode::processARate(int n, std::span<float> destination, double 
 
 double OscillatorNode::processKRate(int n, std::span<float> destination, double virtualReadIndex)
 {
-    unsigned periodicWaveSize = m_periodicWave->periodicWaveSize();
+    Ref periodicWave = *m_periodicWave;
+    unsigned periodicWaveSize = periodicWave->periodicWaveSize();
     double invPeriodicWaveSize = 1.0 / periodicWaveSize;
     unsigned readIndexMask = periodicWaveSize - 1;
 
@@ -318,10 +320,10 @@ double OscillatorNode::processKRate(int n, std::span<float> destination, double 
     float detune = m_detune->finalValue();
     float detuneScale = detuneToFrequencyMultiplier(detune);
     frequency *= detuneScale;
-    clampFrequency(singleElementSpan(frequency), context().sampleRate() / 2);
-    m_periodicWave->waveDataForFundamentalFrequency(frequency, lowerWaveData, higherWaveData, tableInterpolationFactor);
+    clampFrequency(singleElementSpan(frequency), protect(context())->sampleRate() / 2);
+    periodicWave->waveDataForFundamentalFrequency(frequency, lowerWaveData, higherWaveData, tableInterpolationFactor);
 
-    float rateScale = m_periodicWave->rateScale();
+    float rateScale = periodicWave->rateScale();
     float increment = frequency * rateScale;
 
     for (int k = 0; k < n; ++k) {
@@ -341,10 +343,10 @@ double OscillatorNode::processKRate(int n, std::span<float> destination, double 
 void OscillatorNode::process(size_t framesToProcess)
 {
     CheckedPtr firstOutput = output(0);
-    auto& outputBus = firstOutput->bus();
+    Ref outputBus = firstOutput->bus();
 
-    if (!isInitialized() || !outputBus.numberOfChannels()) {
-        outputBus.zero();
+    if (!isInitialized() || !outputBus->numberOfChannels()) {
+        outputBus->zero();
         return;
     }
 
@@ -355,16 +357,17 @@ void OscillatorNode::process(size_t framesToProcess)
     // The audio thread can't block on this lock, so we use tryLock() instead.
     if (!m_processLock.tryLock()) {
         // Too bad - tryLock() failed. We must be in the middle of changing wave-tables.
-        outputBus.zero();
+        outputBus->zero();
         return;
     }
     Locker locker { AdoptLock, m_processLock };
 
     // We must access m_periodicWave only inside the lock.
     if (!m_periodicWave.get()) {
-        outputBus.zero();
+        outputBus->zero();
         return;
     }
+    Ref periodicWave = *m_periodicWave;
 
     size_t quantumFrameOffset = 0;
     size_t nonSilentFramesToProcess = 0;
@@ -372,18 +375,18 @@ void OscillatorNode::process(size_t framesToProcess)
     updateSchedulingInfo(framesToProcess, outputBus, quantumFrameOffset, nonSilentFramesToProcess, startFrameOffset);
 
     if (!nonSilentFramesToProcess) {
-        outputBus.zero();
+        outputBus->zero();
         return;
     }
 
-    auto destination = outputBus.channel(0)->mutableSpan();
+    auto destination = outputBus->channel(0)->mutableSpan();
 
     ASSERT(quantumFrameOffset <= framesToProcess);
 
     // We keep virtualReadIndex double-precision since we're accumulating values.
     double virtualReadIndex = m_virtualReadIndex;
 
-    float rateScale = m_periodicWave->rateScale();
+    float rateScale = periodicWave->rateScale();
     bool hasSampleAccurateValues = calculateSampleAccuratePhaseIncrements(framesToProcess);
 
     float frequency = 0;
@@ -396,8 +399,8 @@ void OscillatorNode::process(size_t framesToProcess)
         float detune = m_detune->finalValue();
         float detuneScale = detuneToFrequencyMultiplier(detune);
         frequency *= detuneScale;
-        clampFrequency(singleElementSpan(frequency), context().sampleRate() / 2);
-        m_periodicWave->waveDataForFundamentalFrequency(frequency, lowerWaveData, higherWaveData, tableInterpolationFactor);
+        clampFrequency(singleElementSpan(frequency), protect(context())->sampleRate() / 2);
+        periodicWave->waveDataForFundamentalFrequency(frequency, lowerWaveData, higherWaveData, tableInterpolationFactor);
     }
 
     auto phaseIncrements = m_phaseIncrements.span();
@@ -410,13 +413,18 @@ void OscillatorNode::process(size_t framesToProcess)
     // start at quantumFrameOffset, but just past that time. Adjust destination and n
     // to reflect that, and adjust virtualReadIndex to start the value at
     // startFrameOffset.
+    // The phase increment for the first rendered frame is phaseIncrements[0]
+    // when we have sample-accurate values; otherwise frequency stays 0 (it is
+    // only assigned in the !hasSampleAccurateValues branch above), so fall back
+    // to frequency * rateScale for the k-rate case.
+    double firstPhaseIncrement = hasSampleAccurateValues ? phaseIncrements[0] : frequency * rateScale;
     if (startFrameOffset > 0) {
         skip(destination, 1);
         --n;
-        virtualReadIndex += (1 - startFrameOffset) * frequency * rateScale;
-        ASSERT(virtualReadIndex < m_periodicWave->periodicWaveSize());
+        virtualReadIndex += (1 - startFrameOffset) * firstPhaseIncrement;
+        ASSERT(virtualReadIndex < periodicWave->periodicWaveSize());
     } else if (startFrameOffset < 0)
-        virtualReadIndex = -startFrameOffset * frequency * rateScale;
+        virtualReadIndex = -startFrameOffset * firstPhaseIncrement;
 
     if (hasSampleAccurateValues)
         virtualReadIndex = processARate(n, destination, virtualReadIndex, phaseIncrements);
@@ -425,7 +433,7 @@ void OscillatorNode::process(size_t framesToProcess)
 
     m_virtualReadIndex = virtualReadIndex;
 
-    outputBus.clearSilentFlag();
+    outputBus->clearSilentFlag();
 }
 
 void OscillatorNode::setPeriodicWave(PeriodicWave& periodicWave)

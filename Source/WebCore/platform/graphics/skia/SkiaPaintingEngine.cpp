@@ -31,17 +31,31 @@
 #include "CoordinatedBackingStoreProxy.h"
 #include "CoordinatedPlatformLayer.h"
 #include "CoordinatedTileBuffer.h"
+#include "FontRenderOptions.h"
 #include "GLContext.h"
+#include "GraphicsContextSkia.h"
 #include "GraphicsLayerCoordinated.h"
 #include "PlatformDisplay.h"
 #include "ProcessCapabilities.h"
 #include "RenderingMode.h"
+#include "SkiaGPUAtlas.h"
+#include "SkiaImageAtlasLayout.h"
 #include "SkiaRecordingResult.h"
 #include "SkiaReplayCanvas.h"
+#include "SkiaUtilities.h"
+
+#if USE(GBM)
+#include "MemoryMappedGPUBuffer.h"
+#endif
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+#include <skia/core/SkBBHFactory.h>
+#include <skia/core/SkColorSpace.h>
 #include <skia/core/SkPictureRecorder.h>
+#include <skia/core/SkSurface.h>
 #include <skia/gpu/ganesh/GrBackendSurface.h>
+#include <skia/gpu/ganesh/GrDirectContext.h>
 #include <skia/gpu/ganesh/SkImageGanesh.h>
+#include <skia/gpu/ganesh/SkSurfaceGanesh.h>
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 #include <wtf/NumberOfCores.h>
 #include <wtf/SystemTracing.h>
@@ -51,38 +65,32 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SkiaPaintingEngine);
 
-// Note:
-// If WEBKIT_SKIA_ENABLE_CPU_RENDERING is unset, we will allocate a GPU-only worker pool with WEBKIT_SKIA_GPU_PAINTING_THREADS threads.
-// If WEBKIT_SKIA_ENABLE_CPU_RENDERING is unset, and WEBKIT_SKIA_GPU_PAINTING_THREADS is set to 0, we will use GPU rendering on main thread.
-//
-// If WEBKIT_SKIA_ENABLE_CPU_RENDERING=1 is set, we will allocate a CPU-only worker pool with WEBKIT_SKIA_CPU_PAINTING_THREADS threads.
-// if WEBKIT_SKIA_ENABLE_CPU_RENDERING=1 is set, and WEBKIT_SKIA_CPU_PAINTING_THREADS is set to 0, we will use CPU rendering on main thread.
-
 static bool canPerformAcceleratedRendering()
 {
     return ProcessCapabilities::canUseAcceleratedBuffers() && PlatformDisplay::sharedDisplay().skiaGLContext();
 }
 
-SkiaPaintingEngine::SkiaPaintingEngine()
+SkiaPaintingEngine::SkiaPaintingEngine(sk_sp<GrContextThreadSafeProxy>&& threadSafeGrContext)
+    : m_threadSafeGrContext(WTF::move(threadSafeGrContext))
 {
+#if USE(TEXTURE_MAPPER)
     if (canPerformAcceleratedRendering()) {
-        m_texturePool = makeUnique<BitmapTexturePool>();
-
         if (auto numberOfGPUThreads = numberOfGPUPaintingThreads())
-            m_workerPool = WorkerPool::create("SkiaGPUWorker"_s, numberOfGPUThreads);
+            lazyInitialize(m_paintingWorkerPool, WorkerPool::create("SkiaGPUWorker"_s, numberOfGPUThreads));
 
         return;
     }
+#endif
 
     if (auto numberOfCPUThreads = numberOfCPUPaintingThreads())
-        m_workerPool = WorkerPool::create("SkiaCPUWorker"_s, numberOfCPUThreads);
+        lazyInitialize(m_paintingWorkerPool, WorkerPool::create("SkiaCPUWorker"_s, numberOfCPUThreads));
 }
 
 SkiaPaintingEngine::~SkiaPaintingEngine() = default;
 
-std::unique_ptr<SkiaPaintingEngine> SkiaPaintingEngine::create()
+std::unique_ptr<SkiaPaintingEngine> SkiaPaintingEngine::create(sk_sp<GrContextThreadSafeProxy>&& threadSafeGrContext)
 {
-    return makeUnique<SkiaPaintingEngine>();
+    return makeUnique<SkiaPaintingEngine>(WTF::move(threadSafeGrContext));
 }
 
 void SkiaPaintingEngine::paintIntoGraphicsContext(const GraphicsLayer& layer, GraphicsContext& context, const IntRect& dirtyRect, bool contentsOpaque, float contentsScale) const
@@ -107,101 +115,185 @@ void SkiaPaintingEngine::paintIntoGraphicsContext(const GraphicsLayer& layer, Gr
 Ref<CoordinatedTileBuffer> SkiaPaintingEngine::createBuffer(RenderingMode renderingMode, const IntSize& size, bool contentsOpaque) const
 {
     if (renderingMode == RenderingMode::Accelerated) {
+#if USE(TEXTURE_MAPPER)
         PlatformDisplay::sharedDisplay().skiaGLContext()->makeContextCurrent();
 
         OptionSet<BitmapTexture::Flags> textureFlags;
         if (!contentsOpaque)
             textureFlags.add(BitmapTexture::Flags::SupportsAlpha);
 
-        ASSERT(m_texturePool);
-        return CoordinatedAcceleratedTileBuffer::create(m_texturePool->acquireTexture(size, textureFlags));
+        return CoordinatedAcceleratedTileBuffer::create(BitmapTexturePool::singleton().acquireTexture(size, textureFlags));
+#else
+        ASSERT(m_threadSafeGrContext);
+        return CoordinatedAcceleratedTileBuffer::create(m_threadSafeGrContext, size, contentsOpaque ? CoordinatedTileBuffer::NoFlags : CoordinatedTileBuffer::SupportsAlpha);
+#endif
     }
 
     return CoordinatedUnacceleratedTileBuffer::create(size, contentsOpaque ? CoordinatedTileBuffer::NoFlags : CoordinatedTileBuffer::SupportsAlpha);
 }
 
-Ref<CoordinatedTileBuffer> SkiaPaintingEngine::paint(const GraphicsLayerCoordinated& layer, const IntRect& dirtyRect, bool contentsOpaque, float contentsScale)
+RefPtr<SkiaGPUAtlas> SkiaPaintingEngine::createAtlas(const SkiaImageAtlasLayout& layout, AtlasUploadCondition& uploadCondition)
 {
-    // ### Synchronous rendering on main thread ###
-    ASSERT(!useThreadedRendering());
+    const auto& atlasSize = layout.atlasSize();
 
-    Ref platformLayer = layer.coordinatedPlatformLayer();
-    platformLayer->willPaintTile();
+    OptionSet<BitmapTexture::Flags> textureFlags { BitmapTexture::Flags::UseBGRALayout, BitmapTexture::Flags::NearestFiltering, BitmapTexture::Flags::SupportsAlpha };
+    bool isDMABufBackedTexture = false;
+#if USE(GBM)
+    if (shouldUseDMABufAtlasTextures())
+        textureFlags.add({ BitmapTexture::Flags::BackedByDMABuf, BitmapTexture::Flags::ForceLinearBuffer });
+#endif
 
-    auto renderingMode = canPerformAcceleratedRendering() ? RenderingMode::Accelerated : RenderingMode::Unaccelerated;
-    auto buffer = createBuffer(renderingMode, dirtyRect.size(), contentsOpaque);
-    buffer->beginPainting();
+    // Verify the texture actually has DMA-buf backing. BitmapTexture silently
+    // falls back to GL if DMA-buf allocation fails, but we must not dispatch
+    // GL operations to the upload worker thread (which has no GL context).
+    auto texture = BitmapTexturePool::singleton().acquireTexture(atlasSize, textureFlags);
+#if USE(GBM)
+    if (texture->memoryMappedGPUBuffer())
+        isDMABufBackedTexture = true;
+#endif
 
-    if (auto* canvas = buffer->canvas()) {
-        WTFBeginSignpost(canvas, PaintTile, "Skia/%s, dirty region %ix%i+%i+%i", buffer->isBackedByOpenGL() ? "GPU" : "CPU", dirtyRect.x(), dirtyRect.y(), dirtyRect.width(), dirtyRect.height());
-        canvas->save();
-        canvas->clear(SkColors::kTransparent);
+    auto atlas = SkiaGPUAtlas::create(layout, WTF::move(texture), Ref { uploadCondition }, m_threadSafeGrContext);
+    if (!atlas)
+        return nullptr;
 
-        GraphicsContextSkia context(*canvas, renderingMode, RenderingPurpose::LayerBacking);
-        paintIntoGraphicsContext(layer, context, dirtyRect, contentsOpaque, contentsScale);
-
-        canvas->restore();
-        WTFEndSignpost(canvas, PaintTile);
+    // GL path: upload synchronously.
+    if (!isDMABufBackedTexture) [[unlikely]] {
+        atlas->uploadImages();
+        return atlas;
     }
 
-    buffer->completePainting();
-    platformLayer->didPaintTile();
-
-    return buffer;
+    // DMA-buf path: create atlas without uploading, dispatch pixel writes to worker.
+    if (!m_uploadWorkQueue)
+        lazyInitialize(m_uploadWorkQueue, WorkQueue::create("AtlasUpload"_s));
+    uploadCondition.addPending();
+    m_uploadWorkQueue->dispatch([atlas = Ref { *atlas }]() mutable {
+        atlas->uploadImages();
+    });
+    return atlas;
 }
 
-Ref<SkiaRecordingResult> SkiaPaintingEngine::record(const GraphicsLayerCoordinated& layer, const IntRect& recordRect, bool contentsOpaque, float contentsScale)
+bool SkiaPaintingEngine::tryReuseCachedAtlases(SkiaRecordingResult& result, unsigned fingerprint)
+{
+    if (m_cachedGPUAtlases.isEmpty() || fingerprint != m_cachedImageFingerprint)
+        return false;
+
+    // Cache hit — reuse GPU atlases.
+    result.setGPUAtlases(copyToVectorOf<Ref<SkiaGPUAtlas>>(m_cachedGPUAtlases));
+    return true;
+}
+
+Ref<SkiaRecordingResult> SkiaPaintingEngine::record(const GraphicsLayerCoordinated& layer, const IntRect& recordRect, bool contentsOpaque, float contentsScale, unsigned dirtyTilesCount)
 {
     // ### Asynchronous rendering on worker threads ###
-    ASSERT(useThreadedRendering());
-    ASSERT(m_workerPool);
+    ASSERT(m_paintingWorkerPool);
 
     auto renderingMode = canPerformAcceleratedRendering() ? RenderingMode::Accelerated : RenderingMode::Unaccelerated;
 
     WTFBeginSignpost(this, RecordTile);
     SkPictureRecorder pictureRecorder;
-    auto* recordingCanvas = pictureRecorder.beginRecording(recordRect.width(), recordRect.height());
+    // Use a bounding box hierarchy factory when the picture is going be replayed more than once,
+    // so that every playback uses only the operations intersecting the dirty rect.
+    SkRTreeFactory rtreeFactory;
+    auto* recordingCanvas = pictureRecorder.beginRecording(recordRect.width(), recordRect.height(), dirtyTilesCount > 1 ? &rtreeFactory : nullptr);
     GraphicsContextSkia recordingContext(*recordingCanvas, renderingMode, RenderingPurpose::LayerBacking);
-    recordingContext.beginRecording();
+    recordingContext.beginRecording(GraphicsContextSkia::RecordingMode::Tile, m_threadSafeGrContext);
     paintIntoGraphicsContext(layer, recordingContext, recordRect, contentsOpaque, contentsScale);
-    auto imageToFenceMap = recordingContext.endRecording();
+    auto recordingData = recordingContext.endRecording();
+
     auto picture = pictureRecorder.finishRecordingAsPicture();
     WTFEndSignpost(this, RecordTile);
 
-    return SkiaRecordingResult::create(WTF::move(picture), WTF::move(imageToFenceMap), recordRect, renderingMode, contentsOpaque, contentsScale);
+    auto result = SkiaRecordingResult::create(WTF::move(picture), WTF::move(recordingData), recordRect, renderingMode, contentsOpaque, contentsScale);
+
+    // Prepare GPU atlases on main thread before dispatching to workers.
+    if (result->hasAtlasLayouts()) {
+        auto fingerprint = result->imageSetFingerprint();
+
+        // Fast path: reuse cached atlases if the image set is unchanged.
+        if (!tryReuseCachedAtlases(result.get(), fingerprint)) {
+            PlatformDisplay::sharedDisplay().skiaGLContext()->makeContextCurrent();
+
+            auto* grContext = PlatformDisplay::sharedDisplay().skiaGrContext();
+            RELEASE_ASSERT(grContext);
+
+            Vector<Ref<SkiaGPUAtlas>> gpuAtlases;
+            auto uploadCondition = AtlasUploadCondition::create();
+            gpuAtlases.reserveInitialCapacity(result->atlasLayouts().size());
+
+            for (const auto& layout : result->atlasLayouts()) {
+                if (auto atlas = createAtlas(layout.get(), uploadCondition.get()))
+                    gpuAtlases.append(atlas.releaseNonNull());
+            }
+
+            if (!gpuAtlases.isEmpty()) {
+                // Only populate atlas cache when we see the same fingerprint twice in a row.
+                // This avoids holding the BitmapTextures by an extra frame, if not needed.
+                if (fingerprint == m_cachedImageFingerprint) {
+                    m_cachedGPUAtlases = WTF::move(gpuAtlases);
+                    result->setGPUAtlases(copyToVectorOf<Ref<SkiaGPUAtlas>>(m_cachedGPUAtlases));
+                } else {
+                    m_cachedImageFingerprint = fingerprint;
+                    m_cachedGPUAtlases.clear();
+                    result->setGPUAtlases(WTF::move(gpuAtlases));
+                }
+            }
+        }
+    } else {
+        // No atlas layouts — clear cache to release GPU memory.
+        m_cachedImageFingerprint = 0;
+        m_cachedGPUAtlases.clear();
+    }
+
+    return result;
 }
 
-Ref<CoordinatedTileBuffer> SkiaPaintingEngine::replay(const GraphicsLayerCoordinated& layer, const RefPtr<SkiaRecordingResult>& recording, const IntRect& dirtyRect)
+Ref<CoordinatedTileBuffer> SkiaPaintingEngine::replay(const GraphicsLayerCoordinated& layer, Ref<SkiaRecordingResult>&& recording, const IntRect& tileRect, const IntRect& dirtyRect)
 {
     // ### Asynchronous rendering on worker threads ###
-    ASSERT(useThreadedRendering());
-
     Ref platformLayer = layer.coordinatedPlatformLayer();
     platformLayer->willPaintTile();
 
     auto renderingMode = recording->renderingMode();
-    auto buffer = createBuffer(renderingMode, dirtyRect.size(), recording->contentsOpaque());
+#if USE(TEXTURE_MAPPER)
+    auto bufferSize = dirtyRect.size();
+#else
+    auto bufferSize = renderingMode == RenderingMode::Accelerated ? tileRect.size() : dirtyRect.size();
+#endif
+    auto buffer = createBuffer(renderingMode, bufferSize, recording->contentsOpaque());
     buffer->beginPainting();
 
-    m_workerPool->postTask([platformLayer = WTF::move(platformLayer), buffer = Ref { buffer }, dirtyRect, recording = RefPtr { recording }]() mutable {
+    m_paintingWorkerPool->postTask([platformLayer = WTF::move(platformLayer), buffer = Ref { buffer }, tileRect, dirtyRect, recording = WTF::move(recording), threadSafeGrContext = m_threadSafeGrContext]() mutable {
         if (auto* canvas = buffer->canvas()) {
-            auto replayPicture = [](const sk_sp<SkPicture>& picture, SkCanvas* canvas, const IntRect& recordRect, const IntRect& paintRect) {
+            auto replayPicture = [](const sk_sp<SkPicture>& picture, SkCanvas* canvas, const IntRect& recordRect, const IntRect& tileRect, const IntRect& dirtyRect, bool isDDLBuffer) {
                 canvas->save();
-                canvas->clear(SkColors::kTransparent);
-                canvas->clipRect(SkRect::MakeXYWH(0, 0, paintRect.width(), paintRect.height()));
-                canvas->translate(recordRect.x() - paintRect.x(), recordRect.y() - paintRect.y());
+                if (isDDLBuffer) {
+                    canvas->clipRect(SkRect::MakeXYWH(dirtyRect.x() - tileRect.x(), dirtyRect.y() - tileRect.y(), dirtyRect.width(), dirtyRect.height()));
+                    canvas->translate(recordRect.x() - tileRect.x(), recordRect.y() - tileRect.y());
+                } else {
+                    canvas->clear(SkColors::kTransparent);
+                    canvas->clipRect(SkRect::MakeXYWH(0, 0, dirtyRect.width(), dirtyRect.height()));
+                    canvas->translate(recordRect.x() - dirtyRect.x(), recordRect.y() - dirtyRect.y());
+                }
                 picture->playback(canvas);
                 canvas->restore();
             };
 
-            WTFBeginSignpost(canvas, PaintTile, "Skia/%s threaded, dirty region %ix%i+%i+%i", buffer->isBackedByOpenGL() ? "GPU" : "CPU", dirtyRect.x(), dirtyRect.y(), dirtyRect.width(), dirtyRect.height());
-            if (recording->hasFences()) {
-                auto replayCanvas = SkiaReplayCanvas::create(dirtyRect.size(), recording);
+#if USE(TEXTURE_MAPPER)
+            const bool isDDLBuffer = false;
+            const bool needsReplayCanvas = recording->hasFences() || recording->hasGPUAtlases();
+#else
+            const bool isDDLBuffer = buffer->isBackedByOpenGL();
+            const bool needsReplayCanvas = recording->hasGPUAtlases();
+#endif
+            WTFBeginSignpost(canvas, PaintTile, "Skia/%s%s threaded, dirty region %ix%i+%i+%i", buffer->isBackedByOpenGL() ? "GPU" : "CPU", isDDLBuffer ? "(DDL)" : "", dirtyRect.x(), dirtyRect.y(), dirtyRect.width(), dirtyRect.height());
+            // Use SkiaReplayCanvas if there are GPU fences or GPU atlases to handle.
+            if (needsReplayCanvas) {
+                auto replayCanvas = SkiaReplayCanvas::create(tileRect.size(), recording, threadSafeGrContext);
                 replayCanvas->addCanvas(canvas);
-                replayPicture(replayCanvas->picture(), &replayCanvas.get(), recording->recordRect(), dirtyRect);
+                replayPicture(replayCanvas->picture(), &replayCanvas.get(), recording->recordRect(), tileRect, dirtyRect, isDDLBuffer);
                 replayCanvas->removeCanvas(canvas);
             } else
-                replayPicture(recording->picture(), canvas, recording->recordRect(), dirtyRect);
+                replayPicture(recording->picture(), canvas, recording->recordRect(), tileRect, dirtyRect, isDDLBuffer);
             WTFEndSignpost(canvas, PaintTile);
         }
 
@@ -222,16 +314,17 @@ unsigned SkiaPaintingEngine::numberOfCPUPaintingThreads()
 
         if (const char* envString = getenv("WEBKIT_SKIA_CPU_PAINTING_THREADS")) {
             auto newValue = parseInteger<unsigned>(StringView::fromLatin1(envString));
-            if (newValue && *newValue <= 8)
+            if (newValue && *newValue >= 1 && *newValue <= 8)
                 numberOfThreads = *newValue;
             else
-                WTFLogAlways("The number of Skia painting threads is not between 0 and 8. Using the default value %u\n", numberOfThreads);
+                WTFLogAlways("The number of Skia painting threads is not between 1 and 8. Using the default value %u\n", numberOfThreads);
         }
     });
 
     return numberOfThreads;
 }
 
+#if USE(TEXTURE_MAPPER)
 unsigned SkiaPaintingEngine::numberOfGPUPaintingThreads()
 {
     static std::once_flag onceFlag;
@@ -243,14 +336,41 @@ unsigned SkiaPaintingEngine::numberOfGPUPaintingThreads()
 
         if (const char* envString = getenv("WEBKIT_SKIA_GPU_PAINTING_THREADS")) {
             auto newValue = parseInteger<unsigned>(StringView::fromLatin1(envString));
-            if (newValue && *newValue <= 4)
+            if (newValue && *newValue >= 1 && *newValue <= 4)
                 numberOfThreads = *newValue;
             else
-                WTFLogAlways("The number of Skia/GPU painting threads is not between 0 and 4. Using the default value %u\n", numberOfThreads);
+                WTFLogAlways("The number of Skia/GPU painting threads is not between 1 and 4. Using the default value %u\n", numberOfThreads);
         }
     });
 
     return numberOfThreads;
+}
+#endif
+
+bool SkiaPaintingEngine::shouldUseDMABufAtlasTextures()
+{
+#if USE(GBM)
+    static std::once_flag onceFlag;
+    static bool shouldUseDMABufAtlas = true;
+
+    std::call_once(onceFlag, [] {
+        if (const char* envString = getenv("WEBKIT_DISABLE_DMABUF_ATLAS")) {
+            auto envStringView = StringView::fromLatin1(envString);
+            if (envStringView == "1"_s)
+                shouldUseDMABufAtlas = false;
+        }
+
+        // On systems where allocating/exporting a gbm_bo succeeds but mmap'ing its dma-buf FD
+        // does not, stay on the pure-OpenGL path from the start rather than tripping the
+        // RELEASE_ASSERT in SkiaGPUAtlas::uploadImages() later.
+        if (shouldUseDMABufAtlas && !MemoryMappedGPUBuffer::isSupported())
+            shouldUseDMABufAtlas = false;
+    });
+
+    return shouldUseDMABufAtlas;
+#else
+    return false;
+#endif
 }
 
 bool SkiaPaintingEngine::shouldUseLinearTileTextures()

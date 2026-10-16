@@ -33,14 +33,12 @@
 
 #if !UCONFIG_NO_COLLATION
 
-#include <mutex>
 #include <unicode/ucol.h>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/text/StringView.h>
 
 #if OS(DARWIN) && USE(CF)
-#include <CoreFoundation/CoreFoundation.h>
 #include <wtf/RetainPtr.h>
 #include <wtf/cf/TypeCastsCF.h>
 #endif
@@ -61,19 +59,21 @@ static inline const char* resolveDefaultLocale(const char* locale)
 
 #else
 
-static inline CString copyShortASCIIString(CFStringRef string)
+static inline ASCIICString copyShortASCIIString(CFStringRef string)
 {
     if (!string)
-        return CString(""_s);
+        return ASCIICString { ""_s };
 
     std::span<char> buffer;
-    auto result = CString::newUninitialized(CFStringGetLength(string) + 1, buffer);
-    if (!CFStringGetCString(string, buffer.data(), buffer.size(), kCFStringEncodingASCII))
-        return CString(""_s);
+    auto result = ASCIICString::newUninitialized(CFStringGetLength(string), buffer);
+    // CFStringGetCString() writes the null terminator, for which CStringBuffer has already reserved room.
+    auto bufferIncludingNullTerminator = result.mutableSpanIncludingNullTerminator();
+    if (!CFStringGetCString(string, bufferIncludingNullTerminator.data(), bufferIncludingNullTerminator.size(), kCFStringEncodingASCII))
+        return ASCIICString { ""_s };
     return result;
 }
 
-static CString copyDefaultLocale()
+static ASCIICString copyDefaultLocale()
 {
 #if !PLATFORM(IOS_FAMILY)
     RetainPtr locale = checked_cf_cast<CFStringRef>(CFLocaleGetValue(adoptCF(CFLocaleCopyCurrent()).get(), kCFLocaleCollatorIdentifier));
@@ -90,7 +90,7 @@ static inline const char* resolveDefaultLocale(const char* locale)
         return locale;
     // Since iOS and OS X don't set UNIX locale to match the user's selected locale, the ICU default locale is not the right one.
     // So, instead of passing null to ICU, we pass the name of the user's selected locale.
-    static NeverDestroyed<CString> defaultLocale = copyDefaultLocale();
+    static NeverDestroyed<ASCIICString> defaultLocale = copyDefaultLocale();
     return defaultLocale.get().data();
 }
 
@@ -149,7 +149,7 @@ Collator::~Collator()
     cachedCollatorShouldSortLowercaseFirst = m_shouldSortLowercaseFirst;
 }
 
-static int32_t getIndexLatin1(UCharIterator* iterator, UCharIteratorOrigin origin)
+static int32_t LEGACY_NODELETE getIndexLatin1(UCharIterator* iterator, UCharIteratorOrigin origin)
 {
     switch (origin) {
     case UITER_START:
@@ -167,23 +167,23 @@ static int32_t getIndexLatin1(UCharIterator* iterator, UCharIteratorOrigin origi
     return U_SENTINEL;
 }
 
-static int32_t moveLatin1(UCharIterator* iterator, int32_t delta, UCharIteratorOrigin origin)
+static int32_t LEGACY_NODELETE moveLatin1(UCharIterator* iterator, int32_t delta, UCharIteratorOrigin origin)
 {
     return iterator->index = getIndexLatin1(iterator, origin) + delta;
 }
 
-static UBool hasNextLatin1(UCharIterator* iterator)
+static UBool LEGACY_NODELETE hasNextLatin1(UCharIterator* iterator)
 {
     return iterator->index < iterator->limit;
 }
 
-static UBool hasPreviousLatin1(UCharIterator* iterator)
+static UBool LEGACY_NODELETE hasPreviousLatin1(UCharIterator* iterator)
 {
     return iterator->index > iterator->start;
 }
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-static UChar32 currentLatin1(UCharIterator* iterator)
+static UChar32 LEGACY_NODELETE currentLatin1(UCharIterator* iterator)
 {
     ASSERT(iterator->index >= iterator->start);
     if (iterator->index >= iterator->limit)
@@ -191,7 +191,7 @@ static UChar32 currentLatin1(UCharIterator* iterator)
     return static_cast<const Latin1Character*>(iterator->context)[iterator->index];
 }
 
-static UChar32 nextLatin1(UCharIterator* iterator)
+static UChar32 LEGACY_NODELETE nextLatin1(UCharIterator* iterator)
 {
     ASSERT(iterator->index >= iterator->start);
     if (iterator->index >= iterator->limit)
@@ -199,7 +199,7 @@ static UChar32 nextLatin1(UCharIterator* iterator)
     return static_cast<const Latin1Character*>(iterator->context)[iterator->index++];
 }
 
-static UChar32 previousLatin1(UCharIterator* iterator)
+static UChar32 LEGACY_NODELETE previousLatin1(UCharIterator* iterator)
 {
     if (iterator->index <= iterator->start)
         return U_SENTINEL;
@@ -207,17 +207,17 @@ static UChar32 previousLatin1(UCharIterator* iterator)
 }
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
-static uint32_t getStateLatin1(const UCharIterator* iterator)
+static uint32_t LEGACY_NODELETE getStateLatin1(const UCharIterator* iterator)
 {
     return iterator->index;
 }
 
-static void setStateLatin1(UCharIterator* iterator, uint32_t state, UErrorCode*)
+static void LEGACY_NODELETE setStateLatin1(UCharIterator* iterator, uint32_t state, UErrorCode*)
 {
     iterator->index = state;
 }
 
-static UCharIterator createLatin1Iterator(std::span<const Latin1Character> characters)
+static UCharIterator LEGACY_NODELETE createLatin1Iterator(std::span<const Latin1Character> characters)
 {
     UCharIterator iterator;
     iterator.context = characters.data();

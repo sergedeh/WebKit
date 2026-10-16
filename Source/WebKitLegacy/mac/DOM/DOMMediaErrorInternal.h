@@ -25,9 +25,10 @@
  */
 
 #import <WebKitLegacy/DOMMediaError.h>
+#import <wtf/Compiler.h>
 
 namespace WebCore {
 class MediaError;
 }
 
-DOMMediaError *kit(WebCore::MediaError*);
+DOMMediaError * LEGACY_NODELETE kit(WebCore::MediaError*);

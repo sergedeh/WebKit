@@ -2,7 +2,7 @@
  * Copyright (C) 1999 Lars Knoll (knoll@kde.org)
  * Copyright (C) 2004-2005 Allan Sandfeld Jensen (kde@carewolf.com)
  * Copyright (C) 2006, 2007 Nicholas Shanks (webkit@nickshanks.com)
- * Copyright (C) 2005-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2005-2026 Apple Inc. All rights reserved.
  * Copyright (C) 2007 Alexey Proskuryakov <ap@webkit.org>
  * Copyright (C) 2007, 2008 Eric Seidel <eric@webkit.org>
  * Copyright (C) 2008, 2009 Torch Mobile Inc. All rights reserved. (http://www.torchmobile.com/)
@@ -33,6 +33,7 @@
 
 #include "CSSCalcRandomCachingKey.h"
 #include "CSSCanvasValue.h"
+#include "CSSColorImageValue.h"
 #include "CSSColorValue.h"
 #include "CSSCrossfadeValue.h"
 #include "CSSCursorImageValue.h"
@@ -42,8 +43,10 @@
 #include "CSSGradientValue.h"
 #include "CSSImageSetValue.h"
 #include "CSSImageValue.h"
+#include "CSSLightDarkImageValue.h"
 #include "CSSNamedImageValue.h"
 #include "CSSPaintImageValue.h"
+#include "CSSParserIdioms.h"
 #include "DocumentInlines.h"
 #include "DocumentView.h"
 #include "ElementInlines.h"
@@ -52,7 +55,6 @@
 #include "FrameDestructionObserverInlines.h"
 #include "HTMLElement.h"
 #include "LocalFrame.h"
-#include "RenderStyle+SettersInlines.h"
 #include "RenderTheme.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGSVGElement.h"
@@ -61,43 +63,55 @@
 #include "StyleCachedImage.h"
 #include "StyleCanvasImage.h"
 #include "StyleColor.h"
+#include "StyleComputedStyle+SettersInlines.h"
 #include "StyleCrossfadeImage.h"
 #include "StyleCursorImage.h"
+#include "StyleCustomPropertyRegistry.h"
 #include "StyleFilterImage.h"
 #include "StyleFontSizeFunctions.h"
 #include "StyleGeneratedImage.h"
 #include "StyleGradientImage.h"
 #include "StyleImageSet.h"
+#include "StyleLocalPropertyRegistry.h"
 #include "StyleNamedImage.h"
 #include "StylePaintImage.h"
 #include "StylePrimitiveNumericTypes+Conversions.h"
 #include "StylePrimitiveNumericTypes+Evaluation.h"
+#include "StyleScope.h"
 
 namespace WebCore {
 namespace Style {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BuilderState);
 
-BuilderState::BuilderState(RenderStyle& style)
-    : m_style(style)
-{
-}
-
-BuilderState::BuilderState(RenderStyle& style, BuilderContext&& context)
+BuilderState::BuilderState(ComputedStyle& style, BuilderContext&& context)
     : m_style(style)
     , m_context(WTF::move(context))
     , m_cssToLengthConversionData(style, *this)
 {
 }
 
+const CSSRegisteredCustomProperty* BuilderState::registeredProperty(const AtomString& name) const
+{
+    // "Only the custom property registrations in registrations are visible" covers the names a custom
+    // function introduces. A name it does not introduce arrives by inheritance carrying the calling
+    // element's computed value, so it keeps the document registration.
+    // https://drafts.csswg.org/css-mixins/#resolve-function-styles
+    if (m_context.localPropertyRegistry) {
+        if (auto* local = m_context.localPropertyRegistry->get(name))
+            return local;
+        // The result descriptor is never registered document-wide.
+        if (!isCustomPropertyName(name))
+            return nullptr;
+    }
+    return document().customPropertyRegistry().get(name);
+}
+
 float BuilderState::zoomWithTextZoomFactor()
 {
-    if (RefPtr frame = document().frame()) {
-        float textZoomFactor = style().textZoom() != TextZoom::Reset ? frame->textZoomFactor() : 1.0f;
-        float usedZoom = evaluationTimeZoomEnabled(*this) ? 1.0f : style().usedZoom();
-        return usedZoom * textZoomFactor;
-    }
-    return cssToLengthConversionData().zoom();
+    if (auto* frame = document().frame())
+        return style().textZoom() != TextZoom::Reset ? frame->textZoomFactor() : 1.0f;
+    return 1.0f;
 }
 
 // SVG handles zooming in a different way compared to CSS. The whole document is scaled instead
@@ -105,7 +119,7 @@ float BuilderState::zoomWithTextZoomFactor()
 // multiplies each resolved length with the zoom multiplier - so for SVG we need to disable that.
 // Though all CSS values that can be applied to outermost <svg> elements (width/height/border/padding...)
 // need to respect the scaling. RenderBox (the parent class of LegacyRenderSVGRoot) grabs values like
-// width/height/border/padding/... from the RenderStyle -> for SVG these values would never scale,
+// width/height/border/padding/... from the ComputedStyle -> for SVG these values would never scale,
 // if we'd pass a 1.0 zoom factor everywhere. So we only pass a zoom factor of 1.0 for specific
 // properties that are NOT allowed to scale within a zoomed SVG document (letter/word-spacing/font-size).
 bool BuilderState::useSVGZoomRules() const
@@ -118,7 +132,7 @@ bool BuilderState::useSVGZoomRulesForLength() const
     return is<SVGElement>(element()) && !(is<SVGSVGElement>(*element()) && element()->parentNode());
 }
 
-RefPtr<StyleImage> BuilderState::createStyleImage(const CSSValue& value) const
+RefPtr<Image> BuilderState::createStyleImage(const CSSValue& value) const
 {
     if (auto* imageValue = dynamicDowncast<CSSImageValue>(value))
         return imageValue->createStyleImage(*this);
@@ -136,82 +150,98 @@ RefPtr<StyleImage> BuilderState::createStyleImage(const CSSValue& value) const
         return filterImageValue->createStyleImage(*this);
     if (auto* gradientValue = dynamicDowncast<CSSGradientValue>(value))
         return gradientValue->createStyleImage(*this);
+    if (auto* colorImageValue = dynamicDowncast<CSSColorImageValue>(value))
+        return colorImageValue->createStyleImage(*this);
+    if (auto* lightDarkImageValue = dynamicDowncast<CSSLightDarkImageValue>(value))
+        return lightDarkImageValue->createStyleImage(*this);
     if (auto* paintImageValue = dynamicDowncast<CSSPaintImageValue>(value))
         return paintImageValue->createStyleImage(*this);
     return nullptr;
 }
 
-void BuilderState::registerContentAttribute(const AtomString& attributeLocalName)
+void BuilderState::registerSubstitutionAttribute(const AtomString& attributeLocalName, const Scope* targetScope)
 {
-    if (style().pseudoElementType() == PseudoElementType::Before || style().pseudoElementType() == PseudoElementType::After)
-        m_registeredContentAttributes.append(attributeLocalName);
+    m_registeredSubstitutionAttributes.append({ attributeLocalName, targetScope });
 }
 
 void BuilderState::adjustStyleForInterCharacterRuby()
 {
-    if (!m_style.isInterCharacterRubyPosition() || !element() || !element()->hasTagName(HTMLNames::rtTag))
+    if (!m_style->isInterCharacterRubyPosition() || !element() || !element()->hasTagName(HTMLNames::rtTag))
         return;
 
-    m_style.setTextAlign(TextAlign::Center);
-    if (!m_style.writingMode().isVerticalTypographic())
-        m_style.setWritingMode(StyleWritingMode::VerticalLr);
+    m_style->setTextAlign(TextAlign::Center);
+    if (!m_style->writingMode().isVerticalTypographic())
+        m_style->setWritingMode(StyleWritingMode::VerticalLr);
 }
 
 void BuilderState::updateFont()
 {
-    Ref fontSelector = const_cast<Document&>(document()).fontSelector();
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST Ref fontSelector = const_cast<Document&>(document()).fontSelector();
 
     auto needsUpdate = [&] {
-        return m_fontDirty || !m_style.fontCascade().fonts();
+        return m_fontDirty || !m_style->fontCascade().fonts();
     };
 
     if (!needsUpdate())
         return;
 
-#if ENABLE(TEXT_AUTOSIZING)
     updateFontForTextSizeAdjust();
-#endif
     updateFontForGenericFamilyChange();
     updateFontForZoomChange();
     updateFontForOrientationChange();
     updateFontForSizeChange();
 
-    m_style.fontCascade().update(fontSelector.ptr());
+    m_style->fontCascade().update(fontSelector.ptr());
 
     m_fontDirty = false;
 }
 
-#if ENABLE(TEXT_AUTOSIZING)
 void BuilderState::updateFontForTextSizeAdjust()
 {
-    if (m_style.textSizeAdjust().isAuto()
+    if (m_style->textSizeAdjust().isAuto()
         || !document().settings().textAutosizingEnabled()
         || (document().settings().textAutosizingUsesIdempotentMode()
-            && !m_style.textSizeAdjust().isNone()
+            && !m_style->textSizeAdjust().isNone()
             && !document().settings().idempotentModeAutosizingOnlyHonorsPercentages()))
         return;
 
-    auto newFontDescription = m_style.fontDescription();
-    if (!m_style.textSizeAdjust().isNone())
-        newFontDescription.setComputedSize(newFontDescription.specifiedSize() * m_style.textSizeAdjust().multiplier());
-    else
-        newFontDescription.setComputedSize(newFontDescription.specifiedSize());
+    auto newFontDescription = m_style->fontDescription();
+    auto baseSize = newFontDescription.computedSize();
+    if (!m_style->textSizeAdjust().isNone())
+        baseSize *= m_style->textSizeAdjust().multiplier();
 
-    m_style.setFontDescriptionWithoutUpdate(WTF::move(newFontDescription));
+    float zoomFactor = m_style->usedZoom();
+    if (auto* frame = document().frame(); frame && m_style->textZoom() != TextZoom::Reset)
+        zoomFactor *= frame->textZoomFactor();
+    newFontDescription.setComputedSize(baseSize);
+    newFontDescription.setUsedSize(baseSize * zoomFactor, zoomFactor);
+
+    m_style->setFontDescriptionWithoutUpdate(WTF::move(newFontDescription));
 }
-#endif
 
 void BuilderState::updateFontForZoomChange()
 {
-    if (m_style.usedZoom() == parentStyle().usedZoom() && m_style.textZoom() == parentStyle().textZoom())
+    if (m_style->usedZoom() == parentStyle().usedZoom() && m_style->textZoom() == parentStyle().textZoom())
         return;
 
-    setFontDescriptionFontSize(m_style.fontDescription().specifiedSize());
+    // When text-size-adjust has an active percentage, updateFontForTextSizeAdjust() has already
+    // computed the correct size (incorporating both the multiplier and the current zoom factor).
+    // Skip recalculation here to avoid overwriting that result, which would lose the
+    // text-size-adjust multiplier.
+    if (document().settings().textAutosizingEnabled()
+        && !m_style->textSizeAdjust().isAuto()
+        && !m_style->textSizeAdjust().isNone()
+        && (!document().settings().textAutosizingUsesIdempotentMode()
+            || document().settings().idempotentModeAutosizingOnlyHonorsPercentages()))
+        return;
+
+    setFontDescriptionFontSize(m_style->fontDescription().computedSize());
 }
 
 void BuilderState::updateFontForGenericFamilyChange()
 {
-    const auto& childFont = m_style.fontDescription();
+    const auto& childFont = m_style->fontDescription();
 
     if (childFont.isAbsoluteSize())
         return;
@@ -225,81 +255,111 @@ void BuilderState::updateFontForGenericFamilyChange()
     // If the font uses a keyword size, then we refetch from the table rather than
     // multiplying by our scale factor.
     float size = [&] {
-        if (CSSValueID sizeIdentifier = childFont.keywordSizeAsIdentifier())
+        if (auto sizeIdentifier = childFont.keywordSizeAsIdentifier(); sizeIdentifier != CSSValueID::Invalid)
             return Style::fontSizeForKeyword(sizeIdentifier, childFont.useFixedDefaultSize(), document());
 
         auto fixedSize =  document().settings().defaultFixedFontSize();
         auto defaultSize =  document().settings().defaultFontSize();
         float fixedScaleFactor = (fixedSize && defaultSize) ? static_cast<float>(fixedSize) / defaultSize : 1;
-        return parentFont.useFixedDefaultSize() ? childFont.specifiedSize() / fixedScaleFactor : childFont.specifiedSize() * fixedScaleFactor;
+        return parentFont.useFixedDefaultSize() ? childFont.computedSize() / fixedScaleFactor : childFont.computedSize() * fixedScaleFactor;
     }();
 
     auto newFontDescription = childFont;
     setFontSize(newFontDescription, size);
-    m_style.setFontDescriptionWithoutUpdate(WTF::move(newFontDescription));
+    m_style->setFontDescriptionWithoutUpdate(WTF::move(newFontDescription));
 }
 
 void BuilderState::updateFontForOrientationChange()
 {
-    auto [fontOrientation, glyphOrientation] = m_style.fontAndGlyphOrientation();
+    auto [fontOrientation, glyphOrientation] = m_style->fontAndGlyphOrientation();
 
-    const auto& fontDescription = m_style.fontDescription();
+    const auto& fontDescription = m_style->fontDescription();
     if (fontDescription.orientation() == fontOrientation && fontDescription.nonCJKGlyphOrientation() == glyphOrientation)
         return;
 
     auto newFontDescription = fontDescription;
     newFontDescription.setNonCJKGlyphOrientation(glyphOrientation);
     newFontDescription.setOrientation(fontOrientation);
-    m_style.setFontDescriptionWithoutUpdate(WTF::move(newFontDescription));
+    m_style->setFontDescriptionWithoutUpdate(WTF::move(newFontDescription));
 }
 
 void BuilderState::updateFontForSizeChange()
 {
-    m_style.synchronizeLetterSpacingWithFontCascadeWithoutUpdate();
-    m_style.synchronizeWordSpacingWithFontCascadeWithoutUpdate();
+    m_style->synchronizeLetterSpacingWithFontCascadeWithoutUpdate();
+    m_style->synchronizeWordSpacingWithFontCascadeWithoutUpdate();
 }
 
 void BuilderState::setFontSize(FontCascadeDescription& fontDescription, float size)
 {
-    fontDescription.setSpecifiedSize(size);
-    auto computedFontSize = Style::computedFontSizeFromSpecifiedSize(size, fontDescription.isAbsoluteSize(), useSVGZoomRules(), style(), document());
-    fontDescription.setComputedSize(computedFontSize.size, computedFontSize.usedZoomFactor);
+    fontDescription.setComputedSize(size);
+    auto usedFontSize = Style::usedFontSizeFromComputedSize(size, fontDescription.isAbsoluteSize(), useSVGZoomRules(), style(), document());
+    fontDescription.setUsedSize(usedFontSize.size, usedFontSize.zoomFactor);
 }
 
 CSSPropertyID BuilderState::cssPropertyID() const
 {
-    return m_currentProperty ? m_currentProperty->id : CSSPropertyInvalid;
+    return m_currentProperty ? m_currentProperty->id : CSSPropertyID::Invalid;
+}
+
+// Every custom property shares CSSPropertyID::Custom, so anything keying on cssPropertyID() needs this to
+// tell them apart. Null unless a custom property is being applied.
+AtomString BuilderState::customPropertyName() const
+{
+    if (cssPropertyID() != CSSPropertyID::Custom)
+        return nullAtom();
+    RefPtr customPropertyValue = dynamicDowncast<CSSCustomPropertyValue>(m_currentProperty->cssValue[SelectorChecker::MatchDefault]);
+    return customPropertyValue ? customPropertyValue->name() : nullAtom();
 }
 
 bool BuilderState::isCurrentPropertyInvalidAtComputedValueTime() const
 {
-    return m_invalidAtComputedValueTimeProperties.get(cssPropertyID());
+    return m_invalidAtComputedValueTimeProperties.get(std::to_underlying(cssPropertyID()));
 }
 
 void BuilderState::setCurrentPropertyInvalidAtComputedValueTime()
 {
-    m_invalidAtComputedValueTimeProperties.set(cssPropertyID());
+    m_invalidAtComputedValueTimeProperties.set(std::to_underlying(cssPropertyID()));
 }
 
 void BuilderState::setUsesViewportUnits()
 {
-    m_style.setUsesViewportUnits();
+    m_style->setUsesViewportUnits();
 }
 
-void BuilderState::setUsesContainerUnits()
+void BuilderState::setIsContainerDependent()
 {
-    m_style.setUsesContainerUnits();
+    m_style->setIsContainerDependent();
 }
 
-double BuilderState::lookupCSSRandomBaseValue(const CSSCalc::RandomCachingKey& key, std::optional<CSS::Keyword::ElementShared> elementShared) const
+double BuilderState::lookupCSSRandomBaseValue(const CSSCalc::RandomCachingKey& key, std::optional<CSS::Keyword::ElementScoped> elementScoped) const
 {
-    if (!elementShared)
-        return element()->lookupCSSRandomBaseValue(style().pseudoElementIdentifier(), key);
+    if (elementScoped)
+        return protect(element())->lookupCSSRandomBaseValue(style().pseudoElementIdentifier(), key);
 
     return document().lookupCSSRandomBaseValue(key);
 }
 
 // MARK: - Tree Counting Functions
+
+static void LEGACY_NODELETE markTreeCountingFunctionUsed(const Element& element, ComputedStyle& style)
+{
+    style.setUsesTreeCountingFunctions();
+
+    auto* parent = element.parentElement();
+    if (!parent)
+        return;
+
+    // FIXME: This should mark through Style::Relations.
+    parent->setChildrenAffectedByBackwardPositionalRules();
+    parent->setChildrenAffectedByForwardPositionalRules();
+}
+
+// "Loosely-matched tree-scoped references" count as 0 for cross-tree styling.
+// https://drafts.csswg.org/css-shadow-1/#tree-scoped-name-loosely-matched
+static bool isLooselyMatchedTreeScopedReference(const PropertyCascade::Property* property)
+{
+    return property && property->styleScopeOrdinal <= ScopeOrdinal::ContainingHost;
+}
 
 unsigned BuilderState::siblingCount()
 {
@@ -307,13 +367,10 @@ unsigned BuilderState::siblingCount()
 
     ASSERT(element());
 
-    RefPtr parent = element()->parentElement();
-    if (!parent)
-        return 1;
+    if (isLooselyMatchedTreeScopedReference(m_currentProperty))
+        return 0;
 
-    m_style.setUsesTreeCountingFunctions();
-    parent->setChildrenAffectedByBackwardPositionalRules();
-    parent->setChildrenAffectedByForwardPositionalRules();
+    markTreeCountingFunctionUsed(*element(), m_style);
 
     unsigned count = 1;
     for (const auto* sibling = ElementTraversal::previousSibling(*element()); sibling; sibling = ElementTraversal::previousSibling(*sibling))
@@ -329,13 +386,10 @@ unsigned BuilderState::siblingIndex()
 
     ASSERT(element());
 
-    RefPtr parent = element()->parentElement();
-    if (!parent)
-        return 1;
+    if (isLooselyMatchedTreeScopedReference(m_currentProperty))
+        return 0;
 
-    m_style.setUsesTreeCountingFunctions();
-    parent->setChildrenAffectedByBackwardPositionalRules();
-    parent->setChildrenAffectedByForwardPositionalRules();
+    markTreeCountingFunctionUsed(*element(), m_style);
 
     unsigned count = 1;
     for (const auto* sibling = ElementTraversal::previousSibling(*element()); sibling; sibling = ElementTraversal::previousSibling(*sibling))
@@ -352,7 +406,7 @@ void BuilderState::disableNativeAppearanceIfNeeded(CSSPropertyID propertyID, Pro
             return false;
         if (!applyPropertyToRegularStyle())
             return false;
-        return element()->isDevolvableWidget() || RenderTheme::hasAppearanceForElementTypeFromUAStyle(*element());
+        SUPPRESS_UNCOUNTED_ARG return element()->isDevolvableWidget() || RenderTheme::hasAppearanceForElementTypeFromUAStyle(*element());
     };
 
     if (shouldDisable())

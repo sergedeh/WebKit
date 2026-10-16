@@ -55,20 +55,35 @@ Lock& WebGLProgram::instancesLock()
     return s_instancesLock;
 }
 
-RefPtr<WebGLProgram> WebGLProgram::create(WebGLRenderingContextBase& context)
+Ref<WebGLProgram> WebGLProgram::createLost(WebGLRenderingContextBase& context)
 {
-    auto object = context.graphicsContextGL()->createProgram();
+    return adoptRef(*new WebGLProgram { context });
+}
+
+Ref<WebGLProgram> WebGLProgram::create(WebGLRenderingContextBase& context)
+{
+    auto object = protect(context.graphicsContextGL())->createProgram();
     if (!object)
-        return nullptr;
+        return createLost(context);
     return adoptRef(*new WebGLProgram { context, object });
 }
 
 WebGLProgram::WebGLProgram(WebGLRenderingContextBase& context, PlatformGLObject object)
     : WebGLObject(context, object)
-    , ContextDestructionObserver(context.scriptExecutionContext())
+    , ContextDestructionObserver(protect(context.scriptExecutionContext()))
 {
     ASSERT(scriptExecutionContext());
 
+    {
+        Locker locker { instancesLock() };
+        instances().add(this, &context);
+    }
+}
+
+WebGLProgram::WebGLProgram(WebGLRenderingContextBase& context)
+    : ContextDestructionObserver(protect(context.scriptExecutionContext()))
+{
+    ASSERT(scriptExecutionContext());
     {
         Locker locker { instancesLock() };
         instances().add(this, &context);
@@ -89,13 +104,6 @@ WebGLProgram::~WebGLProgram()
         return;
 
     runDestructor();
-}
-
-void WebGLProgram::contextDestroyed()
-{
-    InspectorInstrumentation::willDestroyWebGLProgram(*this);
-
-    ContextDestructionObserver::contextDestroyed();
 }
 
 void WebGLProgram::deleteObjectImpl(const AbstractLocker& locker, GraphicsContextGL* context3d, PlatformGLObject obj)
@@ -161,11 +169,15 @@ const HashMap<String, int>& WebGLProgram::uniformLocations() LIFETIME_BOUND
     if (!m_state.uniformLocations) {
         auto& locations = m_state.uniformLocations.emplace();
         for (auto& activeUniform : activeUniforms()) {
-            auto name = String::fromUTF8(activeUniform.name.data());
-            locations.add(name, activeUniform.locations[0]);
+            if (activeUniform.blockIndex != -1)
+                continue;
+            String name { activeUniform.name };
+            if (activeUniform.locations[0] != -1)
+                locations.add(name, activeUniform.locations[0]);
             if (name.endsWith("[0]"_s)) {
                 auto baseName = name.left(name.length() - 3);
-                locations.add(baseName, activeUniform.locations[0]);
+                if (activeUniform.locations[0] != -1)
+                    locations.add(baseName, activeUniform.locations[0]);
                 for (size_t i = 1; i < activeUniform.locations.size(); ++i) {
                     if (activeUniform.locations[i] != -1)
                         locations.add(makeString(baseName, '[', i, ']'), activeUniform.locations[i]);
@@ -183,7 +195,7 @@ const HashMap<String, unsigned>& WebGLProgram::uniformIndices() LIFETIME_BOUND
         auto activeUniforms = this->activeUniforms();
         for (unsigned i = 0; i < activeUniforms.size(); ++i) {
             auto& activeUniform = activeUniforms[i];
-            auto name = String::fromUTF8(activeUniform.name.data());
+            String name { activeUniform.name };
             indices.add(name, i);
             if (name.endsWith("[0]"_s)) {
                 auto baseName = name.left(name.length() - 3);

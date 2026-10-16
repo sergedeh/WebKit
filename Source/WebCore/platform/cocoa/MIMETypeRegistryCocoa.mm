@@ -54,7 +54,8 @@ static MemoryCompactLookupOnlyRobinHoodHashMap<String, MemoryCompactLookupOnlyRo
             ASSERT(pos != notFound);
             auto wildcardMIMEType = makeString(StringView(type).left(pos), "/*"_s);
 
-            for (NSString *extension in extensions) {
+            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+            for (SUPPRESS_UNRETAINED_LOCAL NSString *extension in extensions) {
                 // Add extension to wildcardMIMEType, for example add "png" to "image/*"
                 addExtension(wildcardMIMEType, extension);
                 // Add extension to its mimeType, for example add "png" to "image/png"
@@ -83,7 +84,7 @@ static const HashMap<String, String, ASCIICaseInsensitiveHash>& additionalMimeTy
 {
     static NeverDestroyed<HashMap<String, String, ASCIICaseInsensitiveHash>> mimeTypesMap = [] {
         HashMap<String, String, ASCIICaseInsensitiveHash> map;
-        static constexpr auto additionalTypes = std::to_array<TypeExtensionPair>({
+        static constexpr auto additionalTypes = WTF::toArray<TypeExtensionPair>({
             // FIXME: Remove this list once rdar://112044000 (Many camera RAW image type identifiers are missing MIME types) is resolved.
             { "image/x-canon-cr2"_s, "cr2"_s },
             { "image/x-canon-cr3"_s, "cr3"_s },

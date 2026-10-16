@@ -24,9 +24,10 @@
  */
 
 #import <WebKitLegacy/DOMImplementation.h>
+#import <wtf/Compiler.h>
 
 namespace WebCore {
 class DOMImplementation;
 }
 
-DOMImplementation *kit(WebCore::DOMImplementation*);
+DOMImplementation * LEGACY_NODELETE kit(WebCore::DOMImplementation*);

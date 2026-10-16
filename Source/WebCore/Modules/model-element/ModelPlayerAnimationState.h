@@ -37,21 +37,21 @@ public:
     ModelPlayerAnimationState& operator=(ModelPlayerAnimationState&&) = default;
     ModelPlayerAnimationState(bool autoplay, bool loop, bool paused, Seconds duration, std::optional<double> effectivePlaybackRate, std::optional<Seconds> lastCachedCurrentTime, std::optional<MonotonicTime> lastCachedClockTimestamp);
 
-    bool autoplay() const;
-    void setAutoplay(bool);
-    bool loop() const;
-    void setLoop(bool);
-    bool paused() const;
-    void setPaused(bool);
-    Seconds duration() const;
-    void setDuration(Seconds);
-    std::optional<double> effectivePlaybackRate() const;
-    void setPlaybackRate(double);
-    std::optional<Seconds> lastCachedCurrentTime() const;
-    std::optional<MonotonicTime> lastCachedClockTimestamp() const;
+    bool LEGACY_NODELETE autoplay() const;
+    void LEGACY_NODELETE setAutoplay(bool);
+    bool LEGACY_NODELETE loop() const;
+    void LEGACY_NODELETE setLoop(bool);
+    bool LEGACY_NODELETE paused() const;
+    void LEGACY_NODELETE setPaused(bool);
+    Seconds LEGACY_NODELETE duration() const;
+    void LEGACY_NODELETE setDuration(Seconds);
+    std::optional<double> LEGACY_NODELETE effectivePlaybackRate() const;
+    void LEGACY_NODELETE setPlaybackRate(double);
+    std::optional<Seconds> LEGACY_NODELETE lastCachedCurrentTime() const;
+    std::optional<MonotonicTime> LEGACY_NODELETE lastCachedClockTimestamp() const;
 
     Seconds currentTime() const;
-    void setCurrentTime(Seconds, MonotonicTime clockTimestamp);
+    void LEGACY_NODELETE setCurrentTime(Seconds, MonotonicTime clockTimestamp);
 
 private:
     bool m_autoplay { false };

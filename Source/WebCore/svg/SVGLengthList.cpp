@@ -26,7 +26,6 @@
 #include "config.h"
 #include "SVGLengthList.h"
 
-#include "EventTarget.h"
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringParsingBuffer.h>
 
@@ -34,9 +33,9 @@ namespace WebCore {
 
 bool SVGLengthList::parse(StringView value)
 {
-    clearItems();
+    Vector<SVGLengthValue> lengths;
 
-    return readCharactersForParsing(value, [&](auto buffer) {
+    bool parsingSucceeded = readCharactersForParsing(value, [&](auto buffer) {
         skipOptionalSVGSpaces(buffer);
 
         while (buffer.hasCharactersRemaining()) {
@@ -50,16 +49,21 @@ bool SVGLengthList::parse(StringView value)
             SVGParsingError parseError;
             auto length = SVGLengthValue::construct(m_lengthMode, std::span(start, buffer.position() - start), parseError);
             if (parseError != SVGParsingError::None)
-                break;
+                return false;
 
-            append(SVGLength::create(WTF::move(length)));
+            lengths.append(WTF::move(length));
             skipOptionalSVGSpacesOrDelimiter(buffer);
         }
 
-        // FIXME: Should this clearItems() on failure like SVGTransformList does?
-
         return buffer.atEnd();
     });
+    if (!parsingSucceeded) {
+        clearItems();
+        return false;
+    }
+
+    updateItems(lengths);
+    return true;
 }
 
 String SVGLengthList::valueAsString() const

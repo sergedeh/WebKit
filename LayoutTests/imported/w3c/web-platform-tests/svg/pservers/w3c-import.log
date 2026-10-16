@@ -10,9 +10,8 @@ Do NOT modify or remove this file.
 ------------------------------------------------------------------------
 Properties requiring vendor prefixes:
 None
-Property values requiring vendor prefixes:
-None
 ------------------------------------------------------------------------
 List of files:
 /LayoutTests/imported/w3c/web-platform-tests/svg/pservers/inheritance.svg
 /LayoutTests/imported/w3c/web-platform-tests/svg/pservers/pattern-with-invalid-base-cloned-thcrash.html
+/LayoutTests/imported/w3c/web-platform-tests/svg/pservers/radial-gradient-undefined-fx-fy.html

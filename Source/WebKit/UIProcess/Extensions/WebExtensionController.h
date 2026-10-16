@@ -72,6 +72,7 @@ class WebExtensionDataRecord;
 class WebPageProxy;
 class WebProcessPool;
 class WebsiteDataStore;
+struct WebExtensionContentRuleListBlockedLoadInfo;
 struct WebExtensionControllerParameters;
 struct WebExtensionFrameParameters;
 
@@ -88,7 +89,7 @@ class WebExtensionController : public API::ObjectImpl<API::Object::Type::WebExte
 
 public:
     static Ref<WebExtensionController> create(Ref<WebExtensionControllerConfiguration> configuration) { return adoptRef(*new WebExtensionController(configuration)); }
-    static RefPtr<WebExtensionController> get(WebExtensionControllerIdentifier);
+    static RefPtr<WebExtensionController> LEGACY_NODELETE get(WebExtensionControllerIdentifier);
 
     void ref() const final { API::ObjectImpl<API::Object::Type::WebExtensionController>::ref(); }
     void deref() const final { API::ObjectImpl<API::Object::Type::WebExtensionController>::deref(); }
@@ -111,9 +112,8 @@ public:
 
     enum class ForPrivateBrowsing { No, Yes };
 
-    WebExtensionControllerConfiguration& configuration() const { return m_configuration.get(); }
-    Ref<WebExtensionControllerConfiguration> protectedConfiguration() const { return m_configuration; }
-    WebExtensionControllerParameters parameters(const API::PageConfiguration&) const;
+    WebExtensionControllerConfiguration& configuration() const LIFETIME_BOUND { return m_configuration.get(); }
+    WebExtensionControllerParameters parameters(const API::PageConfiguration&, WebProcessProxy& destinationProcess) const;
 
     bool operator==(const WebExtensionController& other) const { return (this == &other); }
 
@@ -126,14 +126,14 @@ public:
     void getDataRecord(OptionSet<WebExtensionDataType>, WebExtensionContext&, CompletionHandler<void(RefPtr<WebExtensionDataRecord>)>&&);
     void removeData(OptionSet<WebExtensionDataType>, const Vector<Ref<WebExtensionDataRecord>>&, CompletionHandler<void()>&&);
 
-    void calculateStorageSize(RefPtr<WebExtensionStorageSQLiteStore>, WebExtensionDataType, CompletionHandler<void(Expected<size_t, WebExtensionError>&&)>&&);
-    void removeStorage(RefPtr<WebExtensionStorageSQLiteStore>, WebExtensionDataType, CompletionHandler<void(Expected<void, WebExtensionError>&&)>&&);
+    void calculateStorageSize(WebExtensionStorageSQLiteStore&, WebExtensionDataType, CompletionHandler<void(std::expected<size_t, WebExtensionError>&&)>&&);
+    void removeStorage(WebExtensionStorageSQLiteStore&, WebExtensionDataType, CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&&);
 
     bool hasLoadedContexts() const { return !m_extensionContexts.isEmpty(); }
     bool isFreshlyCreated() const { return m_freshlyCreated; }
 
-    Expected<bool, RefPtr<API::Error>> load(WebExtensionContext&);
-    Expected<bool, RefPtr<API::Error>> unload(WebExtensionContext&);
+    std::expected<bool, RefPtr<API::Error>> load(WebExtensionContext&);
+    std::expected<bool, RefPtr<API::Error>> unload(WebExtensionContext&);
 
     void unloadAll();
 
@@ -142,30 +142,30 @@ public:
     void addPage(WebPageProxy&);
     void removePage(WebPageProxy&);
 
-    const WebPageProxySet& allPages() const { return m_pages; }
+    const WebPageProxySet& allPages() const LIFETIME_BOUND { return m_pages; }
 
-    const WebsiteDataStoreSet& allWebsiteDataStores() const { return m_websiteDataStores; }
+    const WebsiteDataStoreSet& allWebsiteDataStores() const LIFETIME_BOUND { return m_websiteDataStores; }
     RefPtr<WebsiteDataStore> websiteDataStore(std::optional<PAL::SessionID> = std::nullopt) const;
 
     // Includes both non-private and private browsing content controllers.
-    const UserContentControllerProxySet& allUserContentControllers() const { return m_allUserContentControllers; }
-    const UserContentControllerProxySet& allNonPrivateUserContentControllers() const { return m_allNonPrivateUserContentControllers; }
-    const UserContentControllerProxySet& allPrivateUserContentControllers() const { return m_allPrivateUserContentControllers; }
+    const UserContentControllerProxySet& allUserContentControllers() const LIFETIME_BOUND { return m_allUserContentControllers; }
+    const UserContentControllerProxySet& allNonPrivateUserContentControllers() const LIFETIME_BOUND { return m_allNonPrivateUserContentControllers; }
+    const UserContentControllerProxySet& allPrivateUserContentControllers() const LIFETIME_BOUND { return m_allPrivateUserContentControllers; }
 
-    const WebProcessPoolSet& allProcessPools() const { return m_processPools; }
+    const WebProcessPoolSet& allProcessPools() const LIFETIME_BOUND { return m_processPools; }
     WebProcessProxySet allProcesses() const;
 
     RefPtr<WebExtensionContext> extensionContext(const WebExtension&) const;
     RefPtr<WebExtensionContext> extensionContext(const UniqueIdentifier&) const;
     RefPtr<WebExtensionContext> extensionContext(const URL&) const;
 
-    const WebExtensionContextSet& extensionContexts() const { return m_extensionContexts; }
+    const WebExtensionContextSet& extensionContexts() const LIFETIME_BOUND { return m_extensionContexts; }
     WebExtensionSet extensions() const;
 
     void cookiesDidChange(API::HTTPCookieStore&);
 
-    template<typename T, typename RawValue>
-    void sendToAllProcesses(const T& message, const ObjectIdentifierGenericBase<RawValue>& destinationID);
+    template<typename T>
+    void sendToAllProcesses(const T& message, const ObjectIdentifierGenericBase& destinationID);
 
     bool isFeatureEnabled(const String& featureName) const;
 
@@ -192,13 +192,19 @@ public:
     void resourceLoadDidReceiveResponse(WebPageProxyIdentifier, const ResourceLoadInfo&, const WebCore::ResourceResponse&);
     void resourceLoadDidCompleteWithError(WebPageProxyIdentifier, const ResourceLoadInfo&, const WebCore::ResourceResponse&, const WebCore::ResourceError&);
 
+#if ENABLE(CONTENT_EXTENSIONS)
+    void resourceLoadWasBlockedByContentRuleList(WebPageProxyIdentifier, const WebExtensionContentRuleListBlockedLoadInfo&);
+#endif
+
     bool isShowingActionPopup() { return m_showingActionPopup; };
     void setShowingActionPopup(bool isOpen) { m_showingActionPopup = isOpen; };
 
+    bool markDidRemoveStaleExtensionWebsiteData();
+    HashSet<String> activeExtensionURLs() const;
+
 #ifdef __OBJC__
     WKWebExtensionController *wrapper() const { return (WKWebExtensionController *)API::ObjectImpl<API::Object::Type::WebExtensionController>::wrapper(); }
-    RetainPtr<WKWebExtensionController> protectedWrapper() const { return wrapper(); }
-    WKWebExtensionControllerDelegatePrivate *delegate() const { return (WKWebExtensionControllerDelegatePrivate *)protectedWrapper().get().delegate; }
+    WKWebExtensionControllerDelegatePrivate *delegate() const { return (WKWebExtensionControllerDelegatePrivate *)protect(wrapper()).get().delegate; }
 #endif
 
 private:
@@ -269,12 +275,11 @@ private:
         WeakPtr<WebExtensionController> m_extensionController;
     };
 
-    RefPtr<HTTPCookieStoreObserver> protectedCookieStoreObserver() { return m_cookieStoreObserver; }
 
     const Ref<WebExtensionControllerConfiguration> m_configuration;
 
 #if PLATFORM(COCOA)
-    RetainPtr<_WKWebExtensionControllerHelper> m_webExtensionControllerHelper;
+    const RetainPtr<_WKWebExtensionControllerHelper> m_webExtensionControllerHelper;
 #endif
     WebExtensionContextSet m_extensionContexts;
     WebExtensionContextBaseURLMap m_extensionContextBaseURLMap;
@@ -285,6 +290,7 @@ private:
     UserContentControllerProxySet m_allNonPrivateUserContentControllers;
     UserContentControllerProxySet m_allPrivateUserContentControllers;
     WebExtensionURLSchemeHandlerMap m_registeredSchemeHandlers;
+    bool m_didRemoveStaleExtensionWebsiteData { false };
 
     bool m_freshlyCreated : 1 { true };
 #ifdef NDEBUG
@@ -298,8 +304,8 @@ private:
     RefPtr<HTTPCookieStoreObserver> m_cookieStoreObserver;
 };
 
-template<typename T, typename RawValue>
-void WebExtensionController::sendToAllProcesses(const T& message, const ObjectIdentifierGenericBase<RawValue>& destinationID)
+template<typename T>
+void WebExtensionController::sendToAllProcesses(const T& message, const ObjectIdentifierGenericBase& destinationID)
 {
     for (Ref process : allProcesses()) {
         if (process->canSendMessage())

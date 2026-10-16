@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2026 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -58,13 +59,10 @@ ExceptionOr<Ref<CSSMatrixComponent>> CSSMatrixComponent::create(Ref<const CSSFun
     auto makeMatrix = [&](NOESCAPE const Function<Ref<CSSMatrixComponent>(Vector<double>&&)>& create, size_t expectedNumberOfComponents) -> ExceptionOr<Ref<CSSMatrixComponent>> {
         Vector<double> components;
         for (Ref componentCSSValue : cssFunctionValue.get()) {
-            auto valueOrException = CSSStyleValueFactory::reifyValue(document, componentCSSValue.get(), std::nullopt);
+            auto valueOrException = CSSUnitValue::reifyValue(document, componentCSSValue.get());
             if (valueOrException.hasException())
                 return valueOrException.releaseException();
-            RefPtr unitValue = dynamicDowncast<CSSUnitValue>(valueOrException.releaseReturnValue());
-            if (!unitValue)
-                return Exception { ExceptionCode::TypeError, "Expected a CSSUnitValue."_s };
-            components.append(unitValue->value());
+            components.append(valueOrException.returnValue()->value());
         }
         if (components.size() != expectedNumberOfComponents) {
             ASSERT_NOT_REACHED();
@@ -74,12 +72,12 @@ ExceptionOr<Ref<CSSMatrixComponent>> CSSMatrixComponent::create(Ref<const CSSFun
     };
 
     switch (cssFunctionValue->name()) {
-    case CSSValueMatrix:
+    case CSSValueID::Matrix:
         return makeMatrix([](Vector<double>&& components) {
             auto domMatrix = DOMMatrixReadOnly::create({ components[0], components[1], components[2], components[3], components[4], components[5] }, DOMMatrixReadOnly::Is2D::Yes);
             return CSSMatrixComponent::create(WTF::move(domMatrix));
         }, 6);
-    case CSSValueMatrix3d:
+    case CSSValueID::Matrix3d:
         return makeMatrix([](Vector<double>&& components) {
             auto domMatrix = DOMMatrixReadOnly::create({
                 components[0], components[1], components[2], components[3],
@@ -154,7 +152,7 @@ RefPtr<CSSValue> CSSMatrixComponent::toCSSValue() const
         CSSValueListBuilder arguments;
         for (double value : values)
             arguments.append(CSSPrimitiveValue::create(value));
-        return CSSFunctionValue::create(CSSValueMatrix, WTF::move(arguments));
+        return CSSFunctionValue::create(CSSValueID::Matrix, WTF::move(arguments));
     }
     double values[] = {
         m_matrix->m11(), m_matrix->m12(), m_matrix->m13(), m_matrix->m14(),
@@ -165,7 +163,7 @@ RefPtr<CSSValue> CSSMatrixComponent::toCSSValue() const
     CSSValueListBuilder arguments;
     for (double value : values)
         arguments.append(CSSPrimitiveValue::create(value));
-    return CSSFunctionValue::create(CSSValueMatrix3d, WTF::move(arguments));
+    return CSSFunctionValue::create(CSSValueID::Matrix3d, WTF::move(arguments));
 }
 
 CSSMatrixComponent::~CSSMatrixComponent() = default;

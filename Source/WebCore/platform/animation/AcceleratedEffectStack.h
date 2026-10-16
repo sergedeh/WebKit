@@ -39,12 +39,12 @@ class WEBCORE_EXPORT AcceleratedEffectStack : public RefCounted<AcceleratedEffec
 public:
     static Ref<AcceleratedEffectStack> create();
 
-    bool hasEffects() const;
-    const AcceleratedEffects& primaryLayerEffects() const { return m_primaryLayerEffects; }
-    const AcceleratedEffects& backdropLayerEffects() const { return m_backdropLayerEffects; }
+    bool LEGACY_NODELETE hasEffects() const;
+    const AcceleratedEffects& primaryLayerEffects() const LIFETIME_BOUND { return m_primaryLayerEffects; }
+    const AcceleratedEffects& backdropLayerEffects() const LIFETIME_BOUND { return m_backdropLayerEffects; }
     void setEffects(AcceleratedEffects&&);
 
-    const AcceleratedEffectValues& baseValues() { return m_baseValues; }
+    const AcceleratedEffectValues& baseValues() const LIFETIME_BOUND { return m_baseValues; }
     void setBaseValues(AcceleratedEffectValues&&);
 
     virtual ~AcceleratedEffectStack() = default;
@@ -56,6 +56,8 @@ protected:
     AcceleratedEffects m_primaryLayerEffects;
     AcceleratedEffects m_backdropLayerEffects;
 };
+
+TextStream& operator<<(TextStream&, const AcceleratedEffectStack&);
 
 } // namespace WebCore
 

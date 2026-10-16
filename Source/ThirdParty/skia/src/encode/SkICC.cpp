@@ -13,11 +13,11 @@
 #include "include/core/SkStream.h"
 #include "include/core/SkString.h"
 #include "include/core/SkTypes.h"
-#include "include/private/base/SkFixed.h"
-#include "include/private/base/SkFloatingPoint.h"
+#include "include/private/SkFixed.h"
+#include "include/private/SkFloatingPoint.h"
 #include "modules/skcms/skcms.h"
-#include "src/base/SkAutoMalloc.h"
-#include "src/base/SkEndian.h"
+#include "src/core/SkAutoMalloc.h"
+#include "src/core/SkEndian.h"
 #include "src/core/SkMD5.h"
 #include "src/core/SkStreamPriv.h"
 #include "src/encode/SkICCPriv.h"
@@ -49,7 +49,7 @@ SkFixed float_round_to_fixed(float x) {
 
 // Convert a float to a uInt16Number, with 0.0 mapping go 0 and 1.0 mapping to |one|.
 uint16_t float_to_uInt16Number(float x, uint16_t one) {
-    x = x * one + 0.5;
+    x = x * one + 0.5f;
     if (x > one) return one;
     if (x < 0) return 0;
     return static_cast<uint16_t>(x);

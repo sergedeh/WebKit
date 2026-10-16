@@ -36,9 +36,10 @@
 #import <WebCore/PlatformXRPose.h>
 #import <wtf/RunLoop.h>
 #import <wtf/WeakObjCPtr.h>
+#import <wtf/darwin/DispatchExtras.h>
 #import <wtf/darwin/DispatchOSObject.h>
 
-#import "ARKitSoftLink.h"
+#import <pal/cocoa/ARKitSoftLink.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -171,7 +172,7 @@ NS_ASSUME_NONNULL_BEGIN
     auto allowingTarget = ARRaycastTargetEstimatedPlane;
     auto alignment = ARRaycastTargetAlignmentAny;
     RetainPtr query = [frame raycastQueryFromPoint:point allowingTarget:allowingTarget alignment:alignment];
-    return ARMatrixMakeLookAt([query origin], [query direction]);
+    return TransformationMatrix::makeLookAt([query origin], [query direction]);
 }
 
 #pragma mark - WKARPresentationSession
@@ -396,7 +397,7 @@ id<WKARPresentationSession> createPresentationSession(ARSession *session, WKARPr
 {
     self = [super init];
     if (self) {
-        _accessQueue = adoptOSObject(dispatch_queue_create("com.apple.WebContent._WKTransientGestureRecognizer.AccessQueue", DISPATCH_QUEUE_SERIAL_WITH_AUTORELEASE_POOL));
+        _accessQueue = adoptOSObject(dispatch_queue_create("com.apple.WebContent._WKTransientGestureRecognizer.AccessQueue", serialQueueWithAutoreleasePoolAttrSingleton()));
         _session = session;
         _transientActions = adoptNS([NSMutableDictionary new]);
     }

@@ -26,6 +26,7 @@
 #include "SVGComponentTransferFunctionElementInlines.h"
 #include "SVGFEComponentTransferElement.h"
 #include "SVGNames.h"
+#include "SVGParserUtilities.h"
 #include "SVGPropertyOwnerRegistry.h"
 #include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -35,17 +36,17 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGComponentTransferFunctionElement);
 
 SVGComponentTransferFunctionElement::SVGComponentTransferFunctionElement(const QualifiedName& tagName, Document& document)
-    : SVGElement(tagName, document, makeUniqueRef<PropertyRegistry>(*this))
+    : SVGElement(tagName, document, PropertyRegistry::singleton())
 {
     static bool didRegistration = false;
     if (!didRegistration) [[unlikely]] {
         didRegistration = true;
         PropertyRegistry::registerProperty<SVGNames::typeAttr, ComponentTransferType, &SVGComponentTransferFunctionElement::m_type>();
         PropertyRegistry::registerProperty<SVGNames::tableValuesAttr, &SVGComponentTransferFunctionElement::m_tableValues>();
-        PropertyRegistry::registerProperty<SVGNames::slopeAttr, &SVGComponentTransferFunctionElement::m_slope>();
+        PropertyRegistry::registerProperty<SVGNames::slopeAttr, &SVGComponentTransferFunctionElement::m_slope>(initialSlopeValue);
         PropertyRegistry::registerProperty<SVGNames::interceptAttr, &SVGComponentTransferFunctionElement::m_intercept>();
-        PropertyRegistry::registerProperty<SVGNames::amplitudeAttr, &SVGComponentTransferFunctionElement::m_amplitude>();
-        PropertyRegistry::registerProperty<SVGNames::exponentAttr, &SVGComponentTransferFunctionElement::m_exponent>();
+        PropertyRegistry::registerProperty<SVGNames::amplitudeAttr, &SVGComponentTransferFunctionElement::m_amplitude>(initialAmplitudeValue);
+        PropertyRegistry::registerProperty<SVGNames::exponentAttr, &SVGComponentTransferFunctionElement::m_exponent>(initialExponentValue);
         PropertyRegistry::registerProperty<SVGNames::offsetAttr, &SVGComponentTransferFunctionElement::m_offset>();
     };
 }
@@ -53,29 +54,26 @@ SVGComponentTransferFunctionElement::SVGComponentTransferFunctionElement(const Q
 void SVGComponentTransferFunctionElement::attributeChanged(const QualifiedName& name, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason attributeModificationReason)
 {
     switch (name.nodeName()) {
-    case AttributeNames::typeAttr: {
-        ComponentTransferType propertyValue = SVGPropertyTraits<ComponentTransferType>::fromString(*this, newValue);
-        if (enumToUnderlyingType(propertyValue))
-            m_type->setBaseValInternal<ComponentTransferType>(propertyValue);
+    case AttributeNames::typeAttr:
+        protect(m_type)->parseBaseVal<ComponentTransferType>(*this, newValue);
         break;
-    }
     case AttributeNames::tableValuesAttr:
-        m_tableValues->baseVal()->parse(newValue);
+        protect(protect(m_tableValues)->baseVal())->parse(newValue);
         break;
     case AttributeNames::slopeAttr:
-        m_slope->setBaseValInternal(newValue.toFloat());
+        m_slope->setBaseValInternal(parseNumber(newValue));
         break;
     case AttributeNames::interceptAttr:
-        m_intercept->setBaseValInternal(newValue.toFloat());
+        m_intercept->setBaseValInternal(parseNumber(newValue));
         break;
     case AttributeNames::amplitudeAttr:
-        m_amplitude->setBaseValInternal(newValue.toFloat());
+        m_amplitude->setBaseValInternal(parseNumber(newValue));
         break;
     case AttributeNames::exponentAttr:
-        m_exponent->setBaseValInternal(newValue.toFloat());
+        m_exponent->setBaseValInternal(parseNumber(newValue));
         break;
     case AttributeNames::offsetAttr:
-        m_offset->setBaseValInternal(newValue.toFloat());
+        m_offset->setBaseValInternal(parseNumber(newValue));
         break;
     default:
         break;

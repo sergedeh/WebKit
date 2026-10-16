@@ -26,6 +26,7 @@
 #include "config.h"
 #include "StyleFontVariantEastAsian.h"
 
+#include "CSSKeywordValue.h"
 #include "CSSPropertyParserConsumer+Font.h"
 #include "StyleBuilderChecking.h"
 
@@ -36,9 +37,9 @@ namespace Style {
 
 auto CSSValueConversion<FontVariantEastAsian>::operator()(BuilderState& state, const CSSValue& value) -> FontVariantEastAsian
 {
-    if (RefPtr primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value)) {
-        switch (primitiveValue->valueID()) {
-        case CSSValueNormal:
+    if (auto* keywordValue = dynamicDowncast<CSSKeywordValue>(value)) {
+        switch (keywordValue->valueID()) {
+        case CSSValueID::Normal:
             return CSS::Keyword::Normal { };
         default:
             state.setCurrentPropertyInvalidAtComputedValueTime();
@@ -46,7 +47,7 @@ auto CSSValueConversion<FontVariantEastAsian>::operator()(BuilderState& state, c
         }
     }
 
-    auto list = requiredListDowncast<CSSValueList, CSSPrimitiveValue>(state, value);
+    auto list = requiredListDowncast<CSSValueList, CSSKeywordValue>(state, value);
     if (!list)
         return CSS::Keyword::Normal { };
 
@@ -54,33 +55,33 @@ auto CSSValueConversion<FontVariantEastAsian>::operator()(BuilderState& state, c
     auto width = FontVariantEastAsianWidth::Normal;
     auto ruby = FontVariantEastAsianRuby::Normal;
 
-    for (Ref item : *list) {
-        switch (item->valueID()) {
-        case CSSValueJis78:
+    for (auto& item : *list) {
+        switch (item.valueID()) {
+        case CSSValueID::Jis78:
             variant = FontVariantEastAsianVariant::Jis78;
             break;
-        case CSSValueJis83:
+        case CSSValueID::Jis83:
             variant = FontVariantEastAsianVariant::Jis83;
             break;
-        case CSSValueJis90:
+        case CSSValueID::Jis90:
             variant = FontVariantEastAsianVariant::Jis90;
             break;
-        case CSSValueJis04:
+        case CSSValueID::Jis04:
             variant = FontVariantEastAsianVariant::Jis04;
             break;
-        case CSSValueSimplified:
+        case CSSValueID::Simplified:
             variant = FontVariantEastAsianVariant::Simplified;
             break;
-        case CSSValueTraditional:
+        case CSSValueID::Traditional:
             variant = FontVariantEastAsianVariant::Traditional;
             break;
-        case CSSValueFullWidth:
+        case CSSValueID::FullWidth:
             width = FontVariantEastAsianWidth::Full;
             break;
-        case CSSValueProportionalWidth:
+        case CSSValueID::ProportionalWidth:
             width = FontVariantEastAsianWidth::Proportional;
             break;
-        case CSSValueRuby:
+        case CSSValueID::Ruby:
             ruby = FontVariantEastAsianRuby::Yes;
             break;
         default:

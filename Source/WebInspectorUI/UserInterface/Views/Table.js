@@ -923,15 +923,12 @@ WI.Table = class Table extends WI.View
 
         let lockedWidth = 0;
         let lockedColumnCount = 0;
-        let totalMinimumWidth = 0;
 
         for (let column of this._visibleColumns) {
             if (column.locked) {
                 lockedWidth += column.width;
                 lockedColumnCount++;
-                totalMinimumWidth += column.width;
-            } else if (column.minWidth)
-                totalMinimumWidth += column.minWidth;
+            }
         }
 
         let flexibleWidth = availableWidth - lockedWidth;
@@ -1109,6 +1106,8 @@ WI.Table = class Table extends WI.View
         let updateOffsetThreshold = rowHeight * 10;
         let overflowPadding = updateOffsetThreshold * 3;
 
+        let heightChanged = isNaN(this._cachedHeight);
+
         let scrollTop = this._calculateScrollTop();
         let scrollableOffsetHeight = this._calculateOffsetHeight();
 
@@ -1120,7 +1119,7 @@ WI.Table = class Table extends WI.View
         let belowTopThreshold = !currentTopMargin || scrollTop > currentTopMargin + updateOffsetThreshold;
         let aboveBottomThreshold = !currentBottomMargin || scrollTop + scrollableOffsetHeight < currentTableBottom - updateOffsetThreshold;
 
-        if (belowTopThreshold && aboveBottomThreshold && !isNaN(this._previousRevealedRowCount))
+        if (belowTopThreshold && aboveBottomThreshold && !heightChanged && !isNaN(this._previousRevealedRowCount))
             return;
 
         let numberOfRows = this.numberOfRows;
@@ -1152,7 +1151,7 @@ WI.Table = class Table extends WI.View
             this._topSpacerElement.style.height = marginTop + "px";
         }
 
-        if (this._bottomDataTableMarginElement !== marginBottom) {
+        if (this._bottomSpacerHeight !== marginBottom) {
             this._bottomSpacerHeight = marginBottom;
             this._bottomSpacerElement.style.height = marginBottom + "px";
         }
@@ -1166,12 +1165,14 @@ WI.Table = class Table extends WI.View
         // If there are an odd number of rows hidden, the first visible row must be an even row.
         this._listElement.classList.toggle("even-first-zebra-stripe", !!(topHiddenRowCount % 2));
 
+        let listElementFragment = document.createDocumentFragment();
         for (let i = this._visibleRowIndexStart; i < this._visibleRowIndexEnd && i < numberOfRows; ++i) {
             let row = this._getOrCreateRow(i);
-            this._listElement.appendChild(row);
+            listElementFragment.appendChild(row);
         }
 
-        this._listElement.appendChild(this._fillerRow);
+        listElementFragment.appendChild(this._fillerRow);
+        this._listElement.appendChild(listElementFragment);
     }
 
     _updateFillerRowWithNewHeight()
@@ -1301,7 +1302,7 @@ WI.Table = class Table extends WI.View
         if (!this._previousRevealedRowCount)
             return false;
 
-        return rowIndex >= this._visibleRowIndexStart && rowIndex <= this._visibleRowIndexEnd;
+        return rowIndex >= this._visibleRowIndexStart && rowIndex < this._visibleRowIndexEnd;
     }
 
     _indexToInsertColumn(column)
@@ -1311,7 +1312,7 @@ WI.Table = class Table extends WI.View
         for (let columnIdentifier of this._columnOrder) {
             if (columnIdentifier === column.identifier)
                 return currentVisibleColumnIndex;
-            if (columnIdentifier === this._visibleColumns[currentVisibleColumnIndex].identifier) {
+            if (currentVisibleColumnIndex < this._visibleColumns.length && columnIdentifier === this._visibleColumns[currentVisibleColumnIndex].identifier) {
                 currentVisibleColumnIndex++;
                 if (currentVisibleColumnIndex >= this._visibleColumns.length)
                     break;
@@ -1412,7 +1413,7 @@ WI.Table = class Table extends WI.View
 
         let didAppendHeaderItem = false;
 
-        for (let [columnIdentifier, column] of this._columnSpecs) {
+        for (let column of this._columnSpecs.values()) {
             if (column.locked)
                 continue;
             if (!column.hideable)

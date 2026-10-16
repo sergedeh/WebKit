@@ -94,7 +94,7 @@ if ("dec" IN_LIST Brotli_FIND_COMPONENTS)
     )
 
     find_library(Brotli_DEC_LIBRARY
-        NAMES ${Brotli_DEC_NAMES} Brotlidec
+        NAMES ${Brotli_DEC_NAMES} brotlidec
         HINTS ${PC_Brotli_DEC_LIBDIR} ${PC_Brotli_DEC_LIBRARY_DIRS}
     )
 
@@ -135,6 +135,8 @@ find_package_handle_standard_args(Brotli
     REQUIRED_VARS Brotli_LIBRARY _Brotli_REQUIRED_LIBS_FOUND
     VERSION_VAR Brotli_VERSION
 )
+
+WEBKIT_SCOPE_OPTIONS_TO_NON_SWIFT(Brotli_COMPILE_OPTIONS ${Brotli_COMPILE_OPTIONS})
 
 if (Brotli_LIBRARY AND NOT TARGET Brotli::common)
     add_library(Brotli::common UNKNOWN IMPORTED GLOBAL)

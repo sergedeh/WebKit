@@ -34,11 +34,10 @@ class RenderSVGResourceLinearGradient final : public RenderSVGResourceGradient {
     WTF_MAKE_TZONE_ALLOCATED(RenderSVGResourceLinearGradient);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderSVGResourceLinearGradient);
 public:
-    RenderSVGResourceLinearGradient(SVGLinearGradientElement&, RenderStyle&&);
+    RenderSVGResourceLinearGradient(SVGLinearGradientElement&, Style::ComputedStyle&&);
     virtual ~RenderSVGResourceLinearGradient();
 
     inline SVGLinearGradientElement& linearGradientElement() const;
-    inline Ref<SVGLinearGradientElement> protectedLinearGradientElement() const;
 
     SVGUnitTypes::SVGUnitType gradientUnits() const final { return m_attributes ? m_attributes.value().gradientUnits() : SVGUnitTypes::SVG_UNIT_TYPE_UNKNOWN; }
     AffineTransform gradientTransform() const final { return m_attributes ? m_attributes.value().gradientTransform() : identity; }
@@ -52,7 +51,7 @@ public:
 
 private:
     void collectGradientAttributesIfNeeded() final;
-    RefPtr<Gradient> createGradient(const RenderStyle&) final;
+    RefPtr<Gradient> createGradient(const Style::ComputedStyle&) final;
 
     void element() const = delete;
     ASCIILiteral renderName() const final { return "RenderSVGResourceLinearGradient"_s; }

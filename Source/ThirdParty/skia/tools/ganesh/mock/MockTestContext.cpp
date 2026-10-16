@@ -1,13 +1,12 @@
 
 /*
- * Copyright 2017 Google Inc.
+ * Copyright 2017 Google LLC
  *
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
  */
-#ifndef GLTestContext_DEFINED
-#define GLTestContext_DEFINED
 
+#include "include/core/SkContext.h"
 #include "tools/ganesh/mock/MockTestContext.h"
 
 #include "include/gpu/ganesh/GrDirectContext.h"
@@ -44,4 +43,12 @@ namespace sk_gpu_test {
 TestContext* CreateMockTestContext(TestContext*) { return new MockTestContext(); }
 
 }  // namespace sk_gpu_test
-#endif
+
+namespace SkContexts {
+
+std::unique_ptr<SkContext> MakeGanesh(const SkContextOptions& options,
+                                      sk_gpu_test::TestContext* shareContext) {
+    return nullptr;
+}
+
+}  // namespace SkContexts

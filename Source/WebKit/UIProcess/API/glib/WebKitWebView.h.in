@@ -27,7 +27,9 @@
 #define WebKitWebView_h
 
 #include <@API_INCLUDE_PREFIX@/WebKitAuthenticationRequest.h>
+#include <@API_INCLUDE_PREFIX@/WebKitApplicationManifest.h>
 #include <@API_INCLUDE_PREFIX@/WebKitBackForwardList.h>
+#include <@API_INCLUDE_PREFIX@/WebKitColorChooserRequest.h>
 #include <@API_INCLUDE_PREFIX@/WebKitContextMenu.h>
 #include <@API_INCLUDE_PREFIX@/WebKitDefines.h>
 #include <@API_INCLUDE_PREFIX@/WebKitEditorState.h>
@@ -67,7 +69,6 @@
 #if !ENABLE(2022_GLIB_API)
 #include <JavaScriptCore/JSBase.h>
 #endif
-#include <webkit/WebKitColorChooserRequest.h>
 #include <webkit/WebKitWebInspector.h>
 #include <webkit/WebKitWebViewBase.h>
 #elif PLATFORM(WPE)
@@ -339,12 +340,8 @@ struct _WebKitWebViewClass {
 
     gboolean   (* context_menu)                (WebKitWebView               *web_view,
                                                 WebKitContextMenu           *context_menu,
-#if !ENABLE(2022_GLIB_API)
-#if PLATFORM(GTK)
+#if PLATFORM(GTK) && !ENABLE(2022_GLIB_API)
                                                 GdkEvent                    *event,
-#elif PLATFORM(WPE)
-                                                void                        *event,
-#endif
 #endif
                                                 WebKitHitTestResult         *hit_test_result);
 
@@ -388,14 +385,9 @@ struct _WebKitWebViewClass {
 
     gboolean   (* query_permission_state)      (WebKitWebView               *web_view,
                                                 WebKitPermissionStateQuery  *query);
-
-#if PLATFORM(WPE) && !ENABLE(2022_GLIB_API)
-    /*< private >*/
-    void (*_webkit_reserved0) (void);
-    void (*_webkit_reserved1) (void);
-    void (*_webkit_reserved2) (void);
-    void (*_webkit_reserved3) (void);
-    void (*_webkit_reserved4) (void);
+#if PLATFORM(WPE)
+    gboolean   (* run_color_chooser)           (WebKitWebView               *web_view,
+                                                WebKitColorChooserRequest   *request);
 #endif
 
 #if ENABLE(2022_GLIB_API)
@@ -430,7 +422,10 @@ struct _WebKitWebViewClass {
     void (*_webkit_reserved27) (void);
     void (*_webkit_reserved28) (void);
     void (*_webkit_reserved29) (void);
+#if PLATFORM(GTK)
+    /* WPE has one fewer slot, used by run_color_chooser */
     void (*_webkit_reserved30) (void);
+#endif
 #endif
 };
 
@@ -457,24 +452,6 @@ webkit_web_view_new_with_user_content_manager        (WebKitUserContentManager  
 #if USE(LIBWPE)
 WEBKIT_API WebKitWebView *
 webkit_web_view_new                                  (WebKitWebViewBackend      *backend);
-
-#if !ENABLE(2022_GLIB_API)
-WEBKIT_API WebKitWebView *
-webkit_web_view_new_with_related_view                (WebKitWebViewBackend      *backend,
-                                                      WebKitWebView             *web_view);
-
-WEBKIT_API WebKitWebView *
-webkit_web_view_new_with_context                     (WebKitWebViewBackend      *backend,
-                                                      WebKitWebContext          *context);
-
-WEBKIT_API WebKitWebView *
-webkit_web_view_new_with_settings                    (WebKitWebViewBackend      *backend,
-                                                      WebKitSettings            *settings);
-
-WEBKIT_API WebKitWebView *
-webkit_web_view_new_with_user_content_manager        (WebKitWebViewBackend      *backend,
-                                                      WebKitUserContentManager  *user_content_manager);
-#endif
 
 WEBKIT_API WebKitWebViewBackend *
 webkit_web_view_get_backend                          (WebKitWebView             *web_view);
@@ -607,6 +584,22 @@ webkit_web_view_get_favicon                          (WebKitWebView             
 #endif
 #endif
 
+#if ENABLE(2022_GLIB_API)
+WEBKIT_API WebKitImageList *
+webkit_web_view_get_page_icons                       (WebKitWebView             *web_view);
+
+WEBKIT_API void
+webkit_web_view_get_application_manifest             (WebKitWebView             *web_view,
+                                                      GCancellable              *cancellable,
+                                                      GAsyncReadyCallback        callback,
+                                                      gpointer                   user_data);
+
+WEBKIT_API WebKitApplicationManifest *
+webkit_web_view_get_application_manifest_finish      (WebKitWebView             *web_view,
+                                                      GAsyncResult              *result,
+                                                      GError                   **error);
+#endif
+
 WEBKIT_API const gchar *
 webkit_web_view_get_custom_charset                   (WebKitWebView             *web_view);
 
@@ -629,6 +622,12 @@ webkit_web_view_set_zoom_level                       (WebKitWebView             
                                                       gdouble                    zoom_level);
 WEBKIT_API gdouble
 webkit_web_view_get_zoom_level                       (WebKitWebView             *web_view);
+
+WEBKIT_API void
+webkit_web_view_set_magnification                    (WebKitWebView             *web_view,
+                                                      gdouble                    magnification);
+WEBKIT_API gdouble
+webkit_web_view_get_magnification                    (WebKitWebView             *web_view);
 
 WEBKIT_API void
 webkit_web_view_can_execute_editing_command          (WebKitWebView             *web_view,
@@ -782,6 +781,7 @@ webkit_web_view_get_tls_info                         (WebKitWebView             
                                                       GTlsCertificate          **certificate,
                                                       GTlsCertificateFlags      *errors);
 
+#if PLATFORM(GTK) || ENABLE(2022_GLIB_API)
 WEBKIT_API void
 webkit_web_view_get_snapshot                         (WebKitWebView             *web_view,
                                                       WebKitSnapshotRegion       region,
@@ -806,6 +806,7 @@ WEBKIT_API WebKitImage *
 webkit_web_view_get_snapshot_finish                  (WebKitWebView             *web_view,
                                                       GAsyncResult              *result,
                                                       GError                   **error);
+#endif
 #endif
 
 WEBKIT_API WebKitUserContentManager *
@@ -968,7 +969,7 @@ webkit_web_view_leave_immersive_mode                 (WebKitWebView             
  *     JSCValue               *value;
  *     GError                 *error = NULL;
  *
- *     js_result = webkit_web_view_run_javascript_finish (WEBKIT_WEB_VIEW (object), result, &error);
+ *     js_result = webkit_web_view_run_javascript_in_world_finish (WEBKIT_WEB_VIEW (object), result, &error);
  *     if (!js_result) {
  *         g_warning ("Error running javascript: %s", error->message);
  *         g_error_free (error);
@@ -977,13 +978,12 @@ webkit_web_view_leave_immersive_mode                 (WebKitWebView             
  *
  *     value = webkit_javascript_result_get_js_value (js_result);
  *     if (jsc_value_is_number (value)) {
- *         gint32        int_value = jsc_value_to_string (value);
+ *         gint32        int_value = jsc_value_to_int32 (value);
  *         JSCException *exception = jsc_context_get_exception (jsc_value_get_context (value));
  *         if (exception)
  *             g_warning ("Error running javascript: %s", jsc_exception_get_message (exception));
  *         else
  *             g_print ("Script result: %d\n", int_value);
- *         g_free (str_value);
  *     } else {
  *         g_warning ("Error running javascript: unexpected return value");
  *     }
@@ -998,7 +998,7 @@ webkit_web_view_leave_immersive_mode                 (WebKitWebView             
  *     g_variant_dict_insert (&dict, "count", "u", 42);
  *     GVariant *args = g_variant_dict_end (&dict);
  *     const gchar *body = "return new Promise((resolve) => { resolve(count); });";
- *     webkit_web_view_run_async_javascript_function_in_world (web_view, body, arguments, NULL, NULL, web_view_javascript_finished, NULL);
+ *     webkit_web_view_run_async_javascript_function_in_world (web_view, body, args, NULL, NULL, web_view_javascript_finished, NULL);
  * }
  * ```
  *
@@ -1038,7 +1038,7 @@ webkit_web_view_leave_immersive_mode                 (WebKitWebView             
  *     JSCValue               *value;
  *     GError                 *error = NULL;
  *
- *     js_result = webkit_web_view_run_javascript_finish (WEBKIT_WEB_VIEW (object), result, &error);
+ *     js_result = webkit_web_view_run_javascript_in_world_finish (WEBKIT_WEB_VIEW (object), result, &error);
  *     if (!js_result) {
  *         g_warning ("Error running javascript: %s", error->message);
  *         g_error_free (error);
@@ -1047,13 +1047,12 @@ webkit_web_view_leave_immersive_mode                 (WebKitWebView             
  *
  *     value = webkit_javascript_result_get_js_value (js_result);
  *     if (jsc_value_is_number (value)) {
- *         gint32        int_value = jsc_value_to_string (value);
+ *         gint32        int_value = jsc_value_to_int32 (value);
  *         JSCException *exception = jsc_context_get_exception (jsc_value_get_context (value));
  *         if (exception)
  *             g_warning ("Error running javascript: %s", jsc_exception_get_message (exception));
  *         else
  *             g_print ("Script result: %d\n", int_value);
- *         g_free (str_value);
  *     } else {
  *         g_warning ("Error running javascript: unexpected return value");
  *     }
@@ -1068,7 +1067,7 @@ webkit_web_view_leave_immersive_mode                 (WebKitWebView             
  *     g_variant_dict_insert (&dict, "count", "u", 42);
  *     GVariant *args = g_variant_dict_end (&dict);
  *     const gchar *body = "return new Promise((resolve) => { resolve(count); });";
- *     webkit_web_view_run_async_javascript_function_in_world (web_view, body, arguments, NULL, NULL, web_view_javascript_finished, NULL);
+ *     webkit_web_view_run_async_javascript_function_in_world (web_view, body, args, NULL, NULL, web_view_javascript_finished, NULL);
  * }
  * ```
  *
@@ -1077,6 +1076,60 @@ webkit_web_view_leave_immersive_mode                 (WebKitWebView             
  * Deprecated: 2.40: Use webkit_web_view_call_async_javascript_function() instead.
  */
 #endif
+
+#if PLATFORM(GTK)
+#if USE(GTK4)
+/**
+ * WebKitWebView:favicon:
+ *
+ * The favicon currently associated with the #WebKitWebView.
+ * See webkit_web_view_get_favicon() for more details.
+ *
+ * New applications should use [property@WebView:page-icons] instead.
+ *
+ * Deprecated: 2.54
+ */
+
+/**
+ * webkit_web_view_get_favicon:
+ * @web_view: a #WebKitWebView
+ *
+ * Returns favicon currently associated with @web_view.
+ *
+ * Returns favicon currently associated with @web_view, if any. You can
+ * connect to notify::favicon signal of @web_view to be notified when
+ * the favicon is available.
+ *
+ * New applications should use [method@WebView.get_page_icons] instead.
+ *
+ * Returns: (transfer none): the favicon image or %NULL if there's no
+ *    icon associated with @web_view.
+ *
+ * Deprecated: 2.54
+ */
+#else
+/**
+ * WebKitWebView:favicon:
+ *
+ * The favicon currently associated with the #WebKitWebView.
+ * See webkit_web_view_get_favicon() for more details.
+ */
+
+/**
+ * webkit_web_view_get_favicon:
+ * @web_view: a #WebKitWebView
+ *
+ * Returns favicon currently associated with @web_view.
+ *
+ * Returns favicon currently associated with @web_view, if any. You can
+ * connect to notify::favicon signal of @web_view to be notified when
+ * the favicon is available.
+ *
+ * Returns: (transfer none): the favicon image or %NULL if there's no
+ *    icon associated with @web_view.
+ */
+#endif // USE(GTK4)
+#endif // PLATFORM(GTK)
 
 G_END_DECLS
 

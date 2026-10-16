@@ -53,7 +53,7 @@ public:
 
         const GRefPtr<GstPad>& pad() const { return m_pad; }
         const GRefPtr<GstPad>& targetPad() const { return m_targetPad; }
-        const GRefPtr<GstCaps>& outputCaps();
+        GRefPtr<GstCaps> outputCaps();
 
         const RefPtr<GStreamerElementHarness> downstreamHarness() const { return m_downstreamHarness; }
 
@@ -94,9 +94,11 @@ public:
     bool pushBuffer(GRefPtr<GstBuffer>&&);
     bool pushEvent(GRefPtr<GstEvent>&&);
 
+    void storeStickyEvent(const GRefPtr<GstEvent>&);
+
     GstPad* inputPad() const { return m_srcPad.get(); }
     const GRefPtr<GstCaps>& inputCaps() const { return m_inputCaps; }
-    const Vector<RefPtr<Stream>>& outputStreams() const { return m_outputStreams; }
+    const Vector<RefPtr<Stream>>& outputStreams() const LIFETIME_BOUND { return m_outputStreams; }
 
     GstElement* element() const { return m_element.get(); }
 

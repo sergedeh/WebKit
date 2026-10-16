@@ -42,14 +42,17 @@ public:
     virtual ~RegionContext() = default;
 
     void pushTransform(const AffineTransform&);
-    void popTransform();
+    void LEGACY_NODELETE popTransform();
 
     void pushClip(const IntRect&);
     void pushClip(const Path&);
-    void popClip();
+    void LEGACY_NODELETE popClip();
 
     virtual bool isEventRegionContext() const { return false; }
     virtual bool isAccessibilityRegionContext() const { return false; }
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    virtual bool isAXCustomColorBackdropContext() const { return false; }
+#endif
 
 protected:
     Vector<AffineTransform> m_transformStack;
@@ -89,7 +92,8 @@ public:
         m_pushedClip = true;
     }
 
-    RegionContext* context() const { return const_cast<RegionContext*>(m_context.get()); }
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    RegionContext* context() const { SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<RegionContext*>(m_context.get()); }
 
 private:
     CheckedPtr<RegionContext> m_context;

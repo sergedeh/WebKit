@@ -10,11 +10,10 @@ Do NOT modify or remove this file.
 ------------------------------------------------------------------------
 Properties requiring vendor prefixes:
 None
-Property values requiring vendor prefixes:
-None
 ------------------------------------------------------------------------
 List of files:
 /LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/.htaccess
+/LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/WEB_FEATURES.yml
 /LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/cdata-dir_auto.html
 /LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/cdata-iframe.xhtml
 /LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/classlist-nonstring.html
@@ -23,6 +22,7 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/dataset-binding.window.js
 /LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/dataset-delete.html
 /LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/dataset-enumeration.html
+/LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/dataset-get-invalid-names.html
 /LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/dataset-get.html
 /LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/dataset-prototype.html
 /LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/dataset-set.html
@@ -39,6 +39,7 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/dir-auto-dynamic-simple-textContent.html
 /LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/dir-auto-form-associated.window.js
 /LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/dir-bdi-script.html
+/LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/dir-not-changed-text-input-typing.html
 /LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/dir-shadow-01-expected.html
 /LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/dir-shadow-01-ref.html
 /LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/dir-shadow-01.html
@@ -324,6 +325,7 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/id-attribute.html
 /LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/id-name-specialcase.html
 /LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/id-name.html
+/LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/lang-attribute-document-element-replacement.html
 /LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/lang-attribute-shadow.window.js
 /LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/lang-attribute.window.js
 /LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/lang-xmllang-01-expected.html
@@ -336,11 +338,6 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/style-01-expected.html
 /LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/style-01-ref.html
 /LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/style-01.html
-/LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/the-anchor-attribute-001.tentative.html
-/LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/the-anchor-attribute-002.tentative.html
-/LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/the-anchor-attribute-003-crash.tentative.html
-/LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/the-anchor-attribute-003.tentative.html
-/LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/the-anchor-attribute-xml.tentative.html
 /LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/the-lang-attribute-001.html
 /LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/the-lang-attribute-002.html
 /LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/the-lang-attribute-003.html
@@ -355,6 +352,7 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/the-lang-attribute-009.html
 /LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/the-lang-attribute-009.html.headers
 /LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/the-lang-attribute-010.html
+/LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/the-lang-attribute-011.html
 /LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/the-lang-attribute-011.html.headers
 /LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/the-translate-attribute-007.html
 /LayoutTests/imported/w3c/web-platform-tests/html/dom/elements/global-attributes/the-translate-attribute-008.html

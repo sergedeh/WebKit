@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2008-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2026 Igalia S.L.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,7 +30,7 @@
 #include <bmalloc/BPlatform.h>
 #include <cstring>
 #include <wtf/DateMath.h>
-#include <wtf/Gigacage.h>
+#include <wtf/FastMalloc.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/PrintStream.h>
 #include <wtf/RunLoop.h>
@@ -38,14 +39,6 @@
 #include <wtf/WTFConfig.h>
 #include <wtf/text/AtomString.h>
 #include <wtf/threads/Signals.h>
-
-#if HAVE(QOS_CLASSES)
-#include <bmalloc/bmalloc.h>
-#endif
-
-#if OS(LINUX)
-#include <wtf/linux/RealTimeThreads.h>
-#endif
 
 #if PLATFORM(COCOA)
 #include <wtf/cocoa/Entitlements.h>
@@ -101,7 +94,7 @@ ThreadSuspendLocker::~ThreadSuspendLocker()
 }
 #endif
 
-static std::optional<size_t> stackSize(ThreadType threadType)
+static std::optional<size_t> LEGACY_NODELETE stackSize(ThreadType threadType)
 {
     // Return the stack size for the created thread based on its type.
     // If the stack size is not specified, then use the system default. Platforms can tune the values here.
@@ -136,7 +129,16 @@ static std::optional<size_t> stackSize(ThreadType threadType)
 #endif
 }
 
-std::atomic<uint32_t> ThreadLike::s_uid;
+#if PLATFORM(COCOA)
+// uid 1 is reserved for the main thread, assigned in Thread::initializeCurrentTLS
+// when pthread_main_np() returns true. ++s_uid yields >= 2 for every non-main thread.
+std::atomic<uint32_t> ThreadLike::s_uid { 1 };
+#else
+// On platforms without a way to detect the main thread before initializeMainThread()
+// has run, ++s_uid yields uids starting at 1 — the first Thread to be lazily
+// constructed gets uid 1 which currently is the main thread.
+std::atomic<uint32_t> ThreadLike::s_uid { 0 };
+#endif
 
 uint32_t ThreadLike::currentSequence()
 {
@@ -244,6 +246,7 @@ void Thread::entryPoint(NewThreadContext* newThreadContext)
 
         Ref thread = WTF::move(context->thread);
         thread->initializeInThread();
+        thread->initializeSchedulingAttributes();
 
         Thread::initializeTLS(WTF::move(thread));
 
@@ -258,17 +261,22 @@ void Thread::entryPoint(NewThreadContext* newThreadContext)
     function();
 }
 
-Ref<Thread> Thread::create(ASCIILiteral name, Function<void()>&& entryPoint, ThreadType threadType, QOS qos, SchedulingPolicy schedulingPolicy)
+Ref<Thread> Thread::create(ASCIILiteral name, Function<void()>&& entryPoint, ThreadType threadType, QOS qos, SchedulingPolicy schedulingPolicy, StackAllocationSpecification stackSpec)
 {
     WTF::initialize();
 
-    Ref thread = adoptRef(*new Thread(schedulingPolicy));
+    Ref thread = adoptRef(*new Thread(qos, schedulingPolicy, Thread::IsMain::No));
 
     Ref context = adoptRef(*new NewThreadContext { name, WTF::move(entryPoint), thread.get() });
     {
         MutexLocker locker(context->mutex);
         context->ref(); // Adopted by Thread::entryPoint
-        bool success = thread->establishHandle(context.get(), stackSize(threadType), qos, schedulingPolicy);
+        if (stackSpec.kind() == StackAllocationSpecification::Kind::Default) {
+            auto maybeSize = stackSize(threadType);
+            if (maybeSize)
+                stackSpec = StackAllocationSpecification::RequestSize(maybeSize.value());
+        }
+        bool success = thread->establishHandle(context.get(), stackSpec, qos, schedulingPolicy);
         RELEASE_ASSERT(success);
 
 #if HAVE(STACK_BOUNDS_FOR_NEW_THREAD)
@@ -290,25 +298,21 @@ Ref<Thread> Thread::create(ASCIILiteral name, Function<void()>&& entryPoint, Thr
     return thread;
 }
 
-static bool shouldRemoveThreadFromThreadGroup()
+#if !OS(WINDOWS)
+bool processIsShuttingDown()
 {
-#if OS(WINDOWS)
-    // On Windows the thread specific destructor is also called when the
-    // main thread is exiting. This may lead to the main thread waiting
-    // forever for the thread group lock when exiting, if the sampling
-    // profiler thread was terminated by the system while holding the
-    // thread group lock.
-    if (WTF::isMainThread())
-        return false;
-#endif
-    return true;
+    return false;
 }
+#endif
 
 void Thread::didExit()
 {
+    if (processIsShuttingDown())
+        return;
+
     allThreads().remove(*this);
 
-    if (shouldRemoveThreadFromThreadGroup()) {
+    {
         {
             Vector<Ref<ThreadGroup>> threadGroups;
             {
@@ -380,14 +384,9 @@ void Thread::setCurrentThreadIsUserInteractive(int relativePriority)
     ASSERT(relativePriority <= 0);
     ASSERT(relativePriority >= QOS_MIN_RELATIVE_PRIORITY);
     pthread_set_qos_class_self_np(adjustedQOSClass(QOS_CLASS_USER_INTERACTIVE), relativePriority);
-#elif OS(LINUX)
-    // We don't allow to make the main thread real time. This is used by secondary processes to match the
-    // UI process, but in linux the UI process is not real time.
-    if (!isMainThread())
-        RealTimeThreads::singleton().registerThread(currentSingleton());
-    UNUSED_PARAM(relativePriority);
 #else
     UNUSED_PARAM(relativePriority);
+    setCurrentThreadQOS(QOS::UserInteractive);
 #endif
 }
 
@@ -399,11 +398,23 @@ void Thread::setCurrentThreadIsUserInitiated(int relativePriority)
     pthread_set_qos_class_self_np(adjustedQOSClass(QOS_CLASS_USER_INITIATED), relativePriority);
 #else
     UNUSED_PARAM(relativePriority);
+    setCurrentThreadQOS(QOS::UserInitiated);
 #endif
 }
 
+void Thread::setCurrentThreadQOS(QOS qos)
+{
+    Thread& thread = currentSingleton();
+#if OS(LINUX)
+    // Only secondary helper threads can run with non-default priority.
+    qos = defaultQOS;
+#endif
+    thread.m_qos = qos;
+    thread.initializeSchedulingAttributes();
+}
+
 #if HAVE(QOS_CLASSES)
-static Thread::QOS toQOS(qos_class_t qosClass)
+static Thread::QOS LEGACY_NODELETE toQOS(qos_class_t qosClass)
 {
     switch (qosClass) {
     case QOS_CLASS_USER_INTERACTIVE:
@@ -430,13 +441,13 @@ auto Thread::currentThreadQOS() -> QOS
     pthread_get_qos_class_np(pthread_self(), &qos, &relativePriority);
     return toQOS(qos);
 #else
-    return QOS::Default;
+    return currentSingleton().qos();
 #endif
 }
 
 bool Thread::currentThreadIsRealtime()
 {
-    return Thread::currentSingleton().m_isRealtime;
+    return Thread::currentSingleton().isRealtime();
 }
 
 #if HAVE(QOS_CLASSES)
@@ -444,7 +455,7 @@ static qos_class_t globalMaxQOSclass { QOS_CLASS_UNSPECIFIED };
 
 void Thread::setGlobalMaxQOSClass(qos_class_t maxClass)
 {
-    bmalloc::api::setScavengerThreadQOSClass(maxClass);
+    fastSetScavengerThreadQOSClass(maxClass);
     globalMaxQOSclass = maxClass;
 }
 
@@ -465,15 +476,6 @@ void Thread::dump(PrintStream& out) const
 ThreadSpecificKey Thread::s_key = InvalidThreadSpecificKey;
 #endif
 
-#if USE(TZONE_MALLOC)
-#if PLATFORM(COCOA)
-static bool hasDisableTZoneEntitlement()
-{
-    return processHasEntitlement("webkit.tzone.disable"_s);
-}
-#endif
-#endif
-
 void initialize()
 {
     static std::once_flag onceKey;
@@ -484,9 +486,6 @@ void initialize()
         setPermissionsOfConfigPage();
         Config::initialize();
 #if USE(TZONE_MALLOC)
-#if PLATFORM(COCOA)
-        bmalloc::api::TZoneHeapManager::setHasDisableTZoneEntitlementCallback(hasDisableTZoneEntitlement);
-#endif
         bmalloc::api::TZoneHeapManager::ensureSingleton(); // Force initialization.
 #endif
         Gigacage::ensureGigacage();

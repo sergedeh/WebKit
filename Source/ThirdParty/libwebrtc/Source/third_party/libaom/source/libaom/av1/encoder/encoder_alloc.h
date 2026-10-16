@@ -15,6 +15,7 @@
 #include "av1/encoder/block.h"
 #include "av1/encoder/encodeframe_utils.h"
 #include "av1/encoder/encoder.h"
+#include "av1/encoder/encoder_utils.h"
 #include "av1/encoder/encodetxb.h"
 #include "av1/encoder/ethread.h"
 #include "av1/encoder/global_motion_facade.h"
@@ -105,22 +106,29 @@ static inline void alloc_mb_mode_info_buffers(AV1_COMP *const cpi) {
 static inline void realloc_segmentation_maps(AV1_COMP *cpi) {
   AV1_COMMON *const cm = &cpi->common;
   CommonModeInfoParams *const mi_params = &cm->mi_params;
+  int max_mi_cols = mi_params->mi_cols;
+  int max_mi_rows = mi_params->mi_rows;
+  if (cpi->oxcf.frm_dim_cfg.forced_max_frame_width) {
+    max_mi_cols = size_in_mi(cpi->oxcf.frm_dim_cfg.forced_max_frame_width);
+  }
+  if (cpi->oxcf.frm_dim_cfg.forced_max_frame_height) {
+    max_mi_rows = size_in_mi(cpi->oxcf.frm_dim_cfg.forced_max_frame_height);
+  }
 
   // Create the encoder segmentation map and set all entries to 0
   aom_free(cpi->enc_seg.map);
   CHECK_MEM_ERROR(cm, cpi->enc_seg.map,
-                  aom_calloc(mi_params->mi_rows * mi_params->mi_cols, 1));
+                  aom_calloc(max_mi_rows * max_mi_cols, 1));
 
   // Create a map used for cyclic background refresh.
   if (cpi->cyclic_refresh) av1_cyclic_refresh_free(cpi->cyclic_refresh);
-  CHECK_MEM_ERROR(
-      cm, cpi->cyclic_refresh,
-      av1_cyclic_refresh_alloc(mi_params->mi_rows, mi_params->mi_cols));
+  CHECK_MEM_ERROR(cm, cpi->cyclic_refresh,
+                  av1_cyclic_refresh_alloc(max_mi_rows, max_mi_cols));
 
   // Create a map used to mark inactive areas.
   aom_free(cpi->active_map.map);
   CHECK_MEM_ERROR(cm, cpi->active_map.map,
-                  aom_calloc(mi_params->mi_rows * mi_params->mi_cols, 1));
+                  aom_calloc(max_mi_rows * max_mi_cols, 1));
 }
 
 static inline void alloc_obmc_buffers(OBMCBuffer *obmc_buffer,
@@ -185,15 +193,12 @@ static inline void release_compound_type_rd_buffers(
 static inline void dealloc_compressor_data(AV1_COMP *cpi) {
   AV1_COMMON *const cm = &cpi->common;
   TokenInfo *token_info = &cpi->token_info;
-  AV1EncRowMultiThreadInfo *const enc_row_mt = &cpi->mt_info.enc_row_mt;
   const int num_planes = av1_num_planes(cm);
   dealloc_context_buffers_ext(&cpi->mbmi_ext_info);
 
   aom_free(cpi->tile_data);
   cpi->tile_data = NULL;
   cpi->allocated_tiles = 0;
-  enc_row_mt->allocated_tile_cols = 0;
-  enc_row_mt->allocated_tile_rows = 0;
 
   // Delete sementation map
   aom_free(cpi->enc_seg.map);
@@ -336,6 +341,7 @@ static inline void dealloc_compressor_data(AV1_COMP *cpi) {
   aom_free(cpi->td.mb.palette_buffer);
   release_compound_type_rd_buffers(&cpi->td.mb.comp_rd_buffer);
   aom_free(cpi->td.mb.tmp_conv_dst);
+  aom_free(cpi->td.mb.upsample_pred);
   for (int j = 0; j < 2; ++j) {
     aom_free(cpi->td.mb.tmp_pred_bufs[j]);
   }
@@ -367,6 +373,7 @@ static inline void dealloc_compressor_data(AV1_COMP *cpi) {
 
   aom_free(cpi->mb_weber_stats);
   cpi->mb_weber_stats = NULL;
+  cpi->mb_weber_stats_alloc_size = 0;
 
   if (cpi->oxcf.enable_rate_guide_deltaq) {
     aom_free(cpi->prep_rate_estimates);
@@ -378,6 +385,11 @@ static inline void dealloc_compressor_data(AV1_COMP *cpi) {
 
   aom_free(cpi->mb_delta_q);
   cpi->mb_delta_q = NULL;
+  cpi->mb_delta_q_alloc_size = 0;
+
+#if !CONFIG_REALTIME_ONLY
+  av1_free_tpl_gop_stats(&cpi->extrc_tpl_gop_stats);
+#endif
 }
 
 static inline void allocate_gradient_info_for_hog(AV1_COMP *cpi) {
@@ -474,6 +486,7 @@ static inline void free_thread_data(AV1_PRIMARY *ppi) {
     aom_free(td->tctx);
     aom_free(td->palette_buffer);
     aom_free(td->tmp_conv_dst);
+    aom_free(td->upsample_pred);
     release_compound_type_rd_buffers(&td->comp_rd_buffer);
     for (int j = 0; j < 2; ++j) {
       aom_free(td->tmp_pred_bufs[j]);

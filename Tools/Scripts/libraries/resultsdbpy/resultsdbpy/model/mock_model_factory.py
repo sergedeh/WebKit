@@ -26,9 +26,9 @@ import io
 import time
 
 from resultsdbpy.controller.configuration import Configuration
-from resultsdbpy.model.configuration_context_unittest import ConfigurationContextTest
 from resultsdbpy.model.model import Model
 from resultsdbpy.model.repository import StashRepository, WebKitRepository
+from resultsdbpy.model.configuration_context_unittest import ConfigurationContextTest
 
 from webkitscmpy import mocks, Commit
 
@@ -97,13 +97,20 @@ class MockModelFactory(object):
             yield github
 
     @classmethod
-    def create(cls, redis, cassandra, async_processing=False):
+    def ttl_seconds(cls):
+        # Mock commits are frozen in time, so any fixed time-to-live would eventually expire
+        # everything uploaded against them. Keep the TTL as old as the oldest mock commit.
         oldest_commit = time.time()
         with cls.safari() as safari, cls.webkit() as webkit:
             for repo in [safari, webkit]:
                 for commits in repo.commits.values():
                     for commit in commits:
                         oldest_commit = min(oldest_commit, commit.timestamp)
+        return time.time() - oldest_commit + Model.TTL_WEEK
+
+    @classmethod
+    def create(cls, redis, cassandra, async_processing=False):
+        ttl_seconds = cls.ttl_seconds()
 
         model = Model(
             redis=redis,
@@ -112,8 +119,8 @@ class MockModelFactory(object):
                 StashRepository('https://bitbucket.example.com/projects/SAFARI/repos/safari'),
                 WebKitRepository(),
             ],
-            default_ttl_seconds=time.time() - oldest_commit + Model.TTL_WEEK,
-            archive_ttl_seconds=time.time() - oldest_commit + Model.TTL_WEEK,
+            default_ttl_seconds=ttl_seconds,
+            archive_ttl_seconds=ttl_seconds,
             async_processing=async_processing,
         )
         with cls.safari() as safari, cls.webkit() as webkit:
@@ -192,8 +199,8 @@ class MockModelFactory(object):
                     continue
 
                 timestamp_to_use = current
-                if (complete_configuration.platform == 'Mac' and complete_configuration.version <= Configuration.version_to_integer('10.13')) \
-                   or (complete_configuration.platform == 'iOS' and complete_configuration.version <= Configuration.version_to_integer('11')):
+                if (complete_configuration.platform == 'mac' and complete_configuration.version <= Configuration.version_to_integer('10.13')) \
+                   or (complete_configuration.platform == 'ios' and complete_configuration.version <= Configuration.version_to_integer('11')):
                     timestamp_to_use = old
 
                 cls.iterate_all_commits(model, lambda commits: model.upload_context.upload_test_results(complete_configuration, commits, suite=suite, test_results=test_results, timestamp=timestamp_to_use))
@@ -219,6 +226,20 @@ class MockModelFactory(object):
                             )
 
     @classmethod
+    def add_mock_ews_results(cls, test_results, model, configuration=Configuration(), timestamp=None, flaky_type=None, details=None):
+        configurations = [configuration] if configuration.is_complete() else ConfigurationContextTest.CONFIGURATIONS
+
+        for complete_configuration in configurations:
+            if complete_configuration != configuration:
+                continue
+
+            cls.iterate_all_commits(model, lambda commits: model.ews_context.record_results(
+                complete_configuration, commits, suite='layout-tests',
+                test_results=test_results, flaky_type=flaky_type,
+                timestamp=timestamp, details=details,
+            ))
+
+    @classmethod
     def add_mock_archives(cls, model, configuration=Configuration(), suite='layout-tests', archive=None):
         archive = archive or io.BytesIO(base64.b64decode(cls.ARCHIVE_ZIP))
         configurations = [configuration] if configuration.is_complete() else ConfigurationContextTest.CONFIGURATIONS
@@ -231,8 +252,8 @@ class MockModelFactory(object):
                     continue
 
                 timestamp_to_use = current
-                if (complete_configuration.platform == 'Mac' and complete_configuration.version <= Configuration.version_to_integer('10.13')) \
-                   or (complete_configuration.platform == 'iOS' and complete_configuration.version <= Configuration.version_to_integer('11')):
+                if (complete_configuration.platform == 'mac' and complete_configuration.version <= Configuration.version_to_integer('10.13')) \
+                   or (complete_configuration.platform == 'ios' and complete_configuration.version <= Configuration.version_to_integer('11')):
                     timestamp_to_use = old
 
                 cls.iterate_all_commits(model, lambda commits: model.archive_context.register(archive, complete_configuration, commits, suite=suite, timestamp=timestamp_to_use))

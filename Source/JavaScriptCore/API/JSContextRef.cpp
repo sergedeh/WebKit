@@ -33,12 +33,12 @@
 #include "IntegrityInlines.h"
 #include "JSAPIGlobalObject.h"
 #include "JSAPIWrapperObject.h"
+#include "JSCJSValueInlines.h"
 #include "JSCallbackObject.h"
 #include "JSClassRef.h"
 #include "JSObjectInlines.h"
 #include "StackVisitor.h"
 #include "StrongInlines.h"
-#include "StructureInlines.h"
 #include "Watchdog.h"
 #include <wtf/text/StringBuilder.h>
 
@@ -195,7 +195,7 @@ JSObjectRef JSContextGetGlobalObject(JSContextRef ctx)
     VM& vm = globalObject->vm();
     JSLockHolder locker(vm);
 
-    return toRef(jsCast<JSObject*>(JSValue(globalObject).toThis(globalObject, ECMAMode::sloppy())));
+    return toRef(uncheckedDowncast<JSObject>(JSValue(globalObject).toThis(globalObject, ECMAMode::sloppy())));
 }
 
 JSContextGroupRef JSContextGetGroup(JSContextRef ctx)
@@ -455,7 +455,7 @@ void JSGlobalContextSetDebuggerRunLoop(JSGlobalContextRef ctx, CFRunLoopRef runL
     VM& vm = globalObject->vm();
     JSLockHolder lock(vm);
 
-    globalObject->protectedInspectorDebuggable()->setTargetRunLoop(runLoop);
+    protect(globalObject->inspectorDebuggable())->setTargetRunLoop(runLoop);
 #else
     UNUSED_PARAM(ctx);
     UNUSED_PARAM(runLoop);

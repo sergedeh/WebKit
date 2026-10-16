@@ -33,7 +33,7 @@
 #include "DocumentMarkers.h"
 #include "DocumentView.h"
 #include "FloatQuad.h"
-#include "FontCascade.h"
+#include "FontCascadeInlines.h"
 #include "LocalFrame.h"
 #include "NodeTraversal.h"
 #include "Page.h"
@@ -42,6 +42,10 @@
 #include "RenderObjectInlines.h"
 #include "RenderReplaced.h"
 #include "RenderText.h"
+#if ENABLE(WRITING_TOOLS_TEXT_EFFECTS)
+#include "TextEffectController.h"
+#include "TextIndicator.h"
+#endif
 #include "RenderedDocumentMarker.h"
 #include "TextIterator.h"
 #include <stdio.h>
@@ -75,6 +79,9 @@ void DocumentMarkerController::detach()
     m_possiblyExistingMarkerTypes = { };
     m_fadeAnimationTimer.stop();
     m_writingToolsTextSuggestionAnimationTimer.stop();
+#if ENABLE(WRITING_TOOLS_TEXT_EFFECTS)
+    m_appliedGrammarTextEffectUUIDs.clear();
+#endif
 }
 
 auto DocumentMarkerController::collectTextRanges(const SimpleRange& range) -> Vector<TextRange>
@@ -90,10 +97,36 @@ auto DocumentMarkerController::collectTextRanges(const SimpleRange& range) -> Ve
 bool DocumentMarkerController::addMarker(const SimpleRange& range, DocumentMarkerType type, const DocumentMarker::Data& data)
 {
     bool added = false;
+
+#if ENABLE(WRITING_TOOLS_TEXT_EFFECTS)
+    RefPtr page = m_document->page();
+    const auto isGrammar = type == DocumentMarkerType::Grammar;
+    const auto textEffectsEnabled = page && page->settings().textEffectsEnabled();
+    auto needsTextEffect = false;
+    if (isGrammar && textEffectsEnabled) {
+        auto& grammarUUID = std::get<DocumentMarker::GrammarData>(data).uuid;
+        if (grammarUUID.isEmpty() || !m_appliedGrammarTextEffectUUIDs.contains(grammarUUID))
+            needsTextEffect = true;
+    }
+    RefPtr<TextIndicator> textIndicator;
+    if (needsTextEffect)
+        textIndicator = page->textEffectController().createTextIndicatorForRange(range);
+#endif
+
     for (auto& textPiece : collectTextRanges(range)) {
         if (addMarker(textPiece.node, { type, textPiece.range, DocumentMarker::Data { data } }))
             added = true;
     }
+
+#if ENABLE(WRITING_TOOLS_TEXT_EFFECTS)
+    if (needsTextEffect) {
+        RefPtr decorationIndicator = page->textEffectController().createTextIndicatorForRange(range, IncludeDocumentMarkers::Yes);
+        page->textEffectController().addTextEffect(range, WTF::move(textIndicator), WTF::move(decorationIndicator));
+        auto& grammarUUID = std::get<DocumentMarker::GrammarData>(data).uuid;
+        if (!grammarUUID.isEmpty())
+            m_appliedGrammarTextEffectUUIDs.add(grammarUUID);
+    }
+#endif
     return added;
 }
 
@@ -133,8 +166,25 @@ void DocumentMarkerController::addTransparentContentMarker(const SimpleRange& ra
         addMarker(textPiece.node, { DocumentMarkerType::TransparentContent, textPiece.range, DocumentMarker::TransparentContentData { { textPiece.node.ptr() }, uuid } });
 }
 
+void DocumentMarkerController::addDictationStreamingOpacityMarker(const SimpleRange& range, float opacity)
+{
+    for (auto& textPiece : collectTextRanges(range))
+        addMarker(textPiece.node, { DocumentMarkerType::DictationStreamingOpacity, textPiece.range, DocumentMarker::DictationStreamingOpacityData { opacity } });
+}
+
+void DocumentMarkerController::removeAllDictationStreamingOpacityMarkers()
+{
+    removeMarkers({ DocumentMarkerType::DictationStreamingOpacity });
+}
+
 void DocumentMarkerController::removeMarkers(const SimpleRange& range, OptionSet<DocumentMarkerType> types, RemovePartiallyOverlappingMarker overlapRule)
 {
+#if ENABLE(WRITING_TOOLS_TEXT_EFFECTS)
+    if (types.contains(DocumentMarkerType::Grammar)) {
+        if (RefPtr page = m_document->page())
+            page->textEffectController().removeTextEffect(range);
+    }
+#endif
     filterMarkers(range, nullptr, types, overlapRule);
 }
 
@@ -193,10 +243,6 @@ static void updateMainFrameLayoutIfNeeded(Document& document)
         mainFrameView->updateLayoutAndStyleIfNeededRecursive();
 }
 
-Ref<Document> DocumentMarkerController::protectedDocument() const
-{
-    return m_document.get();
-}
 
 void DocumentMarkerController::updateRectsForInvalidatedMarkersOfType(DocumentMarkerType type)
 {
@@ -210,7 +256,7 @@ void DocumentMarkerController::updateRectsForInvalidatedMarkersOfType(DocumentMa
             if (marker.type() != type || marker.isValid())
                 continue;
             if (!updatedLayout) {
-                updateMainFrameLayoutIfNeeded(protectedDocument());
+                updateMainFrameLayoutIfNeeded(protect(m_document));
                 updatedLayout = true;
             }
             updateRenderedRectsForMarker(marker, nodeMarkers.key);
@@ -540,7 +586,7 @@ Vector<WeakPtr<RenderedDocumentMarker>> DocumentMarkerController::markersFor(Nod
 
 // Finds any document markers of the specified types that contain a collapsed range matching `range`,
 // and applies `function` to them.
-void DocumentMarkerController::applyToCollapsedRangeMarker(const SimpleRange& range, OptionSet<DocumentMarkerType> types, Function<bool(Node&, RenderedDocumentMarker&)>&& function)
+void DocumentMarkerController::applyToCollapsedRangeMarker(const SimpleRange& range, OptionSet<DocumentMarkerType> types, NOESCAPE const Function<bool(Node&, RenderedDocumentMarker&)>& function)
 {
     if (!types.contains(DocumentMarkerType::TransparentContent)) {
         // Optimization: currently, only transparent content markers can be added to collapsed ranges,
@@ -565,7 +611,7 @@ void DocumentMarkerController::applyToCollapsedRangeMarker(const SimpleRange& ra
 }
 
 template<>
-void DocumentMarkerController::forEach<DocumentMarkerController::IterationDirection::Forwards>(const SimpleRange& range, OptionSet<DocumentMarkerType> types, Function<bool(Node&, RenderedDocumentMarker&)>&& function)
+void DocumentMarkerController::forEach<DocumentMarkerController::IterationDirection::Forwards>(const SimpleRange& range, OptionSet<DocumentMarkerType> types, NOESCAPE const Function<bool(Node&, RenderedDocumentMarker&)>& function)
 {
     if (!possiblyHasMarkers(types))
         return;
@@ -587,11 +633,11 @@ void DocumentMarkerController::forEach<DocumentMarkerController::IterationDirect
     }
 
     // The above loop does not take into account collapsed ranges.
-    applyToCollapsedRangeMarker(range, types, WTF::move(function));
+    applyToCollapsedRangeMarker(range, types, function);
 }
 
 template<>
-void DocumentMarkerController::forEach<DocumentMarkerController::IterationDirection::Backwards>(const SimpleRange& range, OptionSet<DocumentMarkerType> types, Function<bool(Node&, RenderedDocumentMarker&)>&& function)
+void DocumentMarkerController::forEach<DocumentMarkerController::IterationDirection::Backwards>(const SimpleRange& range, OptionSet<DocumentMarkerType> types, NOESCAPE const Function<bool(Node&, RenderedDocumentMarker&)>& function)
 {
     if (!possiblyHasMarkers(types))
         return;
@@ -616,10 +662,10 @@ void DocumentMarkerController::forEach<DocumentMarkerController::IterationDirect
     }
 
     // The above loop does not take into account collapsed ranges.
-    applyToCollapsedRangeMarker(range, types, WTF::move(function));
+    applyToCollapsedRangeMarker(range, types, function);
 }
 
-void DocumentMarkerController::forEachOfTypes(OptionSet<DocumentMarkerType> types, Function<bool(Node&, RenderedDocumentMarker&)>&& function)
+void DocumentMarkerController::forEachOfTypes(OptionSet<DocumentMarkerType> types, NOESCAPE const Function<bool(Node&, RenderedDocumentMarker&)>& function)
 {
     if (!possiblyHasMarkers(types))
         return;
@@ -916,19 +962,28 @@ std::tuple<float, float> DocumentMarkerController::markerYPositionAndHeightForFo
     return { y, height };
 }
 
+size_t DocumentMarkerController::appliedGrammarTextEffectCount() const
+{
+#if ENABLE(WRITING_TOOLS_TEXT_EFFECTS)
+    return m_appliedGrammarTextEffectUUIDs.size();
+#else
+    return 0;
+#endif
+}
+
 void addMarker(const SimpleRange& range, DocumentMarkerType type, const DocumentMarker::Data& data)
 {
-    range.start.protectedDocument()->checkedMarkers()->addMarker(range, type, data);
+    protect(protect(range.start.document())->markers())->addMarker(range, type, data);
 }
 
 void addMarker(Node& node, unsigned startOffset, unsigned length, DocumentMarkerType type, DocumentMarker::Data&& data)
 {
-    node.protectedDocument()->checkedMarkers()->addMarker(node, startOffset, length, type, WTF::move(data));
+    protect(protect(node.document())->markers())->addMarker(node, startOffset, length, type, WTF::move(data));
 }
 
 void removeMarkers(const SimpleRange& range, OptionSet<DocumentMarkerType> types, RemovePartiallyOverlappingMarker policy)
 {
-    range.start.protectedDocument()->checkedMarkers()->removeMarkers(range, types, policy);
+    protect(protect(range.start.document())->markers())->removeMarkers(range, types, policy);
 }
 
 SimpleRange makeSimpleRange(Node& node, const DocumentMarker& marker)
@@ -946,7 +1001,7 @@ void DocumentMarkerController::showMarkers() const
     for (auto& nodeMarkers : m_markers) {
         fprintf(stderr, "%p", nodeMarkers.key.ptr());
         for (auto& marker : *nodeMarkers.value)
-            fprintf(stderr, " %u:[%d:%d]", enumToUnderlyingType(marker.type()), marker.startOffset(), marker.endOffset());
+            fprintf(stderr, " %u:[%d:%d]", std::to_underlying(marker.type()), marker.startOffset(), marker.endOffset());
         fputc('\n', stderr);
     }
 }

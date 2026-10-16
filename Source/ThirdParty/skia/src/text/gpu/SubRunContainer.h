@@ -9,11 +9,11 @@
 #define sktext_gpu_SubRunContainer_DEFINED
 
 #include "include/core/SkMatrix.h"
+#include "include/core/SkPoint.h"
 #include "include/core/SkRect.h"
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkSpan.h"
-#include "include/private/base/SkPoint_impl.h"
-#include "include/private/base/SkTLogic.h"
+#include "include/private/SkTLogic.h"
 #include "src/core/SkColorData.h"  // IWYU pragma: keep
 #include "src/text/gpu/GlyphVector.h"
 #include "src/text/gpu/SubRunAllocator.h"
@@ -38,25 +38,8 @@ class GlyphRunList;
 class StrikeForGPUCacheInterface;
 }
 
-namespace skgpu {
-enum class MaskFormat : int;
-}
-
 namespace sktext::gpu {
-class Glyph;
 class StrikeCache;
-
-using RegenerateAtlasDelegate = std::function<std::tuple<bool, int>(GlyphVector*,
-                                                                    int begin,
-                                                                    int end,
-                                                                    skgpu::MaskFormat,
-                                                                    int padding)>;
-
-struct RendererData {
-    bool isSDF = false;
-    bool isLCD = false;
-    skgpu::MaskFormat maskFormat;
-};
 
 class AtlasSubRun;
 using AtlasDrawDelegate = std::function<void(const sktext::gpu::AtlasSubRun* subRun,
@@ -101,6 +84,7 @@ protected:
 
 private:
     friend class SubRunList;
+    friend class TextBlobTools;
     SubRunOwner fNext;
 };
 
@@ -120,14 +104,17 @@ private:
 //        rectangles are in source space.
 class AtlasSubRun : public SubRun {
 public:
-    AtlasSubRun(VertexFiller&& vertexFiller, GlyphVector&& glyphs)
-            : fVertexFiller{std::move(vertexFiller)}
-            , fGlyphs{std::move(glyphs)} {}
+    AtlasSubRun(VertexFiller&& vertexFiller, GlyphVector&& glyphVector)
+            : fVertexFiller{std::move(vertexFiller)}, fGlyphVector{std::move(glyphVector)} {}
+
     ~AtlasSubRun() override = default;
 
-    SkSpan<const Glyph*> glyphs() const { return fGlyphs.glyphs(); }
-    int glyphCount() const { return SkCount(fGlyphs.glyphs()); }
-    skgpu::MaskFormat maskFormat() const { return fVertexFiller.grMaskType(); }
+    static bool IsBigEnough(const SkMatrix& matrix) {
+        return matrix.getMaxScale() >= 1.f;
+    }
+
+    int glyphCount() const { return fGlyphVector.glyphCount(); }
+    skgpu::MaskFormat maskFormat() const { return fVertexFiller.maskFormat(); }
     virtual int glyphSrcPadding() const = 0;
     unsigned short instanceFlags() const { return (unsigned short)this->maskFormat(); }
 
@@ -141,40 +128,16 @@ public:
     };
     virtual GlyphParams glyphParams() const = 0;
 
-    size_t vertexStride(const SkMatrix& drawMatrix) const {
-        return fVertexFiller.vertexStride(drawMatrix);
-    }
-
-    void fillVertexData(
-            void* vertexDst, int offset, int count,
-            const SkPMColor4f& color,
-            const SkMatrix& drawMatrix,
-            SkPoint drawOrigin,
-            SkIRect clip) const {
-        SkMatrix positionMatrix = drawMatrix;
-        positionMatrix.preTranslate(drawOrigin.x(), drawOrigin.y());
-        fVertexFiller.fillVertexData(offset, count,
-                                     fGlyphs.glyphs(),
-                                     color,
-                                     positionMatrix,
-                                     clip,
-                                     vertexDst);
-    }
-
-    // This call is not thread safe. It should only be called from a known single-threaded env.
-    virtual std::tuple<bool, int> regenerateAtlas(
-            int begin, int end, RegenerateAtlasDelegate) const = 0;
-
     const VertexFiller& vertexFiller() const { return fVertexFiller; }
 
-    virtual void testingOnly_packedGlyphIDToGlyph(StrikeCache* cache) const = 0;
+    GlyphVector& glyphVector() const { return fGlyphVector; }
 
 protected:
     const VertexFiller fVertexFiller;
 
-    // The regenerateAtlas method mutates fGlyphs. It should be called from onPrepare which must
-    // be single threaded.
-    mutable GlyphVector fGlyphs;
+    // Initially packed-ID span, converted to backend specific per-Glyph atlas location
+    // information.
+    mutable GlyphVector fGlyphVector;
 };
 
 // -- SubRunList -----------------------------------------------------------------------------------
@@ -263,9 +226,6 @@ private:
     const SkMatrix fInitialPositionMatrix;
     SubRunList fSubRuns;
 };
-
-// Returns the empty span if there is a problem reading the positions.
-SkSpan<SkPoint> MakePointsFromBuffer(SkReadBuffer&, SubRunAllocator*);
 
 }  // namespace sktext::gpu
 

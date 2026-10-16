@@ -56,7 +56,7 @@ public:
 #endif
 
     template<typename CustomizeSuccessors>
-    BasicBlock* cloneBlock(BasicBlock* const, const CustomizeSuccessors&);
+    BasicBlock* cloneBlock(BasicBlock* const, NOESCAPE const CustomizeSuccessors&);
     BasicBlock* blockClone(BasicBlock*);
 
     void clear();
@@ -73,7 +73,7 @@ private:
 };
 
 template<typename CustomizeSuccessors>
-BasicBlock* CloneHelper::cloneBlock(BasicBlock* const block, const CustomizeSuccessors& customizeSuccessors)
+BasicBlock* CloneHelper::cloneBlock(BasicBlock* const block, NOESCAPE const CustomizeSuccessors& customizeSuccessors)
 {
     auto iter = m_blockClones.find(block);
     if (iter != m_blockClones.end())
@@ -160,9 +160,14 @@ BasicBlock* CloneHelper::cloneBlock(BasicBlock* const block, const CustomizeSucc
     CLONE_STATUS(ArithUnary, Common) \
     CLONE_STATUS(ArrayIncludes, Common) \
     CLONE_STATUS(ArrayIndexOf, Common) \
+    CLONE_STATUS(ArrayJoin, Common) \
     CLONE_STATUS(ArrayPop, Common) \
     CLONE_STATUS(ArrayPush, Common) \
+    CLONE_STATUS(ArrayShift, Common) \
+    CLONE_STATUS(ArrayUnshift, Common) \
     CLONE_STATUS(ArraySlice, Common) \
+    CLONE_STATUS(ArrayConcatArray, Common) \
+    CLONE_STATUS(ArrayConcatAppendOne, Common) \
     CLONE_STATUS(ArraySplice, Common) \
     CLONE_STATUS(Arrayify, Common) \
     CLONE_STATUS(ArrayifyToStructure, Common) \
@@ -204,6 +209,7 @@ BasicBlock* CloneHelper::cloneBlock(BasicBlock* const block, const CustomizeSucc
     CLONE_STATUS(DataViewGetInt, Common) \
     CLONE_STATUS(DataViewSet, Common) \
     CLONE_STATUS(DateGetTime, Common) \
+    CLONE_STATUS(DateNow, Common) \
     CLONE_STATUS(DateSetTime, Common) \
     CLONE_STATUS(Dec, Common) \
     CLONE_STATUS(DeleteById, Common) \
@@ -247,7 +253,6 @@ BasicBlock* CloneHelper::cloneBlock(BasicBlock* const block, const CustomizeSucc
     CLONE_STATUS(GetPropertyEnumerator, Common) \
     CLONE_STATUS(GetPrototypeOf, Common) \
     CLONE_STATUS(GetRegExpObjectLastIndex, Common) \
-    CLONE_STATUS(GetRestLength, Common) \
     CLONE_STATUS(GetScope, Common) \
     CLONE_STATUS(GetEvalScope, Common) \
     CLONE_STATUS(GetUndetachedTypeArrayLength, Common) \
@@ -293,11 +298,14 @@ BasicBlock* CloneHelper::cloneBlock(BasicBlock* const block, const CustomizeSucc
     CLONE_STATUS(NewArrayWithSpread, Common) \
     CLONE_STATUS(NewFunction, Common) \
     CLONE_STATUS(NewInternalFieldObject, Common) \
+    CLONE_STATUS(NewPromise, Common) \
     CLONE_STATUS(NewMap, Common) \
     CLONE_STATUS(NewObject, Common) \
     CLONE_STATUS(NewRegExp, Common) \
     CLONE_STATUS(NewRegExpUntyped, Common) \
     CLONE_STATUS(NewSet, Common) \
+    CLONE_STATUS(NewWeakMap, Common) \
+    CLONE_STATUS(NewWeakSet, Common) \
     CLONE_STATUS(NormalizeMapKey, Common) \
     CLONE_STATUS(NumberToStringWithValidRadixConstant, Common) \
     CLONE_STATUS(NukeStructureAndSetButterfly, Common) \
@@ -338,12 +346,23 @@ BasicBlock* CloneHelper::cloneBlock(BasicBlock* const block, const CustomizeSucc
     CLONE_STATUS(StringCharCodeAt, Common) \
     CLONE_STATUS(StringCodePointAt, Common) \
     CLONE_STATUS(StringFromCharCode, Common) \
+    CLONE_STATUS(StringFromCodePoint, Common) \
     CLONE_STATUS(StringIndexOf, Common) \
+    CLONE_STATUS(StringIteratorNext, Common) \
+    CLONE_STATUS(StringIteratorNextWithUndefined, Common) \
+    CLONE_STATUS(StringLastIndexOf, Common) \
+    CLONE_STATUS(StringStartsWith, Common) \
+    CLONE_STATUS(StringEndsWith, Common) \
     CLONE_STATUS(StringLocaleCompare, Common) \
     CLONE_STATUS(StringReplace, Common) \
     CLONE_STATUS(StringReplaceString, Common) \
     CLONE_STATUS(StringSlice, Common) \
+    CLONE_STATUS(StringSplit, Common) \
+    CLONE_STATUS(StringMatch, Common) \
+    CLONE_STATUS(StringSearch, Common) \
     CLONE_STATUS(StringSubstring, Common) \
+    CLONE_STATUS(StringSubstr, Common) \
+    CLONE_STATUS(StringTrim, Common) \
     CLONE_STATUS(StrCat, Common) \
     CLONE_STATUS(Switch, Special) \
     CLONE_STATUS(TailCallForwardVarargsInlinedCaller, Special) \
@@ -358,6 +377,7 @@ BasicBlock* CloneHelper::cloneBlock(BasicBlock* const block, const CustomizeSucc
     CLONE_STATUS(TypeOfIsFunction, Common) \
     CLONE_STATUS(TypeOfIsObject, Common) \
     CLONE_STATUS(TypeOfIsUndefined, Common) \
+    CLONE_STATUS(TypedArraySet, Common) \
     CLONE_STATUS(UInt32ToNumber, Common) \
     CLONE_STATUS(ValueAdd, Common) \
     CLONE_STATUS(ValueBitAnd, Common) \

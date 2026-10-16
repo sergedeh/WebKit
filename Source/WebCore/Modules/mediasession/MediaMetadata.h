@@ -31,6 +31,7 @@
 #include <WebCore/CachedImageClient.h>
 #include <WebCore/CachedResourceHandle.h>
 #include <WebCore/MediaSession.h>
+#include <WebCore/SizedImage.h>
 #include <wtf/CheckedRef.h>
 #include <wtf/Function.h>
 #include <wtf/TZoneMalloc.h>
@@ -75,7 +76,7 @@ private:
     CachedResourceHandle<CachedImage> m_cachedImage;
 };
 
-class MediaMetadata final : public RefCounted<MediaMetadata> {
+class MediaMetadata final : public RefCountedAndCanMakeWeakPtr<MediaMetadata> {
 public:
     static ExceptionOr<Ref<MediaMetadata>> create(ScriptExecutionContext&, std::optional<MediaMetadataInit>&&);
     static Ref<MediaMetadata> create(MediaSession&, Vector<URL>&&);
@@ -84,25 +85,25 @@ public:
     void setMediaSession(MediaSession&);
     void resetMediaSession();
 
-    const String& title() const { return m_metadata.title; }
+    const String& title() const LIFETIME_BOUND { return m_metadata.title; }
     void setTitle(const String&);
 
-    const String& artist() const { return m_metadata.artist; }
+    const String& artist() const LIFETIME_BOUND { return m_metadata.artist; }
     void setArtist(const String&);
 
-    const String& album() const { return m_metadata.album; }
+    const String& album() const LIFETIME_BOUND { return m_metadata.album; }
     void setAlbum(const String&);
 
-    const Vector<MediaImage>& artwork() const { return m_metadata.artwork; }
+    const Vector<MediaImage>& artwork() const LIFETIME_BOUND { return m_metadata.artwork; }
     ExceptionOr<void> setArtwork(ScriptExecutionContext&, Vector<MediaImage>&&);
 
-    const String& artworkSrc() const { return m_artworkImageSrc; }
-    const RefPtr<Image>& artworkImage() const { return m_artworkImage; }
+    const String& artworkSrc() const LIFETIME_BOUND { return m_artworkImageSrc; }
+    const std::optional<SizedImage>& artworkImage() const { return m_artworkImage; }
 
-    const MediaSessionMetadata& metadata() const { return m_metadata; }
+    const MediaSessionMetadata& metadata() const LIFETIME_BOUND { return m_metadata; }
 
 #if ENABLE(MEDIA_SESSION_PLAYLIST)
-    const String& trackIdentifier() const { return m_metadata.trackIdentifier; }
+    const String& trackIdentifier() const LIFETIME_BOUND { return m_metadata.trackIdentifier; }
     void setTrackIdentifier(const String&);
 #endif
 
@@ -113,19 +114,17 @@ private:
     };
 
     MediaMetadata();
-    void setArtworkImage(Image*);
+    void setArtworkImage(std::optional<SizedImage>&&);
     void metadataUpdated();
     void refreshArtworkImage();
     void tryNextArtworkImage(uint32_t, Vector<Pair>&&);
 
-    static constexpr int s_minimumSize = 128;
-    static constexpr int s_idealSize = 512;
 
     WeakPtr<MediaSession> m_session;
     MediaSessionMetadata m_metadata;
     RefPtr<ArtworkImageLoader> m_artworkLoader;
     String m_artworkImageSrc;
-    RefPtr<Image> m_artworkImage;
+    std::optional<SizedImage> m_artworkImage;
     Vector<URL> m_defaultImages;
 };
 

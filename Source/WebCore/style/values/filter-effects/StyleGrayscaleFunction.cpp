@@ -38,7 +38,7 @@ namespace Style {
 
 Grayscale Grayscale::passthroughForInterpolation()
 {
-    return { .value = CSSFilterFunctionDescriptor<CSSValueGrayscale>::initialValueForInterpolation };
+    return { .value = CSSFilterFunctionDescriptor<CSSValueID::Grayscale>::initialValueForInterpolation };
 }
 
 bool Grayscale::transformColor(SRGBA<float>& color) const
@@ -49,7 +49,7 @@ bool Grayscale::transformColor(SRGBA<float>& color) const
 
 // MARK: - Conversion
 
-auto ToCSS<Grayscale>::operator()(const Grayscale& value, const RenderStyle& style) -> CSS::Grayscale
+auto ToCSS<Grayscale>::operator()(const Grayscale& value, const Style::ComputedStyle& style) -> CSS::Grayscale
 {
     return { .value = CSS::Grayscale::Parameter { toCSS(value.value, style) } };
 }
@@ -66,7 +66,7 @@ auto ToStyle<CSS::Grayscale>::operator()(const CSS::Grayscale& value, const Buil
             }
         ) };
     }
-    return { .value = CSSFilterFunctionDescriptor<CSSValueGrayscale>::defaultValue };
+    return { .value = CSSFilterFunctionDescriptor<CSSValueID::Grayscale>::defaultValue };
 }
 
 // MARK: - Evaluation

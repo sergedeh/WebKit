@@ -33,8 +33,6 @@
 
 namespace JSC {
 
-const ASCIILiteral WeakSetInvalidValueError { "WeakSet values must be objects or non-registered symbols"_s };
-
 const ClassInfo WeakSetPrototype::s_info = { "WeakSet"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(WeakSetPrototype) };
 
 static JSC_DECLARE_HOST_FUNCTION(protoFuncWeakSetDelete);
@@ -62,7 +60,7 @@ ALWAYS_INLINE static JSWeakSet* getWeakSet(JSGlobalObject* globalObject, JSValue
         return nullptr;
     }
 
-    if (auto* set = jsDynamicCast<JSWeakSet*>(asObject(value))) [[likely]]
+    if (auto* set = dynamicDowncast<JSWeakSet>(asObject(value))) [[likely]]
         return set;
 
     throwTypeError(globalObject, scope, "Called WeakSet function on a non-WeakSet object"_s);

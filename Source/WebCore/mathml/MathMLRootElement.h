@@ -42,7 +42,7 @@ public:
 
 private:
     MathMLRootElement(const QualifiedName& tagName, Document&);
-    RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) final;
+    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
 
     void childrenChanged(const ChildChange&) override;
 
@@ -50,5 +50,14 @@ private:
 };
 
 }
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::MathMLRootElement)
+    static bool isType(const WebCore::MathMLElement& element) { return element.hasTagName(WebCore::MathMLNames::msqrtTag) || element.hasTagName(WebCore::MathMLNames::mrootTag); }
+    static bool isType(const WebCore::Node& node)
+    {
+        auto* mathMLElement = dynamicDowncast<WebCore::MathMLElement>(node);
+        return mathMLElement && isType(*mathMLElement);
+    }
+SPECIALIZE_TYPE_TRAITS_END()
 
 #endif // ENABLE(MATHML)

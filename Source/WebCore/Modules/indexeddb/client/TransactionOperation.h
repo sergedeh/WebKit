@@ -96,7 +96,7 @@ public:
         m_transaction->operationCompletedOnClient(*this);
     }
 
-    const IDBResourceIdentifier& identifier() const { return m_identifier; }
+    const IDBResourceIdentifier& identifier() const LIFETIME_BOUND { return m_identifier; }
 
     Thread& originThread() const { return m_originThread.get(); }
 
@@ -130,7 +130,7 @@ private:
     IndexedDB::IndexRecordType indexRecordType() const { return m_indexRecordType; }
 
     const Ref<Thread> m_originThread { Thread::currentSingleton() };
-    RefPtr<IDBRequest> m_idbRequest;
+    const RefPtr<IDBRequest> m_idbRequest;
     bool m_nextRequestCanGoToServer { true };
     bool m_didComplete { false };
 

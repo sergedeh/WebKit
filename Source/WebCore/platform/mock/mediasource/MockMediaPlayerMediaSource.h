@@ -31,6 +31,7 @@
 #include "MediaPlayerPrivate.h"
 #include <wtf/Logger.h>
 #include <wtf/MediaTime.h>
+#include <wtf/NativePromise.h>
 #include <wtf/RefCounted.h>
 #include <wtf/WeakPtr.h>
 
@@ -67,6 +68,7 @@ public:
     MediaPlayer::ReadyState readyState() const override;
     void readyStateFromMediaSourceChanged() final;
     void characteristicsFromMediaSourceChanged() final;
+    void seekableRangesFromMediaSourceChanged() final;
     void setNetworkState(MediaPlayer::NetworkState);
 
 #if !RELEASE_LOG_DISABLED
@@ -88,8 +90,7 @@ private:
     bool hasVideo() const override;
     bool hasAudio() const override;
     void setPageIsVisible(bool) final;
-    void seekToTarget(const SeekTarget&) final;
-    bool seeking() const final;
+    Ref<MediaTimePromise> seekToTarget(const SeekTarget&) final;
     bool paused() const override;
     MediaPlayer::NetworkState networkState() const override;
     void mediaSourceHasRetrievedAllData() final;
@@ -100,8 +101,7 @@ private:
     void paint(GraphicsContext&, const FloatRect&) override;
     MediaTime duration() const override;
     std::optional<VideoPlaybackQualityMetrics> videoPlaybackQualityMetrics() override;
-    DestinationColorSpace colorSpace() override;
-    RefPtr<MockMediaSourcePrivate> protectedMediaSourcePrivate();
+    ColorSpace colorSpace() override;
 
     ThreadSafeWeakPtr<MediaPlayer> m_player;
     RefPtr<MockMediaSourcePrivate> m_mediaSourcePrivate;
@@ -109,6 +109,7 @@ private:
     MediaTime m_currentTime;
     MediaTime m_duration;
     std::optional<SeekTarget> m_lastSeekTarget;
+    std::optional<MediaTimePromise::AutoRejectProducer> m_seekPromise;
     MediaPlayer::NetworkState m_networkState { MediaPlayer::NetworkState::Empty };
     bool m_playing { false };
 };

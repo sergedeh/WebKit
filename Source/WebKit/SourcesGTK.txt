@@ -30,8 +30,9 @@ GPUProcess/media/RemoteAudioDestinationManager.cpp
 
 GPUProcess/media/gstreamer/RemoteMediaPlayerProxyGStreamer.cpp
 
-NetworkProcess/Classifier/WebResourceLoadStatisticsStore.cpp
+NetworkProcess/Classifier/WebResourceLoadStatisticsStore.cpp @cost:7
 
+NetworkProcess/Cookies/soup/CookieStorageSoup.cpp
 NetworkProcess/Cookies/soup/WebCookieManagerSoup.cpp
 
 NetworkProcess/NetworkDataTaskDataURL.cpp
@@ -48,6 +49,7 @@ NetworkProcess/soup/NetworkDataTaskSoup.cpp
 NetworkProcess/soup/NetworkProcessMainSoup.cpp
 NetworkProcess/soup/NetworkProcessSoup.cpp
 NetworkProcess/soup/NetworkSessionSoup.cpp
+NetworkProcess/soup/NetworkStorageSessionSoup.cpp
 NetworkProcess/soup/WebKitDirectoryInputStream.cpp
 NetworkProcess/soup/WebSocketTaskSoup.cpp
 
@@ -55,8 +57,6 @@ NetworkProcess/webrtc/LibWebRTCSocketClient.cpp
 NetworkProcess/webrtc/NetworkRTCMonitor.cpp
 NetworkProcess/webrtc/NetworkRTCProvider.cpp
 NetworkProcess/webrtc/NetworkRTCSharedMonitor.cpp
-
-NetworkProcess/webrtc/rice/RiceBackend.cpp
 
 Platform/IPC/glib/ConnectionGLib.cpp
 
@@ -85,6 +85,10 @@ Shared/API/glib/WebKitUserMessage.cpp @no-unify
 Shared/Extensions/gtk/WebExtensionUtilitiesGtk.cpp
 
 Shared/glib/ArgumentCodersGLib.cpp
+Shared/glib/CoreIPCGByteArray.cpp
+Shared/glib/CoreIPCGTlsCertificate.cpp
+Shared/glib/CoreIPCGUnixFDList.cpp
+Shared/glib/CoreIPCGVariant.cpp
 Shared/glib/InputMethodState.cpp
 Shared/glib/JavaScriptEvaluationResultGLib.cpp
 Shared/glib/ProcessExecutablePathGLib.cpp
@@ -92,7 +96,7 @@ Shared/glib/UserMessage.cpp
 Shared/glib/WebContextMenuItemGlib.cpp
 Shared/glib/WebKitContextMenuGAction.cpp @no-unify
 
-Shared/gtk/ArgumentCodersGtk.cpp
+Shared/gtk/CoreIPCGtkPrint.cpp
 Shared/gtk/NativeWebKeyboardEventGtk.cpp
 Shared/gtk/NativeWebMouseEventGtk.cpp
 Shared/gtk/NativeWebTouchEventGtk.cpp
@@ -129,11 +133,13 @@ UIProcess/API/glib/IconDatabase.cpp @no-unify
 UIProcess/API/glib/InputMethodFilter.cpp @no-unify
 UIProcess/API/glib/KeyAutoRepeatHandler.cpp @no-unify
 UIProcess/API/glib/WebKitApplicationInfo.cpp @no-unify
+UIProcess/API/glib/WebKitApplicationManifest.cpp @no-unify
 UIProcess/API/glib/WebKitAuthenticationRequest.cpp @no-unify
 UIProcess/API/glib/WebKitAutomationSession.cpp @no-unify
 UIProcess/API/glib/WebKitBackForwardList.cpp @no-unify
 UIProcess/API/glib/WebKitBackForwardListItem.cpp @no-unify
 UIProcess/API/glib/WebKitClipboardPermissionRequest.cpp @no-unify
+UIProcess/API/glib/WebKitColorChooserRequest.cpp @no-unify
 UIProcess/API/glib/WebKitContextMenuClient.cpp @no-unify
 UIProcess/API/glib/WebKitCookieManager.cpp @no-unify
 UIProcess/API/glib/WebKitCredential.cpp @no-unify
@@ -148,6 +154,7 @@ UIProcess/API/glib/WebKitFileChooserRequest.cpp @no-unify
 UIProcess/API/glib/WebKitFindController.cpp @no-unify
 UIProcess/API/glib/WebKitFormClient.cpp @no-unify
 UIProcess/API/glib/WebKitFormSubmissionRequest.cpp @no-unify
+UIProcess/API/glib/WebKitFrameInfo.cpp @no-unify
 UIProcess/API/glib/WebKitGeolocationManager.cpp @no-unify
 UIProcess/API/glib/WebKitGeolocationPermissionRequest.cpp @no-unify
 UIProcess/API/glib/WebKitIconLoadingClient.cpp @no-unify
@@ -183,6 +190,7 @@ UIProcess/API/glib/WebKitUIClient.cpp @no-unify
 UIProcess/API/glib/WebKitURISchemeRequest.cpp @no-unify
 UIProcess/API/glib/WebKitURISchemeResponse.cpp @no-unify
 UIProcess/API/glib/WebKitURIUtilities.cpp @no-unify
+UIProcess/API/glib/WebKitUserAgent.cpp @no-unify
 UIProcess/API/glib/WebKitUserContent.cpp @no-unify
 UIProcess/API/glib/WebKitUserContentFilterStore.cpp @no-unify
 UIProcess/API/glib/WebKitUserContentManager.cpp @no-unify
@@ -210,7 +218,6 @@ UIProcess/API/gtk/PageClientImpl.cpp @no-unify
 UIProcess/API/gtk/ToplevelWindow.cpp @no-unify
 UIProcess/API/gtk/WebKitAuthenticationDialog.cpp @no-unify
 UIProcess/API/gtk/WebKitColorChooser.cpp @no-unify
-UIProcess/API/gtk/WebKitColorChooserRequest.cpp @no-unify
 UIProcess/API/gtk/WebKitEmojiChooser.cpp @no-unify
 UIProcess/API/gtk/WebKitInputMethodContextGtk.cpp @no-unify
 UIProcess/API/gtk/WebKitInputMethodContextImplGtk.cpp @no-unify
@@ -235,6 +242,7 @@ UIProcess/Automation/gtk/WebAutomationSessionGtk.cpp @no-unify
 UIProcess/CoordinatedGraphics/DrawingAreaProxyCoordinatedGraphics.cpp
 
 UIProcess/Extensions/glib/WebExtensionGLib.cpp
+UIProcess/Extensions/glib/WebExtensionContextGLib.cpp
 
 UIProcess/Extensions/gtk/WebExtensionGTK.cpp
 
@@ -245,6 +253,7 @@ UIProcess/geoclue/GeoclueGeolocationProvider.cpp
 
 UIProcess/Inspector/glib/RemoteInspectorClient.cpp
 UIProcess/Inspector/glib/RemoteInspectorHTTPServer.cpp
+UIProcess/Inspector/glib/WebInspectorUIProxyGLib.cpp
 
 UIProcess/Inspector/gtk/RemoteWebInspectorUIProxyGtk.cpp
 UIProcess/Inspector/gtk/WebInspectorUIProxyGtk.cpp
@@ -262,8 +271,6 @@ UIProcess/linux/MemoryPressureMonitor.cpp
 UIProcess/WebsiteData/glib/WebsiteDataStoreGLib.cpp
 UIProcess/WebsiteData/soup/WebsiteDataStoreSoup.cpp
 
-UIProcess/cairo/BackingStoreCairo.cpp
-
 UIProcess/glib/DRMMainDevice.cpp @no-unify
 UIProcess/glib/DisplayLinkGLib.cpp
 UIProcess/glib/DisplayVBlankMonitor.cpp
@@ -273,9 +280,12 @@ UIProcess/glib/DisplayVBlankMonitorTimer.cpp
 UIProcess/glib/FenceMonitor.cpp
 UIProcess/glib/ScreenManager.cpp
 UIProcess/glib/SystemSettingsManagerProxy.cpp
+UIProcess/glib/TextCheckerGLib.cpp @no-unify
 UIProcess/glib/WebPageProxyGLib.cpp
 UIProcess/glib/WebProcessPoolGLib.cpp
 UIProcess/glib/WebProcessProxyGLib.cpp
+UIProcess/glib/WebTextCheckerClient.cpp
+UIProcess/glib/WebTextChecker.cpp
 
 UIProcess/gstreamer/WebPageProxyGStreamer.cpp
 
@@ -296,7 +306,6 @@ UIProcess/gtk/PointerLockManagerWayland.cpp @no-unify
 UIProcess/gtk/PointerLockManagerX11.cpp @no-unify
 UIProcess/gtk/ScreenManagerGtk.cpp @no-unify
 UIProcess/gtk/SystemSettingsManagerProxyGtk.cpp
-UIProcess/gtk/TextCheckerGtk.cpp @no-unify
 UIProcess/gtk/ValidationBubbleGtk.cpp
 UIProcess/gtk/ViewSnapshotStoreGtk3.cpp @no-unify
 UIProcess/gtk/ViewSnapshotStoreGtk4.cpp @no-unify
@@ -308,12 +317,11 @@ UIProcess/gtk/WebPageProxyGtk.cpp @no-unify
 UIProcess/gtk/WebPasteboardProxyGtk.cpp
 UIProcess/gtk/WebPopupMenuProxyGtk.cpp
 UIProcess/gtk/WebPreferencesGtk.cpp
-UIProcess/gtk/WebTextChecker.cpp
-UIProcess/gtk/WebTextCheckerClient.cpp
 
 UIProcess/soup/WebProcessPoolSoup.cpp
 
 UIProcess/XR/openxr/OpenXRExtensions.cpp
+UIProcess/XR/openxr/OpenXRGraphicsBindingOpenGLES.cpp
 UIProcess/XR/openxr/OpenXRHitTestManager.cpp
 UIProcess/XR/openxr/OpenXRInput.cpp
 UIProcess/XR/openxr/OpenXRInputSource.cpp
@@ -342,8 +350,6 @@ WebProcess/Inspector/gtk/WebInspectorUIGtk.cpp
 
 WebProcess/MediaCache/WebMediaKeyStorageManager.cpp
 
-WebProcess/Network/webrtc/rice/RiceBackendProxy.cpp
-
 WebProcess/WebCoreSupport/WebValidationMessageClient.cpp
 
 WebProcess/WebCoreSupport/glib/WebEditorClientGLib.cpp
@@ -354,13 +360,17 @@ WebProcess/WebCoreSupport/gtk/WebEditorClientGtk.cpp
 
 WebProcess/WebCoreSupport/soup/WebFrameNetworkingContext.cpp
 
-WebProcess/WebPage/ViewGestureGeometryCollector.cpp
+WebProcess/WebPage/ViewGestureGeometryCollector.cpp @cost:5
 
 WebProcess/WebPage/CoordinatedGraphics/AcceleratedSurface.cpp @no-unify
 WebProcess/WebPage/CoordinatedGraphics/CoordinatedSceneState.cpp
-WebProcess/WebPage/CoordinatedGraphics/DrawingAreaCoordinatedGraphics.cpp
+WebProcess/WebPage/CoordinatedGraphics/DrawingAreaCoordinatedGraphicsGLib.cpp
+WebProcess/WebPage/CoordinatedGraphics/FrameRenderer.cpp
 WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
-WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
+WebProcess/WebPage/CoordinatedGraphics/NonCompositedFrameRenderer.cpp @no-unify
+WebProcess/WebPage/CoordinatedGraphics/ScrollbarsControllerCoordinated.cpp
+WebProcess/WebPage/CoordinatedGraphics/ScrollingCoordinatorCoordinated.cpp
+WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp @no-unify
 
 WebProcess/WebPage/glib/WebPageGLib.cpp
 

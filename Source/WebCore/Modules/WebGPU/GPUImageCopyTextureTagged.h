@@ -26,7 +26,7 @@
 #pragma once
 
 #include "GPUImageCopyTexture.h"
-#include "GPUPredefinedColorSpace.h"
+#include "PredefinedColorSpace.h"
 #include "WebGPUImageCopyTextureTagged.h"
 
 namespace WebCore {
@@ -34,7 +34,6 @@ namespace WebCore {
 struct GPUImageCopyTextureTagged : public GPUImageCopyTexture {
     WebGPU::ImageCopyTextureTagged convertToBacking() const
     {
-        ASSERT(texture);
         return {
             {
                 texture->backing(),
@@ -42,12 +41,14 @@ struct GPUImageCopyTextureTagged : public GPUImageCopyTexture {
                 origin ? std::optional { WebCore::convertToBacking(*origin) } : std::nullopt,
                 WebCore::convertToBacking(aspect),
             },
-            WebCore::convertToBacking(colorSpace),
+            colorSpace,
             premultipliedAlpha,
         };
     }
 
-    GPUPredefinedColorSpace colorSpace { GPUPredefinedColorSpace::SRGB };
+    Ref<JSON::Object> toJSON() const;
+
+    PredefinedColorSpace colorSpace { PredefinedColorSpace::SRGB };
     bool premultipliedAlpha { false };
 };
 

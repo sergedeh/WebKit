@@ -69,8 +69,14 @@ enum DeviceType {
     readonly attribute boolean supportsRewind;
     readonly attribute boolean needsChromeMediaControlsPseudoElement;
     readonly attribute boolean isMediaControlsMacInlineSizeSpecsEnabled;
+    readonly attribute boolean spatialVideoRenderingEnabled;
+    readonly attribute DOMString spatialVideoProjectionKind;
+    readonly attribute long? spatialVideoHorizontalFieldOfView;
+    undefined spatialCameraDidMove(unrestricted double yaw, unrestricted double pitch, unrestricted double fieldOfView);
+    readonly attribute boolean isAVExperienceControllerFullscreenEnabled;
 
     readonly attribute DOMString externalDeviceDisplayName;
+    readonly attribute DOMString externalDeviceRouteName;
     readonly attribute DeviceType externalDeviceType;
 
     attribute boolean controlsDependOnPageScaleFactor;
@@ -88,6 +94,7 @@ enum DeviceType {
     DOMString base64StringForIconNameAndType(DOMString iconName, DOMString iconType);
     [Conditional=MEDIA_CONTROLS_CONTEXT_MENUS, EnabledBySetting=MediaControlsContextMenusEnabled] boolean showMediaControlsContextMenu(HTMLElement target, JSON options, VoidCallback callback);
     [Conditional=MEDIA_CONTROLS_CONTEXT_MENUS, EnabledBySetting=MediaControlsContextMenusEnabled, ImplementedAs=mediaControlsContextMenuItemsForBindings] sequence<MediaControlsContextMenuItem> mediaControlsContextMenuItems(JSON options);
+    [Conditional=MEDIA_CONTROLS_CONTEXT_MENUS, EnabledBySetting=MediaControlsContextMenusEnabled, ImplementedAs=mediaControlsContextMenuAnchorRectForBindings] DOMRect mediaControlsContextMenuAnchorRect(HTMLElement target);
 
     [Conditional=MEDIA_SESSION] undefined ensureMediaSessionObserver();
 

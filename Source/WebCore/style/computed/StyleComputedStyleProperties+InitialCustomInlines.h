@@ -37,6 +37,7 @@
 #include <WebCore/StyleBoxData.h>
 #include <WebCore/StyleCustomPropertyData.h>
 #include <WebCore/StyleDeprecatedFlexibleBoxData.h>
+#include <WebCore/StyleDisplay.h>
 #include <WebCore/StyleFillLayers.h>
 #include <WebCore/StyleFilterData.h>
 #include <WebCore/StyleFlexibleBoxData.h>
@@ -94,46 +95,6 @@
 namespace WebCore {
 namespace Style {
 
-constexpr SVGGlyphOrientationHorizontal ComputedStyleProperties::initialGlyphOrientationHorizontal()
-{
-    return SVGGlyphOrientationHorizontal::Degrees0;
-}
-
-inline WebCore::Color ComputedStyleProperties::initialColor()
-{
-    return WebCore::Color::black;
-}
-
-constexpr LineWidth ComputedStyleProperties::initialBorderBottomWidth()
-{
-    return LineWidth { 3.0f };
-}
-
-constexpr LineWidth ComputedStyleProperties::initialBorderLeftWidth()
-{
-    return LineWidth { 3.0f };
-}
-
-constexpr LineWidth ComputedStyleProperties::initialBorderRightWidth()
-{
-    return LineWidth { 3.0f };
-}
-
-constexpr LineWidth ComputedStyleProperties::initialBorderTopWidth()
-{
-    return LineWidth { 3.0f };
-}
-
-constexpr LineWidth ComputedStyleProperties::initialColumnRuleWidth()
-{
-    return LineWidth { 3.0f };
-}
-
-constexpr LineWidth ComputedStyleProperties::initialOutlineWidth()
-{
-    return LineWidth { 3.0f };
-}
-
 constexpr WebkitLineBoxContain ComputedStyleProperties::initialLineBoxContain()
 {
     return { WebkitLineBoxContainValue::Block, WebkitLineBoxContainValue::Inline, WebkitLineBoxContainValue::Replaced };
@@ -146,7 +107,7 @@ constexpr TextEmphasisPosition ComputedStyleProperties::initialTextEmphasisPosit
 
 constexpr PositionVisibility ComputedStyleProperties::initialPositionVisibility()
 {
-    return PositionVisibilityValue::AnchorsVisible;
+    return PositionVisibilityValue::AnchorVisible;
 }
 
 } // namespace Style

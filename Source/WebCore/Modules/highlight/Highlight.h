@@ -42,10 +42,14 @@ public:
     }
 
     AbstractRange& range() const { return m_range.get(); }
-    const Position& startPosition() const { return m_startPosition; }
+    const Position& startPosition() const LIFETIME_BOUND { return m_startPosition; }
     void setStartPosition(Position&& startPosition) { m_startPosition = WTF::move(startPosition); }
-    const Position& endPosition() const { return m_endPosition; }
+    const Position& endPosition() const LIFETIME_BOUND { return m_endPosition; }
     void setEndPosition(Position&& endPosition) { m_endPosition = WTF::move(endPosition); }
+
+    bool needsPositionUpdate() const { return m_needsPositionUpdate; }
+    void setNeedsPositionUpdate() { m_needsPositionUpdate = true; }
+    void didUpdatePositions() { m_needsPositionUpdate = false; }
 
 private:
     explicit HighlightRange(Ref<AbstractRange>&& range)
@@ -58,6 +62,7 @@ private:
     const Ref<AbstractRange> m_range;
     Position m_startPosition;
     Position m_endPosition;
+    bool m_needsPositionUpdate { true };
 };
 
 class Highlight : public RefCounted<Highlight> {
@@ -77,7 +82,8 @@ public:
     void setPriority(int);
 
     void repaint();
-    const Vector<Ref<HighlightRange>>& highlightRanges() const { return m_highlightRanges; }
+    void setAllRangesNeedPositionUpdate();
+    const Vector<Ref<HighlightRange>>& highlightRanges() const LIFETIME_BOUND { return m_highlightRanges; }
 
 private:
     explicit Highlight(FixedVector<std::reference_wrapper<AbstractRange>>&&);

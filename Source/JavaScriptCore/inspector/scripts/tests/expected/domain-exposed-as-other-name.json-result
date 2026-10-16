@@ -182,8 +182,8 @@ public:
 
 #include "TestProtocolObjects.h"
 #include <JavaScriptCore/InspectorBackendDispatcher.h>
+#include <expected>
 #include <tuple>
-#include <wtf/Expected.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/WTFString.h>
 
@@ -379,8 +379,7 @@ void DatabaseBackendDispatcher::executeSQLAsyncOptionalReturnValues(long protoco
     m_agent->executeSQLAsyncOptionalReturnValues(*in_databaseId, in_query, [backendDispatcher = m_backendDispatcher.copyRef(), protocol_requestId](CommandResultOf<RefPtr<JSON::ArrayOf<String>>, String, std::optional<double>, RefPtr<JSON::Object>, RefPtr<JSON::Value>, std::optional<int>, RefPtr<Protocol::Database::Error>, std::optional<Protocol::Database::PrimaryColors>, RefPtr<Protocol::Database::ColorList>, String> result) {
         if (!result) {
            ASSERT(!result.error().isEmpty());
-           backendDispatcher->reportProtocolError(protocol_requestId, BackendDispatcher::ServerError, result.error());
-           backendDispatcher->sendPendingErrors();
+           backendDispatcher->sendErrorResponse(protocol_requestId, BackendDispatcher::ServerError, result.error());
            return;
         }
         auto [out_opt_columnNames, out_opt_notes, out_opt_timestamp, out_opt_values, out_opt_payload, out_opt_databaseId, out_opt_sqlError, out_opt_screenColor, out_opt_alternateColors, out_opt_printColor] = WTF::move(result.value());
@@ -468,8 +467,7 @@ void DatabaseBackendDispatcher::executeSQLAsync(long protocol_requestId, RefPtr<
     m_agent->executeSQLAsync(*in_databaseId, in_query, [backendDispatcher = m_backendDispatcher.copyRef(), protocol_requestId](CommandResultOf<Ref<JSON::ArrayOf<String>>, String, double, Ref<JSON::Object>, Ref<JSON::Value>, int, Ref<Protocol::Database::Error>, Protocol::Database::PrimaryColors, Ref<Protocol::Database::ColorList>, String> result) {
         if (!result) {
            ASSERT(!result.error().isEmpty());
-           backendDispatcher->reportProtocolError(protocol_requestId, BackendDispatcher::ServerError, result.error());
-           backendDispatcher->sendPendingErrors();
+           backendDispatcher->sendErrorResponse(protocol_requestId, BackendDispatcher::ServerError, result.error());
            return;
         }
         auto [out_columnNames, out_notes, out_timestamp, out_values, out_payload, out_databaseId, out_sqlError, out_screenColor, out_alternateColors, out_printColor] = WTF::move(result.value());
@@ -835,7 +833,7 @@ namespace Protocol {
 
 namespace TestHelpers {
 
-static const auto enum_constant_values = std::to_array<ASCIILiteral>({
+static const auto enum_constant_values = WTF::toArray<ASCIILiteral>({
     "red"_s,
     "green"_s,
     "blue"_s,
@@ -853,7 +851,7 @@ String getEnumConstantValue(int code) {
 
 template<> std::optional<Protocol::Database::PrimaryColors> parseEnumValueFromString<Protocol::Database::PrimaryColors>(const String& protocolString)
 {
-    static const auto constantValues = std::to_array<size_t>({
+    static const auto constantValues = WTF::toArray<size_t>({
         (size_t)Protocol::Database::PrimaryColors::Red,
         (size_t)Protocol::Database::PrimaryColors::Green,
         (size_t)Protocol::Database::PrimaryColors::Blue,
@@ -975,8 +973,7 @@ void ObjCInspectorDatabaseBackendDispatcher::executeSQLSyncOptionalReturnValues(
     }
 
     id errorCallback = ^(NSString *error) {
-        backendDispatcher()->reportProtocolError(protocol_requestId, BackendDispatcher::ServerError, error);
-        backendDispatcher()->sendPendingErrors();
+        backendDispatcher()->sendErrorResponse(protocol_requestId, BackendDispatcher::ServerError, error);
     };
 
     id successCallback = ^(NSArray/*<NSString>*/ **out_opt_columnNames, NSString **out_opt_notes, double *out_opt_timestamp, RWIProtocolJSONObject **out_opt_values, RWIProtocolJSONObject **out_opt_payload, int *out_opt_databaseId, TestProtocolDatabaseError **out_opt_sqlError, TestProtocolDatabasePrimaryColors *out_opt_screenColor, NSArray/*<NSString>*/ **out_opt_alternateColors, TestProtocolDatabase(anonymous) *out_opt_printColor) {
@@ -1024,8 +1021,7 @@ void ObjCInspectorDatabaseBackendDispatcher::executeSQLAsyncOptionalReturnValues
     }
 
     id errorCallback = ^(NSString *error) {
-        backendDispatcher()->reportProtocolError(protocol_requestId, BackendDispatcher::ServerError, error);
-        backendDispatcher()->sendPendingErrors();
+        backendDispatcher()->sendErrorResponse(protocol_requestId, BackendDispatcher::ServerError, error);
     };
 
     id successCallback = ^(NSArray/*<NSString>*/ **out_opt_columnNames, NSString **out_opt_notes, double *out_opt_timestamp, RWIProtocolJSONObject **out_opt_values, RWIProtocolJSONObject **out_opt_payload, int *out_opt_databaseId, TestProtocolDatabaseError **out_opt_sqlError, TestProtocolDatabasePrimaryColors *out_opt_screenColor, NSArray/*<NSString>*/ **out_opt_alternateColors, TestProtocolDatabase(anonymous) *out_opt_printColor) {
@@ -1073,8 +1069,7 @@ void ObjCInspectorDatabaseBackendDispatcher::executeSQLSync(long protocol_reques
     }
 
     id errorCallback = ^(NSString *error) {
-        backendDispatcher()->reportProtocolError(protocol_requestId, BackendDispatcher::ServerError, error);
-        backendDispatcher()->sendPendingErrors();
+        backendDispatcher()->sendErrorResponse(protocol_requestId, BackendDispatcher::ServerError, error);
     };
 
     id successCallback = ^(NSArray/*<NSString>*/ *out_columnNames, NSString *out_notes, double out_timestamp, RWIProtocolJSONObject *out_values, RWIProtocolJSONObject *out_payload, int out_databaseId, TestProtocolDatabaseError *out_sqlError, NSArray/*<NSString>*/ *out_alternateColors, TestProtocolDatabasePrimaryColors out_screenColor, TestProtocolDatabase(anonymous) out_printColor) {
@@ -1112,8 +1107,7 @@ void ObjCInspectorDatabaseBackendDispatcher::executeSQLAsync(long protocol_reque
     }
 
     id errorCallback = ^(NSString *error) {
-        backendDispatcher()->reportProtocolError(protocol_requestId, BackendDispatcher::ServerError, error);
-        backendDispatcher()->sendPendingErrors();
+        backendDispatcher()->sendErrorResponse(protocol_requestId, BackendDispatcher::ServerError, error);
     };
 
     id successCallback = ^(NSArray/*<NSString>*/ *out_columnNames, NSString *out_notes, double out_timestamp, RWIProtocolJSONObject *out_values, RWIProtocolJSONObject *out_payload, int out_databaseId, TestProtocolDatabaseError *out_sqlError, TestProtocolDatabasePrimaryColors out_screenColor, NSArray/*<NSString>*/ *out_alternateColors, TestProtocolDatabase(anonymous) out_printColor) {
@@ -1540,7 +1534,7 @@ inline String toProtocolString(TestProtocolDatabasePrimaryColors value)
 template<>
 inline std::optional<TestProtocolDatabasePrimaryColors> fromProtocolString(const String& value)
 {
-    static constexpr SortedArrayMap map { std::to_array<std::pair<ComparableASCIILiteral, TestProtocolDatabasePrimaryColors>>({
+    static constexpr SortedArrayMap map { WTF::toArray<std::pair<ComparableASCIILiteral, TestProtocolDatabasePrimaryColors>>({
         { "blue"_s, TestProtocolDatabasePrimaryColorsBlue },
         { "green"_s, TestProtocolDatabasePrimaryColorsGreen },
         { "red"_s, TestProtocolDatabasePrimaryColorsRed },
@@ -1567,7 +1561,7 @@ inline String toProtocolString(TestProtocolDatabaseExecuteSQLSyncOptionalReturnV
 template<>
 inline std::optional<TestProtocolDatabaseExecuteSQLSyncOptionalReturnValuesPrintColor> fromProtocolString(const String& value)
 {
-    static constexpr SortedArrayMap map { std::to_array<std::pair<ComparableASCIILiteral, TestProtocolDatabaseExecuteSQLSyncOptionalReturnValuesPrintColor>>({
+    static constexpr SortedArrayMap map { WTF::toArray<std::pair<ComparableASCIILiteral, TestProtocolDatabaseExecuteSQLSyncOptionalReturnValuesPrintColor>>({
         { "black"_s, TestProtocolDatabaseExecuteSQLSyncOptionalReturnValuesPrintColorBlack },
         { "cyan"_s, TestProtocolDatabaseExecuteSQLSyncOptionalReturnValuesPrintColorCyan },
         { "magenta"_s, TestProtocolDatabaseExecuteSQLSyncOptionalReturnValuesPrintColorMagenta },
@@ -1595,7 +1589,7 @@ inline String toProtocolString(TestProtocolDatabaseExecuteSQLAsyncOptionalReturn
 template<>
 inline std::optional<TestProtocolDatabaseExecuteSQLAsyncOptionalReturnValuesPrintColor> fromProtocolString(const String& value)
 {
-    static constexpr SortedArrayMap map { std::to_array<std::pair<ComparableASCIILiteral, TestProtocolDatabaseExecuteSQLAsyncOptionalReturnValuesPrintColor>>({
+    static constexpr SortedArrayMap map { WTF::toArray<std::pair<ComparableASCIILiteral, TestProtocolDatabaseExecuteSQLAsyncOptionalReturnValuesPrintColor>>({
         { "black"_s, TestProtocolDatabaseExecuteSQLAsyncOptionalReturnValuesPrintColorBlack },
         { "cyan"_s, TestProtocolDatabaseExecuteSQLAsyncOptionalReturnValuesPrintColorCyan },
         { "magenta"_s, TestProtocolDatabaseExecuteSQLAsyncOptionalReturnValuesPrintColorMagenta },
@@ -1623,7 +1617,7 @@ inline String toProtocolString(TestProtocolDatabaseExecuteSQLSyncPrintColor valu
 template<>
 inline std::optional<TestProtocolDatabaseExecuteSQLSyncPrintColor> fromProtocolString(const String& value)
 {
-    static constexpr SortedArrayMap map { std::to_array<std::pair<ComparableASCIILiteral, TestProtocolDatabaseExecuteSQLSyncPrintColor>>({
+    static constexpr SortedArrayMap map { WTF::toArray<std::pair<ComparableASCIILiteral, TestProtocolDatabaseExecuteSQLSyncPrintColor>>({
         { "black"_s, TestProtocolDatabaseExecuteSQLSyncPrintColorBlack },
         { "cyan"_s, TestProtocolDatabaseExecuteSQLSyncPrintColorCyan },
         { "magenta"_s, TestProtocolDatabaseExecuteSQLSyncPrintColorMagenta },
@@ -1651,7 +1645,7 @@ inline String toProtocolString(TestProtocolDatabaseExecuteSQLAsyncPrintColor val
 template<>
 inline std::optional<TestProtocolDatabaseExecuteSQLAsyncPrintColor> fromProtocolString(const String& value)
 {
-    static constexpr SortedArrayMap map { std::to_array<std::pair<ComparableASCIILiteral, TestProtocolDatabaseExecuteSQLAsyncPrintColor>>({
+    static constexpr SortedArrayMap map { WTF::toArray<std::pair<ComparableASCIILiteral, TestProtocolDatabaseExecuteSQLAsyncPrintColor>>({
         { "black"_s, TestProtocolDatabaseExecuteSQLAsyncPrintColorBlack },
         { "cyan"_s, TestProtocolDatabaseExecuteSQLAsyncPrintColorCyan },
         { "magenta"_s, TestProtocolDatabaseExecuteSQLAsyncPrintColorMagenta },

@@ -54,8 +54,8 @@ public:
     ~WebKitMediaKeySession();
 
     WebKitMediaKeyError* error() { return m_error.get(); }
-    const String& keySystem() const { return m_keySystem; }
-    const String& sessionId() const { return m_sessionId; }
+    const String& keySystem() const LIFETIME_BOUND { return m_keySystem; }
+    const String& sessionId() const LIFETIME_BOUND { return m_sessionId; }
     ExceptionOr<void> update(Ref<Uint8Array>&& key);
     void close();
 
@@ -81,16 +81,16 @@ private:
 
     // ActiveDOMObject.
     void stop() final;
-    bool virtualHasPendingActivity() const final;
+    bool LEGACY_NODELETE virtualHasPendingActivity() const final;
 
     enum EventTargetInterfaceType eventTargetInterface() const final { return EventTargetInterfaceType::WebKitMediaKeySession; }
-    ScriptExecutionContext* scriptExecutionContext() const final;
+    ScriptExecutionContext* LEGACY_NODELETE scriptExecutionContext() const final;
 
 #if !RELEASE_LOG_DISABLED
     const Logger& logger() const final { return m_logger; }
     uint64_t logIdentifier() const final { return m_logIdentifier; }
     ASCIILiteral logClassName() const { return "WebKitMediaKeySession"_s; }
-    WTFLogChannel& logChannel() const;
+    WTFLogChannel& LEGACY_NODELETE logChannel() const;
 
     const Ref<const Logger> m_logger;
     const uint64_t m_logIdentifier;

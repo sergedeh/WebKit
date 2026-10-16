@@ -97,12 +97,18 @@ class FunctionExecutable;
                 ("JavaScriptCore", "builtins/BuiltinUtils.h"),
             ),
 
+            (["WebCore"], ("JavaScriptCore", "runtime/FunctionExecutable.h")),
+
             (["WebCore"],
                 ("JavaScriptCore", "runtime/Identifier.h"),
             ),
 
             (["WebCore"],
                 ("JavaScriptCore", "runtime/JSFunction.h"),
+            ),
+
+            (["WebCore"],
+                ("JavaScriptCore", "heap/SlotVisitorInlines.h"),
             ),
         ]
 

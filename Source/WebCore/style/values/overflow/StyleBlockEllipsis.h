@@ -26,45 +26,46 @@
 
 #pragma once
 
+#include <WebCore/StyleString.h>
 #include <WebCore/StyleValueTypes.h>
 #include <wtf/text/AtomString.h>
 
 namespace WebCore {
 namespace Style {
 
-// <'block-ellipse'> = none | auto | <string>
+// <'block-ellipsis'> = no-ellipsis | ellipsis | <string>
 // https://www.w3.org/TR/css-overflow-4/#propdef-block-ellipsis
 struct BlockEllipsis {
-    BlockEllipsis(CSS::Keyword::None)
+    BlockEllipsis(CSS::Keyword::NoEllipsis)
     {
     }
 
-    BlockEllipsis(CSS::Keyword::Auto)
-        : m_type { Type::Auto }
+    BlockEllipsis(CSS::Keyword::Ellipsis)
+        : m_type { Type::Ellipsis }
     {
     }
 
-    BlockEllipsis(AtomString&& string)
+    BlockEllipsis(String&& string)
         : m_type { Type::String }
-        , m_string { WTF::move(string) }
+        , m_string { WTF::move(string.value) }
     {
     }
 
-    bool isNone() const { return m_type == Type::None; }
-    bool isAuto() const { return m_type == Type::Auto; }
+    bool isNone() const { return m_type == Type::NoEllipsis; }
+    bool isEllipsis() const { return m_type == Type::Ellipsis; }
     bool isString() const { return m_type == Type::String; }
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
         switch (m_type) {
-        case Type::None:
-            return visitor(CSS::Keyword::None { });
-        case Type::Auto:
-            return visitor(CSS::Keyword::Auto { });
+        case Type::NoEllipsis:
+            return visitor(CSS::Keyword::NoEllipsis { });
+        case Type::Ellipsis:
+            return visitor(CSS::Keyword::Ellipsis { });
         case Type::String:
-            return visitor(m_string);
+            return visitor(String { m_string });
         }
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -72,9 +73,9 @@ struct BlockEllipsis {
     bool operator==(const BlockEllipsis&) const = default;
 
 private:
-    enum class Type : uint8_t { None, Auto, String };
+    enum class Type : uint8_t { NoEllipsis, Ellipsis, String };
 
-    Type m_type { Type::None };
+    Type m_type { Type::NoEllipsis };
     AtomString m_string { nullAtom() };
 };
 

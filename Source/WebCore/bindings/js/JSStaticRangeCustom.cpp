@@ -31,11 +31,12 @@
 namespace WebCore {
 
 template<typename Visitor>
-void JSStaticRange::visitAdditionalChildren(Visitor& visitor)
+void JSStaticRange::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
-    wrapped().visitNodesConcurrently(visitor);
+    // Cannot ref on the GC thread.
+    SUPPRESS_UNCOUNTED_ARG wrapped().visitNodesInGCThread(visitor);
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSStaticRange);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSStaticRange);
 
 } // namespace WebCore

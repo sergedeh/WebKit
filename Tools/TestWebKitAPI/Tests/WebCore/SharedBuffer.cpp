@@ -28,7 +28,7 @@
 #include "config.h"
 
 #include "SharedBufferTest.h"
-#include "Test.h"
+#include "Helpers/Test.h"
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <WebCore/SharedBuffer.h>
 #if ENABLE(MHTML)
@@ -131,9 +131,9 @@ TEST_F(FragmentedSharedBufferTest, getReturnsContiguous)
 
 TEST_F(FragmentedSharedBufferTest, tryCreateArrayBufferLargeSegments)
 {
-    Vector<uint8_t> vector0(0x4000, 'a');
-    Vector<uint8_t> vector1(0x4000, 'b');
-    Vector<uint8_t> vector2(0x4000, 'c');
+    Vector<uint8_t> vector0(FillWith { }, 0x4000, 'a');
+    Vector<uint8_t> vector1(FillWith { }, 0x4000, 'b');
+    Vector<uint8_t> vector2(FillWith { }, 0x4000, 'c');
 
     SharedBufferBuilder builder(std::in_place, WTF::move(vector0));
     builder.append(WTF::move(vector1));
@@ -404,6 +404,58 @@ TEST_F(FragmentedSharedBufferTest, extractData)
     EXPECT_GT(original->begin()->segment->size(), 0u);
 }
 
+TEST_F(FragmentedSharedBufferTest, isSpanWithinBounds)
+{
+    // Use a Provider-backed SharedBuffer so the underlying data lives in our
+    // controlled allocation, allowing safe pointer arithmetic to construct
+    // out-of-bounds spans for testing.
+    Vector<uint8_t> backing(FillWith { }, 200, 'x');
+    auto* base = backing.span().data();
+    constexpr size_t bufferOffset = 50;
+    constexpr size_t bufferSize = 100;
+    auto bufferDataSpan = std::span<const uint8_t>(base + bufferOffset, bufferSize);
+    auto buffer = SharedBuffer::create(DataSegment::Provider {
+        [bufferDataSpan]() { return bufferDataSpan; }
+    });
+    auto bufferSpan = buffer->span();
+    ASSERT_EQ(bufferSpan.data(), base + bufferOffset);
+    ASSERT_EQ(bufferSpan.size(), bufferSize);
+
+    // Fully within bounds.
+    EXPECT_TRUE(buffer->isSpanWithinBounds(bufferSpan));
+    EXPECT_TRUE(buffer->isSpanWithinBounds(bufferSpan.subspan(0, 50)));
+    EXPECT_TRUE(buffer->isSpanWithinBounds(bufferSpan.subspan(50)));
+    EXPECT_TRUE(buffer->isSpanWithinBounds(bufferSpan.subspan(10, 80)));
+
+    // Empty spans at boundaries.
+    EXPECT_TRUE(buffer->isSpanWithinBounds(bufferSpan.subspan(0, 0)));
+    EXPECT_TRUE(buffer->isSpanWithinBounds(bufferSpan.subspan(bufferSize, 0)));
+
+    // Span starts before buffer but ends within it.
+    std::span<const uint8_t> startsBeforeEndsWithin(base + bufferOffset - 10, 50);
+    EXPECT_FALSE(buffer->isSpanWithinBounds(startsBeforeEndsWithin));
+
+    // Span starts within buffer but extends past the end.
+    std::span<const uint8_t> startsWithinEndsPast(base + bufferOffset + 80, 30);
+    EXPECT_FALSE(buffer->isSpanWithinBounds(startsWithinEndsPast));
+
+    // Span entirely before buffer.
+    std::span<const uint8_t> entirelyBefore(base, 20);
+    EXPECT_FALSE(buffer->isSpanWithinBounds(entirelyBefore));
+
+    // Span entirely after buffer.
+    std::span<const uint8_t> entirelyAfter(base + bufferOffset + bufferSize + 10, 20);
+    EXPECT_FALSE(buffer->isSpanWithinBounds(entirelyAfter));
+
+    // Empty span before buffer.
+    std::span<const uint8_t> emptyBefore(base, 0);
+    EXPECT_FALSE(buffer->isSpanWithinBounds(emptyBefore));
+
+    // Empty span after buffer.
+    std::span<const uint8_t> emptyAfter(base + bufferOffset + bufferSize + 10, 0);
+    EXPECT_FALSE(buffer->isSpanWithinBounds(emptyAfter));
+}
+
 TEST_F(FragmentedSharedBufferTest, copyIsContiguous)
 {
     EXPECT_TRUE(SharedBuffer::create()->copy()->isContiguous());
@@ -450,7 +502,7 @@ constexpr size_t arraysize( const T (&)[N] ) { return N; }
 
 static void readAllChunks(std::vector<String>* chunks, FragmentedSharedBuffer& buffer, const String& separator = "\r\n"_s, bool includeSeparator = false)
 {
-    SharedBufferChunkReader chunkReader(&buffer, separator.utf8().data());
+    SharedBufferChunkReader chunkReader(&buffer, separator.utf8());
     String chunk = chunkReader.nextChunkAsUTF8StringWithLatin1Fallback(includeSeparator);
     while (!chunk.isNull()) {
         chunks->push_back(chunk);
@@ -482,7 +534,7 @@ static void checkDataInRange(const Vector<uint8_t>& data, size_t start, size_t l
 TEST_F(SharedBufferChunkReaderTest, includeSeparator)
 {
     auto check = [](FragmentedSharedBuffer& sharedBuffer) {
-        SharedBufferChunkReader chunkReader(&sharedBuffer, "\x10\x11\x12");
+        SharedBufferChunkReader chunkReader(&sharedBuffer, "\x10\x11\x12"_s);
         Vector<uint8_t> out;
         EXPECT_TRUE(chunkReader.nextChunk(out));
         checkDataInRange(out, 0, 16);
@@ -513,7 +565,7 @@ TEST_F(SharedBufferChunkReaderTest, peekData)
     const auto simpleText = "This is a simple test."_span;
 
     auto check = [](FragmentedSharedBuffer& sharedBuffer) {
-        SharedBufferChunkReader chunkReader(&sharedBuffer, "is");
+        SharedBufferChunkReader chunkReader(&sharedBuffer, "is"_s);
 
         String chunk = chunkReader.nextChunkAsUTF8StringWithLatin1Fallback();
         EXPECT_EQ(chunk, "Th"_s);
@@ -611,14 +663,14 @@ TEST_F(SharedBufferChunkReaderTest, changingIterator)
     {
         const auto simpleText = "This is the most ridiculous history there is."_span;
         auto sharedBuffer = SharedBuffer::create(simpleText);
-        SharedBufferChunkReader chunkReader(sharedBuffer.ptr(), "is");
+        SharedBufferChunkReader chunkReader(sharedBuffer.ptr(), "is"_s);
         String chunk = chunkReader.nextChunkAsUTF8StringWithLatin1Fallback();
         EXPECT_EQ(chunk, "Th"_s);
 
         chunk = chunkReader.nextChunkAsUTF8StringWithLatin1Fallback();
         EXPECT_EQ(chunk, " "_s);
 
-        chunkReader.setSeparator("he");
+        chunkReader.setSeparator("he"_s);
         chunk = chunkReader.nextChunkAsUTF8StringWithLatin1Fallback();
         EXPECT_EQ(chunk, " t"_s);
 
@@ -626,12 +678,12 @@ TEST_F(SharedBufferChunkReaderTest, changingIterator)
         EXPECT_EQ(chunk, " most ridiculous history t"_s);
 
         // Set a non existing separator.
-        chunkReader.setSeparator("tchinta");
+        chunkReader.setSeparator("tchinta"_s);
         chunk = chunkReader.nextChunkAsUTF8StringWithLatin1Fallback();
         EXPECT_EQ(chunk, "re is."_s);
 
         // We should be at the end of the string, so any subsequent call to nextChunk should return null.
-        chunkReader.setSeparator(".");
+        chunkReader.setSeparator("."_s);
         chunk = chunkReader.nextChunkAsUTF8StringWithLatin1Fallback(true);
         EXPECT_TRUE(chunk.isNull());
     }

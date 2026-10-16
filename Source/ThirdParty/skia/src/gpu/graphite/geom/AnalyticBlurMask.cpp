@@ -14,6 +14,7 @@
 #include "include/core/SkImageInfo.h"
 #include "include/core/SkMatrix.h"
 #include "include/core/SkPaint.h"
+#include "include/core/SkPoint.h"
 #include "include/core/SkRRect.h"
 #include "include/core/SkRect.h"
 #include "include/core/SkScalar.h"
@@ -21,12 +22,11 @@
 #include "include/effects/SkImageFilters.h"
 #include "include/gpu/GpuTypes.h"
 #include "include/gpu/graphite/Recorder.h"
-#include "include/private/base/SkAlign.h"
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkFloatingPoint.h"
-#include "include/private/base/SkMacros.h"
-#include "include/private/base/SkPoint_impl.h"
-#include "src/base/SkFloatBits.h"
+#include "include/private/SkAlign.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkFloatingPoint.h"
+#include "include/private/SkMacros.h"
+#include "src/core/SkFloatBits.h"
 #include "src/core/SkRRectPriv.h"
 #include "src/gpu/BlurUtils.h"
 #include "src/gpu/ResourceKey.h"
@@ -375,7 +375,7 @@ std::optional<AnalyticBlurMask> AnalyticBlurMask::MakeRRect(Recorder* recorder,
     static const UniqueKey::Domain kRRectBlurDomain = UniqueKey::GenerateDomain();
     UniqueKey key;
     {
-        static constexpr int kKeySize = sizeof(DerivedParams) / sizeof(uint32_t);
+        static constexpr uint16_t kKeySize = sizeof(DerivedParams) / sizeof(uint32_t);
         static_assert(SkIsAlign4(sizeof(DerivedParams)));
         // TODO: We should discretize the sigma to perceptibly meaningful changes to the table,
         // as well as the underlying the round rect geometry.

@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2026 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,8 +26,8 @@
 
 #pragma once
 
+#include "CSSColorInterpolationMethod.h"
 #include "Color.h"
-#include "ColorInterpolationMethod.h"
 #include "StylePrimitiveNumericTypes.h"
 #include <optional>
 
@@ -42,8 +43,7 @@ struct ColorMixResolver {
     };
 
     ColorInterpolationMethod colorInterpolationMethod;
-    Component mixComponents1;
-    Component mixComponents2;
+    Vector<Component> components;
 };
 
 WebCore::Color mix(const ColorMixResolver&);

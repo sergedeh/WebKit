@@ -35,9 +35,19 @@
 #import "WebProcessPool.h"
 #import "WebProcessProxy.h"
 #import "XPCEndpoint.h"
+#import <wtf/Borrow.h>
 #import <wtf/EnumTraits.h>
 #import <wtf/RuntimeApplicationChecks.h>
 #import <wtf/darwin/XPCExtras.h>
+
+#if ENABLE(CONTENT_EXTENSIONS)
+#import "WKContentRuleListInternal.h"
+#import "WebCompiledContentRuleList.h"
+#endif
+
+#if ENABLE(ADVANCED_PRIVACY_PROTECTIONS)
+#import "WebPrivacyHelpers.h"
+#endif
 
 #if PLATFORM(IOS_FAMILY)
 #import <UIKit/UIKit.h>
@@ -74,7 +84,7 @@ bool NetworkProcessProxy::XPCEventHandler::handleXPCEvent(xpc_object_t event)
     if (messageName == LaunchServicesDatabaseXPCConstants::xpcLaunchServicesDatabaseXPCEndpointMessageName) {
         networkProcess->m_endpointMessage = event;
         for (auto& processPool : WebProcessPool::allProcessPools()) {
-            for (Ref process : processPool->processes())
+            for (Ref process : borrow(processPool->processes()).get())
                 networkProcess->sendXPCEndpointToProcess(process);
         }
 #if ENABLE(GPU_PROCESS)
@@ -93,16 +103,16 @@ NetworkProcessProxy::XPCEventHandler::XPCEventHandler(const NetworkProcessProxy&
 
 bool NetworkProcessProxy::sendXPCEndpointToProcess(AuxiliaryProcessProxy& process)
 {
-    RELEASE_LOG(Process, "%p - NetworkProcessProxy::sendXPCEndpointToProcess(%p) state = %d has connection = %d XPC endpoint message = %p", this, &process, enumToUnderlyingType(process.state()), process.hasConnection(), xpcEndpointMessage());
+    RELEASE_LOG(Process, "%p - NetworkProcessProxy::sendXPCEndpointToProcess(%p) state = %d has connection = %d XPC endpoint message = %p", this, &process, std::to_underlying(process.state()), process.hasConnection(), xpcEndpointMessage());
 
     if (process.state() != AuxiliaryProcessProxy::State::Running)
         return false;
     if (!process.hasConnection())
         return false;
-    XPCObjectPtr<xpc_object_t> message = xpcEndpointMessage();
+    OSObjectPtr<xpc_object_t> message = xpcEndpointMessage();
     if (!message)
         return false;
-    XPCObjectPtr<xpc_connection_t> xpcConnection = process.connection().xpcConnection();
+    OSObjectPtr<xpc_connection_t> xpcConnection = process.connection().xpcConnection();
     RELEASE_ASSERT(xpcConnection);
     xpc_connection_send_message(xpcConnection.get(), message.get());
     return true;
@@ -112,14 +122,14 @@ bool NetworkProcessProxy::sendXPCEndpointToProcess(AuxiliaryProcessProxy& proces
 
 void NetworkProcessProxy::addBackgroundStateObservers()
 {
-    m_backgroundObserver = [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidEnterBackgroundNotification object:[UIApplication sharedApplication] queue:nil usingBlock:makeBlockPtr([weakThis = WeakPtr { *this }](NSNotification *) {
+    lazyInitialize(m_backgroundObserver, retainPtr([[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidEnterBackgroundNotification object:[UIApplication sharedApplication] queue:nil usingBlock:makeBlockPtr([weakThis = WeakPtr { *this }](NSNotification *) {
         if (weakThis)
             weakThis->applicationDidEnterBackground();
-    }).get()];
-    m_foregroundObserver = [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationWillEnterForegroundNotification object:[UIApplication sharedApplication] queue:nil usingBlock:makeBlockPtr([weakThis = WeakPtr { *this }](NSNotification *) {
+    }).get()]));
+    lazyInitialize(m_foregroundObserver, retainPtr([[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationWillEnterForegroundNotification object:[UIApplication sharedApplication] queue:nil usingBlock:makeBlockPtr([weakThis = WeakPtr { *this }](NSNotification *) {
         if (weakThis)
             weakThis->applicationWillEnterForeground();
-    }).get()];
+    }).get()]));
 }
 
 void NetworkProcessProxy::removeBackgroundStateObservers()
@@ -177,5 +187,31 @@ void NetworkProcessProxy::getPaymentCoordinatorEmbeddingUserAgent(WebPageProxyId
     completionHandler(page->userAgent());
 }
 #endif
+
+#if ENABLE(CONTENT_EXTENSIONS)
+
+void NetworkProcessProxy::platformLoadTrackingPreventionContentRuleList(CompletionHandler<void(RefPtr<WebCompiledContentRuleList>)>&& completionHandler)
+{
+#if ENABLE(ADVANCED_PRIVACY_PROTECTIONS)
+    RELEASE_LOG(ResourceLoadStatistics, "NetworkProcessProxy::platformLoadTrackingPreventionContentRuleList request to load rule list.");
+
+    TrackingPreventionContentRuleListController::singleton().prepare([completionHandler = WTF::move(completionHandler)](WKContentRuleList *list) mutable {
+        completionHandler(createCompiledContentRuleList(list));
+    });
+#else
+    completionHandler(nullptr);
+#endif
+}
+
+void NetworkProcessProxy::platformObserveTrackingPreventionContentRuleListUpdates()
+{
+#if ENABLE(ADVANCED_PRIVACY_PROTECTIONS)
+    static MainRunLoopNeverDestroyed<Ref<ListDataObserver>> updateObserver { TrackingPreventionContentRuleListController::singleton().observeUpdates([] {
+        loadTrackingPreventionContentRuleList();
+    }) };
+#endif
+}
+
+#endif // ENABLE(CONTENT_EXTENSIONS)
 
 }

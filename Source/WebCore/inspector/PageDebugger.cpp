@@ -27,6 +27,7 @@
 #include "config.h"
 #include "PageDebugger.h"
 
+#include "ActiveDOMObject.h"
 #include "CommonVM.h"
 #include "Document.h"
 #include "InspectorFrontendClient.h"
@@ -39,6 +40,7 @@
 #include "PageGroup.h"
 #include "PageInspectorController.h"
 #include "ScriptController.h"
+#include "Settings.h"
 #include "Timer.h"
 #include <JavaScriptCore/JSLock.h>
 #include <wtf/MainThread.h>
@@ -67,14 +69,21 @@ void PageDebugger::attachDebugger()
 {
     JSC::Debugger::attachDebugger();
 
-    m_page->setDebugger(this);
+    // Under site isolation, FrameDebugger handles per-frame debugging.
+    // Don't attach the PageDebugger to frames to avoid conflicts.
+    if (m_page->settings().siteIsolationEnabled())
+        return;
+
+    protect(m_page)->setDebugger(this);
 }
 
 void PageDebugger::detachDebugger(bool isBeingDestroyed)
 {
     JSC::Debugger::detachDebugger(isBeingDestroyed);
 
-    m_page->setDebugger(nullptr);
+    Ref page = m_page;
+    if (page->debugger() == this)
+        page->setDebugger(nullptr);
     if (!isBeingDestroyed)
         recompileAllJSFunctions();
 }
@@ -89,14 +98,14 @@ void PageDebugger::didPause(JSGlobalObject* globalObject)
 {
     JSC::Debugger::didPause(globalObject);
 
-    setJavaScriptPaused(m_page->group(), true);
+    setJavaScriptPaused(protect(protect(m_page)->group()), true);
 }
 
 void PageDebugger::didContinue(JSGlobalObject* globalObject)
 {
     JSC::Debugger::didContinue(globalObject);
 
-    setJavaScriptPaused(m_page->group(), false);
+    setJavaScriptPaused(protect(protect(m_page)->group()), false);
 }
 
 void PageDebugger::runEventLoopWhilePaused()
@@ -141,6 +150,13 @@ bool PageDebugger::isContentScript(JSGlobalObject* state) const
     return &currentWorld(*state) != &mainThreadNormalWorldSingleton() || JSC::Debugger::isContentScript(state);
 }
 
+URL PageDebugger::sourceURLBase(JSGlobalObject* state) const
+{
+    if (RefPtr context = uncheckedDowncast<JSDOMGlobalObject>(state)->scriptExecutionContext())
+        return context->url();
+    return { };
+}
+
 void PageDebugger::reportException(JSGlobalObject* state, JSC::Exception* exception) const
 {
     JSC::Debugger::reportException(state, exception);
@@ -169,7 +185,7 @@ void PageDebugger::setJavaScriptPaused(const PageGroup& pageGroup, bool paused)
 
 void PageDebugger::setJavaScriptPaused(LocalFrame& frame, bool paused)
 {
-    if (!frame.script().canExecuteScripts(ReasonForCallingCanExecuteScripts::NotAboutToExecuteScript))
+    if (!protect(frame.script())->canExecuteScripts(ReasonForCallingCanExecuteScripts::NotAboutToExecuteScript))
         return;
 
     frame.script().setPaused(paused);

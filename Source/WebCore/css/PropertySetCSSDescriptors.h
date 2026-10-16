@@ -54,7 +54,7 @@ protected:
     PropertySetCSSDescriptors(MutableStyleProperties&, CSSRule&);
 
     CSSStyleSheet* parentStyleSheet() const final;
-    CSSRule* parentRule() const final;
+    CSSRule* LEGACY_NODELETE parentRule() const final;
     // FIXME: To implement.
     CSSRuleList* cssRules() const override { return nullptr; }
     unsigned length() const final;
@@ -72,6 +72,9 @@ protected:
     bool isExposed(CSSPropertyID) const;
     RefPtr<DeprecatedCSSOMValue> wrapForDeprecatedCSSOM(CSSValue*);
 
+    // Maps an author-facing name to its stored id (`size` -> `page-size` within @page).
+    CSSPropertyID resolvePropertyName(const String&) const;
+
     enum class MutationType : uint8_t { NoChanges, StyleAttributeChanged, PropertyChanged };
     [[nodiscard]] bool willMutate();
     void didMutate(MutationType);
@@ -81,7 +84,7 @@ protected:
     virtual ExceptionOr<void> setPropertyInternal(CSSPropertyID, const String& value, IsImportant);
 
     CSSParserContext cssParserContext() const;
-    Ref<MutableStyleProperties> protectedPropertySet() const;
+    MutableStyleProperties& propertySet() const { return m_propertySet; }
 
     WeakPtr<CSSRule> m_parentRule;
     HashMap<CSSValue*, WeakPtr<DeprecatedCSSOMValue>> m_cssomValueWrappers;

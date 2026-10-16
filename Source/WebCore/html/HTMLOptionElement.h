@@ -2,7 +2,7 @@
  * Copyright (C) 1999 Lars Knoll (knoll@kde.org)
  *           (C) 1999 Antti Koivisto (koivisto@kde.org)
  *           (C) 2000 Dirk Mueller (mueller@kde.org)
- * Copyright (C) 2004-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2004-2026 Apple Inc. All rights reserved.
  * Copyright (C) 2010 Google Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
@@ -29,6 +29,8 @@
 namespace WebCore {
 
 class HTMLSelectElement;
+class HTMLSlotElement;
+class HTMLSpanElement;
 
 enum class AllowStyleInvalidation : bool { No, Yes };
 
@@ -40,10 +42,12 @@ public:
     static Ref<HTMLOptionElement> create(const QualifiedName&, Document&);
     static ExceptionOr<Ref<HTMLOptionElement>> createForLegacyFactoryFunction(Document&, String&& text, const AtomString& value, bool defaultSelected, bool selected);
 
+    void finishParsingChildren() final;
+
     WEBCORE_EXPORT String text() const;
     void setText(String&&);
 
-    WEBCORE_EXPORT HTMLFormElement* form() const;
+    WEBCORE_EXPORT HTMLFormElement* LEGACY_NODELETE form() const;
     RefPtr<HTMLFormElement> formForBindings() const;
 
     WEBCORE_EXPORT int index() const;
@@ -52,8 +56,13 @@ public:
 
     WEBCORE_EXPORT bool selected(AllowStyleInvalidation = AllowStyleInvalidation::Yes) const;
     WEBCORE_EXPORT void setSelected(bool);
+    void setSelectedByUser(bool);
 
-    WEBCORE_EXPORT HTMLSelectElement* ownerSelectElement() const;
+    bool selectedForBindings() const;
+    void setSelectedForBindings(bool);
+
+    WEBCORE_EXPORT HTMLSelectElement* LEGACY_NODELETE ownerSelectElement() const;
+    bool isRenderedWithBaseAppearance() const;
 
     WEBCORE_EXPORT String label() const;
     WEBCORE_EXPORT String displayLabel() const;
@@ -61,37 +70,58 @@ public:
     bool ownElementDisabled() const { return m_disabled; }
 
     WEBCORE_EXPORT bool isDisabledFormControl() const final;
+    bool isActuallyDisabled() const final;
 
     String textIndentedToRespectGroupLabel() const;
 
     void setSelectedState(bool, AllowStyleInvalidation = AllowStyleInvalidation::Yes);
     bool selectedWithoutUpdate() const { return m_isSelected; }
 
+    void setDirty(bool dirty) { m_isDirty = dirty; }
+
+    void cloneIntoSelectedContent(HTMLSelectedContentElement&);
+    Ref<HTMLOptionElement> cloneForSelectedContent();
+    HTMLOptionElement* selectedContentSource() const { return m_selectedContentSource.get(); }
+
+    void updateUserAgentShadowTree() final;
+
 private:
     HTMLOptionElement(const QualifiedName&, Document&);
 
-    InsertedIntoAncestorResult insertedIntoAncestor(InsertionType, ContainerNode&) final;
-    void removedFromAncestor(RemovalType, ContainerNode& oldParentOfRemovedTree) final;
+    NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode&) final;
+    void postConnectionSteps() final;
+    void removingSteps(RemovalType, ContainerNode& oldParentOfRemovedTree) final;
+    void movingSteps(MovingType, ContainerNode&) final;
 
+    bool supportsFocus() const final;
+    bool isKeyboardFocusable(const FocusEventData&) const final;
     bool isFocusable() const final;
-    bool rendererIsNeeded(const RenderStyle&) final { return false; }
-    bool matchesDefaultPseudoClass() const final;
+    bool matchesDefaultPseudoClass() const final { return m_isDefault; }
 
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) final;
+    void parseDisabledAttribute(const AtomString&);
+
+    void didAddUserAgentShadowRoot(ShadowRoot&) final;
 
     bool accessKeyAction(bool) final;
+
+    void defaultEventHandler(Event&) final;
 
     void childrenChanged(const ChildChange&) final;
 
     void willResetComputedStyle() final;
 
-    String collectOptionInnerText() const;
-    String collectOptionInnerTextCollapsingWhitespace() const;
+    void invalidateShadowTree();
 
     bool m_disabled { false };
     bool m_isSelected { false };
     bool m_isDefault { false };
+    bool m_isDirty { false };
+    bool m_shadowTreeNeedsUpdate { false };
     WeakPtr<HTMLSelectElement, WeakPtrImplWithEventTargetData> m_ownerSelect;
+    WeakPtr<HTMLOptionElement, WeakPtrImplWithEventTargetData> m_selectedContentSource;
+    WeakPtr<HTMLSpanElement, WeakPtrImplWithEventTargetData> m_labelContainer;
+    WeakPtr<HTMLSlotElement, WeakPtrImplWithEventTargetData> m_slot;
 };
 
 } // namespace

@@ -24,11 +24,15 @@
 
 #pragma once
 
+#include <WebCore/CSSCustomPropertyValue.h>
+#include <WebCore/CSSKeyword.h>
+#include <WebCore/CSSPrimitiveNumeric.h>
+#include <WebCore/CSSRatio.h>
 #include <WebCore/CSSToLengthConversionData.h>
-#include <WebCore/CSSValue.h>
 #include <WebCore/CSSValueKeywords.h>
 #include <wtf/CheckedPtr.h>
 #include <wtf/OptionSet.h>
+#include <wtf/Variant.h>
 #include <wtf/text/AtomString.h>
 
 namespace WebCore {
@@ -41,21 +45,64 @@ enum class LogicalOperator : uint8_t { And, Or, Not };
 enum class ComparisonOperator : uint8_t { LessThan, LessThanOrEqual, Equal, GreaterThan, GreaterThanOrEqual };
 enum class Syntax : uint8_t { Boolean, Plain, Range };
 
+template<typename T>
+bool compare(ComparisonOperator op, T left, T right)
+{
+    switch (op) {
+    case ComparisonOperator::LessThan:
+        return left < right;
+    case ComparisonOperator::LessThanOrEqual:
+        return left <= right;
+    case ComparisonOperator::Equal:
+        return left == right;
+    case ComparisonOperator::GreaterThan:
+        return left > right;
+    case ComparisonOperator::GreaterThanOrEqual:
+        return left >= right;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// The two comparisons of a three-operand range must point the same direction and neither may be '='.
+inline bool isConsistentThreeWayComparison(ComparisonOperator first, ComparisonOperator second)
+{
+    auto isLessFamily = [](ComparisonOperator op) {
+        return op == ComparisonOperator::LessThan || op == ComparisonOperator::LessThanOrEqual;
+    };
+    auto isGreaterFamily = [](ComparisonOperator op) {
+        return op == ComparisonOperator::GreaterThan || op == ComparisonOperator::GreaterThanOrEqual;
+    };
+    return (isLessFamily(first) && isLessFamily(second)) || (isGreaterFamily(first) && isGreaterFamily(second));
+}
+
 struct Condition;
 struct FeatureSchema;
 
+using Value = Variant<
+    CSS::Integer<>,
+    CSS::Number<>,
+    CSS::Length<>,
+    CSS::Resolution<>,
+    CSS::Ratio,
+    CSS::Keyword,
+    Ref<CSSCustomPropertyValue>
+>;
+
 struct Comparison {
     ComparisonOperator op;
-    RefPtr<CSSValue> value;
-
-    RefPtr<CSSValue> protectedValue() const { return value; }
+    std::optional<Value> value;
 };
 
 struct Feature {
     AtomString name;
     Syntax syntax;
-    std::optional<Comparison> leftComparison;
-    std::optional<Comparison> rightComparison;
+    std::optional<Comparison> leftComparison { };
+    std::optional<Comparison> rightComparison { };
+
+    // The center operand of a style range, used when it is not a bare <custom-property-name>
+    // (those are stored in `name`, matching the plain/size feature model). For example, the
+    // subject of `style(10px < 10em)` or `style(calc(1px + 1px) > --foo)`.
+    std::optional<Value> subject { };
 
     std::optional<CSSValueID> functionId { };
 
@@ -86,8 +133,8 @@ enum class MediaQueryDynamicDependency : uint8_t  {
 
 struct FeatureEvaluationContext {
     WeakRef<const Document, WeakPtrImplWithEventTargetData> document;
-    CSSToLengthConversionData conversionData { };
-    CheckedPtr<const RenderElement> renderer { };
+    CSSToLengthConversionData conversionData;
+    CheckedPtr<const RenderElement> renderer;
 };
 
 struct FeatureSchema {
@@ -114,10 +161,10 @@ struct FeatureSchema {
     virtual ~FeatureSchema() = default;
 };
 
-template<typename TraverseFunction> void traverseFeatures(const Condition&, TraverseFunction&&);
+template<typename TraverseFunction> void traverseFeatures(const Condition&, NOESCAPE const TraverseFunction&);
 
 template<typename TraverseFunction>
-void traverseFeatures(const QueryInParens& queryInParens, TraverseFunction&& function)
+void traverseFeatures(const QueryInParens& queryInParens, NOESCAPE const TraverseFunction& function)
 {
     return WTF::switchOn(queryInParens, [&](const Condition& condition) {
         traverseFeatures(condition, function);
@@ -130,7 +177,7 @@ void traverseFeatures(const QueryInParens& queryInParens, TraverseFunction&& fun
 }
 
 template<typename TraverseFunction>
-void traverseFeatures(const Condition& condition, TraverseFunction&& function)
+void traverseFeatures(const Condition& condition, NOESCAPE const TraverseFunction& function)
 {
     for (auto& queryInParens : condition.queries)
         traverseFeatures(queryInParens, function);

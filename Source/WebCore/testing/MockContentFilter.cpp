@@ -26,6 +26,8 @@
 #include "config.h"
 #include "MockContentFilter.h"
 
+#include <wtf/text/TextStream.h>
+
 #if ENABLE(CONTENT_FILTERING)
 
 #include "ContentFilter.h"
@@ -93,7 +95,7 @@ void MockContentFilter::willSendRequest(ResourceRequest& request, const Resource
 
     URL modifiedRequestURL { request.url(), modifiedRequestURLString };
     if (!modifiedRequestURL.isValid()) {
-        LOG(ContentFiltering, "MockContentFilter failed to convert %s to a  URL.\n", modifiedRequestURL.string().utf8().data());
+        LOG_WITH_STREAM(ContentFiltering, stream << "MockContentFilter failed to convert "_s << modifiedRequestURL.string() << " to a  URL."_s);
         return;
     }
 
@@ -153,7 +155,7 @@ void MockContentFilter::maybeDetermineStatus(DecisionPoint decisionPoint)
     if (m_state != State::Filtering || decisionPoint != MockContentFilterSettings::singleton().decisionPoint())
         return;
 
-    LOG(ContentFiltering, "MockContentFilter stopped buffering with state %u at decision point %hhu.\n", enumToUnderlyingType(m_state), enumToUnderlyingType(decisionPoint));
+    LOG(ContentFiltering, "MockContentFilter stopped buffering with state %u at decision point %hhu.\n", std::to_underlying(m_state), std::to_underlying(decisionPoint));
 
     m_state = MockContentFilterSettings::singleton().decision() == Decision::Allow ? State::Allowed : State::Blocked;
     if (m_state != State::Blocked)

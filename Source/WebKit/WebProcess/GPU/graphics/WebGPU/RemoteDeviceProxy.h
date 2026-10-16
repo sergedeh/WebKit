@@ -55,7 +55,6 @@ public:
 
     RemoteAdapterProxy& parent() const { return m_parent; }
     RemoteGPUProxy& root() { return m_parent->root(); }
-    Ref<RemoteGPUProxy> protectedRoot() { return m_parent->root(); }
     WebGPUIdentifier backing() const { return m_backing; }
 
 private:
@@ -71,15 +70,15 @@ private:
     template<typename T>
     [[nodiscard]] IPC::Error send(T&& message)
     {
-        return root().protectedStreamClientConnection()->send(WTF::move(message), backing());
+        return protect(root().streamClientConnection())->send(std::forward<T>(message), backing());
     }
     template<typename T, typename C>
     [[nodiscard]] std::optional<IPC::StreamClientConnection::AsyncReplyID> sendWithAsyncReply(T&& message, C&& completionHandler)
     {
-        return root().protectedStreamClientConnection()->sendWithAsyncReply(WTF::move(message), completionHandler, backing());
+        return protect(root().streamClientConnection())->sendWithAsyncReply(std::forward<T>(message), std::forward<C>(completionHandler), backing());
     }
 
-    Ref<WebCore::WebGPU::Queue> queue() final;
+    Ref<WebCore::WebGPU::Queue> LEGACY_NODELETE queue() final;
 
     void destroy() final;
 
@@ -101,6 +100,8 @@ private:
     RefPtr<WebCore::WebGPU::RenderPipeline> createRenderPipeline(const WebCore::WebGPU::RenderPipelineDescriptor&) final;
     void createComputePipelineAsync(const WebCore::WebGPU::ComputePipelineDescriptor&, CompletionHandler<void(RefPtr<WebCore::WebGPU::ComputePipeline>&&, String&&)>&&) final;
     void createRenderPipelineAsync(const WebCore::WebGPU::RenderPipelineDescriptor&, CompletionHandler<void(RefPtr<WebCore::WebGPU::RenderPipeline>&&, String&&)>&&) final;
+    void createComputePipelineWithPipelineLayoutFromPipelineAsync(const WebCore::WebGPU::ComputePipelineDescriptor&, const WebCore::WebGPU::ComputePipeline&, CompletionHandler<void(RefPtr<WebCore::WebGPU::ComputePipeline>&&)>&&) final;
+    void createRenderPipelineWithPipelineLayoutFromPipelineAsync(const WebCore::WebGPU::RenderPipelineDescriptor&, const WebCore::WebGPU::RenderPipeline&, CompletionHandler<void(RefPtr<WebCore::WebGPU::RenderPipeline>&&)>&&) final;
 
     RefPtr<WebCore::WebGPU::CommandEncoder> createCommandEncoder(const std::optional<WebCore::WebGPU::CommandEncoderDescriptor>&) final;
     Ref<WebCore::WebGPU::CommandEncoder> createInvalidCommandEncoder();
@@ -116,12 +117,12 @@ private:
     void setLabelInternal(const String&) final;
     void resolveDeviceLostPromise(CompletionHandler<void(WebCore::WebGPU::DeviceLostReason)>&&) final;
 
-    Ref<WebCore::WebGPU::BindGroupLayout> emptyBindGroupLayout() const final;
+    Ref<WebCore::WebGPU::BindGroupLayout> LEGACY_NODELETE emptyBindGroupLayout() const final;
 
-    Ref<WebCore::WebGPU::CommandEncoder> invalidCommandEncoder() final;
-    Ref<WebCore::WebGPU::CommandBuffer> invalidCommandBuffer() final;
-    Ref<WebCore::WebGPU::RenderPassEncoder> invalidRenderPassEncoder() final;
-    Ref<WebCore::WebGPU::ComputePassEncoder> invalidComputePassEncoder() final;
+    Ref<WebCore::WebGPU::CommandEncoder> LEGACY_NODELETE invalidCommandEncoder() final;
+    Ref<WebCore::WebGPU::CommandBuffer> LEGACY_NODELETE invalidCommandBuffer() final;
+    Ref<WebCore::WebGPU::RenderPassEncoder> LEGACY_NODELETE invalidRenderPassEncoder() final;
+    Ref<WebCore::WebGPU::ComputePassEncoder> LEGACY_NODELETE invalidComputePassEncoder() final;
     void pauseAllErrorReporting(bool pause) final;
 
     bool isRemoteDeviceProxy() const final { return true; }

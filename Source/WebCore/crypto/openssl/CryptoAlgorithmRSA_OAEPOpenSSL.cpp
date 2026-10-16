@@ -36,7 +36,6 @@ namespace WebCore {
 
 ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSA_OAEP::platformEncrypt(const CryptoAlgorithmRsaOaepParams& parameters, const CryptoKeyRSA& key, const Vector<uint8_t>& plainText)
 {
-#if defined(EVP_PKEY_CTX_set_rsa_oaep_md) && defined(EVP_PKEY_CTX_set_rsa_mgf1_md) && defined(EVP_PKEY_CTX_set0_rsa_oaep_label)
     const EVP_MD* md = digestAlgorithm(key.hashAlgorithmIdentifier());
     if (!md)
         return Exception { ExceptionCode::NotSupportedError };
@@ -61,7 +60,7 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSA_OAEP::platformEncrypt(const Cryp
         size_t labelSize = parameters.labelVector().size();
         // The library takes ownership of the label so the caller should not free the original memory pointed to by label.
         auto label = static_cast<uint8_t*>(OPENSSL_malloc(labelSize));
-        memcpySpan(std::span(label, labelSize), parameters.labelVector().span());
+        memcpySpan(unsafeMakeSpan(label, labelSize), parameters.labelVector().span());
         if (EVP_PKEY_CTX_set0_rsa_oaep_label(ctx.get(), label, labelSize) <= 0) {
             OPENSSL_free(label);
             return Exception { ExceptionCode::OperationError };
@@ -78,14 +77,10 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSA_OAEP::platformEncrypt(const Cryp
     cipherText.shrink(cipherTextLen);
 
     return cipherText;
-#else
-    return Exception { ExceptionCode::NotSupportedError };
-#endif
 }
 
 ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSA_OAEP::platformDecrypt(const CryptoAlgorithmRsaOaepParams& parameters, const CryptoKeyRSA& key, const Vector<uint8_t>& cipherText)
 {
-#if defined(EVP_PKEY_CTX_set_rsa_oaep_md) && defined(EVP_PKEY_CTX_set_rsa_mgf1_md) && defined(EVP_PKEY_CTX_set0_rsa_oaep_label)
     const EVP_MD* md = digestAlgorithm(key.hashAlgorithmIdentifier());
     if (!md)
         return Exception { ExceptionCode::NotSupportedError };
@@ -110,7 +105,7 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSA_OAEP::platformDecrypt(const Cryp
         size_t labelSize = parameters.labelVector().size();
         // The library takes ownership of the label so the caller should not free the original memory pointed to by label.
         auto label = static_cast<uint8_t*>(OPENSSL_malloc(labelSize));
-        memcpySpan(std::span(label, labelSize), parameters.labelVector().span());
+        memcpySpan(unsafeMakeSpan(label, labelSize), parameters.labelVector().span());
         if (EVP_PKEY_CTX_set0_rsa_oaep_label(ctx.get(), label, labelSize) <= 0) {
             OPENSSL_free(label);
             return Exception { ExceptionCode::OperationError };
@@ -127,9 +122,6 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSA_OAEP::platformDecrypt(const Cryp
     plainText.shrink(plainTextLen);
 
     return plainText;
-#else
-    return Exception { ExceptionCode::NotSupportedError };
-#endif
 }
 
 } // namespace WebCore

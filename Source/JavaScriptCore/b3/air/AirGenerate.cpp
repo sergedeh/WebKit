@@ -29,7 +29,6 @@
 #if ENABLE(B3_JIT)
 
 #include "AirAllocateRegistersAndStackAndGenerateCode.h"
-#include "AirAllocateRegistersByGraphColoring.h"
 #include "AirAllocateRegistersByGreedy.h"
 #include "AirAllocateStackByGraphColoring.h"
 #include "AirCode.h"
@@ -40,7 +39,6 @@
 #include "AirLogRegisterPressure.h"
 #include "AirLowerAfterRegAlloc.h"
 #include "AirLowerEntrySwitch.h"
-#include "AirLowerMacros.h"
 #include "AirLowerStackArgs.h"
 #include "AirOpcodeUtils.h"
 #include "AirOptimizeBlockOrder.h"
@@ -77,8 +75,6 @@ void prepareForGeneration(Code& code)
         validate(code);
 
     if (!code.optLevel()) {
-        lowerMacros(code);
-
         // FIXME: The name of this phase doesn't make much sense in O0 since we do this before
         // register allocation.
         lowerAfterRegAlloc(code);
@@ -106,8 +102,6 @@ void prepareForGeneration(Code& code)
 
     simplifyCFG(code);
 
-    lowerMacros(code);
-
     // This is where we run our optimizations and transformations.
     // FIXME: Add Air optimizations.
     // https://bugs.webkit.org/show_bug.cgi?id=150456
@@ -116,22 +110,19 @@ void prepareForGeneration(Code& code)
 
     // Register allocation for all the Tmps that do not have a corresponding machine
     // register. After this phase, every Tmp has a reg.
-    if (Options::airUseGreedyRegAlloc())
-        allocateRegistersByGreedy(code);
-    else
-        allocateRegistersByGraphColoring(code);
+    allocateRegistersByGreedy(code);
 
     if (Options::logAirRegisterPressure()) {
         dataLog("Register pressure after register allocation:\n");
         logRegisterPressure(code);
     }
 
+    lowerAfterRegAlloc(code);
+
     // This replaces uses of spill slots with registers or constants if possible. It
     // does this by minimizing the amount that we perturb the already-chosen register
     // allocation. It may extend the live ranges of registers though.
     fixObviousSpills(code);
-
-    lowerAfterRegAlloc(code);
 
     // This does first-fit allocation of stack slots using an interference graph plus a
     // bunch of other optimizations.
@@ -144,22 +135,23 @@ void prepareForGeneration(Code& code)
     // phase.
     simplifyCFG(code);
 
-    // This is needed to satisfy a requirement of B3::StackmapValue. This also removes dead
-    // code. We can avoid running this when certain optimizations are disabled.
-    if (code.optLevel() >= 2 || code.needsUsedRegisters())
-        reportUsedRegisters(code);
+    // Not worth a whole-graph liveness scan just for the dead assignments it also kills, so this runs
+    // only for the used-register set that B3::StackmapValue reports to a patchpoint's generator.
+    bool cfgMayHaveChanged = false;
+    if (code.needsUsedRegisters())
+        cfgMayHaveChanged |= reportUsedRegisters(code);
 
     // Attempt to remove false dependencies between instructions created by partial register changes.
     // This must be executed as late as possible as it depends on the instructions order and register
-    // use. We _must_ run this after reportUsedRegisters(), since that kills variable assignments
-    // that seem dead. Luckily, this phase does not change register liveness, so that's OK.
+    // use, and it must follow reportUsedRegisters() when that runs, since that kills variable
+    // assignments that seem dead. Luckily, this phase does not change register liveness, so that's OK.
     fixPartialRegisterStalls(code);
-    
+
     // Actually create entrypoints.
-    lowerEntrySwitch(code);
-    
-    // The control flow graph can be simplified further after we have lowered EntrySwitch.
-    simplifyCFG(code);
+    cfgMayHaveChanged |= lowerEntrySwitch(code);
+
+    if (cfgMayHaveChanged)
+        simplifyCFG(code);
 
     // We do this optimization at the very end of Air generation pipeline since it can be beneficial after
     // spills are lowered to load/store with the frame pointer or the stack pointer. And this is block-local
@@ -188,9 +180,7 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
 {
     CompilerTimingScope timingScope("Air"_s, "generateWithAlreadyAllocatedRegisters"_s);
 
-#if !CPU(ARM)
     DisallowMacroScratchRegisterUsage disallowScratch(jit);
-#endif
 
     // And now, we generate code.
     GenerationContext context;
@@ -210,8 +200,9 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
     };
 
     PCToOriginMap& pcToOriginMap = code.proc().pcToOriginMap();
+    bool shouldPreserveB3Origins = code.shouldPreserveB3Origins();
     auto addItem = [&] (Inst& inst) {
-        if (!code.shouldPreserveB3Origins())
+        if (!shouldPreserveB3Origins)
             return;
         if (inst.origin)
             pcToOriginMap.appendItem(jit.labelIgnoringWatchpoints(), inst.origin->origin());
@@ -237,7 +228,7 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
             if (disassembler)
                 disassembler->startEntrypoint(jit); 
 
-            code.prologueGeneratorForEntrypoint(*entrypointIndex)->run(jit, code);
+            code.prologueGeneratorForEntrypoint(*entrypointIndex)->run(jit, code, context);
 
             if (disassembler)
                 disassembler->endEntrypoint(jit); 
@@ -249,12 +240,11 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
             context.indexInBlock = i;
             Inst& inst = block->at(i);
             addItem(inst);
-            auto start = jit.labelIgnoringWatchpoints();
+            auto start = disassembler ? jit.labelIgnoringWatchpoints() : CCallHelpers::Label();
             CCallHelpers::Jump jump = inst.generate(jit, context);
             ASSERT_UNUSED(jump, !jump.isSet());
-            auto end = jit.labelIgnoringWatchpoints();
             if (disassembler)
-                disassembler->addInst(&inst, start, end);
+                disassembler->addInst(&inst, start, jit.labelIgnoringWatchpoints());
         }
 
         context.indexInBlock = block->size() - 1;
@@ -267,20 +257,18 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
             // We currently don't represent the full prologue/epilogue in Air, so we need to
             // have this override.
             addItem(block->last());
-            auto start = jit.labelIgnoringWatchpoints();
+            auto start = disassembler ? jit.labelIgnoringWatchpoints() : CCallHelpers::Label();
             code.emitEpilogue(jit);
-            auto end = jit.labelIgnoringWatchpoints();
             if (disassembler)
-                disassembler->addInst(&block->last(), start, end);
+                disassembler->addInst(&block->last(), start, jit.labelIgnoringWatchpoints());
             continue;
         }
 
         addItem(block->last());
-        auto start = jit.labelIgnoringWatchpoints();
+        auto start = disassembler ? jit.labelIgnoringWatchpoints() : CCallHelpers::Label();
         CCallHelpers::Jump jump = block->last().generate(jit, context);
-        auto end = jit.labelIgnoringWatchpoints();
         if (disassembler)
-            disassembler->addInst(&block->last(), start, end);
+            disassembler->addInst(&block->last(), start, jit.labelIgnoringWatchpoints());
 
         // The jump won't be set for patchpoints. It won't be set for Oops because then it won't have
         // any successors.

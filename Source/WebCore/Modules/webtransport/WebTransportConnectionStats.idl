@@ -25,22 +25,25 @@
 
 typedef double DOMHighResTimeStamp;
 
+// https://w3c.github.io/webtransport/#dictdef-webtransportconnectionstats
 [
     EnabledBySetting=WebTransportEnabled,
     JSGenerateToJSObject,
     JSGenerateToNativeObject,
-    LegacyNativeDictionaryRequiredInterfaceNullability,
 ] dictionary WebTransportConnectionStats {
-    unsigned long long bytesSent;
-    unsigned long long packetsSent;
-    unsigned long long bytesLost;
-    unsigned long long packetsLost;
-    unsigned long long bytesReceived;
-    unsigned long long packetsReceived;
-    required DOMHighResTimeStamp smoothedRtt;
-    required DOMHighResTimeStamp rttVariation;
-    required DOMHighResTimeStamp minRtt;
+    [ImplementationDefaultValue=0] unsigned long long bytesSent;
+    // Commented members are not supported.
+    // unsigned long long bytesSentOverhead;
+    // unsigned long long bytesAcknowledged;
+    // unsigned long long packetsSent;
+    // unsigned long long bytesLost;
+    // unsigned long long packetsLost;
+    [ImplementationDefaultValue=0] unsigned long long bytesReceived;
+    // unsigned long long packetsReceived;
+    // required DOMHighResTimeStamp smoothedRtt;
+    // required DOMHighResTimeStamp rttVariation;
+    // required DOMHighResTimeStamp minRtt;
     required WebTransportDatagramStats datagrams;
-    unsigned long long? estimatedSendRate;
-    boolean atSendCapacity;
+    unsigned long long? estimatedSendRate = null;
+    boolean atSendCapacity = false;
 };

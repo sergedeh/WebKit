@@ -42,20 +42,21 @@ class ImageBufferShareableAllocator final : public WebCore::ImageBufferAllocator
     WTF_MAKE_TZONE_ALLOCATED(ImageBufferShareableAllocator);
 public:
 #if HAVE(IOSURFACE)
-    ImageBufferShareableAllocator(const WebCore::ProcessIdentity&, WebCore::IOSurfacePool*);
+    ImageBufferShareableAllocator(const WebCore::ProcessIdentity&, WebCore::IOSurfacePool*, bool useIOSurfaceWebKitBehavior = false);
 #else
     ImageBufferShareableAllocator(const WebCore::ProcessIdentity&);
 #endif
 
 private:
-    RefPtr<WebCore::ImageBuffer> createImageBuffer(const WebCore::FloatSize&, const WebCore::DestinationColorSpace&, WebCore::RenderingMode) const final;
+    RefPtr<WebCore::ImageBuffer> createImageBuffer(const WebCore::FloatSize&, const WebCore::ColorSpace&, WebCore::RenderingMode) const final;
     RefPtr<WebCore::PixelBuffer> createPixelBuffer(const WebCore::PixelBufferFormat&, const WebCore::IntSize&) const final;
 
     void transferMemoryOwnership(WebCore::SharedMemory::Handle&&) const;
 
     const WebCore::ProcessIdentity m_resourceOwner;
 #if HAVE(IOSURFACE)
-    RefPtr<WebCore::IOSurfacePool> m_ioSurfacePool;
+    const RefPtr<WebCore::IOSurfacePool> m_ioSurfacePool;
+    const bool m_useIOSurfaceWebKitBehavior { false };
 #endif
 };
 

@@ -29,6 +29,7 @@
 
 #include "RemoteDisplayListIdentifier.h"
 #include "RemoteGradientIdentifier.h"
+#include "RemotePathImplIdentifier.h"
 #include <WebCore/DisplayList.h>
 #include <WebCore/RenderingResourceIdentifier.h>
 #include <wtf/HashMap.h>
@@ -37,7 +38,6 @@
 namespace WebCore {
 
 class Filter;
-class Font;
 class Gradient;
 class ImageBuffer;
 class NativeImage;
@@ -46,6 +46,8 @@ struct FontCustomPlatformData;
 }
 
 namespace WebKit {
+
+class SharedFont;
 
 class RemoteResourceCache {
 public:
@@ -56,19 +58,23 @@ public:
     bool releaseNativeImage(WebCore::RenderingResourceIdentifier);
     RefPtr<WebCore::NativeImage> cachedNativeImage(WebCore::RenderingResourceIdentifier) const;
 
+    bool cachePathImpl(RemotePathImplIdentifier, Ref<WebCore::PathImpl>&&);
+    bool releasePathImpl(RemotePathImplIdentifier);
+    RefPtr<WebCore::PathImpl> cachedPathImpl(RemotePathImplIdentifier) const;
+
     bool cacheGradient(RemoteGradientIdentifier, Ref<WebCore::Gradient>&&);
     bool releaseGradient(RemoteGradientIdentifier);
     RefPtr<WebCore::Gradient> cachedGradient(RemoteGradientIdentifier) const;
 
-    void cacheFilter(Ref<WebCore::Filter>&&);
+    bool cacheFilter(Ref<WebCore::Filter>&&);
     bool releaseFilter(WebCore::RenderingResourceIdentifier);
     RefPtr<WebCore::Filter> cachedFilter(WebCore::RenderingResourceIdentifier) const;
 
-    void cacheFont(Ref<WebCore::Font>&&);
+    bool cacheFont(Ref<SharedFont>&&);
     bool releaseFont(WebCore::RenderingResourceIdentifier);
-    RefPtr<WebCore::Font> cachedFont(WebCore::RenderingResourceIdentifier) const;
+    RefPtr<SharedFont> cachedFont(WebCore::RenderingResourceIdentifier) const;
 
-    void cacheFontCustomPlatformData(Ref<WebCore::FontCustomPlatformData>&&);
+    bool cacheFontCustomPlatformData(Ref<WebCore::FontCustomPlatformData>&&);
     bool releaseFontCustomPlatformData(WebCore::RenderingResourceIdentifier);
     RefPtr<WebCore::FontCustomPlatformData> cachedFontCustomPlatformData(WebCore::RenderingResourceIdentifier) const;
 
@@ -84,8 +90,9 @@ private:
     HashMap<WebCore::RenderingResourceIdentifier, Ref<WebCore::NativeImage>> m_nativeImages;
     HashMap<RemoteGradientIdentifier, Ref<WebCore::Gradient>> m_gradients;
     HashMap<WebCore::RenderingResourceIdentifier, Ref<WebCore::Filter>> m_filters;
-    HashMap<WebCore::RenderingResourceIdentifier, Ref<WebCore::Font>> m_fonts;
+    HashMap<WebCore::RenderingResourceIdentifier, Ref<SharedFont>> m_fonts;
     HashMap<WebCore::RenderingResourceIdentifier, Ref<WebCore::FontCustomPlatformData>> m_fontCustomPlatformDatas;
+    HashMap<RemotePathImplIdentifier, Ref<WebCore::PathImpl>> m_paths;
     HashMap<RemoteDisplayListIdentifier, Ref<const WebCore::DisplayList::DisplayList>> m_displayLists;
 };
 

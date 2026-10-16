@@ -55,7 +55,7 @@ MutableStyleProperties::~MutableStyleProperties() = default;
 MutableStyleProperties::MutableStyleProperties(const StyleProperties& other)
     : StyleProperties(other.cssParserMode())
 {
-    if (auto* mutableProperties = dynamicDowncast<MutableStyleProperties>(other))
+    if (RefPtr mutableProperties = dynamicDowncast<MutableStyleProperties>(other))
         m_propertyVector = mutableProperties->m_propertyVector;
     else {
         m_propertyVector = WTF::map(downcast<ImmutableStyleProperties>(other), [](auto property) {
@@ -112,7 +112,7 @@ bool MutableStyleProperties::removePropertyAtIndex(int index, String* returnText
 
     if (returnText) {
         auto property = propertyAt(index);
-        *returnText = WebCore::serializeLonghandValue(CSS::defaultSerializationContext(), property.id(), *property.value());
+        *returnText = WebCore::serializeLonghandValue(CSS::defaultSerializationContext(), property.id(), protect(*property.value()));
     }
 
     // A more efficient removal strategy would involve marking entries as empty
@@ -208,10 +208,10 @@ bool MutableStyleProperties::canUpdateInPlace(const CSSProperty& property, CSSPr
 
 bool MutableStyleProperties::setProperty(const CSSProperty& property, CSSProperty* slot)
 {
-    ASSERT(property.id() == CSSPropertyCustom || isLonghand(property.id()));
+    ASSERT(property.id() == CSSPropertyID::Custom || isLonghand(property.id()));
     auto* toReplace = slot;
     if (!slot) {
-        if (property.id() == CSSPropertyCustom) {
+        if (property.id() == CSSPropertyID::Custom) {
             if (property.value())
                 toReplace = findCustomCSSPropertyWithName(downcast<CSSCustomPropertyValue>(*property.value()).name());
         } else
@@ -233,7 +233,7 @@ bool MutableStyleProperties::setProperty(const CSSProperty& property, CSSPropert
 bool MutableStyleProperties::setProperty(CSSPropertyID propertyID, CSSValueID identifier, IsImportant important)
 {
     ASSERT(isLonghand(propertyID));
-    return setProperty(CSSProperty(propertyID, CSSPrimitiveValue::create(identifier), important));
+    return setProperty(CSSProperty(propertyID, CSSKeywordValue::create(identifier), important));
 }
 
 bool MutableStyleProperties::parseDeclaration(const String& styleDeclaration, CSSParserContext context)
@@ -261,7 +261,7 @@ bool MutableStyleProperties::addParsedProperties(const ParsedPropertyVector& pro
 
 bool MutableStyleProperties::addParsedProperty(const CSSProperty& property)
 {
-    if (property.id() == CSSPropertyCustom) {
+    if (property.id() == CSSPropertyID::Custom) {
         if ((property.value() && !customPropertyIsImportant(downcast<CSSCustomPropertyValue>(*property.value()).name())) || property.isImportant())
             return setProperty(property);
         return false;
@@ -287,12 +287,12 @@ bool MutableStyleProperties::removeProperties(std::span<const CSSPropertyID> pro
     if (m_propertyVector.isEmpty())
         return false;
 
-    // FIXME: This is always used with static sets and in that case constructing the hash repeatedly is pretty pointless.
-    HashSet<CSSPropertyID> toRemove;
-    toRemove.addAll(properties);
+    WTF::BitSet<cssPropertyIDEnumValueCount> toRemove;
+    for (auto property : properties)
+        toRemove.set(std::to_underlying(property));
 
     return m_propertyVector.removeAllMatching([&toRemove](const CSSProperty& property) {
-        return toRemove.contains(property.id());
+        return toRemove.get(std::to_underlying(property.id()));
     }) > 0;
 }
 
@@ -301,7 +301,7 @@ int MutableStyleProperties::findPropertyIndex(CSSPropertyID propertyID) const
     // Convert here propertyID into an uint16_t to compare it with the metadata's m_propertyID to avoid
     // the compiler converting it to an int multiple times in the loop.
     auto& properties = m_propertyVector;
-    uint16_t id = enumToUnderlyingType(propertyID);
+    uint16_t id = std::to_underlying(propertyID);
     for (int n = m_propertyVector.size() - 1 ; n >= 0; --n) {
         if (properties[n].metadata().m_propertyID == id)
             return n;
@@ -313,7 +313,7 @@ int MutableStyleProperties::findCustomPropertyIndex(StringView propertyName) con
 {
     auto& properties = m_propertyVector;
     for (int n = m_propertyVector.size() - 1 ; n >= 0; --n) {
-        if (properties[n].metadata().m_propertyID == CSSPropertyCustom) {
+        if (properties[n].metadata().m_propertyID == std::to_underlying(CSSPropertyID::Custom)) {
             // We found a custom property. See if the name matches.
             if (!properties[n].value())
                 continue;

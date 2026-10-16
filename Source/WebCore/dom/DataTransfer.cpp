@@ -70,7 +70,7 @@ public:
     static Ref<DragImageLoader> create(DataTransfer&, const Document&);
     void startLoading(CachedResourceHandle<CachedImage>&);
     void stopLoading(CachedResourceHandle<CachedImage>&);
-    void moveToDataTransfer(DataTransfer&);
+    void LEGACY_NODELETE moveToDataTransfer(DataTransfer&);
 
     // CachedResourceClient.
     void ref() const final { RefCounted::ref(); }
@@ -93,9 +93,9 @@ DataTransfer::DataTransfer(StoreMode mode, std::unique_ptr<Pasteboard> pasteboar
     : m_storeMode(mode)
     , m_pasteboard(WTF::move(pasteboard))
 #if ENABLE(DRAG_SUPPORT)
-    , m_type(type)
     , m_dropEffect("uninitialized"_s)
     , m_effectAllowed(WTF::move(effectAllowed))
+    , m_type(type)
     , m_shouldUpdateDragImage(false)
 #endif
 {
@@ -146,7 +146,7 @@ static String normalizeType(const String& type)
         return type;
 
     auto lowercaseType = type.trim(isASCIIWhitespace).convertToASCIILowercase();
-    if (lowercaseType == "text"_s || lowercaseType.startsWith(textPlainContentTypeAtom()))
+    if (lowercaseType == "text"_s || lowercaseType == textPlainContentTypeAtom() || lowercaseType.startsWith("text/plain;"_s))
         return textPlainContentTypeAtom();
     if (lowercaseType == "url"_s || lowercaseType.startsWith("text/uri-list;"_s))
         return "text/uri-list"_s;
@@ -154,6 +154,20 @@ static String normalizeType(const String& type)
         return textHTMLContentTypeAtom();
 
     return lowercaseType;
+}
+
+// Parses text/uri-list data as described by RFC 2483 and returns the first URL it contains,
+// skipping the comment lines that specification defines as well as lines that cannot be URLs.
+static String firstURLFromURIList(StringView uriList)
+{
+    // split() elides empty entries, and trimming removes the CR of a CRLF line ending.
+    for (auto line : uriList.split('\n')) {
+        auto url = line.trim(isASCIIWhitespace);
+        if (url.isEmpty() || url.startsWith('#'))
+            continue;
+        return url.toString();
+    }
+    return emptyString();
 }
 
 void DataTransfer::clearData(const String& type)
@@ -170,7 +184,7 @@ void DataTransfer::clearData(const String& type)
         m_itemList->didClearStringData(normalizedType);
 }
 
-static String readURLsFromPasteboardAsString(Page* page, Pasteboard& pasteboard, Function<bool(const String&)>&& shouldIncludeURL)
+static String readURLsFromPasteboardAsString(Page* page, Pasteboard& pasteboard, NOESCAPE const Function<bool(const String&)>& shouldIncludeURL)
 {
     StringBuilder urlList;
     auto urlStrings = pasteboard.readAllStrings("text/uri-list"_s);
@@ -195,7 +209,7 @@ String DataTransfer::getDataForItem(Document& document, const String& type) cons
     auto lowercaseType = type.trim(isASCIIWhitespace).convertToASCIILowercase();
     if (shouldSuppressGetAndSetDataToAvoidExposingFilePaths()) {
         if (lowercaseType == "text/uri-list"_s) {
-            return readURLsFromPasteboardAsString(document.page(), *m_pasteboard, [] (auto& urlString) {
+            return readURLsFromPasteboardAsString(protect(document.page()), *m_pasteboard, [] (auto& urlString) {
                 return Pasteboard::canExposeURLToDOMWhenPasteboardContainsFiles(urlString);
             });
         }
@@ -232,13 +246,13 @@ String DataTransfer::readStringFromPasteboard(Document& document, const String& 
     if (!is<StaticPasteboard>(*m_pasteboard) && lowercaseType == textHTMLContentTypeAtom()) {
         if (!document.frame())
             return { };
-        WebContentMarkupReader reader { document.protectedFrame().releaseNonNull() };
+        WebContentMarkupReader reader { protect(document.frame()).releaseNonNull() };
         m_pasteboard->read(reader, policy);
         return reader.takeMarkup();
     }
 
     if (!is<StaticPasteboard>(*m_pasteboard) && lowercaseType == "text/uri-list"_s) {
-        return readURLsFromPasteboardAsString(document.protectedPage().get(), *m_pasteboard, [] (auto&) {
+        return readURLsFromPasteboardAsString(protect(document.page()).get(), *m_pasteboard, [] (auto&) {
             return true;
         });
     }
@@ -252,7 +266,16 @@ String DataTransfer::readStringFromPasteboard(Document& document, const String& 
 
 String DataTransfer::getData(Document& document, const String& type) const
 {
-    return getDataForItem(document, normalizeType(type));
+    // https://html.spec.whatwg.org/multipage/dnd.html#dom-datatransfer-getdata
+    // Step 6 sets the convert-to-URL flag when the requested format is "url", and step 9
+    // then replaces the text/uri-list data with the first URL it contains.
+    bool convertToURL = equalLettersIgnoringASCIICase(StringView { type }.trim(isASCIIWhitespace), "url"_s);
+
+    auto data = getDataForItem(document, normalizeType(type));
+    if (!convertToURL)
+        return data;
+
+    return firstURLFromURIList(data);
 }
 
 bool DataTransfer::shouldSuppressGetAndSetDataToAvoidExposingFilePaths() const
@@ -260,6 +283,20 @@ bool DataTransfer::shouldSuppressGetAndSetDataToAvoidExposingFilePaths() const
     if (!forFileDrag() && !DeprecatedGlobalSettings::customPasteboardDataEnabled())
         return false;
     return m_pasteboard->fileContentState() == Pasteboard::FileContentState::MayContainFilePaths;
+}
+
+bool DataTransfer::allowsFileAccess() const
+{
+#if PLATFORM(COCOA)
+    return !forDrag() || forFileDrag();
+#elif PLATFORM(GTK) || PLATFORM(WPE)
+    // File drag access is disabled until https://webkit.org/b/271957 is resolved for GTK/WPE ports.
+    // In-memory image paste does not access files on disk, so it is safe to allow.
+    return !forDrag() && m_pasteboard && m_pasteboard->fileContentState() == Pasteboard::FileContentState::InMemoryImage;
+#else
+    // Check https://webkit.org/b/271957 before allowing file access for your port.
+    return false;
+#endif
 }
 
 void DataTransfer::setData(Document& document, const String& type, const String& data)
@@ -323,7 +360,7 @@ void DataTransfer::didAddFileToItemList()
 
     auto& newItem = m_itemList->items().last();
     ASSERT(newItem->isFile());
-    m_fileList->append(*newItem->file());
+    protect(m_fileList)->append(*newItem->file());
 }
 
 DataTransferItemList& DataTransfer::items(Document& document)
@@ -401,7 +438,7 @@ Vector<Ref<File>> DataTransfer::filesFromPasteboardAndItemList(ScriptExecutionCo
     bool itemListContainsItems = false;
     if (m_itemList && m_itemList->hasItems()) {
         for (auto& item : m_itemList->items()) {
-            if (auto file = item->file())
+            if (RefPtr file = item->file())
                 files.append(file.releaseNonNull());
         }
         itemListContainsItems = true;
@@ -416,7 +453,7 @@ FileList& DataTransfer::files(Document* document) const
 {
     if (!canReadData()) {
         if (m_fileList)
-            m_fileList->clear();
+            protect(m_fileList)->clear();
         else
             m_fileList = FileList::create();
         return *m_fileList;
@@ -560,7 +597,7 @@ void DataTransfer::setDragImage(Ref<Element>&& element, int x, int y)
         return;
 
     CachedResourceHandle<CachedImage> image;
-    if (auto* imageElement = dynamicDowncast<HTMLImageElement>(element.get()); imageElement && !imageElement->isConnected())
+    if (RefPtr imageElement = dynamicDowncast<HTMLImageElement>(element); imageElement && !imageElement->isConnected())
         image = imageElement->cachedImage();
 
     m_dragLocation = IntPoint(x, y);
@@ -610,9 +647,9 @@ DragImageRef DataTransfer::createDragImage(const Document* document, IntPoint& l
     location = m_dragLocation;
 
     if (m_dragImage) {
-        HostWindow* hostWindow = document && document->view() ? document->view()->hostWindow() : nullptr;
+        HostWindow* hostWindow = document && document->view() ? protect(document->view())->hostWindow() : nullptr;
         auto deviceScaleFactor = document ? document->deviceScaleFactor() : 1.f;
-        return createDragImageFromImage(m_dragImage->protectedImage().get(), ImageOrientation::Orientation::None, hostWindow, deviceScaleFactor);
+        return createDragImageFromImage(protect(protect(m_dragImage)->image()).get(), ImageOrientation::Orientation::None, hostWindow, deviceScaleFactor);
     }
 
     if (m_dragImageElement) {
@@ -645,12 +682,12 @@ void DragImageLoader::moveToDataTransfer(DataTransfer& newDataTransfer)
 void DragImageLoader::startLoading(CachedResourceHandle<WebCore::CachedImage>& image)
 {
     // FIXME: Does this really trigger a load? Does it need to?
-    image->addClient(*this);
+    protect(image)->addClient(*this);
 }
 
 void DragImageLoader::stopLoading(CachedResourceHandle<WebCore::CachedImage>& image)
 {
-    image->removeClient(*this);
+    protect(image)->removeClient(*this);
 }
 
 void DragImageLoader::imageChanged(CachedImage*, const IntRect*)
@@ -782,7 +819,7 @@ void DataTransfer::moveDragState(Ref<DataTransfer>&& other)
     m_dragImage = other->m_dragImage;
     m_dragImageElement = WTF::move(other->m_dragImageElement);
     m_dragImageLoader = WTF::move(other->m_dragImageLoader);
-    if (RefPtr dragImageLoader = m_dragImageLoader)
+    if (auto* dragImageLoader = m_dragImageLoader.get())
         dragImageLoader->moveToDataTransfer(*this);
     m_fileList = WTF::move(other->m_fileList);
 }

@@ -53,6 +53,7 @@ public:
 
     void add(const RenderLayer&, const LayoutRect&, const LayerAndBoundsVector& enclosingClippingLayers);
     bool overlapsLayers(const RenderLayer&, const LayoutRect&, const LayerAndBoundsVector& enclosingClippingLayers) const;
+    bool isCoveredByRecentRects(const LayoutRect& bounds, const LayerAndBoundsVector& enclosingClippingLayers) const;
     bool isEmpty() const { return m_isEmpty; }
 
     void pushCompositingContainer(const RenderLayer&);
@@ -62,10 +63,10 @@ public:
     void confirmSpeculativeCompositingContainer();
     bool maybePopSpeculativeCompositingContainer();
 
-    const RenderGeometryMap& geometryMap() const { return m_geometryMap; }
-    RenderGeometryMap& geometryMap() { return m_geometryMap; }
+    const RenderGeometryMap& geometryMap() const LIFETIME_BOUND { return m_geometryMap; }
+    RenderGeometryMap& geometryMap() LIFETIME_BOUND { return m_geometryMap; }
 
-    const Vector<std::unique_ptr<OverlapMapContainer>>& overlapStack() const { return m_overlapStack; }
+    const Vector<std::unique_ptr<OverlapMapContainer>>& overlapStack() const LIFETIME_BOUND { return m_overlapStack; }
 
 private:
     Vector<std::unique_ptr<OverlapMapContainer>> m_overlapStack;

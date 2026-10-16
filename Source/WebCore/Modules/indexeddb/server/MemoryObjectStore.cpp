@@ -167,7 +167,7 @@ IDBError MemoryObjectStore::updateIndexRecordsWithIndexKey(MemoryBackingStoreTra
     return index->putIndexKey(key, indexKey);
 }
 
-void MemoryObjectStore::forEachRecord(Function<void(const IDBKeyData& key, const IDBValue& value)>&& apply)
+void MemoryObjectStore::forEachRecord(NOESCAPE const Function<void(const IDBKeyData& key, const IDBValue& value)>& apply)
 {
     for (auto& [key, value] : m_keyValueStore)
         apply(key, value);
@@ -308,6 +308,56 @@ void MemoryObjectStore::addRecordWithoutUpdatingIndexes(MemoryBackingStoreTransa
     ASSERT_UNUSED(listResult, listResult.second);
 
     updateCursorsForPutRecord(listResult.first);
+}
+
+// https://w3c.github.io/IndexedDB/#object-store-storage-operation
+IDBError MemoryObjectStore::overwriteRecord(MemoryBackingStoreTransaction& transaction, const IDBKeyData& keyData, const IndexIDToIndexKeyMap& indexKeys, const IDBValue& value)
+{
+    LOG(IndexedDB, "MemoryObjectStore::overwriteRecord");
+
+    // Before mutating anything, verify the record does not violate a unique index constraint. Otherwise deleting
+    // the record being overwritten below would leave the store with neither the old nor the new record if adding
+    // the new record then failed. A failed put() must leave the store unchanged.
+    auto error = checkIndexConstraintsForPut(keyData, indexKeys);
+    if (!error.isNull())
+        return error;
+
+    // If a record already exists in store, then remove the record from store using the steps for deleting records
+    // from an object store. This is important because formally deleting it from the object store also removes it
+    // from the appropriate indexes.
+    deleteRecord(keyData);
+
+    return addRecord(transaction, keyData, indexKeys, value);
+}
+
+IDBError MemoryObjectStore::checkIndexConstraintsForPut(const IDBKeyData& keyData, const IndexIDToIndexKeyMap& indexKeys)
+{
+    LOG(IndexedDB, "MemoryObjectStore::checkIndexConstraintsForPut");
+
+    for (const auto& [indexID, indexKey] : indexKeys) {
+        RefPtr index = m_indexesByIdentifier.get(indexID);
+        ASSERT(index);
+        if (!index)
+            return IDBError { ExceptionCode::InvalidStateError, "Missing index metadata"_s };
+
+        if (!index->info().unique())
+            continue;
+
+        Vector<IDBKeyData> keys;
+        if (index->info().multiEntry())
+            keys = indexKey.multiEntry();
+        else
+            keys.append(indexKey.asOneKey());
+
+        for (auto& key : keys) {
+            if (!key.isValid())
+                continue;
+            if (index->hasRecordForOtherPrimaryKey(key, keyData))
+                return IDBError { ExceptionCode::ConstraintError, "Unable to store record in object store because it does not satisfy the uniqueness requirements of an index"_s };
+        }
+    }
+
+    return IDBError { };
 }
 
 IDBError MemoryObjectStore::addRecord(MemoryBackingStoreTransaction& transaction, const IDBKeyData& keyData, const IndexIDToIndexKeyMap& indexKeys, const IDBValue& value)
@@ -516,12 +566,12 @@ MemoryObjectStoreCursor* MemoryObjectStore::maybeOpenCursor(const IDBCursorInfo&
     if (transaction.isWriting() && m_writeTransaction != &transaction)
         return nullptr;
 
-    auto result = m_cursors.add(info.identifier(), nullptr);
+    auto result = m_cursors.ensure(info.identifier(), [&] {
+        return MemoryObjectStoreCursor::create(*this, info, transaction);
+    });
     if (!result.isNewEntry)
         return nullptr;
-
-    result.iterator->value = MemoryObjectStoreCursor::create(*this, info, transaction);
-    return result.iterator->value.get();
+    return result.iterator->value.ptr();
 }
 
 void MemoryObjectStore::renameIndex(MemoryIndex& index, const String& newName)

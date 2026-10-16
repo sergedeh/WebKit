@@ -6,10 +6,9 @@
 
 // MemoryObjectTest.cpp : Tests of the GL_EXT_memory_object extension.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
+#include <array>
 
+#include "common/unsafe_buffers.h"
 #include "test_utils/ANGLETest.h"
 
 #include "test_utils/gl_raii.h"
@@ -40,8 +39,8 @@ TEST_P(MemoryObjectTest, MemoryObjectShouldBeMemoryObject)
     ANGLE_SKIP_TEST_IF(IsLinux() && IsAMD() && IsDesktopOpenGL());
 
     constexpr GLsizei kMemoryObjectCount = 2;
-    GLuint memoryObjects[kMemoryObjectCount];
-    glCreateMemoryObjectsEXT(kMemoryObjectCount, memoryObjects);
+    std::array<GLuint, kMemoryObjectCount> memoryObjects;
+    glCreateMemoryObjectsEXT(kMemoryObjectCount, memoryObjects.data());
 
     EXPECT_FALSE(glIsMemoryObjectEXT(0));
 
@@ -50,7 +49,7 @@ TEST_P(MemoryObjectTest, MemoryObjectShouldBeMemoryObject)
         EXPECT_TRUE(glIsMemoryObjectEXT(memoryObjects[i]));
     }
 
-    glDeleteMemoryObjectsEXT(kMemoryObjectCount, memoryObjects);
+    glDeleteMemoryObjectsEXT(kMemoryObjectCount, memoryObjects.data());
 
     EXPECT_GL_NO_ERROR();
 }

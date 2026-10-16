@@ -25,11 +25,15 @@
 
 #pragma once
 
+#include <WebCore/FontCreationContext.h>
+#include <WebCore/FontDescription.h>
 #include <WebCore/FontPlatformData.h>
+#include <WebCore/FontSelectionAlgorithm.h>
 #include <WebCore/RenderingResourceIdentifier.h>
 #include <wtf/Forward.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/Platform.h>
+#include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/TZoneMallocInlines.h>
 
 #if PLATFORM(WIN)
@@ -64,7 +68,7 @@ struct FontCustomPlatformSerializedData {
     RenderingResourceIdentifier renderingResourceIdentifier;
 };
 
-struct FontCustomPlatformData : public RefCounted<FontCustomPlatformData> {
+struct FontCustomPlatformData : public ThreadSafeRefCounted<FontCustomPlatformData> {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(FontCustomPlatformData);
     WTF_MAKE_NONCOPYABLE(FontCustomPlatformData);
 public:
@@ -87,31 +91,61 @@ public:
 #endif
     WEBCORE_EXPORT ~FontCustomPlatformData();
 
-    FontPlatformData fontPlatformData(const FontDescription&, bool bold, bool italic, const FontCreationContext&);
+    FontPlatformData fontPlatformData(const FontDescription&, const FontCreationContext&);
 
-    WEBCORE_EXPORT FontCustomPlatformSerializedData serializedData() const;
+    WEBCORE_EXPORT FontCustomPlatformSerializedData LEGACY_NODELETE serializedData() const;
     WEBCORE_EXPORT static std::optional<Ref<FontCustomPlatformData>> tryMakeFromSerializationData(FontCustomPlatformSerializedData&&, bool);
 
+#if USE(SKIA)
+    sk_sp<SkTypeface> retrieveOrAddCachedTypeface(const Vector<SkFontArguments::VariationPosition::Coordinate>&);
+    void clearVariationTypefacesCache() const;
+    void clearUnusedVariationTypefacesCacheEntries() const;
+#endif
+
     static bool supportsFormat(const String&);
-    static bool supportsTechnology(const FontTechnology&);
+    static bool LEGACY_NODELETE supportsTechnology(const FontTechnology&);
 
 #if PLATFORM(WIN) && USE(CAIRO)
     String name;
 #elif USE(CORE_TEXT)
     RetainPtr<CTFontDescriptorRef> fontDescriptor;
 #elif USE(CAIRO)
-    RefPtr<cairo_font_face_t> m_fontFace;
+    const RefPtr<cairo_font_face_t> m_fontFace;
 #elif USE(SKIA)
     sk_sp<SkTypeface> m_typeface;
+    mutable HashMap<unsigned, sk_sp<SkTypeface>> m_variationTypefacesCache;
 #endif
     FontPlatformData::CreationData creationData;
 
     RenderingResourceIdentifier m_renderingResourceIdentifier;
 };
 
-inline RefPtr<const FontCustomPlatformData> FontPlatformData::protectedCustomPlatformData() const
+inline bool computeSyntheticBold(bool hasWeightVariationAxis, const FontDescription& fontDescription, const FontCreationContext& fontCreationContext)
 {
-    return m_customPlatformData.get();
+    auto explicitlyDeclaredWeight = fontCreationContext.fontFaceCapabilities().weight;
+    // No explicit font-weight descriptor (auto): the variable font's wght axis handles weight, so don't synthesize.
+    if (hasWeightVariationAxis && !explicitlyDeclaredWeight)
+        return false;
+    auto declaredWeightMax = explicitlyDeclaredWeight
+        .transform([](auto range) { return range.maximum; })
+        .value_or(normalWeightValue());
+    return fontDescription.hasAutoFontSynthesisWeight()
+        && isFontWeightBold(fontDescription.weight())
+        && !isFontWeightBold(declaredWeightMax);
+}
+
+inline bool computeSyntheticItalic(bool hasSlopeVariationAxis, const FontDescription& fontDescription, const FontCreationContext& fontCreationContext)
+{
+    auto explicitlyDeclaredSlope = fontCreationContext.fontFaceCapabilities().slope;
+    // No explicit font-style descriptor (auto): the variable font's slnt/ital axis handles slope, so don't synthesize.
+    if (hasSlopeVariationAxis && !explicitlyDeclaredSlope)
+        return false;
+    auto declaredSlopeMax = explicitlyDeclaredSlope
+        .transform([](auto range) { return range.maximum; })
+        .value_or(normalItalicValue());
+    return fontDescription.allowsItalicOrObliqueFontSynthesisStyle()
+        && isItalic(fontDescription.fontStyleSlope())
+        && !isItalic(declaredSlopeMax);
 }
 
 } // namespace WebCore

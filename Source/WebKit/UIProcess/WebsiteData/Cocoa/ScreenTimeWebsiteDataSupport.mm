@@ -57,7 +57,8 @@ void getScreenTimeURLs(std::optional<WTF::UUID> identifier, CompletionHandler<vo
             }
 
             HashSet<URL> result;
-            for (NSURL *site in urls.get()) {
+            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+            for (SUPPRESS_UNRETAINED_LOCAL NSURL *site in urls.get()) {
                 URL url { site };
                 if (url.isValid())
                     result.add(WTF::move(url));
@@ -68,7 +69,16 @@ void getScreenTimeURLs(std::optional<WTF::UUID> identifier, CompletionHandler<vo
     }).get()];
 }
 
-void removeScreenTimeData(const HashSet<URL>& websitesToRemove, const WebsiteDataStoreConfiguration& configuration)
+static bool hostIsInDomain(NSString *host, NSString *domain)
+{
+    if (![host hasSuffix:domain])
+        return false;
+
+    NSUInteger suffixOffset = host.length - domain.length;
+    return !suffixOffset || [host characterAtIndex:suffixOffset - 1] == '.';
+}
+
+void removeScreenTimeData(const HashSet<URL>& websitesToRemove, const WebsiteDataStoreConfiguration& configuration, CompletionHandler<void()>&& completionHandler)
 {
     RetainPtr<NSString> profileIdentifier;
     if (configuration.identifier())
@@ -77,21 +87,29 @@ void removeScreenTimeData(const HashSet<URL>& websitesToRemove, const WebsiteDat
     RetainPtr webHistory = adoptNS([PAL::allocSTWebHistoryInstance() initWithProfileIdentifier:profileIdentifier.get()]);
 
     RetainPtr<NSMutableSet<NSString *>> websitesToRemoveDomains = [NSMutableSet set];
-    for (auto& url : websitesToRemove)
-        if (RetainPtr host = url.host().createNSString())
+    for (auto& url : websitesToRemove) {
+        if (RetainPtr host = url.host().createNSString(); host && [host length])
             [websitesToRemoveDomains addObject:host.get()];
+    }
 
-    [webHistory fetchAllHistoryWithCompletionHandler:^(NSSet<NSURL *> *urls, NSError *error) {
-        if (error)
-            return;
-
-        for (NSURL *url in urls) {
-            for (NSString *domainString in websitesToRemoveDomains.get()) {
-                if ([[url host] hasSuffix:domainString])
-                    [webHistory deleteHistoryForURL:url];
+    [webHistory fetchAllHistoryWithCompletionHandler:makeBlockPtr([webHistory, websitesToRemoveDomains, completionHandler = WTF::move(completionHandler)](NSSet<NSURL *> *urls, NSError *error) mutable {
+        if (!error) {
+            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+            for (SUPPRESS_UNRETAINED_LOCAL NSURL *url in urls) {
+                // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+                for (SUPPRESS_UNRETAINED_LOCAL NSString *domainString in websitesToRemoveDomains.get()) {
+                    if (hostIsInDomain([url host], domainString)) {
+                        [webHistory deleteHistoryForURL:url];
+                        break;
+                    }
+                }
             }
         }
-    }];
+
+        ensureOnMainRunLoop([completionHandler = WTF::move(completionHandler)] mutable {
+            completionHandler();
+        });
+    }).get()];
 }
 
 void removeScreenTimeDataWithInterval(WallTime modifiedSince, const WebsiteDataStoreConfiguration& configuration)

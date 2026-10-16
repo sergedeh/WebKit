@@ -33,6 +33,7 @@
 
 #include <JavaScriptCore/InspectorAgentBase.h>
 #include <JavaScriptCore/InspectorBackendDispatchers.h>
+#include <wtf/CheckedRef.h>
 #include <wtf/Forward.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
@@ -96,8 +97,8 @@ private:
     void setTypeProfilerEnabledState(bool);
     void setControlFlowProfilerEnabledState(bool);
 
-    InjectedScriptManager& m_injectedScriptManager;
-    JSC::Debugger& m_debugger;
+    const CheckedRef<InjectedScriptManager> m_injectedScriptManager;
+    JSC::Debugger* m_debugger { nullptr };
     JSC::VM& m_vm;
     bool m_enabled {false};
     bool m_isTypeProfilingEnabled {false};

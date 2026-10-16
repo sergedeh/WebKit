@@ -31,6 +31,7 @@
 #include <WebCore/ChromeClient.h>
 #include <WebCore/CryptoClient.h>
 #include <WebCore/ExceptionOr.h>
+#include <WebCore/FocusOptions.h>
 #include <WebCore/PageIdentifier.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/Platform.h>
@@ -52,7 +53,9 @@ class DiagnosticLoggingClient;
 class EditorClient;
 class HTMLImageElement;
 class PageConfiguration;
+class SocketProvider;
 enum class BroadcastFocusedElement : bool;
+enum class ContentChange : uint8_t;
 struct FocusOptions;
 
 class EmptyChromeClient : public ChromeClient {
@@ -74,16 +77,13 @@ class EmptyChromeClient : public ChromeClient {
     void focusedElementChanged(Element*, LocalFrame*, FocusOptions, BroadcastFocusedElement) final { }
     void focusedFrameChanged(Frame*) final { }
 
-    RefPtr<Page> createWindow(LocalFrame&, const String&, const WindowFeatures&, const NavigationAction&) final { return nullptr; }
+    RefPtr<Page> createWindow(LocalFrame&, const String&, const WindowFeatures&, const NavigationAction&) final;
     void show() final { }
 
     bool canRunModal() const final { return false; }
     void runModal() final { }
 
-    bool toolbarsVisible() const final { return false; }
-    bool statusbarVisible() const final { return false; }
-    bool scrollbarsVisible() const final { return false; }
-    bool menubarVisible() const final { return false; }
+    bool isPopup() const final { return false; }
 
     void setResizable(bool) final { }
 
@@ -140,8 +140,6 @@ class EmptyChromeClient : public ChromeClient {
 
     void exceededDatabaseQuota(LocalFrame&, const String&, DatabaseDetails) final { }
 
-    void reachedMaxAppCacheSize(int64_t) final { }
-
     RefPtr<ColorChooser> createColorChooser(ColorChooserClient&, const Color&) final;
 
     RefPtr<DataListSuggestionPicker> createDataListSuggestionPicker(DataListSuggestionsClient&) final;
@@ -149,13 +147,13 @@ class EmptyChromeClient : public ChromeClient {
 
     RefPtr<DateTimeChooser> createDateTimeChooser(DateTimeChooserClient&) final;
 
-    void setTextIndicator(RefPtr<TextIndicator>&&) const final;
-    void updateTextIndicator(RefPtr<TextIndicator>&&) const final;
+    void LEGACY_NODELETE setTextIndicator(RefPtr<TextIndicator>&&) const final;
+    void LEGACY_NODELETE updateTextIndicator(RefPtr<TextIndicator>&&) const final;
 
-    DisplayRefreshMonitorFactory* displayRefreshMonitorFactory() const final;
+    DisplayRefreshMonitorFactory* LEGACY_NODELETE displayRefreshMonitorFactory() const final;
 
-    void runOpenPanel(LocalFrame&, FileChooser&) final;
-    void showShareSheet(ShareDataWithParsedURL&&, CompletionHandler<void(bool)>&&) final;
+    void LEGACY_NODELETE runOpenPanel(LocalFrame&, FileChooser&) final;
+    void LEGACY_NODELETE showShareSheet(ShareDataWithParsedURL&&, CompletionHandler<void(bool)>&&) final;
     void loadIconForFiles(const Vector<String>&, FileIconLoader&) final { }
 
     void elementDidFocus(Element&, const FocusOptions&) final { }
@@ -190,7 +188,6 @@ class EmptyChromeClient : public ChromeClient {
 #if PLATFORM(IOS_FAMILY)
     void didReceiveMobileDocType(bool) final { }
     void setNeedsScrollNotifications(LocalFrame&, bool) final { }
-    void didFinishContentChangeObserving(LocalFrame&, WKContentChange) final { }
     void notifyRevealedSelectionByScrollingFrame(LocalFrame&) final { }
     void didLayout(LayoutType) final { }
     void didStartOverflowScroll() final { }
@@ -208,6 +205,10 @@ class EmptyChromeClient : public ChromeClient {
     bool showDataDetectorsUIForElement(const Element&, const Event&) final { return false; }
 #endif // PLATFORM(IOS_FAMILY)
 
+#if ENABLE(CONTENT_CHANGE_OBSERVER)
+    void didFinishContentChangeObserving(LocalFrame&, ContentChange) final { }
+#endif
+
 #if ENABLE(ORIENTATION_EVENTS)
     IntDegrees deviceOrientation() const final { return 0; }
 #endif
@@ -224,11 +225,10 @@ class EmptyChromeClient : public ChromeClient {
     bool shouldNotifyOnFormChanges() final { return false; }
 
     RefPtr<Icon> createIconForFiles(const Vector<String>& /* filenames */) final;
-
-    void requestCookieConsent(CompletionHandler<void(CookieConsentDecisionResult)>&&) final;
 };
 
-DiagnosticLoggingClient& emptyDiagnosticLoggingClient();
+WEBCORE_EXPORT Ref<SocketProvider> emptySocketProvider();
+DiagnosticLoggingClient& LEGACY_NODELETE emptyDiagnosticLoggingClient();
 WEBCORE_EXPORT PageConfiguration pageConfigurationWithEmptyClients(std::optional<PageIdentifier>, PAL::SessionID);
 
 class EmptyCryptoClient: public CryptoClient {

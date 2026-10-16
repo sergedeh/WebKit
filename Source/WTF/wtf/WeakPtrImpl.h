@@ -28,8 +28,8 @@
 #include <wtf/GetPtr.h>
 #include <wtf/HashTraits.h>
 #include <wtf/SingleThreadIntegralWrapper.h>
+#include <wtf/ThreadAssertions.h>
 #include <wtf/ThreadSafeRefCounted.h>
-#include <wtf/Threading.h>
 #include <wtf/TypeCasts.h>
 
 namespace WTF {
@@ -41,31 +41,44 @@ class WeakPtrImplBase : public ThreadSafeRefCounted<Derived> {
     WTF_MAKE_NONCOPYABLE(WeakPtrImplBase);
     WTF_DEPRECATED_MAKE_FAST_COMPACT_ALLOCATED_WITH_HEAP_IDENTIFIER(WeakPtrImplBase, WeakPtrImplBase);
 public:
-    template<typename T> typename T::WeakValueType* get()
+    template<typename T> typename T::WeakValueType* get() const
     {
         return static_cast<typename T::WeakValueType*>(m_ptr);
     }
 
     explicit operator bool() const { return m_ptr; }
-    void clear() { m_ptr = nullptr; }
+    void clear()
+    {
+        m_ptr = nullptr;
+#if !ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
+        m_thread = anyThreadLike;
+#endif
+    }
 
-#if ASSERT_ENABLED
-    bool wasConstructedOnMainThread() const { return m_wasConstructedOnMainThread; }
+#if !ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
+    const ThreadLikeAssertion& threadAssertion() const LIFETIME_BOUND { return m_thread; }
 #endif
 
     template<typename T>
     explicit WeakPtrImplBase(T* ptr)
         : m_ptr(static_cast<typename T::WeakValueType*>(ptr))
-#if ASSERT_ENABLED
-        , m_wasConstructedOnMainThread(isMainThread())
+#if !ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
+        , m_thread(currentThreadLike)
 #endif
     {
     }
 
+    ~WeakPtrImplBase()
+    {
+#if !ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
+        m_thread = anyThreadLike;
+#endif
+    }
+
 private:
     void* m_ptr;
-#if ASSERT_ENABLED
-    bool m_wasConstructedOnMainThread;
+#if !ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
+    NO_UNIQUE_ADDRESS mutable ThreadLikeAssertion m_thread;
 #endif
 };
 
@@ -76,6 +89,12 @@ public:
         : WeakPtrImplBase<DefaultWeakPtrImpl>(ptr)
     {
     }
+
+    // DefaultWeakPtrImpl is an implementation detail of WeakPtr.
+    // Deleting this object does not logically result in destruction of a user object.
+    SUPPRESS_NODELETE void LEGACY_NODELETE deref() const {
+        WeakPtrImplBase<DefaultWeakPtrImpl>::deref();
+    }
 };
 
 DECLARE_COMPACT_ALLOCATOR_WITH_HEAP_IDENTIFIER(WeakPtrImplBaseSingleThread);
@@ -85,25 +104,38 @@ class WeakPtrImplBaseSingleThread {
     WTF_MAKE_NONCOPYABLE(WeakPtrImplBaseSingleThread);
     WTF_DEPRECATED_MAKE_FAST_COMPACT_ALLOCATED_WITH_HEAP_IDENTIFIER(WeakPtrImplBaseSingleThread, WeakPtrImplBaseSingleThread);
 public:
-    template<typename T> typename T::WeakValueType* get()
+    template<typename T> typename T::WeakValueType* get() const
     {
         return static_cast<typename T::WeakValueType*>(m_ptr);
     }
 
     explicit operator bool() const { return m_ptr; }
-    void clear() { m_ptr = nullptr; }
+    void clear()
+    {
+        m_ptr = nullptr;
+#if !ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
+        m_thread = anyThreadLike;
+#endif
+    }
 
-#if ASSERT_ENABLED
-    bool wasConstructedOnMainThread() const { return m_wasConstructedOnMainThread; }
+#if !ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
+    const ThreadLikeAssertion& threadAssertion() const LIFETIME_BOUND { return m_thread; }
 #endif
 
     template<typename T>
     explicit WeakPtrImplBaseSingleThread(T* ptr)
         : m_ptr(static_cast<typename T::WeakValueType*>(ptr))
-#if ASSERT_ENABLED
-        , m_wasConstructedOnMainThread(isMainThread())
+#if !ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
+        , m_thread(currentThreadLike)
 #endif
     {
+    }
+
+    ~WeakPtrImplBaseSingleThread()
+    {
+#if !ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
+        m_thread = anyThreadLike;
+#endif
     }
 
     uint32_t refCount() const { return m_refCount; }
@@ -121,8 +153,8 @@ public:
 private:
     mutable SingleThreadIntegralWrapper<uint32_t> m_refCount { 1 };
     void* m_ptr;
-#if ASSERT_ENABLED
-    bool m_wasConstructedOnMainThread;
+#if !ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
+    NO_UNIQUE_ADDRESS mutable ThreadLikeAssertion m_thread;
 #endif
 };
 

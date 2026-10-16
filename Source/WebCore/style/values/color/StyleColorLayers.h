@@ -37,6 +37,8 @@ class Color;
 
 namespace Style {
 
+class ResolvedColors;
+
 struct ColorResolutionState;
 
 struct ColorLayers {
@@ -54,11 +56,11 @@ inline bool operator==(const UniqueRef<ColorLayers>& a, const UniqueRef<ColorLay
 }
 
 Color toStyleColor(const CSS::ColorLayers&, ColorResolutionState&);
-WebCore::Color resolveColor(const ColorLayers&, const WebCore::Color& currentColor);
+WebCore::Color resolveColor(const ColorLayers&, const ResolvedColors&);
 bool containsCurrentColor(const ColorLayers&);
 
 void serializationForCSSTokenization(StringBuilder&, const CSS::SerializationContext&, const ColorLayers&);
-String serializationForCSSTokenization(const CSS::SerializationContext&, const ColorLayers&);
+WTF::String serializationForCSSTokenization(const CSS::SerializationContext&, const ColorLayers&);
 
 WTF::TextStream& operator<<(WTF::TextStream&, const ColorLayers&);
 

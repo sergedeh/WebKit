@@ -36,9 +36,12 @@
 #include "ColorSerialization.h"
 #include "DOMMatrix2DInit.h"
 #include "DOMPointInit.h"
+#include "DefaultSizing.h"
 #include "Document.h"
 #include "Element.h"
 #include "FloatPoint.h"
+#include "GPUCanvasContext.h"
+#include "GPUDevice.h"
 #include "Gradient.h"
 #include "HTMLCanvasElement.h"
 #include "HTMLImageElement.h"
@@ -48,6 +51,7 @@
 #include "ImageBitmapRenderingContext.h"
 #include "ImageBuffer.h"
 #include "ImageData.h"
+#include "ImageUtilities.h"
 #include "InspectorCanvasAgent.h"
 #include "InspectorDOMAgent.h"
 #include "InspectorInstrumentation.h"
@@ -58,7 +62,9 @@
 #include "JSCanvasRenderingContext2D.h"
 #include "JSCanvasTextAlign.h"
 #include "JSCanvasTextBaseline.h"
+#include "JSDOMWrapperCache.h"
 #include "JSExecState.h"
+#include "JSGPUDevice.h"
 #include "JSImageBitmapRenderingContext.h"
 #include "JSImageSmoothingQuality.h"
 #include "JSPredefinedColorSpace.h"
@@ -70,6 +76,8 @@
 #include <JavaScriptCore/IdentifiersFactory.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ScriptCallStackFactory.h>
+#include <ranges>
+#include <wtf/CheckedArithmetic.h>
 #include <wtf/Function.h>
 #include <wtf/RefPtr.h>
 #include <wtf/Scope.h>
@@ -92,58 +100,256 @@ Ref<InspectorCanvas> InspectorCanvas::create(CanvasRenderingContext& context)
     return adoptRef(*new InspectorCanvas(context));
 }
 
+Ref<InspectorCanvas> InspectorCanvas::create(GPUDevice& device)
+{
+    return adoptRef(*new InspectorCanvas(device));
+}
+
+InspectorCanvas::~InspectorCanvas() = default;
+
 InspectorCanvas::InspectorCanvas(CanvasRenderingContext& context)
     : m_identifier(makeString("canvas:"_s, IdentifiersFactory::createIdentifier()))
     , m_context(context)
 {
 }
 
-HTMLCanvasElement* InspectorCanvas::canvasElement() const
+CanvasRenderingContext* InspectorCanvas::canvasContext() const
 {
-    return dynamicDowncast<HTMLCanvasElement>(m_context->canvasBase());
+    auto* context = std::get_if<WeakRef<CanvasRenderingContext>>(&m_context);
+    return context ? context->ptr() : nullptr;
+}
+
+InspectorCanvas::InspectorCanvas(GPUDevice& device)
+    : m_identifier(makeString("canvas:"_s, IdentifiersFactory::createIdentifier()))
+    , m_context(device)
+{
+}
+
+GPUDevice* InspectorCanvas::deviceContext() const
+{
+    auto* device = std::get_if<WeakRef<GPUDevice, WeakPtrImplWithEventTargetData>>(&m_context);
+    return device ? device->ptr() : nullptr;
+}
+
+bool InspectorCanvas::hasActiveInspectorCanvasCallTracer() const
+{
+    return WTF::switchOn(m_context,
+        [](const WeakRef<CanvasRenderingContext>& context) {
+            return context->hasActiveInspectorCanvasCallTracer();
+        },
+        [](const WeakRef<GPUDevice, WeakPtrImplWithEventTargetData>& device) {
+            return device->hasActiveInspectorCanvasCallTracer();
+        }
+    );
+}
+
+void InspectorCanvas::setHasActiveInspectorCanvasCallTracer(bool active)
+{
+    WTF::switchOn(m_context,
+        [active](const WeakRef<CanvasRenderingContext>& context) {
+            context->setHasActiveInspectorCanvasCallTracer(active);
+        },
+        [active](const WeakRef<GPUDevice, WeakPtrImplWithEventTargetData>& device) {
+            device->setHasActiveInspectorCanvasCallTracer(active);
+        }
+    );
+}
+
+static bool canvasContextMatchesDevice(const CanvasRenderingContext& context, const GPUDevice& device)
+{
+    auto* gpuCanvasContext = dynamicDowncast<GPUCanvasContext>(context);
+    return gpuCanvasContext && gpuCanvasContext->device() == &device;
+}
+
+HashSet<HTMLCanvasElement*> InspectorCanvas::canvasElements() const
+{
+    return WTF::switchOn(m_context,
+        [](const WeakRef<CanvasRenderingContext>& weakContext) {
+            Ref context = weakContext;
+
+            HashSet<HTMLCanvasElement*> canvasElements;
+            if (RefPtr canvasElement = dynamicDowncast<HTMLCanvasElement>(context->canvasBase()))
+                canvasElements.add(canvasElement);
+            return canvasElements;
+        },
+        [](const WeakRef<GPUDevice, WeakPtrImplWithEventTargetData>& weakDevice) {
+            Ref device = weakDevice;
+
+            HashSet<HTMLCanvasElement*> canvasElements;
+            Locker locker { CanvasRenderingContext::instancesLock() };
+            for (SUPPRESS_UNCOUNTED_ARG auto* context : CanvasRenderingContext::instances()) {
+                if (!context->isContextThread() || !canvasContextMatchesDevice(*context, device))
+                    continue;
+
+                if (RefPtr canvasElement = dynamicDowncast<HTMLCanvasElement>(context->canvasBase()))
+                    canvasElements.add(canvasElement);
+            }
+            return canvasElements;
+        }
+    );
+}
+
+Vector<IntSize> InspectorCanvas::sizes() const
+{
+    return WTF::switchOn(m_context,
+        [](const WeakRef<CanvasRenderingContext>& weakContext) -> Vector<IntSize> {
+            Ref context = weakContext;
+            return { context->canvasBase().size() };
+        },
+        [](const WeakRef<GPUDevice, WeakPtrImplWithEventTargetData>& weakDevice) {
+            Ref device = weakDevice;
+
+            Vector<IntSize> sizes;
+            Locker locker { CanvasRenderingContext::instancesLock() };
+            for (SUPPRESS_UNCOUNTED_ARG auto* context : CanvasRenderingContext::instances()) {
+                if (!context->isContextThread() || !canvasContextMatchesDevice(*context, device))
+                    continue;
+
+                sizes.appendIfNotContains(context->canvasBase().size());
+            }
+            return sizes;
+        }
+    );
+}
+
+Vector<String> InspectorCanvas::cssCanvasNames() const
+{
+    auto cssCanvasNames = WTF::switchOn(m_context,
+        [](const WeakRef<CanvasRenderingContext>& weakContext) {
+            Ref context = weakContext;
+
+            Vector<String> cssCanvasNames;
+            if (RefPtr canvasElement = dynamicDowncast<HTMLCanvasElement>(context->canvasBase())) {
+                if (String cssCanvasName = canvasElement->document().nameForCSSCanvasElement(*canvasElement); !cssCanvasName.isEmpty())
+                    cssCanvasNames.append(cssCanvasName);
+            }
+            return cssCanvasNames;
+        },
+        [](const WeakRef<GPUDevice, WeakPtrImplWithEventTargetData>& weakDevice) {
+            Ref device = weakDevice;
+
+            Vector<String> cssCanvasNames;
+            Locker locker { CanvasRenderingContext::instancesLock() };
+            for (SUPPRESS_UNCOUNTED_ARG auto* context : CanvasRenderingContext::instances()) {
+                if (!context->isContextThread() || !canvasContextMatchesDevice(*context, device))
+                    continue;
+
+                if (RefPtr canvasElement = dynamicDowncast<HTMLCanvasElement>(context->canvasBase())) {
+                    if (String cssCanvasName = canvasElement->document().nameForCSSCanvasElement(*canvasElement); !cssCanvasName.isEmpty())
+                        cssCanvasNames.appendIfNotContains(cssCanvasName);
+                }
+
+            }
+            return cssCanvasNames;
+        }
+    );
+
+    std::ranges::sort(cssCanvasNames, codePointCompareLessThan);
+    return cssCanvasNames;
 }
 
 ScriptExecutionContext* InspectorCanvas::scriptExecutionContext() const
 {
-    return m_context->canvasBase().scriptExecutionContext();
+    return WTF::switchOn(m_context,
+        [](const WeakRef<CanvasRenderingContext>& weakContext) {
+            Ref context = weakContext;
+            return protect(context->canvasBase())->scriptExecutionContext();
+        },
+        [](const WeakRef<GPUDevice, WeakPtrImplWithEventTargetData>& weakDevice) {
+            Ref device = weakDevice;
+            return device->scriptExecutionContext();
+        }
+    );
 }
 
 JSC::JSValue InspectorCanvas::resolveContext(JSC::JSGlobalObject* exec)
 {
     JSC::JSLockHolder lock(exec);
     auto* globalObject = deprecatedGlobalObjectForPrototype(exec);
-    if (is<CanvasRenderingContext2D>(m_context))
-        return toJS(exec, globalObject, downcast<CanvasRenderingContext2D>(m_context.get()));
+
+    return WTF::switchOn(m_context,
+        [&](const WeakRef<CanvasRenderingContext>& weakContext) {
+            Ref context = weakContext;
+            if (is<CanvasRenderingContext2D>(context))
+                return toJS(exec, globalObject, downcast<CanvasRenderingContext2D>(context));
 #if ENABLE(OFFSCREEN_CANVAS)
-    if (is<OffscreenCanvasRenderingContext2D>(m_context))
-        return toJS(exec, globalObject, downcast<OffscreenCanvasRenderingContext2D>(m_context.get()));
+            if (is<OffscreenCanvasRenderingContext2D>(context))
+                return toJS(exec, globalObject, downcast<OffscreenCanvasRenderingContext2D>(context));
 #endif
-    if (is<ImageBitmapRenderingContext>(m_context))
-        return toJS(exec, globalObject, downcast<ImageBitmapRenderingContext>(m_context.get()));
+            if (is<ImageBitmapRenderingContext>(context))
+                return toJS(exec, globalObject, downcast<ImageBitmapRenderingContext>(context));
 #if ENABLE(WEBGL)
-    if (is<WebGLRenderingContext>(m_context))
-        return toJS(exec, globalObject, downcast<WebGLRenderingContext>(m_context.get()));
-    if (is<WebGL2RenderingContext>(m_context))
-        return toJS(exec, globalObject, downcast<WebGL2RenderingContext>(m_context.get()));
+            if (is<WebGLRenderingContext>(context))
+                return toJS(exec, globalObject, downcast<WebGLRenderingContext>(context));
+            if (is<WebGL2RenderingContext>(context))
+                return toJS(exec, globalObject, downcast<WebGL2RenderingContext>(context));
 #endif
-    RELEASE_ASSERT_NOT_REACHED();
+            RELEASE_ASSERT_NOT_REACHED();
+        },
+        [&](const WeakRef<GPUDevice, WeakPtrImplWithEventTargetData>& weakDevice) {
+            Ref device = weakDevice;
+            return toJS(exec, globalObject, device);
+        }
+    );
 }
 
-HashSet<Element*> InspectorCanvas::clientNodes() const
+HashSet<Ref<Element>> InspectorCanvas::cssCanvasClientNodes() const
 {
-    return m_context->canvasBase().cssCanvasClients();
+    return WTF::switchOn(m_context,
+        [](const WeakRef<CanvasRenderingContext>& weakContext) {
+            Ref context = weakContext;
+            return protect(context->canvasBase())->cssCanvasClients();
+        },
+        [](const WeakRef<GPUDevice, WeakPtrImplWithEventTargetData>& weakDevice) {
+            Ref device = weakDevice;
+            HashSet<Ref<Element>> cssCanvasClientNodes;
+            Locker locker { CanvasRenderingContext::instancesLock() };
+            for (SUPPRESS_UNCOUNTED_ARG auto* context : CanvasRenderingContext::instances()) {
+                if (!context->isContextThread() || !canvasContextMatchesDevice(*context, device))
+                    continue;
+
+                for (Ref cssCanvasClientNode : protect(context->canvasBase())->cssCanvasClients())
+                    cssCanvasClientNodes.add(WTF::move(cssCanvasClientNode));
+            }
+            return cssCanvasClientNodes;
+        }
+    );
 }
 
-void InspectorCanvas::canvasChanged()
+size_t InspectorCanvas::memoryCost() const
 {
-    if (!m_context->hasActiveInspectorCanvasCallTracer())
+    return WTF::switchOn(m_context,
+        [](const WeakRef<CanvasRenderingContext>& weakContext) {
+            Ref context = weakContext;
+
+            return context->memoryCost();
+        },
+        [](const WeakRef<GPUDevice, WeakPtrImplWithEventTargetData>& weakDevice) -> size_t {
+            Ref device = weakDevice;
+
+            CheckedSize memoryCost = device->memoryCost();
+            Locker locker { CanvasRenderingContext::instancesLock() };
+            for (SUPPRESS_UNCOUNTED_ARG auto* context : CanvasRenderingContext::instances()) {
+                if (!context->isContextThread() || !canvasContextMatchesDevice(*context, device))
+                    continue;
+                memoryCost += context->memoryCost();
+            }
+            return memoryCost;
+        }
+    );
+}
+
+void InspectorCanvas::canvasContentsWillChange()
+{
+    Ref context = std::get<WeakRef<CanvasRenderingContext>>(m_context);
+    if (!context->hasActiveInspectorCanvasCallTracer())
         return;
 
     // Since 2D contexts are able to be fully reproduced in the frontend, we don't need snapshots.
-    if (is<CanvasRenderingContext2D>(m_context))
+    if (is<CanvasRenderingContext2D>(context))
         return;
 #if ENABLE(OFFSCREEN_CANVAS)
-    if (is<OffscreenCanvasRenderingContext2D>(m_context))
+    if (is<OffscreenCanvasRenderingContext2D>(context))
         return;
 #endif
 
@@ -157,6 +363,8 @@ void InspectorCanvas::resetRecordingData()
     m_currentActions = nullptr;
     m_serializedDuplicateData = nullptr;
     m_indexedDuplicateData.clear();
+    m_boundRecordingObjectIdentifiers.clear();
+    m_nextRecordingObjectIdentifiers.clear();
     m_recordingName = { };
     m_bufferLimit = 100 * 1024 * 1024;
     m_bufferUsed = 0;
@@ -164,9 +372,7 @@ void InspectorCanvas::resetRecordingData()
     m_framesCaptured = 0;
     m_contentChanged = false;
 
-    // FIXME: <https://webkit.org/b/201651> Web Inspector: Canvas: support canvas recordings for WebGPUDevice
-
-    m_context->setHasActiveInspectorCanvasCallTracer(false);
+    setHasActiveInspectorCanvasCallTracer(false);
 }
 
 bool InspectorCanvas::hasRecordingData() const
@@ -179,14 +385,6 @@ bool InspectorCanvas::currentFrameHasData() const
     return !!m_frames;
 }
 
-template<typename T> static Ref<JSON::ArrayOf<JSON::Value>> buildArrayForVector(const Vector<T>& vector)
-{
-    auto array = JSON::ArrayOf<JSON::Value>::create();
-    for (auto& item : vector)
-        array->addItem(item);
-    return array;
-}
-
 static bool shouldSnapshotBitmapRendererAction(const String& name)
 {
     return name == "transferFromImageBitmap"_s;
@@ -197,7 +395,13 @@ static bool shouldSnapshotWebGLAction(const String& name)
 {
     return name == "clear"_s
         || name == "drawArrays"_s
-        || name == "drawElements"_s;
+        || name == "drawArraysInstancedANGLE"_s
+        || name == "drawElements"_s
+        || name == "drawElementsInstancedANGLE"_s
+        || name == "multiDrawArraysWEBGL"_s
+        || name == "multiDrawArraysInstancedWEBGL"_s
+        || name == "multiDrawElementsWEBGL"_s
+        || name == "multiDrawElementsInstancedWEBGL"_s;
 }
 
 static bool shouldSnapshotWebGL2Action(const String& name)
@@ -205,19 +409,43 @@ static bool shouldSnapshotWebGL2Action(const String& name)
     return name == "clear"_s
         || name == "drawArrays"_s
         || name == "drawArraysInstanced"_s
+        || name == "drawArraysInstancedBaseInstanceWEBGL"_s
         || name == "drawElements"_s
-        || name == "drawElementsInstanced"_s;
+        || name == "drawElementsInstanced"_s
+        || name == "drawElementsInstancedBaseVertexBaseInstanceWEBGL"_s
+        || name == "multiDrawArraysWEBGL"_s
+        || name == "multiDrawArraysInstancedBaseInstanceWEBGL"_s
+        || name == "multiDrawArraysInstancedWEBGL"_s
+        || name == "multiDrawElementsInstancedBaseVertexBaseInstanceWEBGL"_s
+        || name == "multiDrawElementsInstancedWEBGL"_s
+        || name == "multiDrawElementsWEBGL"_s;
 }
 #endif
 
+static bool shouldSnapshotWebGPUAction(RecordingSwizzleType receiverSwizzleType, const String& name)
+{
+    if (receiverSwizzleType == RecordingSwizzleType::GPUQueue) {
+        return name == "submit"_s
+            || name == "writeTexture"_s
+            || name == "copyExternalImageToTexture"_s
+            || name == "drawElementImageToTexture"_s;
+    }
+    return false;
+}
+
 void InspectorCanvas::recordAction(String&& name, InspectorCanvasProcessedArguments&& arguments)
+{
+    recordAction(WTF::move(name), WTF::move(arguments), nullptr);
+}
+
+void InspectorCanvas::recordAction(String&& name, InspectorCanvasProcessedArguments&& arguments, RefPtr<JSON::ArrayOf<int>> receiver)
 {
     if (!m_initialState) {
         // We should only construct the initial state for the first action of the recording.
         ASSERT(!m_frames && !m_currentActions);
 
         m_initialState = buildInitialState();
-        m_bufferUsed += m_initialState->memoryCost();
+        m_bufferUsed += protect(m_initialState)->memoryCost();
     }
 
     if (!m_frames)
@@ -230,7 +458,7 @@ void InspectorCanvas::recordAction(String&& name, InspectorCanvasProcessedArgume
             .setActions(*m_currentActions)
             .release();
 
-        m_frames->addItem(WTF::move(frame));
+        protect(m_frames)->addItem(WTF::move(frame));
         ++m_framesCaptured;
 
         m_currentFrameStartTime = MonotonicTime::now();
@@ -238,20 +466,64 @@ void InspectorCanvas::recordAction(String&& name, InspectorCanvasProcessedArgume
 
     appendActionSnapshotIfNeeded();
 
-    // FIXME: <https://webkit.org/b/201651> Web Inspector: Canvas: support canvas recordings for WebGPUDevice
-
-    if (is<ImageBitmapRenderingContext>(m_context) && shouldSnapshotBitmapRendererAction(name))
-        m_contentChanged = true;
+    if (RefPtr context = canvasContext()) {
+        if (is<ImageBitmapRenderingContext>(context) && shouldSnapshotBitmapRendererAction(name))
+            m_contentChanged = true;
 #if ENABLE(WEBGL)
-    else if (is<WebGLRenderingContext>(m_context) && shouldSnapshotWebGLAction(name))
-        m_contentChanged = true;
-    else if (is<WebGL2RenderingContext>(m_context) && shouldSnapshotWebGL2Action(name))
-        m_contentChanged = true;
+        else if (is<WebGLRenderingContext>(context) && shouldSnapshotWebGLAction(name))
+            m_contentChanged = true;
+        else if (is<WebGL2RenderingContext>(context) && shouldSnapshotWebGL2Action(name))
+            m_contentChanged = true;
 #endif
+    }
 
     m_lastRecordedAction = buildAction(WTF::move(name), WTF::move(arguments));
-    m_bufferUsed += m_lastRecordedAction->memoryCost();
-    m_currentActions->addItem(*m_lastRecordedAction);
+    Ref lastRecordedAction = *m_lastRecordedAction;
+    if (receiver) {
+        lastRecordedAction->addItem(-1); // Add the result placeholder.
+        lastRecordedAction->addItem(receiver.releaseNonNull());
+    }
+    m_bufferUsed += lastRecordedAction->memoryCost();
+    protect(m_currentActions)->addItem(lastRecordedAction);
+}
+
+static Ref<JSON::ArrayOf<int>> buildActionObject(int identifier, RecordingSwizzleType swizzleType)
+{
+    auto object = JSON::ArrayOf<int>::create();
+    object->addItem(identifier);
+    object->addItem(static_cast<int>(swizzleType));
+    return object;
+}
+
+void InspectorCanvas::recordAction(String&& name, InspectorCanvasProcessedArgument&& receiver, InspectorCanvasProcessedArguments&& arguments)
+{
+    auto identifier = protect(receiver.value)->asInteger();
+    RELEASE_ASSERT(identifier);
+
+    bool shouldSnapshot = shouldSnapshotWebGPUAction(receiver.swizzleType, name);
+
+    recordAction(WTF::move(name), WTF::move(arguments), buildActionObject(*identifier, receiver.swizzleType));
+
+    if (shouldSnapshot)
+        m_contentChanged = true;
+}
+
+void InspectorCanvas::recordActionResult(InspectorCanvasProcessedArgument&& result)
+{
+    if (!m_lastRecordedAction)
+        return;
+
+    auto identifier = protect(result.value)->asInteger();
+    RELEASE_ASSERT(identifier);
+
+    Ref lastRecordedAction = *m_lastRecordedAction;
+    m_bufferUsed -= lastRecordedAction->memoryCost();
+    auto resultObject = buildActionObject(*identifier, result.swizzleType);
+    if (lastRecordedAction->length() == 4)
+        lastRecordedAction->addItem(WTF::move(resultObject));
+    else
+        lastRecordedAction->setItem(4, WTF::move(resultObject));
+    m_bufferUsed += lastRecordedAction->memoryCost();
 }
 
 void InspectorCanvas::finalizeFrame()
@@ -310,10 +582,15 @@ static RefPtr<Inspector::Protocol::Canvas::ContextAttributes> buildObjectForCanv
         case PredefinedColorSpace::SRGB:
             contextAttributesPayload->setColorSpace(Inspector::Protocol::Canvas::ColorSpace::SRGB);
             break;
-
+        case PredefinedColorSpace::SRGBLinear:
+            contextAttributesPayload->setColorSpace(Inspector::Protocol::Canvas::ColorSpace::SRGBLinear);
+            break;
 #if ENABLE(PREDEFINED_COLOR_SPACE_DISPLAY_P3)
         case PredefinedColorSpace::DisplayP3:
             contextAttributesPayload->setColorSpace(Inspector::Protocol::Canvas::ColorSpace::DisplayP3);
+            break;
+        case PredefinedColorSpace::DisplayP3Linear:
+            contextAttributesPayload->setColorSpace(Inspector::Protocol::Canvas::ColorSpace::DisplayP3Linear);
             break;
 #endif
         }
@@ -364,66 +641,97 @@ static RefPtr<Inspector::Protocol::Canvas::ContextAttributes> buildObjectForCanv
 
 Ref<Inspector::Protocol::Canvas::Canvas> InspectorCanvas::buildObjectForCanvas(bool captureBacktrace)
 {
-    auto contextType = [&] {
-        bool isOffscreen = false;
+    Ref canvas = WTF::switchOn(m_context,
+        [&](const WeakRef<CanvasRenderingContext>& weakContext) {
+            Ref context = weakContext;
+
+            auto contextType = [&] {
+                bool isOffscreen = false;
 #if ENABLE(OFFSCREEN_CANVAS)
-        if (is<OffscreenCanvas>(m_context->canvasBase()))
-            isOffscreen = true;
+                if (is<OffscreenCanvas>(context->canvasBase()))
+                    isOffscreen = true;
 #endif
 
-        if (is<CanvasRenderingContext2D>(m_context)) {
-            ASSERT(!isOffscreen);
-            return Inspector::Protocol::Canvas::ContextType::Canvas2D;
-        }
+                if (is<CanvasRenderingContext2D>(context)) {
+                    ASSERT(!isOffscreen);
+                    return Inspector::Protocol::Canvas::ContextType::Canvas2D;
+                }
 #if ENABLE(OFFSCREEN_CANVAS)
-        if (is<OffscreenCanvasRenderingContext2D>(m_context)) {
-            ASSERT(isOffscreen);
-            return Inspector::Protocol::Canvas::ContextType::OffscreenCanvas2D;
-        }
+                if (is<OffscreenCanvasRenderingContext2D>(context)) {
+                    ASSERT(isOffscreen);
+                    return Inspector::Protocol::Canvas::ContextType::OffscreenCanvas2D;
+                }
 #endif
-        if (is<ImageBitmapRenderingContext>(m_context)) {
-            if (isOffscreen)
-                return Inspector::Protocol::Canvas::ContextType::OffscreenBitmapRenderer;
-            return Inspector::Protocol::Canvas::ContextType::BitmapRenderer;
-        }
+                if (is<ImageBitmapRenderingContext>(context)) {
+                    if (isOffscreen)
+                        return Inspector::Protocol::Canvas::ContextType::OffscreenBitmapRenderer;
+                    return Inspector::Protocol::Canvas::ContextType::BitmapRenderer;
+                }
 #if ENABLE(WEBGL)
-        if (is<WebGLRenderingContext>(m_context)) {
-            if (isOffscreen)
-                return Inspector::Protocol::Canvas::ContextType::OffscreenWebGL;
-            return Inspector::Protocol::Canvas::ContextType::WebGL;
-        }
-        if (is<WebGL2RenderingContext>(m_context)) {
-            if (isOffscreen)
-                return Inspector::Protocol::Canvas::ContextType::OffscreenWebGL2;
-            return Inspector::Protocol::Canvas::ContextType::WebGL2;
-        }
+                if (is<WebGLRenderingContext>(context)) {
+                    if (isOffscreen)
+                        return Inspector::Protocol::Canvas::ContextType::OffscreenWebGL;
+                    return Inspector::Protocol::Canvas::ContextType::WebGL;
+                }
+                if (is<WebGL2RenderingContext>(context)) {
+                    if (isOffscreen)
+                        return Inspector::Protocol::Canvas::ContextType::OffscreenWebGL2;
+                    return Inspector::Protocol::Canvas::ContextType::WebGL2;
+                }
 #endif
 
-        ASSERT_NOT_REACHED();
-        return Inspector::Protocol::Canvas::ContextType::Canvas2D;
-    }();
+                RELEASE_ASSERT_NOT_REACHED();
+            }();
 
-    const auto& size = m_context->canvasBase().size();
+            auto result = Inspector::Protocol::Canvas::Canvas::create()
+                .setCanvasId(m_identifier)
+                .setContextType(contextType)
+                .release();
 
-    auto canvas = Inspector::Protocol::Canvas::Canvas::create()
-        .setCanvasId(m_identifier)
-        .setContextType(contextType)
-        .setWidth(size.width())
-        .setHeight(size.height())
-        .release();
+            if (auto attributes = buildObjectForCanvasContextAttributes(context))
+                result->setContextAttributes(attributes.releaseNonNull());
 
-    if (RefPtr node = canvasElement()) {
-        String cssCanvasName = node->document().nameForCSSCanvasElement(*node);
-        if (!cssCanvasName.isEmpty())
-            canvas->setCssCanvasName(cssCanvasName);
+            return result;
+        },
+        [&](const WeakRef<GPUDevice, WeakPtrImplWithEventTargetData>& weakDevice) {
+            Ref device = weakDevice;
 
-        // FIXME: <https://webkit.org/b/178282> Web Inspector: send a DOM node with each Canvas payload and eliminate Canvas.requestNode
+            auto result = Inspector::Protocol::Canvas::Canvas::create()
+                .setCanvasId(m_identifier)
+                .setContextType(Inspector::Protocol::Canvas::ContextType::WebGPU)
+                .release();
+
+            auto features = JSON::ArrayOf<String>::create();
+            for (const String& feature : device->backing().features().features())
+                features->addItem(feature);
+            result->setFeatures(WTF::move(features));
+
+            if (auto label = device->label(); !label.isEmpty())
+                result->setName(label);
+
+            return result;
+        }
+    );
+
+    if (auto sizes = this->sizes(); !sizes.isEmpty()) {
+        auto sizesPayload = JSON::ArrayOf<Inspector::Protocol::GenericTypes::Size>::create();
+        for (auto& size : sizes) {
+            sizesPayload->addItem(Inspector::Protocol::GenericTypes::Size::create()
+                .setWidth(size.width())
+                .setHeight(size.height())
+                .release());
+        }
+        canvas->setSizes(WTF::move(sizesPayload));
     }
 
-    if (auto attributes = buildObjectForCanvasContextAttributes(m_context.get()))
-        canvas->setContextAttributes(attributes.releaseNonNull());
+    if (auto cssCanvasNames = this->cssCanvasNames(); !cssCanvasNames.isEmpty()) {
+        auto cssCanvasNamesPayload = JSON::ArrayOf<String>::create();
+        for (auto& cssCanvasName : cssCanvasNames)
+            cssCanvasNamesPayload->addItem(cssCanvasName);
+        canvas->setCssCanvasNames(WTF::move(cssCanvasNamesPayload));
+    }
 
-    if (size_t memoryCost = m_context->canvasBase().memoryCost())
+    if (size_t memoryCost = this->memoryCost())
         canvas->setMemoryCost(memoryCost);
 
     if (captureBacktrace) {
@@ -440,29 +748,31 @@ Ref<Inspector::Protocol::Recording::Recording> InspectorCanvas::releaseObjectFor
     ASSERT(!m_lastRecordedAction);
     ASSERT(!m_frames);
 
-    // FIXME: <https://webkit.org/b/201651> Web Inspector: Canvas: support canvas recordings for WebGPUDevice
-
     bool isOffscreen = false;
+    RefPtr context = canvasContext();
 #if ENABLE(OFFSCREEN_CANVAS)
-    if (is<OffscreenCanvas>(m_context->canvasBase()))
+    if (context && is<OffscreenCanvas>(context->canvasBase()))
         isOffscreen = true;
 #endif
 
     Inspector::Protocol::Recording::Type type;
-    if (is<CanvasRenderingContext2D>(m_context)) {
+    if (!context) {
+        ASSERT(deviceContext());
+        type = Inspector::Protocol::Recording::Type::CanvasWebGPU;
+    } else if (is<CanvasRenderingContext2D>(context)) {
         ASSERT(!isOffscreen);
         type = Inspector::Protocol::Recording::Type::Canvas2D;
 #if ENABLE(OFFSCREEN_CANVAS)
-    } else if (is<OffscreenCanvasRenderingContext2D>(m_context)) {
+    } else if (is<OffscreenCanvasRenderingContext2D>(context)) {
         ASSERT(isOffscreen);
         type = Inspector::Protocol::Recording::Type::OffscreenCanvas2D;
 #endif
-    } else if (is<ImageBitmapRenderingContext>(m_context)) {
+    } else if (is<ImageBitmapRenderingContext>(context)) {
         type = isOffscreen ? Inspector::Protocol::Recording::Type::OffscreenCanvasBitmapRenderer : Inspector::Protocol::Recording::Type::CanvasBitmapRenderer;
 #if ENABLE(WEBGL)
-    } else if (is<WebGLRenderingContext>(m_context)) {
+    } else if (is<WebGLRenderingContext>(context)) {
         type = isOffscreen ? Inspector::Protocol::Recording::Type::OffscreenCanvasWebGL : Inspector::Protocol::Recording::Type::CanvasWebGL;
-    } else if (is<WebGL2RenderingContext>(m_context)) {
+    } else if (is<WebGL2RenderingContext>(context)) {
         type = isOffscreen ? Inspector::Protocol::Recording::Type::OffscreenCanvasWebGL2 : Inspector::Protocol::Recording::Type::CanvasWebGL2;
 #endif
     } else {
@@ -487,14 +797,41 @@ Ref<Inspector::Protocol::Recording::Recording> InspectorCanvas::releaseObjectFor
 
 Inspector::Protocol::ErrorStringOr<String> InspectorCanvas::getContentAsDataURL(CanvasRenderingContext& context)
 {
-    RefPtr<ImageBuffer> buffer;
+    RefPtr<NativeImage> image;
     if (context.compositingResultsNeedUpdating())
-        buffer = context.surfaceBufferToImageBuffer(CanvasRenderingContext::SurfaceBuffer::DrawingBuffer);
+        image = protect(context.canvasBase())->copyNativeImage();
     else
-        buffer = context.surfaceBufferToImageBuffer(CanvasRenderingContext::SurfaceBuffer::DisplayBuffer);
-    if (buffer)
-        return buffer->toDataURL("image/png"_s);
-    return emptyString();
+        image = context.surfaceBufferToNativeImage(CanvasRenderingContext::SurfaceBuffer::DisplayBufferForInspector);
+    return encodeDataURL(WTF::move(image), "image/png"_s);
+}
+
+Inspector::Protocol::ErrorStringOr<String> InspectorCanvas::getContentAsDataURL()
+{
+    return WTF::switchOn(m_context,
+        [](const WeakRef<CanvasRenderingContext>& weakContext) {
+            Ref context = weakContext;
+            return getContentAsDataURL(context);
+        },
+        [](const WeakRef<GPUDevice, WeakPtrImplWithEventTargetData>& weakDevice) -> Inspector::Protocol::ErrorStringOr<String> {
+            Ref device = weakDevice;
+            RefPtr<CanvasRenderingContext> context;
+            {
+                Locker locker { CanvasRenderingContext::instancesLock() };
+                for (SUPPRESS_UNCOUNTED_ARG auto* candidate : CanvasRenderingContext::instances()) {
+                    if (!candidate->isContextThread() || !canvasContextMatchesDevice(*candidate, device))
+                        continue;
+                    if (context) {
+                        context = nullptr;
+                        break;
+                    }
+                    context = candidate;
+                }
+            }
+            if (!context)
+                return makeUnexpected("GPUDevice must be configured for one <canvas>."_s);
+            return getContentAsDataURL(*context);
+        }
+    );
 }
 
 void InspectorCanvas::appendActionSnapshotIfNeeded()
@@ -503,11 +840,16 @@ void InspectorCanvas::appendActionSnapshotIfNeeded()
         return;
 
     if (m_contentChanged) {
-        m_bufferUsed -= m_lastRecordedAction->memoryCost();
-        if (auto content = getContentAsDataURL())
-            m_lastRecordedAction->addItem(indexForData(*content));
-
-        m_bufferUsed += m_lastRecordedAction->memoryCost();
+        if (auto content = getContentAsDataURL()) {
+            Ref lastRecordedAction = *m_lastRecordedAction;
+            m_bufferUsed -= lastRecordedAction->memoryCost();
+            if (lastRecordedAction->length() == 4)
+                lastRecordedAction->addItem(-1); // Add the result if needed.
+            if (lastRecordedAction->length() == 5)
+                lastRecordedAction->addItem(-1); // Add the receiver if needed.
+            lastRecordedAction->addItem(indexForData(*content));
+            m_bufferUsed += lastRecordedAction->memoryCost();
+        }
     }
 
     m_lastRecordedAction = nullptr;
@@ -520,15 +862,15 @@ int InspectorCanvas::indexForData(DuplicateDataVariant data)
         if (data == item)
             return true;
 
-        auto stackTraceA = std::get_if<RefPtr<ScriptCallStack>>(&data);
-        auto stackTraceB = std::get_if<RefPtr<ScriptCallStack>>(&item);
-        if (stackTraceA && *stackTraceA && stackTraceB && *stackTraceB)
-            return (*stackTraceA)->isEqual((*stackTraceB).get());
+        auto stackTraceA = std::get_if<Ref<ScriptCallStack>>(&data);
+        auto stackTraceB = std::get_if<Ref<ScriptCallStack>>(&item);
+        if (stackTraceA && stackTraceB)
+            return (*stackTraceA)->isEqual(stackTraceB->ptr());
 
-        auto parentStackTraceA = std::get_if<RefPtr<AsyncStackTrace>>(&data);
-        auto parentStackTraceB = std::get_if<RefPtr<AsyncStackTrace>>(&item);
-        if (parentStackTraceA && *parentStackTraceA && parentStackTraceB && *parentStackTraceB)
-            return *parentStackTraceA == *parentStackTraceB;
+        auto parentStackTraceA = std::get_if<Ref<AsyncStackTrace>>(&data);
+        auto parentStackTraceB = std::get_if<Ref<AsyncStackTrace>>(&item);
+        if (parentStackTraceA && parentStackTraceB)
+            return parentStackTraceA->ptr() == parentStackTraceB->ptr();
 
         return false;
     });
@@ -542,36 +884,25 @@ int InspectorCanvas::indexForData(DuplicateDataVariant data)
 
     RefPtr<JSON::Value> item;
     WTF::switchOn(data,
-        [&] (const RefPtr<HTMLImageElement>& imageElement) {
+        [&](const Ref<HTMLImageElement>& imageElement) {
             String dataURL = "data:,"_s;
 
-            if (CachedImage* cachedImage = imageElement->cachedImage()) {
-                RefPtr<Image> image = cachedImage->image();
-                if (image && image != &Image::nullImage()) {
-                    auto imageBuffer = ImageBuffer::create(image->size(), RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1, DestinationColorSpace::SRGB(), PixelFormat::BGRA8);
-                    imageBuffer->context().drawImage(*image, FloatPoint(0, 0));
-                    dataURL = imageBuffer->toDataURL("image/png"_s);
-                }
-            }
+            if (RefPtr image = imageElement->sourceImage())
+                dataURL = encodeDataURL(image->currentNativeImage(DefaultSizing { }.resolve(image->naturalDimensions())), "image/png"_s);
 
             index = indexForData(dataURL);
         },
 #if ENABLE(VIDEO)
-        [&] (RefPtr<HTMLVideoElement>& videoElement) {
-            String dataURL = "data:,"_s;
-
+        [&](Ref<HTMLVideoElement>& videoElement) {
             unsigned videoWidth = videoElement->videoWidth();
             unsigned videoHeight = videoElement->videoHeight();
-            auto imageBuffer = ImageBuffer::create(FloatSize(videoWidth, videoHeight), RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1, DestinationColorSpace::SRGB(), PixelFormat::BGRA8);
-            if (imageBuffer) {
+            RefPtr imageBuffer = ImageBuffer::create(FloatSize(videoWidth, videoHeight), RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1, ColorSpace::SRGB(), PixelFormat::BGRA8);
+            if (imageBuffer)
                 videoElement->paintCurrentFrameInContext(imageBuffer->context(), FloatRect(0, 0, videoWidth, videoHeight));
-                dataURL = imageBuffer->toDataURL("image/png"_s);
-            }
-
-            index = indexForData(dataURL);
+            index = indexForData(encodeDataURL(WTF::move(imageBuffer), "image/png"_s, std::nullopt));
         },
 #endif
-        [&] (RefPtr<HTMLCanvasElement>& canvasElement) {
+        [&](Ref<HTMLCanvasElement>& canvasElement) {
             String dataURL = "data:,"_s;
 
             ExceptionOr<UncachedString> result = canvasElement->toDataURL("image/png"_s);
@@ -580,13 +911,13 @@ int InspectorCanvas::indexForData(DuplicateDataVariant data)
 
             index = indexForData(dataURL);
         },
-        [&] (const RefPtr<CanvasGradient>& canvasGradient) { item = buildArrayForCanvasGradient(*canvasGradient); },
-        [&] (const RefPtr<CanvasPattern>& canvasPattern) { item = buildArrayForCanvasPattern(*canvasPattern); },
-        [&] (const RefPtr<ImageData>& imageData) { item = buildArrayForImageData(*imageData); },
-        [&] (RefPtr<ImageBitmap>& imageBitmap) {
-            index = indexForData(imageBitmap->buffer()->toDataURL("image/png"_s));
+        [&](Ref<CanvasGradient>& canvasGradient) { item = buildArrayForCanvasGradient(canvasGradient); },
+        [&](Ref<CanvasPattern>& canvasPattern) { item = buildArrayForCanvasPattern(canvasPattern); },
+        [&](Ref<ImageData>& imageData) { item = buildArrayForImageData(imageData); },
+        [&](Ref<ImageBitmap>& imageBitmap) {
+            index = indexForData(encodeDataURL(imageBitmap->buffer(), "image/png"_s));
         },
-        [&] (const RefPtr<ScriptCallStack>& scriptCallStack) {
+        [&](Ref<ScriptCallStack>& scriptCallStack) {
             auto stackTrace = JSON::ArrayOf<JSON::Value>::create();
 
             auto callFrames = JSON::ArrayOf<double>::create();
@@ -598,12 +929,12 @@ int InspectorCanvas::indexForData(DuplicateDataVariant data)
 
             stackTrace->addItem(scriptCallStack->truncated());
 
-            if (const auto& parentStackTrace = scriptCallStack->parentStackTrace())
-                stackTrace->addItem(indexForData(parentStackTrace));
+            if (RefPtr parentStackTrace = scriptCallStack->parentStackTrace())
+                stackTrace->addItem(indexForData(parentStackTrace.releaseNonNull()));
 
             item = WTF::move(stackTrace);
         },
-        [&] (const RefPtr<AsyncStackTrace>& parentStackTrace) {
+        [&](const Ref<AsyncStackTrace>& parentStackTrace) {
             auto stackTrace = JSON::ArrayOf<JSON::Value>::create();
 
             auto callFrames = JSON::ArrayOf<double>::create();
@@ -615,26 +946,22 @@ int InspectorCanvas::indexForData(DuplicateDataVariant data)
 
             stackTrace->addItem(parentStackTrace->truncated());
 
-            if (const auto& grandparentStackTrace = parentStackTrace->parentStackTrace())
-                stackTrace->addItem(indexForData(grandparentStackTrace));
+            if (RefPtr grandparentStackTrace = parentStackTrace->parentStackTrace())
+                stackTrace->addItem(indexForData(grandparentStackTrace.releaseNonNull()));
 
             item = WTF::move(stackTrace);
         },
-        [&] (const RefPtr<CSSStyleImageValue>& cssImageValue) {
+        [&](const Ref<CSSStyleImageValue>& cssImageValue) {
             String dataURL = "data:,"_s;
 
-            if (auto* cachedImage = cssImageValue->image()) {
-                RefPtr image = cachedImage->image();
-                if (image && image != &Image::nullImage()) {
-                    auto imageBuffer = ImageBuffer::create(image->size(), RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1, DestinationColorSpace::SRGB(), PixelFormat::BGRA8);
-                    imageBuffer->context().drawImage(*image, FloatPoint(0, 0));
-                    dataURL = imageBuffer->toDataURL("image/png"_s);
-                }
+            if (RefPtr cachedImage = cssImageValue->image()) {
+                if (RefPtr image = cachedImage->image())
+                    dataURL = encodeDataURL(image->currentNativeImage(DefaultSizing { }.resolve(image->naturalDimensions())), "image/png"_s);
             }
 
             index = indexForData(dataURL);
         },
-        [&] (const ScriptCallFrame& scriptCallFrame) {
+        [&](const ScriptCallFrame& scriptCallFrame) {
             auto array = JSON::ArrayOf<double>::create();
             array->addItem(indexForData(scriptCallFrame.functionName()));
             array->addItem(indexForData(scriptCallFrame.sourceURL()));
@@ -643,23 +970,19 @@ int InspectorCanvas::indexForData(DuplicateDataVariant data)
             item = WTF::move(array);
         },
 #if ENABLE(OFFSCREEN_CANVAS)
-        [&] (const RefPtr<OffscreenCanvas> offscreenCanvas) {
+        [&](const Ref<OffscreenCanvas> offscreenCanvas) {
             String dataURL = "data:,"_s;
-
-            if (offscreenCanvas->originClean()) {
-                if (RefPtr buffer = offscreenCanvas->makeRenderingResultsAvailable())
-                    dataURL = buffer->toDataURL("image/png"_s);
-            }
-
+            if (offscreenCanvas->originClean())
+                dataURL = encodeDataURL(offscreenCanvas->makeRenderingResultsAvailable(), "image/png"_s);
             index = indexForData(dataURL);
         },
 #endif
-        [&] (const String& value) { item = JSON::Value::create(value); }
+        [&](const String& value) { item = JSON::Value::create(value); }
     );
 
     if (item) {
         m_bufferUsed += item->memoryCost();
-        m_serializedDuplicateData->addItem(item.releaseNonNull());
+        protect(m_serializedDuplicateData)->addItem(item.releaseNonNull());
 
         m_indexedDuplicateData.append(data);
         index = m_indexedDuplicateData.size() - 1;
@@ -667,6 +990,15 @@ int InspectorCanvas::indexForData(DuplicateDataVariant data)
 
     ASSERT(index < static_cast<size_t>(std::numeric_limits<int>::max()));
     return static_cast<int>(index);
+}
+
+size_t InspectorCanvas::identifierForRecordingObject(RecordingSwizzleType swizzleType, uintptr_t object)
+{
+    return m_boundRecordingObjectIdentifiers.ensure(object, [&] {
+        return m_nextRecordingObjectIdentifiers.ensure(swizzleType, [] {
+            return 1;
+        }).iterator->value++;
+    }).iterator->value;
 }
 
 Ref<JSON::Value> InspectorCanvas::valueIndexForData(DuplicateDataVariant data)
@@ -693,86 +1025,87 @@ static Ref<JSON::ArrayOf<double>> buildArrayForAffineTransform(const AffineTrans
 
 Ref<Inspector::Protocol::Recording::InitialState> InspectorCanvas::buildInitialState()
 {
-    // FIXME: <https://webkit.org/b/201651> Web Inspector: Canvas: support canvas recordings for WebGPUDevice
-
     auto initialStatePayload = Inspector::Protocol::Recording::InitialState::create().release();
 
-    auto attributesPayload = JSON::Object::create();
-    attributesPayload->setInteger("width"_s, m_context->canvasBase().width());
-    attributesPayload->setInteger("height"_s, m_context->canvasBase().height());
+    if (RefPtr context = canvasContext()) {
+        auto attributesPayload = JSON::Object::create();
+        Ref canvasBase = context->canvasBase();
+        attributesPayload->setInteger("width"_s, canvasBase->width());
+        attributesPayload->setInteger("height"_s, canvasBase->height());
 
-    auto statesPayload = JSON::ArrayOf<JSON::Object>::create();
+        auto statesPayload = JSON::ArrayOf<JSON::Object>::create();
 
-    auto parametersPayload = JSON::ArrayOf<JSON::Value>::create();
+        auto parametersPayload = JSON::ArrayOf<JSON::Value>::create();
 
-    if (RefPtr context2d = dynamicDowncast<CanvasRenderingContext2DBase>(m_context.get())) {
-        for (auto& state : context2d->stateStack()) {
-            auto statePayload = JSON::Object::create();
+        if (RefPtr context2d = dynamicDowncast<CanvasRenderingContext2DBase>(context)) {
+            for (auto& state : context2d->stateStack()) {
+                auto statePayload = JSON::Object::create();
 
-            statePayload->setArray(stringIndexForKey("setTransform"_s), buildArrayForAffineTransform(state.transform));
-            statePayload->setDouble(stringIndexForKey("globalAlpha"_s), state.globalAlpha);
-            statePayload->setInteger(stringIndexForKey("globalCompositeOperation"_s), indexForData(state.globalCompositeOperationString()));
-            statePayload->setDouble(stringIndexForKey("lineWidth"_s), state.lineWidth);
-            statePayload->setInteger(stringIndexForKey("lineCap"_s), indexForData(convertEnumerationToString(state.canvasLineCap())));
-            statePayload->setInteger(stringIndexForKey("lineJoin"_s), indexForData(convertEnumerationToString(state.canvasLineJoin())));
-            statePayload->setDouble(stringIndexForKey("miterLimit"_s), state.miterLimit);
-            statePayload->setDouble(stringIndexForKey("shadowOffsetX"_s), state.shadowOffset.width());
-            statePayload->setDouble(stringIndexForKey("shadowOffsetY"_s), state.shadowOffset.height());
-            statePayload->setDouble(stringIndexForKey("shadowBlur"_s), state.shadowBlur);
-            statePayload->setInteger(stringIndexForKey("shadowColor"_s), indexForData(serializationForHTML(state.shadowColor)));
+                statePayload->setArray(stringIndexForKey("setTransform"_s), buildArrayForAffineTransform(state.transform));
+                statePayload->setDouble(stringIndexForKey("globalAlpha"_s), state.globalAlpha);
+                statePayload->setInteger(stringIndexForKey("globalCompositeOperation"_s), indexForData(state.globalCompositeOperationString()));
+                statePayload->setDouble(stringIndexForKey("lineWidth"_s), state.lineWidth);
+                statePayload->setInteger(stringIndexForKey("lineCap"_s), indexForData(convertEnumerationToString(state.canvasLineCap())));
+                statePayload->setInteger(stringIndexForKey("lineJoin"_s), indexForData(convertEnumerationToString(state.canvasLineJoin())));
+                statePayload->setDouble(stringIndexForKey("miterLimit"_s), state.miterLimit);
+                statePayload->setDouble(stringIndexForKey("shadowOffsetX"_s), state.shadowOffset.width());
+                statePayload->setDouble(stringIndexForKey("shadowOffsetY"_s), state.shadowOffset.height());
+                statePayload->setDouble(stringIndexForKey("shadowBlur"_s), state.shadowBlur);
+                statePayload->setInteger(stringIndexForKey("shadowColor"_s), indexForData(serializationForHTML(state.shadowColor)));
 
-            // The parameter to `setLineDash` is itself an array, so we need to wrap the parameters
-            // list in an array to allow spreading.
-            auto setLineDash = JSON::ArrayOf<JSON::Value>::create();
-            setLineDash->addItem(buildArrayForVector(state.lineDash));
-            statePayload->setArray(stringIndexForKey("setLineDash"_s), WTF::move(setLineDash));
+                // The parameter to `setLineDash` is itself an array, so we need to wrap the parameters
+                // list in an array to allow spreading.
+                auto setLineDash = JSON::ArrayOf<JSON::Value>::create();
+                setLineDash->addItem(Inspector::Protocol::buildArray(state.lineDash));
+                statePayload->setArray(stringIndexForKey("setLineDash"_s), WTF::move(setLineDash));
 
-            statePayload->setDouble(stringIndexForKey("lineDashOffset"_s), state.lineDashOffset);
-            statePayload->setInteger(stringIndexForKey("font"_s), indexForData(state.fontString()));
-            statePayload->setInteger(stringIndexForKey("textAlign"_s), indexForData(convertEnumerationToString(state.canvasTextAlign())));
-            statePayload->setInteger(stringIndexForKey("textBaseline"_s), indexForData(convertEnumerationToString(state.canvasTextBaseline())));
-            statePayload->setInteger(stringIndexForKey("direction"_s), indexForData(convertEnumerationToString(state.direction)));
+                statePayload->setDouble(stringIndexForKey("lineDashOffset"_s), state.lineDashOffset);
+                statePayload->setInteger(stringIndexForKey("font"_s), indexForData(state.fontString()));
+                statePayload->setInteger(stringIndexForKey("textAlign"_s), indexForData(convertEnumerationToString(state.canvasTextAlign())));
+                statePayload->setInteger(stringIndexForKey("textBaseline"_s), indexForData(convertEnumerationToString(state.canvasTextBaseline())));
+                statePayload->setInteger(stringIndexForKey("direction"_s), indexForData(convertEnumerationToString(state.direction)));
 
-            int strokeStyleIndex;
-            if (auto canvasGradient = state.strokeStyle.canvasGradient())
-                strokeStyleIndex = indexForData(canvasGradient);
-            else if (auto canvasPattern = state.strokeStyle.canvasPattern())
-                strokeStyleIndex = indexForData(canvasPattern);
-            else
-                strokeStyleIndex = indexForData(state.strokeStyle.colorString());
-            statePayload->setInteger(stringIndexForKey("strokeStyle"_s), strokeStyleIndex);
+                int strokeStyleIndex;
+                if (RefPtr canvasGradient = state.strokeStyle.canvasGradient())
+                    strokeStyleIndex = indexForData(canvasGradient.releaseNonNull());
+                else if (RefPtr canvasPattern = state.strokeStyle.canvasPattern())
+                    strokeStyleIndex = indexForData(canvasPattern.releaseNonNull());
+                else
+                    strokeStyleIndex = indexForData(state.strokeStyle.colorString());
+                statePayload->setInteger(stringIndexForKey("strokeStyle"_s), strokeStyleIndex);
 
-            int fillStyleIndex;
-            if (auto canvasGradient = state.fillStyle.canvasGradient())
-                fillStyleIndex = indexForData(canvasGradient);
-            else if (auto canvasPattern = state.fillStyle.canvasPattern())
-                fillStyleIndex = indexForData(canvasPattern);
-            else
-                fillStyleIndex = indexForData(state.fillStyle.colorString());
-            statePayload->setInteger(stringIndexForKey("fillStyle"_s), fillStyleIndex);
+                int fillStyleIndex;
+                if (RefPtr canvasGradient = state.fillStyle.canvasGradient())
+                    fillStyleIndex = indexForData(canvasGradient.releaseNonNull());
+                else if (RefPtr canvasPattern = state.fillStyle.canvasPattern())
+                    fillStyleIndex = indexForData(canvasPattern.releaseNonNull());
+                else
+                    fillStyleIndex = indexForData(state.fillStyle.colorString());
+                statePayload->setInteger(stringIndexForKey("fillStyle"_s), fillStyleIndex);
 
-            statePayload->setBoolean(stringIndexForKey("imageSmoothingEnabled"_s), state.imageSmoothingEnabled);
-            statePayload->setInteger(stringIndexForKey("imageSmoothingQuality"_s), indexForData(convertEnumerationToString(state.imageSmoothingQuality)));
+                statePayload->setBoolean(stringIndexForKey("imageSmoothingEnabled"_s), state.imageSmoothingEnabled);
+                statePayload->setInteger(stringIndexForKey("imageSmoothingQuality"_s), indexForData(convertEnumerationToString(state.imageSmoothingQuality)));
 
-            // FIXME: This is wrong: it will repeat the context's current path for every level in the stack, ignoring saved paths.
-            auto setPath = JSON::ArrayOf<JSON::Value>::create();
-            setPath->addItem(indexForData(buildStringFromPath(context2d->getPath()->path())));
-            statePayload->setArray(stringIndexForKey("setPath"_s), WTF::move(setPath));
+                // FIXME: This is wrong: it will repeat the context's current path for every level in the stack, ignoring saved paths.
+                auto setPath = JSON::ArrayOf<JSON::Value>::create();
+                setPath->addItem(indexForData(buildStringFromPath(context2d->getPath()->path())));
+                statePayload->setArray(stringIndexForKey("setPath"_s), WTF::move(setPath));
 
-            statesPayload->addItem(WTF::move(statePayload));
+                statesPayload->addItem(WTF::move(statePayload));
+            }
         }
+
+        if (auto contextAttributes = buildObjectForCanvasContextAttributes(*context))
+            parametersPayload->addItem(contextAttributes.releaseNonNull());
+
+        initialStatePayload->setAttributes(WTF::move(attributesPayload));
+
+        if (statesPayload->length())
+            initialStatePayload->setStates(WTF::move(statesPayload));
+
+        if (parametersPayload->length())
+            initialStatePayload->setParameters(WTF::move(parametersPayload));
     }
-
-    if (auto contextAttributes = buildObjectForCanvasContextAttributes(m_context.get()))
-        parametersPayload->addItem(contextAttributes.releaseNonNull());
-
-    initialStatePayload->setAttributes(WTF::move(attributesPayload));
-
-    if (statesPayload->length())
-        initialStatePayload->setStates(WTF::move(statesPayload));
-
-    if (parametersPayload->length())
-        initialStatePayload->setParameters(WTF::move(parametersPayload));
 
     if (auto content = getContentAsDataURL())
         initialStatePayload->setContent(*content);
@@ -798,7 +1131,7 @@ Ref<JSON::ArrayOf<JSON::Value>> InspectorCanvas::buildAction(String&& name, Insp
     action->addItem(WTF::move(swizzleTypes));
 
     auto stackTrace = Inspector::createScriptCallStack(JSExecState::currentState());
-    action->addItem(indexForData(stackTrace.ptr()));
+    action->addItem(indexForData(WTF::move(stackTrace)));
 
     return action;
 }
@@ -848,8 +1181,6 @@ Ref<JSON::ArrayOf<JSON::Value>> InspectorCanvas::buildArrayForCanvasGradient(con
 
 Ref<JSON::ArrayOf<JSON::Value>> InspectorCanvas::buildArrayForCanvasPattern(const CanvasPattern& canvasPattern)
 {
-    auto imageBuffer = canvasPattern.pattern().tileImageBuffer();
-
     String repeat;
     bool repeatX = canvasPattern.pattern().repeatX();
     bool repeatY = canvasPattern.pattern().repeatY();
@@ -863,7 +1194,7 @@ Ref<JSON::ArrayOf<JSON::Value>> InspectorCanvas::buildArrayForCanvasPattern(cons
         repeat = "no-repeat"_s;
 
     auto array = JSON::ArrayOf<JSON::Value>::create();
-    array->addItem(indexForData(imageBuffer->toDataURL("image/png"_s)));
+    array->addItem(indexForData(encodeDataURL(canvasPattern.pattern().tileImageBuffer(), "image/png"_s)));
     array->addItem(indexForData(repeat));
     return array;
 }

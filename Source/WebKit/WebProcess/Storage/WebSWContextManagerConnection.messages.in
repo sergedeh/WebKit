@@ -31,7 +31,13 @@ messages -> WebSWContextManagerConnection {
     StartFetch(WebCore::ProcessIdentifier serverConnectionIdentifier, WebCore::ServiceWorkerIdentifier serviceWorkerIdentifier, WebCore::FetchIdentifier fetchIdentifier, WebCore::ResourceRequest request, struct WebCore::FetchOptions options, IPC::FormDataReference requestBody, String referrer, bool isServiceWorkerNavigationPreloadEnabled, String clientIdentifier, String resutlingClientIdentifier)
     CancelFetch(WebCore::ProcessIdentifier serverConnectionIdentifier, WebCore::ServiceWorkerIdentifier serviceWorkerIdentifier, WebCore::FetchIdentifier fetchIdentifier)
     ContinueDidReceiveFetchResponse(WebCore::ProcessIdentifier serverConnectionIdentifier, WebCore::ServiceWorkerIdentifier serviceWorkerIdentifier, WebCore::FetchIdentifier fetchIdentifier)
+
+    ForwardPendingStreamUploadData(WebCore::FetchIdentifier fetchIdentifier, IPC::SharedBufferReference chunk)
+    ForwardPendingStreamUploadEnd(WebCore::FetchIdentifier fetchIdentifier)
+    ForwardPendingStreamUploadError(WebCore::FetchIdentifier fetchIdentifier)
+
     PostMessageToServiceWorker(WebCore::ServiceWorkerIdentifier destinationIdentifier, struct WebCore::MessageWithMessagePorts message, WebCore::ServiceWorkerOrClientData sourceData)
+    PostMessageToServiceWorkerAndNotifyWhenDispatched(WebCore::ServiceWorkerIdentifier destinationIdentifier, struct WebCore::MessageWithMessagePorts message, WebCore::ServiceWorkerOrClientData sourceData) -> ()
     FireInstallEvent(WebCore::ServiceWorkerIdentifier identifier)
     FireActivateEvent(WebCore::ServiceWorkerIdentifier identifier)
     FirePushEvent(WebCore::ServiceWorkerIdentifier identifier, std::optional<std::span<const uint8_t>> data, std::optional<WebCore::NotificationPayload> proposedPayload) -> (bool handled, std::optional<WebCore::NotificationPayload> resultPayload)

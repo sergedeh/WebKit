@@ -52,6 +52,18 @@ String PDFDocumentImage::filenameExtension() const
     return "pdf"_s;
 }
 
+NaturalDimensions PDFDocumentImage::unorientedNaturalDimensions() const
+{
+    // FIXME: If we want size negotiation with PDF documents as-image, this is the place to implement it (https://bugs.webkit.org/show_bug.cgi?id=12095).
+
+    auto size = this->size();
+    if (size.isEmpty())
+        return NaturalDimensions::none();
+
+    // FIXME: Why does it make sense for this to return a non-existing aspect ratio? We should document why that is appropriate.
+    return { .width = size.width(), .height = size.height(), .aspectRatio = std::nullopt };
+}
+
 FloatSize PDFDocumentImage::size(ImageOrientation) const
 {
     FloatSize expandedCropBoxSize = FloatSize(expandedIntSize(m_cropBox.size()));
@@ -59,13 +71,6 @@ FloatSize PDFDocumentImage::size(ImageOrientation) const
     if (m_rotationDegrees == 90 || m_rotationDegrees == 270)
         return expandedCropBoxSize.transposedSize();
     return expandedCropBoxSize;
-}
-
-void PDFDocumentImage::computeIntrinsicDimensions(float& intrinsicWidth, float& intrinsicHeight, FloatSize& intrinsicRatio)
-{
-    // FIXME: If we want size negotiation with PDF documents as-image, this is the place to implement it (https://bugs.webkit.org/show_bug.cgi?id=12095).
-    Image::computeIntrinsicDimensions(intrinsicWidth, intrinsicHeight, intrinsicRatio);
-    intrinsicRatio = FloatSize();
 }
 
 EncodedDataStatus PDFDocumentImage::dataChanged(bool allDataReceived)
@@ -140,6 +145,8 @@ ImageDrawResult PDFDocumentImage::drawPDFDocument(GraphicsContext& context, cons
 
     GraphicsContextStateSaver stateSaver(context);
     context.setCompositeOperation(options.compositeOperator());
+    if (options.interpolationQuality() != InterpolationQuality::Default)
+        context.setImageInterpolationQuality(options.interpolationQuality());
 
     context.clip(destinationRect);
 
@@ -190,7 +197,7 @@ ImageDrawResult PDFDocumentImage::drawFromCachedSubimage(GraphicsContext& contex
     return ImageDrawResult::DidDraw;
 }
 
-ImageDrawResult PDFDocumentImage::draw(GraphicsContext& context, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions options)
+ImageDrawResult PDFDocumentImage::draw(GraphicsContext& context, ConcreteObjectSize, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions options, const ImageDrawingExtras*)
 {
     auto result = drawFromCachedSubimage(context, destination, source, options);
     if (result != ImageDrawResult::DidNothing)
@@ -214,14 +221,14 @@ void PDFDocumentImage::destroyDecodedData(bool)
 
 void PDFDocumentImage::createPDFDocument()
 {
-    auto dataProvider = adoptCF(CGDataProviderCreateWithCFData(data()->makeContiguous()->createCFData().get()));
+    RetainPtr dataProvider = adoptCF(CGDataProviderCreateWithCFData(protect(data())->makeContiguous()->createCFData().get()));
     m_document = adoptCF(CGPDFDocumentCreateWithProvider(dataProvider.get()));
 }
 
 void PDFDocumentImage::computeBoundsForCurrentPage()
 {
     ASSERT(pageCount() > 0);
-    CGPDFPageRef cgPage = CGPDFDocumentGetPage(m_document.get(), 1);
+    RetainPtr cgPage = CGPDFDocumentGetPage(m_document.get(), 1);
     CGRect mediaBox = CGPDFPageGetBoxRect(cgPage, kCGPDFMediaBox);
 
     // Get crop box (not always there). If not, use media box.
@@ -258,7 +265,8 @@ void PDFDocumentImage::drawPDFPage(GraphicsContext& context)
     context.translate(-m_cropBox.location());
 
     // CGPDF pages are indexed from 1.
-    CGContextDrawPDFPageWithAnnotations(context.platformContext(), CGPDFDocumentGetPage(m_document.get(), 1), nullptr);
+    RetainPtr page = CGPDFDocumentGetPage(m_document.get(), 1);
+    CGContextDrawPDFPageWithAnnotations(protect(context.platformContext()), page, nullptr);
 }
 
 #endif // !USE(PDFKIT_FOR_PDFDOCUMENTIMAGE)

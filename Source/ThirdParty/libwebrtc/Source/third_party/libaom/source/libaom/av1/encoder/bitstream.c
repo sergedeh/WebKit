@@ -2047,35 +2047,39 @@ static inline void encode_loopfilter(AV1_COMMON *cm,
 
   aom_wb_write_bit(wb, lf->mode_ref_delta_enabled);
 
-  // Write out loop filter deltas applied at the MB level based on mode or
-  // ref frame (if they are enabled), only if there is information to write.
-  int meaningful = is_mode_ref_delta_meaningful(cm);
-  aom_wb_write_bit(wb, meaningful);
-  if (!meaningful) {
-    return;
-  }
+  if (lf->mode_ref_delta_enabled) {
+    // Check if the loop filter deltas have changed from the previous frame.
+    // If mode_ref_delta_update_decision is 1, signal the update and write out
+    // the actual delta values. Otherwise, signal 0 and skip writing delta
+    // values.
+    int mode_ref_delta_update = is_mode_ref_delta_meaningful(cm);
+    aom_wb_write_bit(wb, mode_ref_delta_update);
+    if (!mode_ref_delta_update) {
+      return;
+    }
 
-  const RefCntBuffer *buf = get_primary_ref_frame_buf(cm);
-  int8_t last_ref_deltas[REF_FRAMES];
-  int8_t last_mode_deltas[MAX_MODE_LF_DELTAS];
-  if (buf == NULL) {
-    av1_set_default_ref_deltas(last_ref_deltas);
-    av1_set_default_mode_deltas(last_mode_deltas);
-  } else {
-    memcpy(last_ref_deltas, buf->ref_deltas, REF_FRAMES);
-    memcpy(last_mode_deltas, buf->mode_deltas, MAX_MODE_LF_DELTAS);
-  }
-  for (int i = 0; i < REF_FRAMES; i++) {
-    const int delta = lf->ref_deltas[i];
-    const int changed = delta != last_ref_deltas[i];
-    aom_wb_write_bit(wb, changed);
-    if (changed) aom_wb_write_inv_signed_literal(wb, delta, 6);
-  }
-  for (int i = 0; i < MAX_MODE_LF_DELTAS; i++) {
-    const int delta = lf->mode_deltas[i];
-    const int changed = delta != last_mode_deltas[i];
-    aom_wb_write_bit(wb, changed);
-    if (changed) aom_wb_write_inv_signed_literal(wb, delta, 6);
+    const RefCntBuffer *buf = get_primary_ref_frame_buf(cm);
+    int8_t last_ref_deltas[REF_FRAMES];
+    int8_t last_mode_deltas[MAX_MODE_LF_DELTAS];
+    if (buf == NULL) {
+      av1_set_default_ref_deltas(last_ref_deltas);
+      av1_set_default_mode_deltas(last_mode_deltas);
+    } else {
+      memcpy(last_ref_deltas, buf->ref_deltas, REF_FRAMES);
+      memcpy(last_mode_deltas, buf->mode_deltas, MAX_MODE_LF_DELTAS);
+    }
+    for (int i = 0; i < REF_FRAMES; i++) {
+      const int delta = lf->ref_deltas[i];
+      const int changed = delta != last_ref_deltas[i];
+      aom_wb_write_bit(wb, changed);
+      if (changed) aom_wb_write_inv_signed_literal(wb, delta, 6);
+    }
+    for (int i = 0; i < MAX_MODE_LF_DELTAS; i++) {
+      const int delta = lf->mode_deltas[i];
+      const int changed = delta != last_mode_deltas[i];
+      aom_wb_write_bit(wb, changed);
+      if (changed) aom_wb_write_inv_signed_literal(wb, delta, 6);
+    }
   }
 }
 
@@ -2363,13 +2367,20 @@ static inline void write_frame_size(const AV1_COMMON *cm,
                                     struct aom_write_bit_buffer *wb) {
   const int coded_width = cm->superres_upscaled_width - 1;
   const int coded_height = cm->superres_upscaled_height - 1;
+  const SequenceHeader *seq_params = cm->seq_params;
 
   if (frame_size_override) {
-    const SequenceHeader *seq_params = cm->seq_params;
     int num_bits_width = seq_params->num_bits_width;
     int num_bits_height = seq_params->num_bits_height;
     aom_wb_write_literal(wb, coded_width, num_bits_width);
     aom_wb_write_literal(wb, coded_height, num_bits_height);
+  } else {
+    if (cm->superres_upscaled_width != seq_params->max_frame_width ||
+        cm->superres_upscaled_height != seq_params->max_frame_height) {
+      aom_internal_error(cm->error, AOM_CODEC_UNSUP_BITSTREAM,
+                         "Frame dimensions are different from the maximum "
+                         "values when frame_size_override_flag is 0");
+    }
   }
 
   write_superres_scale(cm, wb);
@@ -2973,10 +2984,7 @@ static inline void write_uncompressed_header_obu(
 
   int frame_size_override_flag = 0;
 
-  if (seq_params->reduced_still_picture_hdr) {
-    assert(cm->superres_upscaled_width == seq_params->max_frame_width &&
-           cm->superres_upscaled_height == seq_params->max_frame_height);
-  } else {
+  if (!seq_params->reduced_still_picture_hdr) {
     if (seq_params->frame_id_numbers_present_flag) {
       int frame_id_len = seq_params->frame_id_length;
       aom_wb_write_literal(wb, cm->current_frame_id, frame_id_len);
@@ -3051,117 +3059,109 @@ static inline void write_uncompressed_header_obu(
     }
   }
 
-  if (current_frame->frame_type == KEY_FRAME) {
+  if (frame_is_intra_only(cm)) {
     write_frame_size(cm, frame_size_override_flag, wb);
     assert(!av1_superres_scaled(cm) || !features->allow_intrabc);
     if (features->allow_screen_content_tools && !av1_superres_scaled(cm))
       aom_wb_write_bit(wb, features->allow_intrabc);
-  } else {
-    if (current_frame->frame_type == INTRA_ONLY_FRAME) {
-      write_frame_size(cm, frame_size_override_flag, wb);
-      assert(!av1_superres_scaled(cm) || !features->allow_intrabc);
-      if (features->allow_screen_content_tools && !av1_superres_scaled(cm))
-        aom_wb_write_bit(wb, features->allow_intrabc);
-    } else if (current_frame->frame_type == INTER_FRAME ||
-               frame_is_sframe(cm)) {
-      MV_REFERENCE_FRAME ref_frame;
+  } else if (current_frame->frame_type == INTER_FRAME || frame_is_sframe(cm)) {
+    MV_REFERENCE_FRAME ref_frame;
 
-      // NOTE: Error resilient mode turns off frame_refs_short_signaling
-      //       automatically.
+    // NOTE: Error resilient mode turns off frame_refs_short_signaling
+    //       automatically.
 #define FRAME_REFS_SHORT_SIGNALING 0
 #if FRAME_REFS_SHORT_SIGNALING
-      current_frame->frame_refs_short_signaling =
-          seq_params->order_hint_info.enable_order_hint;
+    current_frame->frame_refs_short_signaling =
+        seq_params->order_hint_info.enable_order_hint;
 #endif  // FRAME_REFS_SHORT_SIGNALING
 
-      if (current_frame->frame_refs_short_signaling) {
-        //    In rtc case when cpi->sf.rt_sf.enable_ref_short_signaling is true,
-        //    we turn on frame_refs_short_signaling when the current frame and
-        //    golden frame are in the same order_hint group, and their relative
-        //    distance is <= 64 (in order to be decodable).
+    if (current_frame->frame_refs_short_signaling) {
+      //    In rtc case when cpi->sf.rt_sf.enable_ref_short_signaling is true,
+      //    we turn on frame_refs_short_signaling when the current frame and
+      //    golden frame are in the same order_hint group, and their relative
+      //    distance is <= 64 (in order to be decodable).
 
-        //    For other cases, an example solution for encoder-side
-        //    implementation on frame_refs_short_signaling is also provided in
-        //    this function, where frame_refs_short_signaling is only turned on
-        //    when the encoder side decision on ref frames is identical to that
-        //    at the decoder side.
+      //    For other cases, an example solution for encoder-side
+      //    implementation on frame_refs_short_signaling is also provided in
+      //    this function, where frame_refs_short_signaling is only turned on
+      //    when the encoder side decision on ref frames is identical to that
+      //    at the decoder side.
 
-        current_frame->frame_refs_short_signaling =
-            check_frame_refs_short_signaling(
-                cm, cpi->sf.rt_sf.enable_ref_short_signaling);
-      }
+      current_frame->frame_refs_short_signaling =
+          check_frame_refs_short_signaling(
+              cm, cpi->sf.rt_sf.enable_ref_short_signaling);
+    }
 
-      if (seq_params->order_hint_info.enable_order_hint)
-        aom_wb_write_bit(wb, current_frame->frame_refs_short_signaling);
+    if (seq_params->order_hint_info.enable_order_hint)
+      aom_wb_write_bit(wb, current_frame->frame_refs_short_signaling);
 
-      if (current_frame->frame_refs_short_signaling) {
-        const int lst_ref = get_ref_frame_map_idx(cm, LAST_FRAME);
-        aom_wb_write_literal(wb, lst_ref, REF_FRAMES_LOG2);
+    if (current_frame->frame_refs_short_signaling) {
+      const int lst_ref = get_ref_frame_map_idx(cm, LAST_FRAME);
+      aom_wb_write_literal(wb, lst_ref, REF_FRAMES_LOG2);
 
-        const int gld_ref = get_ref_frame_map_idx(cm, GOLDEN_FRAME);
-        aom_wb_write_literal(wb, gld_ref, REF_FRAMES_LOG2);
-      }
-      int first_ref_map_idx = INVALID_IDX;
-      if (cpi->ppi->rtc_ref.set_ref_frame_config) {
-        for (ref_frame = LAST_FRAME; ref_frame <= ALTREF_FRAME; ++ref_frame) {
-          if (cpi->ppi->rtc_ref.reference[ref_frame - 1] == 1) {
-            first_ref_map_idx = cpi->ppi->rtc_ref.ref_idx[ref_frame - 1];
-            break;
-          }
-        }
-      }
+      const int gld_ref = get_ref_frame_map_idx(cm, GOLDEN_FRAME);
+      aom_wb_write_literal(wb, gld_ref, REF_FRAMES_LOG2);
+    }
+    int first_ref_map_idx = INVALID_IDX;
+    if (cpi->ppi->rtc_ref.set_ref_frame_config) {
       for (ref_frame = LAST_FRAME; ref_frame <= ALTREF_FRAME; ++ref_frame) {
-        assert(get_ref_frame_map_idx(cm, ref_frame) != INVALID_IDX);
-        if (!current_frame->frame_refs_short_signaling) {
-          if (cpi->ppi->rtc_ref.set_ref_frame_config &&
-              first_ref_map_idx != INVALID_IDX &&
-              cpi->svc.number_spatial_layers == 1 &&
-              !seq_params->order_hint_info.enable_order_hint) {
-            // For the usage of set_ref_frame_config:
-            // for any reference not used set their ref_map_idx
-            // to the first used reference.
-            const int map_idx = cpi->ppi->rtc_ref.reference[ref_frame - 1]
-                                    ? get_ref_frame_map_idx(cm, ref_frame)
-                                    : first_ref_map_idx;
-            aom_wb_write_literal(wb, map_idx, REF_FRAMES_LOG2);
-          } else {
-            aom_wb_write_literal(wb, get_ref_frame_map_idx(cm, ref_frame),
-                                 REF_FRAMES_LOG2);
-          }
-        }
-        if (seq_params->frame_id_numbers_present_flag) {
-          int i = get_ref_frame_map_idx(cm, ref_frame);
-          int frame_id_len = seq_params->frame_id_length;
-          int diff_len = seq_params->delta_frame_id_length;
-          int delta_frame_id_minus_1 =
-              ((cm->current_frame_id - cm->ref_frame_id[i] +
-                (1 << frame_id_len)) %
-               (1 << frame_id_len)) -
-              1;
-          if (delta_frame_id_minus_1 < 0 ||
-              delta_frame_id_minus_1 >= (1 << diff_len)) {
-            aom_internal_error(cm->error, AOM_CODEC_ERROR,
-                               "Invalid delta_frame_id_minus_1");
-          }
-          aom_wb_write_literal(wb, delta_frame_id_minus_1, diff_len);
+        if (cpi->ppi->rtc_ref.reference[ref_frame - 1] == 1) {
+          first_ref_map_idx = cpi->ppi->rtc_ref.ref_idx[ref_frame - 1];
+          break;
         }
       }
-
-      if (!features->error_resilient_mode && frame_size_override_flag) {
-        write_frame_size_with_refs(cm, wb);
-      } else {
-        write_frame_size(cm, frame_size_override_flag, wb);
+    }
+    for (ref_frame = LAST_FRAME; ref_frame <= ALTREF_FRAME; ++ref_frame) {
+      assert(get_ref_frame_map_idx(cm, ref_frame) != INVALID_IDX);
+      if (!current_frame->frame_refs_short_signaling) {
+        if (cpi->ppi->rtc_ref.set_ref_frame_config &&
+            first_ref_map_idx != INVALID_IDX &&
+            cpi->svc.number_spatial_layers == 1 &&
+            !seq_params->order_hint_info.enable_order_hint) {
+          // For the usage of set_ref_frame_config:
+          // for any reference not used set their ref_map_idx
+          // to the first used reference.
+          const int map_idx = cpi->ppi->rtc_ref.reference[ref_frame - 1]
+                                  ? get_ref_frame_map_idx(cm, ref_frame)
+                                  : first_ref_map_idx;
+          aom_wb_write_literal(wb, map_idx, REF_FRAMES_LOG2);
+        } else {
+          aom_wb_write_literal(wb, get_ref_frame_map_idx(cm, ref_frame),
+                               REF_FRAMES_LOG2);
+        }
       }
-
-      if (!features->cur_frame_force_integer_mv)
-        aom_wb_write_bit(wb, features->allow_high_precision_mv);
-      write_frame_interp_filter(features->interp_filter, wb);
-      aom_wb_write_bit(wb, features->switchable_motion_mode);
-      if (frame_might_allow_ref_frame_mvs(cm)) {
-        aom_wb_write_bit(wb, features->allow_ref_frame_mvs);
-      } else {
-        assert(features->allow_ref_frame_mvs == 0);
+      if (seq_params->frame_id_numbers_present_flag) {
+        int i = get_ref_frame_map_idx(cm, ref_frame);
+        int frame_id_len = seq_params->frame_id_length;
+        int diff_len = seq_params->delta_frame_id_length;
+        int delta_frame_id_minus_1 =
+            ((cm->current_frame_id - cm->ref_frame_id[i] +
+              (1 << frame_id_len)) %
+             (1 << frame_id_len)) -
+            1;
+        if (delta_frame_id_minus_1 < 0 ||
+            delta_frame_id_minus_1 >= (1 << diff_len)) {
+          aom_internal_error(cm->error, AOM_CODEC_ERROR,
+                             "Invalid delta_frame_id_minus_1");
+        }
+        aom_wb_write_literal(wb, delta_frame_id_minus_1, diff_len);
       }
+    }
+
+    if (!features->error_resilient_mode && frame_size_override_flag) {
+      write_frame_size_with_refs(cm, wb);
+    } else {
+      write_frame_size(cm, frame_size_override_flag, wb);
+    }
+
+    if (!features->cur_frame_force_integer_mv)
+      aom_wb_write_bit(wb, features->allow_high_precision_mv);
+    write_frame_interp_filter(features->interp_filter, wb);
+    aom_wb_write_bit(wb, features->switchable_motion_mode);
+    if (frame_might_allow_ref_frame_mvs(cm)) {
+      aom_wb_write_bit(wb, features->allow_ref_frame_mvs);
+    } else {
+      assert(features->allow_ref_frame_mvs == 0);
     }
   }
 
@@ -3639,10 +3639,12 @@ static uint32_t init_large_scale_tile_obu_header(
 // Write total buffer size and related information into the OBU header for large
 // scale tile case.
 static void write_large_scale_tile_obu_size(
-    const CommonTileParams *const tiles, uint8_t *const dst, uint8_t *data,
-    struct aom_write_bit_buffer *saved_wb, LargeTileFrameOBU *const lst_obu,
-    int have_tiles, uint32_t *total_size, int max_tile_size,
-    int max_tile_col_size) {
+    const CommonTileParams *const tiles, uint8_t *const dst, size_t dst_size,
+    uint8_t *data, struct aom_write_bit_buffer *saved_wb,
+    LargeTileFrameOBU *const lst_obu, int have_tiles, uint32_t *total_size,
+    int max_tile_size, int max_tile_col_size) {
+  // TODO: bug 42302568 - Use dst_size.
+  (void)dst_size;
   int tile_size_bytes = 0;
   int tile_col_size_bytes = 0;
   if (have_tiles) {
@@ -3678,8 +3680,9 @@ static void write_large_scale_tile_obu_size(
 
 // Store information on each large scale tile in the OBU header.
 static void write_large_scale_tile_obu(
-    AV1_COMP *const cpi, uint8_t *const dst, LargeTileFrameOBU *const lst_obu,
-    int *const largest_tile_id, uint32_t *total_size, const int have_tiles,
+    AV1_COMP *const cpi, uint8_t *const dst, size_t dst_size,
+    LargeTileFrameOBU *const lst_obu, int *const largest_tile_id,
+    uint32_t *total_size, const int have_tiles,
     unsigned int *const max_tile_size, unsigned int *const max_tile_col_size) {
   AV1_COMMON *const cm = &cpi->common;
   const CommonTileParams *const tiles = &cm->tiles;
@@ -3702,22 +3705,33 @@ static void write_large_scale_tile_obu(
 
     for (int tile_row = 0; tile_row < tile_rows; tile_row++) {
       TileBufferEnc *const buf = &tile_buffers[tile_row][tile_col];
-      const int data_offset = have_tiles ? 4 : 0;
+      const uint32_t data_offset = have_tiles ? 4 : 0;
       const int tile_idx = tile_row * tile_cols + tile_col;
       TileDataEnc *this_tile = &cpi->tile_data[tile_idx];
       av1_tile_set_row(&tile_info, cm, tile_row);
       aom_writer mode_bc;
 
+      // Require *total_size + lst_obu->tg_hdr_size + data_offset < dst_size.
+      if (*total_size > dst_size ||
+          lst_obu->tg_hdr_size > dst_size - *total_size ||
+          data_offset >= dst_size - *total_size - lst_obu->tg_hdr_size) {
+        aom_internal_error(cm->error, AOM_CODEC_ERROR, "Error writing modes");
+      }
       buf->data = dst + *total_size + lst_obu->tg_hdr_size;
 
       // Is CONFIG_EXT_TILE = 1, every tile in the row has a header,
       // even for the last one, unless no tiling is used at all.
+      if (*total_size > UINT32_MAX - data_offset) {
+        aom_internal_error(cm->error, AOM_CODEC_ERROR, "Error writing modes");
+      }
       *total_size += data_offset;
       cpi->td.mb.e_mbd.tile_ctx = &this_tile->tctx;
       mode_bc.allow_update_cdf = !tiles->large_scale;
       mode_bc.allow_update_cdf =
           mode_bc.allow_update_cdf && !cm->features.disable_cdf_update;
-      aom_start_encode(&mode_bc, buf->data + data_offset);
+      aom_start_encode(
+          &mode_bc, buf->data + data_offset,
+          dst_size - *total_size - lst_obu->tg_hdr_size - data_offset);
       write_modes(cpi, &cpi->td, &tile_info, &mode_bc, tile_row, tile_col);
       if (aom_stop_encode(&mode_bc) < 0) {
         aom_internal_error(cm->error, AOM_CODEC_ERROR, "Error writing modes");
@@ -3773,7 +3787,7 @@ static void write_large_scale_tile_obu(
 
 // Packs information in the obu header for large scale tiles.
 static inline uint32_t pack_large_scale_tiles_in_tg_obus(
-    AV1_COMP *const cpi, uint8_t *const dst,
+    AV1_COMP *const cpi, uint8_t *const dst, size_t dst_size,
     struct aom_write_bit_buffer *saved_wb, uint8_t obu_extension_header,
     int *const largest_tile_id) {
   AV1_COMMON *const cm = &cpi->common;
@@ -3789,12 +3803,13 @@ static inline uint32_t pack_large_scale_tiles_in_tg_obus(
   total_size += init_large_scale_tile_obu_header(
       cpi, &data, saved_wb, obu_extension_header, &lst_obu);
 
-  write_large_scale_tile_obu(cpi, dst, &lst_obu, largest_tile_id, &total_size,
-                             have_tiles, &max_tile_size, &max_tile_col_size);
+  write_large_scale_tile_obu(cpi, dst, dst_size, &lst_obu, largest_tile_id,
+                             &total_size, have_tiles, &max_tile_size,
+                             &max_tile_col_size);
 
-  write_large_scale_tile_obu_size(tiles, dst, data, saved_wb, &lst_obu,
-                                  have_tiles, &total_size, max_tile_size,
-                                  max_tile_col_size);
+  write_large_scale_tile_obu_size(tiles, dst, dst_size, data, saved_wb,
+                                  &lst_obu, have_tiles, &total_size,
+                                  max_tile_size, max_tile_col_size);
 
   return total_size;
 }
@@ -3854,11 +3869,16 @@ void av1_pack_tile_info(AV1_COMP *const cpi, ThreadData *const td,
 
   pack_bs_params->buf.data = pack_bs_params->dst + *total_size;
 
-  // The last tile of the tile group does not have a header.
+  // The last tile of the tile group does not have a tile_size_minus_1 header.
   if (!pack_bs_params->is_last_tile_in_tg) *total_size += 4;
 
   // Pack tile data
-  aom_start_encode(&mode_bc, pack_bs_params->dst + *total_size);
+  if (pack_bs_params->tile_buf_size <= *total_size) {
+    aom_internal_error(td->mb.e_mbd.error_info, AOM_CODEC_ERROR,
+                       "Error writing modes");
+  }
+  aom_start_encode(&mode_bc, pack_bs_params->dst + *total_size,
+                   pack_bs_params->tile_buf_size - *total_size);
   write_modes(cpi, td, &tile_info, &mode_bc, tile_row, tile_col);
   if (aom_stop_encode(&mode_bc) < 0) {
     aom_internal_error(td->mb.e_mbd.error_info, AOM_CODEC_ERROR,
@@ -3871,7 +3891,7 @@ void av1_pack_tile_info(AV1_COMP *const cpi, ThreadData *const td,
 
   // Write tile size
   if (!pack_bs_params->is_last_tile_in_tg) {
-    // size of this tile
+    // size of this tile minus 1
     mem_put_le32(pack_bs_params->buf.data, tile_size - AV1_MIN_TILE_SIZE_BYTES);
   }
 }
@@ -3953,11 +3973,11 @@ void av1_accumulate_pack_bs_thread_data(AV1_COMP *const cpi,
 
 // Store information related to each default tile in the OBU header.
 static void write_tile_obu(
-    AV1_COMP *const cpi, uint8_t *const dst, uint32_t *total_size,
-    struct aom_write_bit_buffer *saved_wb, uint8_t obu_extn_header,
-    const FrameHeaderInfo *fh_info, int *const largest_tile_id,
-    unsigned int *max_tile_size, uint32_t *const obu_header_size,
-    uint8_t **tile_data_start) {
+    AV1_COMP *const cpi, uint8_t *const dst, size_t dst_size,
+    uint32_t *total_size, struct aom_write_bit_buffer *saved_wb,
+    uint8_t obu_extn_header, const FrameHeaderInfo *fh_info,
+    int *const largest_tile_id, unsigned int *max_tile_size,
+    uint32_t *const obu_header_size, uint8_t **tile_data_start) {
   AV1_COMMON *const cm = &cpi->common;
   MACROBLOCKD *const xd = &cpi->td.mb.e_mbd;
   const CommonTileParams *const tiles = &cm->tiles;
@@ -3994,6 +4014,7 @@ static void write_tile_obu(
       // info.
       PackBSParams pack_bs_params;
       pack_bs_params.dst = dst;
+      pack_bs_params.tile_buf_size = dst_size;
       pack_bs_params.curr_tg_hdr_size = 0;
       pack_bs_params.is_last_tile_in_tg = is_last_tile_in_tg;
       pack_bs_params.new_tg = new_tg;
@@ -4040,11 +4061,14 @@ static void write_tile_obu(
 // Write total buffer size and related information into the OBU header for
 // default tile case.
 static void write_tile_obu_size(AV1_COMP *const cpi, uint8_t *const dst,
+                                size_t dst_size,
                                 struct aom_write_bit_buffer *saved_wb,
                                 int largest_tile_id, uint32_t *const total_size,
                                 unsigned int max_tile_size,
                                 uint32_t obu_header_size,
                                 uint8_t *tile_data_start) {
+  // TODO: bug 42302568 - Use dst_size.
+  (void)dst_size;
   const CommonTileParams *const tiles = &cpi->common.tiles;
 
   // Fill in context_update_tile_id indicating the tile to use for the
@@ -4127,7 +4151,7 @@ static int calc_pack_bs_mt_workers(const TileDataEnc *tile_data, int num_tiles,
 }
 
 static inline uint32_t pack_tiles_in_tg_obus(
-    AV1_COMP *const cpi, uint8_t *const dst,
+    AV1_COMP *const cpi, uint8_t *const dst, size_t dst_size,
     struct aom_write_bit_buffer *saved_wb, uint8_t obu_extension_header,
     const FrameHeaderInfo *fh_info, int *const largest_tile_id) {
   const CommonTileParams *const tiles = &cpi->common.tiles;
@@ -4144,18 +4168,20 @@ static inline uint32_t pack_tiles_in_tg_obus(
       cpi->mt_info.pack_bs_mt_enabled);
 
   if (num_workers > 1) {
-    av1_write_tile_obu_mt(cpi, dst, &total_size, saved_wb, obu_extension_header,
-                          fh_info, largest_tile_id, &max_tile_size,
-                          &obu_header_size, &tile_data_start, num_workers);
+    av1_write_tile_obu_mt(cpi, dst, dst_size, &total_size, saved_wb,
+                          obu_extension_header, fh_info, largest_tile_id,
+                          &max_tile_size, &obu_header_size, &tile_data_start,
+                          num_workers);
   } else {
-    write_tile_obu(cpi, dst, &total_size, saved_wb, obu_extension_header,
-                   fh_info, largest_tile_id, &max_tile_size, &obu_header_size,
-                   &tile_data_start);
+    write_tile_obu(cpi, dst, dst_size, &total_size, saved_wb,
+                   obu_extension_header, fh_info, largest_tile_id,
+                   &max_tile_size, &obu_header_size, &tile_data_start);
   }
 
   if (num_tiles > 1)
-    write_tile_obu_size(cpi, dst, saved_wb, *largest_tile_id, &total_size,
-                        max_tile_size, obu_header_size, tile_data_start);
+    write_tile_obu_size(cpi, dst, dst_size, saved_wb, *largest_tile_id,
+                        &total_size, max_tile_size, obu_header_size,
+                        tile_data_start);
   return total_size;
 }
 
@@ -4165,8 +4191,6 @@ static uint32_t write_tiles_in_tg_obus(AV1_COMP *const cpi, uint8_t *const dst,
                                        uint8_t obu_extension_header,
                                        const FrameHeaderInfo *fh_info,
                                        int *const largest_tile_id) {
-  // TODO: bug 42302568 - Use dst_size.
-  (void)dst_size;
   AV1_COMMON *const cm = &cpi->common;
   const CommonTileParams *const tiles = &cm->tiles;
   *largest_tile_id = 0;
@@ -4185,10 +4209,10 @@ static uint32_t write_tiles_in_tg_obus(AV1_COMP *const cpi, uint8_t *const dst,
 
   if (tiles->large_scale)
     return pack_large_scale_tiles_in_tg_obus(
-        cpi, dst, saved_wb, obu_extension_header, largest_tile_id);
+        cpi, dst, dst_size, saved_wb, obu_extension_header, largest_tile_id);
 
-  return pack_tiles_in_tg_obus(cpi, dst, saved_wb, obu_extension_header,
-                               fh_info, largest_tile_id);
+  return pack_tiles_in_tg_obus(cpi, dst, dst_size, saved_wb,
+                               obu_extension_header, fh_info, largest_tile_id);
 }
 
 // Returns the number of bytes written on success. Returns 0 on failure.

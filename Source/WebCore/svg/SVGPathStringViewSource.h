@@ -46,9 +46,9 @@ private:
     std::optional<CurveToQuadraticSmoothSegment> parseCurveToQuadraticSmoothSegment(FloatPoint) final;
     std::optional<ArcToSegment> parseArcToSegment(FloatPoint) final;
 
-    template<typename Function> decltype(auto) parse(Function&&);
+    template<typename Function> decltype(auto) LEGACY_NODELETE parse(NOESCAPE const Function&);
 
-    bool m_is8BitSource;
+    bool m_is8BitSource { false };
     union {
         StringParsingBuffer<Latin1Character> m_buffer8;
         StringParsingBuffer<char16_t> m_buffer16;

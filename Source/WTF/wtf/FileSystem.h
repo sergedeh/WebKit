@@ -31,6 +31,7 @@
 #pragma once
 
 #include <span>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <time.h>
 #include <utility>
@@ -40,7 +41,12 @@
 #include <wtf/OptionSet.h>
 #include <wtf/Vector.h>
 #include <wtf/WallTime.h>
+#include <wtf/text/UTF8CStringView.h>
 #include <wtf/text/WTFString.h>
+
+#if OS(WINDOWS)
+#include <windows.h>
+#endif
 
 #if USE(CF)
 #include <wtf/RetainPtr.h>
@@ -48,6 +54,10 @@
 
 #if USE(CF)
 typedef const struct __CFData* CFDataRef;
+#endif
+
+#if !OS(WINDOWS)
+struct stat;
 #endif
 
 OBJC_CLASS NSString;
@@ -96,13 +106,14 @@ WTF_EXPORT_PRIVATE bool moveFile(const String& oldPath, const String& newPath);
 WTF_EXPORT_PRIVATE std::optional<uint64_t> fileSize(const String&); // Follows symlinks.
 WTF_EXPORT_PRIVATE std::optional<uint64_t> directorySize(const String&);
 WTF_EXPORT_PRIVATE std::optional<WallTime> fileModificationTime(const String&);
-WTF_EXPORT_PRIVATE bool fileIDsAreEqual(std::optional<PlatformFileID>, std::optional<PlatformFileID>);
+WTF_EXPORT_PRIVATE bool LEGACY_NODELETE fileIDsAreEqual(std::optional<PlatformFileID>, std::optional<PlatformFileID>);
 WTF_EXPORT_PRIVATE bool updateFileModificationTime(const String& path); // Sets modification time to now.
 WTF_EXPORT_PRIVATE std::optional<WallTime> fileCreationTime(const String&); // Not all platforms store file creation time.
 WTF_EXPORT_PRIVATE bool isHiddenFile(const String&);
 WTF_EXPORT_PRIVATE String pathByAppendingComponent(StringView path, StringView component);
 WTF_EXPORT_PRIVATE String pathByAppendingComponents(StringView path, std::span<const StringView> components);
 WTF_EXPORT_PRIVATE String lastComponentOfPathIgnoringTrailingSlash(const String& path);
+WTF_EXPORT_PRIVATE void removeTrailingSlash(String& path);
 WTF_EXPORT_PRIVATE bool makeAllDirectories(const String& path);
 WTF_EXPORT_PRIVATE String pathFileName(const String&);
 WTF_EXPORT_PRIVATE String parentPath(const String&);
@@ -126,11 +137,17 @@ WTF_EXPORT_PRIVATE bool setExcludedFromBackup(const String&, bool); // Returns t
 WTF_EXPORT_PRIVATE bool markPurgeable(const String&);
 
 WTF_EXPORT_PRIVATE Vector<String> listDirectory(const String& path); // Returns file names, not full paths.
+WTF_EXPORT_PRIVATE void traverseDirectory(const String& path, NOESCAPE const Function<void(const String& fileName, FileType)>&);
 
-WTF_EXPORT_PRIVATE CString fileSystemRepresentation(const String&);
+WTF_EXPORT_PRIVATE UTF8CString fileSystemRepresentation(const String&);
 #if !PLATFORM(WIN)
-WTF_EXPORT_PRIVATE String stringFromFileSystemRepresentation(const char*);
+WTF_EXPORT_PRIVATE String stringFromFileSystemRepresentation(UTF8CStringView);
+inline String stringFromFileSystemRepresentation(const char* path) { return stringFromFileSystemRepresentation(UTF8CStringView::unsafeFromUTF8(path)); }
 #endif
+
+// stat() needs a null-terminated path, so these take the span including the terminator and check for it.
+WTF_EXPORT_PRIVATE int statFile(std::span<const char> pathIncludingNullTerminator, struct stat&);
+inline int statFile(std::span<const char8_t> pathIncludingNullTerminator, struct stat& result) { return statFile(byteCast<char>(pathIncludingNullTerminator), result); }
 
 using Salt = std::array<uint8_t, 8>;
 WTF_EXPORT_PRIVATE std::optional<Salt> readOrMakeSalt(const String& path);
@@ -138,10 +155,10 @@ WTF_EXPORT_PRIVATE std::optional<Vector<uint8_t>> readEntireFile(const String& p
 WTF_EXPORT_PRIVATE std::optional<uint64_t> overwriteEntireFile(const String& path, std::span<const uint8_t>);
 
 // Prefix is what the filename should be prefixed with, not the full path.
-WTF_EXPORT_PRIVATE std::pair<String, FileHandle> openTemporaryFile(StringView prefix, StringView suffix = { });
+WTF_EXPORT_PRIVATE std::pair<String, FileHandle> openTemporaryFile(StringView prefix, StringView suffix = { }, const String& temporaryDirectory = { });
 WTF_EXPORT_PRIVATE String createTemporaryFile(StringView prefix, StringView suffix = { });
 #if PLATFORM(COCOA)
-WTF_EXPORT_PRIVATE std::pair<FileHandle, CString> createTemporaryFileInDirectory(const String& directory, const String& suffix);
+WTF_EXPORT_PRIVATE std::pair<FileHandle, String> createTemporaryFileInDirectory(const String& directory, const String& suffix);
 #endif
 WTF_EXPORT_PRIVATE FileHandle openFile(const String& path, FileOpenMode, FileAccessPermission = FileAccessPermission::All, OptionSet<FileLockMode> = { }, bool failIfFileExists = false);
 
@@ -161,15 +178,19 @@ WTF_EXPORT_PRIVATE bool filesHaveSameVolume(const String&, const String&);
 WTF_EXPORT_PRIVATE RetainPtr<CFURLRef> pathAsURL(const String&);
 #endif
 
+// The name of the running executable, as reported by the platform.
+#if USE(GLIB) || PLATFORM(COCOA)
+WTF_EXPORT_PRIVATE UTF8CString currentExecutableName();
+#endif
+
 #if USE(GLIB)
 WTF_EXPORT_PRIVATE String filenameForDisplay(const String&);
-WTF_EXPORT_PRIVATE CString currentExecutablePath();
-WTF_EXPORT_PRIVATE CString currentExecutableName();
+WTF_EXPORT_PRIVATE UTF8CString currentExecutablePath();
 WTF_EXPORT_PRIVATE String userCacheDirectory();
 WTF_EXPORT_PRIVATE String userDataDirectory();
 WTF_EXPORT_PRIVATE String createTemporaryDirectory(const String& directoryPrefix = nullString());
 #if ENABLE(DEVELOPER_MODE)
-WTF_EXPORT_PRIVATE CString webkitTopLevelDirectory();
+WTF_EXPORT_PRIVATE UTF8CString webkitTopLevelDirectory();
 #endif
 #endif // USE(GLIB)
 
@@ -183,10 +204,17 @@ WTF_EXPORT_PRIVATE String createTemporaryDirectory();
 WTF_EXPORT_PRIVATE NSString *createTemporaryDirectory(NSString *directoryPrefix = nil);
 WTF_EXPORT_PRIVATE NSString *systemDirectoryPath();
 
+WTF_EXPORT_PRIVATE String darwinCacheDirectory();
+WTF_EXPORT_PRIVATE String darwinTempDirectory();
+
 // Allow reading cloud files with no local copy.
 enum class PolicyScope : uint8_t { Process, Thread };
 WTF_EXPORT_PRIVATE bool setAllowsMaterializingDatalessFiles(bool, PolicyScope);
 WTF_EXPORT_PRIVATE std::optional<bool> allowsMaterializingDatalessFiles(PolicyScope);
+#endif
+
+#if PLATFORM(MAC) || PLATFORM(MACCATALYST)
+WTF_EXPORT_PRIVATE std::optional<String> homeDirectory();
 #endif
 
 // Impl for systems that do not already have createTemporaryDirectory

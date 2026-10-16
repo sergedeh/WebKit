@@ -24,7 +24,7 @@
  */
 
 #include "config.h"
-#include "LogInitialization.h"
+#include <wtf/LogInitialization.h>
 
 #include <wtf/LogChannels.h>
 #include <wtf/Logging.h>
@@ -58,4 +58,4 @@ LogChannels& logChannels()
 
 #endif // !LOG_DISABLED || !RELEASE_LOG_DISABLED
 
-} // namespace WebCore
+} // namespace WTF

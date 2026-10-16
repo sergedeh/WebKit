@@ -28,6 +28,7 @@
 
 #include "WebCoreJSBuiltinInternals.h"
 #include "WebCoreJSClientData.h"
+#include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
@@ -42,7 +43,7 @@ std::pair<bool, std::reference_wrapper<JSC::JSObject>> getBackingMap(JSC::JSGlob
         return { false, *JSC::asObject(backingMap) };
 
     backingMap = JSC::JSMap::create(vm, lexicalGlobalObject.mapStructure());
-    mapLike.putDirect(vm, builtinNames(vm).backingMapPrivateName(), backingMap, enumToUnderlyingType(JSC::PropertyAttribute::DontEnum));
+    mapLike.putDirect(vm, builtinNames(vm).backingMapPrivateName(), backingMap, std::to_underlying(JSC::PropertyAttribute::DontEnum));
     return { true, *JSC::asObject(backingMap) };
 }
 

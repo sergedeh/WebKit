@@ -67,6 +67,8 @@ public:
         virtual void startDisplayDidRefreshCallbacks(WebCore::PlatformDisplayID) = 0;
         virtual void stopDisplayDidRefreshCallbacks(WebCore::PlatformDisplayID) = 0;
 
+        virtual void didEndSyntheticMomentumScrolling() = 0;
+
 #if ENABLE(MOMENTUM_EVENT_DISPATCHER_TEMPORARY_LOGGING)
         virtual void flushMomentumEventLoggingSoon() = 0;
 #endif
@@ -102,7 +104,7 @@ private:
         WebCore::PlatformDisplayID displayID;
         WebCore::FramesPerSecond nominalFrameRate;
     };
-    std::optional<DisplayProperties> displayProperties(WebCore::PageIdentifier) const;
+    std::optional<DisplayProperties> LEGACY_NODELETE displayProperties(WebCore::PageIdentifier) const;
 
     void dispatchSyntheticMomentumEvent(WebWheelEvent::Phase, WebCore::FloatSize delta);
 
@@ -114,6 +116,7 @@ private:
 
     WebCore::FloatSize offsetAtTime(Seconds);
     std::pair<WebCore::FloatSize, WebCore::FloatSize> computeNextDelta(WebCore::FloatSize currentUnacceleratedDelta);
+    std::pair<WebCore::FloatSize, WebCore::FloatSize> computeNextDeltaSimple(WebCore::FloatSize currentUnacceleratedDelta);
 
     void didReceiveScrollEventWithInterval(WebCore::FloatSize, Seconds);
     void didReceiveScrollEvent(const WebWheelEvent&);
@@ -150,16 +153,18 @@ private:
     HistoricalDeltas m_deltaHistoryY;
 
     Markable<MonotonicTime> m_lastScrollTimestamp;
-    std::optional<WebWheelEvent> m_lastIncomingEvent;
+    RefPtr<const WebWheelEvent> m_lastIncomingEvent;
     WebCore::RectEdges<WebCore::RubberBandingBehavior> m_lastRubberBandableEdges;
     bool m_isInOverriddenPlatformMomentumGesture { false };
 
+    enum class MomentumCurve : uint8_t { Default, Simple };
     struct {
         bool active { false };
+        MomentumCurve momentumCurve { MomentumCurve::Default };
 
         Markable<WebCore::PageIdentifier> pageIdentifier;
         std::optional<ScrollingAccelerationCurve> accelerationCurve;
-        std::optional<WebWheelEvent> initiatingEvent;
+        RefPtr<const WebWheelEvent> initiatingEvent;
 
         WebCore::FloatSize currentOffset;
         MonotonicTime startTime;

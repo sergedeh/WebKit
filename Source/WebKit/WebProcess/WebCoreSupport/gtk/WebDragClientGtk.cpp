@@ -28,7 +28,6 @@
 
 #if ENABLE(DRAG_SUPPORT)
 
-#include "ArgumentCodersGtk.h"
 #include "MessageSenderInlines.h"
 #include "WebPage.h"
 #include "WebPageProxyMessages.h"
@@ -39,32 +38,9 @@
 #include <WebCore/SelectionData.h>
 #include <WebCore/ShareableBitmap.h>
 
-#if USE(CAIRO)
-#include <WebCore/CairoOperations.h>
-#include <cairo.h>
-#endif
-
 namespace WebKit {
 using namespace WebCore;
 
-#if USE(CAIRO)
-static RefPtr<ShareableBitmap> convertCairoSurfaceToShareableBitmap(cairo_surface_t* surface)
-{
-    if (!surface)
-        return nullptr;
-
-    IntSize imageSize(cairo_image_surface_get_width(surface), cairo_image_surface_get_height(surface));
-    auto bitmap = ShareableBitmap::create({ imageSize });
-    auto graphicsContext = bitmap->createGraphicsContext();
-
-    ASSERT(graphicsContext->hasPlatformContext());
-    auto& state = graphicsContext->state();
-    Cairo::drawSurface(*graphicsContext->platformContext(), surface, IntRect(IntPoint(), imageSize), IntRect(IntPoint(), imageSize), state.imageInterpolationQuality(), state.alpha(), Cairo::ShadowState(state));
-    return bitmap;
-}
-#endif
-
-#if USE(SKIA)
 static RefPtr<ShareableBitmap> convertSkiaImageToShareableBitmap(SkImage* image)
 {
     if (!image)
@@ -79,7 +55,6 @@ static RefPtr<ShareableBitmap> convertSkiaImageToShareableBitmap(SkImage* image)
 
     return bitmap;
 }
-#endif
 
 void WebDragClient::didConcludeEditDrag()
 {
@@ -91,12 +66,7 @@ void WebDragClient::startDrag(DragItem dragItem, DataTransfer& dataTransfer, Fra
     auto* dragSurface = dragItem.image.get().get();
     RefPtr<ShareableBitmap> bitmap;
 
-#if USE(CAIRO)
-    bitmap = convertCairoSurfaceToShareableBitmap(dragSurface);
-#elif USE(SKIA)
     bitmap = convertSkiaImageToShareableBitmap(dragSurface);
-#endif
-
     if (bitmap) {
         handle = bitmap->createHandle();
 

@@ -30,6 +30,7 @@
 #include "LibWebRTCDnsResolverFactory.h"
 #include "LibWebRTCResolverIdentifier.h"
 #include <WebCore/LibWebRTCMacros.h>
+#include <WebCore/ScriptExecutionContextIdentifier.h>
 #include <wtf/CheckedPtr.h>
 #include <wtf/Identified.h>
 #include <wtf/TZoneMalloc.h>
@@ -46,10 +47,15 @@ class LibWebRTCResolver final : public LibWebRTCDnsResolverFactory::Resolver, pr
     WTF_MAKE_TZONE_ALLOCATED(LibWebRTCResolver);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(LibWebRTCResolver);
 public:
-    LibWebRTCResolver() = default;
+    explicit LibWebRTCResolver(WebCore::ScriptExecutionContextIdentifier contextIdentifier)
+        : m_contextIdentifier(contextIdentifier)
+    {
+    }
+
     ~LibWebRTCResolver();
 
     void start(const webrtc::SocketAddress&, Function<void()>&&) final;
+    Function<void()> takeCallback();
 
 private:
     friend class WebRTCResolver;
@@ -66,6 +72,7 @@ private:
 
     static void sendOnMainThread(Function<void(IPC::Connection&)>&&);
 
+    const WebCore::ScriptExecutionContextIdentifier m_contextIdentifier;
     Vector<webrtc::IPAddress> m_addresses;
     webrtc::SocketAddress m_addressToResolve;
     Function<void()> m_callback;

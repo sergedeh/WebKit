@@ -27,12 +27,14 @@
 
 #include <JavaScriptCore/CollectionScope.h>
 #include <wtf/PrintStream.h>
-#include <wtf/RefPtr.h>
-#include <wtf/SharedTask.h>
 
 namespace JSC {
 
 struct GCRequest {
+    // Identifies a request to the thread that asked for it, so it can wait for that request in
+    // particular rather than for whatever collection happens to be running.
+    using Ticket = uint64_t;
+
     GCRequest() { }
     
     GCRequest(CollectionScope scope)
@@ -45,12 +47,11 @@ struct GCRequest {
     {
     }
     
-    bool subsumedBy(const GCRequest& other) const;
+    bool LEGACY_NODELETE subsumedBy(const GCRequest& other) const;
     
     void dump(PrintStream&) const;
     
     std::optional<CollectionScope> scope;
-    RefPtr<SharedTask<void()>> didFinishEndPhase;
 };
 
 } // namespace JSC

@@ -26,16 +26,13 @@
 
 #include <WebCore/StylePrimitiveNumericTypes.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // <'perspective'> = none | <length [0,∞]>
 // https://drafts.csswg.org/css-transforms-2/#propdef-perspective
 struct Perspective : ValueOrKeyword<Length<CSS::Nonnegative, float>, CSS::Keyword::None> {
     using Base::Base;
     using Length = typename Base::Value;
-
-    float usedPerspective() const { return std::max(1.0f, tryValue().value_or(1.0f).resolveZoom(Style::ZoomNeeded { })); }
 
     bool isNone() const { return isKeyword(); }
     bool isLength() const { return isValue(); }
@@ -46,14 +43,15 @@ static_assert(sizeof(Perspective) == sizeof(float));
 
 template<> struct CSSValueConversion<Perspective> { auto operator()(BuilderState&, const CSSValue&) -> Perspective; };
 
-// MARK: - Blending
+// MARK: - Evaluation
 
-template<> struct Blending<Perspective> {
-    auto canBlend(const Perspective&, const Perspective&) -> bool;
-    auto blend(const Perspective&, const Perspective&, const BlendingContext&) -> Perspective;
+template<typename Result> struct Evaluation<Perspective, Result> {
+    constexpr auto operator()(const Perspective& perspective, ZoomFactor zoom) -> Result
+    {
+        return Result(std::max(1.0f, perspective.tryValue().value_or(1.0f).resolveZoom(zoom)));
+    }
 };
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style
 
 DEFINE_VARIANT_LIKE_CONFORMANCE(WebCore::Style::Perspective)

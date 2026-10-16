@@ -28,22 +28,22 @@ require "config"
 #
 # On x86-64 (windows and non-windows)
 #
-# rax => t0,     r0
+# rax => t0,     r0, ws0
 # rdi => t6, a0
 # rsi => t1, a1
 # rdx => t2, a2, r1
 # rcx => t3, a3
 #  r8 => t4, a4
 #  r9 => t7, a5
-# r10 => t5
-# rbx =>             csr0 (callee-save, wasmInstance)
-# r12 =>             csr1 (callee-save, metadataTable)
-# r13 =>             csr2 (callee-save, PB)
-# r14 =>             csr3 (callee-save, tagTypeNumber)
-# r15 =>             csr4 (callee-save, tagMask)
+# r10 => t5,         ws1
+# rbx =>                 csr0 (callee-save, wasmInstance)
+# r12 =>                 csr1 (callee-save, metadataTable)
+# r13 =>                 csr2 (callee-save, PB)
+# r14 =>                 csr3 (callee-save, tagTypeNumber)
+# r15 =>                 csr4 (callee-save, tagMask)
 # rsp => sp
 # rbp => cfr
-# r11 =>                  (scratch)
+# r11 =>                       (scratch)
 
 def isWin
     $options.has_key?(:platform) && $options[:platform] == "Windows"
@@ -1086,6 +1086,13 @@ class Instruction
             handleX86Op("xor#{x86Suffix(:quad)}", :quad)
         when "leap"
             emitX86Lea(operands[0], operands[1], :ptr)
+        when "pcrtoaddr"
+            labelRef = operands[0]
+            dst = operands[1]
+            if labelRef.is_a? LabelReference
+                labelRef.used
+            end
+            $asm.puts "leaq #{labelRef.asmLabel}(%rip), #{dst.x86Operand(:quad)}"
         when "loadi", "atomicloadi"
             $asm.puts "mov#{x86Suffix(:int)} #{x86LoadOperands(:int, :int)}"
         when "storei"
@@ -1647,6 +1654,14 @@ class Instruction
             $asm.puts "idiv#{x86Suffix(:quad)} #{operands[0].x86Operand(:quad)}"
         when "udivq"
             $asm.puts "div#{x86Suffix(:quad)} #{operands[0].x86Operand(:quad)}"
+        when "adcq"
+            $asm.puts "adcq #{x86Operands(:quad, :quad)}"
+        when "sbcq"
+            $asm.puts "sbbq #{x86Operands(:quad, :quad)}"
+        when "umulhq"
+            $asm.puts "mulq #{operands[0].x86Operand(:quad)}"
+        when "smulhq"
+            $asm.puts "imulq #{operands[0].x86Operand(:quad)}"
         when "popcnti"
             $asm.puts "popcnt#{x86Suffix(:int)} #{x86Operands(:int, :int)}"
         when "popcntq"
@@ -1659,16 +1674,6 @@ class Instruction
             countLeadingZeros(:int)
         when "lzcntq"
             countLeadingZeros(:quad)
-        when "fii2d"
-            $asm.puts "movd #{operands[0].x86Operand(:int)}, #{operands[2].x86Operand(:double)}"
-            $asm.puts "movd #{operands[1].x86Operand(:int)}, %xmm7"
-            $asm.puts "psllq $32, %xmm7"
-            $asm.puts "por %xmm7, #{operands[2].x86Operand(:double)}"
-        when "fd2ii"
-            $asm.puts "movd #{operands[0].x86Operand(:double)}, #{operands[1].x86Operand(:int)}"
-            $asm.puts "movsd #{operands[0].x86Operand(:double)}, %xmm7"
-            $asm.puts "psrlq $32, %xmm7"
-            $asm.puts "movd %xmm7, #{operands[2].x86Operand(:int)}"
         when "fq2d"
             $asm.puts "movq #{operands[0].x86Operand(:quad)}, #{operands[1].x86Operand(:double)}"
         when "fd2q"
@@ -1685,6 +1690,8 @@ class Instruction
             $asm.puts "jz #{operands[0].asmLabel}"
         when "bnz"
             $asm.puts "jnz #{operands[0].asmLabel}"
+        when "bc"
+            $asm.puts "jc #{operands[0].asmLabel}"
         when "leai"
             $asm.puts "lea#{x86Suffix(:int)} #{orderOperands(operands[0].x86AddressOperand(:int), operands[1].x86Operand(:int))}"
         when "leap"

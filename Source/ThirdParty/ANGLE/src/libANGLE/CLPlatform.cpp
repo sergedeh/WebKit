@@ -6,36 +6,28 @@
 // CLPlatform.cpp: Implements the cl::Platform class.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
+#include "common/unsafe_buffers.h"
 
+#include <angle_cl.h>
+
+#include "libANGLE/CLBitField.h"
+#include "libANGLE/CLContext.h"
+#include "libANGLE/CLObject.h"
+#include "libANGLE/CLPlatform.h"
 #include "libANGLE/Context.h"
 #include "libANGLE/capture/FrameCapture.h"
-
-#include "libANGLE/CLPlatform.h"
-
-#include "entry_points_utils.h"
-#include "libANGLE/CLContext.h"
-#include "libANGLE/CLDevice.h"
+#include "libANGLE/cl_types.h"
 #include "libANGLE/cl_utils.h"
 
+#include <cstdlib>
 #include <cstring>
+#include <mutex>
 
 namespace cl
 {
 
 namespace
 {
-
-bool IsDeviceTypeMatch(DeviceType select, DeviceType type)
-{
-    // The type 'DeviceType' is a bitfield, so it matches if any selected bit is set.
-    // A custom device is an exception, which only matches if it was explicitely selected, see:
-    // https://www.khronos.org/registry/OpenCL/specs/3.0-unified/html/OpenCL_API.html#clGetDeviceIDs
-    return type == CL_DEVICE_TYPE_CUSTOM ? select == CL_DEVICE_TYPE_CUSTOM
-                                         : type.intersects(select);
-}
 
 Context::PropArray ParseContextProperties(const cl_context_properties *properties,
                                           Platform *&platform,
@@ -47,18 +39,19 @@ Context::PropArray ParseContextProperties(const cl_context_properties *propertie
         const cl_context_properties *propIt = properties;
         while (*propIt != 0)
         {
-            switch (*propIt++)
+            switch (*ANGLE_UNSAFE_TODO(propIt++))
             {
                 case CL_CONTEXT_PLATFORM:
-                    platform = &reinterpret_cast<cl_platform_id>(*propIt++)->cast<Platform>();
+                    platform = &reinterpret_cast<cl_platform_id>(*ANGLE_UNSAFE_TODO(propIt++))
+                                    ->cast<Platform>();
                     break;
                 case CL_CONTEXT_INTEROP_USER_SYNC:
-                    userSync = *propIt++ != CL_FALSE;
+                    userSync = *ANGLE_UNSAFE_TODO(propIt++) != CL_FALSE;
                     break;
             }
         }
         // Include the trailing zero
-        ++propIt;
+        ANGLE_UNSAFE_TODO(++propIt);
         propArray.reserve(propIt - properties);
         propArray.insert(propArray.cend(), properties, propIt);
     }
@@ -82,10 +75,7 @@ void Platform::Initialize(const cl_icd_dispatch &dispatch,
     platforms.reserve(createFuncs.size());
     while (!createFuncs.empty())
     {
-        platforms.emplace_back(new Platform(createFuncs.front()));
-
-        // Release initialization reference, lifetime controlled by RefPointer.
-        platforms.back()->release();
+        platforms.emplace_back(PlatformPtr::Create(createFuncs.front()));
 
         // Remove platform on any errors
         if (!platforms.back()->mInfo.isValid() || platforms.back()->mDevices.empty())
@@ -112,7 +102,7 @@ angle::Result Platform::GetPlatformIDs(cl_uint numEntries,
         auto platformIt = availPlatforms.cbegin();
         while (entry < numEntries && platformIt != availPlatforms.cend())
         {
-            platforms[entry++] = (*platformIt++).get();
+            ANGLE_UNSAFE_TODO(platforms[entry++]) = (*platformIt++).get();
         }
     }
     return angle::Result::Continue;
@@ -155,7 +145,7 @@ angle::Result Platform::getInfo(PlatformInfo name,
         case PlatformInfo::ExtensionsWithVersion:
             copyValue = mInfo.extensionsWithVersion.data();
             copySize  = mInfo.extensionsWithVersion.size() *
-                       sizeof(decltype(mInfo.extensionsWithVersion)::value_type);
+                        sizeof(decltype(mInfo.extensionsWithVersion)::value_type);
             break;
         case PlatformInfo::HostTimerResolution:
             copyValue = &mInfo.hostTimerRes;
@@ -168,7 +158,7 @@ angle::Result Platform::getInfo(PlatformInfo name,
         case PlatformInfo::ExternalMemory:
             copyValue = mInfo.externalMemoryHandleSupportList.data();
             copySize  = mInfo.externalMemoryHandleSupportList.size() *
-                       sizeof(*mInfo.externalMemoryHandleSupportList.data());
+                        sizeof(*mInfo.externalMemoryHandleSupportList.data());
             break;
         default:
             ASSERT(false);
@@ -185,7 +175,7 @@ angle::Result Platform::getInfo(PlatformInfo name,
         }
         if (copyValue != nullptr)
         {
-            std::memcpy(value, copyValue, copySize);
+            ANGLE_UNSAFE_TODO(std::memcpy(value, copyValue, copySize));
         }
     }
     if (valueSizeRet != nullptr)
@@ -200,34 +190,55 @@ angle::Result Platform::getDeviceIDs(DeviceType deviceType,
                                      cl_device_id *devices,
                                      cl_uint *numDevices) const
 {
-    cl_uint found = 0u;
+    cl_uint found                = 0u;
+    const bool requestForAll     = deviceType.intersects(CL_DEVICE_TYPE_ALL);
+    const bool requestForDefault = deviceType.intersects(CL_DEVICE_TYPE_DEFAULT);
+
     for (const DevicePtr &device : mDevices)
     {
-        if (IsDeviceTypeMatch(deviceType, device->getInfo().type))
+        // "default" and "all" types are edge cases
+        if (requestForDefault || requestForAll)
         {
             if (devices != nullptr && found < numEntries)
             {
-                devices[found] = device.get();
+                ANGLE_UNSAFE_TODO(devices[found]) = device.get();
             }
             ++found;
+            if (requestForDefault)
+            {
+                break;  // just return the 1st device as the "default"
+            }
+        }
+        else
+        {
+            // otherwise, check for type-match
+            if (IsDeviceTypeMatch(deviceType, device->getInfo().type))
+            {
+                if (devices != nullptr && found < numEntries)
+                {
+                    ANGLE_UNSAFE_TODO(devices[found]) = device.get();
+                }
+                ++found;
+            }
         }
     }
+
     if (numDevices != nullptr)
     {
         *numDevices = found;
     }
-
-    // CL_DEVICE_NOT_FOUND if no OpenCL devices that matched device_type were found.
-    if (found == 0u)
-    {
-        ANGLE_CL_RETURN_ERROR(CL_DEVICE_NOT_FOUND);
-    }
+    ASSERT(found != 0);
 
     return angle::Result::Continue;
 }
 
 bool Platform::hasDeviceType(DeviceType deviceType) const
 {
+    if (deviceType.intersects(CL_DEVICE_TYPE_DEFAULT | CL_DEVICE_TYPE_ALL))
+    {
+        return true;  // query-types are always valid/available
+    }
+
     for (const DevicePtr &device : mDevices)
     {
         if (IsDeviceTypeMatch(deviceType, device->getInfo().type))
@@ -248,7 +259,7 @@ cl_context Platform::CreateContext(const cl_context_properties *properties,
     devs.reserve(numDevices);
     while (numDevices-- != 0u)
     {
-        devs.emplace_back(&(*devices++)->cast<Device>());
+        devs.emplace_back(&(*ANGLE_UNSAFE_TODO(devices++))->cast<Device>());
     }
 
     Platform *platform           = nullptr;
@@ -295,7 +306,10 @@ Platform::Platform(const rx::CLPlatformImpl::CreateFunc &createFunc)
     : mImpl(createFunc(*this)),
       mDevices(mImpl ? createDevices(mImpl->createDevices()) : DevicePtrs{}),
       mInfo(mImpl ? mImpl->createInfo() : rx::CLPlatformImpl::Info{}),
-      mMultiThreadPool(mImpl ? angle::WorkerThreadPool::Create(0, ANGLEPlatformCurrent()) : nullptr)
+      mMultiThreadPool(mImpl ? angle::WorkerThreadPool::Create(angle::ThreadPoolType::Asynchronous,
+                                                               0,
+                                                               ANGLEPlatformCurrent())
+                             : nullptr)
 {}
 
 DevicePtrs Platform::createDevices(rx::CLDeviceImpl::CreateDatas &&createDatas)
@@ -304,10 +318,9 @@ DevicePtrs Platform::createDevices(rx::CLDeviceImpl::CreateDatas &&createDatas)
     devices.reserve(createDatas.size());
     while (!createDatas.empty())
     {
-        devices.emplace_back(
-            new Device(*this, nullptr, createDatas.front().first, createDatas.front().second));
-        // Release initialization reference, lifetime controlled by RefPointer.
-        devices.back()->release();
+        devices.emplace_back(RefPointer<Device>::Create(*this, nullptr, createDatas.front().first,
+                                                        createDatas.front().second));
+
         if (!devices.back()->mInfo.isValid())
         {
             devices.pop_back();

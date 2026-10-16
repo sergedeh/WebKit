@@ -25,10 +25,10 @@
 
 #pragma once
 
-#include <WebCore/CSSCounterStyle.h>
-#include <WebCore/CSSRule.h>
-#include <WebCore/StyleProperties.h>
-#include <WebCore/StyleRule.h>
+#include "CSSCounterStyleDescriptors.h"
+#include "CSSRule.h"
+#include "StyleProperties.h"
+#include "StyleRule.h"
 #include <wtf/text/AtomString.h>
 
 namespace WebCore {
@@ -39,10 +39,10 @@ public:
 
     Ref<StyleRuleCounterStyle> copy() const { return adoptRef(*new StyleRuleCounterStyle(*this)); }
 
-    const CSSCounterStyleDescriptors& descriptors() const { return m_descriptors; };
-    CSSCounterStyleDescriptors& mutableDescriptors() { return m_descriptors; };
+    const CSSCounterStyleDescriptors& descriptors() const LIFETIME_BOUND { return m_descriptors; };
+    CSSCounterStyleDescriptors& mutableDescriptors() LIFETIME_BOUND { return m_descriptors; };
 
-    const AtomString& name() const { return m_name; }
+    const AtomString& name() const LIFETIME_BOUND { return m_name; }
     String system() const { return m_descriptors.systemCSSText(); }
     String negative() const { return m_descriptors.negativeCSSText(); }
     String prefix() const { return m_descriptors.prefixCSSText(); }
@@ -75,15 +75,15 @@ public:
     StyleRuleType styleRuleType() const final { return StyleRuleType::CounterStyle; }
 
     String name() const { return m_counterStyleRule->name(); }
-    String system() const { return m_counterStyleRule->system(); }
-    String negative() const { return m_counterStyleRule->negative(); }
-    String prefix() const { return m_counterStyleRule->prefix(); }
-    String suffix() const { return m_counterStyleRule->suffix(); }
-    String range() const { return m_counterStyleRule->range(); }
-    String pad() const { return m_counterStyleRule->pad(); }
-    String fallback() const { return m_counterStyleRule->fallback(); }
-    String symbols() const { return m_counterStyleRule->symbols(); }
-    String additiveSymbols() const { return m_counterStyleRule->additiveSymbols(); }
+    String system() const { return protect(m_counterStyleRule)->system(); }
+    String negative() const { return protect(m_counterStyleRule)->negative(); }
+    String prefix() const { return protect(m_counterStyleRule)->prefix(); }
+    String suffix() const { return protect(m_counterStyleRule)->suffix(); }
+    String range() const { return protect(m_counterStyleRule)->range(); }
+    String pad() const { return protect(m_counterStyleRule)->pad(); }
+    String fallback() const { return protect(m_counterStyleRule)->fallback(); }
+    String symbols() const { return protect(m_counterStyleRule)->symbols(); }
+    String additiveSymbols() const { return protect(m_counterStyleRule)->additiveSymbols(); }
     String speakAs() const { return m_counterStyleRule->speakAs(); }
 
     void setName(const String&);
@@ -96,15 +96,15 @@ public:
     void setFallback(const String&);
     void setSymbols(const String&);
     void setAdditiveSymbols(const String&);
-    void setSpeakAs(const String&);
+    void LEGACY_NODELETE setSpeakAs(const String&);
 
 private:
     CSSCounterStyleRule(StyleRuleCounterStyle&, CSSStyleSheet* parent);
 
     bool setterInternal(CSSPropertyID, const String&);
     RefPtr<CSSValue> cssValueFromText(CSSPropertyID, const String&);
-    const CSSCounterStyleDescriptors& descriptors() const { return m_counterStyleRule->descriptors(); }
-    CSSCounterStyleDescriptors& mutableDescriptors() { return m_counterStyleRule->mutableDescriptors(); }
+    const CSSCounterStyleDescriptors& descriptors() const LIFETIME_BOUND { return m_counterStyleRule->descriptors(); }
+    CSSCounterStyleDescriptors& mutableDescriptors() LIFETIME_BOUND { return m_counterStyleRule->mutableDescriptors(); }
 
     Ref<StyleRuleCounterStyle> m_counterStyleRule;
 };

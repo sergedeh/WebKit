@@ -53,7 +53,8 @@ bool NetworkIssueReporter::shouldReport(NSURLSessionTaskMetrics *metrics)
     if (!isEnabled())
         return false;
 
-    for (NSURLSessionTaskTransactionMetrics *transaction in metrics.transactionMetrics) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSURLSessionTaskTransactionMetrics *transaction in metrics.transactionMetrics) {
         if (transaction._isUnlistedTracker)
             return true;
     }
@@ -79,7 +80,7 @@ void NetworkIssueReporter::report(const URL& requestURL)
         return;
 
     if (auto createIssue = ne_tracker_create_xcode_issuePtr())
-        createIssue(host.utf8().data(), m_stackTrace.get(), m_stackTraceSize);
+        createIssue(host.utf8().legacyCStringPointer(), m_stackTrace.get(), m_stackTraceSize);
 }
 
 } // namespace WebKit

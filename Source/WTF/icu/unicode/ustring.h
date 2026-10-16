@@ -18,7 +18,12 @@
 #ifndef USTRING_H
 #define USTRING_H
 
-DECLARE_SYSTEM_HEADER
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
+#if defined(__clang__)
+_Pragma("clang system_header")
+#endif
 
 #include "unicode/utypes.h"
 #include "unicode/putil.h"

@@ -26,11 +26,11 @@
 
 #include "config.h"
 
-#include "Counters.h"
+#include "Helpers/Counters.h"
 #include "DeletedAddressOfOperator.h"
 #include "MoveOnly.h"
 #include "RefLogger.h"
-#include "Test.h"
+#include "Helpers/Test.h"
 #include <string>
 #include <wtf/HashMap.h>
 #include <wtf/InlineWeakPtr.h>
@@ -45,11 +45,10 @@
 namespace {
 
 class InlineWeakPtrObject : public RefCountedWithInlineWeakPtr<InlineWeakPtrObject> {
-    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(InlineWeakPtrObject);
 public:
     static Ref<InlineWeakPtrObject> create()
     {
-        return adoptRef(*new InlineWeakPtrObject);
+        return createRefCountedWithInlineWeakPtr<InlineWeakPtrObject>();
     }
 };
 
@@ -101,7 +100,7 @@ TEST(WTF_HashMap, DoubleHashCollisions)
     // The "clobber" key here is one that ends up stealing the bucket that the -0 key
     // originally wants to be in. This makes the 0 and -0 keys collide and the test then
     // fails unless the FloatHash::equals() implementation can distinguish them.
-    const double clobberKey = 6;
+    const double clobberKey = 7;
     const double zeroKey = 0;
     const double negativeZeroKey = -zeroKey;
 
@@ -1139,7 +1138,7 @@ TEST(WTF_HashMap, ReserveInitialCapacity)
     EXPECT_EQ(9999u, map.size());
     EXPECT_EQ(32768u, map.capacity());
     EXPECT_TRUE(map.contains("foo3"_str));
-    EXPECT_STREQ("bar3", map.get("foo3"_str).utf8().data());
+    EXPECT_EQ("bar3"_s, map.get("foo3"_str));
 
     for (int i = 0; i < 9999; ++i)
         map.add(makeString("excess"_s, i), makeString("baz"_s, i));
@@ -1150,7 +1149,7 @@ TEST(WTF_HashMap, ReserveInitialCapacity)
         EXPECT_TRUE(map.remove(makeString("foo"_s, i)));
     EXPECT_EQ(9999u, map.size());
     EXPECT_EQ(32768u, map.capacity());
-    EXPECT_STREQ("baz3", map.get("excess3"_str).utf8().data());
+    EXPECT_EQ("baz3"_s, map.get("excess3"_str));
 
     for (int i = 0; i < 9999; ++i)
         EXPECT_TRUE(map.remove(makeString("excess"_s, i)));

@@ -31,7 +31,7 @@ namespace WebCore {
 
 template<>
 struct SVGPropertyTraits<CompositeOperationType> {
-    static unsigned highestEnumValue() { return enumToUnderlyingType(CompositeOperationType::FECOMPOSITE_OPERATOR_LIGHTER); }
+    static unsigned highestEnumValue() { return std::to_underlying(CompositeOperationType::FECOMPOSITE_OPERATOR_LIGHTER); }
 
     static String toString(CompositeOperationType type)
     {
@@ -60,7 +60,7 @@ struct SVGPropertyTraits<CompositeOperationType> {
 
     static CompositeOperationType fromString(SVGElement&, const String& value)
     {
-        static constexpr SortedArrayMap map { std::to_array<std::pair<ComparableASCIILiteral, CompositeOperationType>>({
+        static constexpr SortedArrayMap map { WTF::toArray<std::pair<ComparableASCIILiteral, CompositeOperationType>>({
             { "arithmetic"_s, CompositeOperationType::FECOMPOSITE_OPERATOR_ARITHMETIC },
             { "atop"_s, CompositeOperationType::FECOMPOSITE_OPERATOR_ATOP },
             { "in"_s, CompositeOperationType::FECOMPOSITE_OPERATOR_IN },
@@ -107,13 +107,13 @@ private:
     Vector<AtomString> filterEffectInputsNames() const override { return { AtomString { in1() }, AtomString { in2() } }; }
     RefPtr<FilterEffect> createFilterEffect(const FilterEffectVector&, const GraphicsContext& destinationContext) const override;
 
-    Ref<SVGAnimatedString> m_in1 { SVGAnimatedString::create(this) };
-    Ref<SVGAnimatedString> m_in2 { SVGAnimatedString::create(this) };
-    Ref<SVGAnimatedEnumeration> m_svgOperator { SVGAnimatedEnumeration::create(this, CompositeOperationType::FECOMPOSITE_OPERATOR_OVER) };
-    Ref<SVGAnimatedNumber> m_k1 { SVGAnimatedNumber::create(this) };
-    Ref<SVGAnimatedNumber> m_k2 { SVGAnimatedNumber::create(this) };
-    Ref<SVGAnimatedNumber> m_k3 { SVGAnimatedNumber::create(this) };
-    Ref<SVGAnimatedNumber> m_k4 { SVGAnimatedNumber::create(this) };
+    const Ref<SVGAnimatedString> m_in1 { SVGAnimatedString::create(this) };
+    const Ref<SVGAnimatedString> m_in2 { SVGAnimatedString::create(this) };
+    const Ref<SVGAnimatedEnumeration> m_svgOperator { SVGAnimatedEnumeration::create(this, CompositeOperationType::FECOMPOSITE_OPERATOR_OVER) };
+    const Ref<SVGAnimatedNumber> m_k1 { SVGAnimatedNumber::create(this) };
+    const Ref<SVGAnimatedNumber> m_k2 { SVGAnimatedNumber::create(this) };
+    const Ref<SVGAnimatedNumber> m_k3 { SVGAnimatedNumber::create(this) };
+    const Ref<SVGAnimatedNumber> m_k4 { SVGAnimatedNumber::create(this) };
 };
 
 } // namespace WebCore

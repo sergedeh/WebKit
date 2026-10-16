@@ -34,6 +34,7 @@
 #include <WebCore/RenderingResourceIdentifier.h>
 #include <WebCore/WebGPUIntegralTypes.h>
 #include <wtf/Ref.h>
+#include <wtf/Seconds.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakRef.h>
 #include <wtf/text/WTFString.h>
@@ -44,7 +45,7 @@
 #endif
 
 namespace WebCore {
-class DestinationColorSpace;
+class ColorSpace;
 class ImageBuffer;
 }
 
@@ -90,27 +91,21 @@ private:
     RemoteCompositorIntegration& operator=(RemoteCompositorIntegration&&) = delete;
 
     WebCore::WebGPU::CompositorIntegration& backing() { return m_backing; }
-    Ref<WebCore::WebGPU::CompositorIntegration> protectedBacking();
-
-    Ref<IPC::StreamServerConnection> protectedStreamConnection() const;
-
-    Ref<WebGPU::ObjectHeap> protectedObjectHeap() const { return m_objectHeap; }
-    Ref<RemoteGPU> protectedGPU() const { return m_gpu; }
 
     void didReceiveStreamMessage(IPC::StreamServerConnection&, IPC::Decoder&) final;
     void destruct();
     void paintCompositedResultsToCanvas(WebCore::RenderingResourceIdentifier, uint32_t, CompletionHandler<void()>&&);
 
 #if PLATFORM(COCOA)
-    void recreateRenderBuffers(int width, int height, WebCore::DestinationColorSpace&&, WebCore::AlphaPremultiplication, WebCore::WebGPU::TextureFormat, unsigned bufferCount, WebKit::WebGPUIdentifier deviceIdentifier, CompletionHandler<void(Vector<MachSendRight>&&)>&&);
+    void recreateRenderBuffers(int width, int height, WebCore::ColorSpace&&, WebCore::AlphaPremultiplication, WebCore::WebGPU::TextureFormat, unsigned bufferCount, WebKit::WebGPUIdentifier deviceIdentifier, CompletionHandler<void(Vector<MachSendRight>&&)>&&);
 #endif
 
-    void prepareForDisplay(uint32_t frameIndex, CompletionHandler<void(bool)>&&);
+    void prepareForDisplay(uint32_t frameIndex, CompletionHandler<void(Seconds, Seconds)>&&);
     void updateContentsHeadroom(float);
 
-    Ref<WebCore::WebGPU::CompositorIntegration> m_backing;
+    const Ref<WebCore::WebGPU::CompositorIntegration> m_backing;
     WeakRef<WebGPU::ObjectHeap> m_objectHeap;
-    Ref<IPC::StreamServerConnection> m_streamConnection;
+    const Ref<IPC::StreamServerConnection> m_streamConnection;
     WeakRef<RemoteGPU> m_gpu;
     WebGPUIdentifier m_identifier;
 };

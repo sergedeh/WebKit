@@ -10,8 +10,6 @@ Do NOT modify or remove this file.
 ------------------------------------------------------------------------
 Properties requiring vendor prefixes:
 None
-Property values requiring vendor prefixes:
-None
 ------------------------------------------------------------------------
 List of files:
 /LayoutTests/imported/w3c/web-platform-tests/css/css-shapes/shape-outside/assorted/float-retry-push-circle-expected.html
@@ -22,5 +20,9 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/css/css-shapes/shape-outside/assorted/float-retry-push-inset.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-shapes/shape-outside/assorted/float-retry-push-polygon-expected.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-shapes/shape-outside/assorted/float-retry-push-polygon.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-shapes/shape-outside/assorted/float-retry-push-rect-expected.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-shapes/shape-outside/assorted/float-retry-push-rect.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-shapes/shape-outside/assorted/float-retry-push-xywh-expected.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-shapes/shape-outside/assorted/float-retry-push-xywh.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-shapes/shape-outside/assorted/float-should-push-expected.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-shapes/shape-outside/assorted/float-should-push.html

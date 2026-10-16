@@ -64,6 +64,7 @@ enum class WebCore::UserInterfaceLayoutDirection : bool;
     double gapBetweenPages;
 
     String userAgent;
+    bool hasCustomUserAgent;
 
     WebKit::VisitedLinkTableIdentifier visitedLinkTableID;
     bool canRunBeforeUnloadConfirmPanel;
@@ -80,16 +81,22 @@ enum class WebCore::UserInterfaceLayoutDirection : bool;
 
     WebCore::FloatBoxExtent obscuredContentInsets;
 
+#if HAVE(NSREFRESHCONTROLLER)
+    bool hasRefreshController;
+#endif
+
     float mediaVolume;
     WebCore::MediaProducerMutedStateFlags muted;
     bool openedByDOM;
     bool mayStartMediaWhenInWindow;
     bool mediaPlaybackIsSuspended;
+    bool areActiveDOMObjectsAndAnimationsSuspended;
 
     WebCore::IntSize minimumSizeForAutoLayout;
     WebCore::IntSize sizeToContentAutoSizeMaximumSize;
     bool autoSizingShouldExpandToViewHeight;
     std::optional<WebCore::FloatSize> viewportSizeForCSSViewportUnits;
+    WebCore::ViewportSegments viewportSegments;
 
     WebCore::ScrollPinningBehavior scrollPinningBehavior;
 
@@ -107,9 +114,10 @@ enum class WebCore::UserInterfaceLayoutDirection : bool;
     bool useDarkAppearance;
     bool useElevatedUserInterfaceLevel;
     bool allowPostingLegacySynchronousMessages;
+    bool backgroundTextExtractionEnabled;
 
 #if PLATFORM(MAC)
-    std::optional<WebCore::DestinationColorSpace> colorSpace;
+    std::optional<WebCore::ColorSpace> colorSpace;
     bool useFormSemanticContext;
     int headerBannerHeight;
     int footerBannerHeight;
@@ -134,6 +142,10 @@ enum class WebCore::UserInterfaceLayoutDirection : bool;
     bool canShowWhileLocked;
     bool isCapturingScreen;
     WebCore::Color insertionPointColor;
+    String contentSizeCategory;
+#endif
+#if PLATFORM(IOS_FAMILY) && ENABLE(UNIFIED_PDF)
+    WebKit::PDFPluginDisplayMode initialPDFDisplayMode;
 #endif
 #if PLATFORM(COCOA)
     bool smartInsertDeleteEnabled;
@@ -144,7 +156,7 @@ enum class WebCore::UserInterfaceLayoutDirection : bool;
 #if ENABLE(TILED_CA_DRAWING_AREA)
     WebKit::SandboxExtensionHandle renderServerMachExtensionHandle;
 #endif
-#if HAVE(STATIC_FONT_REGISTRY)
+#if HAVE(STATIC_FONT_REGISTRY) && !ENABLE(REMOVE_XPC_AND_MACH_SANDBOX_EXTENSIONS_IN_WEBCONTENT)
     Vector<WebKit::SandboxExtensionHandle> fontMachExtensionHandles;
 #endif
 #if HAVE(APP_ACCENT_COLORS)
@@ -240,6 +252,9 @@ enum class WebCore::UserInterfaceLayoutDirection : bool;
 
 #if PLATFORM(MAC)
     double overflowHeightForTopScrollEdgeEffect;
+#if ENABLE(SCROLL_POCKET_IN_FULLSCREEN)
+    bool fullScreenTitlebarOverlayIsDisplayed;
+#endif
 #if HAVE(NSVIEW_CORNER_CONFIGURATION)
     WebCore::CornerRadii scrollbarAvoidanceCornerRadii;
 #endif
@@ -252,12 +267,10 @@ enum class WebCore::UserInterfaceLayoutDirection : bool;
     WebCore::FrameIdentifier mainFrameIdentifier;
     String openedMainFrameName;
     std::optional<WebCore::FrameIdentifier> mainFrameOpenerIdentifier;
+    URL mainFrameOpenerURL;
     WebCore::SandboxFlags initialSandboxFlags;
     WebCore::ReferrerPolicy initialReferrerPolicy;
     std::optional<WebCore::WindowFeatures> windowFeatures;
-    bool statusBarIsVisible;
-    bool menuBarIsVisible;
-    bool toolbarsAreVisible;
 
 #if ENABLE(ADVANCED_PRIVACY_PROTECTIONS)
     Vector<WebCore::LinkDecorationFilteringData> linkDecorationFilteringData;
@@ -278,6 +291,10 @@ enum class WebCore::UserInterfaceLayoutDirection : bool;
     WebCore::ShouldRequireExplicitConsentForGamepadAccess gamepadAccessRequiresExplicitConsent;
 #endif
 
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
+    bool allowsImmersiveEnvironments;
+#endif
+
 #if HAVE(AUDIT_TOKEN)
     std::optional<WebKit::CoreIPCAuditToken> presentingApplicationAuditToken;
 #endif
@@ -292,11 +309,21 @@ enum class WebCore::UserInterfaceLayoutDirection : bool;
     std::optional<WebCore::ImageTranslationLanguageIdentifiers> imageTranslationLanguageIdentifiers;
 #endif
 
+    String displayedTranslationLocaleIdentifier;
+
     std::optional<WebKit::TextManipulationParameters> textManipulationParameters;
+
+    bool isPopup;
+
+    WebCore::AccessibilityMode accessibilityMode;
+    bool shouldForceSiteIsolationAlwaysOnForTesting;
+    bool shouldEnableNetworkInstrumentation;
+    bool shouldEnablePageInstrumentation;
 }
 
 [Nested] struct WebKit::RemotePageParameters {
     URL initialMainDocumentURL;
     WebKit::FrameTreeCreationParameters frameTreeParameters;
     std::optional<WebKit::WebsitePoliciesData> websitePoliciesData;
+    Ref<WebCore::DocumentSyncData> topDocumentSyncData;
 }

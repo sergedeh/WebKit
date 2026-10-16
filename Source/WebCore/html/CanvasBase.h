@@ -45,10 +45,10 @@ class CanvasRenderingContext;
 class Element;
 class Event;
 class GraphicsContext;
-class GraphicsContextStateSaver;
 class Image;
 class ImageBuffer;
 class IntRect;
+class NativeImage;
 class ScriptExecutionContext;
 class SecurityOrigin;
 class WebCoreOpaqueRoot;
@@ -72,18 +72,13 @@ public:
 
     virtual unsigned width() const { return m_size.width(); }
     virtual unsigned height() const { return m_size.height(); }
-    const IntSize& size() const { return m_size; }
+    const IntSize& size() const LIFETIME_BOUND { return m_size; }
+    virtual void setSizeForControllingContext(IntSize) = 0;
 
-    ImageBuffer* buffer() const;
+    WEBCORE_EXPORT RefPtr<ImageBuffer> makeRenderingResultsAvailable(ShouldApplyPostProcessingToDirtyRect = ShouldApplyPostProcessingToDirtyRect::Yes);
+    RefPtr<ImageBuffer> createTransparentBlackImageBuffer() const;
 
-    virtual void setImageBufferAndMarkDirty(RefPtr<ImageBuffer>&&) { }
-
-    RefPtr<ImageBuffer> makeRenderingResultsAvailable(ShouldApplyPostProcessingToDirtyRect = ShouldApplyPostProcessingToDirtyRect::Yes);
-
-    size_t memoryCost() const;
-#if ENABLE(RESOURCE_USAGE)
-    size_t externalMemoryCost() const;
-#endif
+    WEBCORE_EXPORT RefPtr<NativeImage> copyNativeImage() const;
 
     void setOriginClean() { m_originClean = true; }
     void setOriginTainted() { m_originClean = false; }
@@ -91,7 +86,6 @@ public:
 
     virtual SecurityOrigin* securityOrigin() const { return nullptr; }
     ScriptExecutionContext* scriptExecutionContext() const { return canvasBaseScriptExecutionContext();  }
-    RefPtr<ScriptExecutionContext> protectedScriptExecutionContext() const;
 
     virtual CanvasRenderingContext* renderingContext() const = 0;
 
@@ -99,8 +93,8 @@ public:
 
     void addObserver(CanvasObserver&);
     void removeObserver(CanvasObserver&);
-    bool hasObserver(CanvasObserver&) const;
-    void notifyObserversCanvasChanged(const FloatRect&);
+    bool LEGACY_NODELETE hasObserver(CanvasObserver&) const;
+    void notifyObserversContentsWillChange(const FloatRect&);
     void notifyObserversCanvasResized();
     void notifyObserversCanvasDestroyed(); // Must be called in destruction before clearing m_context.
     void addDisplayBufferObserver(CanvasDisplayBufferObserver&);
@@ -108,37 +102,29 @@ public:
     void notifyObserversCanvasDisplayBufferPrepared();
     bool hasDisplayBufferObservers() const { return !m_displayBufferObservers.isEmptyIgnoringNullReferences(); }
 
-    HashSet<Element*> cssCanvasClients() const;
+    HashSet<Ref<Element>> cssCanvasClients() const;
 
+    // Called before the canvas contents are updated, so that the observers and the pending
+    // readback post-processing are notified of the area that is about to change.
     // !rect means caller knows the full canvas is invalidated previously.
-    void didDraw(const std::optional<FloatRect>& rect) { return didDraw(rect, ShouldApplyPostProcessingToDirtyRect::Yes); }
-    virtual void didDraw(const std::optional<FloatRect>&, ShouldApplyPostProcessingToDirtyRect);
-
-    virtual Image* copiedImage() const = 0;
-    virtual void clearCopiedImage() const = 0;
+    void willUpdateContents(const std::optional<FloatRect>& rect) { return willUpdateContents(rect, ShouldApplyPostProcessingToDirtyRect::Yes); }
+    virtual void willUpdateContents(const std::optional<FloatRect>&, ShouldApplyPostProcessingToDirtyRect);
 
     bool hasActiveInspectorCanvasCallTracer() const;
 
-    bool shouldAccelerate(const IntSize&) const;
+    bool shouldAccelerate() const;
 
-    WEBCORE_EXPORT static void setMaxCanvasAreaForTesting(std::optional<size_t>);
+    WEBCORE_EXPORT static void LEGACY_NODELETE setMaxCanvasAreaForTesting(std::optional<size_t>);
+    [[nodiscard]] bool validateArea() const;
 
     virtual void queueTaskKeepingObjectAlive(TaskSource, Function<void(CanvasBase&)>&&) = 0;
     virtual void dispatchEvent(Event&) = 0;
 
-    bool postProcessPixelBufferResults(Ref<PixelBuffer>&&) const;
+    bool postProcessPixelBufferResults(PixelBuffer&) const;
     void recordLastFillText(const String&);
-
-    void resetGraphicsContextState() const;
 
     void setNoiseInjectionSalt(NoiseInjectionHashSalt salt) { m_canvasNoiseHashSalt = salt; }
     bool havePendingCanvasNoiseInjection() const { return m_canvasNoiseInjection.haveDirtyRects(); }
-
-    // FIXME(https://bugs.webkit.org/show_bug.cgi?id=275100): The image buffer from CanvasBase should be moved to CanvasRenderingContext2DBase.
-    RefPtr<ImageBuffer> allocateImageBuffer() const;
-
-    void setHasCreatedImageBuffer(bool hasCreatedImageBuffer) { m_hasCreatedImageBuffer = hasCreatedImageBuffer; }
-    bool hasCreatedImageBuffer() const { return m_hasCreatedImageBuffer; }
 
     RefPtr<ImageBuffer> createImageForNoiseInjection() const;
 
@@ -146,25 +132,18 @@ protected:
     explicit CanvasBase(IntSize, ScriptExecutionContext&);
 
     virtual ScriptExecutionContext* canvasBaseScriptExecutionContext() const = 0;
-    RefPtr<ScriptExecutionContext> protectedCanvasBaseScriptExecutionContext() const;
     virtual std::unique_ptr<CSSParserContext> createCSSParserContext() const = 0;
 
     void setSize(const IntSize&);
 
-    RefPtr<ImageBuffer> setImageBuffer(RefPtr<ImageBuffer>&&) const;
     String lastFillText() const { return m_lastFillText; }
     void addCanvasNeedingPreparationForDisplayOrFlush();
     void removeCanvasNeedingPreparationForDisplayOrFlush();
 
 private:
-    bool shouldInjectNoiseBeforeReadback() const;
-    virtual void createImageBuffer() const { }
-    bool shouldAccelerate(uint64_t area) const;
+    bool LEGACY_NODELETE shouldInjectNoiseBeforeReadback() const;
 
     mutable IntSize m_size;
-    mutable RefPtr<ImageBuffer> m_imageBuffer;
-    mutable std::atomic<size_t> m_imageBufferMemoryCost { 0 };
-    mutable std::unique_ptr<GraphicsContextStateSaver> m_contextStateSaver;
     mutable std::unique_ptr<CSSParserContext> m_cssParserContext;
 
     String m_lastFillText;
@@ -176,17 +155,16 @@ private:
     Markable<NoiseInjectionHashSalt, IntegralMarkableTraits<NoiseInjectionHashSalt, std::numeric_limits<int64_t>::max()>> m_canvasNoiseHashSalt;
 
     bool m_originClean { true };
-    // m_hasCreatedImageBuffer means we tried to malloc the buffer. We didn't necessarily get it.
-    bool m_hasCreatedImageBuffer { false };
+    mutable bool m_hasWarnedExceedsArea { false };
 #if ASSERT_ENABLED
     bool m_didNotifyObserversCanvasDestroyed { false };
 #endif
 };
 
-WebCoreOpaqueRoot root(CanvasBase*);
+WebCoreOpaqueRoot LEGACY_NODELETE root(CanvasBase*);
 
 
-inline const CSSParserContext& CanvasBase::cssParserContext() const
+inline const CSSParserContext& CanvasBase::cssParserContext() const LIFETIME_BOUND
 {
     if (!m_cssParserContext) [[unlikely]]
         m_cssParserContext = createCSSParserContext();

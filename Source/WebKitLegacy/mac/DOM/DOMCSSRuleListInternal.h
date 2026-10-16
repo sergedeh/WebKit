@@ -24,9 +24,10 @@
  */
 
 #import <WebKitLegacy/DOMCSSRuleList.h>
+#import <wtf/Compiler.h>
 
 namespace WebCore {
 class CSSRuleList;
 }
 
-DOMCSSRuleList *kit(WebCore::CSSRuleList*);
+DOMCSSRuleList * LEGACY_NODELETE kit(WebCore::CSSRuleList*);

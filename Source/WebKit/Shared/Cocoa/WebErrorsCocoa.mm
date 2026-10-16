@@ -39,9 +39,6 @@ static RetainPtr<NSError> createNSError(NSString* domain, int code, NSURL *URL)
 {
     RetainPtr<NSDictionary> userInfo = [NSDictionary dictionaryWithObjectsAndKeys:
         URL, NSURLErrorFailingURLErrorKey,
-#if USE(NSURL_ERROR_FAILING_URL_STRING_KEY)
-        [URL absoluteString], NSURLErrorFailingURLStringErrorKey,
-#endif
         nil];
 
     return adoptNS([[NSError alloc] initWithDomain:domain code:code userInfo:userInfo.get()]);
@@ -60,6 +57,11 @@ ResourceError fileDoesNotExistError(const ResourceResponse& response)
 ResourceError decodeError(const URL& url)
 {
     return ResourceError(createNSError(NSURLErrorDomain, NSURLErrorCannotDecodeContentData, url.createNSURL().get()).get());
+}
+
+ResourceError imageDataExceedsMaximumSizeError(const URL& url)
+{
+    return ResourceError(createNSError(NSURLErrorDomain, NSURLErrorDataLengthExceedsMaximum, url.createNSURL().get()).get());
 }
 
 } // namespace WebKit

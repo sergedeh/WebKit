@@ -43,6 +43,7 @@
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakPtr.h>
 
+OBJC_CLASS WKAVContentSource;
 OBJC_CLASS WKSLinearMediaPlayer;
 OBJC_CLASS WebAVPlayerController;
 
@@ -66,7 +67,10 @@ public:
 
     virtual WebAVPlayerController *playerController() const = 0;
     virtual WKSLinearMediaPlayer *linearMediaPlayer() const = 0;
-    PlaybackSessionModel* playbackSessionModel() const;
+#if HAVE(AVEXPERIENCECONTROLLER)
+    virtual WKAVContentSource *contentSource() const;
+#endif
+    PlaybackSessionModel* LEGACY_NODELETE playbackSessionModel() const;
     void durationChanged(double) override = 0;
     void currentTimeChanged(double currentTime, double anchorTime) override = 0;
     void bufferedTimeChanged(double) override = 0;
@@ -75,15 +79,15 @@ public:
     void canPlayFastReverseChanged(bool) override = 0;
     void audioMediaSelectionOptionsChanged(const Vector<MediaSelectionOption>& options, uint64_t selectedIndex) override = 0;
     void legibleMediaSelectionOptionsChanged(const Vector<MediaSelectionOption>& options, uint64_t selectedIndex) override = 0;
-    void externalPlaybackChanged(bool enabled, PlaybackSessionModel::ExternalPlaybackTargetType, const String& localizedDeviceName) override = 0;
+    void externalPlaybackChanged(bool enabled, PlaybackSessionModel::ExternalPlaybackTargetType, const String& localizedDeviceName, const String& localizedRouteName) override = 0;
     void wirelessVideoPlaybackDisabledChanged(bool) override = 0;
     void mutedChanged(bool) override = 0;
     void volumeChanged(double) override = 0;
     void modelDestroyed() override;
 
-    std::optional<MediaPlayerIdentifier> playerIdentifier() const;
+    std::optional<MediaPlayerIdentifier> LEGACY_NODELETE playerIdentifier() const;
     virtual void setPlayerIdentifier(std::optional<MediaPlayerIdentifier>);
-    void setVideoPresentationInterface(WeakPtr<VideoPresentationInterfaceIOS>);
+    void LEGACY_NODELETE setVideoPresentationInterface(WeakPtr<VideoPresentationInterfaceIOS>);
 
     virtual void startObservingNowPlayingMetadata();
     virtual void stopObservingNowPlayingMetadata();
@@ -94,7 +98,7 @@ public:
     uint64_t logIdentifier() const;
     const Logger* loggerPtr() const;
     virtual ASCIILiteral logClassName() const = 0;
-    WTFLogChannel& logChannel() const;
+    WTFLogChannel& LEGACY_NODELETE logChannel() const;
 #endif
 
 protected:

@@ -4,13 +4,11 @@
 // found in the LICENSE file.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #include "compiler/translator/wgsl/TranslatorWGSL.h"
+#include "common/unsafe_buffers.h"
 
 #include <iostream>
+#include <string_view>
 #include <variant>
 
 #include "GLSLANG/ShaderLang.h"
@@ -34,7 +32,6 @@
 #include "compiler/translator/tree_ops/RewriteArrayOfArrayOfOpaqueUniforms.h"
 #include "compiler/translator/tree_ops/RewriteStructSamplers.h"
 #include "compiler/translator/tree_ops/SeparateDeclarations.h"
-#include "compiler/translator/tree_ops/SeparateStructFromUniformDeclarations.h"
 #include "compiler/translator/tree_ops/wgsl/EmulateMutableFunctionParams.h"
 #include "compiler/translator/tree_ops/wgsl/PullExpressionsIntoFunctions.h"
 #include "compiler/translator/tree_ops/wgsl/RewriteMixedTypeMathExprs.h"
@@ -183,7 +180,6 @@ class OutputWGSLTraverser : public TIntermTraverser
         EmitTypeConfig typeConfig;
         bool isParameter                                     = false;
         std::optional<WgslPointerAddressSpace> emitAsPointer = std::nullopt;
-        bool disableStructSpecifier                          = false;
         bool isDeclaration                                   = false;
         bool isGlobalScope                                   = false;
     };
@@ -277,7 +273,7 @@ void OutputWGSLTraverser::groupedTraverse(TIntermNode &node)
 
 void OutputWGSLTraverser::emitNameOf(const VarDecl &decl)
 {
-    WriteNameOf(mSink, decl.symbolType, decl.symbolName);
+    WriteNameOf(mSink, decl.symbolType, decl.symbolName, kUserVariableNamePrefix);
 }
 
 void OutputWGSLTraverser::emitIndentation()
@@ -336,11 +332,13 @@ void OutputWGSLTraverser::visitSymbol(TIntermSymbol *symbolNode)
         // Accesses of pipeline variables should be rewritten as struct accesses.
         if (mRewritePipelineVarOutput->IsInputVar(var.uniqueId()))
         {
-            mSink << kBuiltinInputStructName << "." << var.name();
+            mSink << kBuiltinInputStructName << ".";
+            WriteNameOf(mSink, var, kUserVariableNamePrefix);
         }
         else if (mRewritePipelineVarOutput->IsOutputVar(var.uniqueId()))
         {
-            mSink << kBuiltinOutputStructName << "." << var.name();
+            mSink << kBuiltinOutputStructName << ".";
+            WriteNameOf(mSink, var, kUserVariableNamePrefix);
         }
         else
         {
@@ -356,7 +354,7 @@ void OutputWGSLTraverser::visitSymbol(TIntermSymbol *symbolNode)
             {
                 mSink << "(*";
             }
-            WriteNameOf(mSink, var);
+            WriteNameOf(mSink, var, kUserVariableNamePrefix);
             if (needsDereference)
             {
                 mSink << ")";
@@ -436,7 +434,7 @@ const TConstantUnion *OutputWGSLTraverser::emitConstantUnionArray(
     const size_t size)
 {
     const TConstantUnion *constUnionIterated = constUnion;
-    for (size_t i = 0; i < size; i++, constUnionIterated++)
+    for (size_t i = 0; i < size; i++, ANGLE_UNSAFE_TODO(constUnionIterated++))
     {
         emitSingleConstant(constUnionIterated);
 
@@ -529,31 +527,36 @@ OperatorInfo OutputWGSLTraverser::useOperatorAndGetInfo(TIntermNode *current,
             // This should have been done by a preprocessing.
             UNREACHABLE();
             return {"TODO_operator"};
-        case TOperator::EOpAssign:
-            return {"="};
         case TOperator::EOpInitialize:
             return {"="};
+        // Assignments are always statements in WGSL and do not yield a value, so they are
+        // implemented as functions, unless the current expression is a statement and is a scalar
+        // integer, in which case the normal postfix operator will do.
+        case TOperator::EOpAssign:
         // Compound assignments now exist: https://www.w3.org/TR/WGSL/#compound-assignment-sec
         case TOperator::EOpAddAssign:
-            return {"+="};
         case TOperator::EOpSubAssign:
-            return {"-="};
         case TOperator::EOpMulAssign:
-            return {"*="};
         case TOperator::EOpDivAssign:
-            return {"/="};
         case TOperator::EOpIModAssign:
-            return {"%="};
         case TOperator::EOpBitShiftLeftAssign:
-            return {"<<="};
         case TOperator::EOpBitShiftRightAssign:
-            return {">>="};
         case TOperator::EOpBitwiseAndAssign:
-            return {"&="};
         case TOperator::EOpBitwiseXorAssign:
-            return {"^="};
         case TOperator::EOpBitwiseOrAssign:
-            return {"|="};
+        case TOperator::EOpVectorTimesScalarAssign:
+        case TOperator::EOpVectorTimesMatrixAssign:
+        case TOperator::EOpMatrixTimesScalarAssign:
+        case TOperator::EOpMatrixTimesMatrixAssign:
+            if (isStatement(current))
+            {
+                return {GetOperatorString(op)};
+            }
+            else
+            {
+                return OperatorInfo{nullptr, mPrelude->assign(*argType0, *argType1, op)};
+            }
+
         case TOperator::EOpAdd:
             return {"+"};
         case TOperator::EOpSub:
@@ -662,14 +665,6 @@ OperatorInfo OutputWGSLTraverser::useOperatorAndGetInfo(TIntermNode *current,
             {
                 return OperatorInfo{"", mPrelude->preDecrement(*argType0)};
             }
-        case TOperator::EOpVectorTimesScalarAssign:
-            return {"*="};
-        case TOperator::EOpVectorTimesMatrixAssign:
-            return {"*="};
-        case TOperator::EOpMatrixTimesScalarAssign:
-            return {"*="};
-        case TOperator::EOpMatrixTimesMatrixAssign:
-            return {"*="};
         case TOperator::EOpVectorTimesScalar:
             return {"*"};
         case TOperator::EOpVectorTimesMatrix:
@@ -1062,6 +1057,7 @@ const TField &OutputWGSLTraverser::getDirectField(const TIntermTyped &fieldsNode
     return field;
 }
 
+// Indexes arrays but also matrices.
 void OutputWGSLTraverser::emitArrayIndex(TIntermTyped &leftNode, TIntermTyped &rightNode)
 {
     TType leftType = leftNode.getType();
@@ -1091,7 +1087,16 @@ void OutputWGSLTraverser::emitArrayIndex(TIntermTyped &leftNode, TIntermTyped &r
         ASSERT(!needsUnwrapping || !isUniformMatrixNeedingConversion);
     }
 
-    // Emit the left side, which should be of type array.
+    enum class ConversionScope
+    {
+        kNoConversionFunction,
+        kConvertTheIndexedMatrix,
+        kConvertTheWholeArrayIndexExpression,
+    };
+
+    ConversionScope conversionFunctionScope = ConversionScope::kNoConversionFunction;
+
+    // Emit the left side, which should be of type matrix or array (including array of matrices).
     if (needsUnwrapping || isUniformMatrixNeedingConversion || isUniformBoolNeedingConversion)
     {
         if (isUniformMatrixNeedingConversion)
@@ -1100,20 +1105,40 @@ void OutputWGSLTraverser::emitArrayIndex(TIntermTyped &leftNode, TIntermTyped &r
             // array<ANGLE_wrapped_vec2, C>), just convert the entire expression to a WGSL matCx2,
             // instead of converting the entire array of std140 matCx2s into an array of WGSL
             // matCx2s and then indexing into it.
+            //
+            // NOTE: this could also be indexing a column vector of a matrix.
             TType baseType = leftType;
             baseType.toArrayBaseType();
             mSink << MakeMatCx2ConversionFunctionName(&baseType) << "(";
             // Make sure the conversion function referenced here is actually generated in the
             // resulting WGSL.
             mWGSLGenerationMetadataForUniforms->outputMatCx2Conversion.insert(baseType);
+
+            // If this an index of a single matrix, it needs conversion *before* indexing.
+            // Otherwise, if this is a index of an array of matrices, it needs conversion *after*
+            // indexing.
+            if (leftType.isArray())
+            {
+                conversionFunctionScope = ConversionScope::kConvertTheWholeArrayIndexExpression;
+            }
+            else
+            {
+                conversionFunctionScope = ConversionScope::kConvertTheIndexedMatrix;
+            }
         }
         else if (isUniformBoolNeedingConversion)
         {
             // Convert just this one array element into a bool instead of converting the entire
             // array into an array of booleans and indexing into that.
             OutputUniformBoolOrBvecConversion(mSink, leftType);
+            conversionFunctionScope = ConversionScope::kConvertTheWholeArrayIndexExpression;
         }
         emitStructIndexNoUnwrapping(leftNodeBinary);
+
+        if (conversionFunctionScope == ConversionScope::kConvertTheIndexedMatrix)
+        {
+            mSink << ")";
+        }
     }
     else
     {
@@ -1174,7 +1199,7 @@ void OutputWGSLTraverser::emitArrayIndex(TIntermTyped &leftNode, TIntermTyped &r
         mSink << "." << kWrappedStructFieldName;
     }
 
-    if (isUniformMatrixNeedingConversion || isUniformBoolNeedingConversion)
+    if (conversionFunctionScope == ConversionScope::kConvertTheWholeArrayIndexExpression)
     {
         // Close conversion function call
         mSink << ")";
@@ -1237,7 +1262,7 @@ void OutputWGSLTraverser::emitStructIndexNoUnwrapping(TIntermBinary *binaryNode)
 
     groupedTraverse(leftNode);
     mSink << ".";
-    WriteNameOf(mSink, getDirectField(leftNode, rightNode));
+    WriteNameOf(mSink, getDirectField(leftNode, rightNode), kUserVariableNamePrefix);
 }
 
 bool OutputWGSLTraverser::visitBinary(Visit, TIntermBinary *binaryNode)
@@ -1273,24 +1298,30 @@ bool OutputWGSLTraverser::visitBinary(Visit, TIntermBinary *binaryNode)
                 mSink << opInfo.wgslWrapperFn->prefix;
             }
 
+            auto emitArgList = [&]() {
+                leftNode.traverse(this);
+                mSink << ", ";
+                rightNode.traverse(this);
+            };
+
             // x * y, x ^ y, etc.
             if (opInfo.IsSymbolicOperator())
             {
                 groupedTraverse(leftNode);
-                if (op != TOperator::EOpComma)
-                {
-                    mSink << " ";
-                }
-                mSink << opInfo.opName << " ";
+                mSink << " " << opInfo.opName << " ";
                 groupedTraverse(rightNode);
+            }
+            else if (opInfo.wgslWrapperFn)
+            {
+                // Any necessary parentheses should be contained in opInfo.wgslWrapperFn->prefix and
+                // opInfo.wgslWrapperFn->suffix.
+                emitArgList();
             }
             // E.g. builtin function calls
             else
             {
                 mSink << opInfo.opName << "(";
-                leftNode.traverse(this);
-                mSink << ", ";
-                rightNode.traverse(this);
+                emitArgList();
                 mSink << ")";
             }
 
@@ -1454,8 +1485,8 @@ bool OutputWGSLTraverser::visitSwitch(Visit, TIntermSwitch *switchNode)
                  nextCaseStmt++)
             {
             }
-            angle::Span<TIntermNode *> stmtListView(&stmtList.getSequence()->at(currStmt),
-                                                    nextCaseStmt - currStmt);
+            auto stmtListView = ANGLE_UNSAFE_TODO(angle::Span<TIntermNode *>(
+                &stmtList.getSequence()->at(currStmt), nextCaseStmt - currStmt));
             emitBlock(stmtListView);
             mSink << "\n";
 
@@ -1508,7 +1539,7 @@ void OutputWGSLTraverser::emitFunctionName(const TFunction &func)
     {
         mSink << "ANGLEfunc" << func.uniqueId().get();
     }
-    WriteNameOf(mSink, func);
+    WriteNameOf(mSink, func, kUserVariableNamePrefix);
 }
 
 void OutputWGSLTraverser::emitFunctionSignature(const TFunction &func)
@@ -1600,10 +1631,10 @@ void OutputWGSLTraverser::emitTextureBuiltin(const TOperator op, const TIntermSe
     ImmutableString wgslTextureVarName("");
     ImmutableString wgslSamplerVarName("");
 
-    constexpr char k2DCoordsSwizzle[] = ".xy";
-    constexpr char k3DCoordsSwizzle[] = ".xyz";
+    constexpr std::string_view k2DCoordsSwizzle = ".xy";
+    constexpr std::string_view k3DCoordsSwizzle = ".xyz";
 
-    constexpr char kPossibleElems[] = "xyzw";
+    constexpr std::string_view kPossibleElems = "xyzw";
 
     // MonomorphizeUnsupportedFunctions() and RewriteStructSamplers() ensure that this is a
     // reference to the global sampler.
@@ -1864,11 +1895,11 @@ void OutputWGSLTraverser::emitTextureBuiltin(const TOperator op, const TIntermSe
         // Finally, set the swizzle for extracting coordinates from the p vector.
         if (IsSampler2D(samplerType) || IsSampler2DArray(samplerType))
         {
-            coordsSwizzle = ImmutableString(k2DCoordsSwizzle);
+            coordsSwizzle = ImmutableString(k2DCoordsSwizzle.data(), k2DCoordsSwizzle.size());
         }
         else if (IsSampler3D(samplerType) || IsSamplerCube(samplerType))
         {
-            coordsSwizzle = ImmutableString(k3DCoordsSwizzle);
+            coordsSwizzle = ImmutableString(k3DCoordsSwizzle.data(), k3DCoordsSwizzle.size());
         }
     }
 
@@ -2163,8 +2194,8 @@ bool OutputWGSLTraverser::emitBlock(angle::Span<TIntermNode *> nodes)
 
 bool OutputWGSLTraverser::visitBlock(Visit, TIntermBlock *blockNode)
 {
-    return emitBlock(
-        angle::Span(blockNode->getSequence()->data(), blockNode->getSequence()->size()));
+    return emitBlock(ANGLE_UNSAFE_TODO(
+        angle::Span(blockNode->getSequence()->data(), blockNode->getSequence()->size())));
 }
 
 bool OutputWGSLTraverser::visitGlobalQualifierDeclaration(Visit,
@@ -2235,7 +2266,6 @@ void OutputWGSLTraverser::emitStructDeclaration(const TType &type)
         EmitVariableDeclarationConfig evdConfig;
         evdConfig.typeConfig.addressSpace =
             isInUniformAddressSpace ? WgslAddressSpace::Uniform : WgslAddressSpace::NonUniform;
-        evdConfig.disableStructSpecifier = true;
         emitVariableDeclaration({field->symbolType(), field->name(), *fieldType}, evdConfig);
         mSink << ",\n";
     }
@@ -2256,8 +2286,7 @@ void OutputWGSLTraverser::emitVariableDeclaration(const VarDecl &decl,
         return;
     }
 
-    if (basicType == TBasicType::EbtStruct && decl.type.isStructSpecifier() &&
-        !evdConfig.disableStructSpecifier)
+    if (basicType == TBasicType::EbtStruct && decl.type.isStructSpecifier())
     {
         // TODO(anglebug.com/42267100): in WGSL structs probably can't be declared in
         // function parameters or in uniform declarations or in variable declarations, or
@@ -2278,27 +2307,29 @@ void OutputWGSLTraverser::emitVariableDeclaration(const VarDecl &decl,
 
     if (evdConfig.isDeclaration)
     {
-        // "const" and "let" typically don't need to be emitted because they are more for
-        // readability, and the GLSL compiler constant folds most (all?) the consts anyway.
-        // However, pointers in WGSL must be declared with let.
+        // Pointers in WGSL must be declared with let.
         if (evdConfig.emitAsPointer)
         {
             mSink << "let";
         }
+        else if (decl.type.getQualifier() == EvqConst)
+        {
+            mSink << "const";
+        }
         else
         {
             mSink << "var";
-        }
-        if (evdConfig.isGlobalScope)
-        {
-            if (decl.type.getQualifier() == EvqUniform)
+            if (evdConfig.isGlobalScope)
             {
-                ASSERT(IsOpaqueType(decl.type.getBasicType()));
-                mSink << "<uniform>";
-            }
-            else
-            {
-                mSink << "<private>";
+                if (decl.type.getQualifier() == EvqUniform)
+                {
+                    ASSERT(IsOpaqueType(decl.type.getBasicType()));
+                    mSink << "<uniform>";
+                }
+                else
+                {
+                    mSink << "<private>";
+                }
             }
         }
         mSink << " ";
@@ -2618,6 +2649,45 @@ void OutputWGSLTraverser::emitType(const TType &type)
     return RunAtTheEndOfShader(compiler, root, assignment, symbolTable);
 }
 
+// This operation performs the viewport depth translation needed by WGPU. GL uses a
+// clip space z range of -1 to +1 where as WGPU uses 0 to 1. The translation becomes
+// this expression
+//
+//     z_wgpu = 0.5 * (w_gl + z_gl)
+//
+// where z_wgpu is the depth output of a WGPU vertex shader and z_gl is the same for GL.
+bool AppendVertexShaderDepthCorrectionToMain(TCompiler *compiler,
+                                             TIntermBlock *root,
+                                             const DriverUniform *driverUniforms)
+{
+    const TVariable *position  = BuiltInVariable::gl_Position();
+    TIntermSymbol *positionRef = new TIntermSymbol(position);
+
+    TVector<uint32_t> swizzleOffsetZ = {2};
+    TIntermSwizzle *positionZ        = new TIntermSwizzle(positionRef, swizzleOffsetZ);
+
+    TIntermConstantUnion *oneHalf = CreateFloatNode(0.5f, EbpMedium);
+
+    TVector<uint32_t> swizzleOffsetW = {3};
+    TIntermSwizzle *positionW        = new TIntermSwizzle(positionRef->deepCopy(), swizzleOffsetW);
+
+    // Create the expression "(gl_Position.z + gl_Position.w) * 0.5".
+    TIntermBinary *zPlusW = new TIntermBinary(EOpAdd, positionZ->deepCopy(), positionW->deepCopy());
+    TIntermBinary *halfZPlusW = new TIntermBinary(EOpMul, zPlusW, oneHalf->deepCopy());
+
+    // Create the assignment "gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5"
+    TIntermTyped *positionZLHS = positionZ->deepCopy();
+    TIntermBinary *assignment  = new TIntermBinary(TOperator::EOpAssign, positionZLHS, halfZPlusW);
+
+    // Apply depth correction if needed
+    TIntermBlock *block = new TIntermBlock;
+    block->appendStatement(assignment);
+    TIntermIfElse *ifCall = new TIntermIfElse(driverUniforms->getTransformDepth(), block, nullptr);
+
+    // Append the assignment as a statement at the end of the shader.
+    return RunAtTheEndOfShader(compiler, root, ifCall, &compiler->getSymbolTable());
+}
+
 }  // namespace
 
 TranslatorWGSL::TranslatorWGSL(sh::GLenum type, ShShaderSpec spec, ShShaderOutput output)
@@ -2625,6 +2695,7 @@ TranslatorWGSL::TranslatorWGSL(sh::GLenum type, ShShaderSpec spec, ShShaderOutpu
 {}
 
 bool TranslatorWGSL::preTranslateTreeModifications(TIntermBlock *root,
+                                                   const ShCompileOptions &compileOptions,
                                                    const TVariable **defaultUniformBlockOut)
 {
     if (!PullExpressionsIntoFunctions(this, root))
@@ -2658,9 +2729,16 @@ bool TranslatorWGSL::preTranslateTreeModifications(TIntermBlock *root,
 
     // TODO(anglebug.com/42267100): just use the struct mode to avoid a rewrite of the interface
     // block by ReduceInterfaceBlocks into a struct.
-    DriverUniform driverUniforms(DriverUniformMode::InterfaceBlock);
+    DriverUniform driverUniforms(DriverUniformMode::InterfaceBlock, SH_WGSL_OUTPUT);
     ASSERT(getShaderType() != GL_COMPUTE_SHADER);
-    driverUniforms.addGraphicsDriverUniformsToShader(root, &getSymbolTable());
+    if (compileOptions.useIR)
+    {
+        driverUniforms.findDeclarationAddedByIR(root);
+    }
+    else
+    {
+        driverUniforms.addGraphicsDriverUniformsToShader(root, &getSymbolTable());
+    }
 
     if (getShaderType() == GL_VERTEX_SHADER)
     {
@@ -2669,6 +2747,11 @@ bool TranslatorWGSL::preTranslateTreeModifications(TIntermBlock *root,
         flipNegY = (new TIntermSwizzle(flipNegY, {1}))->fold(nullptr);
 
         if (!AppendVertexShaderPositionYCorrectionToMain(this, root, &getSymbolTable(), flipNegY))
+        {
+            return false;
+        }
+
+        if (!AppendVertexShaderDepthCorrectionToMain(this, root, &driverUniforms))
         {
             return false;
         }
@@ -2685,29 +2768,56 @@ bool TranslatorWGSL::preTranslateTreeModifications(TIntermBlock *root,
     //
     // This  dramatically simplifies future transformations w.r.t to samplers in structs, array of
     //   arrays of opaque types, atomic counters etc.
-    UnsupportedFunctionArgsBitSet args{UnsupportedFunctionArgs::StructContainingSamplers,
-                                       UnsupportedFunctionArgs::ArrayOfArrayOfSamplerOrImage,
-                                       UnsupportedFunctionArgs::AtomicCounter,
-                                       UnsupportedFunctionArgs::Image};
-    if (!MonomorphizeUnsupportedFunctions(this, root, &getSymbolTable(), args))
+    if (!compileOptions.useIR)
     {
-        return false;
+        UnsupportedFunctionArgsBitSet args{UnsupportedFunctionArgs::StructContainingSamplers,
+                                           UnsupportedFunctionArgs::ArrayOfArrayOfSamplerOrImage,
+                                           UnsupportedFunctionArgs::AtomicCounter,
+                                           UnsupportedFunctionArgs::Image};
+        if (!MonomorphizeUnsupportedFunctions(this, root, &getSymbolTable(), args))
+        {
+            return false;
+        }
+
+        if (aggregateTypesUsedForUniforms > 0)
+        {
+            // Requires MonomorphizeUnsupportedFunctions() to have been run already.
+            if (!RewriteStructSamplers(this, root, &getSymbolTable()))
+            {
+                return false;
+            }
+        }
     }
-
-    if (aggregateTypesUsedForUniforms > 0)
+    else
     {
-        if (!SeparateStructFromUniformDeclarations(this, root, &getSymbolTable()))
+        // GatherDefaultUniforms below is relying on the sorting of functions and declarations that
+        // was otherwise done in MonomorphizeUnsupportedFunctions.  This can be removed once more is
+        // ported to IR and no transformation above is inserting a function in the middle of
+        // declarations.
+        TIntermSequence *original = root->getSequence();
+
+        TIntermSequence replacement;
+        TIntermSequence functionDefs;
+
+        // Accumulate non-function-definition declarations in |replacement| and function definitions
+        // in |functionDefs|.
+        for (TIntermNode *node : *original)
         {
-            return false;
+            if (node->getAsFunctionDefinition() || node->getAsFunctionPrototypeNode())
+            {
+                functionDefs.push_back(node);
+            }
+            else
+            {
+                replacement.push_back(node);
+            }
         }
 
-        int removedUniformsCount;
+        // Append function definitions to |replacement|.
+        replacement.insert(replacement.end(), functionDefs.begin(), functionDefs.end());
 
-        // Requires MonomorphizeUnsupportedFunctions() to have been run already.
-        if (!RewriteStructSamplers(this, root, &getSymbolTable(), &removedUniformsCount))
-        {
-            return false;
-        }
+        // Replace root's sequence with |replacement|.
+        root->replaceAllChildren(std::move(replacement));
     }
 
     // Replace array of array of opaque uniforms with a flattened array.  This is run after
@@ -2768,7 +2878,7 @@ bool TranslatorWGSL::translate(TIntermBlock *root,
 
     const TVariable *defaultUniformBlock = nullptr;
 
-    if (!preTranslateTreeModifications(root, &defaultUniformBlock))
+    if (!preTranslateTreeModifications(root, compileOptions, &defaultUniformBlock))
     {
         return false;
     }

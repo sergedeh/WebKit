@@ -533,19 +533,9 @@ String contextMenuItemPDFOpenWithDefaultViewer(const String& appName)
 #endif
 
 #if ENABLE(PDFJS) || ENABLE(UNIFIED_PDF)
-String contextMenuItemPDFSinglePage()
-{
-    return WEB_UI_STRING_WITH_MNEMONIC("Single Page", "_Single Page", "Single Page context menu item");
-}
-
 String contextMenuItemPDFSinglePageContinuous()
 {
     return WEB_UI_STRING_WITH_MNEMONIC("Single Page Continuous", "_Single Page Continuous", "Single Page Continuous context menu item");
-}
-
-String contextMenuItemPDFTwoPages()
-{
-    return WEB_UI_STRING_WITH_MNEMONIC("Two Pages", "_Two Pages", "Two Pages context menu item");
 }
 
 String contextMenuItemPDFTwoPagesContinuous()
@@ -585,6 +575,18 @@ String contextMenuItemPDFPreviousPage()
 #endif
 
 #endif // ENABLE(CONTEXT_MENUS)
+
+#if ENABLE(PDFJS) || ENABLE(UNIFIED_PDF)
+String contextMenuItemPDFSinglePage()
+{
+    return WEB_UI_STRING_WITH_MNEMONIC("Single Page", "_Single Page", "Single Page context menu item");
+}
+
+String contextMenuItemPDFTwoPages()
+{
+    return WEB_UI_STRING_WITH_MNEMONIC("Two Pages", "_Two Pages", "Two Pages context menu item");
+}
+#endif
 
 #if !PLATFORM(COCOA)
 String pdfDocumentTypeDescription()
@@ -910,6 +912,11 @@ String AXMenuListActionVerb()
     return "select"_s;
 }
 
+String AXShowWritingToolsLabel()
+{
+    return WEB_UI_STRING("Show Writing Tools", "Label for the AX custom action that brings up the Writing Tools affordance");
+}
+
 String AXListItemActionVerb()
 {
     notImplemented();
@@ -1058,6 +1065,18 @@ String unknownFileSizeText()
     return WEB_UI_STRING_KEY("Unknown", "Unknown (filesize)", "Unknown filesize FTP directory listing item");
 }
 
+String htmlSelectMultipleItems(size_t count)
+{
+    switch (count) {
+    case 0:
+        return WEB_UI_STRING("0 Items", "Present the element <select multiple> when no <option> items are selected");
+    case 1:
+        return WEB_UI_STRING("1 Item", "Present the element <select multiple> when a single <option> is selected");
+    default:
+        return WEB_UI_FORMAT_STRING("%zu Items", "Present the number of selected <option> items in a <select multiple> element", count);
+    }
+}
+
 String imageTitle(const String& filename, const IntSize& size)
 {
 #if PLATFORM(COCOA)
@@ -1076,7 +1095,7 @@ String imageTitle(const String& filename, const IntSize& size)
 #elif PLATFORM(WIN)
     return WEB_UI_FORMAT_STRING("%s %d×%d pixels", "window title for a standalone image (uses multiplication symbol, not x)", filename.wideCharacters().span().data(), size.width(), size.height());
 #elif USE(GLIB)
-    return WEB_UI_FORMAT_STRING("%s %d×%d pixels", "window title for a standalone image (uses multiplication symbol, not x)", filename.utf8().data(), size.width(), size.height());
+    return WEB_UI_FORMAT_STRING("%s %d×%d pixels", "window title for a standalone image (uses multiplication symbol, not x)", filename.utf8(), size.width(), size.height());
 #else
     return makeStringByReplacingAll(WEB_UI_FORMAT_STRING("<filename> %d×%d pixels", "window title for a standalone image (uses multiplication symbol, not x)", size.width(), size.height()), "<filename>"_s, filename);
 #endif
@@ -1273,7 +1292,7 @@ String validationMessagePatternMismatchText(const String& title)
 #if PLATFORM(COCOA)
     return WEB_UI_FORMAT_CFSTRING("Match the requested format: %@", "Validation message for input form controls requiring a constrained value according to pattern followed by a website-provided description of the pattern", title.createCFString().get());
 #elif USE(GLIB)
-    return WEB_UI_FORMAT_STRING("Match the requested format: %s", "Validation message for input form controls requiring a constrained value according to pattern followed by a website-provided description of the pattern", title.utf8().data());
+    return WEB_UI_FORMAT_STRING("Match the requested format: %s", "Validation message for input form controls requiring a constrained value according to pattern followed by a website-provided description of the pattern", title.utf8());
 #else
     UNUSED_PARAM(title);
     return validationMessagePatternMismatchText();
@@ -1299,7 +1318,7 @@ String validationMessageRangeUnderflowText(const String& minimum)
 #if PLATFORM(COCOA)
     return WEB_UI_FORMAT_CFSTRING("Value must be greater than or equal to %@", "Validation message for input form controls with value lower than allowed minimum", minimum.createCFString().get());
 #elif USE(GLIB)
-    return WEB_UI_FORMAT_STRING("Value must be greater than or equal to %s", "Validation message for input form controls with value lower than allowed minimum", minimum.utf8().data());
+    return WEB_UI_FORMAT_STRING("Value must be greater than or equal to %s", "Validation message for input form controls with value lower than allowed minimum", minimum.utf8());
 #else
     UNUSED_PARAM(minimum);
     return WEB_UI_STRING("range underflow", "Validation message for input form controls with value lower than allowed minimum");
@@ -1311,7 +1330,7 @@ String validationMessageRangeOverflowText(const String& maximum)
 #if PLATFORM(COCOA)
     return WEB_UI_FORMAT_CFSTRING("Value must be less than or equal to %@", "Validation message for input form controls with value higher than allowed maximum", maximum.createCFString().get());
 #elif USE(GLIB)
-    return WEB_UI_FORMAT_STRING("Value must be less than or equal to %s", "Validation message for input form controls with value higher than allowed maximum", maximum.utf8().data());
+    return WEB_UI_FORMAT_STRING("Value must be less than or equal to %s", "Validation message for input form controls with value higher than allowed maximum", maximum.utf8());
 #else
     UNUSED_PARAM(maximum);
     return WEB_UI_STRING("range overflow", "Validation message for input form controls with value higher than allowed maximum");
@@ -1357,7 +1376,7 @@ String textTrackAutomaticMenuItemText()
 
 String captionStylePreviewWithProfileName(const String& profileName)
 {
-    return WEB_UI_FORMAT_STRING("This is the %s subtitle style", "This is the %s subtitle style (Caption User Preferences)", profileName.utf8().data());
+    return WEB_UI_FORMAT_STRING("This is the %s subtitle style", "This is the %s subtitle style (Caption User Preferences)", profileName.utf8());
 }
 
 String captionStylePreview()
@@ -1466,6 +1485,18 @@ String addTextTrackKindForcedSuffix(const String& text)
     if (text.isEmpty())
         return textTrackKindForcedDisplayName();
     return WEB_UI_FORMAT_CFSTRING_KEY("%@ Forced", "%@ Forced (text track)", "Forced text track display name format that includes the language and/or locale (e.g. 'English Forced').", text.createCFString().get());
+}
+
+String textTrackKindGeneratedDisplayName()
+{
+    return WEB_UI_CFSTRING_KEY("Generated", "Generated (text track)", "Display name for text track kind 'generated'.");
+}
+
+String addTextTrackKindGeneratedSuffix(const String& text)
+{
+    if (text.isEmpty())
+        return textTrackKindGeneratedDisplayName();
+    return WEB_UI_FORMAT_CFSTRING_KEY("%@ Generated", "%@ Generated (text track)", "Generated text track display name format that includes the language and/or locale (e.g. 'English Generated').", text.createCFString().get());
 }
 
 String audioTrackKindDescriptionsDisplayName()

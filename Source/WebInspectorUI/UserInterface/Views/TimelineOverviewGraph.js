@@ -274,6 +274,48 @@ WI.TimelineOverviewGraph = class TimelineOverviewGraph extends WI.View
         // Implemented by sub-classes if needed.
     }
 
+    updateSelectedRecordBar(recordBarsList)
+    {
+        for (let recordBars of recordBarsList) {
+            for (let recordBar of recordBars) {
+                if (recordBar.records.includes(this.selectedRecord)) {
+                    this.selectedRecordBar = recordBar;
+                    return;
+                }
+            }
+        }
+
+        this.selectedRecordBar = null;
+    }
+
+    layoutRecordBars(rowElement, recordBars, ...recordsToCombine)
+    {
+        let secondsPerPixel = this.timelineOverview.secondsPerPixel;
+        let recordBarIndex = 0;
+
+        let createBar = (records, renderMode) => {
+            let timelineRecordBar = recordBars[recordBarIndex];
+            if (!timelineRecordBar)
+                timelineRecordBar = recordBars[recordBarIndex] = new WI.TimelineRecordBar(this, records, renderMode);
+            else {
+                timelineRecordBar.renderMode = renderMode;
+                timelineRecordBar.records = records;
+            }
+            timelineRecordBar.refresh(this);
+            if (!timelineRecordBar.element.parentNode)
+                rowElement.appendChild(timelineRecordBar.element);
+            ++recordBarIndex;
+        };
+
+        for (let records of recordsToCombine)
+            WI.TimelineRecordBar.createCombinedBars(records, secondsPerPixel, this, createBar);
+
+        for (; recordBarIndex < recordBars.length; ++recordBarIndex) {
+            recordBars[recordBarIndex].records = null;
+            recordBars[recordBarIndex].element.remove();
+        }
+    }
+
     // Private
 
     _needsSelectedRecordLayout()

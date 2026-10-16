@@ -51,12 +51,12 @@ private:
 
     WebCore::DelegatedScrollingMode delegatedScrollingMode() const final;
 
-    void setColorSpace(std::optional<WebCore::DestinationColorSpace>) final;
-    std::optional<WebCore::DestinationColorSpace> displayColorSpace() const final;
+    void setColorSpace(std::optional<WebCore::ColorSpace>) final;
+    std::optional<WebCore::ColorSpace> displayColorSpace() const final;
 
-    std::optional<WebCore::DestinationColorSpace> m_displayColorSpace;
+    std::optional<WebCore::ColorSpace> m_displayColorSpace;
 
-    bool usesDelegatedPageScaling() const override { return false; }
+    bool usesDelegatedPageScaling() const override;
 
     void mainFrameContentSizeChanged(WebCore::FrameIdentifier, const WebCore::IntSize&) final;
 

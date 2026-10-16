@@ -29,6 +29,7 @@
 #if ENABLE(WEB_AUTHN)
 
 #include <VirtualService.h>
+#include <wtf/Borrow.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/UUID.h>
 
@@ -69,7 +70,7 @@ Vector<VirtualCredential> VirtualAuthenticatorManager::credentialsMatchingList(c
 {
     Vector<VirtualCredential> matching;
     auto it = m_credentialsByAuthenticator.find(authenticatorId);
-    for (auto& credential : it->value) {
+    for (auto& credential : borrow(it->value)) {
         if (credential.rpId == rpId && ((credentialIds.isEmpty() && credential.isResidentCredential) || credentialIds.contains(credential.credentialId)))
             matching.append(credential);
     }
@@ -100,7 +101,7 @@ void VirtualAuthenticatorManager::runPanel()
 
 void VirtualAuthenticatorManager::selectAssertionResponse(Vector<Ref<WebCore::AuthenticatorAssertionResponse>>&& responses, WebAuthenticationSource source, CompletionHandler<void(WebCore::AuthenticatorAssertionResponse*)>&& completionHandler)
 {
-    completionHandler(responses[0].ptr());
+    completionHandler(protect(responses[0]).ptr());
 }
 
 void VirtualAuthenticatorManager::decidePolicyForLocalAuthenticator(CompletionHandler<void(LocalAuthenticatorPolicy)>&& completionHandler)

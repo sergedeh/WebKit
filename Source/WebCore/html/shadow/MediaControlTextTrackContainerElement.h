@@ -47,7 +47,7 @@ class TextTrack;
 class TextTrackCue;
 class VTTCue;
 
-using CueInterval = PODInterval<MediaTime, TextTrackCue*>;
+using CueInterval = PODInterval<MediaTime, CheckedPtr<TextTrackCue>>;
 using CueList = Vector<CueInterval>;
 
 class MediaControlTextTrackContainerElement final
@@ -68,7 +68,7 @@ public:
     void updateSizes(ForceUpdate force = ForceUpdate::No);
     void updateDisplay();
 
-    TextTrackRepresentation* textTrackRepresentation() const { return m_textTrackRepresentation.get(); }
+    TextTrackRepresentation* textTrackRepresentation() const LIFETIME_BOUND { return m_textTrackRepresentation.get(); }
     void updateTextTrackRepresentationImageIfNeeded();
     void requiresTextTrackRepresentationChanged();
 
@@ -82,11 +82,11 @@ private:
     explicit MediaControlTextTrackContainerElement(Document&, HTMLMediaElement&);
 
     // Element
-    RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) override;
+    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
 
     // TextTrackRepresentationClient
-    RefPtr<NativeImage> createTextTrackRepresentationImage() override;
-    void textTrackRepresentationBoundsChanged(const IntRect&) override;
+    RefPtr<NativeImage> createTextTrackRepresentationImage() final;
+    void textTrackRepresentationBoundsChanged(const IntRect&) final;
 
     void updateTextTrackRepresentationIfNeeded();
     void clearTextTrackRepresentation();
@@ -95,6 +95,9 @@ private:
     void updateActiveCuesFontSize();
     void updateTextStrokeStyle();
     void processActiveVTTCue(VTTCue&);
+#if PLATFORM(IOS_FAMILY)
+    void updateDisplayedCaptionsForAccessibility(const CueList&);
+#endif
     void updateTextTrackStyle();
 
     void hide();
@@ -122,8 +125,8 @@ private:
     bool m_needsToGenerateTextTrackRepresentation { false };
     bool m_shouldShowCaptionPreviewCue { false };
 
-    mutable RefPtr<TextTrack> m_previewTrack;
-    mutable RefPtr<VTTCue> m_previewCue;
+    const RefPtr<TextTrack> m_previewTrack;
+    const RefPtr<VTTCue> m_previewCue;
 };
 
 } // namespace WebCore

@@ -31,10 +31,13 @@
 #import "WKTouchEventsGestureRecognizer.h"
 #import <WebCore/IntPoint.h>
 #import <WebCore/WAKAppKitStubs.h>
+#import <wtf/TZoneMallocInlines.h>
 
 namespace WebKit {
 
 #if ENABLE(TOUCH_EVENTS)
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(NativeWebTouchEvent);
 
 static inline WebEventType webEventTypeForWKTouchEventType(WKTouchEventType type)
 {
@@ -101,9 +104,10 @@ Vector<WebPlatformTouchPoint> NativeWebTouchEvent::extractWebTouchPoints(const W
     return event.touchPoints.map([](auto& touchPoint) {
         unsigned identifier = touchPoint.identifier;
         auto locationInRootView = positionForCGPoint(touchPoint.locationInRootViewCoordinates);
+        auto previousLocationInRootView = positionForCGPoint(touchPoint.previousLocationInRootViewCoordinates);
         auto locationInViewport = positionForCGPoint(touchPoint.locationInViewport);
         WebPlatformTouchPoint::State phase = convertTouchPhase(touchPoint.phase);
-        WebPlatformTouchPoint platformTouchPoint = WebPlatformTouchPoint(identifier, locationInRootView, locationInViewport, phase);
+        WebPlatformTouchPoint platformTouchPoint = WebPlatformTouchPoint(identifier, locationInRootView, previousLocationInRootView, locationInViewport, phase);
 #if ENABLE(IOS_TOUCH_EVENTS)
         auto radius = radiusForTouchPoint(touchPoint);
         platformTouchPoint.setRadiusX(radius);
@@ -120,31 +124,39 @@ Vector<WebPlatformTouchPoint> NativeWebTouchEvent::extractWebTouchPoints(const W
     });
 }
 
-Vector<WebTouchEvent> NativeWebTouchEvent::extractCoalescedWebTouchEvents(const WKTouchEvent& event, UIKeyModifierFlags flags)
+Vector<Ref<WebTouchEvent>> NativeWebTouchEvent::extractCoalescedWebTouchEvents(const WKTouchEvent& event, UIKeyModifierFlags flags)
 {
-    return event.coalescedEvents.map([&](auto& event) -> WebTouchEvent {
-        return NativeWebTouchEvent { event, flags };
+    return event.coalescedEvents.map([&](auto& event) -> Ref<WebTouchEvent> {
+        return NativeWebTouchEvent::create(event, flags);
     });
 }
 
-Vector<WebTouchEvent> NativeWebTouchEvent::extractPredictedWebTouchEvents(const WKTouchEvent& event, UIKeyModifierFlags flags)
+Vector<Ref<WebTouchEvent>> NativeWebTouchEvent::extractPredictedWebTouchEvents(const WKTouchEvent& event, UIKeyModifierFlags flags)
 {
-    return event.predictedEvents.map([&](auto& event) -> WebTouchEvent {
-        return NativeWebTouchEvent { event, flags };
+    return event.predictedEvents.map([&](auto& event) -> Ref<WebTouchEvent> {
+        return NativeWebTouchEvent::create(event, flags);
     });
 }
 
-NativeWebTouchEvent::NativeWebTouchEvent(const WKTouchEvent& event, UIKeyModifierFlags flags)
-    : WebTouchEvent(
+Ref<NativeWebTouchEvent> NativeWebTouchEvent::create(const WKTouchEvent& event, UIKeyModifierFlags flags)
+{
+    return adoptRef(*new NativeWebTouchEvent(WebTouchEventInit {
         { webEventTypeForWKTouchEventType(event.type), webEventModifierFlags(flags), MonotonicTime::fromRawSeconds(event.timestamp) },
-        extractWebTouchPoints(event),
-        extractCoalescedWebTouchEvents(event, flags),
-        extractPredictedWebTouchEvents(event, flags),
-        positionForCGPoint(event.locationInRootViewCoordinates),
-        event.isPotentialTap,
-        event.inJavaScriptGesture,
-        event.scale,
-        event.rotation)
+        {
+            .touchPoints = extractWebTouchPoints(event),
+            .coalescedEvents = extractCoalescedWebTouchEvents(event, flags),
+            .predictedEvents = extractPredictedWebTouchEvents(event, flags),
+            .position = positionForCGPoint(event.locationInRootViewCoordinates),
+            .isPotentialTap = event.isPotentialTap,
+            .isGesture = event.inJavaScriptGesture,
+            .gestureScale = static_cast<float>(event.scale),
+            .gestureRotation = static_cast<float>(event.rotation),
+        }
+    }));
+}
+
+NativeWebTouchEvent::NativeWebTouchEvent(WebTouchEventInit&& init)
+    : WebTouchEvent(WTF::move(init.event), WTF::move(init.touch))
 {
 }
 

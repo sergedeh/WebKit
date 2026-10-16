@@ -145,8 +145,7 @@ function buildPositionTests(shape, valid, type, units) {
         });
     } else {
         if (valid) {
-            var positions = is_computed ? validComputedPositions : validSpecifiedPositions;
-            positions.forEach(function(test) {
+            validPositions.forEach(function(test) {
                 var testCase = [], testName, actual, expected;
                 // skip if this isn't explicitly testing length units
                 if (!(type.indexOf('lengthUnit') != -1 && test[0].indexOf("u1") == -1)) {
@@ -517,189 +516,96 @@ var validUnits = [
                  ]
 
 /// [actual, expected]
-var validSpecifiedPositions = [
+var validPositions = [
 
 /// [ percent ], [ length ], [ percent | percent ], [ percent | length ], [ length | percent ], [ length | length ]
-    ["50%", "50% center"],
-    ["50u1", "50u1 center"],
+    ["50%", "50% center", "50% 50%"],
+    ["50u1", "50u1 center", "50u1 50%"],
     ["50% 50%", "50% 50%"],
     ["50% 50u1", "50% 50u1"],
     ["50u1 50%", "50u1 50%"],
     ["50u1 50u1", "50u1 50u1"],
 
 ///// [ keyword ], [ keyword keyword ] x 5 keywords
-    ["left", "left center"],
-    ["top", "center top"],
-    ["right", "right center"],
-    ["bottom", "center bottom"],
-    ["center", "center center"],
+    ["left", "left center", "0% 50%"],
+    ["top", "center top", "50% 0%"],
+    ["right", "right center", "100% 50%"],
+    ["bottom", "center bottom", "50% 100%"],
+    ["center", "center center", "50% 50%"],
 
-    ["left top", "left top"],
-    ["left bottom", "left bottom"],
-    ["left center", "left center"],
+    ["left top", "left top", "0% 0%"],
+    ["left bottom", "left bottom", "0% 100%"],
+    ["left center", "left center", "0% 50%"],
 
-    ["top left", "left top"],
-    ["top right", "right top"],
-    ["top center", "center top"],
+    ["top left", "left top", "0% 0%"],
+    ["top right", "right top", "100% 0%"],
+    ["top center", "center top", "50% 0%"],
 
-    ["right top", "right top"],
-    ["right bottom", "right bottom"],
-    ["right center", "right center"],
+    ["right top", "right top", "100% 0%"],
+    ["right bottom", "right bottom", "100% 100%"],
+    ["right center", "right center", "100% 50%"],
 
-    ["bottom left", "left bottom"],
-    ["bottom right", "right bottom"],
-    ["bottom center", "center bottom"],
+    ["bottom left", "left bottom", "0% 100%"],
+    ["bottom right", "right bottom", "100% 100%"],
+    ["bottom center", "center bottom", "50% 100%"],
 
-    ["center top", "center top"],
-    ["center left", "left center"],
-    ["center right", "right center"],
-    ["center bottom", "center bottom"],
-    ["center center", "center center"],
+    ["center top", "center top", "50% 0%"],
+    ["center left", "left center", "0% 50%"],
+    ["center right", "right center", "100% 50%"],
+    ["center bottom", "center bottom", "50% 100%"],
+    ["center center", "center center", "50% 50%"],
 
 ////// [ keyword | percent ], [ keyword | length ], [ percent | keyword ], [ length | keyword ] x 5 keywords
-    ["left 50%", "left 50%"],
-    ["left 50u1", "left 50u1"],
+    ["left 50%", "left 50%", "0% 50%"],
+    ["left 50u1", "left 50u1", "0% 50u1"],
 
-    ["50% top", "50% top"],
-    ["50u1 top", "50u1 top"],
+    ["50% top", "50% top", "50% 0%"],
+    ["50u1 top", "50u1 top", "50u1 0%"],
 
-    ["right 80%", "right 80%"],
-    ["right 80u1", "right 80u1"],
+    ["right 80%", "right 80%", "100% 80%"],
+    ["right 80u1", "right 80u1", "100% 80u1"],
 
-    ["70% bottom", "70% bottom"],
-    ["70u1 bottom", "70u1 bottom"],
+    ["70% bottom", "70% bottom", "70% 100%"],
+    ["70u1 bottom", "70u1 bottom", "70u1 100%"],
 
-    ["center 60%", "center 60%"],
-    ["center 60u1", "center 60u1"],
-    ["60% center", "60% center"],
-    ["60u1 center", "60u1 center"],
+    ["center 60%", "center 60%", "50% 60%"],
+    ["center 60u1", "center 60u1", "50% 60u1"],
+    ["60% center", "60% center", "60% 50%"],
+    ["60u1 center", "60u1 center", "60u1 50%"],
 
 ////// [ keyword percent |  keyword percent], [ keyword percent |  keyword length],
 ////// [ keyword length | keyword length],  [ keyword length | keyword percent] x 5 keywords
-    ["left 50% top 50%", "left 50% top 50%"],
-    ["left 50% top 50u1", "left 50% top 50u1"],
-    ["left 50% bottom 70%", "left 50% bottom 70%"],
-    ["left 50% bottom 70u1", "left 50% bottom 70u1"],
-    ["left 50u1 top 50%", "left 50u1 top 50%"],
-    ["left 50u1 top 50u1", "left 50u1 top 50u1"],
-    ["left 50u1 bottom 70%", "left 50u1 bottom 70%"],
+    ["left 50% top 50%", "left 50% top 50%", "50% 50%"],
+    ["left 50% top 50u1", "left 50% top 50u1", "50% 50u1"],
+    ["left 50% bottom 70%", "left 50% bottom 70%", "50% 30%"],
+    ["left 50% bottom 70u1", "left 50% bottom 70u1", "50% calc(100% - 70u1)"],
+    ["left 50u1 top 50%", "left 50u1 top 50%", "50u1 50%"],
+    ["left 50u1 top 50u1", "left 50u1 top 50u1", "50u1 50u1"],
+    ["left 50u1 bottom 70%", "left 50u1 bottom 70%", "50u1 30%"],
 
-    ["top 50% left 50%", "left 50% top 50%"],
-    ["top 50% left 50u1", "left 50u1 top 50%"],
-    ["top 50% right 80%", "right 80% top 50%"],
-    ["top 50% right 80u1", "right 80u1 top 50%"],
-    ["top 50u1 left 50%", "left 50% top 50u1"],
-    ["top 50u1 left 50u1", "left 50u1 top 50u1"],
-    ["top 50u1 right 80%", "right 80% top 50u1"],
+    ["top 50% left 50%", "left 50% top 50%", "50% 50%"],
+    ["top 50% left 50u1", "left 50u1 top 50%", "50u1 50%"],
+    ["top 50% right 80%", "right 80% top 50%", "20% 50%"],
+    ["top 50% right 80u1", "right 80u1 top 50%", "calc(100% - 80u1) 50%"],
+    ["top 50u1 left 50%", "left 50% top 50u1", "50% 50u1"],
+    ["top 50u1 left 50u1", "left 50u1 top 50u1", "50u1 50u1"],
+    ["top 50u1 right 80%", "right 80% top 50u1", "20% 50u1"],
 
-    ["bottom 70%  left 50%",    "left 50% bottom 70%"],
-    ["bottom 70%  left 50u1",   "left 50u1 bottom 70%"],
-    ["bottom 70%  right 80%",   "right 80% bottom 70%"],
-    ["bottom 70%  right 80u1",  "right 80u1 bottom 70%"],
-    ["bottom 70u1 left 50%",    "left 50% bottom 70u1"],
-    ["bottom 70u1 right 50%",   "right 50% bottom 70u1"],
-    ["bottom 70u1 right 80u1",  "right 80u1 bottom 70u1"],
+    ["bottom 70% left 50%", "left 50% bottom 70%", "50% 30%"],
+    ["bottom 70% left 50u1", "left 50u1 bottom 70%", "50u1 30%"],
+    ["bottom 70% right 80%", "right 80% bottom 70%", "20% 30%"],
+    ["bottom 70% right 80u1", "right 80u1 bottom 70%", "calc(100% - 80u1) 30%"],
+    ["bottom 70u1 left 50%", "left 50% bottom 70u1", "50% calc(100% - 70u1)"],
+    ["bottom 70u1 right 50%", "right 50% bottom 70u1", "50% calc(100% - 70u1)"],
+    ["bottom 70u1 right 80u1", "right 80u1 bottom 70u1", "calc(100% - 80u1) calc(100% - 70u1)"],
 
-    ["right 80% top 50%",      "right 80% top 50%"],
-    ["right 80% top 50u1",     "right 80% top 50u1"],
-    ["right 80% bottom 70%",   "right 80% bottom 70%"],
-    ["right 80% bottom 70u1",  "right 80% bottom 70u1"],
-    ["right 80u1 top 50%",     "right 80u1 top 50%"],
-    ["right 80u1 bottom 70%",  "right 80u1 bottom 70%"],
-    ["right 80u1 bottom 70u1", "right 80u1 bottom 70u1"],
-];
-
-/// [actual, expected]
-var validComputedPositions = [
-
-/// [ percent ], [ length ], [ percent | percent ], [ percent | length ], [ length | percent ], [ length | length ]
-    ["50%", "50% 50%"],
-    ["50u1", "50u1 50%"],
-    ["50% 50%", "50% 50%"],
-    ["50% 50u1", "50% 50u1"],
-    ["50u1 50%", "50u1 50%"],
-    ["50u1 50u1", "50u1 50u1"],
-
-///// [ keyword ], [ keyword keyword ] x 5 keywords
-    ["left", "0% 50%"],
-    ["top", "50% 0%"],
-    ["right", "100% 50%"],
-    ["bottom", "50% 100%"],
-    ["center", "50% 50%"],
-
-    ["left top", "0% 0%"],
-    ["left bottom", "0% 100%"],
-    ["left center", "0% 50%"],
-
-    ["top left", "0% 0%"],
-    ["top right", "100% 0%"],
-    ["top center", "50% 0%"],
-
-    ["right top", "100% 0%"],
-    ["right bottom", "100% 100%"],
-    ["right center", "100% 50%"],
-
-    ["bottom left", "0% 100%"],
-    ["bottom right", "100% 100%"],
-    ["bottom center", "50% 100%"],
-
-    ["center top", "50% 0%"],
-    ["center left", "0% 50%"],
-    ["center right", "100% 50%"],
-    ["center bottom", "50% 100%"],
-    ["center center", "50% 50%"],
-
-////// [ keyword | percent ], [ keyword | length ], [ percent | keyword ], [ length | keyword ] x 5 keywords
-    ["left 50%", "0% 50%"],
-    ["left 50u1", "0% 50u1"],
-
-    ["50% top", "50% 0%"],
-    ["50u1 top", "50u1 0%"],
-
-    ["right 80%", "100% 80%"],
-    ["right 80u1", "100% 80u1"],
-
-    ["70% bottom", "70% 100%"],
-    ["70u1 bottom", "70u1 100%"],
-
-    ["center 60%", "50% 60%"],
-    ["center 60u1", "50% 60u1"],
-    ["60% center", "60% 50%"],
-    ["60u1 center", "60u1 50%"],
-
-////// [ keyword percent |  keyword percent], [ keyword percent |  keyword length],
-////// [ keyword length | keyword length],  [ keyword length | keyword percent] x 5 keywords
-    ["left 50% top 50%", "50% 50%"],
-    ["left 50% top 50u1", "50% 50u1"],
-    ["left 50% bottom 70%", "50% calc(30%)", "50% 30%"],
-    ["left 50% bottom 70u1", "[convert] 50% calc(100% - 70u1)"],
-    ["left 50u1 top 50%", "50u1 50%"],
-    ["left 50u1 top 50u1", "50u1 50u1"],
-    ["left 50u1 bottom 70%", "50u1 calc(30%)", "50u1 30%"],
-
-    ["top 50% left 50%", "50% 50%"],
-    ["top 50% left 50u1", "50u1 50%"],
-    ["top 50% right 80%", "calc(20%) 50%", "20% 50%"],
-    ["top 50% right 80u1", "[convert] calc(100% - 80u1) 50%"],
-    ["top 50u1 left 50%", "50% 50u1"],
-    ["top 50u1 left 50u1", "50u1 50u1"],
-    ["top 50u1 right 80%", "calc(20%) 50u1", "20% 50u1"],
-
-    ["bottom 70% left 50%", "50% calc(30%)", "50% 30%"],
-    ["bottom 70% left 50u1", "50u1 calc(30%)", "50u1 30%"],
-    ["bottom 70% right 80%", "calc(20%) calc(30%)", "20% 30%"],
-    ["bottom 70% right 80u1", "[convert] calc(100% - 80u1) calc(30%)", "calc(100% - 80u1) 30%"],
-    ["bottom 70u1 left 50%", "[convert] 50% calc(100% - 70u1)"],
-    ["bottom 70u1 right 50%", "[convert] calc(50%) calc(100% - 70u1)", "50% calc(100% - 70u1)"],
-    ["bottom 70u1 right 80u1", "[convert] calc(100% - 80u1) calc(100% - 70u1)"],
-
-    ["right 80% top 50%", "calc(20%) 50%", "20% 50%"],
-    ["right 80% top 50u1", "calc(20%) 50u1", "20% 50u1"],
-    ["right 80% bottom 70%", "calc(20%) calc(30%)", "20% 30%"],
-    ["right 80% bottom 70u1", "[convert] calc(20%) calc(100% - 70u1)", "20% calc(100% - 70u1)"],
-    ["right 80u1 top 50%", "[convert] calc(100% - 80u1) 50%"],
-    ["right 80u1 bottom 70%", "[convert] calc(100% - 80u1) calc(30%)", "calc(100% - 80u1) 30%"],
-    ["right 80u1 bottom 70u1", "[convert] calc(100% - 80u1) calc(100% - 70u1)"],
+    ["right 80% top 50%", "right 80% top 50%", "20% 50%"],
+    ["right 80% top 50u1", "right 80% top 50u1", "20% 50u1"],
+    ["right 80% bottom 70%", "right 80% bottom 70%", "20% 30%"],
+    ["right 80% bottom 70u1", "right 80% bottom 70u1", "20% calc(100% - 70u1)"],
+    ["right 80u1 top 50%", "right 80u1 top 50%", "calc(100% - 80u1) 50%"],
+    ["right 80u1 bottom 70%", "right 80u1 bottom 70%", "calc(100% - 80u1) 30%"],
+    ["right 80u1 bottom 70u1", "right 80u1 bottom 70u1", "calc(100% - 80u1) calc(100% - 70u1)"],
 ];
 
 var invalidPositions = [

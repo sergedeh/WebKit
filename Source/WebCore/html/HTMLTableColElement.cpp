@@ -67,9 +67,9 @@ bool HTMLTableColElement::hasPresentationalHintsForAttribute(const QualifiedName
 void HTMLTableColElement::collectPresentationalHintsForAttribute(const QualifiedName& name, const AtomString& value, MutableStyleProperties& style)
 {
     if (name == widthAttr)
-        addHTMLMultiLengthToStyle(style, CSSPropertyWidth, value);
+        addHTMLMultiLengthToStyle(style, CSSPropertyID::Width, value);
     else if (name == heightAttr)
-        addHTMLMultiLengthToStyle(style, CSSPropertyHeight, value);
+        addHTMLMultiLengthToStyle(style, CSSPropertyID::Height, value);
     else
         HTMLTablePartElement::collectPresentationalHintsForAttribute(name, value, style);
 }
@@ -86,8 +86,8 @@ void HTMLTableColElement::attributeChanged(const QualifiedName& name, const Atom
         if (!newValue.isEmpty()) {
             if (CheckedPtr col = dynamicDowncast<RenderTableCol>(renderer())) {
                 int newWidth = parseHTMLInteger(newValue).value_or(0);
-                if (newWidth != col->width())
-                    col->setNeedsLayoutAndPreferredWidthsUpdate();
+                if (newWidth != col->borderBoxWidth())
+                    col->setNeedsLayoutAndInvalidateContentLogicalWidths();
             }
         }
     }

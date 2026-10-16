@@ -26,7 +26,7 @@
 
 #include <WebCore/ScrollAxis.h>
 #include <WebCore/StyleValueTypes.h>
-#include <WebCore/StyleViewTimelineInsets.h>
+#include <WebCore/StyleViewTimelineInsetItem.h>
 
 namespace WebCore {
 
@@ -42,7 +42,7 @@ struct ViewFunctionParameters {
 
     bool operator==(const ViewFunctionParameters&) const = default;
 };
-using ViewFunction = FunctionNotation<CSSValueView, ViewFunctionParameters>;
+using ViewFunction = FunctionNotation<CSSValueID::View, ViewFunctionParameters>;
 
 // MARK: - Conversion
 
@@ -51,11 +51,11 @@ template<> struct CSSValueConversion<ViewFunction> {
     auto operator()(BuilderState&, const CSSViewValue&) -> ViewFunction;
 };
 
-template<> struct CSSValueCreation<ViewFunction> { Ref<CSSValue> operator()(CSSValuePool&, const RenderStyle&, const ViewFunction&); };
+template<> struct CSSValueCreation<ViewFunction> { Ref<CSSValue> operator()(CSSValuePool&, const Style::ComputedStyle&, const ViewFunction&); };
 
 // MARK: - Serialization
 
-template<> struct Serialize<ViewFunctionParameters> { void operator()(StringBuilder&, const CSS::SerializationContext&, const RenderStyle&, const ViewFunctionParameters&); };
+template<> struct Serialize<ViewFunctionParameters> { void operator()(StringBuilder&, const CSS::SerializationContext&, const Style::ComputedStyle&, const ViewFunctionParameters&); };
 
 // MARK: - Logging
 

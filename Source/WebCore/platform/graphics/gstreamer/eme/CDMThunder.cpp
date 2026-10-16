@@ -148,7 +148,7 @@ bool CDMFactoryThunder::supportsKeySystem(const String& keySystem)
 
 CDMPrivateThunder::CDMPrivateThunder(const String& keySystem)
     : m_keySystem(keySystem)
-    , m_thunderSystem(opencdm_create_system(keySystem.utf8().data()))
+    , m_thunderSystem(opencdm_create_system(keySystem.utf8().legacyCStringPointer()))
 {
 };
 
@@ -165,11 +165,11 @@ Vector<String> CDMPrivateThunder::supportedInitDataTypes() const
 bool CDMPrivateThunder::supportsConfiguration(const CDMKeySystemConfiguration& configuration) const
 {
     for (auto& audioCapability : configuration.audioCapabilities) {
-        if (opencdm_is_type_supported(m_keySystem.utf8().data(), audioCapability.contentType.utf8().data()))
+        if (opencdm_is_type_supported(m_keySystem.utf8().legacyCStringPointer(), audioCapability.contentType.utf8().legacyCStringPointer()))
             return false;
     }
     for (auto& videoCapability : configuration.videoCapabilities) {
-        if (opencdm_is_type_supported(m_keySystem.utf8().data(), videoCapability.contentType.utf8().data()))
+        if (opencdm_is_type_supported(m_keySystem.utf8().legacyCStringPointer(), videoCapability.contentType.utf8().legacyCStringPointer()))
             return false;
     }
     return true;
@@ -177,7 +177,45 @@ bool CDMPrivateThunder::supportsConfiguration(const CDMKeySystemConfiguration& c
 
 Vector<String> CDMPrivateThunder::supportedRobustnesses() const
 {
-    return { emptyString(), "SW_SECURE_DECODE"_s, "SW_SECURE_CRYPTO"_s };
+    static const Vector<String> defaultRobustnesses { emptyAtom(), "SW_SECURE_DECODE"_s, "SW_SECURE_CRYPTO"_s };
+
+#if THUNDER_HAS_OCDM_SUPPORTED_ROBUSTNESS
+    if (!m_thunderSystem) {
+        GST_WARNING("CDMPrivateThunder: No active OpenCDM system. Falling back to default WebKit robustness levels.");
+        return defaultRobustnesses;
+    }
+
+    Vector<String> robustnesses { emptyAtom() };
+    char** buffers = nullptr;
+    uint16_t count = 0;
+
+    auto error = opencdm_system_supported_robustness(m_thunderSystem.get(), &buffers, &count);
+
+    if (buffers) {
+        if (count) {
+            robustnesses.reserveCapacity(robustnesses.size() + count);
+            // There's basically no good way to avoid unsafe-buffer-usage-in-container when interacting with a legacy
+            // char** buffer that doesn't depend on us. A modern opencdm API should use a std::vector or std::array,
+            // but it's not in our hands. Using an unsafe span is the less bad way. It's unsafe because the compiler
+            // can't ensure that buffers actually have a length of count, but we do know it's true.
+            for (char* buffer : unsafeMakeSpan(buffers, count)) {
+                if (buffer) {
+                    if (error == ERROR_NONE)
+                        robustnesses.append(String::fromLatin1(buffer));
+                    free(buffer);
+                }
+            }
+        }
+        free(buffers);
+    }
+
+    if (error == ERROR_NONE && robustnesses.size() > 1)
+        return robustnesses;
+
+    GST_WARNING("Failed to get robustness levels from OCDM. Falling back to default WebKit robustness levels.");
+#endif
+
+    return defaultRobustnesses;
 }
 
 CDMRequirement CDMPrivateThunder::distinctiveIdentifiersRequirement(const CDMKeySystemConfiguration&, const CDMRestrictions&) const
@@ -247,7 +285,7 @@ std::optional<String> CDMPrivateThunder::sanitizeSessionId(const String& session
 
 CDMInstanceThunder::CDMInstanceThunder(const String& keySystem)
     : CDMInstanceProxy(keySystem)
-    , m_thunderSystem(opencdm_create_system(keySystem.utf8().data()))
+    , m_thunderSystem(opencdm_create_system(keySystem.utf8().legacyCStringPointer()))
     , m_keySystem(keySystem)
 {
 }
@@ -277,7 +315,8 @@ CDMInstanceSessionThunder::CDMInstanceSessionThunder(CDMInstanceThunder& instanc
     m_thunderSessionCallbacks.process_challenge_callback = [](OpenCDMSession*, void* userData, const char[], const uint8_t challenge[],
         const uint16_t challengeLength) {
         GST_DEBUG("Got 'challenge' OCDM notification with length %hu", challengeLength);
-        ASSERT(challengeLength > 0);
+
+        // Persistent license loading can generate a challenge with length 0.
         callOnMainThread([session = WeakPtr { static_cast<CDMInstanceSessionThunder*>(userData) }, buffer = WebCore::SharedBuffer::create(unsafeMakeSpan(challenge, challengeLength))]() mutable {
             if (!session)
                 return;
@@ -333,7 +372,7 @@ public:
             auto data = buffer->read(0, 7);
             StringView dataString(byteCast<Latin1Character>(data.span()));
             if (dataString.endsWith(":Type:"_s)) {
-                m_type.emplace(static_cast<WebCore::MediaKeyMessageType>(dataString.characterAt(0) - '0'));
+                m_type.emplace(static_cast<WebCore::MediaKeyMessageType>(dataString.codeUnitAt(0) - '0'));
                 offset = 7;
             }
         }
@@ -360,6 +399,10 @@ private:
 
 void CDMInstanceSessionThunder::challengeGeneratedCallback(RefPtr<SharedBuffer>&& buffer)
 {
+    if (!buffer->size()) {
+        GST_DEBUG("Ignoring empty challenge response (maybe persistent license load)");
+        return;
+    }
     ParsedResponseMessage parsedResponseMessage(buffer);
     if (!parsedResponseMessage) {
         GST_ERROR("response message parsing failed");
@@ -514,7 +557,7 @@ void CDMInstanceSessionThunder::requestLicense(LicenseType licenseType, KeyGroup
     GST_MEMDUMP("init data", payloadData.span().data(), payloadData.size());
 
     OpenCDMSession* session = nullptr;
-    opencdm_construct_session(&instance->thunderSystem(), thunderLicenseType(licenseType), initDataType.utf8().data(),
+    opencdm_construct_session(&instance->thunderSystem(), thunderLicenseType(licenseType), initDataType.utf8().legacyCStringPointer(),
         payloadData.span().data(), payloadData.size(), nullptr, 0, &m_thunderSessionCallbacks, this, &session);
     if (!session) {
         GST_ERROR("Could not create session");
@@ -535,12 +578,12 @@ void CDMInstanceSessionThunder::requestLicense(LicenseType licenseType, KeyGroup
         }
 
         if (!isValid()) {
-            GST_WARNING("created invalid session %s", m_sessionID.utf8().data());
+            GST_WARNING("created invalid session %s", m_sessionID.utf8());
             callback(initData.releaseNonNull(), m_sessionID, false, Failed);
             return;
         }
 
-        GST_DEBUG("created valid session %s", m_sessionID.utf8().data());
+        GST_DEBUG("created valid session %s", m_sessionID.utf8());
         callback(m_message.copyRef().releaseNonNull(), m_sessionID, m_needsIndividualization, Succeeded);
     };
 
@@ -561,15 +604,21 @@ void CDMInstanceSessionThunder::updateLicense(const String& sessionID, LicenseTy
 {
     ASSERT_UNUSED(sessionID, sessionID == m_sessionID);
 
-    GST_TRACE("Updating session %s", sessionID.utf8().data());
+    GST_TRACE("Updating session %s", sessionID.utf8());
 
     m_sessionChangedCallbacks.append([this, callback = WTF::move(callback)](bool success, RefPtr<SharedBuffer>&& responseMessage) mutable {
         ASSERT(isMainThread());
         if (success) {
-            if (!responseMessage)
-                callback(false, m_keyStore.convertToJSKeyStatusVector(), std::nullopt, std::nullopt, SuccessValue::Succeeded);
-            else {
-                // FIXME: Using JSON reponse messages is much cleaner than using string prefixes, I believe there
+            if (!responseMessage) {
+                GST_DEBUG("Empty response message");
+                std::optional<KeyStatusVector> keyStatus;
+                // If the keystore is empty, generating an empty status vector would trigger a new
+                // keystatuses event potentially overriding the previous one.
+                if (!m_keyStore.isEmpty())
+                    keyStatus = m_keyStore.convertToJSKeyStatusVector();
+                callback(false, WTF::move(keyStatus), std::nullopt, std::nullopt, SuccessValue::Succeeded);
+            } else {
+                // FIXME: Using JSON response messages is much cleaner than using string prefixes, I believe there
                 // will even be other parts of the spec where not having structured data will be bad.
                 ParsedResponseMessage parsedResponseMessage(responseMessage);
                 ASSERT(parsedResponseMessage);
@@ -598,17 +647,69 @@ void CDMInstanceSessionThunder::updateLicense(const String& sessionID, LicenseTy
         sessionChanged(SessionChangedResult::Failure);
 }
 
-void CDMInstanceSessionThunder::loadSession(LicenseType, const String& sessionID, const String&, LoadSessionCallback&& callback)
+void CDMInstanceSessionThunder::loadSession(LicenseType licenseType, const String& sessionID, const String& /* origin */, LoadSessionCallback&& callback)
 {
-    ASSERT_UNUSED(sessionID, sessionID == m_sessionID);
+    ASSERT(isMainThread());
 
+    // MediaKeySession::load() is guaranteeing this (so we don't have to double-check):
+    // - MediaKeySession is not uninitialized (is initialized) and is not closed.
+    // - sessionID is sanitized.
+    // - LicenseType sessionType is not temporary (it's either PersistentUsageRecord or PersistentLicense).
+
+    auto instance = cdmInstanceThunder();
+    ASSERT(instance);
+
+    GST_TRACE("Going to load session for session id %s", sessionID.utf8());
+
+    OpenCDMSession* session = nullptr;
+    auto sessionIDUtf8 = sessionID.utf8();
+
+    // The convention agreed with the OpenCDM team is that, when constructing a (persistent) session that is
+    // going to be loaded, we will (ab)use the CDMData parameter (an CDMDataLength) to supply the sessionID.
+    OpenCDMError result = opencdm_construct_session(&instance->thunderSystem(), thunderLicenseType(licenseType), "",
+        nullptr, 0, reinterpret_cast<const uint8_t*>(sessionIDUtf8.span().data()), sessionIDUtf8.length(), &m_thunderSessionCallbacks, this, &session);
+
+    if (!session) {
+        SessionLoadFailure failureReason { SessionLoadFailure::Other };
+        switch (result) {
+        case ERROR_NONE:
+            failureReason = SessionLoadFailure::None;
+            break;
+        case ERROR_KEYSYSTEM_NOT_SUPPORTED:
+        case ERROR_OUT_OF_MEMORY:
+        // FIXME: Other cases not yet included in the current version of open_cdm.h
+        // case ERROR_BUSY_CANNOT_INITIALIZE:
+        // case ERROR_BUFFER_TOO_SMALL:
+            failureReason = SessionLoadFailure::QuotaExceeded;
+            break;
+        case ERROR_INVALID_SESSION:
+            failureReason = SessionLoadFailure::NoSessionData;
+            break;
+        default:
+            break;
+        }
+
+        GST_ERROR("Could not create session. OpenCDMError: %" PRIu32, static_cast<uint32_t>(result));
+
+        callback(std::nullopt, std::nullopt, std::nullopt, SuccessValue::Failed, failureReason);
+        return;
+    }
+
+    m_session = adoptInBoxPtr(session);
+    m_sessionID = String::fromUTF8(opencdm_session_id(m_session->get()));
+
+    GST_TRACE("Session created with id %s", m_sessionID.utf8());
+
+    ASSERT(sessionID == m_sessionID);
+
+    // FIXME: Is this callback for the response actually needed, since we're not doing generateRequest()?
     m_sessionChangedCallbacks.append([this, callback = WTF::move(callback)](bool success, RefPtr<SharedBuffer>&& responseMessage) mutable {
         ASSERT(isMainThread());
         if (success) {
             if (!responseMessage)
                 callback(m_keyStore.convertToJSKeyStatusVector(), std::nullopt, std::nullopt, SuccessValue::Succeeded, SessionLoadFailure::None);
             else {
-                // FIXME: Using JSON reponse messages is much cleaner than using string prefixes, I believe there
+                // FIXME: Using JSON response messages is much cleaner than using string prefixes, I believe there
                 // will even be other parts of the spec where not having structured data will be bad.
                 ParsedResponseMessage parsedResponseMessage(responseMessage);
                 ASSERT(parsedResponseMessage);
@@ -627,21 +728,27 @@ void CDMInstanceSessionThunder::loadSession(LicenseType, const String& sessionID
                 }
             }
         } else {
-            GST_ERROR("session %s not loaded", m_sessionID.utf8().data());
+            GST_ERROR("session %s not loaded", m_sessionID.utf8());
             if (!responseMessage || responseMessage->isEmpty())
                 callback(std::nullopt, std::nullopt, std::nullopt, SuccessValue::Failed, sessionLoadFailureFromThunder({ }));
             else {
                 auto responseData = responseMessage->extractData();
                 auto response = String(byteCast<char8_t>(responseData.span()));
-                GST_DEBUG("Error message: %s", response.utf8().data());
+                GST_DEBUG("Error message: %s", response.utf8());
                 callback(std::nullopt, std::nullopt, std::nullopt, SuccessValue::Failed, sessionLoadFailureFromThunder(response));
             }
         }
     });
-    if (!m_session || m_sessionID.isEmpty() || opencdm_session_load(m_session->get())) {
-        GST_DEBUG("loading failed");
+
+    result = OpenCDMError::ERROR_NONE;
+    if (!m_session || m_sessionID.isEmpty() || (result = opencdm_session_load(m_session->get()))) {
+        GST_DEBUG("loading failed for session %s (%p). OpenCDMError: %" PRIu32,
+            m_sessionID.utf8(), m_session.get(), static_cast<uint32_t>(result));
         sessionChanged(SessionChangedResult::Failure);
+        return;
     }
+
+    GST_TRACE("session %s loaded. OpenCDMError: %" PRIu32, m_sessionID.utf8(), static_cast<uint32_t>(result));
 }
 
 void CDMInstanceSessionThunder::closeSession(const String& sessionID, CloseSessionCallback&& callback)
@@ -674,16 +781,16 @@ void CDMInstanceSessionThunder::removeSessionData(const String& sessionID, Licen
                 ASSERT(parsedResponseMessage);
                 if (parsedResponseMessage.hasPayload()) {
                     Ref<SharedBuffer> message = WTF::move(parsedResponseMessage.payload());
-                    GST_DEBUG("session %s removed, message length %zu", m_sessionID.utf8().data(), message->size());
+                    GST_DEBUG("session %s removed, message length %zu", m_sessionID.utf8(), message->size());
                     callback(m_keyStore.allKeysAs(MediaKeyStatus::Released), WTF::move(message), SuccessValue::Succeeded);
                 } else {
                     GST_WARNING("message of size %zu incorrectly formatted as session %s removal answer", buffer ? buffer->size() : 0,
-                        m_sessionID.utf8().data());
+                        m_sessionID.utf8());
                     callback(m_keyStore.allKeysAs(MediaKeyStatus::InternalError), nullptr, SuccessValue::Failed);
                 }
             }
         } else {
-            GST_WARNING("could not remove session %s", m_sessionID.utf8().data());
+            GST_WARNING("could not remove session %s", m_sessionID.utf8());
             callback(m_keyStore.allKeysAs(MediaKeyStatus::InternalError), nullptr, SuccessValue::Failed);
         }
     });

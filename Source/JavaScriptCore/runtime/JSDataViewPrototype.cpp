@@ -48,8 +48,8 @@ namespace JSC {
   getFloat16            dataViewProtoFuncGetFloat16          DontEnum|Function       1  DataViewGetFloat16
   getFloat32            dataViewProtoFuncGetFloat32          DontEnum|Function       1  DataViewGetFloat32
   getFloat64            dataViewProtoFuncGetFloat64          DontEnum|Function       1  DataViewGetFloat64
-  getBigInt64           dataViewProtoFuncGetBigInt64         DontEnum|Function       1
-  getBigUint64          dataViewProtoFuncGetBigUint64        DontEnum|Function       1
+  getBigInt64           dataViewProtoFuncGetBigInt64         DontEnum|Function       1  DataViewGetBigInt64
+  getBigUint64          dataViewProtoFuncGetBigUint64        DontEnum|Function       1  DataViewGetBigUint64
   setInt8               dataViewProtoFuncSetInt8             DontEnum|Function       2  DataViewSetInt8
   setUint8              dataViewProtoFuncSetUint8            DontEnum|Function       2  DataViewSetUint8
   setInt16              dataViewProtoFuncSetInt16            DontEnum|Function       2  DataViewSetInt16
@@ -59,8 +59,8 @@ namespace JSC {
   setFloat16            dataViewProtoFuncSetFloat16          DontEnum|Function       2  DataViewSetFloat16
   setFloat32            dataViewProtoFuncSetFloat32          DontEnum|Function       2  DataViewSetFloat32
   setFloat64            dataViewProtoFuncSetFloat64          DontEnum|Function       2  DataViewSetFloat64
-  setBigInt64           dataViewProtoFuncSetBigInt64         DontEnum|Function       2
-  setBigUint64          dataViewProtoFuncSetBigUint64        DontEnum|Function       2
+  setBigInt64           dataViewProtoFuncSetBigInt64         DontEnum|Function       2  DataViewSetBigInt64
+  setBigUint64          dataViewProtoFuncSetBigUint64        DontEnum|Function       2  DataViewSetBigUint64
   buffer                dataViewProtoGetterBuffer            DontEnum|ReadOnly|CustomAccessor
   byteOffset            dataViewProtoGetterByteOffset        DontEnum|ReadOnly|CustomAccessor
 @end
@@ -139,7 +139,7 @@ EncodedJSValue getData(JSGlobalObject* globalObject, CallFrame* callFrame)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSDataView* dataView = jsDynamicCast<JSDataView*>(callFrame->thisValue());
+    JSDataView* dataView = dynamicDowncast<JSDataView>(callFrame->thisValue());
     if (!dataView)
         return throwVMTypeError(globalObject, scope, "Receiver of DataView method must be a DataView"_s);
     
@@ -183,7 +183,7 @@ EncodedJSValue setData(JSGlobalObject* globalObject, CallFrame* callFrame)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSDataView* dataView = jsDynamicCast<JSDataView*>(callFrame->thisValue());
+    JSDataView* dataView = dynamicDowncast<JSDataView>(callFrame->thisValue());
     if (!dataView)
         return throwVMTypeError(globalObject, scope, "Receiver of DataView method must be a DataView"_s);
     
@@ -228,7 +228,7 @@ JSC_DEFINE_CUSTOM_GETTER(dataViewProtoGetterBuffer, (JSGlobalObject* globalObjec
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSDataView* view = jsDynamicCast<JSDataView*>(JSValue::decode(thisValue));
+    JSDataView* view = dynamicDowncast<JSDataView>(JSValue::decode(thisValue));
     if (!view)
         return throwVMTypeError(globalObject, scope, "DataView.prototype.buffer expects |this| to be a DataView object"_s);
 
@@ -240,7 +240,7 @@ JSC_DEFINE_HOST_FUNCTION(dataViewProtoGetterByteLength, (JSGlobalObject* globalO
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSDataView* view = jsDynamicCast<JSDataView*>(callFrame->thisValue());
+    JSDataView* view = dynamicDowncast<JSDataView>(callFrame->thisValue());
     if (!view) [[unlikely]]
         return throwVMTypeError(globalObject, scope, "DataView.prototype.byteLength expects |this| to be a DataView object"_s);
 
@@ -257,7 +257,7 @@ JSC_DEFINE_CUSTOM_GETTER(dataViewProtoGetterByteOffset, (JSGlobalObject* globalO
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSDataView* view = jsDynamicCast<JSDataView*>(JSValue::decode(thisValue));
+    JSDataView* view = dynamicDowncast<JSDataView>(JSValue::decode(thisValue));
     if (!view)
         return throwVMTypeError(globalObject, scope, "DataView.prototype.byteOffset expects |this| to be a DataView object"_s);
 

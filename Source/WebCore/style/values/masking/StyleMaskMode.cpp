@@ -25,6 +25,7 @@
 #include "config.h"
 #include "StyleMaskMode.h"
 
+#include "CSSKeywordValue.h"
 #include "StyleBuilderChecking.h"
 
 namespace WebCore {
@@ -32,18 +33,18 @@ namespace Style {
 
 auto CSSValueConversion<MaskMode>::operator()(BuilderState& state, const CSSValue& value) -> MaskMode
 {
-    RefPtr primitiveValue = requiredDowncast<CSSPrimitiveValue>(state, value);
-    if (!primitiveValue)
+    RefPtr keywordValue = requiredDowncast<CSSKeywordValue>(state, value);
+    if (!keywordValue)
         return MaskMode::MatchSource;
 
-    switch (primitiveValue->valueID()) {
-    case CSSValueAlpha:
+    switch (keywordValue->valueID()) {
+    case CSSValueID::Alpha:
         return MaskMode::Alpha;
-    case CSSValueLuminance:
+    case CSSValueID::Luminance:
         return MaskMode::Luminance;
-    case CSSValueMatchSource:
+    case CSSValueID::MatchSource:
         return MaskMode::MatchSource;
-    case CSSValueAuto: // -webkit-mask-source-type
+    case CSSValueID::Auto: // -webkit-mask-source-type
         return MaskMode::MatchSource;
     default:
         state.setCurrentPropertyInvalidAtComputedValueTime();

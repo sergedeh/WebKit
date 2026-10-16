@@ -7,7 +7,9 @@ PACKAGES=(
     atk-devel
     bubblewrap
     cairo-devel
+    clang
     cmake
+    enchant2-devel
     flite-devel
     gcc-c++
     gi-docgen
@@ -16,6 +18,8 @@ PACKAGES=(
     gstreamer1-devel
     gstreamer1-plugins-bad-free-devel
     gstreamer1-plugins-base-devel
+    harfbuzz-devel
+    hyphen-devel
     intltool
     libatomic
     libavif-devel
@@ -23,9 +27,11 @@ PACKAGES=(
     libepoxy-devel
     libevent-devel
     libgcrypt-devel
+    libinput-devel
     libjpeg-turbo-devel
     libjxl-devel
     libkate-devel
+    libmanette-devel
     libmount-devel
     libpng-devel
     libseccomp-devel
@@ -35,9 +41,9 @@ PACKAGES=(
     libtasn1-devel
     libvorbis-devel
     libv4l-devel
+    libva-devel
     libvpx-devel
     libwebp-devel
-    libwpe-devel
     libxkbcommon-x11-devel
     libxslt-devel
     mesa-libgbm-devel
@@ -45,9 +51,11 @@ PACKAGES=(
     ninja-build
     openjpeg2-devel
     openssl-devel
+    openxr-devel
     opus-devel
     patch
     perl-autouse
+    perl-bignum
     perl-English
     perl-File-Copy-Recursive
     perl-FindBin
@@ -60,12 +68,14 @@ PACKAGES=(
     sysprof-capture-devel
     systemd-devel
     unifdef
+    vulkan-volk-devel
+    xdg-dbus-proxy
     wayland-devel
     wayland-protocols-devel
     woff2-devel
-    wpebackend-fdo-devel
 
     # These are dependencies necessary for running tests.
+    binutils
     curl
     gdb
     httpd
@@ -73,10 +83,11 @@ PACKAGES=(
     mod_ssl
     perl-CGI
     psmisc
+    python3-legacy-cgi
     pulseaudio-utils
+    python3-gobject
     python3-psutil
-    rubygem-highline
-    rubygem-json
+    time
 
     # These are dependencies necessary for building the jhbuild.
     expat-devel
@@ -90,6 +101,7 @@ PACKAGES=(
     libpsl-devel
     libtheora-devel
     libuuid-devel
+    libp11-devel
     libxcb-devel
     mesa-libEGL-devel
     orc-devel
@@ -111,4 +123,17 @@ PACKAGES=(
     gstreamer1-plugins-good
     gstreamer1-plugins-good-extras
     gstreamer1-plugins-ugly-free
+
+    # These are for generate-bundle script
+    patchelf
+    p11-kit
+
+    # These are required to run the WebKit Container SDK via wkdev-build /
+    # wkdev-sdk. `podman` is the rootless container engine the host wrappers
+    # invoke; `crun` is the runtime we pin podman to (runc does not support
+    # `podman run --init`); `catatonit` is the helper `--init` spawns as
+    # PID 1.
+    catatonit
+    crun
+    podman
 )

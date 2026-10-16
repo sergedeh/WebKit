@@ -80,7 +80,7 @@ bool mightInlineFunctionForCall(JITType jitType, CodeBlock* codeBlock)
             if (codeBlock->bytecodeCost() > Options::maximumFunctionForCallInlineCandidateBytecodeCostForDFG())
                 return false;
         } else {
-            if (codeBlock->bytecodeCost() > Options::maximumFunctionForCallInlineCandidateBytecodeCostForFTL())
+            if (codeBlock->bytecodeCostForFTLInlining() > Options::maximumFunctionForCallInlineCandidateBytecodeCostForFTL())
                 return false;
         }
     }
@@ -93,7 +93,7 @@ bool mightInlineFunctionForClosureCall(JITType jitType, CodeBlock* codeBlock)
             if (codeBlock->bytecodeCost() > Options::maximumFunctionForClosureCallInlineCandidateBytecodeCostForDFG())
                 return false;
         } else {
-            if (codeBlock->bytecodeCost() > Options::maximumFunctionForClosureCallInlineCandidateBytecodeCostForFTL())
+            if (codeBlock->bytecodeCostForFTLInlining() > Options::maximumFunctionForClosureCallInlineCandidateBytecodeCostForFTL())
                 return false;
         }
     }
@@ -106,7 +106,7 @@ bool mightInlineFunctionForConstruct(JITType jitType, CodeBlock* codeBlock)
             if (codeBlock->bytecodeCost() > Options::maximumFunctionForConstructInlineCandidateBytecodeCostForDFG())
                 return false;
         } else {
-            if (codeBlock->bytecodeCost() > Options::maximumFunctionForConstructInlineCandidateBytecodeCostForFTL())
+            if (codeBlock->bytecodeCostForFTLInlining() > Options::maximumFunctionForConstructInlineCandidateBytecodeCostForFTL())
                 return false;
         }
     }
@@ -117,7 +117,7 @@ bool canUseOSRExitFuzzing(CodeBlock* codeBlock)
     return codeBlock->ownerExecutable()->canUseOSRExitFuzzing();
 }
 
-static bool verboseCapabilities()
+static bool LEGACY_NODELETE verboseCapabilities()
 {
     return verboseCompilationEnabled() || Options::verboseDFGFailure();
 }

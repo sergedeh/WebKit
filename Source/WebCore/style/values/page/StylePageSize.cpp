@@ -25,6 +25,7 @@
 #include "config.h"
 #include "StylePageSize.h"
 
+#include "CSSKeywordValue.h"
 #include "CSSValuePair.h"
 #include "StyleBuilderChecking.h"
 #include "StylePrimitiveNumericTypes+CSSValueConversion.h"
@@ -32,7 +33,7 @@
 namespace WebCore {
 namespace Style {
 
-static PageSize pageSizeFromName(BuilderState& state, const CSSPrimitiveValue& pageSizeName, RefPtr<const CSSPrimitiveValue> pageOrientation)
+static PageSize pageSizeFromName(BuilderState& state, const CSSKeywordValue& pageSizeName, RefPtr<const CSSKeywordValue> pageOrientation)
 {
     auto mmLength = [](double mm) {
         return Length<CSS::Nonnegative>(CSS::pixelsPerMm * mm);
@@ -67,43 +68,43 @@ static PageSize pageSizeFromName(BuilderState& state, const CSSPrimitiveValue& p
     Style::Length<CSS::Nonnegative> height { 0 };
 
     switch (pageSizeName.valueID()) {
-    case CSSValueA5:
+    case CSSValueID::A5:
         width = a5Width;
         height = a5Height;
         break;
-    case CSSValueA4:
+    case CSSValueID::A4:
         width = a4Width;
         height = a4Height;
         break;
-    case CSSValueA3:
+    case CSSValueID::A3:
         width = a3Width;
         height = a3Height;
         break;
-    case CSSValueB5:
+    case CSSValueID::B5:
         width = b5Width;
         height = b5Height;
         break;
-    case CSSValueB4:
+    case CSSValueID::B4:
         width = b4Width;
         height = b4Height;
         break;
-    case CSSValueJisB5:
+    case CSSValueID::JisB5:
         width = jisB5Width;
         height = jisB5Height;
         break;
-    case CSSValueJisB4:
+    case CSSValueID::JisB4:
         width = jisB4Width;
         height = jisB4Height;
         break;
-    case CSSValueLetter:
+    case CSSValueID::Letter:
         width = letterWidth;
         height = letterHeight;
         break;
-    case CSSValueLegal:
+    case CSSValueID::Legal:
         width = legalWidth;
         height = legalHeight;
         break;
-    case CSSValueLedger:
+    case CSSValueID::Ledger:
         width = ledgerWidth;
         height = ledgerHeight;
         break;
@@ -114,10 +115,10 @@ static PageSize pageSizeFromName(BuilderState& state, const CSSPrimitiveValue& p
 
     if (pageOrientation) {
         switch (pageOrientation->valueID()) {
-        case CSSValueLandscape:
+        case CSSValueID::Landscape:
             std::swap(width, height);
             break;
-        case CSSValuePortrait:
+        case CSSValueID::Portrait:
             // Nothing to do.
             break;
         default:
@@ -131,57 +132,53 @@ static PageSize pageSizeFromName(BuilderState& state, const CSSPrimitiveValue& p
 
 auto CSSValueConversion<PageSize>::operator()(BuilderState& state, const CSSValue& value) -> PageSize
 {
+    // <length [0,∞]>{2} | [ <page-size> [ portrait | landscape ] ]
     if (RefPtr pair = dynamicDowncast<CSSValuePair>(value)) {
-        // <length [0,∞]>{2} | [ <page-size> [ portrait | landscape ] ]
-        RefPtr first = requiredDowncast<CSSPrimitiveValue>(state, pair->first());
-        if (!first)
-            return CSS::Keyword::Auto { };
-        RefPtr second = requiredDowncast<CSSPrimitiveValue>(state, pair->second());
-        if (!second)
-            return CSS::Keyword::Auto { };
+        Ref first = pair->first();
+        Ref second = pair->second();
 
-        if (first->isLength()) {
-            // <length [0,∞]>{2}
-            if (!second->isLength()) {
-                state.setCurrentPropertyInvalidAtComputedValueTime();
-                return CSS::Keyword::Auto { };
-            }
-
-            auto conversionData = state.cssToLengthConversionData().copyWithAdjustedZoom(1.0f);
+        RefPtr primitiveValueFirst = dynamicDowncast<CSSPrimitiveValue>(first);
+        RefPtr primitiveValueSecond = dynamicDowncast<CSSPrimitiveValue>(second);
+        if (primitiveValueFirst && primitiveValueSecond) {
             return PageSize::Lengths {
-                toStyleFromCSSValue<Length<CSS::Nonnegative>>(conversionData, *first),
-                toStyleFromCSSValue<Length<CSS::Nonnegative>>(conversionData, *second),
+                toStyleFromCSSValue<Length<CSS::Nonnegative>>(state, *primitiveValueFirst),
+                toStyleFromCSSValue<Length<CSS::Nonnegative>>(state, *primitiveValueSecond),
             };
         }
 
         // [ <page-size> [ portrait | landscape ] ]
         // The value order is guaranteed. See CSSParser::parseSizeParameter.
-        return pageSizeFromName(state, *first, second);
-    }
-
-    if (RefPtr primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value)) {
-        // <length [0,∞]> | auto | <page-size> | [ portrait | landscape]
-        if (primitiveValue->isLength()) {
-            // <length [0,∞]>
-            auto conversionData = state.cssToLengthConversionData().copyWithAdjustedZoom(1.0f);
-            auto length = toStyleFromCSSValue<Length<CSS::Nonnegative>>(conversionData, *primitiveValue);
-            return PageSize::Lengths { length, length };
-        }
-
-        switch (primitiveValue->valueID()) {
-        case CSSValueAuto:
+        RefPtr keywordValueFirst = requiredDowncast<CSSKeywordValue>(state, first);
+        if (!keywordValueFirst)
             return CSS::Keyword::Auto { };
-        case CSSValuePortrait:
-            return CSS::Keyword::Portrait { };
-        case CSSValueLandscape:
-            return CSS::Keyword::Landscape { };
-        default:
-            return pageSizeFromName(state, *primitiveValue, nullptr);
-        }
+        RefPtr keywordValueSecond = requiredDowncast<CSSKeywordValue>(state, second);
+        if (!keywordValueSecond)
+            return CSS::Keyword::Auto { };
+
+        return pageSizeFromName(state, *keywordValueFirst, keywordValueSecond);
     }
 
-    state.setCurrentPropertyInvalidAtComputedValueTime();
-    return CSS::Keyword::Auto { };
+    // <length [0,∞]> | auto | <page-size> | [ portrait | landscape]
+    if (RefPtr primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value)) {
+        // <length [0,∞]>
+        auto length = toStyleFromCSSValue<Length<CSS::Nonnegative>>(state, *primitiveValue);
+        return PageSize::Lengths { length, length };
+    }
+
+    RefPtr keywordValue = requiredDowncast<CSSKeywordValue>(state, value);
+    if (!keywordValue)
+        return CSS::Keyword::Auto { };
+
+    switch (keywordValue->valueID()) {
+    case CSSValueID::Auto:
+        return CSS::Keyword::Auto { };
+    case CSSValueID::Portrait:
+        return CSS::Keyword::Portrait { };
+    case CSSValueID::Landscape:
+        return CSS::Keyword::Landscape { };
+    default:
+        return pageSizeFromName(state, *keywordValue, nullptr);
+    }
 }
 
 } // namespace Style

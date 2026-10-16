@@ -64,7 +64,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(InspectorTimelineAgent);
 InspectorTimelineAgent::InspectorTimelineAgent(WebAgentContext& context)
     : InspectorAgentBase("Timeline"_s, context)
     , m_frontendDispatcher(makeUniqueRef<Inspector::TimelineFrontendDispatcher>(context.frontendRouter))
-    , m_backendDispatcher(Inspector::TimelineBackendDispatcher::create(context.backendDispatcher, this))
+    , m_backendDispatcher(Inspector::TimelineBackendDispatcher::create(protect(context.backendDispatcher), this))
 {
 }
 
@@ -178,7 +178,7 @@ void InspectorTimelineAgent::internalStart(std::optional<int>&& maxCallStackDept
 
     Ref { m_instrumentingAgents.get() }->setTrackingTimelineAgent(this);
 
-    checkedEnvironment()->debugger()->addObserver(*this);
+    protect(environment())->debugger()->addObserver(*this);
 
     m_frontendDispatcher->recordingStarted(timestamp());
 }
@@ -187,7 +187,7 @@ void InspectorTimelineAgent::internalStop()
 {
     Ref { m_instrumentingAgents.get() }->setTrackingTimelineAgent(nullptr);
 
-    checkedEnvironment()->debugger()->removeObserver(*this, true);
+    protect(environment())->debugger()->removeObserver(*this, true);
 
     // Complete all pending records to prevent discarding events that are currently in progress.
     while (!m_recordStack.isEmpty())
@@ -205,12 +205,12 @@ void InspectorTimelineAgent::autoCaptureStarted() const
 
 double InspectorTimelineAgent::timestamp()
 {
-    return checkedEnvironment()->executionStopwatch().elapsedTime().seconds();
+    return protect(protect(environment())->executionStopwatch())->elapsedTime().seconds();
 }
 
 std::optional<double> InspectorTimelineAgent::timestampFromMonotonicTime(MonotonicTime time)
 {
-    auto stopwatchTime = checkedEnvironment()->executionStopwatch().fromMonotonicTime(time);
+    auto stopwatchTime = protect(protect(environment())->executionStopwatch())->fromMonotonicTime(time);
     if (!stopwatchTime)
         return std::nullopt;
     return stopwatchTime->seconds();
@@ -221,9 +221,9 @@ void InspectorTimelineAgent::startFromConsole(const String& title)
     // Allow duplicate unnamed profiles. Disallow duplicate named profiles.
     if (!title.isEmpty()) {
         for (const TimelineRecordEntry& record : m_pendingConsoleProfileRecords) {
-            auto recordTitle = record.data->getString("title"_s);
+            auto recordTitle = protect(record.data)->getString("title"_s);
             if (recordTitle == title) {
-                if (auto* consoleAgent = Ref { m_instrumentingAgents.get() } -> webConsoleAgent()) {
+                if (CheckedPtr consoleAgent = Ref { m_instrumentingAgents.get() } -> webConsoleAgent()) {
                     // FIXME: Send an enum to the frontend for localization?
                     String warning = title.isEmpty() ? "Unnamed Profile already exists"_s : makeString("Profile \""_s, ScriptArguments::truncateStringForConsoleMessage(title), "\" already exists"_s);
                     consoleAgent->addMessageToConsole(makeUnique<ConsoleMessage>(MessageSource::ConsoleAPI, MessageType::Profile, MessageLevel::Warning, warning));
@@ -246,7 +246,7 @@ void InspectorTimelineAgent::stopFromConsole(const String& title)
     for (int i = m_pendingConsoleProfileRecords.size() - 1; i >= 0; --i) {
         const TimelineRecordEntry& record = m_pendingConsoleProfileRecords[i];
 
-        auto recordTitle = record.data->getString("title"_s);
+        auto recordTitle = protect(record.data)->getString("title"_s);
         if (title.isEmpty() || recordTitle == title) {
             didCompleteRecordEntry(record);
             m_pendingConsoleProfileRecords.removeAt(i);
@@ -258,7 +258,7 @@ void InspectorTimelineAgent::stopFromConsole(const String& title)
         }
     }
 
-    if (auto* consoleAgent = Ref { m_instrumentingAgents.get() }->webConsoleAgent()) {
+    if (CheckedPtr consoleAgent = Ref { m_instrumentingAgents.get() }->webConsoleAgent()) {
         // FIXME: Send an enum to the frontend for localization?
         String warning = title.isEmpty() ? "No profiles exist"_s : makeString("Profile \""_s, ScriptArguments::truncateStringForConsoleMessage(title), "\" does not exist"_s);
         consoleAgent->addMessageToConsole(makeUnique<ConsoleMessage>(MessageSource::ConsoleAPI, MessageType::ProfileEnd, MessageLevel::Warning, warning));
@@ -287,7 +287,7 @@ void InspectorTimelineAgent::didDispatchEvent(bool defaultPrevented)
 
     auto& entry = m_recordStack.last();
     ASSERT(entry.type == TimelineRecordType::EventDispatch);
-    entry.data->setBoolean("defaultPrevented"_s, defaultPrevented);
+    protect(entry.data)->setBoolean("defaultPrevented"_s, defaultPrevented);
 
     didCompleteCurrentRecord(TimelineRecordType::EventDispatch);
 }
@@ -356,7 +356,7 @@ void InspectorTimelineAgent::didEnqueueFirstContentfulPaint()
 void InspectorTimelineAgent::didEnqueueLargestContentfulPaint(Element* element, unsigned area)
 {
     Inspector::Protocol::DOM::NodeId nodeID = 0;
-    if (auto* domAgent = Ref { m_instrumentingAgents.get() }->persistentDOMAgent())
+    if (CheckedPtr domAgent = Ref { m_instrumentingAgents.get() }->persistentDOMAgent())
         nodeID = domAgent->pushNodeToFrontend(element);
 
     appendRecord(TimelineRecordFactory::createLargestContentfulPaintData(nodeID, area), TimelineRecordType::LargestContentfulPaint, false);
@@ -367,7 +367,7 @@ void InspectorTimelineAgent::startProgrammaticCapture()
     ASSERT(!tracking());
 
     // Disable breakpoints during programmatic capture.
-    if (auto* webDebuggerAgent = Ref { m_instrumentingAgents.get() }->enabledWebDebuggerAgent()) {
+    if (CheckedPtr webDebuggerAgent = Ref { m_instrumentingAgents.get() }->enabledWebDebuggerAgent()) {
         m_programmaticCaptureRestoreBreakpointActiveValue = webDebuggerAgent->breakpointsActive();
         if (m_programmaticCaptureRestoreBreakpointActiveValue)
             std::ignore = webDebuggerAgent->setBreakpointsActive(false);
@@ -390,7 +390,7 @@ void InspectorTimelineAgent::stopProgrammaticCapture()
 
     // Re-enable breakpoints if they were enabled.
     if (m_programmaticCaptureRestoreBreakpointActiveValue) {
-        if (auto* webDebuggerAgent = Ref { m_instrumentingAgents.get() }->enabledWebDebuggerAgent())
+        if (CheckedPtr webDebuggerAgent = Ref { m_instrumentingAgents.get() }->enabledWebDebuggerAgent())
             std::ignore = webDebuggerAgent->setBreakpointsActive(true);
     }
 }
@@ -430,7 +430,7 @@ void InspectorTimelineAgent::toggleInstruments(InstrumentState state)
 
 void InspectorTimelineAgent::toggleScriptProfilerInstrument(InstrumentState state)
 {
-    if (auto* scriptProfilerAgent = Ref { m_instrumentingAgents.get() }->persistentScriptProfilerAgent()) {
+    if (CheckedPtr scriptProfilerAgent = Ref { m_instrumentingAgents.get() }->persistentScriptProfilerAgent()) {
         if (state == InstrumentState::Start)
             std::ignore = scriptProfilerAgent->startTracking(true);
         else
@@ -440,7 +440,7 @@ void InspectorTimelineAgent::toggleScriptProfilerInstrument(InstrumentState stat
 
 void InspectorTimelineAgent::toggleHeapInstrument(InstrumentState state)
 {
-    if (auto* heapAgent = Ref { m_instrumentingAgents.get() }->persistentWebHeapAgent()) {
+    if (CheckedPtr heapAgent = Ref { m_instrumentingAgents.get() }->persistentWebHeapAgent()) {
         if (state == InstrumentState::Start) {
             if (shouldStartHeapInstrument())
                 std::ignore = heapAgent->startTracking();
@@ -452,7 +452,7 @@ void InspectorTimelineAgent::toggleHeapInstrument(InstrumentState state)
 void InspectorTimelineAgent::toggleCPUInstrument(InstrumentState state)
 {
 #if ENABLE(RESOURCE_USAGE)
-    if (auto* cpuProfilerAgent = Ref { m_instrumentingAgents.get() }->persistentCPUProfilerAgent()) {
+    if (CheckedPtr cpuProfilerAgent = Ref { m_instrumentingAgents.get() }->persistentCPUProfilerAgent()) {
         if (state == InstrumentState::Start)
             std::ignore = cpuProfilerAgent->startTracking();
         else
@@ -466,7 +466,7 @@ void InspectorTimelineAgent::toggleCPUInstrument(InstrumentState state)
 void InspectorTimelineAgent::toggleMemoryInstrument(InstrumentState state)
 {
 #if ENABLE(RESOURCE_USAGE)
-    if (auto* memoryAgent = Ref { m_instrumentingAgents.get() }->persistentMemoryAgent()) {
+    if (CheckedPtr memoryAgent = Ref { m_instrumentingAgents.get() }->persistentMemoryAgent()) {
         if (state == InstrumentState::Start)
             std::ignore = memoryAgent->startTracking();
         else
@@ -490,7 +490,7 @@ void InspectorTimelineAgent::toggleTimelineInstrument(InstrumentState state)
 
 void InspectorTimelineAgent::toggleAnimationInstrument(InstrumentState state)
 {
-    if (auto* animationAgent = Ref { m_instrumentingAgents.get() }->persistentAnimationAgent()) {
+    if (CheckedPtr animationAgent = Ref { m_instrumentingAgents.get() }->persistentAnimationAgent()) {
         if (state == InstrumentState::Start)
             std::ignore = animationAgent->startTracking();
         else
@@ -533,7 +533,7 @@ void InspectorTimelineAgent::breakpointActionProbe(JSC::JSGlobalObject*, JSC::Br
     appendRecord(TimelineRecordFactory::createProbeSampleData(actionID, sampleId), TimelineRecordType::ProbeSample, false);
 }
 
-static Inspector::Protocol::Timeline::EventType toProtocol(TimelineRecordType type)
+static Inspector::Protocol::Timeline::EventType LEGACY_NODELETE toProtocol(TimelineRecordType type)
 {
     switch (type) {
     case TimelineRecordType::EventDispatch:
@@ -544,6 +544,8 @@ static Inspector::Protocol::Timeline::EventType toProtocol(TimelineRecordType ty
         return Inspector::Protocol::Timeline::EventType::RecalculateStyles;
     case TimelineRecordType::InvalidateLayout:
         return Inspector::Protocol::Timeline::EventType::InvalidateLayout;
+    case TimelineRecordType::ScheduleLayout:
+        return Inspector::Protocol::Timeline::EventType::ScheduleLayout;
     case TimelineRecordType::Layout:
         return Inspector::Protocol::Timeline::EventType::Layout;
     case TimelineRecordType::Paint:
@@ -599,30 +601,51 @@ static Inspector::Protocol::Timeline::EventType toProtocol(TimelineRecordType ty
     return Inspector::Protocol::Timeline::EventType::TimeStamp;
 }
 
+bool InspectorTimelineAgent::shouldNestUnder(TimelineRecordType type, TimelineRecordType previousType) const
+{
+    switch (type) {
+    case TimelineRecordType::FunctionCall:
+        return true;
+    case TimelineRecordType::TimerFire:
+    case TimelineRecordType::EventDispatch:
+    case TimelineRecordType::FireAnimationFrame:
+    case TimelineRecordType::ObserverCallback:
+        switch (previousType) {
+        case TimelineRecordType::EvaluateScript:
+        case TimelineRecordType::FunctionCall:
+            return true;
+        default:
+            return false;
+        }
+    default:
+        return false;
+    }
+}
+
 void InspectorTimelineAgent::addRecordToTimeline(Ref<JSON::Object>&& record, TimelineRecordType type)
 {
     record->setString("type"_s, Inspector::Protocol::Helpers::getEnumConstantValue(toProtocol(type)));
 
-    if (m_recordStack.isEmpty()) {
+    const TimelineRecordEntry* previousEntry = m_recordStack.isEmpty() ? nullptr : &m_recordStack.last();
+    if (previousEntry && shouldNestUnder(type, previousEntry->type)) {
+        // Nested paint records are an implementation detail and add no information not already contained in the parent.
+        if (type == TimelineRecordType::Paint && previousEntry->type == type)
+            return;
+        protect(previousEntry->children)->pushObject(WTF::move(record));
+    } else {
         // FIXME: runtimeCast is a hack. We do it because we can't build TimelineEvent directly now.
         auto recordObject = Inspector::Protocol::BindingTraits<Inspector::Protocol::Timeline::TimelineEvent>::runtimeCast(WTF::move(record));
         sendEvent(WTF::move(recordObject));
-    } else {
-        const TimelineRecordEntry& parent = m_recordStack.last();
-        // Nested paint records are an implementation detail and add no information not already contained in the parent.
-        if (type == TimelineRecordType::Paint && parent.type == type)
-            return;
-
-        parent.children->pushObject(WTF::move(record));
     }
 }
 
 void InspectorTimelineAgent::didCompleteRecordEntry(const TimelineRecordEntry& entry)
 {
-    entry.record->setObject("data"_s, entry.data.copyRef());
+    Ref entryRecord = entry.record;
+    entryRecord->setObject("data"_s, entry.data.copyRef());
     if (entry.children)
-        entry.record->setArray("children"_s, *entry.children);
-    entry.record->setDouble("endTime"_s, timestamp());
+        entryRecord->setArray("children"_s, *entry.children);
+    entryRecord->setDouble("endTime"_s, timestamp());
     addRecordToTimeline(entry.record.copyRef(), entry.type);
 }
 

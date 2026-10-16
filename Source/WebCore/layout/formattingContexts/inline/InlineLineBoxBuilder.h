@@ -42,6 +42,7 @@ public:
     LineBoxBuilder(const InlineFormattingContext&, LineLayoutResult&);
 
     LineBox build(size_t lineIndex);
+    LineBox buildForRootInlineBoxOnly(size_t lineIndex);
 
 private:
     void setVerticalPropertiesForInlineLevelBox(const LineBox&, InlineLevelBox&) const;
@@ -49,7 +50,7 @@ private:
     void adjustInlineBoxHeightsForLineBoxContainIfApplicable(LineBox&);
     void computeLineBoxGeometry(LineBox&) const;
     InlineLevelBox::AscentAndDescent enclosingAscentDescentWithFallbackFonts(const InlineLevelBox&, const TextUtil::FallbackFontList& fallbackFontsForContent, FontBaseline) const;
-    TextUtil::FallbackFontList collectFallbackFonts(const InlineLevelBox& parentInlineBox, const Line::Run&, const RenderStyle&);
+    TextUtil::FallbackFontList collectFallbackFonts(const InlineLevelBox& parentInlineBox, const Line::Run&, const Style::ComputedStyle&);
     void adjustMarginStartForListMarker(const ElementBox& listMarkerBox, LayoutUnit nestedListMarkerMarginStart, InlineLayoutUnit rootInlineBoxOffset) const;
     InlineLayoutUnit applyTextBoxTrimOnLineBoxIfNeeded(InlineLayoutUnit lineBoxLogicalHeight, LineBox&) const;
 
@@ -57,17 +58,18 @@ private:
     void constructBlockContent(LineBox&);
     void adjustIdeographicBaselineIfApplicable(LineBox&);
     void adjustOutsideListMarkersPosition(LineBox&);
-    void expandAboveRootInlineBox(LineBox&, InlineLayoutUnit) const;
+    void stretchRootInlineBoxForExcludedMarkers(LineBox&) const;
+    void LEGACY_NODELETE expandAboveRootInlineBox(LineBox&, InlineLayoutUnit) const;
 
     bool isFirstFormattedLine() const { return lineLayoutResult().isFirstLast.isFirstFormattedLine == IsFirstFormattedLine::Yes; }
     bool isLastLine() const { return lineLayoutResult().isFirstLast.isLastLineWithInlineContent; }
-    const InlineFormattingContext& formattingContext() const { return m_inlineFormattingContext; }
-    const LineLayoutResult& lineLayoutResult() const { return m_lineLayoutResult; }
+    const InlineFormattingContext& formattingContext() const LIFETIME_BOUND { return m_inlineFormattingContext; }
+    const LineLayoutResult& lineLayoutResult() const LIFETIME_BOUND { return m_lineLayoutResult; }
     const ElementBox& rootBox() const { return formattingContext().root(); }
-    const RenderStyle& rootStyle() const { return isFirstFormattedLine() ? rootBox().firstLineStyle() : rootBox().style(); }
+    const Style::ComputedStyle& rootStyle() const LIFETIME_BOUND { return isFirstFormattedLine() ? rootBox().firstLineStyle() : rootBox().style(); }
 
-    const InlineLayoutState& layoutState() const { return formattingContext().layoutState(); }
-    const BlockLayoutState& blockLayoutState() const { return layoutState().parentBlockLayoutState(); }
+    const InlineLayoutState& layoutState() const LIFETIME_BOUND { return formattingContext().layoutState(); }
+    const BlockLayoutState& blockLayoutState() const LIFETIME_BOUND { return layoutState().parentBlockLayoutState(); }
 
 private:
     const InlineFormattingContext& m_inlineFormattingContext;

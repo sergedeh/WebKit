@@ -25,56 +25,19 @@
 
 #pragma once
 
-#include <WebCore/LayoutElementBox.h>
-#include <wtf/TZoneMalloc.h>
+#include "LayoutElementBox.h"
 
 namespace WebCore {
-
-class RenderBlockFlow;
-class RenderBox;
-class RenderElement;
-class RenderObject;
-class RenderTable;
-class RenderView;
-
 namespace Layout {
 
 class InitialContainingBlock;
 class LayoutState;
-
-class LayoutTree {
-    WTF_MAKE_TZONE_ALLOCATED(LayoutTree);
-public:
-    LayoutTree(std::unique_ptr<ElementBox>);
-
-    const ElementBox& root() const { return *m_root; }
-
-private:
-    std::unique_ptr<ElementBox> m_root;
-};
-
-class TreeBuilder {
-public:
-    static std::unique_ptr<Layout::LayoutTree> buildLayoutTree(const RenderView&);
-
-private:
-    TreeBuilder();
-
-    void buildSubTree(const RenderElement& parentRenderer, ElementBox& parentContainer);
-    void buildTableStructure(const RenderTable& tableRenderer, ElementBox& tableWrapperBox);
-    std::unique_ptr<Box> createLayoutBox(const ElementBox& parentContainer, const RenderObject& childRenderer);
-
-    std::unique_ptr<Box> createReplacedBox(Box::ElementAttributes, ElementBox::ReplacedAttributes&&, RenderStyle&&);
-    std::unique_ptr<Box> createTextBox(String text, bool isCombined, bool canUseSimplifiedTextMeasuring, bool canUseSimpleFontCodePath, bool hasPositionDependentContentWidth, bool hasStrongDirectionalityContent, RenderStyle&&);
-    std::unique_ptr<ElementBox> createContainer(Box::ElementAttributes, RenderStyle&&);
-};
 
 #if ENABLE(TREE_DEBUGGING)
 String layoutTreeAsText(const InitialContainingBlock&, const LayoutState*);
 void showLayoutTree(const InitialContainingBlock&, const LayoutState*);
 void showLayoutTree(const InitialContainingBlock&);
 void showInlineTreeAndRuns(TextStream&, const LayoutState&, const ElementBox& inlineFormattingRoot, size_t depth);
-void printLayoutTreeForLiveDocuments();
 #endif
 
 }

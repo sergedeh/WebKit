@@ -44,17 +44,25 @@ namespace WebKit {
 // FIXME: This is not needed in the WebProcess and should be moved to be a peer
 // of WKView.
 
+enum class WebEventPhase : uint8_t;
+
 class WebEventFactory {
 public:
 #if USE(APPKIT)
-    static WebMouseEvent createWebMouseEvent(NSEvent *, NSEvent *lastPressureEvent, NSView *windowView);
-    static WebWheelEvent createWebWheelEvent(NSEvent *, NSView *windowView);
-    static WebKeyboardEvent createWebKeyboardEvent(NSEvent *, bool handledByInputMethod, bool replacesSoftSpace, const Vector<WebCore::KeypressCommand>&);
-    static bool shouldBeHandledAsContextClick(const WebCore::PlatformMouseEvent&);
+    static WebMouseEventInit createWebMouseEvent(NSEvent *, NSEvent *lastPressureEvent, NSView *windowView, WebEventInputSource, WebCore::PlatformMouseEvent::CanInitiateDrag = WebCore::PlatformMouseEvent::CanInitiateDrag::Yes);
+    static WebWheelEventInit createWebWheelEvent(NSEvent *, NSView *windowView);
+    static WebKeyboardEventInit createWebKeyboardEvent(NSEvent *, bool handledByInputMethod, bool replacesSoftSpace, const Vector<WebCore::KeypressCommand>&);
+    static bool LEGACY_NODELETE shouldBeHandledAsContextClick(const WebCore::PlatformMouseEvent&);
 
 #if defined(__OBJC__)
-    static NSEventModifierFlags toNSEventModifierFlags(OptionSet<WebKit::WebEventModifier>);
-    static NSInteger toNSButtonNumber(WebKit::WebMouseEventButton);
+    static NSEventModifierFlags LEGACY_NODELETE toNSEventModifierFlags(OptionSet<WebKit::WebEventModifier>);
+    static NSInteger LEGACY_NODELETE toNSButtonNumber(WebKit::WebMouseEventButton);
+
+    static OptionSet<WebKit::WebEventModifier> LEGACY_NODELETE toWebEventModifierFlags(NSEventModifierFlags);
+
+    static WebEventPhase phaseForEvent(NSEvent *);
+    static WebEventPhase LEGACY_NODELETE phaseForNativeEventPhase(NSEventPhase);
+    static NSEventPhase LEGACY_NODELETE toNativeEventPhase(WebEventPhase);
 #endif
 #endif // USE(APPKIT)
 };

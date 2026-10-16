@@ -37,6 +37,10 @@
     attribute boolean supportsServerCertificates;
     attribute boolean supportsSessions;
     attribute sequence<MediaKeyEncryptionScheme> supportedEncryptionSchemes;
+    attribute sequence<DOMString> unsupportedVideoCodecs;
+
+    attribute unrestricted double expirationOnUpdate;
+    unsigned long keyCountForSession(DOMString sessionId);
 
     undefined unregister();
 };

@@ -48,7 +48,7 @@ public:
     SVGAnimatedNumber& pathLengthAnimated() { return m_pathLength; }
 
 protected:
-    SVGGeometryElement(const QualifiedName&, Document&, UniqueRef<SVGPropertyRegistry>&&);
+    SVGGeometryElement(const QualifiedName&, Document&, const SVGPropertyRegistry&);
 
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) override;
     void svgAttributeChanged(const QualifiedName&) override;
@@ -56,7 +56,10 @@ protected:
 private:
     bool isSVGGeometryElement() const override { return true; }
 
-    Ref<SVGAnimatedNumber> m_pathLength { SVGAnimatedNumber::create(this) };
+    float calculateTotalLength() const;
+    ExceptionOr<Ref<SVGPoint>> calculatePointAtLength(float distance) const;
+
+    const Ref<SVGAnimatedNumber> m_pathLength { SVGAnimatedNumber::create(this) };
 };
 
 } // namespace WebCore

@@ -27,7 +27,7 @@
 
 #if ENABLE(CONTENT_EXTENSIONS)
 
-#include "Utilities.h"
+#include "Helpers/Utilities.h"
 #include <JavaScriptCore/InitializeThreading.h>
 #include <WebCore/CSSParserContext.h>
 #include <WebCore/CombinedURLFilters.h>
@@ -872,8 +872,8 @@ TEST_F(ContentExtensionTest, MultipleExtensions)
     testRequest(backend, mainDocumentRequest("http://webkit.org"_s), { }, 2);
     testRequest(backend, mainDocumentRequest("http://webkit.org/block_load.html"_s), { variantIndex<ContentExtensions::BlockLoadAction> }, 2);
     testRequest(backend, mainDocumentRequest("http://webkit.org/block_cookies.html"_s), { variantIndex<ContentExtensions::BlockCookiesAction> }, 2);
-    testRequest(backend, mainDocumentRequest("http://webkit.org/block_load/block_cookies.html"_s), { variantIndex<ContentExtensions::BlockCookiesAction>, variantIndex<ContentExtensions::BlockLoadAction> }, 2);
-    testRequest(backend, mainDocumentRequest("http://webkit.org/block_cookies/block_load.html"_s), { variantIndex<ContentExtensions::BlockCookiesAction>, variantIndex<ContentExtensions::BlockLoadAction> }, 2);
+    testRequest(backend, mainDocumentRequest("http://webkit.org/block_load/block_cookies.html"_s), { variantIndex<ContentExtensions::BlockLoadAction>, variantIndex<ContentExtensions::BlockCookiesAction> }, 2);
+    testRequest(backend, mainDocumentRequest("http://webkit.org/block_cookies/block_load.html"_s), { variantIndex<ContentExtensions::BlockLoadAction>, variantIndex<ContentExtensions::BlockCookiesAction> }, 2);
     
     auto ignoreExtension1 = InMemoryCompiledContentExtension::create("[{\"action\":{\"type\":\"block\"},\"trigger\":{\"url-filter\":\"block_load\"}},"
         "{\"action\":{\"type\":\"ignore-previous-rules\"},\"trigger\":{\"url-filter\":\"ignore1\"}}]"_s);
@@ -971,7 +971,7 @@ static int sequenceInstances(const Vector<T> vector, ASCIILiteral sequence)
     size_t instances = 0;
     for (size_t i = 0; i <= vector.size() - sequenceLength; ++i) {
         for (size_t j = 0; j < sequenceLength; j++) {
-            if (vector[i + j] != sequence.characterAt(j))
+            if (vector[i + j] != sequence.codeUnitAt(j))
                 break;
             if (j == sequenceLength - 1)
                 instances++;
@@ -3114,7 +3114,7 @@ TEST_F(ContentExtensionTest, QueryTransformActions)
 
     URL testURL { "https://webkit.org/?foo=garply&baz=test&x+y=z&h%20llo=w%20rld"_s };
     action.applyToURL(testURL);
-    EXPECT_STREQ("https://webkit.org/?foo=bar&x+y=z&h%20llo=w%20rld&one=two", testURL.string().utf8().data());
+    EXPECT_EQ("https://webkit.org/?foo=bar&x+y=z&h%20llo=w%20rld&one=two"_s, testURL.string());
 }
 
 TEST_F(ContentExtensionTest, IfFrameURL)
@@ -3178,11 +3178,11 @@ TEST_F(ContentExtensionTest, UnlessFrameURL)
 
 TEST_F(ContentExtensionTest, RegexSubstitution)
 {
-    auto transformURL = [] (String&& regexSubstitution, String&& regexFilter, String&& originalURL, const char* expectedTransformedURL) {
+    auto transformURL = [] (String&& regexSubstitution, String&& regexFilter, String&& originalURL, ASCIILiteral expectedTransformedURL) {
         WebCore::ContentExtensions::RedirectAction::RegexSubstitutionAction action { WTF::move(regexSubstitution), WTF::move(regexFilter) };
         URL url(WTF::move(originalURL));
         action.applyToURL(url);
-        EXPECT_STREQ(url.string().utf8().data(), expectedTransformedURL);
+        EXPECT_EQ(url.string(), expectedTransformedURL);
     };
     transformURL("https://\\1.xyz.com/"_s, "^https://www\\.(abc?)\\.xyz\\.com/"_s, "https://www.abc.xyz.com"_s, "https://abc.xyz.com/"_s);
     transformURL("https://\\1.\\1.xyz.com/"_s, "^https://www\\.(abc?)\\.xyz\\.com/"_s, "https://www.ab.xyz.com"_s, "https://ab.ab.xyz.com/"_s);

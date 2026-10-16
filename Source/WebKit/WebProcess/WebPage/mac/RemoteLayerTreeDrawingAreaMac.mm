@@ -34,7 +34,9 @@
 #import "WebPageCreationParameters.h"
 #import <WebCore/GraphicsLayer.h>
 #import <WebCore/LocalFrameView.h>
+#import <WebCore/Page.h>
 #import <WebCore/RenderLayerBacking.h>
+#import <WebCore/Settings.h>
 #import <wtf/TZoneMallocInlines.h>
 
 namespace WebKit {
@@ -55,7 +57,13 @@ DelegatedScrollingMode RemoteLayerTreeDrawingAreaMac::delegatedScrollingMode() c
     return DelegatedScrollingMode::DelegatedToWebKit;
 }
 
-void RemoteLayerTreeDrawingAreaMac::setColorSpace(std::optional<WebCore::DestinationColorSpace> colorSpace)
+bool RemoteLayerTreeDrawingAreaMac::usesDelegatedPageScaling() const
+{
+    RefPtr page = protect(m_webPage)->corePage();
+    return page && page->settings().unifiedMacZoomEnabled();
+}
+
+void RemoteLayerTreeDrawingAreaMac::setColorSpace(std::optional<WebCore::ColorSpace> colorSpace)
 {
     m_displayColorSpace = colorSpace;
 
@@ -63,7 +71,7 @@ void RemoteLayerTreeDrawingAreaMac::setColorSpace(std::optional<WebCore::Destina
     // which causes PlatformCALayerRemote::updateBackingStore() to re-create backing stores with the new colorspace.
 }
 
-std::optional<WebCore::DestinationColorSpace> RemoteLayerTreeDrawingAreaMac::displayColorSpace() const
+std::optional<WebCore::ColorSpace> RemoteLayerTreeDrawingAreaMac::displayColorSpace() const
 {
     return m_displayColorSpace;
 }
@@ -77,7 +85,7 @@ void RemoteLayerTreeDrawingAreaMac::adjustTransientZoom(double scale, WebCore::F
 {
     LOG_WITH_STREAM(ViewGestures, stream << "RemoteLayerTreeDrawingAreaMac::adjustTransientZoom - scale " << scale << " origin " << origin);
 
-    auto totalScale = scale * protectedWebPage()->viewScaleFactor();
+    auto totalScale = scale * m_webPage->viewScaleFactor();
 
     // FIXME: Need to trigger some re-rendering here to render at the new scale, so tiles update while zooming.
 
@@ -87,11 +95,13 @@ void RemoteLayerTreeDrawingAreaMac::adjustTransientZoom(double scale, WebCore::F
 void RemoteLayerTreeDrawingAreaMac::willCommitMainFrameData(MainFrameData& data)
 {
     // FIXME: Probably need something here for PDF.
-    RefPtr frameView = protectedWebPage()->localMainFrameView();
+    RefPtr frameView = protect(m_webPage)->localMainFrameView();
     if (!frameView)
         return;
 
-    if (RefPtr renderViewGraphicsLayer = frameView->graphicsLayerForPageScale())
+    // The RenderView backing layer carries the page scale transform, and rootContentsLayer carries the tile
+    // resolution. They can't be the same layer, since rootContentsLayer has a non-zero position.
+    if (RefPtr renderViewGraphicsLayer = frameView->graphicsLayerForRenderViewBacking())
         data.pageScalingLayerID = renderViewGraphicsLayer->primaryLayerID();
 
     if (RefPtr scrolledContentsLayer = frameView->graphicsLayerForScrolledContents())

@@ -53,11 +53,11 @@ struct Base64Specification {
 // Rather than being perfectly precise, this is a bit conservative.
 static constexpr unsigned maximumBase64EncoderInputBufferSize = std::numeric_limits<unsigned>::max() / 77 * 76 / 4 * 3 - 2;
 
-WTF_EXPORT_PRIVATE unsigned calculateBase64EncodedSize(unsigned inputLength, OptionSet<Base64EncodeOption>);
+WTF_EXPORT_PRIVATE unsigned calculateBase64EncodedSize(size_t inputLength, OptionSet<Base64EncodeOption>);
 
 template<typename CharacterType> bool isBase64OrBase64URLCharacter(CharacterType);
 
-WTF_EXPORT_PRIVATE void base64Encode(std::span<const std::byte>, std::span<char16_t>, OptionSet<Base64EncodeOption> = { });
+WTF_EXPORT_PRIVATE void LEGACY_NODELETE base64Encode(std::span<const std::byte>, std::span<char16_t>, OptionSet<Base64EncodeOption> = { });
 WTF_EXPORT_PRIVATE void base64Encode(std::span<const std::byte>, std::span<Latin1Character>, OptionSet<Base64EncodeOption> = { });
 
 WTF_EXPORT_PRIVATE Vector<uint8_t> base64EncodeToVector(std::span<const std::byte>, OptionSet<Base64EncodeOption> = { });
@@ -67,7 +67,7 @@ WTF_EXPORT_PRIVATE String base64EncodeToString(std::span<const std::byte>, Optio
 String base64EncodeToString(std::span<const uint8_t>, OptionSet<Base64EncodeOption> = { });
 
 WTF_EXPORT_PRIVATE String base64EncodeToStringReturnNullIfOverflow(std::span<const std::byte>, OptionSet<Base64EncodeOption> = { });
-String base64EncodeToStringReturnNullIfOverflow(const CString&, OptionSet<Base64EncodeOption> = { });
+String base64EncodeToStringReturnNullIfOverflow(const Latin1CString&, OptionSet<Base64EncodeOption> = { });
 
 WTF_EXPORT_PRIVATE std::optional<Vector<uint8_t>> base64Decode(std::span<const std::byte>, OptionSet<Base64DecodeOption> = { });
 WTF_EXPORT_PRIVATE std::optional<Vector<uint8_t>> base64Decode(StringView, OptionSet<Base64DecodeOption> = { });
@@ -112,7 +112,7 @@ inline String base64EncodeToStringReturnNullIfOverflow(std::span<const uint8_t> 
     return base64EncodeToStringReturnNullIfOverflow(std::as_bytes(input), options);
 }
 
-inline String base64EncodeToStringReturnNullIfOverflow(const CString& input, OptionSet<Base64EncodeOption> options)
+inline String base64EncodeToStringReturnNullIfOverflow(const Latin1CString& input, OptionSet<Base64EncodeOption> options)
 {
     return base64EncodeToStringReturnNullIfOverflow(std::as_bytes(input.span()), options);
 }
@@ -206,7 +206,9 @@ private:
 enum class Alphabet : uint8_t { Base64, Base64URL };
 enum class LastChunkHandling : uint8_t { Loose, Strict, StopBeforePartial };
 enum class FromBase64ShouldThrowError: bool { No, Yes };
-WTF_EXPORT_PRIVATE std::tuple<FromBase64ShouldThrowError, size_t, size_t> fromBase64(StringView, std::span<uint8_t>, Alphabet, LastChunkHandling);
+enum class OutputSizeIsMaxLength : bool { No, Yes };
+
+WTF_EXPORT_PRIVATE std::tuple<FromBase64ShouldThrowError, size_t, size_t> fromBase64(StringView, std::span<uint8_t>, Alphabet, LastChunkHandling, OutputSizeIsMaxLength);
 WTF_EXPORT_PRIVATE size_t maxLengthFromBase64(StringView);
 
 } // namespace WTF
@@ -224,3 +226,4 @@ using WTF::base64URLEncoded;
 using WTF::isBase64OrBase64URLCharacter;
 using WTF::fromBase64;
 using WTF::maxLengthFromBase64;
+using WTF::OutputSizeIsMaxLength;

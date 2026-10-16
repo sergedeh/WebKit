@@ -117,9 +117,6 @@ public:
 
     void stop();
 
-#if USE(GSTREAMER_WEBRTC)
-    virtual void prepareForClose() = 0;
-#endif
     virtual void close() = 0;
 
     virtual void restartIce() = 0;
@@ -164,7 +161,7 @@ public:
     void newDataChannel(UniqueRef<RTCDataChannelHandler>&&, String&&, RTCDataChannelInit&&);
 
     virtual void disableICECandidateFiltering();
-    void enableICECandidateFiltering();
+    void LEGACY_NODELETE enableICECandidateFiltering();
 
     virtual std::optional<bool> canTrickleIceCandidates() const = 0;
 
@@ -174,9 +171,9 @@ public:
     const Logger& logger() const final { return m_logger.get(); }
     uint64_t logIdentifier() const final { return m_logIdentifier; }
     ASCIILiteral logClassName() const override { return "PeerConnectionBackend"_s; }
-    WTFLogChannel& logChannel() const final;
+    WTFLogChannel& LEGACY_NODELETE logChannel() const final;
 #if PLATFORM(WPE) || PLATFORM(GTK)
-    void handleLogMessage(const WTFLogChannel&, WTFLogLevel, Vector<JSONLogValue>&&) final;
+    void handleLogMessage(const WTFLogChannel&, WTFLogLevel, std::optional<WTFLogLocation>, const Vector<JSONLogValue>&) final;
 #endif
 #endif
 
@@ -213,9 +210,9 @@ public:
     };
     static void generateCertificate(Document&, const CertificateInformation&, DOMPromiseDeferred<IDLInterface<RTCCertificate>>&&);
 
-    virtual void collectTransceivers() { };
+    virtual void collectTransceivers(Vector<Ref<RTCRtpTransceiver>>&&) { };
 
-    ScriptExecutionContext* context() const;
+    ScriptExecutionContext* LEGACY_NODELETE context() const;
 
     virtual void suspend() { }
     virtual void resume() { }
@@ -230,7 +227,7 @@ public:
     virtual void startGatheringStatLogs(Function<void(String&&)>&&) { }
     virtual void stopGatheringStatLogs() { }
 
-    WEBCORE_EXPORT void ref() const;
+    WEBCORE_EXPORT void LEGACY_NODELETE ref() const;
     WEBCORE_EXPORT void deref() const;
 
     virtual bool shouldEnableServiceClass() const { return true; }
@@ -250,7 +247,7 @@ protected:
     void setRemoteDescriptionSucceeded(std::optional<DescriptionStates>&&, std::optional<TransceiverStates>&&, std::unique_ptr<RTCSctpTransportBackend>&&, std::optional<double>);
     void setRemoteDescriptionFailed(Exception&&);
 
-    void validateSDP(const String&) const;
+    void LEGACY_NODELETE validateSDP(const String&) const;
 
 #if PLATFORM(WPE) || PLATFORM(GTK)
     bool isJSONLogStreamingEnabled() const { return !m_jsonFilePath.isEmpty(); }
@@ -264,7 +261,7 @@ protected:
 
     using LogEvent = Variant<MessageLogEvent, StatsLogEvent>;
     String generateJSONLogEvent(LogEvent&&, bool isForGatherLogs);
-    void emitJSONLogEvent(String&&);
+    void LEGACY_NODELETE emitJSONLogEvent(String&&);
 
 private:
     virtual void doCreateOffer(RTCOfferOptions&&) = 0;
@@ -275,7 +272,6 @@ private:
     virtual void doStop() = 0;
 
 protected:
-    Ref<RTCPeerConnection> protectedPeerConnection() const;
     WeakRef<RTCPeerConnection, WeakPtrImplWithEventTargetData> m_peerConnection;
 
 private:

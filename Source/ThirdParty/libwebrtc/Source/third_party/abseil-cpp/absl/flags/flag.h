@@ -241,7 +241,8 @@ ABSL_NAMESPACE_END
     /* default value argument. That keeps temporaries alive */               \
     /* long enough for NonConst to work correctly.          */               \
     static constexpr absl::string_view Value(                                \
-        absl::string_view absl_flag_help = ABSL_FLAG_IMPL_FLAGHELP(txt)) {   \
+        absl::string_view absl_flag_help ABSL_ATTRIBUTE_LIFETIME_BOUND  =     \
+            ABSL_FLAG_IMPL_FLAGHELP(txt)) {                                  \
       return absl_flag_help;                                                 \
     }                                                                        \
     static std::string NonConst() { return std::string(Value()); }           \
@@ -299,7 +300,7 @@ ABSL_NAMESPACE_END
 // retired flags are cleaned up.
 #define ABSL_RETIRED_FLAG(type, name, default_value, explanation)      \
   static absl::flags_internal::RetiredFlag<type> RETIRED_FLAGS_##name; \
-  ABSL_ATTRIBUTE_UNUSED static const auto RETIRED_FLAGS_REG_##name =   \
+  [[maybe_unused]] static const auto RETIRED_FLAGS_REG_##name =        \
       (RETIRED_FLAGS_##name.Retire(#name),                             \
        ::absl::flags_internal::FlagRegistrarEmpty{})
 

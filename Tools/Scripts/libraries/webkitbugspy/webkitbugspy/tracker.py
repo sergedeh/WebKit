@@ -131,7 +131,7 @@ class Tracker(object):
     def __init__(self, users=None, redact=None, hide_title=None, redact_exemption=None, timeout=None):
         self.users = users or User.Mapping()
         self.hide_title = False if hide_title is None else hide_title
-        self.timeout = None
+        self.timeout = timeout
 
         for name, rvalue in (('redact', redact), ('redact_exemption', redact_exemption)):
             if rvalue is None:
@@ -181,6 +181,9 @@ class Tracker(object):
         raise NotImplementedError()
 
     def relate(self, issue, **relations):
+        raise NotImplementedError()
+
+    def unrelate(self, issue, **relations):
         raise NotImplementedError()
 
     def add_comment(self, issue, text):

@@ -41,6 +41,8 @@ class RcInterfaceTest : public ::libaom_test::EncoderTest,
         frame_drop_thresh_(0) {
     memset(&svc_params_, 0, sizeof(svc_params_));
     memset(&layer_id_, 0, sizeof(layer_id_));
+    memset(&frame_params_, 0, sizeof(frame_params_));
+    frame_params_.frame_type = aom::kKeyFrame;
   }
 
   ~RcInterfaceTest() override = default;
@@ -256,6 +258,34 @@ class RcInterfaceTest : public ::libaom_test::EncoderTest,
                                          1, 0, kNumFrames);
 
     ASSERT_NO_FATAL_FAILURE(RunLoop(&video));
+  }
+
+  void RunSvcInvalidInputs() {
+    key_interval_ = 10000;
+    // Initial resolution is set to 640x480.
+    SetConfigSvc(3, 3);
+    rc_api_ = aom::AV1RateControlRTC::Create(rc_cfg_);
+    // Verfiy return false on UpdateRateControl if resolution goes above
+    // configured setting.
+    rc_cfg_.width = 1280;
+    rc_cfg_.height = 720;
+    ASSERT_FALSE(rc_api_->UpdateRateControl(rc_cfg_));
+    // Go back to original resolution.
+    rc_cfg_.width = 640;
+    rc_cfg_.height = 480;
+    ASSERT_TRUE(rc_api_->UpdateRateControl(rc_cfg_));
+    // Set layer_id beyond the range set in init (#spatial=3, #temporal=3).
+    // Expect ComputeQP() to return kFrameDropDecisionDrop.
+    frame_params_.spatial_layer_id = 4;
+    frame_params_.temporal_layer_id = 0;
+    ASSERT_EQ(rc_api_->ComputeQP(frame_params_), aom::kFrameDropDecisionDrop);
+    frame_params_.spatial_layer_id = 0;
+    frame_params_.temporal_layer_id = 4;
+    ASSERT_EQ(rc_api_->ComputeQP(frame_params_), aom::kFrameDropDecisionDrop);
+    // Start with valid (0, 0) layer_id, expect return kFrameDropDecisionOk.
+    frame_params_.spatial_layer_id = 0;
+    frame_params_.temporal_layer_id = 0;
+    ASSERT_EQ(rc_api_->ComputeQP(frame_params_), aom::kFrameDropDecisionOk);
   }
 
   void RunSvc() {
@@ -521,6 +551,8 @@ class RcExternMethodsInterfaceTest
   void TestGetCdefInfoRateControl();
   void TestCreateRateControlConfig();
   void TestDestroyRateControlRTC();
+  void TestBitDepthRateControl();
+  void TestLoopFilterLevelBitDepth();
   void SetConfig();
 
  private:
@@ -664,7 +696,7 @@ void RcExternMethodsInterfaceTest::TestCreateRateControlConfig() {
   av1_ratecontrol_rtc_init_ratecontrol_config(&config);
   ASSERT_EQ(config.width, 1280);
   ASSERT_EQ(config.height, 720);
-  // only width and height is checked. can be extended
+  ASSERT_EQ(config.bit_depth, 8);
 
   av1_ratecontrol_rtc_destroy(controller);
 }
@@ -676,6 +708,72 @@ void RcExternMethodsInterfaceTest::TestDestroyRateControlRTC() {
   av1_ratecontrol_rtc_destroy(controller);
 }
 
+void RcExternMethodsInterfaceTest::TestBitDepthRateControl() {
+  // Invalid bit-depth values should fail.
+  rc_cfg_.bit_depth = 9;
+  AomAV1RateControlRTC *invalid_controller =
+      av1_ratecontrol_rtc_create(&rc_cfg_);
+  ASSERT_EQ(invalid_controller, nullptr);
+
+  rc_cfg_.bit_depth = -1;
+  invalid_controller = av1_ratecontrol_rtc_create(&rc_cfg_);
+  ASSERT_EQ(invalid_controller, nullptr);
+
+  rc_cfg_.bit_depth = 14;
+  invalid_controller = av1_ratecontrol_rtc_create(&rc_cfg_);
+  ASSERT_EQ(invalid_controller, nullptr);
+
+  // 8-bit depth is always supported.
+  rc_cfg_.bit_depth = 8;
+  AomAV1RateControlRTC *controller_8 = av1_ratecontrol_rtc_create(&rc_cfg_);
+  ASSERT_NE(controller_8, nullptr);
+  // Attempting to change bit-depth dynamically should fail.
+  rc_cfg_.bit_depth = 10;
+  ASSERT_FALSE(av1_ratecontrol_rtc_update(controller_8, &rc_cfg_));
+  av1_ratecontrol_rtc_destroy(controller_8);
+
+  rc_cfg_.bit_depth = 10;
+  AomAV1RateControlRTC *controller_10 = av1_ratecontrol_rtc_create(&rc_cfg_);
+  ASSERT_NE(controller_10, nullptr);
+  rc_cfg_.bit_depth = 8;
+  ASSERT_FALSE(av1_ratecontrol_rtc_update(controller_10, &rc_cfg_));
+  av1_ratecontrol_rtc_destroy(controller_10);
+
+  rc_cfg_.bit_depth = 12;
+  AomAV1RateControlRTC *controller_12 = av1_ratecontrol_rtc_create(&rc_cfg_);
+  ASSERT_NE(controller_12, nullptr);
+  av1_ratecontrol_rtc_destroy(controller_12);
+}
+
+void RcExternMethodsInterfaceTest::TestLoopFilterLevelBitDepth() {
+  frame_params_.spatial_layer_id = 0;
+  frame_params_.temporal_layer_id = 0;
+  frame_params_.frame_type = kAomKeyFrame;
+
+  rc_cfg_.bit_depth = 8;
+  AomAV1RateControlRTC *controller_8 = av1_ratecontrol_rtc_create(&rc_cfg_);
+  ASSERT_NE(controller_8, nullptr);
+  ASSERT_EQ(av1_ratecontrol_rtc_compute_qp(controller_8, &frame_params_),
+            kAomFrameDropDecisionOk);
+  const AomAV1LoopfilterLevel lpf_8 =
+      av1_ratecontrol_rtc_get_loop_filter_level(controller_8);
+  av1_ratecontrol_rtc_destroy(controller_8);
+
+  rc_cfg_.bit_depth = 10;
+  AomAV1RateControlRTC *controller_10 = av1_ratecontrol_rtc_create(&rc_cfg_);
+  ASSERT_NE(controller_10, nullptr);
+  ASSERT_EQ(av1_ratecontrol_rtc_compute_qp(controller_10, &frame_params_),
+            kAomFrameDropDecisionOk);
+  const AomAV1LoopfilterLevel lpf_10 =
+      av1_ratecontrol_rtc_get_loop_filter_level(controller_10);
+  av1_ratecontrol_rtc_destroy(controller_10);
+
+  // For 10-bit AV1 encoding, the estimated loopfilter level should be stronger
+  // than for 8-bit at the same configuration.
+  EXPECT_GT(lpf_10.filter_level[0], lpf_8.filter_level[0]);
+  EXPECT_GT(lpf_10.filter_level[1], lpf_8.filter_level[1]);
+}
+
 TEST_P(RcInterfaceTest, OneLayer) { RunOneLayer(); }
 
 TEST_P(RcInterfaceTest, OneLayerDropFramesCBR) { RunOneLayerDropFramesCBR(); }
@@ -683,6 +781,8 @@ TEST_P(RcInterfaceTest, OneLayerDropFramesCBR) { RunOneLayerDropFramesCBR(); }
 TEST_P(RcInterfaceTest, OneLayerPeriodicKey) { RunOneLayerPeriodicKey(); }
 
 TEST_P(RcInterfaceTest, OneLayerScreen) { RunOneLayerScreen(); }
+
+TEST_P(RcInterfaceTest, SvcInvalidInputs) { RunSvcInvalidInputs(); }
 
 TEST_P(RcInterfaceTest, Svc) { RunSvc(); }
 
@@ -730,6 +830,14 @@ TEST_P(RcExternMethodsInterfaceTest, CreateRateControlConfigTest) {
 
 TEST_P(RcExternMethodsInterfaceTest, DestroyRateControlRTCTest) {
   TestDestroyRateControlRTC();
+}
+
+TEST_P(RcExternMethodsInterfaceTest, BitDepthRateControllerTest) {
+  TestBitDepthRateControl();
+}
+
+TEST_P(RcExternMethodsInterfaceTest, LoopFilterLevelBitDepthTest) {
+  TestLoopFilterLevelBitDepth();
 }
 
 AV1_INSTANTIATE_TEST_SUITE(RcInterfaceTest, ::testing::Values(0, 3));

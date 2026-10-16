@@ -24,9 +24,13 @@
 
 #include "config.h"
 #include "Shared/WebKit-Swift.h" // NOLINT
+#include "ArgumentCoders.h" // NOLINT
 #include "Decoder.h" // NOLINT
 #include "HandleMessage.h" // NOLINT
+#include "SessionState.h" // NOLINT
 #include "TestWithSwiftMessages.h" // NOLINT
+#include <WebCore/FrameIdentifier.h> // NOLINT
+#include <wtf/Ref.h> // NOLINT
 
 #if ENABLE(IPC_TESTING_API)
 #include "JSIPCBinding.h"
@@ -36,7 +40,6 @@ namespace WebKit {
 
 void TestWithSwiftMessageForwarder::didReceiveMessage(IPC::Connection& connection, IPC::Decoder& decoder)
 {
-    Ref protectedThis { *this };
     auto target = getMessageTarget();
     if (!target) {
         FATAL("Something is keeping a reference to the message forwarder");
@@ -44,7 +47,19 @@ void TestWithSwiftMessageForwarder::didReceiveMessage(IPC::Connection& connectio
         return;
     }
     if (decoder.messageName() == Messages::TestWithSwift::TestAsyncMessage::name()) {
-        IPC::handleMessageAsync<Messages::TestWithSwift::TestAsyncMessage>(connection, decoder, target.get(), &TestWithSwift::testAsyncMessage);
+        IPC::handleMessageAsync<Messages::TestWithSwift::TestAsyncMessage>(connection, decoder, m_handler.get(), &TestWithSwiftWeakRef::dispatchTestAsyncMessage);
+        return;
+    }
+    if (decoder.messageName() == Messages::TestWithSwift::TestMessageWithAliasedParameter::name()) {
+        IPC::handleMessage<Messages::TestWithSwift::TestMessageWithAliasedParameter>(connection, decoder, m_handler.get(), &TestWithSwiftWeakRef::dispatchTestMessageWithAliasedParameter);
+        return;
+    }
+    if (decoder.messageName() == Messages::TestWithSwift::TestThrowingMessageWithoutReply::name()) {
+        IPC::handleMessage<Messages::TestWithSwift::TestThrowingMessageWithoutReply>(connection, decoder, m_handler.get(), &TestWithSwiftWeakRef::dispatchTestThrowingMessageWithoutReply);
+        return;
+    }
+    if (decoder.messageName() == Messages::TestWithSwift::TestMessageWithEmptyReply::name()) {
+        IPC::handleMessageAsync<Messages::TestWithSwift::TestMessageWithEmptyReply>(connection, decoder, m_handler.get(), &TestWithSwiftWeakRef::dispatchTestMessageWithEmptyReply);
         return;
     }
     UNUSED_PARAM(connection);
@@ -54,7 +69,6 @@ void TestWithSwiftMessageForwarder::didReceiveMessage(IPC::Connection& connectio
 
 void TestWithSwiftMessageForwarder::didReceiveSyncMessage(IPC::Connection& connection, IPC::Decoder& decoder, UniqueRef<IPC::Encoder>& replyEncoder)
 {
-    Ref protectedThis { *this };
     auto target = getMessageTarget();
     if (!target) {
         FATAL("Something is keeping a reference to the message forwarder");
@@ -62,7 +76,11 @@ void TestWithSwiftMessageForwarder::didReceiveSyncMessage(IPC::Connection& conne
         return;
     }
     if (decoder.messageName() == Messages::TestWithSwift::TestSyncMessage::name()) {
-        IPC::handleMessageSynchronous<Messages::TestWithSwift::TestSyncMessage>(connection, decoder, replyEncoder, target.get(), &TestWithSwift::testSyncMessage);
+        IPC::handleMessageSynchronous<Messages::TestWithSwift::TestSyncMessage>(connection, decoder, replyEncoder, m_handler.get(), &TestWithSwiftWeakRef::dispatchTestSyncMessage);
+        return;
+    }
+    if (decoder.messageName() == Messages::TestWithSwift::TestThrowingMessageWithReply::name()) {
+        IPC::handleMessageSynchronous<Messages::TestWithSwift::TestThrowingMessageWithReply>(connection, decoder, replyEncoder, m_handler.get(), &TestWithSwiftWeakRef::dispatchTestThrowingMessageWithReply);
         return;
     }
     UNUSED_PARAM(connection);
@@ -97,6 +115,22 @@ TestWithSwiftMessageForwarder::~TestWithSwiftMessageForwarder()
 
 } // namespace WebKit
 
+namespace CompletionHandlers {
+namespace TestWithSwift {
+
+void completeWithDefaultReply(TestAsyncMessageCompletionHandler& completionHandler)
+{
+    IPC::Connection::cancelReply<Messages::TestWithSwift::TestAsyncMessage>(*completionHandler);
+}
+
+void completeWithDefaultReply(TestMessageWithEmptyReplyCompletionHandler& completionHandler)
+{
+    IPC::Connection::cancelReply<Messages::TestWithSwift::TestMessageWithEmptyReply>(*completionHandler);
+}
+
+} // namespace TestWithSwift
+} // namespace CompletionHandlers
+
 #if ENABLE(IPC_TESTING_API)
 
 namespace IPC {
@@ -117,9 +151,37 @@ template<> std::optional<JSC::JSValue> jsValueForDecodedMessageReply<MessageName
 {
     return jsValueForDecodedArguments<Messages::TestWithSwift::TestSyncMessage::ReplyArguments>(globalObject, decoder);
 }
+template<> std::optional<JSC::JSValue> jsValueForDecodedMessage<MessageName::TestWithSwift_TestMessageWithAliasedParameter>(JSC::JSGlobalObject* globalObject, Decoder& decoder)
+{
+    return jsValueForDecodedArguments<Messages::TestWithSwift::TestMessageWithAliasedParameter::Arguments>(globalObject, decoder);
+}
+template<> std::optional<JSC::JSValue> jsValueForDecodedMessage<MessageName::TestWithSwift_TestThrowingMessageWithReply>(JSC::JSGlobalObject* globalObject, Decoder& decoder)
+{
+    return jsValueForDecodedArguments<Messages::TestWithSwift::TestThrowingMessageWithReply::Arguments>(globalObject, decoder);
+}
+template<> std::optional<JSC::JSValue> jsValueForDecodedMessageReply<MessageName::TestWithSwift_TestThrowingMessageWithReply>(JSC::JSGlobalObject* globalObject, Decoder& decoder)
+{
+    return jsValueForDecodedArguments<Messages::TestWithSwift::TestThrowingMessageWithReply::ReplyArguments>(globalObject, decoder);
+}
+template<> std::optional<JSC::JSValue> jsValueForDecodedMessage<MessageName::TestWithSwift_TestThrowingMessageWithoutReply>(JSC::JSGlobalObject* globalObject, Decoder& decoder)
+{
+    return jsValueForDecodedArguments<Messages::TestWithSwift::TestThrowingMessageWithoutReply::Arguments>(globalObject, decoder);
+}
+template<> std::optional<JSC::JSValue> jsValueForDecodedMessage<MessageName::TestWithSwift_TestMessageWithEmptyReply>(JSC::JSGlobalObject* globalObject, Decoder& decoder)
+{
+    return jsValueForDecodedArguments<Messages::TestWithSwift::TestMessageWithEmptyReply::Arguments>(globalObject, decoder);
+}
+template<> std::optional<JSC::JSValue> jsValueForDecodedMessageReply<MessageName::TestWithSwift_TestMessageWithEmptyReply>(JSC::JSGlobalObject* globalObject, Decoder& decoder)
+{
+    return jsValueForDecodedArguments<Messages::TestWithSwift::TestMessageWithEmptyReply::ReplyArguments>(globalObject, decoder);
+}
 template<> std::optional<JSC::JSValue> jsValueForDecodedMessage<MessageName::TestWithSwift_TestAsyncMessageReply>(JSC::JSGlobalObject* globalObject, Decoder& decoder)
 {
     return jsValueForDecodedArguments<Messages::TestWithSwift::TestAsyncMessageReply::Arguments>(globalObject, decoder);
+}
+template<> std::optional<JSC::JSValue> jsValueForDecodedMessage<MessageName::TestWithSwift_TestMessageWithEmptyReplyReply>(JSC::JSGlobalObject* globalObject, Decoder& decoder)
+{
+    return jsValueForDecodedArguments<Messages::TestWithSwift::TestMessageWithEmptyReplyReply::Arguments>(globalObject, decoder);
 }
 
 }

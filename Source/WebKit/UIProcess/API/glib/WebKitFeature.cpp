@@ -23,6 +23,7 @@
 #include "APIFeature.h"
 #include "WebKitFeaturePrivate.h"
 #include <wtf/RefPtr.h>
+#include <wtf/text/UTF8CStringView.h>
 
 static inline WebKitFeatureStatus toFeatureStatus(API::FeatureStatus status)
 {
@@ -93,14 +94,14 @@ static inline const char* toFeatureCategory(API::FeatureCategory category)
  *   for details): [method@Feature.get_status].
  * - A category, which may be used to group features together:
  *   [method@Feature.get_category].
- * - An optional short “name” which can be presented to an user:
+ * - An optional short “name” which can be presented to a user:
  *   [method@Feature.get_name].
  * - An optional longer “detailed” description:
  *   [method@Feature.get_details].
  *
  * The lists of available features can be obtained with
  * [func@Settings.get_all_features], [func@Settings.get_experimental_features],
- * and [func@Settings.get_development_features]). As a rule of thumb,
+ * and [func@Settings.get_development_features]. As a rule of thumb,
  * applications which may want to allow users (i.e. web developers) to test
  * WebKit features should use the list of experimental features. Additionally,
  * applications might want to expose development features *when targeting
@@ -122,12 +123,12 @@ struct _WebKitFeature {
     }
 
     RefPtr<API::Feature> feature;
-    CString identifier { toIdentifier(feature->key()) };
-    CString name { feature->name().utf8() };
-    CString details { feature->details().utf8() };
+    UTF8CString identifier { toIdentifier(feature->key()) };
+    UTF8CString name { feature->name().utf8() };
+    UTF8CString details { feature->details().utf8() };
     int referenceCount { 1 };
 
-    static CString toIdentifier(const String& key)
+    static UTF8CString toIdentifier(const String& key)
     {
         if (key.endsWith("Enabled"_s))
             return StringView(key).left(key.length() - (sizeof("Enabled") - 1)).utf8();
@@ -175,7 +176,7 @@ WebKitFeature* webkit_feature_ref(WebKitFeature* feature)
  *
  * Atomically releases a reference on the given @feature.
  *
- * If the reference was the last, the resources associated to the
+ * If the reference was the last, the resources associated with the
  * @feature are freed. This function is MT-safe and may be called from
  * any thread.
  *
@@ -203,7 +204,7 @@ void webkit_feature_unref(WebKitFeature* feature)
 const char* webkit_feature_get_identifier(WebKitFeature* feature)
 {
     g_return_val_if_fail(feature, nullptr);
-    return feature->identifier.data();
+    return feature->identifier.legacyCStringPointer();
 }
 
 /**
@@ -215,7 +216,7 @@ const char* webkit_feature_get_identifier(WebKitFeature* feature)
  * The returned string is suitable to be displayed to end users, but it
  * should not be relied upon being localized.
  *
- * Note that some *features may not* have a short name, and @NULL
+ * Note that some *features may not* have a short name, and %NULL
  * is returned in this case.
  *
  * Returns: (transfer none) (nullable): Short feature name.
@@ -225,7 +226,7 @@ const char* webkit_feature_get_identifier(WebKitFeature* feature)
 const char* webkit_feature_get_name(WebKitFeature* feature)
 {
     g_return_val_if_fail(feature, nullptr);
-    return feature->name.length() ? feature->name.data() : nullptr;
+    return feature->name.length() ? feature->name.legacyCStringPointer() : nullptr;
 }
 
 /**
@@ -240,7 +241,7 @@ const char* webkit_feature_get_name(WebKitFeature* feature)
  * The returned string is suitable to be displayed to end users, but it
  * should not be relied upon being localized.
  *
- * Note that some *features may not* have a detailed description, and @NULL
+ * Note that some *features may not* have a detailed description, and %NULL
  * is returned in this case.
  *
  * Returns: (transfer none) (nullable): Feature description.
@@ -250,7 +251,7 @@ const char* webkit_feature_get_name(WebKitFeature* feature)
 const char* webkit_feature_get_details(WebKitFeature* feature)
 {
     g_return_val_if_fail(feature, nullptr);
-    return feature->details.length() ? feature->details.data() : nullptr;
+    return feature->details.length() ? feature->details.legacyCStringPointer() : nullptr;
 }
 
 /**
@@ -319,7 +320,7 @@ gboolean webkit_feature_get_default_value(WebKitFeature* feature)
  *
  * ```c
  * g_autoptr(WebKitFeatureList) list = webkit_settings_get_experimental_features();
- * for (gsize i = 0; i < webkit_feature_list_get_length(list): i++) {
+ * for (gsize i = 0; i < webkit_feature_list_get_length(list); i++) {
  *     WebKitFeature *feature = webkit_feature_list_get(list, i);
  *     // Do something with "feature".
  * }
@@ -382,7 +383,7 @@ WebKitFeatureList* webkit_feature_list_ref(WebKitFeatureList* featureList)
  *
  * Atomically releases a reference on the given @feature_list.
  *
- * If the reference was the last, the resources associated to the
+ * If the reference was the last, the resources associated with the
  * @feature_list are freed. This function is MT-safe and may be called
  * from any thread.
  *
@@ -405,7 +406,7 @@ void webkit_feature_list_unref(WebKitFeatureList* featureList)
  *
  * Returns: number of elements.
  *
- * Since 2.42
+ * Since: 2.42
  */
 gsize webkit_feature_list_get_length(WebKitFeatureList* featureList)
 {
@@ -429,4 +430,30 @@ WebKitFeature* webkit_feature_list_get(WebKitFeatureList* featureList, gsize ind
     g_return_val_if_fail(featureList, nullptr);
     g_return_val_if_fail(index < featureList->items.size(), nullptr);
     return featureList->items[index];
+}
+
+/**
+ * webkit_feature_list_find:
+ * @feature_list: a #WebKitFeatureList
+ * @identifier: a #WebKitFeature identifier
+ *
+ * Finds a feature given its identifier.
+ *
+ * Returns: (transfer none) (nullable): The feature with the given
+ *     @identifier, or %NULL if it cannot be found.
+ *
+ * Since: 2.54
+ */
+WebKitFeature* webkit_feature_list_find(WebKitFeatureList* featureList, const char* identifier)
+{
+    g_return_val_if_fail(featureList, nullptr);
+    g_return_val_if_fail(identifier, nullptr);
+
+    const auto identifierView = UTF8CStringView::unsafeFromUTF8(identifier);
+
+    auto it = std::ranges::find_if(featureList->items, [&identifierView](WebKitFeature* feature) -> bool {
+        return equalSpans(feature->identifier.span(), identifierView.span());
+    });
+
+    return (it != featureList->items.end()) ? *it : nullptr;
 }

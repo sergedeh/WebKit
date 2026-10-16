@@ -39,7 +39,7 @@ struct RepeatStyle {
     FillRepeat x() const { return values.x(); }
     FillRepeat y() const { return values.y(); }
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
@@ -58,7 +58,7 @@ struct RepeatStyle {
 
 // MARK: - Conversion
 
-template<> struct CSSValueConversion<RepeatStyle> { auto operator()(BuilderState&, const CSSValue&) -> RepeatStyle; };
+template<> struct CSSValueConversion<RepeatStyle> { RepeatStyle operator()(BuilderState&, const CSSValue&); };
 
 } // namespace Style
 } // namespace WebCore

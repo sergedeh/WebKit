@@ -26,7 +26,7 @@
 #include "config.h"
 #include "ExecutionHandlerTestSupport.h"
 
-#if ENABLE(WEBASSEMBLY) && ENABLE(REMOTE_INSPECTOR)
+#if ENABLE(WEBASSEMBLY_DEBUGGER)
 
 #include "Completion.h"
 #include "Exception.h"
@@ -42,6 +42,7 @@
 #include "SourceCode.h"
 #include "SourceOrigin.h"
 #include "Structure.h"
+#include "StructureCreateInlines.h"
 #include "StructureInlines.h"
 #include "TestScripts.h"
 #include "VM.h"
@@ -53,6 +54,7 @@
 #include <wtf/MainThread.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/NakedPtr.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/SentinelLinkedList.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Threading.h>
@@ -67,6 +69,20 @@ using JSC::Wasm::ExecutionHandler;
 
 std::atomic<unsigned> replyCount { 0 };
 
+static Lock lastReplyLock;
+
+static String& lastReplyStorage() WTF_REQUIRES_LOCK(lastReplyLock)
+{
+    static NeverDestroyed<String> storage;
+    return storage.get();
+}
+
+String lastReply()
+{
+    Locker locker { lastReplyLock };
+    return lastReplyStorage().isolatedCopy();
+}
+
 // ========== Worker/Workers classes (duplicated from jsc.cpp) ==========
 // These are essential for proper VM tracking and $.agent.start() support
 
@@ -80,7 +96,7 @@ public:
     Workers() = default;
     ~Workers() = default;
 
-    static Workers& singleton()
+    static Workers& LEGACY_NODELETE singleton()
     {
         static Workers* workers = new Workers();
         return *workers;
@@ -110,7 +126,7 @@ public:
         remove();
     }
 
-    bool isMain() const { return m_isMain; }
+    bool LEGACY_NODELETE isMain() const { return m_isMain; }
 
     static Worker& current()
     {
@@ -265,14 +281,16 @@ void setupTestEnvironment(DebugServer*& debugServer, ExecutionHandler*& executio
     Options::setOptions("--enableWasmDebugger=true");
 
     debugServer = &DebugServer::singleton();
-    bool started = debugServer->startRWI([](const String& packet) {
+    debugServer->startRWI([](const String& packet) {
+        {
+            Locker locker { lastReplyLock };
+            lastReplyStorage() = packet.isolatedCopy();
+        }
         replyCount++;
         dataLogLnIf(verboseLogging, RWI_REPLY_PREFIX, packet);
         return true;
     });
-
-    RELEASE_ASSERT(started, "Failed to start DebugServer in RWI mode");
-    RELEASE_ASSERT(debugServer->isConnected(), "DebugServer not connected");
+    RELEASE_ASSERT(debugServer->isConnected(), "DebugServer has no debug client after RWI start");
 
     executionHandler = &debugServer->execution();
     executionHandler->setDebugServerThreadId(Thread::currentSingleton().uid());
@@ -317,4 +335,4 @@ void workerThreadTask(const String& script)
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ExecutionHandlerTestSupport::Workers);
 
-#endif // ENABLE(WEBASSEMBLY) && ENABLE(REMOTE_INSPECTOR)
+#endif // ENABLE(WEBASSEMBLY_DEBUGGER)

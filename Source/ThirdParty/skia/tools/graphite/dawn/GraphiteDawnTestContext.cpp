@@ -11,7 +11,7 @@
 #include "include/gpu/graphite/ContextOptions.h"
 #include "include/gpu/graphite/dawn/DawnBackendContext.h"
 #include "include/gpu/graphite/dawn/DawnGraphiteTypes.h"
-#include "include/private/base/SkOnce.h"
+#include "include/private/SkOnce.h"
 #include "src/gpu/graphite/ContextOptionsPriv.h"
 #include "tools/gpu/ContextType.h"
 #include "tools/graphite/TestOptions.h"
@@ -62,19 +62,6 @@ std::unique_ptr<GraphiteTestContext> DawnTestContext::Make(wgpu::BackendType bac
     options.nextInChain = &togglesDesc;
     std::vector<dawn::native::Adapter> adapters = sInstance->EnumerateAdapters(&options);
     SkASSERT(!adapters.empty());
-    // Sort adapters by adapterType(DiscreteGPU, IntegratedGPU, CPU) and
-    // backendType(WebGPU, D3D11, D3D12, Metal, Vulkan, OpenGL, OpenGLES).
-    std::sort(
-            adapters.begin(), adapters.end(), [](dawn::native::Adapter a, dawn::native::Adapter b) {
-                wgpu::Adapter wgpuA = a.Get();
-                wgpu::Adapter wgpuB = b.Get();
-                wgpu::AdapterInfo infoA;
-                wgpu::AdapterInfo infoB;
-                wgpuA.GetInfo(&infoA);
-                wgpuB.GetInfo(&infoB);
-                return std::tuple(infoA.adapterType, infoA.backendType) <
-                       std::tuple(infoB.adapterType, infoB.backendType);
-            });
 
     for (const auto& adapter : adapters) {
         wgpu::Adapter wgpuAdapter = adapter.Get();
@@ -101,48 +88,7 @@ std::unique_ptr<GraphiteTestContext> DawnTestContext::Make(wgpu::BackendType bac
 
     std::vector<wgpu::FeatureName> features;
     wgpu::Adapter adapter = matchedAdaptor.Get();
-    if (adapter.HasFeature(wgpu::FeatureName::MSAARenderToSingleSampled)) {
-        features.push_back(wgpu::FeatureName::MSAARenderToSingleSampled);
-    }
-    if (adapter.HasFeature(wgpu::FeatureName::TransientAttachments)) {
-        features.push_back(wgpu::FeatureName::TransientAttachments);
-    }
-    if (adapter.HasFeature(wgpu::FeatureName::Unorm16TextureFormats)) {
-        features.push_back(wgpu::FeatureName::Unorm16TextureFormats);
-    }
-    if (adapter.HasFeature(wgpu::FeatureName::DualSourceBlending)) {
-        features.push_back(wgpu::FeatureName::DualSourceBlending);
-    }
-    if (adapter.HasFeature(wgpu::FeatureName::FramebufferFetch)) {
-        features.push_back(wgpu::FeatureName::FramebufferFetch);
-    }
-    if (adapter.HasFeature(wgpu::FeatureName::BufferMapExtendedUsages)) {
-        features.push_back(wgpu::FeatureName::BufferMapExtendedUsages);
-    }
-    if (adapter.HasFeature(wgpu::FeatureName::TextureCompressionETC2)) {
-        features.push_back(wgpu::FeatureName::TextureCompressionETC2);
-    }
-    if (adapter.HasFeature(wgpu::FeatureName::TextureCompressionBC)) {
-        features.push_back(wgpu::FeatureName::TextureCompressionBC);
-    }
-    if (adapter.HasFeature(wgpu::FeatureName::TextureFormatsTier1)) {
-        features.push_back(wgpu::FeatureName::TextureFormatsTier1);
-    }
-    if (adapter.HasFeature(wgpu::FeatureName::DawnLoadResolveTexture)) {
-        features.push_back(wgpu::FeatureName::DawnLoadResolveTexture);
-    }
-    if (adapter.HasFeature(wgpu::FeatureName::DawnPartialLoadResolveTexture)) {
-        features.push_back(wgpu::FeatureName::DawnPartialLoadResolveTexture);
-    }
-    if (adapter.HasFeature(wgpu::FeatureName::TimestampQuery)) {
-        features.push_back(wgpu::FeatureName::TimestampQuery);
-    }
-    if (adapter.HasFeature(wgpu::FeatureName::DawnTexelCopyBufferRowAlignment)) {
-        features.push_back(wgpu::FeatureName::DawnTexelCopyBufferRowAlignment);
-    }
-    if (adapter.HasFeature(wgpu::FeatureName::ImplicitDeviceSynchronization)) {
-        features.push_back(wgpu::FeatureName::ImplicitDeviceSynchronization);
-    }
+    skiatest::graphite::AddPreferredFeatures(adapter, features);
 
     wgpu::DeviceDescriptor desc;
     desc.requiredFeatureCount  = features.size();
@@ -157,7 +103,7 @@ std::unique_ptr<GraphiteTestContext> DawnTestContext::Make(wgpu::BackendType bac
             wgpu::CallbackMode::AllowSpontaneous,
             [](const wgpu::Device&, wgpu::DeviceLostReason reason, wgpu::StringView message) {
                 if (reason != wgpu::DeviceLostReason::Destroyed) {
-                    SK_ABORT("Device lost: %.*s\n", static_cast<int>(message.length), message.data);
+                    SK_ABORT("Device lost: %.*s", static_cast<int>(message.length), message.data);
                 }
             });
     desc.SetUncapturedErrorCallback([](const wgpu::Device&, wgpu::ErrorType,
@@ -203,20 +149,18 @@ skgpu::ContextType DawnTestContext::contextType() {
 }
 
 std::unique_ptr<skgpu::graphite::Context> DawnTestContext::makeContext(const TestOptions& options) {
-    skgpu::graphite::ContextOptions revisedContextOptions(options.fContextOptions);
-    skgpu::graphite::ContextOptionsPriv contextOptionsPriv;
-    if (!options.fContextOptions.fOptionsPriv) {
-        revisedContextOptions.fOptionsPriv = &contextOptionsPriv;
-    }
+    skiatest::graphite::TestOptions revisedOptions = options;
+
     // Needed to make synchronous readPixels work
-    revisedContextOptions.fOptionsPriv->fStoreContextRefInRecorder = true;
+    revisedOptions.fOptionsPriv.fStoreContextRefInRecorder = true;
 
     auto backendContext = fBackendContext;
     if (options.fNeverYieldToWebGPU) {
         backendContext.fTick = nullptr;
     }
 
-    return skgpu::graphite::ContextFactory::MakeDawn(backendContext, revisedContextOptions);
+    return skgpu::graphite::ContextFactory::MakeDawn(
+            backendContext, revisedOptions.fContextOptions);
 }
 
 void DawnTestContext::tick() { fBackendContext.fTick(fBackendContext.fInstance); }

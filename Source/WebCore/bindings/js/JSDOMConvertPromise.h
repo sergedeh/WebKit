@@ -25,10 +25,10 @@
 
 #pragma once
 
-#include <WebCore/IDLTypes.h>
-#include <WebCore/JSDOMConvertBase.h>
-#include <WebCore/JSDOMPromise.h>
-#include <WebCore/WorkerGlobalScope.h>
+#include "IDLTypes.h"
+#include "JSDOMConvertBase.h"
+#include "JSDOMPromise.h"
+#include "WorkerGlobalScope.h"
 
 namespace WebCore {
 
@@ -37,28 +37,24 @@ template<typename T> struct Converter<IDLPromise<T>> : DefaultConverter<IDLPromi
     using Result = ConversionResult<IDLPromise<T>>;
 
     // https://webidl.spec.whatwg.org/#es-promise
-    template<typename ExceptionThrower = DefaultExceptionThrower>
-    static Result convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ExceptionThrower&& exceptionThrower = ExceptionThrower())
+    static Result convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
     {
-        JSC::VM& vm = JSC::getVM(&lexicalGlobalObject);
+        auto& vm = lexicalGlobalObject.vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
-        auto* globalObject = JSC::jsDynamicCast<JSDOMGlobalObject*>(&lexicalGlobalObject);
+        auto* globalObject = dynamicDowncast<JSDOMGlobalObject>(&lexicalGlobalObject);
         RELEASE_ASSERT(globalObject);
 
         // 1. Let resolve be the original value of %Promise%.resolve.
         // 2. Let promise be the result of calling resolve with %Promise% as the this value and V as the single argument value.
         auto* promise = JSC::JSPromise::resolvedPromise(globalObject, value);
-        if (scope.exception()) {
+        if (scope.exception()) [[unlikely]] {
             CheckedPtr scriptExecutionContext = globalObject->scriptExecutionContext();
             if (RefPtr globalScope = dynamicDowncast<WorkerGlobalScope>(scriptExecutionContext.get())) {
                 CheckedPtr scriptController = globalScope->script();
                 bool terminatorCausedException = vm.isTerminationException(scope.exception());
-                if (terminatorCausedException || (scriptController && scriptController->isTerminatingExecution())) {
+                if (terminatorCausedException || (scriptController && scriptController->isTerminatingExecution()))
                     scriptController->forbidExecution();
-                    return Result::exception();
-                }
             }
-            exceptionThrower(lexicalGlobalObject, scope);
             return Result::exception();
         }
         ASSERT(promise);

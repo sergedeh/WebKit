@@ -29,7 +29,9 @@
 #include "ContainerNodeInlines.h"
 #include "ContentVisibilityAutoStateChangeEvent.h"
 #include "DocumentTimeline.h"
+#include "ElementInlinesLight.h"
 #include "EventNames.h"
+#include "FrameDestructionObserverInlines.h"
 #include "FrameSelection.h"
 #include "IntersectionObserverCallback.h"
 #include "IntersectionObserverEntry.h"
@@ -37,9 +39,9 @@
 #include "NodeDocument.h"
 #include "NodeRenderStyle.h"
 #include "RenderElement.h"
-#include "RenderStyle+GettersInlines.h"
 #include "Settings.h"
 #include "SimpleRange.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "StyleOriginatedAnimation.h"
 #include "VisibleSelection.h"
 #include <wtf/TZoneMallocInlines.h>
@@ -70,7 +72,7 @@ private:
 
         for (auto& entry : entries) {
             if (RefPtr element = entry->target())
-                element->document().contentVisibilityDocumentState().updateViewportProximity(*element, entry->isIntersecting() ? ViewportProximity::Near : ViewportProximity::Far);
+                protect(element->document())->contentVisibilityDocumentState().updateViewportProximity(*element, entry->isIntersecting() ? ViewportProximity::Near : ViewportProximity::Far);
         }
         return { };
     }
@@ -104,12 +106,12 @@ IntersectionObserver* ContentVisibilityDocumentState::intersectionObserver(Docum
 {
     if (!m_observer) {
         auto callback = ContentVisibilityIntersectionObserverCallback::create(document);
-        IntersectionObserver::Init options { &document, { }, { }, { } };
+        IntersectionObserver::Init options { document, { }, { }, { } };
         auto includeObscuredInsets = document.settings().contentInsetBackgroundFillEnabled() ? IncludeObscuredInsets::Yes : IncludeObscuredInsets::No;
         auto observer = IntersectionObserver::create(document, WTF::move(callback), WTF::move(options), includeObscuredInsets);
         if (observer.hasException())
             return nullptr;
-        m_observer = observer.releaseReturnValue();
+        lazyInitialize(m_observer, observer.releaseReturnValue());
     }
     return m_observer.get();
 }
@@ -148,7 +150,7 @@ bool ContentVisibilityDocumentState::checkRelevancyOfContentVisibilityElement(El
         setRelevancyValue(ContentRelevancy::Selected, targetContainsSelection(target));
 
     auto hasTopLayerinSubtree = [](const Element& target) {
-        for (Ref element : target.document().topLayerElements()) {
+        for (auto& element : target.document().topLayerElements()) {
             if (element->isDescendantOf(target))
                 return true;
         }
@@ -167,12 +169,15 @@ bool ContentVisibilityDocumentState::checkRelevancyOfContentVisibilityElement(El
     auto isSkippedContent = target.isRelevantToUser() ? IsSkippedContent::No : IsSkippedContent::Yes;
     target.invalidateStyle();
     updateAnimations(target, wasSkippedContent, isSkippedContent);
-    target.queueTaskKeepingThisNodeAlive(TaskSource::DOMManipulation, [&, isSkippedContent] {
-        if (target.isConnected()) {
-            ContentVisibilityAutoStateChangeEvent::Init init;
-            init.skipped = isSkippedContent == IsSkippedContent::Yes;
-            target.dispatchEvent(ContentVisibilityAutoStateChangeEvent::create(eventNames().contentvisibilityautostatechangeEvent, init));
-        }
+    Node::queueTaskKeepingNodeAlive(target, TaskSource::DOMManipulation, [isSkippedContent](auto& element) {
+        if (!element.isConnected())
+            return;
+
+        ContentVisibilityAutoStateChangeEvent::Init init {
+            { false, false, false },
+            isSkippedContent == IsSkippedContent::Yes
+        };
+        element.dispatchEvent(ContentVisibilityAutoStateChangeEvent::create(eventNames().contentvisibilityautostatechangeEvent, WTF::move(init)));
     });
     return true;
 }
@@ -180,11 +185,9 @@ bool ContentVisibilityDocumentState::checkRelevancyOfContentVisibilityElement(El
 DidUpdateAnyContentRelevancy ContentVisibilityDocumentState::updateRelevancyOfContentVisibilityElements(OptionSet<ContentRelevancy> relevancyToCheck) const
 {
     auto didUpdateAnyContentRelevancy = DidUpdateAnyContentRelevancy::No;
-    for (auto& weakTarget : m_observer->observationTargets()) {
-        if (RefPtr target = weakTarget.get()) {
-            if (checkRelevancyOfContentVisibilityElement(*target, relevancyToCheck))
-                didUpdateAnyContentRelevancy = DidUpdateAnyContentRelevancy::Yes;
-        }
+    for (Ref target : m_observer->observationTargets()) {
+        if (checkRelevancyOfContentVisibilityElement(target, relevancyToCheck))
+            didUpdateAnyContentRelevancy = DidUpdateAnyContentRelevancy::Yes;
     }
     return didUpdateAnyContentRelevancy;
 }
@@ -194,16 +197,17 @@ HadInitialVisibleContentVisibilityDetermination ContentVisibilityDocumentState::
     if (!m_observer)
         return HadInitialVisibleContentVisibilityDetermination::No;
     Vector<Ref<Element>> elementsToCheck;
-    for (auto& weakTarget : m_observer->observationTargets()) {
-        if (RefPtr target = weakTarget.get()) {
-            bool checkForInitialDetermination = !m_elementViewportProximities.contains(*target) && !target->isRelevantToUser();
-            if (checkForInitialDetermination)
-                elementsToCheck.append(target.releaseNonNull());
-        }
+    for (Ref target : m_observer->observationTargets()) {
+        bool checkForInitialDetermination = !m_elementViewportProximities.contains(target) && !target->isRelevantToUser();
+        if (checkForInitialDetermination)
+            elementsToCheck.append(target);
     }
     auto hadInitialVisibleContentVisibilityDetermination = HadInitialVisibleContentVisibilityDetermination::No;
     if (!elementsToCheck.isEmpty()) {
-        elementsToCheck.first()->protectedDocument()->updateIntersectionObservations({ m_observer });
+        Ref document = elementsToCheck.first()->document();
+        if (m_observer->updateObservations(*protect(document->frame())) == IntersectionObserver::NeedNotify::Yes)
+            m_observer->notify();
+
         for (auto& element : elementsToCheck) {
             checkRelevancyOfContentVisibilityElement(element, { ContentRelevancy::OnScreen });
             if (element->isRelevantToUser())
@@ -222,7 +226,7 @@ void ContentVisibilityDocumentState::updateContentRelevancyForScrollIfNeeded(con
         return;
     auto findSkippedContentRoot = [](const Element& element) -> RefPtr<const Element> {
         RefPtr<const Element> found;
-        if (element.renderer() && element.renderer()->isSkippedContent()) {
+        if (CheckedPtr renderer = element.renderer(); renderer && renderer->isSkippedContent()) {
             for (RefPtr candidate = element; candidate; candidate = candidate->parentElementInComposedTree()) {
                 if (candidate->renderer() && candidate->renderStyle()->contentVisibility() == ContentVisibility::Auto)
                     found = candidate;
@@ -233,21 +237,25 @@ void ContentVisibilityDocumentState::updateContentRelevancyForScrollIfNeeded(con
 
     if (RefPtr scrollAnchorRoot = findSkippedContentRoot(scrollAnchor)) {
         updateViewportProximity(*scrollAnchorRoot, ViewportProximity::Near);
+        // Proximity was forced Near out-of-band, so re-sync the observer to re-evaluate after the scroll.
+        if (RefPtr observer = m_observer)
+            observer->resetPreviousThresholdIndexForTarget(*scrollAnchorRoot);
         // Since we may not have determined initial visibility yet, force scheduling the content relevancy update.
-        scrollAnchorRoot->protectedDocument()->scheduleContentRelevancyUpdate(ContentRelevancy::OnScreen);
-        scrollAnchorRoot->protectedDocument()->updateRelevancyOfContentVisibilityElements();
+        protect(scrollAnchorRoot->document())->scheduleContentRelevancyUpdate(ContentRelevancy::OnScreen);
+        protect(scrollAnchorRoot->document())->updateRelevancyOfContentVisibilityElements();
     }
 }
 
 void ContentVisibilityDocumentState::updateViewportProximity(const Element& element, ViewportProximity viewportProximity)
 {
+    auto result = m_elementViewportProximities.ensure(element, [] {
+        return ViewportProximity::Far;
+    });
     // No need to schedule content relevancy update for first time call, since
     // that will be handled by determineInitialVisibleContentVisibility.
-    if (m_elementViewportProximities.contains(element))
-        element.protectedDocument()->scheduleContentRelevancyUpdate(ContentRelevancy::OnScreen);
-    m_elementViewportProximities.ensure(element, [] {
-        return ViewportProximity::Far;
-    }).iterator->value = viewportProximity;
+    if (!result.isNewEntry)
+        protect(element.document())->scheduleContentRelevancyUpdate(ContentRelevancy::OnScreen);
+    result.iterator->value = viewportProximity;
 }
 
 void ContentVisibilityDocumentState::removeViewportProximity(const Element& element)

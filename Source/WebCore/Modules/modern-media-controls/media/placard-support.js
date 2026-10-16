@@ -68,6 +68,8 @@ class PlacardSupport extends MediaControllerSupport
         let placard = null;
         if (media.webkitPresentationMode === "picture-in-picture" && this._controlsNeedJavascriptPipPlacard())
             placard = controls.pipPlacard;
+        else if (media.webkitPresentationMode === "fullscreen" && this._controlsNeedJavascriptFullscreenPlacard())
+            placard = controls.fullscreenPlacard;
         else if (media.webkitCurrentPlaybackTargetIsWireless) {
             this._updateAirPlayPlacard();
             placard = controls.airplayPlacard;
@@ -84,21 +86,32 @@ class PlacardSupport extends MediaControllerSupport
         return true;
     }
 
+    _controlsNeedJavascriptFullscreenPlacard()
+    {
+        if (this.mediaController.controls instanceof TVOSMediaControls && this.mediaController.host.isAVExperienceControllerFullscreenEnabled)
+            return true;
+        return false;
+    }
+
     _updateAirPlayPlacard()
     {
-        var deviceName = "";
-        
         if (!this.mediaController.host)
             return;
-        
+
+        var deviceName = "";
+        var routeName = UIString("AirPlay");
+
         switch(this.mediaController.host.externalDeviceType) {
             case 'airplay':
                 deviceName = UIString("This video is playing on \u201C%s\u201D.", escapeHTML(this.mediaController.host.externalDeviceDisplayName) || UIString("Apple TV"));
+                if (this.mediaController.host.externalDeviceRouteName)
+                    routeName = escapeHTML(this.mediaController.host.externalDeviceRouteName);
                 break;
             case 'tvout':
                 deviceName = UIString("This video is playing on the TV.");
                 break;
         }
+        this.mediaController.controls.airplayPlacard.title = routeName;
         this.mediaController.controls.airplayPlacard.description = deviceName;
     }
 

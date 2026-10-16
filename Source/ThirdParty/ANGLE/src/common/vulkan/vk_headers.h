@@ -77,6 +77,7 @@ extern PFN_vkBindImageMemory2KHR vkBindImageMemory2KHR;
 
 // VK_KHR_maintenance5
 extern PFN_vkCmdBindIndexBuffer2KHR vkCmdBindIndexBuffer2KHR;
+extern PFN_vkGetImageSubresourceLayout2KHR vkGetImageSubresourceLayout2KHR;
 
 // VK_KHR_external_fence_capabilities
 extern PFN_vkGetPhysicalDeviceExternalFencePropertiesKHR
@@ -169,6 +170,9 @@ extern PFN_vkGetMemoryHostPointerPropertiesEXT vkGetMemoryHostPointerPropertiesE
 
 // VK_KHR_buffer_device_address
 extern PFN_vkGetBufferDeviceAddressKHR vkGetBufferDeviceAddressKHR;
+
+// VK_QCOM_tile_memory_heap
+extern PFN_vkCmdBindTileMemoryQCOM vkCmdBindTileMemoryQCOM;
 
 }  // namespace rx
 

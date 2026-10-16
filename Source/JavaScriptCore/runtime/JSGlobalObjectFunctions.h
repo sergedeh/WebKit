@@ -24,7 +24,6 @@
 #pragma once
 
 #include <JavaScriptCore/JSCJSValue.h>
-#include <unicode/uchar.h>
 
 namespace JSC {
 
@@ -35,8 +34,8 @@ class JSObject;
 // FIXME: These functions should really be in JSGlobalObject.cpp, but putting them there
 // is a 0.5% reduction.
 
-extern const ASCIILiteral ObjectProtoCalledOnNullOrUndefinedError;
-extern const ASCIILiteral RestrictedPropertyAccessError;
+inline constexpr ASCIILiteral ObjectProtoCalledOnNullOrUndefinedError { "Object.prototype.__proto__ called on null or undefined"_s };
+inline constexpr ASCIILiteral RestrictedPropertyAccessError { "'arguments', 'callee', and 'caller' cannot be accessed in this context."_s };
 
 JSC_DECLARE_HOST_FUNCTION(globalFuncEval);
 JSC_DECLARE_HOST_FUNCTION(globalFuncParseInt);

@@ -94,7 +94,7 @@ void LoadableTextTrack::scheduleLoad(const URL& url)
         // 4. Download: If URL is not the empty string, perform a potentially CORS-enabled fetch of URL, with the
         // mode being the state of the media element's crossorigin content attribute, the origin being the
         // origin of the media element's Document, and the default origin behaviour set to fail.
-        loader = TextTrackLoader::create(static_cast<TextTrackLoaderClient&>(*this), trackElement->protectedDocument().get());
+        loader = TextTrackLoader::create(static_cast<TextTrackLoaderClient&>(*this), protect(trackElement->document()).get());
         m_loader = loader.copyRef();
         if (!loader->load(m_url, *trackElement))
             trackElement->didCompleteLoad(HTMLTrackElement::Failure);
@@ -146,7 +146,7 @@ void LoadableTextTrack::newStyleSheetsAvailable(TextTrackLoader& loader)
 
 AtomString LoadableTextTrack::id() const
 {
-    RefPtr trackElement = m_trackElement.get();
+    auto* trackElement = m_trackElement.get();
     if (!trackElement)
         return emptyAtom();
     return trackElement->attributeWithoutSynchronization(idAttr);
@@ -158,10 +158,10 @@ size_t LoadableTextTrack::trackElementIndex()
     ASSERT(m_trackElement->parentNode());
 
     size_t index = 0;
-    for (RefPtr<Node> node = m_trackElement->parentNode()->firstChild(); node; node = node->nextSibling()) {
+    for (auto* node = m_trackElement->parentNode()->firstChild(); node; node = node->nextSibling()) {
         if (!node->hasTagName(trackTag) || !node->parentNode())
             continue;
-        if (node.get() == m_trackElement.get())
+        if (node == m_trackElement.get())
             return index;
         ++index;
     }
@@ -172,7 +172,7 @@ size_t LoadableTextTrack::trackElementIndex()
 
 bool LoadableTextTrack::isDefault() const
 {
-    RefPtr trackElement = m_trackElement.get();
+    auto* trackElement = m_trackElement.get();
     return trackElement && trackElement->hasAttributeWithoutSynchronization(defaultAttr);
 }
 

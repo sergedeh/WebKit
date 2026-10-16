@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Google Inc.
+ * Copyright 2019 Google LLC
  *
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
@@ -19,13 +19,12 @@
 #include "include/effects/SkRuntimeEffect.h"
 #include "include/gpu/ganesh/GrDirectContext.h"
 #include "include/gpu/ganesh/GrTypes.h"
-#include "include/private/base/SingleOwner.h"
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkTemplates.h"
+#include "include/private/SingleOwner.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkTemplates.h"
 #include "include/private/chromium/GrDeferredDisplayList.h"
 #include "src/core/SkRuntimeEffectPriv.h"
 #include "src/core/SkTraceEvent.h"
-#include "src/gpu/AtlasTypes.h"
 #include "src/gpu/SkBackingFit.h"
 #include "src/gpu/ganesh/GrAuditTrail.h"
 #include "src/gpu/ganesh/GrColorInfo.h"
@@ -46,6 +45,7 @@
 #include "src/gpu/ganesh/SurfaceFillContext.h"
 #include "src/gpu/ganesh/effects/GrSkSLFP.h"
 #include "src/gpu/ganesh/effects/GrTextureEffect.h"
+#include "src/gpu/ganesh/image/GrMippedBitmap.h"
 #include "src/gpu/ganesh/image/SkImage_Ganesh.h"
 #include "src/gpu/ganesh/text/GrAtlasManager.h"
 #include "src/image/SkImage_Base.h"
@@ -63,7 +63,6 @@ using MaskFormat = skgpu::MaskFormat;
 #define ASSERT_OWNED_PROXY(P) \
     SkASSERT(!(P) || !((P)->peekTexture()) || (P)->peekTexture()->getContext() == this->context())
 #define ASSERT_SINGLE_OWNER SKGPU_ASSERT_SINGLE_OWNER(this->context()->singleOwner())
-#define RETURN_VALUE_IF_ABANDONED(value) if (this->context()->abandoned()) { return (value); }
 
 GrSemaphoresSubmitted GrDirectContextPriv::flushSurfaces(
         SkSpan<GrSurfaceProxy*> proxies,
@@ -288,11 +287,11 @@ static bool test_for_preserving_PM_conversions(GrDirectContext* dContext) {
     // This function is only ever called if we are in a GrDirectContext since we are calling read
     // pixels here. Thus the pixel data will be uploaded immediately and we don't need to keep the
     // pixel data alive in the proxy. Therefore the ReleaseProc is nullptr.
-    SkBitmap bitmap;
-    bitmap.installPixels(pmII, srcData, 4 * kSize);
-    bitmap.setImmutable();
+    std::optional<GrMippedBitmap> bitmap = GrMippedBitmap::Make(pmII, srcData, 4 * kSize);
+    SkASSERT(bitmap);
+    SkASSERT(bitmap->alphaType() == kPremul_SkAlphaType);
 
-    auto dataView = std::get<0>(GrMakeUncachedBitmapProxyView(dContext, bitmap));
+    auto dataView = std::get<0>(GrMakeUncachedBitmapProxyView(dContext, bitmap.value()));
     if (!dataView) {
         return false;
     }
@@ -309,7 +308,8 @@ static bool test_for_preserving_PM_conversions(GrDirectContext* dContext) {
     // from readTex to tempTex followed by a PM->UPM draw to readTex and finally read the data.
     // We then verify that two reads produced the same values.
 
-    auto fp1 = make_unpremul_effect(GrTextureEffect::Make(std::move(dataView), bitmap.alphaType()));
+    auto fp1 =
+            make_unpremul_effect(GrTextureEffect::Make(std::move(dataView), kPremul_SkAlphaType));
     readSFC->fillRectWithFP(SkIRect::MakeWH(kSize, kSize), std::move(fp1));
     if (!readSFC->readPixels(dContext, firstReadPM, {0, 0})) {
         return false;

@@ -31,6 +31,7 @@
 #import "FloatRect.h"
 #import "Logging.h"
 #import <objc/runtime.h>
+#import <pal/cocoa/AVKitSoftLink.h>
 #import <pal/spi/cocoa/AVFoundationSPI.h>
 #import <pal/spi/cocoa/AVKitSPI.h>
 #import <wtf/MainThread.h>
@@ -39,13 +40,11 @@
 #import <pal/cf/CoreMediaSoftLink.h>
 #import <pal/cocoa/AVFoundationSoftLink.h>
 
-SOFTLINK_AVKIT_FRAMEWORK()
-SOFT_LINK_CLASS_OPTIONAL(AVKit, AVOutputDeviceMenuController)
 
 using namespace WebCore;
 
-static NSString *externalOutputDeviceAvailableKeyName = @"externalOutputDeviceAvailable";
-static NSString *externalOutputDevicePickedKeyName = @"externalOutputDevicePicked";
+static NSString * const externalOutputDeviceAvailableKeyName = @"externalOutputDeviceAvailable";
+static NSString * const externalOutputDevicePickedKeyName = @"externalOutputDevicePicked";
 
 @interface WebAVOutputDeviceMenuControllerHelper : NSObject {
     WeakPtr<AVOutputDeviceMenuControllerTargetPicker> m_callback;
@@ -73,12 +72,12 @@ AVOutputDeviceMenuControllerTargetPicker::~AVOutputDeviceMenuControllerTargetPic
 
 AVOutputDeviceMenuController *AVOutputDeviceMenuControllerTargetPicker::devicePicker()
 {
-    if (!getAVOutputDeviceMenuControllerClassSingleton())
+    if (!PAL::getAVOutputDeviceMenuControllerClassSingleton())
         return nullptr;
 
     if (!m_outputDeviceMenuController) {
         RetainPtr<AVOutputContext> context = adoptNS([PAL::allocAVOutputContextInstance() init]);
-        m_outputDeviceMenuController = adoptNS([allocAVOutputDeviceMenuControllerInstance() initWithOutputContext:context.get()]);
+        m_outputDeviceMenuController = adoptNS([PAL::allocAVOutputDeviceMenuControllerInstance() initWithOutputContext:context.get()]);
 
         [m_outputDeviceMenuController addObserver:m_outputDeviceMenuControllerDelegate.get() forKeyPath:externalOutputDeviceAvailableKeyName options:NSKeyValueObservingOptionNew context:nullptr];
         [m_outputDeviceMenuController addObserver:m_outputDeviceMenuControllerDelegate.get() forKeyPath:externalOutputDevicePickedKeyName options:NSKeyValueObservingOptionNew context:nullptr];
@@ -112,7 +111,7 @@ void AVOutputDeviceMenuControllerTargetPicker::showPlaybackTargetPicker(NSView *
     m_showingMenu = true;
 
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-    bool targetSelected = [devicePicker() showMenuForRect:location appearanceName:(useDarkAppearance ? NSAppearanceNameVibrantDark : NSAppearanceNameVibrantLight) allowReselectionOfSelectedOutputDevice:!hasActiveRoute];
+    bool targetSelected = [protect(devicePicker()) showMenuForRect:location appearanceName:(useDarkAppearance ? NSAppearanceNameVibrantDark : NSAppearanceNameVibrantLight) allowReselectionOfSelectedOutputDevice:!hasActiveRoute];
 ALLOW_DEPRECATED_DECLARATIONS_END
 
     if (!client())
@@ -149,7 +148,7 @@ void AVOutputDeviceMenuControllerTargetPicker::invalidatePlaybackTargets()
 bool AVOutputDeviceMenuControllerTargetPicker::externalOutputDeviceAvailable()
 {
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-    return devicePicker().externalOutputDeviceAvailable;
+    return [protect(devicePicker()) isExternalOutputDeviceAvailable];
 ALLOW_DEPRECATED_DECLARATIONS_END
 }
 
@@ -189,7 +188,7 @@ AVOutputContext * AVOutputDeviceMenuControllerTargetPicker::outputContext()
         return;
 
     callOnMainThread([self, protectedSelf = retainPtr(self), keyPath = retainPtr(keyPath)] {
-        CheckedPtr callback = m_callback.get();
+        CheckedPtr callback = m_callback;
         if (!callback)
             return;
 

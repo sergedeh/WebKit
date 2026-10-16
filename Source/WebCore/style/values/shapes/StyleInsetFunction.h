@@ -32,6 +32,7 @@
 namespace WebCore {
 
 class Path;
+struct AcceleratedEffectInsetFunction;
 
 namespace Style {
 
@@ -43,7 +44,7 @@ struct Inset {
 
     bool operator==(const Inset&) const = default;
 };
-using InsetFunction = FunctionNotation<CSSValueInset, Inset>;
+using InsetFunction = FunctionNotation<CSSValueID::Inset, Inset>;
 
 template<size_t I> const auto& get(const Inset& value)
 {
@@ -55,7 +56,15 @@ template<size_t I> const auto& get(const Inset& value)
 
 DEFINE_TYPE_MAPPING(CSS::Inset, Inset)
 
-template<> struct PathComputation<Inset> { WebCore::Path operator()(const Inset&, const FloatRect&); };
+template<> struct PathComputation<Inset> { WebCore::Path operator()(const Inset&, const FloatRect&, ZoomFactor); };
+
+// MARK: - Evaluation
+
+#if ENABLE(THREADED_ANIMATIONS)
+
+template<> struct Evaluation<InsetFunction, AcceleratedEffectInsetFunction> { AcceleratedEffectInsetFunction operator()(const InsetFunction&, const FloatSize&, ZoomFactor); };
+
+#endif
 
 } // namespace Style
 } // namespace WebCore

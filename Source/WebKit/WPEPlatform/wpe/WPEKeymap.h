@@ -55,7 +55,7 @@ typedef struct _WPEKeymapEntry WPEKeymapEntry;
  *   letter at level 0, and an uppercase letter at level 1, though only the
  *   uppercase letter is printed.
  *
- * A WPEKeymapEntry is a map entry retrurned by wpe_keymap_get_entries_for_keyval().
+ * A WPEKeymapEntry is a map entry returned by wpe_keymap_get_entries_for_keyval().
  */
 struct _WPEKeymapEntry
 {
@@ -82,7 +82,7 @@ struct _WPEKeymapClass
                                                WPEModifiers    *consumed_modifiers);
     WPEModifiers (* get_modifiers)            (WPEKeymap       *keymap);
 
-    gpointer padding[32];
+    gpointer padding[8];
 };
 
 WPE_API gboolean     wpe_keymap_get_entries_for_keyval   (WPEKeymap       *keymap,

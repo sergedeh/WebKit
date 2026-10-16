@@ -53,6 +53,7 @@
 #import <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 #import <wtf/cocoa/SoftLinking.h>
 #import <wtf/cocoa/SpanCocoa.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/darwin/DispatchExtras.h>
 #import <wtf/text/MakeString.h>
 
@@ -70,13 +71,143 @@
 #import <wtf/darwin/XPCObjectPtr.h>
 #endif
 
-#import <pal/cf/AudioToolboxSoftLink.h>
-
-#if HAVE(UPDATE_WEB_ACCESSIBILITY_SETTINGS) && ENABLE(CFPREFS_DIRECT_MODE)
-SOFT_LINK_OPTIONAL(libAccessibility, _AXSUpdateWebAccessibilitySettings, void, (), ());
+#if ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
+#import "LaunchLogHook.h"
+#import "LogClient.h"
+#import "LogStream.h"
+#import "StreamClientConnection.h"
+#import <WebCore/PublicSuffixStore.h>
+#import <wtf/BlockPtr.h>
+#import <wtf/OSObjectPtr.h>
+#import <wtf/SystemFree.h>
+#import <wtf/SystemTracing.h>
+#import <wtf/Threading.h>
+#import <wtf/spi/cocoa/OSLogSPI.h>
 #endif
 
+#import "LibAccessibilitySoftLink.h"
+#import <pal/cf/AudioToolboxSoftLink.h>
+
 namespace WebKit {
+
+#if ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
+static bool shouldIgnoreLogMessage(std::span<const char> logChannel)
+{
+    return equalSpans(logChannel, "com.apple.xpc\0"_span) || equalSpans(logChannel, "com.apple.CoreAnalytics\0"_span);
+}
+
+#if PLATFORM(IOS_FAMILY)
+static void prewarmLogs()
+{
+    // This call will create container manager log objects.
+    // FIXME: this can be removed if we move all calls to topPrivatelyControlledDomain out of these processes.
+    // This would be desirable, since these processes are blocking access to the container manager daemon.
+    WebCore::PublicSuffixStore::singleton().topPrivatelyControlledDomain("apple.com"_s);
+
+    static std::array<std::pair<ASCIILiteral, ASCIILiteral>, 5> logs { {
+        { "com.apple.CFBundle"_s, "strings"_s },
+        { "com.apple.network"_s, ""_s },
+        { "com.apple.CFNetwork"_s, "ATS"_s },
+        { "com.apple.coremedia"_s, ""_s },
+        { "com.apple.SafariShared"_s, "Translation"_s },
+    } };
+
+    for (auto& log : logs) {
+        OSObjectPtr logHandle = adoptOSObject(os_log_create(log.first, log.second));
+        bool enabled = os_log_type_enabled(logHandle.get(), OS_LOG_TYPE_ERROR);
+        UNUSED_PARAM(enabled);
+    }
+}
+#endif // PLATFORM(IOS_FAMILY)
+
+static void registerLogClient(bool isDebugLoggingEnabled, std::unique_ptr<LogClient>&& newLogClient)
+{
+#if PLATFORM(IOS_FAMILY)
+    prewarmLogs();
+#endif
+
+    RELEASE_ASSERT(!WebCore::logClient());
+    WebCore::logClient() = WTF::move(newLogClient);
+
+    // OS_LOG_TYPE_DEFAULT implies default, fault, and error.
+    // OS_LOG_TYPE_DEBUG implies debug, info, default, fault, and error.
+    const auto minimumType = isDebugLoggingEnabled ? OS_LOG_TYPE_DEBUG : OS_LOG_TYPE_DEFAULT;
+
+    LaunchLogHook::singleton().disable();
+
+    static os_log_hook_t prevHook = nullptr;
+
+    prevHook = os_log_set_hook(minimumType, makeBlockPtr([isDebugLoggingEnabled](os_log_type_t type, os_log_message_t msg) {
+        if (prevHook)
+            prevHook(type, msg);
+
+        if (msg->buffer_sz > 1024)
+            return;
+
+        // Don't send debug/info messages unless debug logging is enabled. Even though OS_LOG_TYPE_DEFAULT would be the minimum,
+        // the hook will be called for other subsystems with debug and info types.
+        if (!isDebugLoggingEnabled && type & (OS_LOG_TYPE_DEBUG | OS_LOG_TYPE_INFO))
+            return;
+
+        if (Thread::currentThreadIsRealtime())
+            return;
+
+        auto logChannel = unsafeSpan(msg->subsystem);
+        if (logChannel.size() >= logSubsystemMaxSize)
+            return;
+        if (shouldIgnoreLogMessage(logChannel))
+            return;
+        auto logCategory = unsafeSpan(msg->category);
+        if (logCategory.size() >= logCategoryMaxSize)
+            return;
+
+        if (type == OS_LOG_TYPE_FAULT)
+            type = OS_LOG_TYPE_ERROR;
+
+        if (auto messageString = adoptSystemMalloc(os_log_copy_message_string(msg))) {
+            auto logString = spanConstCast<char>(unsafeSpan(messageString.get()));
+            if (logString.size() >= logStringMaxSize)
+                logString = logString.first(logStringMaxSize - 1);
+            WebCore::logClient()->log(byteCast<char8_t>(logChannel), byteCast<char8_t>(logCategory), byteCast<char8_t>(logString), type);
+        }
+    }).get());
+
+    WTFSignpostIndirectLoggingEnabled = true;
+}
+
+void AuxiliaryProcess::initializeLogForwarding(bool isDebugLoggingEnabled)
+{
+    if (os_trace_get_mode() != OS_TRACE_MODE_OFF)
+        return;
+
+    RefPtr parentConnection = parentProcessConnection();
+    if (!parentConnection)
+        return;
+
+    RELEASE_LOG(Process, "%p - AuxiliaryProcess::initializeLogForwarding: Debug logging enabled: %d", this, isDebugLoggingEnabled);
+
+#if ENABLE(STREAMING_IPC_IN_LOG_FORWARDING)
+    static constexpr auto connectionBufferSizeLog2 = 17;
+    auto connectionPair = IPC::StreamClientConnection::create(connectionBufferSizeLog2, 1_s);
+    if (!connectionPair)
+        CRASH();
+    auto [connection, handle] = WTF::move(*connectionPair);
+    protect(connection)->open(protect(*this), RunLoop::currentSingleton());
+    auto newLogClient = makeUnique<LogClient>(Ref { connection });
+    auto identifier = newLogClient->identifier();
+    sendCreateLogStreamToParent(*parentConnection, WTF::move(handle), identifier, [newLogClient = WTF::move(newLogClient), isDebugLoggingEnabled] () mutable {
+        registerLogClient(isDebugLoggingEnabled, WTF::move(newLogClient));
+    });
+#else
+    auto newLogClient = makeUnique<LogClient>(*parentConnection);
+    auto identifier = newLogClient->identifier();
+    sendCreateLogStreamToParent(*parentConnection, identifier, [newLogClient = WTF::move(newLogClient), isDebugLoggingEnabled] () mutable {
+        registerLogClient(isDebugLoggingEnabled, WTF::move(newLogClient));
+    });
+#endif
+}
+#endif // ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
+
 
 #if PLATFORM(MAC) || PLATFORM(MACCATALYST)
 static void initializeTimerCoalescingPolicy()
@@ -92,7 +223,7 @@ static void initializeTimerCoalescingPolicy()
 static void disableDowngradeToLayoutManager()
 {
     RetainPtr existingArguments = [[NSUserDefaults standardUserDefaults] volatileDomainForName:NSArgumentDomain];
-    RetainPtr newArguments = adoptNS([existingArguments mutableCopy]);
+    RetainPtr newArguments = checked_objc_cast<NSMutableDictionary>(adoptNS([existingArguments mutableCopy]));
     [newArguments setValue:@NO forKey:@"NSTextViewAllowsDowngradeToLayoutManager"];
     [[NSUserDefaults standardUserDefaults] setVolatileDomain:newArguments.get() forName:NSArgumentDomain];
 }
@@ -115,7 +246,7 @@ void AuxiliaryProcess::platformInitialize(const AuxiliaryProcessInitializationPa
     setApplicationBundleIdentifier(parameters.clientBundleIdentifier);
 
 #if USE(SOURCE_APPLICATION_AUDIT_DATA)
-    if (XPCObjectPtr<xpc_connection_t> connection = parameters.connectionIdentifier.xpcConnection) {
+    if (OSObjectPtr<xpc_connection_t> connection = parameters.connectionIdentifier.xpcConnection) {
         audit_token_t auditToken { };
         xpc_connection_get_audit_token(connection.get(), &auditToken);
         setApplicationAuditToken(auditToken);
@@ -134,18 +265,18 @@ void AuxiliaryProcess::platformInitialize(const AuxiliaryProcessInitializationPa
 void AuxiliaryProcess::didReceiveInvalidMessage(IPC::Connection&, IPC::MessageName messageName, const Vector<uint32_t>& indicesOfObjectsFailingDecoding)
 {
     auto errorMessage = makeString("Received invalid message: '"_s, description(messageName), "' ("_s, messageName, ')');
-    logAndSetCrashLogMessage(errorMessage.utf8().data());
+    logAndSetCrashLogMessage(errorMessage.utf8());
 
     ASSERT(indicesOfObjectsFailingDecoding.size() <= 6);
     auto index = [&](size_t i) -> int32_t {
         return i < indicesOfObjectsFailingDecoding.size() ? indicesOfObjectsFailingDecoding[i] : -1;
     };
-    CRASH_WITH_INFO(WTF::enumToUnderlyingType(messageName), index(5), index(4), index(3), index(2), index(1), index(0));
+    CRASH_WITH_INFO(std::to_underlying(messageName), index(5), index(4), index(3), index(2), index(1), index(0));
 }
 
 bool AuxiliaryProcess::parentProcessHasEntitlement(ASCIILiteral entitlement)
 {
-    return WTF::hasEntitlement(protectedParentProcessConnection()->protectedXPCConnection().get(), entitlement);
+    return WTF::hasEntitlement(protect(parentProcessConnection()->xpcConnection()).get(), entitlement);
 }
 
 void AuxiliaryProcess::platformStopRunLoop()
@@ -273,15 +404,15 @@ static const WTF::String& invertColorsPreferenceKey()
 
 void AuxiliaryProcess::handleAXPreferenceChange(const String& domain, const String& key, id value)
 {
-#if HAVE(UPDATE_WEB_ACCESSIBILITY_SETTINGS)
-    if (!libAccessibilityLibrary())
+#if HAVE(UPDATE_WEB_ACCESSIBILITY_SETTINGS) && ENABLE(CFPREFS_DIRECT_MODE)
+    if (!WebKit::islibAccessibilityLibraryAvailable())
         return;
 #endif
 
     if (domain == String(kAXSAccessibilityPreferenceDomain)) {
-#if HAVE(UPDATE_WEB_ACCESSIBILITY_SETTINGS)
-        if (_AXSUpdateWebAccessibilitySettingsPtr())
-            _AXSUpdateWebAccessibilitySettingsPtr()();
+#if HAVE(UPDATE_WEB_ACCESSIBILITY_SETTINGS) && ENABLE(CFPREFS_DIRECT_MODE)
+        if (WebKit::canLoad_libAccessibility__AXSUpdateWebAccessibilitySettings())
+            WebKit::softLink_libAccessibility__AXSUpdateWebAccessibilitySettings();
 #elif PLATFORM(IOS_FAMILY)
         // If the update method is not available, to update the cache inside AccessibilitySupport,
         // these methods need to be called directly.

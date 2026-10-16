@@ -24,8 +24,7 @@
 
 #pragma once
 
-#include <WebCore/StyleLengthWrapper.h>
-#include <WebCore/StyleValueTypes.h>
+#include <WebCore/StylePrimitiveNumeric.h>
 
 namespace WebCore {
 
@@ -71,7 +70,7 @@ struct TabSize {
         return WTF::holdsAlternative<U>(m_value);
     }
 
-    template<typename... F> constexpr decltype(auto) switchOn(F&&... f) const
+    template<typename... F> constexpr decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         return WTF::switchOn(m_value, std::forward<F>(f)...);
     }
@@ -92,13 +91,13 @@ template<> struct CSSValueConversion<TabSize> { auto operator()(BuilderState&, c
 // MARK: - Blending
 
 template<> struct Blending<TabSize> {
-    auto canBlend(const TabSize&, const TabSize&) -> bool;
+    bool LEGACY_NODELETE canBlend(const TabSize&, const TabSize&);
     auto blend(const TabSize&, const TabSize&, const BlendingContext&) -> TabSize;
 };
 
 // MARK: - Platform
 
-template<> struct ToPlatform<TabSize> { auto operator()(const TabSize&) -> WebCore::TabSize; };
+template<> struct ToPlatform<TabSize> { auto operator()(const TabSize&, ZoomFactor) -> WebCore::TabSize; };
 
 } // namespace Style
 } // namespace WebCore

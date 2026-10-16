@@ -23,13 +23,18 @@
 
 #if ENABLE_IPC_TESTING_API && ENABLE_IPC_TESTING_SWIFT
 
-internal import WebKit_Internal
-internal import wtf
+import WebKit_Internal
+import wtf
 
 // Proxy interface to test IPC activities related to receiving messages in Swift.
 final class IPCTesterReceiver {
     // Optional just because of an initialization order issue. Always occupied after initialization finished.
     private var messageForwarder: RefIPCTesterReceiverMessageForwarder?
+
+    @MainActor
+    private var pendingDeferredReply: CheckedContinuation<UInt64, Never>?
+    @MainActor
+    private var deferredReplyArgument: UInt32 = 0
 
     init() {
         self.messageForwarder = WebKit.IPCTesterReceiverMessageForwarder.create(target: self)
@@ -42,8 +47,30 @@ final class IPCTesterReceiver {
         return messageForwarder
     }
 
-    func asyncMessage(data: UInt32, completionHandler: CompletionHandlers.IPCTesterReceiver.AsyncMessageCompletionHandler) {
-        completionHandler.pointee(data + 2)
+    @MainActor
+    func asyncMessage(
+        connection: IPC.Connection,
+        arg1: UInt32
+    ) -> UInt32 {
+        arg1 + 2
+    }
+
+    @MainActor
+    func deferredReplyMessage(
+        connection: IPC.Connection,
+        arg1: UInt32
+    ) async -> UInt64 {
+        deferredReplyArgument = arg1
+        return await withCheckedContinuation { continuation in
+            pendingDeferredReply = continuation
+        }
+    }
+
+    @MainActor
+    func completeDeferredReply(connection: IPC.Connection, arg1: UInt32) {
+        let continuation = pendingDeferredReply
+        pendingDeferredReply = nil
+        continuation?.resume(returning: UInt64(deferredReplyArgument) + UInt64(arg1) + 2)
     }
 }
 

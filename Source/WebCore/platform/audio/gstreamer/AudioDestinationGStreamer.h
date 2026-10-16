@@ -40,7 +40,7 @@ public:
     bool isPlaying() override { return m_isPlaying; }
     unsigned framesPerBuffer() const final;
 
-    bool handleMessage(GstMessage*);
+    bool handleMessage(GstMessage*, bool handleLatencyMessage);
     void notifyIsPlaying(bool);
 
     const RefPtr<AudioBus>& renderBus() const { return m_renderBus; }
@@ -54,7 +54,7 @@ private:
     void notifyStartupResult(bool);
     void notifyStopResult(bool);
 
-    RefPtr<AudioBus> m_renderBus;
+    const RefPtr<AudioBus> m_renderBus;
 
     bool m_isPlaying { false };
     bool m_audioSinkAvailable { false };

@@ -44,31 +44,23 @@ static constexpr OperandKind lastOperandKind = OperandKind::Tmp;
 
 class Operand {
 public:
-    static constexpr unsigned kindBits = WTF::getMSBSetConstexpr(static_cast<std::underlying_type_t<OperandKind>>(lastOperandKind)) + 1;
+    static constexpr unsigned kindBits = WTF::getMSBSet(static_cast<std::underlying_type_t<OperandKind>>(lastOperandKind)) + 1;
     static constexpr unsigned maxBits = 32 + kindBits;
     static_assert(maxBits == 34);
 
     Operand() = default;
-    Operand(const Operand&) = default;
 
     Operand(VirtualRegister operand)
         : Operand(operand.isLocal() ? OperandKind::Local : OperandKind::Argument, operand.offset())
     { }
 
     Operand(OperandKind kind, int operand)
-#if CPU(LITTLE_ENDIAN)
         : m_operand(operand)
         , m_kind(kind)
-#else
-        : m_kind(kind)
-        , m_operand(operand)
-#endif
     { 
         ASSERT(kind == OperandKind::Tmp || VirtualRegister(operand).isLocal() == (kind == OperandKind::Local));
     }
     static Operand tmp(uint32_t index) { return Operand(OperandKind::Tmp, index); }
-
-    Operand& operator=(const Operand&) = default;
 
     OperandKind kind() const { return m_kind; }
     int value() const { return m_operand; }
@@ -101,13 +93,8 @@ public:
     void dump(PrintStream&) const;
 
 private:
-#if CPU(LITTLE_ENDIAN)
     int m_operand { VirtualRegister::invalidVirtualRegister };
     OperandKind m_kind { OperandKind::Argument };
-#else
-    OperandKind m_kind { OperandKind::Argument };
-    int m_operand { VirtualRegister::invalidVirtualRegister };
-#endif
 };
 
 ALWAYS_INLINE bool Operand::operator==(const Operand& other) const
@@ -158,15 +145,15 @@ public:
     }
 
     explicit Operands(size_t numArguments, size_t numLocals, size_t numTmps, const T& initialValue)
-        : m_values(numArguments + numLocals + numTmps, initialValue)
+        : m_values(FillWith { }, numArguments + numLocals + numTmps, initialValue)
         , m_numArguments(numArguments)
         , m_numLocals(numLocals)
     {
     }
-    
+
     template<typename U, typename V>
     explicit Operands(OperandsLikeTag, const Operands<U, V>& other, const T& initialValue = T())
-        : m_values(other.size(), initialValue)
+        : m_values(FillWith { }, other.size(), initialValue)
         , m_numArguments(other.numberOfArguments())
         , m_numLocals(other.numberOfLocals())
     {

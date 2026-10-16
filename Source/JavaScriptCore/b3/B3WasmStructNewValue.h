@@ -27,6 +27,8 @@
 
 #if ENABLE(B3_JIT)
 
+#include "B3Effects.h"
+#include "B3HeapRange.h"
 #include "B3Value.h"
 #include "WasmTypeDefinition.h"
 #include <wtf/StdLibExtras.h>
@@ -47,11 +49,14 @@ public:
     Value* structureID() const { return child(1); }
 
     Ref<const Wasm::RTT> rtt() const { return m_rtt; }
-    const Wasm::StructType* structType() const { return m_structType; }
     uint32_t typeIndex() const { return m_typeIndex; }
 
     // Offset from instance for allocator lookup (pre-computed from ModuleInformation)
     int32_t allocatorsBaseOffset() const { return m_allocatorsBaseOffset; }
+
+    // The GC state that a collection triggered by this allocation may mutate.
+    const HeapRange& range() const { return m_range; }
+    void setRange(HeapRange range) { m_range = range; }
 
     B3_SPECIALIZE_VALUE_FOR_FIXED_CHILDREN(2)
     B3_SPECIALIZE_VALUE_FOR_FINAL_SIZE_FIXED_CHILDREN
@@ -65,19 +70,18 @@ private:
     template<typename... Arguments>
     static Opcode opcodeFromConstructor(Arguments...) { return WasmStructNew; }
 
-    WasmStructNewValue(Origin origin, Type resultType, Ref<const Wasm::RTT> rtt, const Wasm::StructType* structType, uint32_t typeIndex, int32_t allocatorsBaseOffset, Value* instance, Value* structureID)
+    WasmStructNewValue(Origin origin, Type resultType, Ref<const Wasm::RTT> rtt, uint32_t typeIndex, int32_t allocatorsBaseOffset, Value* instance, Value* structureID)
         : Value(CheckedOpcode, WasmStructNew, resultType, Two, origin, instance, structureID)
         , m_rtt(WTF::move(rtt))
-        , m_structType(structType)
         , m_typeIndex(typeIndex)
         , m_allocatorsBaseOffset(allocatorsBaseOffset)
     {
     }
 
-    Ref<const Wasm::RTT> m_rtt;
-    SUPPRESS_UNCOUNTED_MEMBER const Wasm::StructType* m_structType;
+    const Ref<const Wasm::RTT> m_rtt;
     uint32_t m_typeIndex;
     int32_t m_allocatorsBaseOffset;
+    HeapRange m_range { HeapRange::top() };
 };
 
 } // namespace JSC::B3

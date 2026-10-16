@@ -9,8 +9,6 @@ JSPaintWorkletGlobalScope.h: PaintWorkletGlobalScopeConstructors.idl
 PaintWorkletGlobalScopeConstructors.idl:
 JSServiceWorkerGlobalScope.h: ServiceWorkerGlobalScopeConstructors.idl
 ServiceWorkerGlobalScopeConstructors.idl:
-JSShadowRealmGlobalScope.h: ShadowRealmGlobalScopeConstructors.idl
-ShadowRealmGlobalScopeConstructors.idl:
 JSSharedWorkerGlobalScope.h: SharedWorkerGlobalScopeConstructors.idl
 SharedWorkerGlobalScopeConstructors.idl:
 JSTestAsyncIterable.h: 
@@ -33,6 +31,7 @@ TestMixinInterface.idl:
 JSTestConditionallyReadWrite.h: 
 JSTestDOMJIT.h: 
 JSTestDefaultToJSON.h: 
+JSTestDefaultToJSONCustomGetter.h: 
 JSTestDefaultToJSONEnum.h: 
 JSTestDefaultToJSONFilteredByExposed.h: 
 JSTestDefaultToJSONIndirectInheritance.h: 
@@ -42,10 +41,10 @@ JSTestDelegateToSharedSyntheticAttribute.h:
 JSTestDerivedDictionary.h: 
 JSTestDerivedDictionary2.h: 
 JSTestDictionary.h: 
-JSTestDictionaryLegacyNativeDictionaryRequiredInterfaceNullability.h: 
 JSTestDictionaryNoToNative.h: 
 JSTestDictionaryWithOnlyConditionalMembers.h: 
 JSTestDomainSecurity.h: 
+JSTestEmbedderArrayLike.h: 
 JSTestEmptyDictionary.h: 
 JSTestEnabledBySetting.h: TestEnabledBySettingSupplemental.idl
 TestEnabledBySettingSupplemental.idl:
@@ -53,6 +52,7 @@ JSTestEnabledForContext.h:
 JSTestEventConstructor.h: 
 JSTestEventTarget.h: 
 JSTestException.h: 
+JSTestExceptionSubclass.h: 
 JSTestGenerateAddOpaqueRoot.h: 
 JSTestGenerateIsReachable.h: 
 JSTestGlobalObject.h: BindingTestGlobalConstructors.idl
@@ -109,6 +109,7 @@ JSTestReadOnlyMapLike.h:
 JSTestReadOnlySetLike.h: 
 JSTestReportExtraMemoryCost.h: 
 JSTestScheduledAction.h: 
+JSTestSerializable.h: 
 JSTestSerializedScriptValueInterface.h: 
 JSTestSetLike.h: 
 JSTestSetLikeWithOverriddenOperations.h: 

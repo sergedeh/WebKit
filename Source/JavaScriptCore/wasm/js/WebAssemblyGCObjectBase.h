@@ -34,35 +34,36 @@
 
 namespace JSC {
 
-class WebAssemblyGCObjectBase : public JSNonFinalObject {
+class WebAssemblyGCObjectBase : public JSObject {
 public:
-    using Base = JSNonFinalObject;
-    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnPropertySlot | OverridesGetOwnPropertyNames | OverridesGetPrototype | OverridesPut | OverridesIsExtensible | InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero;
+    using Base = JSObject;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnPropertySlot | OverridesGetOwnPropertyNames | OverridesGetPrototype | OverridesPut | OverridesIsExtensible | InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero | ProhibitsPropertyCaching;
 
     DECLARE_INFO;
 
     DECLARE_VISIT_CHILDREN;
 
     const WebAssemblyGCStructure* gcStructure() const { return uncheckedDowncast<WebAssemblyGCStructure>(structure()); }
-    Ref<const Wasm::RTT> rtt() const { return gcStructure()->rtt(); }
+    const Wasm::RTT& rtt() const { return gcStructure()->rtt(); }
 
 protected:
     WebAssemblyGCObjectBase(VM&, WebAssemblyGCStructure*);
 
     DECLARE_DEFAULT_FINISH_CREATION;
 
-    JS_EXPORT_PRIVATE static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
-    JS_EXPORT_PRIVATE static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned, PropertySlot&);
+    JS_EXPORT_PRIVATE static bool LEGACY_NODELETE getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
+    JS_EXPORT_PRIVATE static bool LEGACY_NODELETE getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned, PropertySlot&);
     JS_EXPORT_PRIVATE static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
     JS_EXPORT_PRIVATE static bool putByIndex(JSCell*, JSGlobalObject*, unsigned, JSValue, bool shouldThrow);
     JS_EXPORT_PRIVATE static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
     JS_EXPORT_PRIVATE static bool deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned);
-    JS_EXPORT_PRIVATE static void getOwnPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
+    JS_EXPORT_PRIVATE static void LEGACY_NODELETE getOwnPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
     JS_EXPORT_PRIVATE static bool defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow);
-    JS_EXPORT_PRIVATE static JSValue getPrototype(JSObject*, JSGlobalObject*);
+    JS_EXPORT_PRIVATE static JSValue LEGACY_NODELETE getPrototype(JSObject*, JSGlobalObject*);
     JS_EXPORT_PRIVATE static bool setPrototype(JSObject*, JSGlobalObject*, JSValue, bool shouldThrowIfCantSet);
-    JS_EXPORT_PRIVATE static bool isExtensible(JSObject*, JSGlobalObject*);
+    JS_EXPORT_PRIVATE static bool LEGACY_NODELETE isExtensible(JSObject*, JSGlobalObject*);
     JS_EXPORT_PRIVATE static bool preventExtensions(JSObject*, JSGlobalObject*);
+
 };
 
 } // namespace JSC

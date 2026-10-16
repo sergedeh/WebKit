@@ -32,6 +32,7 @@
 #import <pal/spi/cocoa/NSAttributedStringSPI.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/cocoa/VectorCocoa.h>
+#import <wtf/text/MakeString.h>
 
 #if PLATFORM(IOS_FAMILY)
 #import <pal/ios/UIKitSoftLink.h>
@@ -57,31 +58,31 @@ static RetainPtr<NSString> cocoaTextListMarkerName(const Style::ListStyleType& s
             // - The marker would be `n` where `n` is the list element ordinal
             // - The list will be considered "ordered".
 
-            if (counterStyle == CSSValueDisc)
+            if (counterStyle == CSSValueID::Disc)
                 return NSTextListMarkerDisc;
-            if (counterStyle == CSSValueCircle)
+            if (counterStyle == CSSValueID::Circle)
                 return NSTextListMarkerCircle;
-            if (counterStyle == CSSValueSquare)
+            if (counterStyle == CSSValueID::Square)
                 return NSTextListMarkerSquare;
-            if (counterStyle == CSSValueDecimal)
+            if (counterStyle == CSSValueID::Decimal)
                 return NSTextListMarkerDecimal;
-            if (counterStyle == CSSValueOctal)
+            if (counterStyle == CSSValueID::Octal)
                 return NSTextListMarkerOctal;
-            if (counterStyle == CSSValueLowerRoman)
+            if (counterStyle == CSSValueID::LowerRoman)
                 return NSTextListMarkerLowercaseRoman;
-            if (counterStyle == CSSValueUpperRoman)
+            if (counterStyle == CSSValueID::UpperRoman)
                 return NSTextListMarkerUppercaseRoman;
-            if (counterStyle == CSSValueLowerAlpha)
+            if (counterStyle == CSSValueID::LowerAlpha)
                 return NSTextListMarkerLowercaseAlpha;
-            if (counterStyle == CSSValueUpperAlpha)
+            if (counterStyle == CSSValueID::UpperAlpha)
                 return NSTextListMarkerUppercaseAlpha;
-            if (counterStyle == CSSValueLowerLatin)
+            if (counterStyle == CSSValueID::LowerLatin)
                 return NSTextListMarkerLowercaseLatin;
-            if (counterStyle == CSSValueUpperLatin)
+            if (counterStyle == CSSValueID::UpperLatin)
                 return NSTextListMarkerUppercaseLatin;
-            if (counterStyle == CSSValueLowerHexadecimal)
+            if (counterStyle == CSSValueID::LowerHexadecimal)
                 return NSTextListMarkerLowercaseHexadecimal;
-            if (counterStyle == CSSValueUpperHexadecimal)
+            if (counterStyle == CSSValueID::UpperHexadecimal)
                 return NSTextListMarkerUppercaseHexadecimal;
 
             // The remaining web-exposed list style types have no Cocoa equivalents.
@@ -91,11 +92,16 @@ static RetainPtr<NSString> cocoaTextListMarkerName(const Style::ListStyleType& s
         [&](const CSS::Keyword::None&) {
             return retainPtr(ordered ? NSTextListMarkerDecimal : NSTextListMarkerDisc);
         },
-        [&](const AtomString& identifier) {
+        [&](const Style::String& identifier) {
             // The marker for the marker format `{<identifier>}` is `n` where `n` is the item ordinal, and the list is considered ordered.
             // The marker for the marker format `<identifier>` is `<identifier>`, and the list is considered unordered.
-            auto format = ordered ? makeString("{"_s, identifier, "}"_s) : identifier;
+            auto format = ordered ? makeString("{"_s, identifier.value, "}"_s) : identifier.value;
             return format.createNSString();
+        },
+        [&](const Style::ListStyleType::SymbolsFunction&) {
+            // The anonymous counter style defined by `symbols()` has no Cocoa equivalent.
+            // Fall back to default styles for ordered and unordered lists.
+            return retainPtr(ordered ? NSTextListMarkerDecimal : NSTextListMarkerDisc);
         }
     );
 }

@@ -87,7 +87,7 @@ static AudioHardwareListener::BufferSizeRange currentDeviceSupportedBufferSizes(
 }
 
 
-static const AudioObjectPropertyAddress& processIsRunningPropertyDescriptor()
+static const AudioObjectPropertyAddress& LEGACY_NODELETE processIsRunningPropertyDescriptor()
 {
     static const AudioObjectPropertyAddress processIsRunningProperty = {
         kAudioHardwarePropertyProcessIsRunning,
@@ -98,7 +98,7 @@ static const AudioObjectPropertyAddress& processIsRunningPropertyDescriptor()
     return processIsRunningProperty;
 }
 
-static const AudioObjectPropertyAddress& outputDevicePropertyDescriptor()
+static const AudioObjectPropertyAddress& LEGACY_NODELETE outputDevicePropertyDescriptor()
 {
     static const AudioObjectPropertyAddress outputDeviceProperty = {
         kAudioHardwarePropertyDefaultOutputDevice,
@@ -122,8 +122,8 @@ AudioHardwareListenerMac::AudioHardwareListenerMac(Client& client)
 
     WeakPtr weakThis { *this };
     m_block = Block_copy(^(UInt32 count, const AudioObjectPropertyAddress properties[]) {
-        if (weakThis)
-            weakThis->propertyChanged(unsafeMakeSpan(properties, count));
+        if (RefPtr protectedThis = weakThis)
+            protectedThis->propertyChanged(unsafeMakeSpan(properties, count));
     });
 
     AudioObjectAddPropertyListenerBlock(kAudioObjectSystemObject, &processIsRunningPropertyDescriptor(), mainDispatchQueueSingleton(), m_block);
@@ -157,17 +157,21 @@ void AudioHardwareListenerMac::processIsRunningChanged()
     if (activity == hardwareActivity())
         return;
     setHardwareActivity(activity);
-    
+
+    RefPtr client = this->client();
+    if (!client)
+        return;
     if (hardwareActivity() == AudioHardwareActivityType::IsActive)
-        m_client.audioHardwareDidBecomeActive();
+        client->audioHardwareDidBecomeActive();
     else if (hardwareActivity() == AudioHardwareActivityType::IsInactive)
-        m_client.audioHardwareDidBecomeInactive();
+        client->audioHardwareDidBecomeInactive();
 }
 
 void AudioHardwareListenerMac::outputDeviceChanged()
 {
     setSupportedBufferSizes(currentDeviceSupportedBufferSizes());
-    m_client.audioOutputDeviceChanged();
+    if (RefPtr client = this->client())
+        client->audioOutputDeviceChanged();
 }
 
 }

@@ -35,12 +35,17 @@
 #include "AudioChannel.h"
 #include "AudioWorkletGlobalScope.h"
 #include "AudioWorkletProcessorConstructionData.h"
+#include "ExceptionDetails.h"
 #include "JSCallbackData.h"
 #include "JSDOMExceptionHandling.h"
+#include "JSValueInWrappedObjectInlines.h"
 #include "MessagePort.h"
 #include "ScriptWrappableInlines.h"
 #include "WebCoreOpaqueRoot.h"
+#include <JavaScriptCore/JSArray.h>
+#include <JavaScriptCore/JSGlobalObjectInlines.h>
 #include <JavaScriptCore/JSTypedArrays.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include <wtf/GetPtr.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -52,7 +57,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(AudioWorkletProcessor);
 
 using namespace JSC;
 
-static unsigned busChannelCount(const AudioBus& bus)
+static unsigned LEGACY_NODELETE busChannelCount(const AudioBus& bus)
 {
     return bus.numberOfChannels();
 }
@@ -63,22 +68,22 @@ static ArrayType* getArrayAtIndex(JSArray& jsArray, JSGlobalObject& globalObject
     // We call getDirectIndex() instead of getIndex() since we only want to consider the values
     // we populated the array with, not the ones the worklet might have set on the Array prototype.
     auto item = jsArray.getDirectIndex(&globalObject, index);
-    return item ? jsDynamicCast<ArrayType*>(item) : nullptr;
+    return item ? dynamicDowncast<ArrayType>(item) : nullptr;
 }
 
-static unsigned busChannelCount(const AudioBus* bus)
+static unsigned LEGACY_NODELETE busChannelCount(const AudioBus* bus)
 {
     return bus ? busChannelCount(*bus) : 0;
 }
 
-static JSArray* toJSArray(JSValueInWrappedObject& wrapper)
+static JSArray* LEGACY_NODELETE toJSArray(JSValueInWrappedObject& wrapper)
 {
-    return wrapper ? jsDynamicCast<JSArray*>(wrapper.getValue()) : nullptr;
+    return wrapper ? dynamicDowncast<JSArray>(wrapper.getValue()) : nullptr;
 }
 
-static JSObject* toJSObject(JSValueInWrappedObject& wrapper)
+static JSObject* LEGACY_NODELETE toJSObject(JSValueInWrappedObject& wrapper)
 {
-    return wrapper ? jsDynamicCast<JSObject*>(wrapper.getValue()) : nullptr;
+    return wrapper ? dynamicDowncast<JSObject>(wrapper.getValue()) : nullptr;
 }
 
 static JSFloat32Array* constructJSFloat32Array(VM& vm, JSGlobalObject& globalObject, unsigned length, std::span<const float> data = { })
@@ -206,7 +211,7 @@ static bool copyDataFromParameterMapToJSObject(VM& vm, JSGlobalObject& globalObj
         return false;
 
     for (auto& pair : paramValuesMap) {
-        auto* jsTypedArray = jsDynamicCast<JSFloat32Array*>(jsObject->get(&globalObject, Identifier::fromString(vm, pair.key)));
+        auto* jsTypedArray = dynamicDowncast<JSFloat32Array>(jsObject->get(&globalObject, Identifier::fromString(vm, pair.key)));
         RETURN_IF_EXCEPTION(scope, false);
         if (!jsTypedArray)
             return false;
@@ -273,7 +278,7 @@ void AudioWorkletProcessor::buildJSArguments(VM& vm, JSGlobalObject& globalObjec
     if (!success) {
         auto* array = constructFrozenJSArray(vm, globalObject, inputs, ShouldPopulateWithBusData::Yes);
         RETURN_IF_EXCEPTION(scope, void());
-        m_jsInputs.setWeakly(array);
+        m_jsInputs.set(globalObject, wrapper(), array);
     }
     args.append(m_jsInputs.getValue());
 
@@ -282,26 +287,26 @@ void AudioWorkletProcessor::buildJSArguments(VM& vm, JSGlobalObject& globalObjec
     if (!success) {
         auto* array = constructFrozenJSArray(vm, globalObject, outputs, ShouldPopulateWithBusData::No);
         RETURN_IF_EXCEPTION(scope, void());
-        m_jsOutputs.setWeakly(array);
+        m_jsOutputs.set(globalObject, wrapper(), array);
     }
     args.append(m_jsOutputs.getValue());
 
     success = copyDataFromParameterMapToJSObject(vm, globalObject, paramValuesMap, toJSObject(m_jsParamValues));
     RETURN_IF_EXCEPTION(scope, void());
     if (!success)
-        m_jsParamValues.setWeakly(constructFrozenKeyValueObject(vm, globalObject, paramValuesMap));
+        m_jsParamValues.set(globalObject, wrapper(), constructFrozenKeyValueObject(vm, globalObject, paramValuesMap));
 
     args.append(m_jsParamValues.getValue());
 }
 
-bool AudioWorkletProcessor::process(const Vector<RefPtr<AudioBus>>& inputs, Vector<Ref<AudioBus>>& outputs, const MemoryCompactLookupOnlyRobinHoodHashMap<String, std::unique_ptr<AudioFloatArray>>& paramValuesMap, bool& threwException)
+bool AudioWorkletProcessor::process(const Vector<RefPtr<AudioBus>>& inputs, Vector<Ref<AudioBus>>& outputs, const MemoryCompactLookupOnlyRobinHoodHashMap<String, std::unique_ptr<AudioFloatArray>>& paramValuesMap, std::optional<ExceptionDetails>& exceptionDetails)
 {
     // Heap allocations are forbidden on the audio thread for performance reasons so we need to
     // explicitly allow the following allocation(s).
     DisableMallocRestrictionsForCurrentThreadScope disableMallocRestrictions;
 
     ASSERT(wrapper());
-    auto* globalObject = jsDynamicCast<JSDOMGlobalObject*>(m_globalScope->globalObject());
+    auto* globalObject = dynamicDowncast<JSDOMGlobalObject>(m_globalScope->globalObject());
     if (!globalObject) [[unlikely]]
         return false;
 
@@ -316,16 +321,16 @@ bool AudioWorkletProcessor::process(const Vector<RefPtr<AudioBus>>& inputs, Vect
     buildJSArguments(vm, *globalObject, args, inputs, outputs, paramValuesMap);
     ASSERT(!args.hasOverflowed());
     if (scope.exception()) [[unlikely]] {
-        reportException(globalObject, scope.exception());
-        threwException = true;
+        exceptionDetails.emplace();
+        reportException(globalObject, scope.exception(), nullptr, false, &*exceptionDetails);
         return false;
     }
 
     NakedPtr<JSC::Exception> returnedException;
     auto result = JSCallbackData::invokeCallback(*globalObject, wrapper(), jsUndefined(), args, JSCallbackData::CallbackType::Object, Identifier::fromString(vm, "process"_s), returnedException);
     if (returnedException) {
-        reportException(globalObject, returnedException);
-        threwException = true;
+        exceptionDetails.emplace();
+        reportException(globalObject, returnedException, nullptr, false, &*exceptionDetails);
         return false;
     }
 

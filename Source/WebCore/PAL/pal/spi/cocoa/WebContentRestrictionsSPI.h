@@ -34,6 +34,17 @@
 
 #import <WebContentRestrictions/WebContentRestrictions.h>
 
+NS_ASSUME_NONNULL_BEGIN
+
+@interface WCRBrowserEngineClient ()
+- (void)evaluateURL:(NSURL *)url mainDocumentURL:(NSURL * _Nullable)mainDocumentURL withCompletion:(void (^)(BOOL shouldBlock,  NSData * _Nullable blockPageRepresentation))completion onCompletionQueue:(dispatch_queue_t)completionQueue;
+#if HAVE(WEBCONTENTRESTRICTIONS_ASK_TO)
+- (void)askToBrowseURL:(NSURL *)url referrerURL:(NSURL * _Nullable)referrer withCompletion:(void(^)(WCRAskToBrowseResponse response, NSError * _Nullable error))completion;
+#endif
+@end
+
+NS_ASSUME_NONNULL_END
+
 #else
 
 NS_ASSUME_NONNULL_BEGIN
@@ -41,6 +52,7 @@ NS_ASSUME_NONNULL_BEGIN
 @interface WCRBrowserEngineClient : NSObject
 + (BOOL)shouldEvaluateURLs;
 - (void)evaluateURL:(NSURL *)url withCompletion:(void (^)(BOOL shouldBlock, NSData * _Nullable blockPageRepresentation))completion onCompletionQueue:(dispatch_queue_t)queue;
+- (void)evaluateURL:(NSURL *)url mainDocumentURL:(NSURL * _Nullable)mainDocumentURL withCompletion:(void (^)(BOOL shouldBlock,  NSData * _Nullable blockPageRepresentation))completion onCompletionQueue:(dispatch_queue_t)completionQueue;
 - (void)allowURL:(NSURL *)url withCompletion:(void (^)(BOOL didAllow, NSError *error))completion;
 
 #if HAVE(WEBCONTENTRESTRICTIONS_PATH_SPI)

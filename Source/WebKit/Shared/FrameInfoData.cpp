@@ -30,22 +30,16 @@ namespace WebKit {
 
 FrameInfoData legacyEmptyFrameInfo(WebCore::ResourceRequest&& request)
 {
-    constexpr bool isMainFrame { true };
     constexpr bool isFocused { false };
     constexpr bool errorOccurred { false };
 
     return FrameInfoData {
-        isMainFrame,
         FrameType::Local,
         WTF::move(request),
         WebCore::SecurityOriginData::createOpaque(),
         String { },
         WebCore::generateFrameIdentifier(),
         std::nullopt,
-        std::nullopt,
-        std::nullopt,
-        WebCore::CertificateInfo { },
-        getCurrentProcessID(),
         isFocused,
         errorOccurred,
         WebFrameMetrics { }

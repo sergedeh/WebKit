@@ -28,7 +28,7 @@
 
 #if ENABLE(PICTURE_IN_PICTURE_API)
 
-#include <WebCore/Event.h>
+#include "Event.h"
 
 namespace WebCore {
 
@@ -38,7 +38,7 @@ class PictureInPictureEvent final : public Event {
     WTF_MAKE_TZONE_ALLOCATED(PictureInPictureEvent);
 public:
     struct Init : EventInit {
-        RefPtr<PictureInPictureWindow> pictureInPictureWindow;
+        Ref<PictureInPictureWindow> pictureInPictureWindow;
     };
 
     static Ref<PictureInPictureEvent> create(const AtomString&, Init&&, IsTrusted = IsTrusted::No);

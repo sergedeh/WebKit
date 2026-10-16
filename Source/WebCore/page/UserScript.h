@@ -37,11 +37,12 @@ class UserScript {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(UserScript, WEBCORE_EXPORT);
 public:
     WEBCORE_EXPORT UserScript(String&& source, URL&& = { }, Vector<String>&& allowlist = { }, Vector<String>&& blocklist = { }, UserScriptInjectionTime = UserScriptInjectionTime::DocumentStart, UserContentInjectedFrames = UserContentInjectedFrames::InjectInAllFrames, UserContentMatchParentFrame = UserContentMatchParentFrame::Never);
+    WEBCORE_EXPORT ~UserScript();
 
-    const String& source() const { return m_source; }
-    const URL& url() const { return m_url; }
-    const Vector<String>& allowlist() const { return m_allowlist; }
-    const Vector<String>& blocklist() const { return m_blocklist; }
+    const String& source() const LIFETIME_BOUND { return m_source; }
+    const URL& url() const LIFETIME_BOUND { return m_url; }
+    const Vector<String>& allowlist() const LIFETIME_BOUND { return m_allowlist; }
+    const Vector<String>& blocklist() const LIFETIME_BOUND { return m_blocklist; }
     UserScriptInjectionTime injectionTime() const { return m_injectionTime; }
     UserContentInjectedFrames injectedFrames() const { return m_injectedFrames; }
     UserContentMatchParentFrame matchParentFrame() const { return m_matchParentFrame; }

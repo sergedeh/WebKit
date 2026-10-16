@@ -159,9 +159,9 @@ public:
             setBeginTime(t);
     }
 
-    bool isBasicAnimation() const;
+    bool LEGACY_NODELETE isBasicAnimation() const;
 
-    WEBCORE_EXPORT static String makeGroupKeyPath();
+    WEBCORE_EXPORT static String LEGACY_NODELETE makeGroupKeyPath();
     WEBCORE_EXPORT static String makeKeyPath(AnimatedProperty, FilterOperation::Type = FilterOperation::Type::None, int = 0);
     WEBCORE_EXPORT static bool isValidKeyPath(const String&, AnimationType = AnimationType::Basic);
 

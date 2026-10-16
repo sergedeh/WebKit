@@ -33,9 +33,9 @@ namespace WebCore {
 
 bool SVGPointList::parse(StringView value)
 {
-    clearItems();
+    Vector<FloatPoint> points;
 
-    return readCharactersForParsing(value, [&](auto buffer) {
+    bool parsingSucceeded = readCharactersForParsing(value, [&](auto buffer) {
         skipOptionalSVGSpaces(buffer);
 
         bool delimParsed = false;
@@ -47,8 +47,12 @@ bool SVGPointList::parse(StringView value)
                 return false;
 
             auto yPos = parseNumber(buffer, SuffixSkippingPolicy::DontSkip);
-            if (!yPos)
-                return false;
+            if (!yPos) {
+                skipOptionalSVGSpaces(buffer);
+                if (buffer.hasCharactersRemaining())
+                    return false;
+                break;
+            }
 
             skipOptionalSVGSpaces(buffer);
 
@@ -57,13 +61,18 @@ bool SVGPointList::parse(StringView value)
 
             skipOptionalSVGSpaces(buffer);
 
-            append(SVGPoint::create({ *xPos, *yPos }));
+            points.append(FloatPoint { *xPos, *yPos });
         }
-
-        // FIXME: Should this clearItems() on failure like SVGTransformList does?
 
         return !delimParsed;
     });
+    if (!parsingSucceeded) {
+        clearItems();
+        return false;
+    }
+
+    updateItems(points);
+    return true;
 }
 
 String SVGPointList::valueAsString() const

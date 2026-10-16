@@ -37,31 +37,33 @@ class ImageBufferCGPDFDocumentBackend : public ImageBufferCGBackend {
     WTF_MAKE_TZONE_ALLOCATED(ImageBufferCGPDFDocumentBackend);
     WTF_MAKE_NONCOPYABLE(ImageBufferCGPDFDocumentBackend);
 public:
-    WEBCORE_EXPORT static size_t calculateMemoryCost(const Parameters&);
-    WEBCORE_EXPORT static std::unique_ptr<ImageBufferCGPDFDocumentBackend> create(const Parameters&, const ImageBufferCreationContext&);
+    WEBCORE_EXPORT static std::unique_ptr<ImageBufferCGPDFDocumentBackend> create(const ImageBufferParameters&, const ImageBufferCreationContext&);
 
     ~ImageBufferCGPDFDocumentBackend();
 
-    static constexpr RenderingMode renderingMode = RenderingMode::PDFDocument;
+    RenderingMode renderingMode() const final { return RenderingMode::PDFDocument; }
+    // FIXME: This is fairly meaningless, because we don't actually have a bitmap, and
+    // should really be based on the PDF document size.
+    size_t memoryCost() const final { return ImageBufferBackend::calculateMemoryCost(size(), calculateBytesPerRow(size(), pixelFormat())); }
 
 private:
-    ImageBufferCGPDFDocumentBackend(const Parameters&, RetainPtr<CFDataRef>&&, std::unique_ptr<GraphicsContextCG>&&);
+    ImageBufferCGPDFDocumentBackend(const ImageBufferParameters&, RetainPtr<CFDataRef>&&, std::unique_ptr<GraphicsContextCG>&&);
 
     bool canMapBackingStore() const { return false; }
     unsigned bytesPerRow() const final { return 0; }
-    GraphicsContext& context() final;
+    GraphicsContext& LEGACY_NODELETE context() final;
 
     RefPtr<NativeImage> copyNativeImage() final { return createNativeImageReference(); }
     RefPtr<NativeImage> createNativeImageReference() final { return nullptr; }
 
-    void getPixelBuffer(const IntRect&, PixelBuffer&) final { ASSERT_NOT_REACHED(); }
-    void putPixelBuffer(const PixelBufferSourceView&, const IntRect&, const IntPoint&, AlphaPremultiplication) final { ASSERT_NOT_REACHED(); }
+    void getPixelBuffer(const IntRect&, PixelBuffer&) final { RELEASE_ASSERT_NOT_REACHED(); }
+    void putPixelBuffer(const PixelBufferSourceView&, const IntRect&, const IntPoint&, AlphaPremultiplication) final { RELEASE_ASSERT_NOT_REACHED(); }
 
     RefPtr<SharedBuffer> sinkIntoPDFDocument() final;
 
     String debugDescription() const final;
 
-    RetainPtr<CFDataRef> m_data;
+    const RetainPtr<CFDataRef> m_data;
 };
 
 } // namespace WebCore

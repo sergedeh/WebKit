@@ -9,6 +9,7 @@
 
 #include "include/gpu/vk/VulkanMemoryAllocator.h"
 #include "src/gpu/graphite/vk/VulkanCommandBuffer.h"
+#include "src/gpu/graphite/vk/VulkanDescriptorSet.h"
 #include "src/gpu/graphite/vk/VulkanGraphiteUtils.h"
 #include "src/gpu/vk/VulkanMemory.h"
 
@@ -17,7 +18,8 @@ namespace skgpu::graphite {
 sk_sp<Buffer> VulkanBuffer::Make(const VulkanSharedContext* sharedContext,
                                  size_t size,
                                  BufferType type,
-                                 AccessPattern accessPattern) {
+                                 AccessPattern accessPattern,
+                                 std::string_view label) {
     if (size <= 0) {
         return nullptr;
     }
@@ -167,9 +169,15 @@ sk_sp<Buffer> VulkanBuffer::Make(const VulkanSharedContext* sharedContext,
         return nullptr;
     }
 
-    return sk_sp<Buffer>(new VulkanBuffer(
-            sharedContext, size, type, accessPattern, std::move(buffer), alloc, bufInfo.usage,
-            Protected(isProtected)));
+    return sk_sp<Buffer>(new VulkanBuffer(sharedContext,
+                                          size,
+                                          type,
+                                          accessPattern,
+                                          std::move(buffer),
+                                          alloc,
+                                          bufInfo.usage,
+                                          Protected(isProtected),
+                                          label));
 }
 
 VulkanBuffer::VulkanBuffer(const VulkanSharedContext* sharedContext,
@@ -179,16 +187,21 @@ VulkanBuffer::VulkanBuffer(const VulkanSharedContext* sharedContext,
                            VkBuffer buffer,
                            const skgpu::VulkanAlloc& alloc,
                            const VkBufferUsageFlags usageFlags,
-                           Protected isProtected)
+                           Protected isProtected,
+                           std::string_view label)
         : Buffer(sharedContext,
                  size,
                  isProtected,
+                 label,
                  /*reusableRequiresPurgeable=*/alloc.fFlags & skgpu::VulkanAlloc::kMappable_Flag)
         , fBuffer(std::move(buffer))
         , fAlloc(alloc)
         , fBufferUsageFlags(usageFlags)
         // We assume a buffer is used for CPU reads only in the case of GPU->CPU transfer buffers.
-        , fBufferUsedForCPURead(type == BufferType::kXferGpuToCpu) {}
+        , fBufferUsedForCPURead(type == BufferType::kXferGpuToCpu) {
+    // Update the newly-created underlying GPU object's label to match the Resource's
+    this->synchronizeBackendLabel();
+}
 
 void VulkanBuffer::freeGpuData() {
     if (fMapPtr) {
@@ -391,6 +404,24 @@ void VulkanBuffer::setBufferAccess(VulkanCommandBuffer* cmdBuffer,
     }
 
     fCurrentAccess = dstAccess;
+}
+
+sk_sp<VulkanDescriptorSet> VulkanBuffer::getCachedSingleBufferDescriptorSet(
+        size_t bufferSize) const {
+    for (auto& sizeAndSet : fCachedSingleBufferDescriptorSets) {
+        if (bufferSize == sizeAndSet.first) {
+            return sizeAndSet.second;
+        }
+    }
+    return nullptr;
+}
+
+void VulkanBuffer::addCachedSingleBufferDescriptorSet(size_t bufferSize,
+                                                      sk_sp<VulkanDescriptorSet> set) {
+    // We should already have confirmed we do not have a cached set for the provided bufferSize.
+    SkASSERT(!this->getCachedSingleBufferDescriptorSet(bufferSize));
+
+    fCachedSingleBufferDescriptorSets.push_back(std::make_pair(bufferSize, std::move(set)));
 }
 
 } // namespace skgpu::graphite

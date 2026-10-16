@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 
-# Copyright (C) 2005-2025 Apple Inc.  All rights reserved.
+# Copyright (C) 2005-2026 Apple Inc.  All rights reserved.
 # Copyright (C) 2007 Eric Seidel <eric@webkit.org>
 #
 # Redistribution and use in source and binary forms, with or without
@@ -46,14 +46,16 @@ use webkitdirs;
 use Scalar::Util qw(looks_like_number);
 use Text::ParseWords;
 
+maybeEnterWebKitContainerSDK();
+
 # determine configuration
 setConfiguration();
 my $configuration = configuration();
 
-if (shouldUseFlatpak()) {
-    my @command = (File::Spec->catfile(sourceDir(), "Tools", "Scripts", "run-javascriptcore-tests"));
-    runInFlatpak(@command);
+if (isLinux()) {
+    portName();
 }
+
 maybeUseContainerSDKRootDir();
 
 # These variables are intentionally left undefined.
@@ -98,6 +100,7 @@ my $runTestB3 = RUN_IF_NO_TESTS_SPECIFIED;
 my $runTestDFG = RUN_IF_NO_TESTS_SPECIFIED;
 my $runTestAPI = RUN_IF_NO_TESTS_SPECIFIED;
 my $runTestWasmDebugger = RUN_IF_NO_TESTS_SPECIFIED;
+my $runTestLibJSCTools = RUN_IF_NO_TESTS_SPECIFIED;
 my $runJSCStress = RUN_IF_NO_TESTS_SPECIFIED;
 my $runMozillaTests = RUN_IF_NO_TESTS_SPECIFIED;
 
@@ -205,6 +208,17 @@ if ($ENV{RUN_JAVASCRIPTCORE_TESTS_TESTWASMDEBUGGER}) {
     }
 }
 
+if ($ENV{RUN_JAVASCRIPTCORE_TESTS_TESTLIBJSCTOOLS}) {
+    if ($ENV{RUN_JAVASCRIPTCORE_TESTS_TESTLIBJSCTOOLS} eq "true") {
+        $runTestLibJSCTools = ENV_VAR_SAYS_DO_RUN;
+    } elsif ($ENV{RUN_JAVASCRIPTCORE_TESTS_TESTLIBJSCTOOLS} eq "false") {
+        $runTestLibJSCTools = ENV_VAR_SAYS_DONT_RUN;
+    } else {
+        print "Don't recognize value for RUN_JAVASCRIPTCORE_TESTS_TESTLIBJSCTOOLS environment variable: '"
+            . $ENV{RUN_JAVASCRIPTCORE_TESTS_TESTLIBJSCTOOLS} . "'. Should be set to 'true' or 'false'.\n";
+    }
+}
+
 if ($ENV{RUN_JAVASCRIPTCORE_TESTS_BUILD}) {
     if ($ENV{RUN_JAVASCRIPTCORE_TESTS_BUILD} eq "true") {
         $buildJSC = 1;
@@ -253,6 +267,7 @@ my $testb3Default = defaultStringForTestState($runTestB3);
 my $testDFGDefault = defaultStringForTestState($runTestDFG);
 my $testapiDefault = defaultStringForTestState($runTestAPI);
 my $testWasmDebuggerDefault = defaultStringForTestState($runTestWasmDebugger);
+my $testLibJSCToolsDefault = defaultStringForTestState($runTestLibJSCTools);
 my $jscStressDefault = defaultStringForTestState($runJSCStress);
 my $mozillaTestsDefault = defaultStringForTestState($runMozillaTests);
 my $jitStressTestsDefault = $runJITStressTests ? "will run" : " will not run";
@@ -278,6 +293,7 @@ Usage: $programName [options] [options to pass to build system]
   --[no-]testdfg                Only run (or don't run) testdfg (default: $testDFGDefault)
   --[no-]testapi                Only run (or don't run) testapi (default: $testapiDefault)
   --[no-]testwasmdebugger       Only run (or don't run) testwasmdebugger (default: $testWasmDebuggerDefault)
+  --[no-]testlibjsctools        Only run (or don't run) testLibJSCTools (default: $testLibJSCToolsDefault)
   --[no-]jsc-stress             Only run (or don't run) the JSC stress tests (default: $jscStressDefault)
   --[no-]mozilla-tests          Only run (or don't run) the Mozilla tests (default: $mozillaTestsDefault)
   --[no-]jit-stress-tests       Run (or don't run) the JIT stress tests (default: $jitStressTestsDefault)
@@ -345,6 +361,7 @@ Environment Variables:
   - set RUN_JAVASCRIPTCORE_TESTS_TESTDFG to "true" or "false" (no quotes) to determine if we run testdfg by default.
   - set RUN_JAVASCRIPTCORE_TESTS_TESTAPI to "true" or "false" (no quotes) to determine if we run testapi by default.
   - set RUN_JAVASCRIPTCORE_TESTS_TESTWASMDEBUGGER to "true" or "false" (no quotes) to determine if we run testwasmdebugger by default.
+  - set RUN_JAVASCRIPTCORE_TESTS_TESTLIBJSCTOOLS to "true" or "false" (no quotes) to determine if we run testLibJSCTools by default.
   - set RUN_JAVASCRIPTCORE_TESTS_BUILD to "true" or "false" (no quotes) to set the should-we-build-before-running-tests setting.
   - set RUN_JAVASCRIPTCORE_TESTS_EXTRA_TESTS to the path of a yaml file or a directory of JS files to be run as part of run-javascriptcore-tests.
 
@@ -366,6 +383,7 @@ GetOptions(
     'testdfg!' => \$runTestDFG,
     'testapi!' => \$runTestAPI,
     'testwasmdebugger!' => \$runTestWasmDebugger,
+    'testlibjsctools!' => \$runTestLibJSCTools,
     'jsc-stress!' => \$runJSCStress,
     'jitless-wasm!' => \$runJITlessWasm,
     'mozilla-tests!' => \$runMozillaTests,
@@ -421,6 +439,7 @@ if ($runTestMasm == DO_RUN
    || $runTestDFG == DO_RUN
    || $runTestAPI == DO_RUN
    || $runTestWasmDebugger == DO_RUN
+   || $runTestLibJSCTools == DO_RUN
    || $runJSCStress == DO_RUN
    || $runMozillaTests == DO_RUN) {
     $specificTestsSpecified = 1;
@@ -547,8 +566,15 @@ $runTestB3 = enableTestOrNot($runTestB3);
 $runTestDFG = enableTestOrNot($runTestDFG);
 $runTestAPI = enableTestOrNot($runTestAPI);
 $runTestWasmDebugger = enableTestOrNot($runTestWasmDebugger);
+$runTestLibJSCTools = enableTestOrNot($runTestLibJSCTools);
 $runJSCStress = enableTestOrNot($runJSCStress);
 $runMozillaTests = enableTestOrNot($runMozillaTests);
+
+# libJavaScriptCoreTools and its test is built on Mach APIs and only available on Apple platforms.
+if ($runTestLibJSCTools && $^O ne "darwin") {
+    print "Not running testLibJSCTools: it is only available on Apple platforms.\n";
+    $runTestLibJSCTools = DONT_RUN;
+}
 
 my @buildArgs;
 
@@ -674,12 +700,13 @@ sub testPath {
 }
 
 sub runTest {
-    my ($testName, $jsonTestStatusName, $extraEnvVars) = @_;
+    my ($testName, $jsonTestStatusName, $extraEnvVars, $extraArgs) = @_;
 
     chdirWebKit();
     chdir($productDir) or die "Failed to switch directory to '$productDir'\n";
     my $testExecutable = testPath($productDir, $testName);
     my @command = ($testExecutable);
+    push @command, split(/\s+/, $extraArgs) if defined $extraArgs && $extraArgs ne "";
     if (defined($artifact_exec_wrapper)) {
         # This needs to go first, as one use case is to override the
         # ELF interpreter.
@@ -811,8 +838,11 @@ if ($runTestDFG) { runTest("testdfg", "allDFGTestsPassed") }
 if ($runTestAPI) {
     runTest("testapi", "allApiTestsPassed");
     runTest("testapi", "allApiTestsPassedWithSystemMalloc", "Malloc=1");
+    # The global Collector cannot yet collect several heaps at once, so run only the test that never collects.
+    runTest("testapi", "allApiTestsPassedWithGlobalGC", "JSC_useGlobalGC=1", "heapMembershipChanges");
 }
 if ($runTestWasmDebugger) { runTest("testwasmdebugger", "allWasmDebuggerTestsPassed") }
+if ($runTestLibJSCTools) { runTest("testLibJSCTools", "allLibJSCToolsTestsPassed") }
 
 # Find JavaScriptCore directory
 chdirWebKit();
@@ -857,12 +887,12 @@ sub runJSCStressTests
             "PerformanceTests/SunSpider/with-baseline-code-sharing.yaml",
             "PerformanceTests/SunSpider/tests/v8-v6",
             "JSTests/stress",
-            "JSTests/microbenchmarks",
-            "JSTests/slowMicrobenchmarks.yaml",
+            "JSTests/microbenchmarks.yaml",
             "PerformanceTests/SunSpider/profiler-test.yaml",
             "LayoutTests/jsc-layout-tests.yaml",
             "JSTests/typeProfiler.yaml",
             "JSTests/controlFlowProfiler.yaml",
+            "JSTests/heapProfiler.yaml",
             "JSTests/es6.yaml",
             "JSTests/modules.yaml",
             "JSTests/complex.yaml",
@@ -1129,6 +1159,11 @@ sub runJSCStressTests
     if (defined($jsonFileName)) {
         $jsonData{'flaky'} =  \%jscStressFlakyInfo;
         $jsonData{'stressTestFailures'} = \@jscStressFailList;
+        my %notableResults = ();
+        foreach my $test (@jscStressFailList, keys %jscStressFlakyInfo, @jscStressNoResultList) {
+            $notableResults{$test} = $reportData{$test} if exists $reportData{$test};
+        }
+        $jsonData{'results'} = \%notableResults;
     }
 
     writeJsonDataIfApplicable();

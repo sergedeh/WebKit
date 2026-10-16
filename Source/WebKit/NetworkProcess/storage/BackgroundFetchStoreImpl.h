@@ -28,6 +28,7 @@
 #include <WebCore/ClientOrigin.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/HashMap.h>
+#include <wtf/ThreadSafeWeakPtr.h>
 
 namespace WTF {
 class WorkQueue;
@@ -75,8 +76,6 @@ private:
     void loadAllFetches(CompletionHandler<void()>&&);
     void fetchInformationFromFilename(const String&, CompletionHandler<void(const WebCore::ServiceWorkerRegistrationKey&, const String&)>&&);
     void initializeFetches(const WebCore::ClientOrigin&, CompletionHandler<void()>&&);
-
-    RefPtr<WebCore::SWServer> protectedServer();
 
     ThreadSafeWeakPtr<NetworkStorageManager> m_manager;
 

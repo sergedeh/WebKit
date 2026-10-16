@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include <WebCore/CSSPrimitiveValue.h>
+#include <WebCore/CSSKeywordValueInlines.h>
 #include <WebCore/CSSPropertyInitialValues.h>
 #include <WebCore/ImmutableStyleProperties.h>
 #include <WebCore/MutableStyleProperties.h>
@@ -70,6 +70,11 @@ inline void StyleProperties::deref() const
         delete immutableProperties;
     else
         RELEASE_ASSERT_NOT_REACHED();
+}
+
+inline bool StyleProperties::hasProperty(CSSPropertyID propertyID) const
+{
+    return findPropertyIndex(propertyID) != -1;
 }
 
 inline int StyleProperties::findPropertyIndex(CSSPropertyID propertyID) const

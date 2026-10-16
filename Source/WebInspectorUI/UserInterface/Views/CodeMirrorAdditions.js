@@ -39,7 +39,7 @@
         if (state._linkQuoteCharacter)
             stream.eatWhile(new RegExp("[^" + state._linkQuoteCharacter + "]"));
         else
-            stream.eatWhile(/[^\s\u00a0=<>\"\']/);
+            stream.eatWhile(/[^\s\u00a0=<>"']/);
 
         // If the stream isn't at the end of line then we found the end quote.
         // In the case, change _linkTokenize to parse the end of the link next.
@@ -80,7 +80,7 @@
             if (state._linkQuoteCharacter)
                 stream.eatWhile(new RegExp("[^\\s," + state._linkQuoteCharacter + "]"));
             else
-                stream.eatWhile(/[^\s,\u00a0=<>\"\']/);
+                stream.eatWhile(/[^\s,\u00a0=<>"']/);
         } else {
             // Eat the string until a comma, or ending quote.
             // If this is unquoted, then eat until whitespace or common parse errors.
@@ -88,7 +88,7 @@
             if (state._linkQuoteCharacter)
                 stream.eatWhile(new RegExp("[^," + state._linkQuoteCharacter + "]"));
             else
-                stream.eatWhile(/[^\s\u00a0=<>\"\']/);
+                stream.eatWhile(/[^\s\u00a0=<>"']/);
             stream.eatWhile(/[\s,]/);
         }
 
@@ -202,14 +202,14 @@
         if (state._unquotedURLString && stream.eatSpace())
             return null;
 
-        var ch = null;
+        let ch;
         var escaped = false;
         var reachedEndOfURL = false;
         var lastNonWhitespace = stream.pos;
         var quote = state._urlQuoteCharacter;
 
         // Parse characters until the end of the stream/line or a proper end quote character.
-        while ((ch = stream.next()) != null) {
+        while ((ch = stream.next()) !== null && ch !== undefined) {
             if (ch === quote && !escaped) {
                 reachedEndOfURL = true;
                 break;
@@ -360,6 +360,21 @@
         // We don't want to scroll the blurred editor into view, only the focused editor.
         setTimeout(delayedWork, 0);
     }
+
+    // CodeMirror's CSS tokenizer only accepts ASCII word characters in custom property names, which splits a
+    // name like `--色` into `--` and `色`. Per CSS Syntax, code points at or above U+0080 are valid ident code points.
+    function tokenizeCSSDash(stream, state)
+    {
+        // Not a custom property name. Fall back to CodeMirror's default handling in tokenBase() (negative numbers, vendor prefixes, minus).
+        const consume = false;
+        if (!stream.match(/^-[\w\\\-\u0080-\uFFFF]*/))
+            return consume;
+
+        return ["variable-2", stream.match(/^\s*:/, false) ? "variable-definition" : "variable"];
+    }
+
+    let cssMIMESpec = CodeMirror.mimeModes["text/css"];
+    cssMIMESpec.tokenHooks = Object.assign({}, cssMIMESpec.tokenHooks, {"-": tokenizeCSSDash});
 
     CodeMirror.extendMode("css", {token: extendedCSSToken});
     CodeMirror.extendMode("xml", {token: extendedXMLToken});
@@ -671,10 +686,6 @@
     extraJSONTypes.forEach(function(type) {
         CodeMirror.defineMIME(type, {name: "javascript", json: true});
     });
-
-    // FIXME: Add WHLSL specific modes.
-    CodeMirror.defineMIME("x-pipeline/x-compute", CodeMirror.resolveMode("x-shader/x-vertex"));
-    CodeMirror.defineMIME("x-pipeline/x-render", CodeMirror.resolveMode("x-shader/x-vertex"));
 })();
 
 WI.compareCodeMirrorPositions = function(a, b)

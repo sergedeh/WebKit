@@ -27,6 +27,8 @@
 #import "PrivateClickMeasurementConnection.h"
 
 #import "DaemonEncoder.h"
+#import "NetworkProcess.h"
+#import "NetworkSession.h"
 #import "PrivateClickMeasurementXPCUtilities.h"
 #import <wtf/NeverDestroyed.h>
 #import <wtf/darwin/XPCExtras.h>
@@ -36,14 +38,20 @@ namespace WebKit::PCM {
 void Connection::newConnectionWasInitialized() const
 {
     ASSERT(m_connection);
-    if (!m_networkSession
-        || m_networkSession->sessionID().isEphemeral()
-        || !m_networkSession->privateClickMeasurementDebugModeEnabled())
+    if (!m_networkSession || m_networkSession->sessionID().isEphemeral())
         return;
 
-    Daemon::Encoder encoder;
-    encoder.encode(true);
-    send(MessageType::SetDebugModeIsEnabled, encoder.takeBuffer());
+    if (m_networkSession->privateClickMeasurementDebugModeEnabled()) {
+        Daemon::Encoder encoder;
+        encoder.encode(true);
+        send(MessageType::SetDebugModeIsEnabled, encoder.takeBuffer());
+    }
+
+    if (m_networkSession->privateClickMeasurementPrivateRelayEnforcementEnabled()) {
+        Daemon::Encoder encoder;
+        encoder.encode(true);
+        send(MessageType::SetPrivateRelayEnforcementIsEnabled, encoder.takeBuffer());
+    }
 }
 
 void Connection::connectionReceivedEvent(xpc_object_t request)
@@ -57,13 +65,12 @@ void Connection::connectionReceivedEvent(xpc_object_t request)
     CheckedPtr networkSession = m_networkSession.get();
     if (!networkSession)
         return;
-    m_networkSession->networkProcess().broadcastConsoleMessage(m_networkSession->sessionID(), MessageSource::PrivateClickMeasurement, messageLevel, debugMessage);
+    protect(m_networkSession->networkProcess())->broadcastConsoleMessage(m_networkSession->sessionID(), JSC::MessageSource::PrivateClickMeasurement, messageLevel, debugMessage);
 }
 
-XPCObjectPtr<xpc_object_t> Connection::dictionaryFromMessage(MessageType messageType, EncodedMessage&& message) const
+OSObjectPtr<xpc_object_t> Connection::dictionaryFromMessage(MessageType messageType, EncodedMessage&& message) const
 {
-    // FIXME: This is a false positive. <rdar://164843889>
-    SUPPRESS_RETAINPTR_CTOR_ADOPT auto dictionary = adoptXPCObject(xpc_dictionary_create(nullptr, nullptr, 0));
+    OSObjectPtr dictionary = adoptOSObject(xpc_dictionary_create(nullptr, nullptr, 0));
     addVersionAndEncodedMessageToDictionary(WTF::move(message), dictionary.get());
     xpc_dictionary_set_uint64(dictionary.get(), protocolMessageTypeKey, static_cast<uint64_t>(messageType));
     return dictionary;

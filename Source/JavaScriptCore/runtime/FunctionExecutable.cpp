@@ -33,6 +33,7 @@
 #include "FunctionOverrides.h"
 #include "SourceCodeKey.h"
 #include "IsoCellSetInlines.h"
+#include "JSArray.h"
 #include "JSCJSValueInlines.h"
 
 namespace JSC {
@@ -77,8 +78,7 @@ static inline bool shouldKeepInConstraintSet(Visitor& visitor, CodeBlock* codeBl
 template<typename Visitor>
 void FunctionExecutable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    VM& vm = visitor.vm();
-    FunctionExecutable* thisObject = jsCast<FunctionExecutable*>(cell);
+    FunctionExecutable* thisObject = uncheckedDowncast<FunctionExecutable>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_topLevelExecutable);
@@ -93,7 +93,7 @@ void FunctionExecutable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         }
     }
 
-    // Since FunctionExecutable's finalizer always needs to be run, we do not track FunctionExecutable via finalizerSet.
+    // Every live FunctionExecutable needs reconciling, so it is not tracked via weakReconciliationSet.
     auto* codeBlockForCall = thisObject->m_codeBlockForCall.get();
     if (codeBlockForCall)
         visitCodeBlockEdge(visitor, codeBlockForCall);
@@ -102,7 +102,7 @@ void FunctionExecutable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         visitCodeBlockEdge(visitor, codeBlockForConstruct);
 
     if (shouldKeepInConstraintSet(visitor, codeBlockForCall, codeBlockForConstruct))
-        vm.heap.functionExecutableSpaceAndSet.outputConstraintsSet.add(thisObject);
+        thisObject->vm().heap.functionExecutableSpaceAndSet.outputConstraintsSet.add(thisObject);
 }
 
 DEFINE_VISIT_CHILDREN(FunctionExecutable);
@@ -110,8 +110,7 @@ DEFINE_VISIT_CHILDREN(FunctionExecutable);
 template<typename Visitor>
 void FunctionExecutable::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
 {
-    VM& vm = visitor.vm();
-    auto* executable = jsCast<FunctionExecutable*>(cell);
+    auto* executable = uncheckedDowncast<FunctionExecutable>(cell);
     auto* codeBlockForCall = executable->m_codeBlockForCall.get();
     if (codeBlockForCall) {
         if (!visitor.isMarked(codeBlockForCall))
@@ -124,12 +123,12 @@ void FunctionExecutable::visitOutputConstraintsImpl(JSCell* cell, Visitor& visit
     }
 
     if (!shouldKeepInConstraintSet(visitor, codeBlockForCall, codeBlockForConstruct))
-        vm.heap.functionExecutableSpaceAndSet.outputConstraintsSet.remove(executable);
+        executable->vm().heap.functionExecutableSpaceAndSet.outputConstraintsSet.remove(executable);
 }
 
 DEFINE_VISIT_OUTPUT_CONSTRAINTS(FunctionExecutable);
 
-FunctionExecutable* FunctionExecutable::fromGlobalCode(const Identifier& name, JSGlobalObject* globalObject, String&& program, const SourceOrigin& sourceOrigin, SourceTaintedOrigin taintedOrigin, const String& sourceURL, const TextPosition& position, LexicallyScopedFeatures lexicallyScopedFeatures, JSObject*& exception, int overrideLineNumber, std::optional<int> functionConstructorParametersEndPosition, FunctionConstructionMode functionConstructionMode)
+FunctionExecutable* FunctionExecutable::fromGlobalCode(const Identifier& name, JSGlobalObject* globalObject, String&& program, const SourceOrigin& sourceOrigin, SourceTaintedness taintedOrigin, const String& sourceURL, const TextPosition& position, LexicallyScopedFeatures lexicallyScopedFeatures, JSObject*& exception, int overrideLineNumber, std::optional<int> functionConstructorParametersEndPosition, FunctionConstructionMode functionConstructionMode)
 {
     if (overrideLineNumber == overrideLineNumberNotFound) {
         if (auto* executable = globalObject->tryGetCachedFunctionExecutableForFunctionConstructor(name, program, sourceOrigin, taintedOrigin, sourceURL, position, lexicallyScopedFeatures, functionConstructionMode))
@@ -155,8 +154,6 @@ FunctionExecutable::RareData& FunctionExecutable::ensureRareDataSlow()
 {
     ASSERT(!m_rareData);
     auto rareData = makeUnique<RareData>();
-    rareData->m_lineCount = lineCount();
-    rareData->m_endColumn = endColumn();
     rareData->m_parametersStartOffset = parametersStartOffset();
     rareData->m_functionStart = functionStart();
     rareData->m_functionEnd = functionEnd();
@@ -200,8 +197,6 @@ void FunctionExecutable::overrideInfo(const FunctionOverrideInfo& overrideInfo)
 {
     auto& rareData = ensureRareData();
     m_source = overrideInfo.sourceCode;
-    rareData.m_lineCount = overrideInfo.lineCount;
-    rareData.m_endColumn = overrideInfo.endColumn;
     rareData.m_parametersStartOffset = overrideInfo.parametersStartOffset;
     rareData.m_functionStart = overrideInfo.functionStart;
     rareData.m_functionEnd = overrideInfo.functionEnd;

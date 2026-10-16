@@ -75,7 +75,7 @@ public:
 
     USING_CAN_MAKE_WEAKPTR(EventTarget);
 
-    static uint64_t generateOperationID();
+    static uint64_t LEGACY_NODELETE generateOperationID();
 
     WEBCORE_EXPORT ~IDBTransaction() final;
 
@@ -83,24 +83,23 @@ public:
     Ref<DOMStringList> objectStoreNames() const;
     IDBTransactionMode mode() const { return m_info.mode(); }
     IDBTransactionDurability durability() const { return m_info.durability(); }
-    IDBDatabase& db();
-    DOMException* error() const;
+    IDBDatabase& LEGACY_NODELETE db();
+    DOMException* LEGACY_NODELETE error() const;
     ExceptionOr<Ref<IDBObjectStore>> objectStore(const String& name);
     ExceptionOr<void> abort();
     ExceptionOr<void> commit();
 
     enum EventTargetInterfaceType eventTargetInterface() const final { return EventTargetInterfaceType::IDBTransaction; }
-    ScriptExecutionContext* scriptExecutionContext() const final;
-    using ActiveDOMObject::protectedScriptExecutionContext;
+    ScriptExecutionContext* LEGACY_NODELETE scriptExecutionContext() const final;
     void refEventTarget() final { ThreadSafeRefCounted::ref(); }
     void derefEventTarget() final { ThreadSafeRefCounted::deref(); }
     using EventTarget::dispatchEvent;
     void dispatchEvent(Event&) final;
 
-    const IDBTransactionInfo& info() const { return m_info; }
+    const IDBTransactionInfo& info() const LIFETIME_BOUND { return m_info; }
     IDBDatabase& database() { return m_database.get(); }
     const IDBDatabase& database() const { return m_database.get(); }
-    IDBDatabaseInfo* originalDatabaseInfo() const { return m_info.originalDatabaseInfo().get(); }
+    IDBDatabaseInfo* originalDatabaseInfo() const LIFETIME_BOUND { return m_info.originalDatabaseInfo().get(); }
 
     void didStart(const IDBError&);
     void didAbort(const IDBError&);
@@ -117,8 +116,8 @@ public:
 
     Ref<IDBRequest> requestPutOrAdd(IDBObjectStore&, RefPtr<IDBKey>&&, SerializedScriptValue&, IndexedDB::ObjectStoreOverwriteMode);
     Ref<IDBRequest> requestGetRecord(IDBObjectStore&, const IDBGetRecordData&);
-    Ref<IDBRequest> requestGetAllObjectStoreRecords(IDBObjectStore&, const IDBKeyRangeData&, IndexedDB::GetAllType, std::optional<uint32_t> count);
-    Ref<IDBRequest> requestGetAllIndexRecords(IDBIndex&, const IDBKeyRangeData&, IndexedDB::GetAllType, std::optional<uint32_t> count);
+    Ref<IDBRequest> requestGetAllObjectStoreRecords(IDBObjectStore&, const IDBKeyRangeData&, IndexedDB::GetAllType, std::optional<uint32_t> count, IndexedDB::CursorDirection);
+    Ref<IDBRequest> requestGetAllIndexRecords(IDBIndex&, const IDBKeyRangeData&, IndexedDB::GetAllType, std::optional<uint32_t> count, IndexedDB::CursorDirection);
     Ref<IDBRequest> requestDeleteRecord(IDBObjectStore&, const IDBKeyRangeData&);
     Ref<IDBRequest> requestClearObjectStore(IDBObjectStore&);
     Ref<IDBRequest> requestCount(IDBObjectStore&, const IDBKeyRangeData&);
@@ -137,7 +136,7 @@ public:
 
     void abortDueToFailedRequest(DOMException&);
 
-    void activate();
+    void LEGACY_NODELETE activate();
     void deactivate();
 
     void operationCompletedOnServer(const IDBResultData&, IDBClient::TransactionOperation&);
@@ -149,12 +148,11 @@ public:
     bool isFinished() const { return m_state == IndexedDB::TransactionState::Finished; }
     bool didDispatchAbortOrCommit() const { return m_didDispatchAbortOrCommit; }
 
-    IDBClient::IDBConnectionProxy& connectionProxy();
-    Ref<IDBClient::IDBConnectionProxy> protectedConnectionProxy();
+    IDBClient::IDBConnectionProxy& LEGACY_NODELETE connectionProxy();
     void connectionClosedFromServer(const IDBError&);
     void generateIndexKeyForRecord(const IDBResourceIdentifier& requestIdentifier, const IDBIndexInfo&, const std::optional<IDBKeyPath>&, const IDBKeyData&, const IDBValue&, std::optional<int64_t> recordID);
 
-    template<typename Visitor> void visitReferencedObjectStores(Visitor&) const;
+    template<typename Visitor> void visitReferencedObjectStoresInGCThread(Visitor&) const;
 
     WEBCORE_EXPORT static std::atomic<unsigned> numberOfIDBTransactions;
 
@@ -167,12 +165,12 @@ private:
     IDBTransaction(IDBDatabase&, const IDBTransactionInfo&, IDBOpenDBRequest*);
 
     // ActiveDOMObject.
-    bool virtualHasPendingActivity() const final;
+    bool LEGACY_NODELETE virtualHasPendingActivity() const final;
 
     void commitInternal();
     void abortInternal();
     void notifyDidAbort(const IDBError&);
-    void finishAbortOrCommit();
+    void LEGACY_NODELETE finishAbortOrCommit();
     void abortInProgressOperations(const IDBError&);
 
     enum class IsWriteOperation : bool { No, Yes };
@@ -191,16 +189,16 @@ private:
     void abortOnServerAndCancelRequests(IDBClient::TransactionOperation&);
 
     void createObjectStoreOnServer(IDBClient::TransactionOperation&, const IDBObjectStoreInfo&);
-    void didCreateObjectStoreOnServer(const IDBResultData&);
+    void LEGACY_NODELETE didCreateObjectStoreOnServer(const IDBResultData&);
 
     void renameObjectStoreOnServer(IDBClient::TransactionOperation&, IDBObjectStoreIdentifier, const String& newName);
-    void didRenameObjectStoreOnServer(const IDBResultData&);
+    void LEGACY_NODELETE didRenameObjectStoreOnServer(const IDBResultData&);
 
     void createIndexOnServer(IDBClient::TransactionOperation&, const IDBIndexInfo&);
     void didCreateIndexOnServer(const IDBResultData&);
 
     void renameIndexOnServer(IDBClient::TransactionOperation&, IDBObjectStoreIdentifier, IDBIndexIdentifier, const String& newName);
-    void didRenameIndexOnServer(const IDBResultData&);
+    void LEGACY_NODELETE didRenameIndexOnServer(const IDBResultData&);
 
     void clearObjectStoreOnServer(IDBClient::TransactionOperation&, IDBObjectStoreIdentifier);
     void didClearObjectStoreOnServer(IDBRequest&, const IDBResultData&);
@@ -221,10 +219,10 @@ private:
     void didDeleteRecordOnServer(IDBRequest&, const IDBResultData&);
 
     void deleteObjectStoreOnServer(IDBClient::TransactionOperation&, const String& objectStoreName);
-    void didDeleteObjectStoreOnServer(const IDBResultData&);
+    void LEGACY_NODELETE didDeleteObjectStoreOnServer(const IDBResultData&);
 
     void deleteIndexOnServer(IDBClient::TransactionOperation&, IDBObjectStoreIdentifier, const String& indexName);
-    void didDeleteIndexOnServer(const IDBResultData&);
+    void LEGACY_NODELETE didDeleteIndexOnServer(const IDBResultData&);
 
     Ref<IDBRequest> doRequestOpenCursor(Ref<IDBCursor>&&);
     void openCursorOnServer(IDBClient::TransactionOperation&, const IDBCursorInfo&);
@@ -233,7 +231,7 @@ private:
     void iterateCursorOnServer(IDBClient::TransactionOperation&, const IDBIterateCursorData&);
     void didIterateCursorOnServer(IDBRequest&, const IDBResultData&);
 
-    void transitionedToFinishing(IndexedDB::TransactionState);
+    void LEGACY_NODELETE transitionedToFinishing(IndexedDB::TransactionState);
 
     void establishOnServer();
 
@@ -263,11 +261,11 @@ private:
     HashMap<Ref<IDBClient::TransactionOperation>, IDBResultData> m_transactionOperationResultMap;
     HashMap<IDBResourceIdentifier, Ref<IDBClient::TransactionOperation>> m_transactionOperationMap;
 
-    mutable Lock m_referencedObjectStoreLock;
-    HashMap<String, std::unique_ptr<IDBObjectStore>> m_referencedObjectStores WTF_GUARDED_BY_LOCK(m_referencedObjectStoreLock);
-    HashMap<IDBObjectStoreIdentifier, std::unique_ptr<IDBObjectStore>> m_deletedObjectStores;
+    mutable Lock m_objectStoresLock;
+    HashMap<String, std::unique_ptr<IDBObjectStore>> m_referencedObjectStores WTF_GUARDED_BY_LOCK(m_objectStoresLock);
+    HashMap<IDBObjectStoreIdentifier, std::unique_ptr<IDBObjectStore>> m_deletedObjectStores WTF_GUARDED_BY_LOCK(m_objectStoresLock);;
 
-    HashSet<RefPtr<IDBRequest>> m_openRequests;
+    HashSet<Ref<IDBRequest>> m_openRequests;
     RefPtr<IDBRequest> m_currentlyCompletingRequest;
 
     bool m_isStopped { false };
@@ -296,7 +294,7 @@ public:
     }
 
 private:
-    RefPtr<IDBTransaction> m_transaction;
+    const RefPtr<IDBTransaction> m_transaction;
 };
 
 #if !ASSERT_ENABLED

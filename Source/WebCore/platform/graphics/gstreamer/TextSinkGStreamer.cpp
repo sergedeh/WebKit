@@ -52,7 +52,7 @@ static void webkitTextSinkHandleSample(WebKitTextSink* self, GRefPtr<GstSample>&
 {
     auto* priv = self->priv;
     if (!priv->streamId) {
-        auto pad = adoptGRef(gst_element_get_static_pad(priv->appSink.get(), "sink"));
+        GRefPtr pad = adoptGRef(gst_element_get_static_pad(priv->appSink.get(), "sink"));
         priv->streamId = getStreamIdFromPad(pad.get());
     }
 
@@ -82,19 +82,14 @@ static void webkitTextSinkConstructed(GObject* object)
     priv->appSink = makeGStreamerElement("appsink"_s);
     gst_bin_add(GST_BIN_CAST(sink), priv->appSink.get());
 
-    auto pad = adoptGRef(gst_element_get_static_pad(priv->appSink.get(), "sink"));
+    GRefPtr pad = adoptGRef(gst_element_get_static_pad(priv->appSink.get(), "sink"));
     gst_element_add_pad(GST_ELEMENT_CAST(sink), gst_ghost_pad_new("sink", pad.get()));
 
-    auto textCaps = adoptGRef(gst_caps_new_empty_simple("application/x-subtitle-vtt"));
+    GRefPtr textCaps = adoptGRef(gst_caps_new_empty_simple("application/x-subtitle-vtt"));
     g_object_set(priv->appSink.get(), "emit-signals", TRUE, "enable-last-sample", FALSE, "caps", textCaps.get(), nullptr);
 
     g_signal_connect(priv->appSink.get(), "new-sample", G_CALLBACK(+[](GstElement* appSink, WebKitTextSink* sink) -> GstFlowReturn {
         webkitTextSinkHandleSample(sink, adoptGRef(gst_app_sink_pull_sample(GST_APP_SINK(appSink))));
-        return GST_FLOW_OK;
-    }), sink);
-
-    g_signal_connect(priv->appSink.get(), "new-preroll", G_CALLBACK(+[](GstElement* appSink, WebKitTextSink* sink) -> GstFlowReturn {
-        webkitTextSinkHandleSample(sink, adoptGRef(gst_app_sink_pull_preroll(GST_APP_SINK(appSink))));
         return GST_FLOW_OK;
     }), sink);
 

@@ -30,7 +30,9 @@
 #include "WebPage.h"
 #include "WebProcess.h"
 #include "WebProcessCreationParameters.h"
+#include <wtf/Borrow.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/TextStream.h>
 
 #if ENABLE(NOTIFICATIONS)
 #include "NetworkProcessConnection.h"
@@ -145,7 +147,7 @@ void WebNotificationManager::didUpdateNotificationDecision(const String& originS
 void WebNotificationManager::didRemoveNotificationDecisions(const Vector<String>& originStrings)
 {
 #if ENABLE(NOTIFICATIONS)
-    for (auto& originString : originStrings) {
+    for (auto& originString : borrow(originStrings)) {
         if (!originString.isEmpty())
             m_permissionsMap.remove(originString);
     }
@@ -162,7 +164,7 @@ NotificationClient::Permission WebNotificationManager::policyForOrigin(const Str
         auto origin = SecurityOriginData::fromURL(URL { originString });
         auto result = connection->sendSync(Messages::NotificationManagerMessageHandler::GetPermissionStateSync(WTF::move(origin)), WebProcess::singleton().sessionID().toUInt64());
         if (!result.succeeded())
-            RELEASE_LOG_ERROR(Notifications, "Could not look up notification permission for origin %" SENSITIVE_LOG_STRING": %u", originString.utf8().data(), static_cast<unsigned>(result.error()));
+            RELEASE_LOG_ERROR(Notifications, "Could not look up notification permission for origin %" SENSITIVE_LOG_STRING": %u", originString.utf8(), static_cast<unsigned>(result.error()));
 
         auto [pushPermission] = result.takeReplyOr(PushPermissionState::Denied);
         switch (pushPermission) {
@@ -206,7 +208,7 @@ bool WebNotificationManager::show(NotificationData&& notification, RefPtr<Notifi
 {
 #if ENABLE(NOTIFICATIONS)
     auto notificationID = notification.notificationID;
-    LOG(Notifications, "WebProcess %i going to show notification %s", getpid(), notificationID.toString().utf8().data());
+    LOG_WITH_STREAM(Notifications, stream << "WebProcess "_s << getpid() << " going to show notification "_s << notificationID.toString());
 
     ASSERT(isMainRunLoop());
     if (page && !page->corePage()->settings().notificationsEnabled()) {
@@ -280,7 +282,7 @@ void WebNotificationManager::didShowNotification(const WTF::UUID& notificationID
 {
     ASSERT(isMainRunLoop());
 
-    LOG(Notifications, "WebProcess %i DID SHOW notification %s", getpid(), notificationID.toString().utf8().data());
+    LOG_WITH_STREAM(Notifications, stream << "WebProcess "_s << getpid() << " DID SHOW notification "_s << notificationID.toString());
 
 #if ENABLE(NOTIFICATIONS)
     auto contextIdentifier = m_nonPersistentNotificationsContexts.get(notificationID);
@@ -300,14 +302,14 @@ void WebNotificationManager::didClickNotification(const WTF::UUID& notificationI
 {
     ASSERT(isMainRunLoop());
 
-    LOG(Notifications, "WebProcess %i DID CLICK notification %s", getpid(), notificationID.toString().utf8().data());
+    LOG_WITH_STREAM(Notifications, stream << "WebProcess "_s << getpid() << " DID CLICK notification "_s << notificationID.toString());
 
 #if ENABLE(NOTIFICATIONS)
     auto contextIdentifier = m_nonPersistentNotificationsContexts.get(notificationID);
     if (!contextIdentifier)
         return;
 
-    LOG(Notifications, "WebProcess %i handling click event for notification %s", getpid(), notificationID.toString().utf8().data());
+    LOG_WITH_STREAM(Notifications, stream << "WebProcess "_s << getpid() << " handling click event for notification "_s << notificationID.toString());
 
     Notification::ensureOnNotificationThread(contextIdentifier, notificationID, [](auto* notification) {
         if (!notification)
@@ -330,7 +332,7 @@ void WebNotificationManager::didCloseNotifications(const Vector<WTF::UUID>& noti
     ASSERT(isMainRunLoop());
 
 #if ENABLE(NOTIFICATIONS)
-    for (auto& notificationID : notificationIDs) {
+    for (auto& notificationID : borrow(notificationIDs)) {
         auto contextIdentifier = m_nonPersistentNotificationsContexts.get(notificationID);
         if (!contextIdentifier)
             continue;

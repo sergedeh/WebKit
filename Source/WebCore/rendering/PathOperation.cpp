@@ -27,12 +27,12 @@
 #include "PathOperation.h"
 
 #include "AnimationUtilities.h"
+#include "BorderShape.h"
 #include "CSSRayValue.h"
 #include "SVGElement.h"
 #include "SVGElementTypeHelpers.h"
-#include "SVGPathData.h"
 #include "SVGPathElement.h"
-#include "StyleLengthWrapper+Blending.h"
+#include "SVGPathFromElement.h"
 #include "StylePrimitiveNumericTypes+Blending.h"
 #include "StylePrimitiveNumericTypes+Conversions.h"
 
@@ -64,7 +64,7 @@ ReferencePathOperation::ReferencePathOperation(const Style::URL& url, const Atom
     , m_url(url)
     , m_fragment(fragment)
 {
-    if (is<SVGPathElement>(element) || is<SVGGeometryElement>(element))
+    if (isAnyOf<SVGPathElement, SVGGeometryElement>(element))
         m_path = pathFromGraphicsElement(*element);
 }
 
@@ -75,6 +75,14 @@ ReferencePathOperation::ReferencePathOperation(std::optional<Path>&& path)
 }
 
 // MARK: - ShapePathOperation
+
+ShapePathOperation::ShapePathOperation(Style::BasicShape shape, CSSBoxType referenceBox)
+    : PathOperation(Type::Shape, referenceBox)
+    , m_shape(WTF::move(shape))
+{
+}
+
+ShapePathOperation::~ShapePathOperation() = default;
 
 Ref<ShapePathOperation> ShapePathOperation::create(Style::BasicShape shape, CSSBoxType referenceBox)
 {
@@ -89,18 +97,31 @@ Ref<PathOperation> ShapePathOperation::clone() const
 bool ShapePathOperation::canBlend(const PathOperation& to) const
 {
     RefPtr toOperation = dynamicDowncast<ShapePathOperation>(to);
-    return toOperation && WebCore::Style::canBlend(m_shape, toOperation->m_shape);
+    return toOperation && WebCore::Style::canBlend(m_shape, toOperation->m_shape) && m_referenceBox == toOperation->referenceBox();
 }
 
 RefPtr<PathOperation> ShapePathOperation::blend(const PathOperation* to, const BlendingContext& context) const
 {
     Ref toShapePathOperation = downcast<ShapePathOperation>(*to);
-    return ShapePathOperation::create(WebCore::Style::blend(m_shape, toShapePathOperation->m_shape, context));
+    return ShapePathOperation::create(WebCore::Style::blend(m_shape, toShapePathOperation->m_shape, context), m_referenceBox);
 }
 
-std::optional<Path> ShapePathOperation::getPath(const TransformOperationData& data) const
+std::optional<Path> ShapePathOperation::getPath(const TransformOperationData& data, Style::ZoomFactor zoom) const
 {
-    return MotionPath::computePathForShape(*this, data);
+    return Style::tryPath(shape(), data, zoom);
+}
+
+bool ShapePathOperation::operator==(const ShapePathOperation& other) const
+{
+    return m_shape == other.m_shape
+        && m_referenceBox == other.m_referenceBox;
+}
+
+bool ShapePathOperation::operator==(const PathOperation& other) const
+{
+    if (!isSameType(other))
+        return false;
+    return *this == uncheckedDowncast<ShapePathOperation>(other);
 }
 
 // MARK: - BoxPathOperation
@@ -115,9 +136,17 @@ Ref<PathOperation> BoxPathOperation::clone() const
     return adoptRef(*new BoxPathOperation(referenceBox()));
 }
 
-std::optional<Path> BoxPathOperation::getPath(const TransformOperationData& data) const
+std::optional<Path> BoxPathOperation::getPath(const TransformOperationData& data, Style::ZoomFactor) const
 {
-    return MotionPath::computePathForBox(*this, data);
+    if (auto motionPathData = data.motionPathData) {
+        if (auto shaped = BorderShape::pathForShapedRect(motionPathData->offsetRect(), motionPathData->cornerCurvatures))
+            return shaped;
+
+        Path path;
+        path.addRoundedRect(motionPathData->offsetRect(), PathRoundedRect::Strategy::PreferBezier);
+        return path;
+    }
+    return std::nullopt;
 }
 
 // MARK: - RayPathOperation
@@ -149,9 +178,21 @@ RefPtr<PathOperation> RayPathOperation::blend(const PathOperation* to, const Ble
     return RayPathOperation::create(Style::blend(m_ray, toRayPathOperation->m_ray, context), m_referenceBox);
 }
 
-std::optional<Path> RayPathOperation::getPath(const TransformOperationData& data) const
+std::optional<Path> RayPathOperation::getPath(const TransformOperationData& data, Style::ZoomFactor zoom) const
 {
-    return MotionPath::computePathForRay(*this, data);
+    return Style::tryPath(*ray(), data, zoom);
+}
+
+bool RayPathOperation::operator==(const RayPathOperation& other) const
+{
+    return m_ray == other.m_ray;
+}
+
+bool RayPathOperation::operator==(const PathOperation& other) const
+{
+    if (!isSameType(other))
+        return false;
+    return *this == uncheckedDowncast<RayPathOperation>(other);
 }
 
 } // namespace WebCore

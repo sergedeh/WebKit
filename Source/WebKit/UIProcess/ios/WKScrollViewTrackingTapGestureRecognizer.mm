@@ -29,6 +29,7 @@
 #if PLATFORM(IOS_FAMILY)
 
 #import "UIKitUtilities.h"
+#import <wtf/RetainPtr.h>
 
 @implementation WKScrollViewTrackingTapGestureRecognizer
 
@@ -43,8 +44,8 @@
 {
     [super touchesBegan:touches withEvent:event];
 
-    if (auto scrollView = WebKit::scrollViewForTouches(touches))
-        _lastTouchedScrollView = scrollView;
+    if (RetainPtr scrollView = WebKit::scrollViewForTouches(touches))
+        _lastTouchedScrollView = scrollView.get();
 }
 
 @end

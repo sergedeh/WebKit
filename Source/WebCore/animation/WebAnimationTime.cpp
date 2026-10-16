@@ -31,6 +31,7 @@
 #include "CSSUnits.h"
 #include "LayoutUnit.h"
 #include "WebAnimationUtilities.h"
+#include <wtf/ReducedResolutionSeconds.h>
 
 namespace WebCore {
 
@@ -53,6 +54,12 @@ WebAnimationTime::WebAnimationTime(const Seconds& value)
 {
 }
 
+WebAnimationTime::WebAnimationTime(const ReducedResolutionSeconds& value)
+    : m_type(Type::Time)
+    , m_value(value.seconds())
+{
+}
+
 WebAnimationTime::WebAnimationTime(Type type, double value)
     : m_type(type)
     , m_value(value)
@@ -67,19 +74,19 @@ WebAnimationTime::WebAnimationTime(const CSSNumberish& value)
         return;
     }
 
-    ASSERT(std::holds_alternative<RefPtr<CSSNumericValue>>(value));
-    auto numericValue = std::get<RefPtr<CSSNumericValue>>(value);
+    ASSERT(std::holds_alternative<Ref<CSSNumericValue>>(value));
+    auto numericValue = std::get<Ref<CSSNumericValue>>(value);
     if (RefPtr unitValue = dynamicDowncast<CSSUnitValue>(numericValue.get())) {
-        if (unitValue->unitEnum() == CSSUnitType::CSS_NUMBER) {
+        if (unitValue->unitEnum() == CSSUnitType::Number) {
             m_type = Type::Time;
             m_value = unitValue->value() / 1000;
-        } else if (auto milliseconds = unitValue->convertTo(CSSUnitType::CSS_MS)) {
+        } else if (auto milliseconds = unitValue->convertTo(CSSUnitType::Ms)) {
             m_type = Type::Time;
             m_value = milliseconds->value() / 1000;
-        } else if (auto seconds = unitValue->convertTo(CSSUnitType::CSS_S)) {
+        } else if (auto seconds = unitValue->convertTo(CSSUnitType::S)) {
             m_type = Type::Time;
             m_value = seconds->value();
-        } else if (auto percentage = unitValue->convertTo(CSSUnitType::CSS_PERCENTAGE)) {
+        } else if (auto percentage = unitValue->convertTo(CSSUnitType::Percentage)) {
             m_type = Type::Percentage;
             m_value = percentage->value();
         }
@@ -259,7 +266,7 @@ WebAnimationTime::operator CSSNumberish() const
 void WebAnimationTime::dump(TextStream& ts) const
 {
     if (m_type == Type::Time) {
-        ts << Seconds { m_value } * 1000;
+        ts << Seconds { m_value };
         return;
     }
     ASSERT(m_type == Type::Percentage);

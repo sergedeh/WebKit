@@ -48,8 +48,8 @@ const GlobalObjectMethodTable* JSWorkletGlobalScopeBase::globalObjectMethodTable
         &supportsRichSourceInfo,
         &shouldInterruptScript,
         &javaScriptRuntimeFlags,
-        &queueMicrotaskToEventLoop,
         &shouldInterruptScriptBeforeTimeout,
+        nullptr, // moduleTypeIsAllowed
         &moduleLoaderImportModule,
         &moduleLoaderResolve,
         &moduleLoaderFetch,
@@ -68,7 +68,6 @@ const GlobalObjectMethodTable* JSWorkletGlobalScopeBase::globalObjectMethodTable
         nullptr,
         nullptr,
 #endif
-        deriveShadowRealmGlobalObject,
         codeForEval,
         canCompileStrings,
         trustedScriptStructure,
@@ -76,7 +75,7 @@ const GlobalObjectMethodTable* JSWorkletGlobalScopeBase::globalObjectMethodTable
     return &table;
 };
 
-JSWorkletGlobalScopeBase::JSWorkletGlobalScopeBase(JSC::VM& vm, JSC::Structure* structure, RefPtr<WorkletGlobalScope>&& impl)
+JSWorkletGlobalScopeBase::JSWorkletGlobalScopeBase(JSC::VM& vm, JSC::Structure* structure, Ref<WorkletGlobalScope>&& impl)
     : JSDOMGlobalObject(vm, structure, normalWorld(vm), globalObjectMethodTable())
     , m_wrapped(WTF::move(impl))
 {
@@ -93,7 +92,7 @@ void JSWorkletGlobalScopeBase::finishCreation(VM& vm, JSGlobalProxy* proxy)
 template<typename Visitor>
 void JSWorkletGlobalScopeBase::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = jsCast<JSWorkletGlobalScopeBase*>(cell);
+    auto* thisObject = uncheckedDowncast<JSWorkletGlobalScopeBase>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_proxy);
@@ -107,15 +106,15 @@ void JSWorkletGlobalScopeBase::destroy(JSCell* cell)
     SUPPRESS_MEMORY_UNSAFE_CAST static_cast<JSWorkletGlobalScopeBase*>(cell)->JSWorkletGlobalScopeBase::~JSWorkletGlobalScopeBase();
 }
 
-ScriptExecutionContext* JSWorkletGlobalScopeBase::scriptExecutionContext() const
+JSC::Structure* JSWorkletGlobalScopeBase::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
-    return m_wrapped.get();
+    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::GlobalObjectType, StructureFlags), info());
 }
 
 JSC::ScriptExecutionStatus JSWorkletGlobalScopeBase::scriptExecutionStatus(JSC::JSGlobalObject* globalObject, JSC::JSObject* owner)
 {
     ASSERT_UNUSED(owner, globalObject == owner);
-    return jsCast<JSWorkletGlobalScopeBase*>(globalObject)->scriptExecutionContext()->jscScriptExecutionStatus();
+    return uncheckedDowncast<JSWorkletGlobalScopeBase>(globalObject)->wrapped().jscScriptExecutionStatus();
 }
 
 void JSWorkletGlobalScopeBase::reportViolationForUnsafeEval(JSC::JSGlobalObject* globalObject, const String& source)
@@ -140,13 +139,8 @@ bool JSWorkletGlobalScopeBase::shouldInterruptScriptBeforeTimeout(const JSGlobal
 
 RuntimeFlags JSWorkletGlobalScopeBase::javaScriptRuntimeFlags(const JSGlobalObject* object)
 {
-    auto* thisObject = jsCast<const JSWorkletGlobalScopeBase*>(object);
+    auto* thisObject = uncheckedDowncast<JSWorkletGlobalScopeBase>(object);
     return thisObject->m_wrapped->jsRuntimeFlags();
-}
-
-void JSWorkletGlobalScopeBase::queueMicrotaskToEventLoop(JSGlobalObject& object, JSC::QueuedTask&& task)
-{
-    return Base::queueMicrotaskToEventLoop(object, WTF::move(task));
 }
 
 JSValue toJS(JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject*, WorkletGlobalScope& workletGlobalScope)
@@ -158,7 +152,7 @@ JSValue toJS(JSGlobalObject*, WorkletGlobalScope& workletGlobalScope)
 {
     if (!workletGlobalScope.script())
         return jsUndefined();
-    auto* contextWrapper = workletGlobalScope.script()->globalScopeWrapper();
+    auto* contextWrapper = protect(workletGlobalScope.script())->globalScopeWrapper();
     if (!contextWrapper)
         return jsUndefined();
     return &contextWrapper->proxy();

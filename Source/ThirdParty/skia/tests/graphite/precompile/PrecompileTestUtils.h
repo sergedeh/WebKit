@@ -28,6 +28,10 @@
 namespace skiatest {
     class Reporter;
 }
+namespace skgpu::graphite {
+    class Context;
+}
+class RuntimeEffectManager;
 
 namespace PrecompileTestUtils {
 
@@ -66,6 +70,8 @@ public:
     typedef bool (*SkipFunc)(const char*);
 
     explicit PipelineLabelInfoCollector(SkSpan<const PipelineLabel> cases, SkipFunc);
+
+    int numNotCovered() const;
 
     int processLabel(const std::string& precompiledLabel, int precompileCase);
 
@@ -107,12 +113,28 @@ private:
     std::map<std::string, OverGenInfo> fOverGenerated;
 };
 
-void RunTest(skgpu::graphite::PrecompileContext* precompileContext,
+void RunTest(skgpu::graphite::Context* context,
+             skgpu::graphite::PrecompileContext* precompileContext,
              skiatest::Reporter* reporter,
              const PrecompileSettings& precompileSettings,
              int precompileSettingsIndex,
              SkSpan<const PipelineLabel> cases,
-             PipelineLabelInfoCollector* collector);
+             PipelineLabelInfoCollector* collector,
+             bool checkPaintOptionCoverage);
+
+typedef void (*VisitSettingsFunc)(
+            skgpu::graphite::PrecompileContext*,
+            RuntimeEffectManager& effectManager,
+            const std::function<void(skgpu::graphite::PrecompileContext*,
+                                     const PrecompileSettings&,
+                                     int index)>& func);
+
+void PrecompileTest(skiatest::Reporter* reporter,
+                    skgpu::graphite::Context* context,
+                    SkSpan<const PipelineLabel> labels,
+                    VisitSettingsFunc visitSettings,
+                    bool checkPaintOptionCoverage = true,
+                    bool checkPipelineLabelCoverage = false);
 
 #if defined(SK_VULKAN)
 

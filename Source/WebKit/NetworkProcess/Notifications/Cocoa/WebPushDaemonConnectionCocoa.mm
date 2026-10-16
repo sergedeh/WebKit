@@ -36,7 +36,16 @@
 #import "WebPushDaemonConstants.h"
 #import <wtf/darwin/XPCExtras.h>
 
-namespace WebKit::WebPushD { 
+namespace WebKit::WebPushD {
+
+// This destructor must be defined in this .mm file (and not in WebPushDaemonConnection.cpp).
+// As the first non-pure non-inline virtual, it is the key function for Connection, and the
+// vtable is emitted in the same translation unit. WebPushDaemonConnection.h's ConnectionToMachService
+// base declares connectionReceivedEvent(xpc_object_t), and xpc_object_t resolves to OS_xpc_object*
+// in .mm TUs but to void* in .cpp TUs (gated on __OBJC__ via <os/object.h>). Emitting the vtable
+// from a .cpp TU would sign its slot with the void* discriminator, causing arm64e PAC failures at
+// every .mm call site. See https://bugs.webkit.org/show_bug.cgi?id=316390.
+Connection::~Connection() = default;
 
 void Connection::newConnectionWasInitialized() const
 {
@@ -44,11 +53,10 @@ void Connection::newConnectionWasInitialized() const
     sendWithoutUsingIPCConnection(Messages::PushClientConnection::InitializeConnection(m_configuration));
 }
 
-static XPCObjectPtr<xpc_object_t> messageDictionaryFromEncoder(UniqueRef<IPC::Encoder>&& encoder)
+static OSObjectPtr<xpc_object_t> messageDictionaryFromEncoder(UniqueRef<IPC::Encoder>&& encoder)
 {
     auto xpcData = encoderToXPCData(WTF::move(encoder));
-    // FIXME: This is a false positive. <rdar://164843889>
-    SUPPRESS_RETAINPTR_CTOR_ADOPT auto dictionary = adoptXPCObject(xpc_dictionary_create(nullptr, nullptr, 0));
+    OSObjectPtr dictionary = adoptOSObject(xpc_dictionary_create(nullptr, nullptr, 0));
     xpc_dictionary_set_uint64(dictionary.get(), WebPushD::protocolVersionKey, WebPushD::protocolVersionValue);
     xpc_dictionary_set_value(dictionary.get(), WebPushD::protocolEncodedMessageKey, xpcData.get());
 

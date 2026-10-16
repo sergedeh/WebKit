@@ -38,17 +38,19 @@ enum class CSSWideKeyword : uint8_t {
     Inherit,
     Unset,
     Revert,
-    RevertLayer
+    RevertLayer,
+    RevertRule
 };
 
 inline bool isCSSWideKeyword(CSSValueID valueID)
 {
     switch (valueID) {
-    case CSSValueInitial:
-    case CSSValueInherit:
-    case CSSValueUnset:
-    case CSSValueRevert:
-    case CSSValueRevertLayer:
+    case CSSValueID::Initial:
+    case CSSValueID::Inherit:
+    case CSSValueID::Unset:
+    case CSSValueID::Revert:
+    case CSSValueID::RevertLayer:
+    case CSSValueID::RevertRule:
         return true;
     default:
         return false;
@@ -58,16 +60,18 @@ inline bool isCSSWideKeyword(CSSValueID valueID)
 inline std::optional<CSSWideKeyword> parseCSSWideKeyword(CSSValueID valueID)
 {
     switch (valueID) {
-    case CSSValueInitial:
+    case CSSValueID::Initial:
         return CSSWideKeyword::Initial;
-    case CSSValueInherit:
+    case CSSValueID::Inherit:
         return CSSWideKeyword::Inherit;
-    case CSSValueUnset:
+    case CSSValueID::Unset:
         return CSSWideKeyword::Unset;
-    case CSSValueRevert:
+    case CSSValueID::Revert:
         return CSSWideKeyword::Revert;
-    case CSSValueRevertLayer:
+    case CSSValueID::RevertLayer:
         return CSSWideKeyword::RevertLayer;
+    case CSSValueID::RevertRule:
+        return CSSWideKeyword::RevertRule;
     default:
         return { };
     }
@@ -77,15 +81,17 @@ inline CSSValueID toValueID(CSSWideKeyword keyword)
 {
     switch (keyword) {
     case CSSWideKeyword::Initial:
-        return CSSValueInitial;
+        return CSSValueID::Initial;
     case CSSWideKeyword::Inherit:
-        return CSSValueInherit;
+        return CSSValueID::Inherit;
     case CSSWideKeyword::Unset:
-        return CSSValueUnset;
+        return CSSValueID::Unset;
     case CSSWideKeyword::Revert:
-        return CSSValueRevert;
+        return CSSValueID::Revert;
     case CSSWideKeyword::RevertLayer:
-        return CSSValueRevertLayer;
+        return CSSValueID::RevertLayer;
+    case CSSWideKeyword::RevertRule:
+        return CSSValueID::RevertRule;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

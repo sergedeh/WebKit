@@ -51,7 +51,7 @@ Ref<WorkerModuleScriptLoader> WorkerModuleScriptLoader::create(ModuleScriptLoade
 
 WorkerModuleScriptLoader::WorkerModuleScriptLoader(ModuleScriptLoaderClient& client, DeferredPromise& promise, WorkerScriptFetcher& scriptFetcher, RefPtr<JSC::ScriptFetchParameters>&& parameters)
     : ModuleScriptLoader(client, promise, scriptFetcher, WTF::move(parameters))
-    , m_scriptLoader(WorkerScriptLoader::create(WorkerScriptLoader::AlwaysUseUTF8::Yes))
+    , m_scriptLoader(WorkerScriptLoader::create())
 {
 }
 
@@ -60,7 +60,7 @@ WorkerModuleScriptLoader::~WorkerModuleScriptLoader()
     m_scriptLoader->cancel();
 }
 
-void WorkerModuleScriptLoader::load(ScriptExecutionContext& context, URL&& sourceURL)
+void WorkerModuleScriptLoader::load(ScriptExecutionContext& context, URL&& sourceURL, const URL& referrer)
 {
     m_sourceURL = WTF::move(sourceURL);
 
@@ -81,19 +81,33 @@ void WorkerModuleScriptLoader::load(ScriptExecutionContext& context, URL&& sourc
     fetchOptions.mode = FetchOptions::Mode::Cors;
     fetchOptions.cache = FetchOptions::Cache::Default;
     fetchOptions.redirect = FetchOptions::Redirect::Follow;
-    fetchOptions.credentials = static_cast<WorkerScriptFetcher&>(scriptFetcher()).credentials();
-    fetchOptions.destination = static_cast<WorkerScriptFetcher&>(scriptFetcher()).destination();
-    fetchOptions.referrerPolicy = static_cast<WorkerScriptFetcher&>(scriptFetcher()).referrerPolicy();
+    fetchOptions.credentials = downcast<WorkerScriptFetcher>(scriptFetcher()).credentials();
+    fetchOptions.destination = downcast<WorkerScriptFetcher>(scriptFetcher()).destination();
+    fetchOptions.referrerPolicy = downcast<WorkerScriptFetcher>(scriptFetcher()).referrerPolicy();
+
+    // CSS modules aren't allowed in workers/worklets.
+    // It should've been blocked elsewhere before reaching here.
+    RELEASE_ASSERT(fetchOptions.destination != FetchOptions::Destination::Style);
 
     bool cspCheckFailed = false;
     ContentSecurityPolicyEnforcement contentSecurityPolicyEnforcement = ContentSecurityPolicyEnforcement::DoNotEnforce;
     if (!context.shouldBypassMainWorldContentSecurityPolicy()) {
+        std::optional<TextPosition> sourcePosition;
+        if (RefPtr document = dynamicDowncast<Document>(context))
+            sourcePosition = document->currentParserSourcePosition();
+
         CheckedPtr contentSecurityPolicy = context.contentSecurityPolicy();
-        if (fetchOptions.destination == FetchOptions::Destination::Script) {
-            cspCheckFailed = contentSecurityPolicy && !contentSecurityPolicy->allowScriptFromSource(m_sourceURL);
+        // Worklets and scripts are governed by script-src; Text modules by connect-src; workers by worker-src.
+        bool shouldEnforceScriptSrc = fetchOptions.destination == FetchOptions::Destination::Script
+            || isWorkletDestination(fetchOptions.destination);
+        if (shouldEnforceScriptSrc) {
+            cspCheckFailed = contentSecurityPolicy && !contentSecurityPolicy->allowScriptFromSource(m_sourceURL, WTF::move(sourcePosition));
             contentSecurityPolicyEnforcement = ContentSecurityPolicyEnforcement::EnforceScriptSrcDirective;
+        } else if (fetchOptions.destination == FetchOptions::Destination::Text) {
+            cspCheckFailed = contentSecurityPolicy && !contentSecurityPolicy->allowConnectToSource(m_sourceURL, WTF::move(sourcePosition));
+            contentSecurityPolicyEnforcement = ContentSecurityPolicyEnforcement::EnforceConnectSrcDirective;
         } else {
-            cspCheckFailed = contentSecurityPolicy && !contentSecurityPolicy->allowWorkerFromSource(m_sourceURL);
+            cspCheckFailed = contentSecurityPolicy && !contentSecurityPolicy->allowWorkerFromSource(m_sourceURL, WTF::move(sourcePosition));
             contentSecurityPolicyEnforcement = ContentSecurityPolicyEnforcement::EnforceWorkerSrcDirective;
         }
     }
@@ -117,7 +131,11 @@ void WorkerModuleScriptLoader::load(ScriptExecutionContext& context, URL&& sourc
             fetchOptions.mode = FetchOptions::Mode::SameOrigin;
     }
 
-    m_scriptLoader->loadAsynchronously(context, WTF::move(request), WorkerScriptLoader::Source::ModuleScript, WTF::move(fetchOptions), contentSecurityPolicyEnforcement, ServiceWorkersMode::All, *this, taskMode());
+    String referrerForRequest;
+    if (!referrer.isEmpty())
+        referrerForRequest = referrer.strippedForUseAsReferrer().string;
+
+    m_scriptLoader->loadAsynchronously(context, WTF::move(request), WorkerScriptLoader::Source::ModuleScript, WTF::move(fetchOptions), contentSecurityPolicyEnforcement, ServiceWorkersMode::All, *this, taskMode(), std::nullopt, WTF::move(referrerForRequest));
 }
 
 ReferrerPolicy WorkerModuleScriptLoader::referrerPolicy()

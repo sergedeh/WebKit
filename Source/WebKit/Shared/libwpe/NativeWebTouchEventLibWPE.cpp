@@ -29,17 +29,22 @@
 #if ENABLE(TOUCH_EVENTS) && USE(LIBWPE)
 
 #include "WebEventFactory.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebKit {
 
-NativeWebTouchEvent::NativeWebTouchEvent(struct wpe_input_touch_event* event, float deviceScaleFactor)
-    : WebTouchEvent(WebEventFactory::createWebTouchEvent(event, deviceScaleFactor))
+WTF_MAKE_TZONE_ALLOCATED_IMPL(NativeWebTouchEvent);
+
+Ref<NativeWebTouchEvent> NativeWebTouchEvent::create(struct wpe_input_touch_event* event, float deviceScaleFactor)
+{
+    return adoptRef(*new NativeWebTouchEvent(WebEventFactory::createWebTouchEvent(event, deviceScaleFactor), event));
+}
+
+NativeWebTouchEvent::NativeWebTouchEvent(WebTouchEventInit&& init, struct wpe_input_touch_event* event)
+    : WebTouchEvent(WTF::move(init.event), WTF::move(init.touch))
     , m_fallbackTouchPoint { wpe_input_touch_event_type_null, 0, 0, 0, 0 }
 {
-    for (unsigned i = 0; i < event->touchpoints_length; ++i) {
-        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // WPE port
-        auto& point = event->touchpoints[i];
-        WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+    for (auto& point : unsafeMakeSpan(event->touchpoints, event->touchpoints_length)) {
         if (point.type != wpe_input_touch_event_type_null) {
             m_fallbackTouchPoint = point;
             break;

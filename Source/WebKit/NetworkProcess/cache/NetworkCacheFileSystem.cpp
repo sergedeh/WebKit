@@ -47,6 +47,7 @@
 
 #if USE(SOUP)
 #include <gio/gio.h>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/GRefPtr.h>
 #endif
 
@@ -55,24 +56,21 @@ namespace NetworkCache {
 
 void traverseDirectory(const String& path, NOESCAPE const Function<void (const String&, DirectoryEntryType)>& function)
 {
-    auto entries = FileSystem::listDirectory(path);
-    for (auto& entry : entries) {
-        auto entryPath = FileSystem::pathByAppendingComponent(path, entry);
-        auto type = FileSystem::fileType(entryPath) == FileSystem::FileType::Directory ? DirectoryEntryType::Directory : DirectoryEntryType::File;
-        function(entry, type);
-    }
+    FileSystem::traverseDirectory(path, [&](const String& fileName, FileSystem::FileType type) {
+        function(fileName, type == FileSystem::FileType::Directory ? DirectoryEntryType::Directory : DirectoryEntryType::File);
+    });
 }
 
 FileTimes fileTimes(const String& path)
 {
 #if HAVE(STAT_BIRTHTIME)
     struct stat fileInfo;
-    if (stat(FileSystem::fileSystemRepresentation(path).data(), &fileInfo))
+    if (FileSystem::statFile(FileSystem::fileSystemRepresentation(path).spanIncludingNullTerminator(), fileInfo))
         return { };
     return { WallTime::fromRawSeconds(fileInfo.st_birthtime), WallTime::fromRawSeconds(fileInfo.st_mtime) };
 #elif USE(SOUP)
     // There's no st_birthtime in some operating systems like Linux, so we use xattrs to set/get the creation time.
-    GRefPtr<GFile> file = adoptGRef(g_file_new_for_path(FileSystem::fileSystemRepresentation(path).data()));
+    GRefPtr<GFile> file = gFileNewForPath(FileSystem::fileSystemRepresentation(path));
     GRefPtr<GFileInfo> fileInfo = adoptGRef(g_file_query_info(file.get(), "xattr::birthtime,time::modified", G_FILE_QUERY_INFO_NONE, nullptr, nullptr));
     if (!fileInfo)
         return { };

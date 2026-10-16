@@ -30,6 +30,7 @@
 #import <pal/spi/cocoa/NSUserDefaultsSPI.h>
 #import <wtf/WeakObjCPtr.h>
 #import <wtf/darwin/DispatchExtras.h>
+#import <wtf/text/CString.h>
 
 @interface WKUserDefaults : NSUserDefaults {
 @private
@@ -54,7 +55,8 @@
     if (!strongObserver)
         return;
 
-    for (NSString *key in oldValues) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSString *key in oldValues) {
         RetainPtr<id> oldValue = oldValues[key];
         RetainPtr<id> newValue = newValues[key];
 
@@ -162,7 +164,7 @@
     for (RetainPtr domain : domains) {
         auto userDefaults = adoptNS([[WKUserDefaults alloc] initWithSuiteName:domain.get()]);
         if (!userDefaults) {
-            WTFLogAlways("Could not init user defaults instance for domain %s", String(domain.get()).utf8().data());
+            SAFE_WTFLOGALWAYS("Could not init user defaults instance for domain %s", UTF8CString { domain });
             continue;
         }
         userDefaults->m_observer = self;

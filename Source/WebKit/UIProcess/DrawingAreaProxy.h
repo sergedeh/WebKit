@@ -34,6 +34,7 @@
 #include <WebCore/IntRect.h>
 #include <WebCore/IntSize.h>
 #include <WebCore/ProcessIdentifier.h>
+#include <optional>
 #include <stdint.h>
 #include <wtf/AbstractRefCounted.h>
 #include <wtf/Identified.h>
@@ -62,7 +63,7 @@ class RemotePageDrawingAreaProxy;
 class WebPageProxy;
 class WebProcessProxy;
 
-#if USE(COORDINATED_GRAPHICS) || USE(TEXTURE_MAPPER)
+#if !PLATFORM(WPE) && !PLATFORM(GTK) && (USE(COORDINATED_GRAPHICS) || USE(TEXTURE_MAPPER))
 struct UpdateInfo;
 #endif
 
@@ -94,14 +95,19 @@ public:
     // FIXME: These should be pure virtual.
     virtual void setBackingStoreIsDiscardable(bool) { }
 
-    const WebCore::IntSize& size() const { return m_size; }
+    const WebCore::IntSize& size() const LIFETIME_BOUND { return m_size; }
     bool setSize(const WebCore::IntSize&, const WebCore::IntSize& scrollOffset = { });
 
     virtual void minimumSizeForAutoLayoutDidChange() { }
     virtual void sizeToContentAutoSizeMaximumSizeDidChange() { }
 
     virtual void adjustTransientZoom(double, WebCore::FloatPoint /* originInLayerForPageScale */, WebCore::FloatPoint /* originInVisibleRect */) { }
-    virtual void commitTransientZoom(double, WebCore::FloatPoint /* originInLayerForPageScale */) { }
+    // A zoom that picks its own destination up front, rather than tracking a gesture, passes it as
+    // `targetScrollPosition` in unscaled content coordinates. Ports that apply the page scale in the UI process
+    // need it stated outright, because there `originInLayerForPageScale` is not a translation they can consume
+    // (see RemoteLayerTreeDrawingAreaProxyMac::commitTransientZoom()).
+    virtual void commitTransientZoom(double, WebCore::FloatPoint /* originInLayerForPageScale */, std::optional<WebCore::FloatPoint> /* targetScrollPosition */) { }
+    virtual std::optional<double> committedTransientZoomScale() const { return std::nullopt; }
 
     virtual void viewIsBecomingVisible() { }
     virtual void viewIsBecomingInvisible() { }
@@ -132,7 +138,7 @@ public:
     virtual bool shouldCoalesceVisualEditorStateUpdates() const { return false; }
     virtual bool shouldSendWheelEventsToEventDispatcher() const { return false; }
 
-    WebPageProxy* page() const;
+    WebPageProxy* LEGACY_NODELETE page() const;
     virtual void viewWillStartLiveResize() { };
     virtual void viewWillEndLiveResize() { };
 
@@ -155,7 +161,6 @@ public:
 protected:
     DrawingAreaProxy(WebPageProxy&, WebProcessProxy&);
 
-    RefPtr<WebPageProxy> protectedPage() const;
     WebProcessProxy& webProcessProxy() const { return m_webProcessProxy; }
 
     void removeOutstandingPresentationUpdateCallback(IPC::Connection&, AsyncReplyID);
@@ -169,7 +174,7 @@ private:
     virtual void updateAcceleratedCompositingMode(uint64_t /* backingStoreStateID */, const LayerTreeContext&) { }
     virtual void didFirstLayerFlush(uint64_t /* backingStoreStateID */, const LayerTreeContext&) { }
 
-#if USE(COORDINATED_GRAPHICS) || USE(TEXTURE_MAPPER)
+#if !PLATFORM(WPE) && !PLATFORM(GTK) && (USE(COORDINATED_GRAPHICS) || USE(TEXTURE_MAPPER))
     virtual void update(uint64_t /* backingStoreStateID */, UpdateInfo&&) { }
     virtual void exitAcceleratedCompositingMode(uint64_t /* backingStoreStateID */, UpdateInfo&&) { }
 #endif

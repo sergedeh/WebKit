@@ -41,7 +41,7 @@ namespace WebKit {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(XDGDBusProxy);
 
-CString XDGDBusProxy::makeProxy(const char* baseDirectory, const char* proxyTemplate)
+UTF8CString XDGDBusProxy::makeProxy(const char* baseDirectory, const char* proxyTemplate)
 {
     GUniquePtr<char> appRunDir(g_build_filename(g_get_user_runtime_dir(), baseDirectory, nullptr));
     if (g_mkdir_with_parents(appRunDir.get(), 0700) == -1) {
@@ -56,10 +56,10 @@ CString XDGDBusProxy::makeProxy(const char* baseDirectory, const char* proxyTemp
         return { };
     }
 
-    return proxySocketTemplate.get();
+    return UTF8CString::unsafeFromUTF8(proxySocketTemplate.get());
 }
 
-std::optional<CString> XDGDBusProxy::dbusSessionProxy(const char* baseDirectory, AllowPortals allowPortals)
+std::optional<UTF8CString> XDGDBusProxy::dbusSessionProxy(const char* baseDirectory, AllowPortals allowPortals)
 {
     if (!m_dbusSessionProxyPath.isNull())
         return m_dbusSessionProxyPath;
@@ -72,27 +72,27 @@ std::optional<CString> XDGDBusProxy::dbusSessionProxy(const char* baseDirectory,
     if (m_dbusSessionProxyPath.isNull())
         return std::nullopt;
 
-    m_args.appendVector(Vector<CString> {
-        CString(dbusAddress), m_dbusSessionProxyPath,
-        "--filter"
+    m_args.appendList<UTF8CString>({
+        UTF8CString::unsafeFromUTF8(dbusAddress), m_dbusSessionProxyPath,
+        "--filter"_s
     });
 
 #if ENABLE(MEDIA_SESSION)
     auto mprisSessionID = makeString("--own=org.mpris.MediaPlayer2."_s, WTF::applicationID().span(), ".Sandboxed.*"_s);
-    m_args.append(mprisSessionID.ascii().data());
+    m_args.append(UTF8CString::fromUTF8(mprisSessionID.ascii().span()));
 #endif
 
     if (allowPortals == AllowPortals::Yes)
-        m_args.append("--talk=org.freedesktop.portal.Desktop");
+        m_args.append("--talk=org.freedesktop.portal.Desktop"_s);
 
     if (!g_strcmp0(g_getenv("WEBKIT_ENABLE_DBUS_PROXY_LOGGING"), "1"))
-        m_args.append("--log");
+        m_args.append("--log"_s);
 
     return m_dbusSessionProxyPath;
 }
 
 #if USE(ATSPI)
-std::optional<CString> XDGDBusProxy::accessibilityProxy(const char* baseDirectory, const String& accessibilityBusAddress, const String& accessibilityBusName)
+std::optional<UTF8CString> XDGDBusProxy::accessibilityProxy(const char* baseDirectory, const String& accessibilityBusAddress, const String& accessibilityBusName)
 {
     if (!m_accessibilityProxyPath.isNull())
         return m_accessibilityProxyPath;
@@ -103,24 +103,24 @@ std::optional<CString> XDGDBusProxy::accessibilityProxy(const char* baseDirector
 
     auto webProcessA11yOwnArg = makeString("--own="_s, accessibilityBusName);
 
-    m_args.appendVector(Vector<CString> {
+    m_args.appendList<UTF8CString>({
         accessibilityBusAddress.utf8(), m_accessibilityProxyPath,
-        "--filter",
-        "--sloppy-names",
-        "--broadcast=org.a11y.atspi.Registry.EventListenerRegistered=@/org/a11y/atspi/registry",
-        "--broadcast=org.a11y.atspi.Registry.EventListenerDeregistered=@/org/a11y/atspi/registry",
-        "--call=org.a11y.atspi.Registry=org.a11y.atspi.Socket.Embed@/org/a11y/atspi/accessible/root",
-        "--call=org.a11y.atspi.Registry=org.a11y.atspi.Socket.Unembed@/org/a11y/atspi/accessible/root",
-        "--call=org.a11y.atspi.Registry=org.a11y.atspi.Registry.GetRegisteredEvents@/org/a11y/atspi/registry",
-        "--call=org.a11y.atspi.Registry=org.a11y.atspi.DeviceEventController.GetKeystrokeListeners@/org/a11y/atspi/registry/deviceeventcontroller",
-        "--call=org.a11y.atspi.Registry=org.a11y.atspi.DeviceEventController.GetDeviceEventListeners@/org/a11y/atspi/registry/deviceeventcontroller",
-        "--call=org.a11y.atspi.Registry=org.a11y.atspi.DeviceEventController.NotifyListenersSync@/org/a11y/atspi/registry/deviceeventcontroller",
-        "--call=org.a11y.atspi.Registry=org.a11y.atspi.DeviceEventController.NotifyListenersAsync@/org/a11y/atspi/registry/deviceeventcontroller",
+        "--filter"_s,
+        "--sloppy-names"_s,
+        "--broadcast=org.a11y.atspi.Registry.EventListenerRegistered=@/org/a11y/atspi/registry"_s,
+        "--broadcast=org.a11y.atspi.Registry.EventListenerDeregistered=@/org/a11y/atspi/registry"_s,
+        "--call=org.a11y.atspi.Registry=org.a11y.atspi.Socket.Embed@/org/a11y/atspi/accessible/root"_s,
+        "--call=org.a11y.atspi.Registry=org.a11y.atspi.Socket.Unembed@/org/a11y/atspi/accessible/root"_s,
+        "--call=org.a11y.atspi.Registry=org.a11y.atspi.Registry.GetRegisteredEvents@/org/a11y/atspi/registry"_s,
+        "--call=org.a11y.atspi.Registry=org.a11y.atspi.DeviceEventController.GetKeystrokeListeners@/org/a11y/atspi/registry/deviceeventcontroller"_s,
+        "--call=org.a11y.atspi.Registry=org.a11y.atspi.DeviceEventController.GetDeviceEventListeners@/org/a11y/atspi/registry/deviceeventcontroller"_s,
+        "--call=org.a11y.atspi.Registry=org.a11y.atspi.DeviceEventController.NotifyListenersSync@/org/a11y/atspi/registry/deviceeventcontroller"_s,
+        "--call=org.a11y.atspi.Registry=org.a11y.atspi.DeviceEventController.NotifyListenersAsync@/org/a11y/atspi/registry/deviceeventcontroller"_s,
         webProcessA11yOwnArg.utf8(),
     });
 
     if (!g_strcmp0(g_getenv("WEBKIT_ENABLE_A11Y_DBUS_PROXY_LOGGING"), "1"))
-        m_args.append("--log");
+        m_args.append("--log"_s);
 
     return m_accessibilityProxyPath;
 }
@@ -180,34 +180,26 @@ void XDGDBusProxy::launch(const ProcessLaunchOptions& webProcessLaunchOptions)
     if (m_args.isEmpty())
         return;
 
-    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GTK/WPE port
-
-    int syncFds[2];
-    if (pipe(syncFds) == -1)
+    std::array<int, 2> syncFds;
+    if (pipe(syncFds.data()) == -1)
         g_error("Failed to make syncfds for dbus-proxy: %s", g_strerror(errno));
     setCloseOnExec(syncFds[0]);
 
-    GUniquePtr<char> syncFdStr(g_strdup_printf("--fd=%d", syncFds[1]));
-    Vector<CString> proxyArgs = { syncFdStr.get() };
+    Vector<UTF8CString> proxyArgs = { makeString("--fd="_s, syncFds[1]).utf8() };
     proxyArgs.appendVector(WTF::move(m_args));
 
     // We have to run xdg-dbus-proxy under bubblewrap because we need /.flatpak-info to exist in
     // xdg-dbus-proxy's mount namespace. Portals may use this as a trusted way to get the
     // sandboxed process's application ID, and will break if it's missing.
     int proxyFd = argumentsToFileDescriptor(proxyArgs, "dbus-proxy");
-    GUniquePtr<char> proxyArgsStr(g_strdup_printf("--args=%d", proxyFd));
-    Vector<CString> args = {
-        DBUS_PROXY_EXECUTABLE,
-        proxyArgsStr.get(),
+    Vector<UTF8CString> args = {
+        ASCIILiteral { DBUS_PROXY_EXECUTABLE },
+        makeString("--args="_s, proxyFd).utf8(),
     };
-    int nargs = args.size() + 1;
-    int i = 0;
-    char** argv = g_newa(char*, nargs);
-    for (const auto& arg : args)
-        argv[i++] = const_cast<char*>(arg.data());
-    argv[i] = nullptr;
-
-    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+    auto argv = args.map([](auto& arg) {
+        return const_cast<char*>(arg.legacyCStringPointer());
+    });
+    argv.append(nullptr);
 
     // Warning: we want GIO to be able to spawn with posix_spawn() rather than fork()/exec(), in
     // order to better accommodate applications that use a huge amount of memory or address space

@@ -41,8 +41,8 @@ public:
         return adoptRef(*new GPUDeviceLostInfo(WTF::move(backing)));
     }
 
-    GPUDeviceLostReason reason() const;
-    const String& message() const;
+    GPUDeviceLostReason LEGACY_NODELETE reason() const;
+    const String& LEGACY_NODELETE message() const LIFETIME_BOUND;
 
     WebGPU::DeviceLostInfo& backing() { return m_backing; }
     const WebGPU::DeviceLostInfo& backing() const { return m_backing; }

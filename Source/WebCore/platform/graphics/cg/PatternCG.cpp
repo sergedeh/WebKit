@@ -33,6 +33,7 @@
 #include "CGUtilities.h"
 #include "GraphicsContextCG.h"
 #include "NativeImage.h"
+#include <pal/cg/CoreGraphicsSoftLink.h>
 #include <pal/spi/cg/CoreGraphicsSPI.h>
 #include <wtf/MainThread.h>
 
@@ -49,7 +50,9 @@ static void patternCallback(void* info, CGContextRef context)
 
 static void patternReleaseCallback(void* info)
 {
-    callOnMainThread([image = adoptCF(static_cast<CGImageRef>(info))] { });
+    callOnMainThread([info] {
+        CFRelease(info);
+    });
 }
 
 RetainPtr<CGPatternRef> Pattern::createPlatformPattern(const AffineTransform& userSpaceTransform) const
@@ -68,10 +71,13 @@ RetainPtr<CGPatternRef> Pattern::createPlatformPattern(const AffineTransform& us
     patternTransform.scaleNonUniform(1, -1);
     patternTransform.translate(0, -tileRect.height());
 
+    // FIXME: rdar://170607038 ('CGPatternCreateWithImage2' is deprecated: Don't use CGPatternCreateWithImage2; use CGDataProviderGetSizeOfData instead.)
+ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     // If we're repeating in both directions, we can use image-backed patterns
     // instead of custom patterns, and avoid tiling-edge pixel cracks.
     if (repeatX() && repeatY())
         return adoptCF(CGPatternCreateWithImage2(platformImage.get(), patternTransform, kCGPatternTilingConstantSpacing));
+ALLOW_DEPRECATED_DECLARATIONS_END
 
     // If FLT_MAX should also be used for xStep or yStep, nothing is rendered. Using fractions of FLT_MAX also
     // result in nothing being rendered.
@@ -81,11 +87,16 @@ RetainPtr<CGPatternRef> Pattern::createPlatformPattern(const AffineTransform& us
     CGFloat xStep = repeatX() ? tileRect.width() : (1 << 22);
     CGFloat yStep = repeatY() ? tileRect.height() : (1 << 22);
 
+#if HAVE(CGPATTERN_CREATE_WITH_IMAGE_TRANSFORM_STEP)
+    if (PAL::canLoad_CoreGraphics_CGPatternCreateWithImageTransformStep())
+        return adoptCF(PAL::softLink_CoreGraphics_CGPatternCreateWithImageTransformStep(platformImage.get(), patternTransform, xStep, yStep, kCGPatternTilingConstantSpacing));
+#endif
+
     // The pattern will release the CGImageRef when it's done rendering in patternReleaseCallback
-    CGImageRef image = platformImage.leakRef();
+    CFRetain(platformImage.get());
 
     const CGPatternCallbacks patternCallbacks = { 0, patternCallback, patternReleaseCallback };
-    return adoptCF(CGPatternCreate(image, tileRect, patternTransform, xStep, yStep, kCGPatternTilingConstantSpacing, TRUE, &patternCallbacks));
+    return adoptCF(CGPatternCreate(platformImage.get(), tileRect, patternTransform, xStep, yStep, kCGPatternTilingConstantSpacing, TRUE, &patternCallbacks));
 }
 
 }

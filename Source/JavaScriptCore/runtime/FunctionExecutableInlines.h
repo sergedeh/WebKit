@@ -28,6 +28,7 @@
 #include "FunctionExecutable.h"
 #include "InferredValueInlines.h"
 #include "ScriptExecutableInlines.h"
+#include "StructureCreateInlines.h"
 
 namespace JSC {
 
@@ -36,11 +37,18 @@ inline Structure* FunctionExecutable::createStructure(VM& vm, JSGlobalObject* gl
     return Structure::create(vm, globalObject, proto, TypeInfo(FunctionExecutableType, StructureFlags), info());
 }
 
-inline void FunctionExecutable::finalizeUnconditionally(VM& vm, CollectionScope collectionScope)
+inline void FunctionExecutable::notifyCreation(VM& vm, JSFunction* function, const char* reason)
 {
-    m_singleton.finalizeUnconditionally(vm, collectionScope);
-    finalizeCodeBlockEdge(vm, m_codeBlockForCall);
-    finalizeCodeBlockEdge(vm, m_codeBlockForConstruct);
+    m_singleton.notifyWrite(vm, this, function, reason);
+    if (m_singleton.hasBeenInvalidated())
+        m_unlinkedExecutable->setSingletonHasBeenInvalidated();
+}
+
+inline void FunctionExecutable::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope collectionScope)
+{
+    m_singleton.reconcileWeakReferencesAtGCEnd(vm, collectionScope);
+    jettisonCodeBlockEdgeIfDead(vm, m_codeBlockForCall);
+    jettisonCodeBlockEdgeIfDead(vm, m_codeBlockForConstruct);
     vm.heap.functionExecutableSpaceAndSet.outputConstraintsSet.remove(this);
 }
 

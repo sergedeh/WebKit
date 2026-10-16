@@ -25,8 +25,9 @@
 #include "FloatingObjects.h"
 
 #include "PODIntervalTree.h"
-#include "RenderBlockFlow.h"
+#include "RenderBlockFlowInlines.h"
 #include "RenderBox.h"
+#include "RenderElementInlines.h"
 #include "RenderView.h"
 #include <wtf/HexNumber.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -47,21 +48,20 @@ struct SameSizeAsFloatingObject {
 };
 
 static_assert(sizeof(FloatingObject) == sizeof(SameSizeAsFloatingObject), "FloatingObject should stay small");
-#if !ASSERT_ENABLED
+#if !ASSERT_ENABLED && ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
 static_assert(sizeof(SingleThreadWeakPtr<RenderBox>) == sizeof(void*), "WeakPtr should be same size as raw pointer");
-static_assert(sizeof(CheckedPtr<LegacyRootInlineBox>) == sizeof(void*), "WeakPtr should be same size as raw pointer");
 #endif
 
 FloatingObject::FloatingObject(RenderBox& renderer)
     : m_renderer(renderer)
 {
-    UsedFloat type = RenderStyle::usedFloat(renderer);
+    UsedFloat type = renderer.usedStyle().floating();
     ASSERT(type != UsedFloat::None);
     if (type == UsedFloat::Left)
         m_type = FloatLeft;
     else if (type == UsedFloat::Right)
         m_type = FloatRight;
-    if (auto* containingBlock = renderer.containingBlock())
+    if (CheckedPtr containingBlock = renderer.containingBlock())
         m_hasAncestorWithOverflowClip = containingBlock->effectiveOverflowX() == Overflow::Clip || containingBlock->effectiveOverflowY() == Overflow::Clip;
 }
 
@@ -129,7 +129,7 @@ TextStream& operator<<(TextStream& stream, const FloatingObject& object)
 
 #endif
 
-inline static bool rangesIntersect(LayoutUnit floatTop, LayoutUnit floatBottom, LayoutUnit objectTop, LayoutUnit objectBottom)
+inline static bool LEGACY_NODELETE rangesIntersect(LayoutUnit floatTop, LayoutUnit floatBottom, LayoutUnit objectTop, LayoutUnit objectBottom)
 {
     if (objectTop >= floatBottom || objectBottom < floatTop)
         return false;
@@ -165,11 +165,11 @@ public:
 
     virtual ~ComputeFloatOffsetAdapter() = default;
 
-    LayoutUnit lowValue() const { return m_lineTop; }
-    LayoutUnit highValue() const { return m_lineBottom; }
+    LayoutUnit LEGACY_NODELETE lowValue() const { return m_lineTop; }
+    LayoutUnit LEGACY_NODELETE highValue() const { return m_lineBottom; }
     void collectIfNeeded(const IntervalType&);
 
-    LayoutUnit offset() const { return m_offset; }
+    LayoutUnit LEGACY_NODELETE offset() const { return m_offset; }
 
 protected:
     virtual bool updateOffsetIfNeeded(const FloatingObject&) = 0;
@@ -221,12 +221,12 @@ public:
     {
     }
 
-    LayoutUnit lowValue() const { return m_belowLogicalHeight; }
-    LayoutUnit highValue() const { return LayoutUnit::max(); }
+    LayoutUnit LEGACY_NODELETE lowValue() const { return m_belowLogicalHeight; }
+    LayoutUnit LEGACY_NODELETE highValue() const { return LayoutUnit::max(); }
     void collectIfNeeded(const IntervalType&);
 
-    LayoutUnit nextLogicalBottom() const { return m_nextLogicalBottom.value_or(0); }
-    LayoutUnit nextShapeLogicalBottom() const { return m_nextShapeLogicalBottom.value_or(nextLogicalBottom()); }
+    LayoutUnit LEGACY_NODELETE nextLogicalBottom() const { return m_nextLogicalBottom.value_or(0); }
+    LayoutUnit LEGACY_NODELETE nextShapeLogicalBottom() const { return m_nextShapeLogicalBottom.value_or(nextLogicalBottom()); }
 
 private:
     SingleThreadWeakPtr<const RenderBlockFlow> m_renderer;
@@ -348,6 +348,18 @@ void FloatingObjects::removePlacedObject(FloatingObject* floatingObject)
     floatingObject->setIsPlaced(false);
 }
 
+void FloatingObjects::place(FloatingObject& floatingObject, const LayoutRect& frameRect, LayoutSize marginOffset)
+{
+    // The float may already be in m_placedFloatsTree, indexed on the rect it had then. Take it out before
+    // changing the rect, so the entry is keyed on the rect the float actually has.
+    if (floatingObject.isPlaced())
+        removePlacedObject(&floatingObject);
+
+    floatingObject.setFrameRect(frameRect);
+    floatingObject.setMarginOffset(marginOffset);
+    addPlacedObject(&floatingObject);
+}
+
 FloatingObject* FloatingObjects::add(std::unique_ptr<FloatingObject> floatingObject)
 {
     increaseObjectsCount(floatingObject->type());
@@ -443,7 +455,9 @@ void FloatingObjects::shiftFloatsBy(LayoutUnit blockShift)
             removePlacedObject(floatBox.get());
 
         floatBox->m_frameRect.move(shiftX, shiftY);
-        floatBox->renderer()->move(shiftX, shiftY);
+        // Only a float this container lays out moves with this container's content. Anything else in the list is a copy of an entry in another box's list.
+        if (floatBox->renderer()->containingBlock() == &renderer())
+            floatBox->renderer()->move(shiftX, shiftY);
 
         if (isPlaced)
             addPlacedObject(floatBox.get());

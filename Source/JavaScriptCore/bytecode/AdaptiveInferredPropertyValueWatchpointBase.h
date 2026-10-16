@@ -42,9 +42,9 @@ public:
     AdaptiveInferredPropertyValueWatchpointBase(const ObjectPropertyCondition&);
     AdaptiveInferredPropertyValueWatchpointBase() = default;
 
-    const ObjectPropertyCondition& key() const { return m_key; }
+    const ObjectPropertyCondition& key() const LIFETIME_BOUND { return m_key; }
 
-    void initialize(const ObjectPropertyCondition&);
+    void LEGACY_NODELETE initialize(const ObjectPropertyCondition&);
     void install(VM&);
 
     virtual ~AdaptiveInferredPropertyValueWatchpointBase() = default;

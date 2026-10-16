@@ -38,8 +38,20 @@ STATIC_ANALYZER_UNEXPECTED = 'StaticAnalyzerUnexpectedRegressions'
 UNEXPECTED_PASS = {'actual': 'PASS', 'expected': 'FAIL'}
 UNEXPECTED_FAILURE = {'actual': 'FAIL', 'expected': 'PASS'}
 EXPECTED_FAILURE = {'actual': 'FAIL', 'expected': 'FAIL'}
-DERIVED_SOURCES_RE = r'(^|.*\/)DerivedSources\/WebCore\/JS.*'
+# Generated JS bindings, in the Xcode and CMake build layouts.
+DERIVED_SOURCES_RE = r'(^|.*\/)(DerivedSources\/WebCore\/JS|WebCore\/DerivedSources\/JS).*'
 EXPECTATION_LINE_RE = r'(\s*\[\s*(?P<platform>\w+)\s*\]\s*)?(?P<path>.+)'
+
+
+def normalize_platform(platform):
+    if not platform:
+        return None
+    platform = platform.lower()
+    if platform == "mac" or platform == "macos":
+        return "macOS"
+    elif platform == "ios":
+        return "iOS"
+    return None
 
 
 def parser():
@@ -118,8 +130,8 @@ def find_diff(args, expectation_file_path, results_file_path):
             if not match:
                 print(f'Unexpected line: {line}')
                 continue
-            platform = match.group('platform')
-            if platform and args.platform.lower() != platform.lower():
+            expectations_platform = normalize_platform(match.group('platform'))
+            if expectations_platform and normalize_platform(args.platform) != expectations_platform:
                 continue
             baseline_list.append(match.group('path'))
         new_file_list = new_file.read().splitlines()

@@ -60,7 +60,9 @@ public:
     
     void ensureLocals(unsigned newNumLocals);
     void ensureTmps(unsigned newNumTmps);
-    
+
+    Operands<AbstractValue>& ensureIntersectionOfPastValuesAtHead();
+
     size_t size() const { return m_nodes.size(); }
     bool isEmpty() const { return !size(); }
     Node*& at(size_t i) { return m_nodes[i]; }
@@ -142,8 +144,8 @@ public:
     }
     bool isPhiIndex(size_t i) const { return i < phis.size(); }
     
-    bool isInPhis(Node* node) const;
-    bool isInBlock(Node* myNode) const;
+    bool LEGACY_NODELETE isInPhis(Node* node) const;
+    bool LEGACY_NODELETE isInBlock(Node* myNode) const;
     
     BlockNodeList::iterator begin() { return m_nodes.begin(); }
     BlockNodeList::iterator end() { return m_nodes.end(); }
@@ -165,9 +167,12 @@ public:
     }
 
     bool isJumpPad() { return m_nodes.size() == 1 && m_nodes[0]->isJump(); }
-    
-    void removePredecessor(BasicBlock* block);
-    void replacePredecessor(BasicBlock* from, BasicBlock* to);
+
+    BlockIndex index() const { return m_index; }
+    void setIndex(BlockIndex index) { m_index = index; }
+
+    void LEGACY_NODELETE removePredecessor(BasicBlock* block);
+    void LEGACY_NODELETE replacePredecessor(BasicBlock* from, BasicBlock* to);
 
     inline Node* cloneAndAppend(Graph&, const Node*);
 
@@ -192,9 +197,9 @@ public:
     // This value is used internally for block linking and OSR entry. It is mostly meaningless
     // for other purposes due to inlining.
     BytecodeIndex bytecodeBegin;
-    
-    BlockIndex index;
-
+private:
+    BlockIndex m_index;
+public:
     StructureClobberState cfaStructureClobberStateAtHead;
     StructureClobberState cfaStructureClobberStateAtTail;
     BranchDirection cfaBranchDirection;
@@ -237,7 +242,7 @@ public:
     // would not be a productive optimization: it would make setting up a basic block more
     // expensive and would only benefit bizarre pathological cases.
     Operands<AbstractValue> intersectionOfPastValuesAtHead;
-    
+
     float executionCount;
     
     struct SSAData {

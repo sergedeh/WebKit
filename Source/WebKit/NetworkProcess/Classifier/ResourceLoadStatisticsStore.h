@@ -26,6 +26,7 @@
 #pragma once
 
 #include "DatabaseUtilities.h"
+#include "ITPThirdPartyDataForSpecificFirstParty.h"
 #include "ResourceLoadStatisticsClassifier.h"
 #include "WebResourceLoadStatisticsStore.h"
 #include <JavaScriptCore/ConsoleTypes.h>
@@ -114,22 +115,22 @@ public:
     Vector<ITPThirdPartyData> aggregatedThirdPartyData() const;
     void updateCookieBlocking(CompletionHandler<void()>&&);
     void processStatisticsAndDataRecords(CompletionHandler<void()>&&);
-    void cancelPendingStatisticsProcessingRequest();
+    void LEGACY_NODELETE cancelPendingStatisticsProcessingRequest();
     void mergeStatistics(Vector<ResourceLoadStatistics>&&);
     void runIncrementalVacuumCommand();
     void dumpResourceLoadStatistics(CompletionHandler<void(const String&)>&&);
     bool isNewResourceLoadStatisticsDatabaseFile() const { return m_isNewResourceLoadStatisticsDatabaseFile; }
     void setIsNewResourceLoadStatisticsDatabaseFile(bool isNewResourceLoadStatisticsDatabaseFile) { m_isNewResourceLoadStatisticsDatabaseFile = isNewResourceLoadStatisticsDatabaseFile; }
 
-    void requestStorageAccessUnderOpener(DomainInNeedOfStorageAccess&&, WebCore::PageIdentifier openerID, OpenerDomain&&, CanRequestStorageAccessWithoutUserInteraction);
+    void requestStorageAccessUnderOpener(DomainInNeedOfStorageAccess&&, WebPageProxyIdentifier openerWebPageProxyID, OpenerDomain&&, CanRequestStorageAccessWithoutUserInteraction);
     void removeAllStorageAccess(CompletionHandler<void()>&&);
 
-    HashSet<RegistrableDomain> loadWebsitesWithUserInteraction();
+    std::optional<HashMap<RegistrableDomain, WallTime>> loadWebsitesWithUserInteraction();
 
     void grandfatherExistingWebsiteData(CompletionHandler<void()>&&);
     void setGrandfathered(const RegistrableDomain&, bool value);
     bool isGrandfathered(const RegistrableDomain&) const;
-    void setGrandfatheringTime(Seconds);
+    void LEGACY_NODELETE setGrandfatheringTime(Seconds);
 
     bool isRegisteredAsSubresourceUnder(const SubResourceDomain&, const TopFrameDomain&) const;
     bool isRegisteredAsSubFrameUnder(const SubFrameDomain&, const TopFrameDomain&) const;
@@ -149,18 +150,18 @@ public:
     void setTopFrameUniqueRedirectTo(const TopFrameDomain&, const RedirectDomain&);
     void setTopFrameUniqueRedirectFrom(const TopFrameDomain&, const RedirectDomain&);
 
-    void setIsRunningTest(bool);
+    void LEGACY_NODELETE setIsRunningTest(bool);
     void logTestingEvent(String&&);
     void setTimeAdvanceForTesting(Seconds);
 
-    void setMaxStatisticsEntries(size_t maximumEntryCount);
-    void setPruneEntriesDownTo(size_t pruneTargetCount);
+    void LEGACY_NODELETE setMaxStatisticsEntries(size_t maximumEntryCount);
+    void LEGACY_NODELETE setPruneEntriesDownTo(size_t pruneTargetCount);
     void resetParametersToDefaultValues();
 
     bool shouldSkip(const RegistrableDomain&) const;
-    void setShouldClassifyResourcesBeforeDataRecordsRemoval(bool);
-    void setTimeToLiveUserInteraction(Seconds);
-    void setMinimumTimeBetweenDataRecordsRemoval(Seconds);
+    void LEGACY_NODELETE setShouldClassifyResourcesBeforeDataRecordsRemoval(bool);
+    void LEGACY_NODELETE setTimeToLiveUserInteraction(Seconds);
+    void LEGACY_NODELETE setMinimumTimeBetweenDataRecordsRemoval(Seconds);
     void setResourceLoadStatisticsDebugMode(bool);
     bool isDebugModeEnabled() const { return m_debugModeEnabled; };
     void setPrevalentResourceForDebugMode(const RegistrableDomain&);
@@ -179,13 +180,13 @@ public:
     void setManagedDomains(HashSet<RegistrableDomain>&&);
 #endif
 
-    void hasStorageAccess(SubFrameDomain&&, TopFrameDomain&&, std::optional<WebCore::FrameIdentifier>, WebCore::PageIdentifier, CanRequestStorageAccessWithoutUserInteraction, CompletionHandler<void(bool)>&&);
-    void requestStorageAccess(SubFrameDomain&&, TopFrameDomain&&, WebCore::FrameIdentifier, WebCore::PageIdentifier, WebCore::StorageAccessScope, CanRequestStorageAccessWithoutUserInteraction, CompletionHandler<void(StorageAccessStatus)>&&);
+    void hasStorageAccess(SubFrameDomain&&, TopFrameDomain&&, std::optional<WebCore::FrameIdentifier>, WebPageProxyIdentifier, CanRequestStorageAccessWithoutUserInteraction, CompletionHandler<void(bool)>&&);
+    void requestStorageAccess(SubFrameDomain&&, TopFrameDomain&&, WebCore::FrameIdentifier, WebPageProxyIdentifier, WebCore::StorageAccessScope, CanRequestStorageAccessWithoutUserInteraction, CompletionHandler<void(StorageAccessStatus)>&&);
     void queryStorageAccessPermission(const SubFrameDomain&, const TopFrameDomain&, CompletionHandler<void(WebCore::PermissionState)>&&);
     enum class AddedRecord : bool { No, Yes };
     std::pair<AddedRecord, std::optional<unsigned>> grantStorageAccessPermission(const RegistrableDomain& topFrameDomain, const RegistrableDomain& subFrameDomain);
     void revokeStorageAccessPermission(const RegistrableDomain&);
-    void grantStorageAccess(SubFrameDomain&&, TopFrameDomain&&, WebCore::FrameIdentifier, WebCore::PageIdentifier, WebCore::StorageAccessPromptWasShown, WebCore::StorageAccessScope, CompletionHandler<void(WebCore::StorageAccessWasGranted)>&&);
+    void grantStorageAccess(SubFrameDomain&&, TopFrameDomain&&, WebCore::FrameIdentifier, WebPageProxyIdentifier, WebCore::StorageAccessPromptWasShown, WebCore::StorageAccessScope, CompletionHandler<void(WebCore::StorageAccessWasGranted)>&&);
 
     void logFrameNavigation(const NavigatedToDomain&, const TopFrameDomain&, const NavigatedFromDomain&, bool isRedirect, bool isMainFrame, Seconds delayAfterMainFrameDocumentLoad, bool wasPotentiallyInitiatedByUser);
     void logCrossSiteLoadWithLinkDecoration(const NavigatedFromDomain&, const NavigatedToDomain&, DidFilterKnownLinkDecoration);
@@ -234,12 +235,12 @@ private:
         bool shouldClassifyResourcesBeforeDataRecordsRemoval { true };
         bool isRunningTest { false };
     };
-    const Parameters& parameters() const { return m_parameters; }
-    WallTime& endOfGrandfatheringTimestamp() { return m_endOfGrandfatheringTimestamp; }
-    const WallTime& endOfGrandfatheringTimestamp() const { return m_endOfGrandfatheringTimestamp; }
+    const Parameters& parameters() const LIFETIME_BOUND { return m_parameters; }
+    WallTime& endOfGrandfatheringTimestamp() LIFETIME_BOUND { return m_endOfGrandfatheringTimestamp; }
+    const WallTime& endOfGrandfatheringTimestamp() const LIFETIME_BOUND { return m_endOfGrandfatheringTimestamp; }
     void clearEndOfGrandfatheringTimeStamp() { m_endOfGrandfatheringTimestamp = { }; }
-    const RegistrableDomain& debugManualPrevalentResource() const { return m_debugManualPrevalentResource; }
-    const RegistrableDomain& debugStaticPrevalentResource() const { return m_debugStaticPrevalentResource; }
+    const RegistrableDomain& debugManualPrevalentResource() const LIFETIME_BOUND { return m_debugManualPrevalentResource; }
+    const RegistrableDomain& debugStaticPrevalentResource() const LIFETIME_BOUND { return m_debugStaticPrevalentResource; }
     void debugBroadcastConsoleMessage(MessageSource, MessageLevel, const String& message);
     void debugLogDomainsInBatches(ASCIILiteral action, const RegistrableDomainsToBlockCookiesFor&);
     bool debugLoggingEnabled() const { return m_debugLoggingEnabled; }
@@ -306,7 +307,7 @@ private:
     void classifyPrevalentResources();
     unsigned recursivelyFindNonPrevalentDomainsThatRedirectedToThisDomain(unsigned primaryDomainID, StdSet<unsigned>& nonPrevalentRedirectionSources, unsigned numberOfRecursiveCalls);
     void setDomainsAsPrevalent(StdSet<unsigned>&&);
-    void grantStorageAccessInternal(SubFrameDomain&&, TopFrameDomain&&, std::optional<WebCore::FrameIdentifier>, WebCore::PageIdentifier, WebCore::StorageAccessPromptWasShown, WebCore::StorageAccessScope, CanRequestStorageAccessWithoutUserInteraction, CompletionHandler<void(WebCore::StorageAccessWasGranted)>&&);
+    void grantStorageAccessInternal(SubFrameDomain&&, TopFrameDomain&&, std::optional<WebCore::FrameIdentifier>, WebPageProxyIdentifier, WebCore::StorageAccessPromptWasShown, WebCore::StorageAccessScope, CanRequestStorageAccessWithoutUserInteraction, CompletionHandler<void(WebCore::StorageAccessWasGranted)>&&);
     void markAsPrevalentIfHasRedirectedToPrevalent();
     
     // reason is used for logging purpose.
@@ -317,7 +318,7 @@ private:
     void setIsScheduledForAllScriptWrittenStorageRemoval(const RegistrableDomain&, DataRemovalFrequency);
     DataRemovalFrequency dataRemovalFrequency(const RegistrableDomain&) const;
     void clearTopFrameUniqueRedirectsToSinceSameSiteStrictEnforcement(const NavigatedToDomain&, CompletionHandler<void()>&&);
-    bool shouldEnforceSameSiteStrictForSpecificDomain(const RegistrableDomain&) const;
+    bool LEGACY_NODELETE shouldEnforceSameSiteStrictForSpecificDomain(const RegistrableDomain&) const;
     RegistrableDomainsToDeleteOrRestrictWebsiteDataFor registrableDomainsToDeleteOrRestrictWebsiteDataFor();
 
     bool shouldRemoveDataRecords() const;
@@ -333,7 +334,7 @@ private:
     const MemoryCompactLookupOnlyRobinHoodHashMap<String, TableAndIndexPair>& expectedTableAndIndexQueries() final;
     std::span<const ASCIILiteral> sortedTables() final;
     String ensureAndMakeDomainList(const HashSet<RegistrableDomain>&);
-    std::optional<WallTime> mostRecentUserInteractionTime(const DomainData&);
+    std::optional<WallTime> LEGACY_NODELETE mostRecentUserInteractionTime(const DomainData&);
     void grandfatherDataForDomains(const HashSet<RegistrableDomain>&);
     bool areAllUnpartitionedThirdPartyCookiesBlockedUnder(const TopFrameDomain&);
     bool hasStatisticsExpired(WallTime mostRecentUserInteractionTime, OperatingDatesWindow) const;

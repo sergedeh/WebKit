@@ -48,9 +48,6 @@ public:
     {
         uint16_t result;
         memcpySpan(asMutableByteSpan(result), data.span().subspan(offset, 2));
-#if CPU(BIG_ENDIAN)
-        result = ((result & 0xff) << 8) | ((result & 0xff00) >> 8);
-#endif
         return result;
     }
 
@@ -58,9 +55,6 @@ public:
     {
         uint32_t result;
         memcpySpan(asMutableByteSpan(result), data.span().subspan(offset, 4));
-#if CPU(BIG_ENDIAN)
-        result = ((result & 0xff) << 24) | ((result & 0xff00) << 8) | ((result & 0xff0000) >> 8) | ((result & 0xff000000) >> 24);
-#endif
         return result;
     }
 
@@ -187,39 +181,6 @@ private:
     inline bool pastEndOfImage(int numRows)
     {
         return m_isTopDown ? ((m_coord.y() + numRows) >= m_parent->size().height()) : ((m_coord.y() - numRows) < 0);
-    }
-
-    // Returns the pixel data for the current X coordinate in a uint32_t.
-    // Assumes m_decodedOffset has been set to the beginning of the current
-    // row.
-    // NOTE: Only as many bytes of the return value as are needed to hold
-    // the pixel data will actually be set.
-    inline uint32_t readCurrentPixel(int bytesPerPixel) const
-    {
-        const int offset = m_coord.x() * bytesPerPixel;
-        switch (bytesPerPixel) {
-        case 2:
-            return readUint16(offset);
-
-        case 3: {
-            // It doesn't matter that we never set the most significant byte
-            // of the return value here in little-endian mode, the caller
-            // won't read it.
-            uint32_t pixel;
-            memcpySpan(asMutableByteSpan(pixel), m_data->span().subspan(m_decodedOffset + offset, 3));
-#if CPU(BIG_ENDIAN)
-            pixel = ((pixel & 0xff00) << 8) | ((pixel & 0xff0000) >> 8) | ((pixel & 0xff000000) >> 24);
-#endif
-            return pixel;
-        }
-
-        case 4:
-            return readUint32(offset);
-
-        default:
-            ASSERT_NOT_REACHED();
-            return 0;
-        }
     }
 
     // Returns the value of the desired component (0, 1, 2, 3 == R, G, B, A)

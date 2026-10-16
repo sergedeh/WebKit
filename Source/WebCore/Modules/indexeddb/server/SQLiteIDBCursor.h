@@ -33,6 +33,7 @@
 #include "IDBObjectStoreIdentifier.h"
 #include "IDBResourceIdentifier.h"
 #include "IDBValue.h"
+#include "IndexedDB.h"
 #include "SQLiteStatement.h"
 #include <wtf/CheckedPtr.h>
 #include <wtf/Deque.h>
@@ -55,27 +56,27 @@ class SQLiteIDBCursor final : public CanMakeThreadSafeCheckedPtr<SQLiteIDBCursor
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(SQLiteIDBCursor);
 public:
     static std::unique_ptr<SQLiteIDBCursor> maybeCreate(SQLiteIDBTransaction&, const IDBCursorInfo&);
-    static std::unique_ptr<SQLiteIDBCursor> maybeCreateBackingStoreCursor(SQLiteIDBTransaction&, IDBObjectStoreIdentifier, std::optional<IDBIndexIdentifier>, const IDBKeyRangeData&);
+    static std::unique_ptr<SQLiteIDBCursor> maybeCreateBackingStoreCursor(SQLiteIDBTransaction&, IDBObjectStoreIdentifier, std::optional<IDBIndexIdentifier>, const IDBKeyRangeData&, IndexedDB::CursorDirection = IndexedDB::CursorDirection::Next);
 
     ~SQLiteIDBCursor();
 
-    const IDBResourceIdentifier& identifier() const { return m_cursorIdentifier; }
-    SQLiteIDBTransaction* transaction() const;
+    const IDBResourceIdentifier& identifier() const LIFETIME_BOUND { return m_cursorIdentifier; }
+    SQLiteIDBTransaction* LEGACY_NODELETE transaction() const;
 
     IDBObjectStoreIdentifier objectStoreID() const { return m_objectStoreID; }
-    int64_t currentRecordRowID() const;
+    int64_t LEGACY_NODELETE currentRecordRowID() const;
 
-    const IDBKeyData& currentKey() const;
-    const IDBKeyData& currentPrimaryKey() const;
-    const IDBValue& currentValue() const;
+    const IDBKeyData& LEGACY_NODELETE currentKey() const;
+    const IDBKeyData& LEGACY_NODELETE currentPrimaryKey() const;
+    const IDBValue& LEGACY_NODELETE currentValue() const;
 
     bool advance(uint64_t count);
     bool iterate(const IDBKeyData& targetKey, const IDBKeyData& targetPrimaryKey);
     bool prefetchOneRecord();
     bool prefetch();
 
-    bool didComplete() const;
-    bool didError() const;
+    bool LEGACY_NODELETE didComplete() const;
+    bool LEGACY_NODELETE didError() const;
 
     void objectStoreRecordsChanged();
 
@@ -84,7 +85,7 @@ public:
 
 private:
     SQLiteIDBCursor(SQLiteIDBTransaction&, const IDBCursorInfo&);
-    SQLiteIDBCursor(SQLiteIDBTransaction&, IDBObjectStoreIdentifier, std::optional<IDBIndexIdentifier>, const IDBKeyRangeData&);
+    SQLiteIDBCursor(SQLiteIDBTransaction&, IDBObjectStoreIdentifier, std::optional<IDBIndexIdentifier>, const IDBKeyRangeData&, IndexedDB::CursorDirection = IndexedDB::CursorDirection::Next);
 
     template<typename T, class... Args> friend WTF::UniqueRef<T> WTF::makeUniqueRefWithoutFastMallocCheck(Args&&...);
 
@@ -117,7 +118,7 @@ private:
 
     bool isDirectionNext() const { return m_cursorDirection == IndexedDB::CursorDirection::Next || m_cursorDirection == IndexedDB::CursorDirection::Nextunique; }
 
-    void increaseCountToPrefetch();
+    void LEGACY_NODELETE increaseCountToPrefetch();
 
     uint64_t boundIDValue() const;
 
@@ -137,7 +138,7 @@ private:
     uint64_t m_fetchedRecordsSize { 0 };
     IDBKeyData m_currentKeyForUniqueness;
 
-    std::unique_ptr<SQLiteStatement> m_preIndexStatement;
+    const std::unique_ptr<SQLiteStatement> m_preIndexStatement;
     std::unique_ptr<SQLiteStatement> m_statement;
     std::unique_ptr<SQLiteStatement> m_cachedObjectStoreStatement;
 

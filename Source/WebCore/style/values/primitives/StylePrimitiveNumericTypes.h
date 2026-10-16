@@ -53,7 +53,7 @@ template<CSS::Range nR = CSS::All, CSS::Range pR = nR, typename V = double> stru
 
     bool operator==(const NumberOrPercentage&) const = default;
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
         using ResultType = decltype(visitor(std::declval<Number>()));
@@ -72,6 +72,13 @@ template<CSS::Range nR = CSS::All, CSS::Range pR = nR, typename V = double> stru
     }
 
 private:
+    friend struct Blending<NumberOrPercentage>;
+
+    NumberOrPercentage(Variant<CSS::PrimitiveDataEmptyToken, Number, Percentage>&& value)
+        : value { WTF::move(value) }
+    {
+    }
+
     NumberOrPercentage(CSS::PrimitiveDataEmptyToken token)
         : value { WTF::move(token) }
     {
@@ -117,39 +124,8 @@ template<CSS::Range nR = CSS::All, CSS::Range pR = nR, typename V = double> stru
 
     constexpr bool operator==(const NumberOrPercentageResolvedToNumber&) const = default;
     constexpr bool operator==(typename Number::ResolvedValueType other) const { return value.value == other; };
+    constexpr auto operator<=>(const NumberOrPercentageResolvedToNumber&) const = default;
 };
-
-// Standard Numbers
-using NumberAll = Number<CSS::All>;
-using NumberNonnegative = Number<CSS::Nonnegative>;
-
-// Standard Angles
-using AngleAllFloat = Angle<CSS::All, float>;
-
-// Standard Lengths
-using LengthAll = Length<CSS::All>;
-using LengthNonnegative = Length<CSS::Nonnegative>;
-
-// Standard LengthPercentages
-using LengthPercentageAll = LengthPercentage<CSS::All>;
-using LengthPercentageNonnegative = LengthPercentage<CSS::Nonnegative>;
-
-// Standard Percentages
-using PercentageAll = Percentage<CSS::All>;
-using PercentageNonnegative = Percentage<CSS::Nonnegative>;
-using PercentageAllFloat = Percentage<CSS::All, float>;
-using PercentageNonnegativeFloat = Percentage<CSS::Nonnegative, float>;
-using Percentage0To100 = LengthPercentage<CSS::Range{0,100}>;
-
-// Standard Points
-using LengthPercentageSpaceSeparatedPointAll = SpaceSeparatedPoint<LengthPercentageAll>;
-using LengthPercentageSpaceSeparatedPointNonnegative = SpaceSeparatedPoint<LengthPercentageNonnegative>;
-
-// Standard Sizes
-using LengthPercentageSpaceSeparatedSizeAll = SpaceSeparatedSize<LengthPercentageAll>;
-using LengthPercentageSpaceSeparatedSizeNonnegative = SpaceSeparatedSize<LengthPercentageNonnegative>;
-using LengthPercentageMinimallySerializingSpaceSeparatedSizeAll = MinimallySerializingSpaceSeparatedSize<LengthPercentageAll>;
-using LengthPercentageMinimallySerializingSpaceSeparatedSizeNonnegative = MinimallySerializingSpaceSeparatedSize<LengthPercentageNonnegative>;
 
 // MARK: CSS -> Style
 

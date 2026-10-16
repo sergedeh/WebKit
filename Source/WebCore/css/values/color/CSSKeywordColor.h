@@ -32,7 +32,7 @@ namespace WebCore {
 
 class Color;
 
-enum CSSValueID : uint16_t;
+enum class CSSValueID : uint16_t;
 enum class StyleColorOptions : uint8_t;
 
 namespace CSS {
@@ -49,20 +49,20 @@ struct KeywordColor {
     bool operator==(const KeywordColor&) const = default;
 };
 
-WEBCORE_EXPORT bool isAbsoluteColorKeyword(CSSValueID);
-WEBCORE_EXPORT bool isCurrentColorKeyword(CSSValueID);
-WEBCORE_EXPORT bool isSystemColorKeyword(CSSValueID);
-WEBCORE_EXPORT bool isDeprecatedSystemColorKeyword(CSSValueID);
+WEBCORE_EXPORT bool LEGACY_NODELETE isAbsoluteColorKeyword(CSSValueID);
+WEBCORE_EXPORT bool LEGACY_NODELETE isCurrentColorKeyword(CSSValueID);
+WEBCORE_EXPORT bool LEGACY_NODELETE isSystemColorKeyword(CSSValueID);
+WEBCORE_EXPORT bool LEGACY_NODELETE isDeprecatedSystemColorKeyword(CSSValueID);
 
-bool isColorKeyword(CSSValueID);
-bool isColorKeyword(CSSValueID, OptionSet<ColorType>);
+bool LEGACY_NODELETE isColorKeyword(CSSValueID);
+bool LEGACY_NODELETE isColorKeyword(CSSValueID, OptionSet<ColorType>);
 
 WebCore::Color colorFromAbsoluteKeyword(CSSValueID);
 WebCore::Color colorFromKeyword(CSSValueID, OptionSet<StyleColorOptions>);
 
 WebCore::Color createColor(const KeywordColor&, PlatformColorResolutionState&);
-bool containsCurrentColor(const KeywordColor&);
-bool containsColorSchemeDependentColor(const KeywordColor&);
+bool LEGACY_NODELETE containsCurrentColor(const KeywordColor&);
+bool LEGACY_NODELETE containsColorSchemeDependentColor(const KeywordColor&);
 
 template<> struct Serialize<KeywordColor> { void operator()(StringBuilder&, const SerializationContext&, const KeywordColor&); };
 template<> struct ComputedStyleDependenciesCollector<KeywordColor> { constexpr void operator()(ComputedStyleDependencies&, const KeywordColor&) { } };

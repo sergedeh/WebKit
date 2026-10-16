@@ -23,6 +23,10 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#if !__has_feature(objc_arc)
+#error This file requires ARC. Add the "-fobjc-arc" compiler flag for this file.
+#endif
+
 #import "config.h"
 #import <wtf/Language.h>
 
@@ -89,7 +93,7 @@ void overrideUserPreferredLanguages(const Vector<String>& override)
 {
     LOG_WITH_STREAM(Language, stream << "Languages are being overridden to: " << override);
     NSDictionary *existingArguments = [[NSUserDefaults standardUserDefaults] volatileDomainForName:NSArgumentDomain];
-    auto newArguments = adoptNS([existingArguments mutableCopy]);
+    RetainPtr<NSMutableDictionary> newArguments = adoptNS([existingArguments mutableCopy]);
     [newArguments setValue:createNSArray(override).get() forKey:@"AppleLanguages"];
     [[NSUserDefaults standardUserDefaults] setVolatileDomain:newArguments.get() forName:NSArgumentDomain];
     languageDidChange();

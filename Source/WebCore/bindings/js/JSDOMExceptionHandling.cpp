@@ -29,6 +29,7 @@
 #include "JSDOMWindow.h"
 #include "LocalDOMWindow.h"
 #include "ScriptExecutionContext.h"
+#include "WebCoreJSClientData.h"
 #include <JavaScriptCore/ErrorHandlingScope.h>
 #include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/ExceptionHelpers.h>
@@ -43,7 +44,7 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSValue exceptionValue
 {
     VM& vm = lexicalGlobalObject->vm();
     RELEASE_ASSERT(vm.currentThreadIsHoldingAPILock());
-    auto* exception = jsDynamicCast<JSC::Exception*>(exceptionValue);
+    auto* exception = dynamicDowncast<JSC::Exception>(exceptionValue);
     if (!exception) {
         exception = vm.lastException();
         if (!exception)
@@ -67,10 +68,10 @@ String retrieveErrorMessageWithoutName(JSGlobalObject& lexicalGlobalObject, VM& 
     // FIXME: <http://webkit.org/b/115087> Web Inspector: WebCore::reportException should not evaluate JavaScript handling exceptions
     // If this is a custom exception object, call toString on it to try and get a nice string representation for the exception.
     String errorMessage;
-    if (auto* error = jsDynamicCast<ErrorInstance*>(exception))
-        errorMessage = error->sanitizedMessageString(&lexicalGlobalObject);
-    else if (auto* error = jsDynamicCast<JSDOMException*>(exception))
+    if (auto* error = dynamicDowncast<JSDOMException>(exception))
         errorMessage = error->wrapped().message();
+    else if (auto* error = dynamicDowncast<ErrorInstance>(exception))
+        errorMessage = error->sanitizedMessageString(&lexicalGlobalObject);
     else
         errorMessage = exception.toWTFString(&lexicalGlobalObject);
 
@@ -86,7 +87,12 @@ String retrieveErrorMessage(JSGlobalObject& lexicalGlobalObject, VM& vm, JSValue
     // FIXME: <http://webkit.org/b/115087> Web Inspector: WebCore::reportException should not evaluate JavaScript handling exceptions
     // If this is a custom exception object, call toString on it to try and get a nice string representation for the exception.
     String errorMessage;
-    if (auto* error = jsDynamicCast<ErrorInstance*>(exception))
+    if (auto* domException = dynamicDowncast<JSDOMException>(exception)) {
+        auto& wrapped = domException->wrapped();
+        String name = wrapped.name();
+        String message = wrapped.message();
+        errorMessage = makeString(name, name.isEmpty() || message.isEmpty() ? ""_s : ": "_s, message);
+    } else if (auto* error = dynamicDowncast<ErrorInstance>(exception))
         errorMessage = error->sanitizedToString(&lexicalGlobalObject);
     else
         errorMessage = exception.toWTFString(&lexicalGlobalObject);
@@ -116,8 +122,8 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSC::Exception* except
     scope.clearException();
     vm.clearLastException();
 
-    auto* globalObject = jsCast<JSDOMGlobalObject*>(lexicalGlobalObject);
-    if (auto* window = jsDynamicCast<JSDOMWindow*>(globalObject)) {
+    auto* globalObject = downcast<JSDOMGlobalObject>(lexicalGlobalObject);
+    if (auto* window = dynamicDowncast<JSDOMWindow>(globalObject)) {
         RefPtr localDOMWindow = dynamicDowncast<LocalDOMWindow>(window->wrapped());
         if (!localDOMWindow || !localDOMWindow->isCurrentlyDisplayedInFrame())
             return;
@@ -133,7 +139,19 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSC::Exception* except
     }
 
     auto errorMessage = retrieveErrorMessage(*lexicalGlobalObject, vm, exception->value(), scope);
-    globalObject->protectedScriptExecutionContext()->reportException(errorMessage, lineNumber, columnNumber, exceptionSourceURL, exception, callStack->size() ? callStack.ptr() : nullptr, cachedScript, fromModule);
+
+    if (globalObject->hasScriptErrorCallbacks()) {
+        // The call stack may contain masked URLs (e.g. webkit-masked-url://hidden/) for scripts
+        // whose origin is hidden from the page (e.g. extension content scripts in the main world).
+        // Use the unmasked URL from the exception's code blocks for internal reporting.
+        auto unmaskedSourceURL = exceptionSourceURL;
+        if (auto url = unmaskedSourceURLFromException(*exception, vm); !url.isEmpty())
+            unmaskedSourceURL = url;
+
+        globalObject->invokeScriptErrorCallbacks(errorMessage, unmaskedSourceURL, lineNumber, columnNumber);
+    }
+
+    protect(globalObject->scriptExecutionContext())->reportException(errorMessage, lineNumber, columnNumber, exceptionSourceURL, exception, callStack->size() ? callStack.ptr() : nullptr, cachedScript, fromModule);
 
     if (exceptionDetails) {
         exceptionDetails->message = errorMessage;
@@ -293,10 +311,9 @@ JSC::EncodedJSValue rejectPromiseWithGetterTypeError(JSC::JSGlobalObject& lexica
     return createRejectedPromiseWithTypeError(lexicalGlobalObject, JSC::makeDOMAttributeGetterTypeErrorMessage(classInfo->className, String(attributeName.uid())), RejectedPromiseWithTypeErrorCause::NativeGetter);
 }
 
-String makeThisTypeErrorMessage(const char* interfaceName, const char* functionName)
+String makeThisTypeErrorMessage(StringView interfaceName, StringView functionName)
 {
-    auto interfaceNameSpan = unsafeSpan(interfaceName);
-    return makeString("Can only call "_s, interfaceNameSpan, '.', unsafeSpan(functionName), " on instances of "_s, interfaceNameSpan);
+    return makeString("Can only call "_s, interfaceName, '.', functionName, " on instances of "_s, interfaceName);
 }
 
 String makeUnsupportedIndexedSetterErrorMessage(ASCIILiteral interfaceName)
@@ -304,18 +321,18 @@ String makeUnsupportedIndexedSetterErrorMessage(ASCIILiteral interfaceName)
     return makeString("Failed to set an indexed property on "_s, interfaceName, ": Indexed property setter is not supported."_s);
 }
 
-EncodedJSValue throwThisTypeError(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, const char* interfaceName, const char* functionName)
+EncodedJSValue throwThisTypeError(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, ASCIILiteral interfaceName, ASCIILiteral functionName)
 {
     return throwTypeError(lexicalGlobalObject, scope, makeThisTypeErrorMessage(interfaceName, functionName));
 }
 
-JSC::EncodedJSValue rejectPromiseWithThisTypeError(DeferredPromise& promise, const char* interfaceName, const char* methodName)
+JSC::EncodedJSValue rejectPromiseWithThisTypeError(DeferredPromise& promise, ASCIILiteral interfaceName, ASCIILiteral methodName)
 {
     promise.reject(ExceptionCode::TypeError, makeThisTypeErrorMessage(interfaceName, methodName));
     return JSValue::encode(jsUndefined());
 }
 
-JSC::EncodedJSValue rejectPromiseWithThisTypeError(JSC::JSGlobalObject& lexicalGlobalObject, const char* interfaceName, const char* methodName)
+JSC::EncodedJSValue rejectPromiseWithThisTypeError(JSC::JSGlobalObject& lexicalGlobalObject, ASCIILiteral interfaceName, ASCIILiteral methodName)
 {
     return createRejectedPromiseWithTypeError(lexicalGlobalObject, makeThisTypeErrorMessage(interfaceName, methodName), RejectedPromiseWithTypeErrorCause::InvalidThis);
 }

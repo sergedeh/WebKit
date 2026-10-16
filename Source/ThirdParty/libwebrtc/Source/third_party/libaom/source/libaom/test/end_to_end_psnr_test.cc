@@ -31,11 +31,11 @@ const int kBitrate = 500;
 const unsigned int kCqLevel = 18;
 // List of psnr thresholds for speed settings 0-8 and 4 encoding modes
 const double kPsnrThreshold[][4] = {
-  { 34.9, 44.4, 39.5, 41.9 }, { 34.9, 44.4, 39.5, 41.9 },
-  { 34.9, 44.4, 39.4, 41.9 }, { 34.9, 44.4, 39.1, 41.8 },
-  { 34.9, 44.4, 39.1, 41.8 }, { 34.9, 44.29, 38.5, 41.8 },
-  { 34.9, 44.3, 38.5, 41.3 }, { 34.9, 44.3, 38.5, 40.8 },
-  { 34.9, 44.3, 38.5, 40.8 }
+  { 34.1, 44.4, 39.5, 41.9 }, { 34.1, 44.4, 39.5, 41.9 },
+  { 34.1, 44.4, 39.4, 41.9 }, { 34.1, 44.4, 39.1, 41.8 },
+  { 34.1, 44.4, 39.1, 41.8 }, { 34.1, 44.29, 38.5, 41.8 },
+  { 34.1, 44.3, 38.5, 41.3 }, { 34.1, 44.3, 38.5, 40.8 },
+  { 34.1, 44.3, 38.5, 40.8 }
 };
 
 struct TestVideoParam {
@@ -81,6 +81,12 @@ std::unordered_map<std::string, std::unordered_map<int, double>>
                                    { 1, 41.8 },
                                    { 2, 41.4 },
                                    { 3, 41.1 },
+                               } },
+                             { "SDR_Dance_ldsn_1080p.y4m",
+                               {
+                                   { 1, 32.6 },
+                                   { 2, 32.5 },
+                                   { 3, 32.3 },
                                } } };
 
 // Encoding modes tested
@@ -93,6 +99,7 @@ const libaom_test::TestMode kEncodingModeVectors[] = {
 const TestVideoParam kTestVectorsLcMode[] = {
   { "SDR_Animal_oqo7.y4m", 8, AOM_IMG_FMT_I420, AOM_BITS_8, 0 },
   { "SDR_Health_rtd0_720p.y4m", 8, AOM_IMG_FMT_I420, AOM_BITS_8, 0 },
+  { "SDR_Dance_ldsn_1080p.y4m", 8, AOM_IMG_FMT_I420, AOM_BITS_8, 0 },
 };
 
 // Speed settings tested
@@ -138,8 +145,12 @@ class EndToEndTest
     if (video->frame() == 0) {
       if (encoding_mode_ == ::libaom_test::kLowComplexityDecode) {
         ASSERT_LE(cpu_used_, 3);
+        if (video->img()->d_h >= 1920) {
+          encoder->Control(AV1E_SET_TILE_ROWS, 2);
+        } else {
+          encoder->Control(AV1E_SET_TILE_ROWS, 1);
+        }
         encoder->Control(AV1E_SET_TILE_COLUMNS, 1);
-        encoder->Control(AV1E_SET_TILE_ROWS, 1);
         encoder->Control(AV1E_SET_ENABLE_CDEF, 0);
         encoder->Control(AV1E_SET_ENABLE_LOW_COMPLEXITY_DECODE, 1);
       } else {

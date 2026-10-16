@@ -28,6 +28,7 @@
 
 #import <wtf/BlockPtr.h>
 #import <wtf/RetainPtr.h>
+#import <wtf/darwin/DispatchExtras.h>
 #import <wtf/darwin/DispatchOSObject.h>
 
 #if HAVE(FULL_FEATURED_USER_NOTIFICATIONS)
@@ -60,7 +61,7 @@ static _WKMockUserNotificationCenter *centersByBundleIdentifier(NSString *bundle
     if (!self)
         return nil;
 
-    m_queue = adoptOSObject(dispatch_queue_create(nullptr, OSObjectPtr { DISPATCH_QUEUE_SERIAL_WITH_AUTORELEASE_POOL }.get()));
+    m_queue = adoptOSObject(dispatch_queue_create(nullptr, serialQueueWithAutoreleasePoolAttrSingleton()));
     m_bundleIdentifier = bundleIdentifier;
     m_notifications = adoptNS([[NSMutableArray alloc] init]);
 
@@ -106,7 +107,8 @@ static _WKMockUserNotificationCenter *centersByBundleIdentifier(NSString *bundle
 - (void)removePendingNotificationRequestsWithIdentifiers:(NSArray<NSString *> *) identifiers
 {
     RetainPtr toRemove = adoptNS([NSMutableArray new]);
-    for (UNNotification *notification in m_notifications.get()) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL UNNotification *notification in m_notifications.get()) {
         if ([identifiers containsObject:retainPtr(notification.request.identifier).get()])
             [toRemove addObject:notification];
     }

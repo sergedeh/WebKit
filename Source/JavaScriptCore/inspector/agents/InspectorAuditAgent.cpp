@@ -44,9 +44,9 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(InspectorAuditAgent);
 
 InspectorAuditAgent::InspectorAuditAgent(AgentContext& context)
     : InspectorAgentBase("Audit"_s)
-    , m_backendDispatcher(AuditBackendDispatcher::create(context.backendDispatcher, this))
+    , m_backendDispatcher(AuditBackendDispatcher::create(protect(context.backendDispatcher), this))
     , m_injectedScriptManager(context.injectedScriptManager)
-    , m_debugger(*CheckedRef { context.environment }->debugger())
+    , m_debugger(CheckedRef { context.environment }->debugger())
 {
 }
 
@@ -107,8 +107,11 @@ Protocol::ErrorStringOr<std::tuple<Ref<Protocol::Runtime::RemoteObject>, std::op
     std::optional<bool> wasThrown;
     std::optional<int> savedResultIndex;
 
-    JSC::Debugger::TemporarilyDisableExceptionBreakpoints temporarilyDisableExceptionBreakpoints(m_debugger);
-    temporarilyDisableExceptionBreakpoints.replace();
+    std::optional<JSC::Debugger::TemporarilyDisableExceptionBreakpoints> temporarilyDisableExceptionBreakpoints;
+    if (m_debugger) {
+        temporarilyDisableExceptionBreakpoints.emplace(*m_debugger);
+        temporarilyDisableExceptionBreakpoints->replace();
+    }
 
     muteConsole();
 

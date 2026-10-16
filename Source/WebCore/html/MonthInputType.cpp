@@ -55,7 +55,7 @@ using namespace HTMLNames;
 static const int monthDefaultStep = 1;
 static const int monthDefaultStepBase = 0;
 static const int monthStepScaleFactor = 1;
-static const StepRange::StepDescription monthStepDescription { monthDefaultStep, monthDefaultStepBase, monthStepScaleFactor, StepRange::ParsedStepValueShouldBeInteger };
+static const StepRange::StepDescription monthStepDescription { monthDefaultStep, monthDefaultStepBase, monthStepScaleFactor, StepRange::StepValueShouldBe::ParsedInteger };
 
 const AtomString& MonthInputType::formControlType() const
 {
@@ -70,7 +70,7 @@ DateComponentsType MonthInputType::dateType() const
 WallTime MonthInputType::valueAsDate() const
 {
     ASSERT(element());
-    auto date = parseToDateComponents(protectedElement()->value().get());
+    auto date = parseToDateComponents(protect(element())->value().get());
     if (!date)
         return WallTime::nan();
     double msec = date->millisecondsSinceEpoch();
@@ -106,13 +106,16 @@ StepRange MonthInputType::createStepRange(AnyStepHandling anyStepHandling) const
     ASSERT(element());
     Ref element = *this->element();
     const Decimal stepBase = findStepBase(Decimal::fromDouble(monthDefaultStepBase));
-    const Decimal minimum = parseToNumber(element->attributeWithoutSynchronization(minAttr), Decimal::fromDouble(DateComponents::minimumMonth()));
-    const Decimal maximum = parseToNumber(element->attributeWithoutSynchronization(maxAttr), Decimal::fromDouble(DateComponents::maximumMonth()));
+
+    RangeLimitations rangeLimitations = RangeLimitations::Invalid;
+    const Decimal minimum = extractStepRangeBound(minAttr, Decimal::fromDouble(DateComponents::minimumMonth()), rangeLimitations);
+    const Decimal maximum = extractStepRangeBound(maxAttr, Decimal::fromDouble(DateComponents::maximumMonth()), rangeLimitations);
+
     const Decimal step = StepRange::parseStep(anyStepHandling, monthStepDescription, element->attributeWithoutSynchronization(stepAttr));
-    return StepRange(stepBase, RangeLimitations::Valid, minimum, maximum, step, monthStepDescription);
+    return StepRange(stepBase, rangeLimitations, minimum, maximum, step, monthStepDescription);
 }
 
-Decimal MonthInputType::parseToNumber(const String& src, const Decimal& defaultValue) const
+Decimal MonthInputType::parseToNumber(StringView src, const Decimal& defaultValue) const
 {
     auto date = parseToDateComponents(src);
     if (!date)
@@ -155,7 +158,7 @@ String MonthInputType::formatDateTimeFieldsState(const DateTimeFieldsState& stat
 
 void MonthInputType::setupLayoutParameters(DateTimeEditElement::LayoutParameters& layoutParameters, const DateComponents&) const
 {
-    layoutParameters.dateTimeFormat = layoutParameters.locale.shortMonthFormat();
+    layoutParameters.dateTimeFormat = layoutParameters.locale->shortMonthFormat();
     layoutParameters.fallbackDateTimeFormat = "yyyy-MM"_s;
 }
 

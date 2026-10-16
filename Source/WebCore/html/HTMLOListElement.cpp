@@ -33,7 +33,7 @@
 
 // FIXME: There should be a standard way to turn a std::expected into a Optional.
 // Maybe we should put this into the header file for Expected and give it a better name.
-template<typename T, typename E> inline std::optional<T> optionalValue(Expected<T, E>&& expected)
+template<typename T, typename E> inline std::optional<T> optionalValue(std::expected<T, E>&& expected)
 {
     return expected ? std::optional<T>(WTF::move(expected.value())) : std::nullopt;
 }
@@ -71,15 +71,15 @@ void HTMLOListElement::collectPresentationalHintsForAttribute(const QualifiedNam
 {
     if (name == typeAttr) {
         if (value == "a"_s)
-            addPropertyToPresentationalHintStyle(style, CSSPropertyListStyleType, CSSValueLowerAlpha);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::ListStyleType, CSSValueID::LowerAlpha);
         else if (value == "A"_s)
-            addPropertyToPresentationalHintStyle(style, CSSPropertyListStyleType, CSSValueUpperAlpha);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::ListStyleType, CSSValueID::UpperAlpha);
         else if (value == "i"_s)
-            addPropertyToPresentationalHintStyle(style, CSSPropertyListStyleType, CSSValueLowerRoman);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::ListStyleType, CSSValueID::LowerRoman);
         else if (value == "I"_s)
-            addPropertyToPresentationalHintStyle(style, CSSPropertyListStyleType, CSSValueUpperRoman);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::ListStyleType, CSSValueID::UpperRoman);
         else if (value == "1"_s)
-            addPropertyToPresentationalHintStyle(style, CSSPropertyListStyleType, CSSValueDecimal);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::ListStyleType, CSSValueID::Decimal);
     } else
         HTMLElement::collectPresentationalHintsForAttribute(name, value, style);
 }

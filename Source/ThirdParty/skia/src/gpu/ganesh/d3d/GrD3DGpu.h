@@ -8,8 +8,9 @@
 #ifndef GrD3DGpu_DEFINED
 #define GrD3DGpu_DEFINED
 
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkDeque.h"
+#include "include/gpu/ganesh/d3d/GrD3DBackendSurface.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkDeque.h"
 #include "src/gpu/RefCntedCallback.h"
 #include "src/gpu/ganesh/GrGpu.h"
 #include "src/gpu/ganesh/GrRenderTarget.h"
@@ -61,8 +62,6 @@ public:
 
     void xferBarrier(GrRenderTarget*, GrXferBarrierType) override {}
 
-    void deleteBackendTexture(const GrBackendTexture&) override;
-
     bool compile(const GrProgramDesc&, const GrProgramInfo&) override;
 
 #if defined(GPU_TEST_UTILS)
@@ -86,7 +85,7 @@ public:
                                               SkISize dimensions, int numStencilSamples) override;
 
     GrBackendFormat getPreferredStencilFormat(const GrBackendFormat&) override {
-        return GrBackendFormat::MakeDxgi(this->d3dCaps().preferredStencilFormat());
+        return GrBackendFormats::MakeD3D(this->d3dCaps().preferredStencilFormat());
     }
 
     sk_sp<GrAttachment> makeMSAAAttachment(SkISize dimensions,
@@ -150,6 +149,8 @@ private:
                                                GrProtected,
                                                const void* data,
                                                size_t dataSize) override;
+
+    void onDeleteBackendTexture(const GrBackendTexture&) override;
 
     sk_sp<GrTexture> onWrapBackendTexture(const GrBackendTexture&,
                                           GrWrapOwnership,

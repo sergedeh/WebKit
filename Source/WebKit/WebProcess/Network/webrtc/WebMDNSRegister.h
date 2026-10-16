@@ -32,7 +32,6 @@
 #include <WebCore/ScriptExecutionContextIdentifier.h>
 #include <wtf/CanMakeWeakPtr.h>
 #include <wtf/CompletionHandler.h>
-#include <wtf/Expected.h>
 #include <wtf/Forward.h>
 #include <wtf/HashMap.h>
 #include <wtf/WeakRef.h>
@@ -49,7 +48,7 @@ class WebMDNSRegister : public CanMakeWeakPtr<WebMDNSRegister> {
 public:
     explicit WebMDNSRegister(WebRTCNetworkBase&);
 
-    void ref() const;
+    void LEGACY_NODELETE ref() const;
     void deref() const;
 
     void unregisterMDNSNames(WebCore::ScriptExecutionContextIdentifier);

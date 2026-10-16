@@ -24,13 +24,23 @@
 
 #pragma once
 
-#include <WebCore/IntersectionObserverMarginBox.h>
+#include <WebCore/LayoutRect.h>
 #include <WebCore/RepaintRectCalculation.h>
 #include <optional>
 #include <wtf/OptionSet.h>
+#include <wtf/ScopedLambda.h>
 
 namespace WebCore {
 
+class Frame;
+
+// Given a scroll container or frame viewport clip rect (in the coordinate space of the clipping
+// renderer or frame), and the frame that it belongs to, returns an adjusted clip rect,
+// or std::nullopt to leave the clip unchanged.
+using ClipRectAdjuster = ScopedLambda<std::optional<LayoutRect>(const Frame&, const LayoutRect& clipRect)>;
+
+// Configuration for a visible rect computation. Constant for the duration of a traversal,
+// so it is passed by const reference.
 struct VisibleRectContext {
     enum class Option : uint8_t {
         UseEdgeInclusiveIntersection        = 1 << 0,
@@ -40,16 +50,28 @@ struct VisibleRectContext {
         CalculateAccurateRepaintRect        = 1 << 4,
     };
 
-    bool hasPositionFixedDescendant { false };
-    bool dirtyRectIsFlipped { false };
-    bool descendantNeedsEnclosingIntRect { false };
     OptionSet<Option> options { };
-    std::optional<IntersectionObserverMarginBox> scrollMargin { };
+    const ClipRectAdjuster* scrollContainerClipRectAdjuster { nullptr };
 
     RepaintRectCalculation repaintRectCalculation() const
     {
         return options.contains(Option::CalculateAccurateRepaintRect) ? RepaintRectCalculation::Accurate : RepaintRectCalculation::Fast;
     }
+
+    std::optional<LayoutRect> adjustScrollContainerClipRect(const Frame& frame, const LayoutRect& clipRect) const
+    {
+        if (!scrollContainerClipRectAdjuster)
+            return std::nullopt;
+        return (*scrollContainerClipRectAdjuster)(frame, clipRect);
+    }
+};
+
+// State accumulated while walking from a renderer towards its container. Passed by value so
+// that each step's changes are seen by the steps above it, but not by its own caller.
+struct VisibleRectState {
+    bool hasPositionFixedDescendant { false };
+    bool dirtyRectIsFlipped { false };
+    bool descendantNeedsEnclosingIntRect { false };
 };
 
 } // namespace WebCore

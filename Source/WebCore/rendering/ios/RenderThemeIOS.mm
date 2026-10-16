@@ -30,9 +30,9 @@
 #if PLATFORM(IOS_FAMILY)
 
 #import "ARKitBadgeSystemImage.h"
+#import "AttachmentLayout.h"
 #import "BitmapImage.h"
 #import "BorderShape.h"
-#import "CSSPrimitiveValue.h"
 #import "CSSToLengthConversionData.h"
 #import "CSSValueKey.h"
 #import "CSSValueKeywords.h"
@@ -66,7 +66,7 @@
 #import "LocalCurrentTraitCollection.h"
 #import "LocalFrame.h"
 #import "LocalFrameView.h"
-#import "NodeInlines.h"
+#import "LocalizedDateCache.h"
 #import "NodeRenderStyle.h"
 #import "PaintInfo.h"
 #import "PathUtilities.h"
@@ -74,13 +74,16 @@
 #import "RenderAttachment.h"
 #import "RenderBoxInlines.h"
 #import "RenderButton.h"
+#import "RenderElementInlines.h"
 #import "RenderMenuList.h"
 #import "RenderMeter.h"
 #import "RenderObject.h"
+#import "RenderProgress.h"
 #import "RenderSlider.h"
-#import "RenderStyle+SettersInlines.h"
+#import "StyleComputedStyle+SettersInlines.h"
 #import "RenderView.h"
 #import "Settings.h"
+#import "StyleLengthResolution.h"
 #import "StylePadding.h"
 #import "Theme.h"
 #import "TypedElementDescendantIteratorInlines.h"
@@ -130,14 +133,15 @@ bool RenderThemeIOS::canCreateControlPartForRenderer(const RenderElement& render
 #endif
 }
 
-void RenderThemeIOS::adjustCheckboxStyle(RenderStyle& style, const Element*) const
+void RenderThemeIOS::adjustCheckboxStyle(Style::ComputedStyle& style, const Element*) const
 {
     adjustMinimumIntrinsicSizeForAppearance(StyleAppearance::Checkbox, style);
 
-    if (!style.width().isIntrinsicOrLegacyIntrinsicOrAuto() && !style.height().isAuto())
+    if (!style.width().isSizingKeywordOrAuto() && !style.height().isAuto())
         return;
 
-    auto size = Style::PreferredSize::Fixed { std::max(style.computedFontSize(), 10.f) };
+    // FIXME: usedFontSize() includes zoom, if it is used, zoom will applied twice to width and height, once now, and once at layout / use time. Likely this should use `Style::emToPx<float>(1, style)`.
+    auto size = Style::PreferredSize::Fixed { std::max(style.usedFontSize(), 10.f) };
     style.setWidth(size);
     style.setHeight(size);
 }
@@ -155,11 +159,11 @@ int RenderThemeIOS::baselinePosition(const RenderBox& box) const
     return baseline;
 }
 
-bool RenderThemeIOS::isControlStyled(const RenderStyle& style) const
+bool RenderThemeIOS::isControlStyled(const Style::ComputedStyle& style) const
 {
     // Buttons and MenulistButtons are styled if they contain a background image.
     if (style.usedAppearance() == StyleAppearance::PushButton || style.usedAppearance() == StyleAppearance::MenulistButton)
-        return !style.visitedDependentBackgroundColor().isVisible() || Style::hasImageInAnyLayer(style.backgroundLayers());
+        return !style.visitedDependentUsedBackgroundColor().isVisible() || Style::hasImageInAnyLayer(style.backgroundLayers());
 
     if (style.usedAppearance() == StyleAppearance::TextField || style.usedAppearance() == StyleAppearance::TextArea || style.usedAppearance() == StyleAppearance::SearchField)
         return style.nativeAppearanceDisabled();
@@ -167,7 +171,7 @@ bool RenderThemeIOS::isControlStyled(const RenderStyle& style) const
     return RenderTheme::isControlStyled(style);
 }
 
-void RenderThemeIOS::adjustMinimumIntrinsicSizeForAppearance(StyleAppearance appearance, RenderStyle& style) const
+void RenderThemeIOS::adjustMinimumIntrinsicSizeForAppearance(StyleAppearance appearance, Style::ComputedStyle& style) const
 {
     auto minimumControlSize = this->minimumControlSize(appearance, style.fontCascade(), { style.minWidth(), style.minHeight() }, { style.width(), style.height() }, style.usedZoom());
 
@@ -222,22 +226,33 @@ void RenderThemeIOS::adjustMinimumIntrinsicSizeForAppearance(StyleAppearance app
     }
 }
 
-void RenderThemeIOS::adjustRadioStyle(RenderStyle& style, const Element*) const
+Style::PreferredSizePair RenderThemeIOS::controlSize(StyleAppearance appearance, const FontCascade& fontCascade, const Style::PreferredSizePair& zoomedSize, float) const
+{
+    if (appearance != StyleAppearance::Checkbox && appearance != StyleAppearance::Radio)
+        return zoomedSize;
+
+    auto size = Style::PreferredSize::Fixed { std::max(fontCascade.size(), 16.f) };
+    return { size, size };
+}
+
+void RenderThemeIOS::adjustRadioStyle(Style::ComputedStyle& style, const Element*) const
 {
     adjustMinimumIntrinsicSizeForAppearance(StyleAppearance::Radio, style);
 
-    if (!style.width().isIntrinsicOrLegacyIntrinsicOrAuto() && !style.height().isAuto())
+    if (!style.width().isSizingKeywordOrAuto() && !style.height().isAuto())
         return;
 
-    auto size = std::max(style.computedFontSize(), 10.0f);
+    // FIXME: usedFontSize() includes zoom meaning zoom will applied twice to width and height, once now, and once at layout / use time. Likely this should use `Style::emToPx<float>(1, style)`.
+    auto size = std::max(style.usedFontSize(), 10.0f);
     style.setWidth(Style::PreferredSize::Fixed { size });
     style.setHeight(Style::PreferredSize::Fixed { size });
 
-    auto radius = Style::LengthPercentage<CSS::Nonnegative>::Dimension { std::trunc(size / 2.0f) };
+    auto usedZoom = style.usedZoomForLength();
+    auto radius = Style::LengthPercentage<CSS::Nonnegative>::Dimension { std::trunc(size / 2 / usedZoom.value) };
     style.setBorderRadius({ radius, radius });
 }
 
-static void applyCommonNonCapsuleBorderRadiusToStyle(RenderStyle& style)
+static void applyCommonNonCapsuleBorderRadiusToStyle(Style::ComputedStyle& style)
 {
     if (style.hasExplicitlySetBorderRadius())
         return;
@@ -246,7 +261,7 @@ static void applyCommonNonCapsuleBorderRadiusToStyle(RenderStyle& style)
     style.setBorderRadius({ commonNonCapsuleBorderRadius, commonNonCapsuleBorderRadius });
 }
 
-void RenderThemeIOS::adjustTextFieldStyle(RenderStyle& style, const Element* element) const
+void RenderThemeIOS::adjustTextFieldStyle(Style::ComputedStyle& style, const Element* element) const
 {
 #if ENABLE(FORM_CONTROL_REFRESH)
     if (element && element->document().settings().formControlRefreshEnabled()) {
@@ -270,11 +285,11 @@ void RenderThemeIOS::adjustTextFieldStyle(RenderStyle& style, const Element* ele
     }
 
     auto adjustBackgroundColor = [&] {
-        auto styleColorOptions = element->document().styleColorOptions(&style);
-        if (style.backgroundColor() != systemColor(CSSValueAppleSystemOpaqueTertiaryFill, styleColorOptions))
+        auto styleColorOptions = protect(element->document())->styleColorOptions(&style, StyleColorOptionsPurpose::Rendering);
+        if (style.backgroundColor() != systemColor(CSSValueID::AppleSystemOpaqueTertiaryFill, styleColorOptions))
             return;
 
-        style.setBackgroundColor(systemColor(CSSValueWebkitControlBackground, styleColorOptions));
+        style.setBackgroundColor(systemColor(CSSValueID::WebkitControlBackground, styleColorOptions));
     };
 
     if (PAL::currentUserInterfaceIdiomIsVision()) {
@@ -322,7 +337,7 @@ void RenderThemeIOS::paintTextFieldDecorations(const RenderBox& box, const Paint
     GraphicsContextStateSaver stateSaver(context);
 
     auto shouldPaintFillAndInnerShadow = false;
-    auto element = box.element();
+    RefPtr element = box.element();
     if (RefPtr input = dynamicDowncast<HTMLInputElement>(*element)) {
         if (input->isTextField() && !input->isSearchField())
             shouldPaintFillAndInnerShadow = true;
@@ -330,16 +345,16 @@ void RenderThemeIOS::paintTextFieldDecorations(const RenderBox& box, const Paint
         shouldPaintFillAndInnerShadow = true;
 
     if (PAL::currentUserInterfaceIdiomIsVision() && shouldPaintFillAndInnerShadow) {
-        auto borderShape = BorderShape::shapeForBorderRect(box.style(), LayoutRect(rect));
-        auto path = borderShape.pathForOuterShape(box.document().deviceScaleFactor());
+        auto borderShape = BorderShape::shapeForBorderRect(box.usedStyle(), LayoutRect(rect));
+        auto path = borderShape.pathForOuterShape(protect(box.document())->deviceScaleFactor());
         context.setFillColor(Color::black.colorWithAlphaByte(10));
         context.drawPath(path);
         context.clipPath(path);
-        paintTextFieldInnerShadow(paintInfo,  borderShape.deprecatedPixelSnappedRoundedRect(box.document().deviceScaleFactor()));
+        paintTextFieldInnerShadow(paintInfo,  borderShape.deprecatedPixelSnappedRoundedRect(protect(box.document())->deviceScaleFactor()));
     }
 }
 
-void RenderThemeIOS::adjustTextAreaStyle(RenderStyle& style, const Element* element) const
+void RenderThemeIOS::adjustTextAreaStyle(Style::ComputedStyle& style, const Element* element) const
 {
 #if ENABLE(FORM_CONTROL_REFRESH)
     if (element && element->document().settings().formControlRefreshEnabled()) {
@@ -378,17 +393,16 @@ static Style::PaddingEdge toTruncatedPaddingEdge(auto value)
     return Style::PaddingEdge::Fixed { static_cast<float>(std::trunc(value)) };
 }
 
-Style::PaddingBox RenderThemeIOS::popupInternalPaddingBox(const RenderStyle& style) const
+Style::PaddingBox RenderThemeIOS::platformPopupInternalPaddingBox(const Style::ComputedStyle& style) const
 {
-    auto emSize = CSSPrimitiveValue::create(1.0, CSSUnitType::CSS_EM);
-    auto padding = emSize->resolveAsLength<float>({ style, nullptr, nullptr, nullptr });
+    const auto padding = Style::emToPxZoomed<float>(1, style);
 
     if (style.usedAppearance() == StyleAppearance::MenulistButton) {
         // FIXME: Reduce code duplication with toTruncatedPaddingEdge.
-        auto value = Style::PaddingEdge::Fixed { static_cast<float>(std::trunc(padding + Style::evaluate<float>(style.usedBorderTopWidth(),  Style::ZoomNeeded { }))) / style.usedZoom() };
+        auto value = Style::PaddingEdge::Fixed { static_cast<float>(std::trunc(padding + Style::evaluate<float>(Style::effectiveBorderWidths(style).top(), style.usedZoomForLength(), style.deviceScaleFactor()))) / style.usedZoom() };
 
-        if (style.writingMode().isBidiRTL())
-            return { 0_css_px, 0_css_px, 0_css_px, value };
+        // Return in horizontal-tb LTR; popupInternalPaddingBox() handles conversion.
+        // The chevron is always on the logical end, so pad the end to prevent text from overlapping with it.
         return { 0_css_px, value, 0_css_px, 0_css_px };
     }
     return { 0_css_px };
@@ -400,6 +414,7 @@ static inline bool canAdjustBorderRadiusForAppearance(StyleAppearance appearance
 #if ENABLE(APPLE_PAY)
     case StyleAppearance::ApplePayButton:
 #endif
+    case StyleAppearance::Base:
     case StyleAppearance::None:
     case StyleAppearance::SearchField:
         return false;
@@ -410,37 +425,40 @@ static inline bool canAdjustBorderRadiusForAppearance(StyleAppearance appearance
     };
 }
 
-void RenderThemeIOS::adjustRoundBorderRadius(RenderStyle& style, RenderBox& box)
+void RenderThemeIOS::adjustRoundBorderRadius(Style::ComputedStyle& style, RenderBox& box)
 {
     if (!canAdjustBorderRadiusForAppearance(style.usedAppearance(), box) || Style::hasImageInAnyLayer(style.backgroundLayers()))
         return;
 
-    auto boxLogicalHeight = box.logicalHeight();
-    auto minDimension = std::min(box.width(), box.height());
+    auto usedZoom = style.usedZoomForLength();
 
-    if ((is<RenderButton>(box) || is<RenderMenuList>(box)) && boxLogicalHeight >= largeButtonSize) {
-        auto largeButtonBorderRadius = Style::LengthPercentage<CSS::Nonnegative>::Dimension { minDimension * largeButtonBorderRadiusRatio };
+    auto boxLogicalHeight = box.logicalHeight();
+    auto unzoomedBoxLogicalHeight = box.logicalHeight() / usedZoom.value;
+
+    auto minDimension = std::min(box.borderBoxWidth(), box.borderBoxHeight());
+    auto unzoomedMinDimension = minDimension / usedZoom.value;
+
+    if ((isAnyOf<RenderButton, RenderMenuList>(box)) && boxLogicalHeight >= largeButtonSize) {
+        auto largeButtonBorderRadius = Style::LengthPercentage<CSS::Nonnegative>::Dimension { unzoomedMinDimension * largeButtonBorderRadiusRatio };
         style.setBorderRadius({ largeButtonBorderRadius, largeButtonBorderRadius });
         return;
     }
 
     // FIXME: We should not be relying on border radius for the appearance of our controls <rdar://problem/7675493>.
     auto borderRadius = Style::BorderRadiusValue {
-        Style::LengthPercentage<CSS::Nonnegative>::Dimension { minDimension / 2 },
-        Style::LengthPercentage<CSS::Nonnegative>::Dimension { boxLogicalHeight / 2 },
+        Style::LengthPercentage<CSS::Nonnegative>::Dimension { unzoomedMinDimension / 2 },
+        Style::LengthPercentage<CSS::Nonnegative>::Dimension { unzoomedBoxLogicalHeight / 2 },
     };
     if (!style.writingMode().isHorizontal())
-        borderRadius = { borderRadius.height(), borderRadius.width() };
+        borderRadius.transpose();
 
     style.setBorderRadius(WTF::move(borderRadius));
 }
 
-static void applyCommonButtonPaddingToStyle(RenderStyle& style, const Element& element)
+static void applyCommonButtonPaddingToStyle(Style::ComputedStyle& style)
 {
-    Ref document = element.document();
-    Ref emSize = CSSPrimitiveValue::create(0.5, CSSUnitType::CSS_EM);
-    // We don't need this element's parent style to calculate `em` units, so it's okay to pass nullptr for it here.
-    auto edge = toTruncatedPaddingEdge(emSize->resolveAsLength<int>({ style, document->renderStyle(), nullptr, document->renderView() }));
+    // FIXME: This should probably use the unzoomed Style::emToPx conversion. Like this, zoom is being applied twice. Once now, once at use time.
+    auto edge = toTruncatedPaddingEdge(Style::emToPxZoomed<int>(0.5, style));
 
     auto paddingBox = Style::PaddingBox { 0_css_px, edge, 0_css_px, edge };
     if (!style.writingMode().isHorizontal())
@@ -449,17 +467,18 @@ static void applyCommonButtonPaddingToStyle(RenderStyle& style, const Element& e
     style.setPaddingBox(WTF::move(paddingBox));
 }
 
-static void adjustSelectListButtonStyle(RenderStyle& style, const Element& element)
+static void adjustSelectListButtonStyle(Style::ComputedStyle& style)
 {
     // Enforce "padding: 0 0.5em".
-    applyCommonButtonPaddingToStyle(style, element);
+    applyCommonButtonPaddingToStyle(style);
 
-    style.setLineHeight(CSS::Keyword::Normal { });
+    style.setLineHeight(Style::ComputedStyle::initialLineHeight());
+    style.setTextAutosizingAdjustedLineHeight(Style::ComputedStyle::initialLineHeight());
 }
 
 class RenderThemeMeasureTextClient : public MeasureTextClient {
 public:
-    RenderThemeMeasureTextClient(const FontCascade& font, const RenderStyle& style)
+    RenderThemeMeasureTextClient(const FontCascade& font, const Style::ComputedStyle& style)
         : m_font(font)
         , m_style(style)
     {
@@ -471,13 +490,13 @@ public:
     }
 private:
     const FontCascade& m_font;
-    const RenderStyle& m_style;
+    const Style::ComputedStyle& m_style;
 };
 
-static void adjustInputElementButtonStyle(RenderStyle& style, const HTMLInputElement& inputElement)
+static void adjustInputElementButtonStyle(Style::ComputedStyle& style, const HTMLInputElement& inputElement)
 {
     // Always Enforce "padding: 0 0.5em".
-    applyCommonButtonPaddingToStyle(style, inputElement);
+    applyCommonButtonPaddingToStyle(style);
 
     applyCommonNonCapsuleBorderRadiusToStyle(style);
 
@@ -508,7 +527,7 @@ static void adjustInputElementButtonStyle(RenderStyle& style, const HTMLInputEle
     }
 }
 
-void RenderThemeIOS::adjustMenuListButtonStyle(RenderStyle& style, const Element* element) const
+void RenderThemeIOS::adjustMenuListButtonStyle(Style::ComputedStyle& style, const Element* element) const
 {
 #if ENABLE(FORM_CONTROL_REFRESH)
     if (element && element->document().settings().formControlRefreshEnabled()) {
@@ -517,9 +536,11 @@ void RenderThemeIOS::adjustMenuListButtonStyle(RenderStyle& style, const Element
     }
 #endif
 
+    // FIXME: fontDescription().usedSize() includes zoom meaning zoom will applied twice to logical min-height, once now, and once at layout / use time. Likely this should use `Style::emToPx<int>(MenuListBaseHeight / MenuListBaseFontSize, style)`.
+
     // Set the min-height to be at least MenuListMinHeight.
     if (style.logicalHeight().isAuto())
-        style.setLogicalMinHeight(Style::MinimumSize::Fixed { static_cast<float>(std::max(MenuListMinHeight, static_cast<int>(MenuListBaseHeight / MenuListBaseFontSize * style.fontDescription().computedSize()))) });
+        style.setLogicalMinHeight(Style::MinimumSize::Fixed { static_cast<float>(std::max(MenuListMinHeight, static_cast<int>(MenuListBaseHeight / MenuListBaseFontSize * style.fontDescription().usedSize()))) });
     else
         style.setLogicalMinHeight(Style::MinimumSize::Fixed { static_cast<float>(MenuListMinHeight) });
 
@@ -532,7 +553,7 @@ void RenderThemeIOS::adjustMenuListButtonStyle(RenderStyle& style, const Element
     // or a date input. We don't force these if this is just an element with
     // "-webkit-appearance: menulist-button".
     if (is<HTMLSelectElement>(*element) && !element->hasAttributeWithoutSynchronization(HTMLNames::multipleAttr))
-        adjustSelectListButtonStyle(style, *element);
+        adjustSelectListButtonStyle(style);
     else if (RefPtr input = dynamicDowncast<HTMLInputElement>(*element))
         adjustInputElementButtonStyle(style, *input);
 }
@@ -550,7 +571,7 @@ void RenderThemeIOS::paintMenuListButtonDecorations(const RenderBox& box, const 
     auto& context = paintInfo.context();
     GraphicsContextStateSaver stateSaver(context);
 
-    auto& style = box.style();
+    CheckedRef style = box.style();
 
     Path glyphPath;
     FloatSize glyphSize;
@@ -601,20 +622,25 @@ void RenderThemeIOS::paintMenuListButtonDecorations(const RenderBox& box, const 
         glyphPath.addBezierCurveTo({ 29.4179f, 71.8f }, { 30.541f, 72.3867f }, { 31.8593f, 72.3867 });
     }
 
-    auto emSize = CSSPrimitiveValue::create(1.0, CSSUnitType::CSS_EM);
-    auto emPixels = emSize->resolveAsLength<float>({ style, nullptr, nullptr, nullptr });
+    auto emPixels = Style::emToPxZoomed<float>(1, style);
     auto glyphScale = 0.65f * emPixels / glyphSize.width();
     glyphSize = glyphScale * glyphSize;
 
-    bool isHorizontalWritingMode = style.writingMode().isHorizontal();
+    bool isHorizontalWritingMode = style->writingMode().isHorizontal();
     auto logicalRect = isHorizontalWritingMode ? rect : rect.transposedRect();
 
+    auto glyphInlineSize = isHorizontalWritingMode ? glyphSize.width() : glyphSize.height();
+    auto glyphBlockSize = isHorizontalWritingMode ? glyphSize.height() : glyphSize.width();
+
+    auto zoom = style->usedZoomForLength();
+    auto deviceScaleFactor = style->deviceScaleFactor();
+
     FloatPoint glyphOrigin;
-    glyphOrigin.setY(logicalRect.center().y() - glyphSize.height() / 2.0f);
-    if (!style.writingMode().isInlineFlipped())
-        glyphOrigin.setX(logicalRect.maxX() - glyphSize.width() - Style::evaluate<float>(box.style().usedBorderWidthEnd(), Style::ZoomNeeded { }) - Style::evaluate<float>(box.style().paddingEnd(), logicalRect.width(), box.style().usedZoomForLength()));
+    glyphOrigin.setY(logicalRect.center().y() - glyphBlockSize / 2.0f);
+    if (!style->writingMode().isInlineFlipped())
+        glyphOrigin.setX(logicalRect.maxX() - glyphInlineSize - Style::evaluate<float>(Style::effectiveBorderWidths(style.get()).end(style->writingMode()), zoom, deviceScaleFactor) - Style::evaluate<float>(style->paddingEnd(), logicalRect.width(), zoom));
     else
-        glyphOrigin.setX(logicalRect.x() + Style::evaluate<float>(box.style().usedBorderWidthEnd(), Style::ZoomNeeded { }) + Style::evaluate<float>(box.style().paddingEnd(), logicalRect.width(), box.style().usedZoomForLength()));
+        glyphOrigin.setX(logicalRect.x() + Style::evaluate<float>(Style::effectiveBorderWidths(style.get()).end(style->writingMode()), zoom, deviceScaleFactor) + Style::evaluate<float>(style->paddingEnd(), logicalRect.width(), zoom));
 
     if (!isHorizontalWritingMode)
         glyphOrigin = glyphOrigin.transposedPoint();
@@ -625,9 +651,9 @@ void RenderThemeIOS::paintMenuListButtonDecorations(const RenderBox& box, const 
     glyphPath.transform(transform);
 
     if (isEnabled(box))
-        context.setFillColor(style.color());
+        context.setFillColor(style->color());
     else
-        context.setFillColor(systemColor(CSSValueAppleSystemTertiaryLabel, box.styleColorOptions()));
+        context.setFillColor(systemColor(CSSValueID::AppleSystemTertiaryLabel, box.styleColorOptions(StyleColorOptionsPurpose::Rendering)));
 
     context.fillPath(glyphPath);
 }
@@ -636,7 +662,7 @@ constexpr auto defaultTrackThickness = 4.0;
 constexpr auto defaultTrackRadius = defaultTrackThickness / 2.0;
 constexpr auto defaultSliderThumbSize = 16_css_px;
 
-void RenderThemeIOS::adjustSliderTrackStyle(RenderStyle& style, const Element* element) const
+void RenderThemeIOS::adjustSliderTrackStyle(Style::ComputedStyle& style, const Element* element) const
 {
 #if ENABLE(FORM_CONTROL_REFRESH)
     if (element && element->document().settings().formControlRefreshEnabled()) {
@@ -695,7 +721,7 @@ bool RenderThemeIOS::paintSliderTrack(const RenderElement& box, const PaintInfo&
         ASSERT_NOT_REACHED();
     }
 
-    auto styleColorOptions = box.styleColorOptions();
+    auto styleColorOptions = box.styleColorOptions(StyleColorOptionsPurpose::Rendering);
 
     auto cornerWidth = trackClip.width() < defaultTrackThickness ? trackClip.width() / 2.0f : defaultTrackRadius;
     auto cornerHeight = trackClip.height() < defaultTrackThickness ? trackClip.height() / 2.0f : defaultTrackRadius;
@@ -705,9 +731,9 @@ bool RenderThemeIOS::paintSliderTrack(const RenderElement& box, const PaintInfo&
 
     FloatRoundedRect outerBorder(innerBorder);
     outerBorder.inflateWithRadii(nativeControlBorderInlineSize);
-    context.fillRoundedRect(outerBorder, systemColor(CSSValueWebkitControlBackground, styleColorOptions));
+    context.fillRoundedRect(outerBorder, systemColor(CSSValueID::WebkitControlBackground, styleColorOptions));
 
-    context.fillRoundedRect(innerBorder, systemColor(CSSValueAppleSystemOpaqueFill, styleColorOptions));
+    context.fillRoundedRect(innerBorder, systemColor(CSSValueID::AppleSystemOpaqueFill, styleColorOptions));
 
     paintSliderTicks(box, paintInfo, trackClip);
 
@@ -733,7 +759,7 @@ bool RenderThemeIOS::paintSliderTrack(const RenderElement& box, const PaintInfo&
     return false;
 }
 
-void RenderThemeIOS::adjustSliderThumbSize(RenderStyle& style, const Element* element) const
+void RenderThemeIOS::adjustSliderThumbSize(Style::ComputedStyle& style, const Element* element) const
 {
 #if ENABLE(FORM_CONTROL_REFRESH)
     if (element && element->document().settings().formControlRefreshEnabled()) {
@@ -751,7 +777,7 @@ void RenderThemeIOS::adjustSliderThumbSize(RenderStyle& style, const Element* el
     style.setBorderRadius({ 50_css_percentage, 50_css_percentage });
 
     // Enforce a 16x16 size if no size is provided.
-    if (style.width().isIntrinsicOrLegacyIntrinsicOrAuto() || style.height().isAuto()) {
+    if (style.width().isSizingKeywordOrAuto() || style.height().isAuto()) {
         style.setWidth(defaultSliderThumbSize);
         style.setHeight(defaultSliderThumbSize);
     }
@@ -774,7 +800,7 @@ bool RenderThemeIOS::paintProgressBar(const RenderElement& renderer, const Paint
     auto& context = paintInfo.context();
     GraphicsContextStateSaver stateSaver(context);
 
-    auto styleColorOptions = renderer.styleColorOptions();
+    auto styleColorOptions = renderer.styleColorOptions(StyleColorOptionsPurpose::Rendering);
     auto isHorizontalWritingMode = renderer.writingMode().isHorizontal();
 
     constexpr auto barBlockSize = 4.0f;
@@ -809,9 +835,9 @@ bool RenderThemeIOS::paintProgressBar(const RenderElement& renderer, const Paint
 
     FloatRoundedRect roundedTrackBorderRect(roundedTrackRect);
     roundedTrackBorderRect.inflateWithRadii(nativeControlBorderInlineSize);
-    context.fillRoundedRect(roundedTrackBorderRect, systemColor(CSSValueWebkitControlBackground, styleColorOptions));
+    context.fillRoundedRect(roundedTrackBorderRect, systemColor(CSSValueID::WebkitControlBackground, styleColorOptions));
 
-    context.fillRoundedRect(roundedTrackRect, systemColor(CSSValueAppleSystemOpaqueFill, styleColorOptions));
+    context.fillRoundedRect(roundedTrackRect, systemColor(CSSValueID::AppleSystemOpaqueFill, styleColorOptions));
 
     float barInlineSize;
     float barInlineStart = trackInlineStart;
@@ -867,7 +893,7 @@ int RenderThemeIOS::sliderTickOffsetFromTrackCenter() const
     return -9;
 }
 
-void RenderThemeIOS::adjustSearchFieldStyle(RenderStyle& style, const Element* element) const
+void RenderThemeIOS::adjustSearchFieldStyle(Style::ComputedStyle& style, const Element* element) const
 {
 #if ENABLE(FORM_CONTROL_REFRESH)
     if (element && element->document().settings().formControlRefreshEnabled()) {
@@ -883,7 +909,7 @@ void RenderThemeIOS::adjustSearchFieldStyle(RenderStyle& style, const Element* e
     if (!element)
         return;
 
-    if (!style.hasBorder())
+    if (!style.border().hasBorder())
         return;
 
     RenderBox* box = element->renderBox();
@@ -901,7 +927,7 @@ void RenderThemeIOS::paintSearchFieldDecorations(const RenderBox& box, const Pai
 // This value matches the opacity applied to UIKit controls.
 constexpr auto pressedStateOpacity = 0.75f;
 
-void RenderThemeIOS::adjustButtonLikeControlStyle(RenderStyle& style, const Element& element) const
+void RenderThemeIOS::adjustButtonLikeControlStyle(Style::ComputedStyle& style, const Element& element) const
 {
     if (PAL::currentUserInterfaceIdiomIsVision())
         return;
@@ -910,9 +936,9 @@ void RenderThemeIOS::adjustButtonLikeControlStyle(RenderStyle& style, const Elem
         return;
 
     if (!style.accentColor().isAuto()) {
-        auto tintColor = style.usedAccentColor(element.document().styleColorOptions(&style));
+        auto tintColor = style.usedAccentColor(protect(element.document())->styleColorOptions(&style, StyleColorOptionsPurpose::Rendering));
         if (isSubmitStyleButton(&element))
-            style.setBackgroundColor(WTF::move(tintColor));
+            style.setOverrideBackgroundColor(WTF::move(tintColor));
         else
             style.setColor(WTF::move(tintColor));
     }
@@ -924,12 +950,12 @@ void RenderThemeIOS::adjustButtonLikeControlStyle(RenderStyle& style, const Elem
     if (textColor.isValid())
         style.setColor(textColor.colorWithAlphaMultipliedBy(pressedStateOpacity));
 
-    auto backgroundColor = style.backgroundColorResolvingCurrentColor();
+    auto backgroundColor = style.usedBackgroundColorResolvingCurrentColor();
     if (backgroundColor.isValid())
         style.setBackgroundColor(backgroundColor.colorWithAlphaMultipliedBy(pressedStateOpacity));
 }
 
-void RenderThemeIOS::adjustButtonStyle(RenderStyle& style, const Element* element) const
+void RenderThemeIOS::adjustButtonStyle(Style::ComputedStyle& style, const Element* element) const
 {
 #if ENABLE(FORM_CONTROL_REFRESH)
     if (element && element->document().settings().formControlRefreshEnabled()) {
@@ -938,11 +964,13 @@ void RenderThemeIOS::adjustButtonStyle(RenderStyle& style, const Element* elemen
     }
 #endif
 
+    // FIXME: fontDescription().usedSize() includes zoom meaning zoom will applied twice to logical min-height, once now, and once at layout / use time. Likely this should use `Style::emToPx<int>(ControlBaseHeight / ControlBaseFontSize, style)`.
+
     // If no size is specified, ensure the height of the button matches ControlBaseHeight scaled
     // with the font size. min-height is used rather than height to avoid clipping the contents of
     // the button in cases where the button contains more than one line of text.
-    if (style.logicalWidth().isIntrinsicOrLegacyIntrinsicOrAuto() || style.logicalHeight().isAuto()) {
-        auto minimumHeight = ControlBaseHeight / ControlBaseFontSize * style.fontDescription().computedSize();
+    if (style.logicalWidth().isSizingKeywordOrAuto() || style.logicalHeight().isAuto()) {
+        auto minimumHeight = ControlBaseHeight / ControlBaseFontSize * style.fontDescription().usedSize();
         if (auto fixedLogicalMinHeight = style.logicalMinHeight().tryFixed())
             minimumHeight = std::max(minimumHeight, fixedLogicalMinHeight->resolveZoom(style.usedZoomForLength()));
         // FIXME: This may need to be a layout time adjustment to support various values like fit-content etc.
@@ -953,11 +981,9 @@ void RenderThemeIOS::adjustButtonStyle(RenderStyle& style, const Element* elemen
         return;
 
     // Set padding: 0 1.0em; on buttons.
-    // CSSPrimitiveValue::resolveAsLength only needs the element's style to calculate em lengths.
-    // Since the element might not be in a document, just pass nullptr for the root element style,
-    // the parent element style, and the render view.
-    auto emSize = CSSPrimitiveValue::create(1.0, CSSUnitType::CSS_EM);
-    auto edge = toTruncatedPaddingEdge(emSize->resolveAsLength<int>({ style, nullptr, nullptr, nullptr }));
+
+    // FIXME: This should probably use the unzoomed Style::emToPx conversion. Like this, zoom is being applied twice. Once now, once at use time.
+    auto edge = toTruncatedPaddingEdge(Style::emToPxZoomed<int>(1, style));
 
     auto paddingBox = Style::PaddingBox { 0_css_px, edge, 0_css_px, edge };
     if (!style.writingMode().isHorizontal())
@@ -1022,14 +1048,14 @@ Color RenderThemeIOS::insertionPointColor()
 
 Color RenderThemeIOS::autocorrectionReplacementMarkerColor(const RenderText& renderer) const
 {
-    auto caretColor = CaretBase::computeCaretColor(renderer.style(), renderer.textNode());
+    auto caretColor = CaretBase::computeCaretColor(renderer.style(), protect(renderer.textNode()));
     if (!caretColor.isValid())
         caretColor = insertionPointColor();
 
     auto hsla = caretColor.toColorTypeLossy<HSLA<float>>().resolved();
     if (hsla.hue) {
         hsla.saturation = 100;
-        if (renderer.styleColorOptions().contains(StyleColorOptions::UseDarkAppearance)) {
+        if (renderer.styleColorOptions(StyleColorOptionsPurpose::Rendering).contains(StyleColorOptions::UseDarkAppearance)) {
             hsla.lightness = 50;
             hsla.alpha = 0.5f;
         } else {
@@ -1049,12 +1075,17 @@ Color RenderThemeIOS::platformAnnotationHighlightBackgroundColor(OptionSet<Style
     return SRGBA<uint8_t> { 255, 238, 190 };
 }
 
+Color RenderThemeIOS::platformTextSearchHighlightColor(OptionSet<StyleColorOptions>) const
+{
+    return SRGBA<uint8_t> { 255, 228, 56 };
+}
+
 bool RenderThemeIOS::shouldHaveSpinButton(const HTMLInputElement&) const
 {
     return false;
 }
 
-bool RenderThemeIOS::supportsFocusRing(const RenderElement& renderer, const RenderStyle& style) const
+bool RenderThemeIOS::supportsFocusRing(const RenderElement& renderer, const Style::ComputedStyle& style) const
 {
 #if ENABLE(FORM_CONTROL_REFRESH)
     if (renderer.settings().formControlRefreshEnabled())
@@ -1066,7 +1097,7 @@ bool RenderThemeIOS::supportsFocusRing(const RenderElement& renderer, const Rend
     return false;
 }
 
-bool RenderThemeIOS::supportsBoxShadow(const RenderStyle& style) const
+bool RenderThemeIOS::supportsBoxShadow(const Style::ComputedStyle& style) const
 {
     // FIXME: See if additional native controls can support box shadows.
     switch (style.usedAppearance()) {
@@ -1094,50 +1125,50 @@ static const Vector<CSSValueSystemColorInformation>& cssValueSystemColorInformat
         initializeOnce,
         [] {
         cssValueSystemColorInformationList.get() = Vector(std::initializer_list<CSSValueSystemColorInformation> {
-            { CSSValueCanvas, @selector(systemBackgroundColor) },
-            { CSSValueCanvastext, @selector(labelColor) },
-            { CSSValueText, @selector(labelColor) },
-            { CSSValueWebkitControlBackground, @selector(systemBackgroundColor) },
-            { CSSValueAppleSystemBlue, @selector(systemBlueColor) },
-            { CSSValueAppleSystemBrown, @selector(systemBrownColor) },
-            { CSSValueAppleSystemGray, @selector(systemGrayColor) },
-            { CSSValueAppleSystemGreen, @selector(systemGreenColor) },
-            { CSSValueAppleSystemIndigo, @selector(systemIndigoColor) },
-            { CSSValueAppleSystemOrange, @selector(systemOrangeColor) },
-            { CSSValueAppleSystemPink, @selector(systemPinkColor) },
-            { CSSValueAppleSystemPurple, @selector(systemPurpleColor) },
-            { CSSValueAppleSystemRed, @selector(systemRedColor) },
-            { CSSValueAppleSystemTeal, @selector(systemTealColor) },
-            { CSSValueAppleSystemYellow, @selector(systemYellowColor) },
-            { CSSValueAppleSystemBackground, @selector(systemBackgroundColor) },
-            { CSSValueAppleSystemSecondaryBackground, @selector(secondarySystemBackgroundColor) },
-            { CSSValueAppleSystemTertiaryBackground, @selector(tertiarySystemBackgroundColor) },
-            { CSSValueAppleSystemOpaqueFill, @selector(systemFillColor), true },
-            { CSSValueAppleSystemOpaqueSecondaryFill, @selector(secondarySystemFillColor), true },
+            { CSSValueID::Canvas, @selector(systemBackgroundColor) },
+            { CSSValueID::Canvastext, @selector(labelColor) },
+            { CSSValueID::Text, @selector(labelColor) },
+            { CSSValueID::WebkitControlBackground, @selector(systemBackgroundColor) },
+            { CSSValueID::AppleSystemBlue, @selector(systemBlueColor) },
+            { CSSValueID::AppleSystemBrown, @selector(systemBrownColor) },
+            { CSSValueID::AppleSystemGray, @selector(systemGrayColor) },
+            { CSSValueID::AppleSystemGreen, @selector(systemGreenColor) },
+            { CSSValueID::AppleSystemIndigo, @selector(systemIndigoColor) },
+            { CSSValueID::AppleSystemOrange, @selector(systemOrangeColor) },
+            { CSSValueID::AppleSystemPink, @selector(systemPinkColor) },
+            { CSSValueID::AppleSystemPurple, @selector(systemPurpleColor) },
+            { CSSValueID::AppleSystemRed, @selector(systemRedColor) },
+            { CSSValueID::AppleSystemTeal, @selector(systemTealColor) },
+            { CSSValueID::AppleSystemYellow, @selector(systemYellowColor) },
+            { CSSValueID::AppleSystemBackground, @selector(systemBackgroundColor) },
+            { CSSValueID::AppleSystemSecondaryBackground, @selector(secondarySystemBackgroundColor) },
+            { CSSValueID::AppleSystemTertiaryBackground, @selector(tertiarySystemBackgroundColor) },
+            { CSSValueID::AppleSystemOpaqueFill, @selector(systemFillColor), true },
+            { CSSValueID::AppleSystemOpaqueSecondaryFill, @selector(secondarySystemFillColor), true },
             // FIXME: <rdar://problem/75538507> UIKit should expose this color so that we maintain parity with system buttons.
-            { CSSValueAppleSystemOpaqueSecondaryFillDisabled, @selector(secondarySystemFillColor), true, 0.75f },
-            { CSSValueAppleSystemOpaqueTertiaryFill, @selector(tertiarySystemFillColor), true },
-            { CSSValueAppleSystemTertiaryFill, @selector(tertiarySystemFillColor) },
-            { CSSValueAppleSystemQuaternaryFill, @selector(quaternarySystemFillColor) },
-            { CSSValueAppleSystemGroupedBackground, @selector(systemGroupedBackgroundColor) },
-            { CSSValueAppleSystemSecondaryGroupedBackground, @selector(secondarySystemGroupedBackgroundColor) },
-            { CSSValueAppleSystemTertiaryGroupedBackground, @selector(tertiarySystemGroupedBackgroundColor) },
-            { CSSValueAppleSystemLabel, @selector(labelColor) },
-            { CSSValueAppleSystemSecondaryLabel, @selector(secondaryLabelColor) },
-            { CSSValueAppleSystemTertiaryLabel, @selector(tertiaryLabelColor) },
-            { CSSValueAppleSystemQuaternaryLabel, @selector(quaternaryLabelColor) },
-            { CSSValueAppleSystemPlaceholderText, @selector(placeholderTextColor) },
-            { CSSValueAppleSystemSeparator, @selector(separatorColor) },
+            { CSSValueID::AppleSystemOpaqueSecondaryFillDisabled, @selector(secondarySystemFillColor), true, 0.75f },
+            { CSSValueID::AppleSystemOpaqueTertiaryFill, @selector(tertiarySystemFillColor), true },
+            { CSSValueID::AppleSystemTertiaryFill, @selector(tertiarySystemFillColor) },
+            { CSSValueID::AppleSystemQuaternaryFill, @selector(quaternarySystemFillColor) },
+            { CSSValueID::AppleSystemGroupedBackground, @selector(systemGroupedBackgroundColor) },
+            { CSSValueID::AppleSystemSecondaryGroupedBackground, @selector(secondarySystemGroupedBackgroundColor) },
+            { CSSValueID::AppleSystemTertiaryGroupedBackground, @selector(tertiarySystemGroupedBackgroundColor) },
+            { CSSValueID::AppleSystemLabel, @selector(labelColor) },
+            { CSSValueID::AppleSystemSecondaryLabel, @selector(secondaryLabelColor) },
+            { CSSValueID::AppleSystemTertiaryLabel, @selector(tertiaryLabelColor) },
+            { CSSValueID::AppleSystemQuaternaryLabel, @selector(quaternaryLabelColor) },
+            { CSSValueID::AppleSystemPlaceholderText, @selector(placeholderTextColor) },
+            { CSSValueID::AppleSystemSeparator, @selector(separatorColor) },
             // FIXME: <rdar://problem/79471528> Adopt [UIColor opaqueSeparatorColor] once it has a high contrast variant.
-            { CSSValueAppleSystemOpaqueSeparator, @selector(separatorColor), true },
-            { CSSValueAppleSystemContainerBorder, @selector(separatorColor) },
-            { CSSValueAppleSystemControlBackground, @selector(systemBackgroundColor) },
-            { CSSValueAppleSystemGrid, @selector(separatorColor) },
-            { CSSValueAppleSystemHeaderText, @selector(labelColor) },
-            { CSSValueAppleSystemSelectedContentBackground, @selector(tableCellDefaultSelectionTintColor) },
-            { CSSValueAppleSystemTextBackground, @selector(systemBackgroundColor) },
-            { CSSValueAppleSystemUnemphasizedSelectedContentBackground, @selector(tableCellDefaultSelectionTintColor) },
-            { CSSValueAppleWirelessPlaybackTargetActive, @selector(systemBlueColor) },
+            { CSSValueID::AppleSystemOpaqueSeparator, @selector(separatorColor), true },
+            { CSSValueID::AppleSystemContainerBorder, @selector(separatorColor) },
+            { CSSValueID::AppleSystemControlBackground, @selector(systemBackgroundColor) },
+            { CSSValueID::AppleSystemGrid, @selector(separatorColor) },
+            { CSSValueID::AppleSystemHeaderText, @selector(labelColor) },
+            { CSSValueID::AppleSystemSelectedContentBackground, @selector(tableCellDefaultSelectionTintColor) },
+            { CSSValueID::AppleSystemTextBackground, @selector(systemBackgroundColor) },
+            { CSSValueID::AppleSystemUnemphasizedSelectedContentBackground, @selector(tableCellDefaultSelectionTintColor) },
+            { CSSValueID::AppleWirelessPlaybackTargetActive, @selector(systemBlueColor) },
         });
     });
 
@@ -1218,9 +1249,9 @@ Color RenderThemeIOS::systemColor(CSSValueID cssValueID, OptionSet<StyleColorOpt
     const bool forVisitedLink = options.contains(StyleColorOptions::ForVisitedLink);
 
     // The system color cache below can't handle visited links. The only color value
-    // that cares about visited links is CSSValueWebkitLink, so handle it here by
+    // that cares about visited links is CSSValueID::WebkitLink, so handle it here by
     // calling through to RenderTheme's base implementation.
-    if (forVisitedLink && cssValueID == CSSValueWebkitLink)
+    if (forVisitedLink && cssValueID == CSSValueID::WebkitLink)
         return RenderTheme::systemColor(cssValueID, options);
 
     ASSERT(!forVisitedLink);
@@ -1313,13 +1344,13 @@ LayoutSize RenderThemeIOS::attachmentIntrinsicSize(const RenderAttachment&) cons
 
 static void paintAttachmentIcon(GraphicsContext& context, AttachmentLayout& info)
 {
-    RefPtr<Image> iconImage;
+    RefPtr<BitmapImage> iconImage;
     if (info.thumbnailIcon)
         iconImage = info.thumbnailIcon;
     else if (info.icon)
         iconImage = info.icon;
     
-    context.drawImage(*iconImage, info.iconRect);
+    context.drawBitmapImage(*iconImage, info.iconRect, FloatRect { { }, iconImage->size() });
 }
 
 static void paintAttachmentProgress(GraphicsContext& context, AttachmentLayout& info)
@@ -1414,6 +1445,11 @@ void RenderThemeIOS::paintSystemPreviewBadge(Image& image, const PaintInfo& pain
 {
     paintInfo.context().drawSystemImage(ARKitBadgeSystemImage::create(image), rect);
 }
+
+void RenderThemeIOS::paintSystemPreviewBadge(const PaintInfo& paintInfo, const FloatRect& rect)
+{
+    paintInfo.context().drawSystemImage(ARKitBadgeSystemImage::createWithoutImage(), rect);
+}
 #endif
 
 constexpr auto checkboxRadioBorderWidth = 1.5f;
@@ -1421,7 +1457,7 @@ constexpr auto checkboxRadioBorderDisabledOpacity = 0.3f;
 
 Color RenderThemeIOS::checkboxRadioBorderColor(OptionSet<ControlStyle::State> states, OptionSet<StyleColorOptions> styleColorOptions)
 {
-    auto defaultBorderColor = systemColor(CSSValueAppleSystemSecondaryLabel, styleColorOptions);
+    auto defaultBorderColor = systemColor(CSSValueID::AppleSystemSecondaryLabel, styleColorOptions);
 
     if (!states.contains(ControlStyle::State::Enabled))
         return defaultBorderColor.colorWithAlphaMultipliedBy(checkboxRadioBorderDisabledOpacity);
@@ -1432,7 +1468,7 @@ Color RenderThemeIOS::checkboxRadioBorderColor(OptionSet<ControlStyle::State> st
     return defaultBorderColor;
 }
 
-Color RenderThemeIOS::checkboxRadioBackgroundColor(const RenderStyle& style, OptionSet<ControlStyle::State> states, OptionSet<StyleColorOptions> styleColorOptions)
+Color RenderThemeIOS::checkboxRadioBackgroundColor(const Style::ComputedStyle& style, OptionSet<ControlStyle::State> states, OptionSet<StyleColorOptions> styleColorOptions)
 {
     bool isEmpty = !states.containsAny({ ControlStyle::State::Checked, ControlStyle::State::Indeterminate });
     bool isEnabled = states.contains(ControlStyle::State::Enabled);
@@ -1440,7 +1476,7 @@ Color RenderThemeIOS::checkboxRadioBackgroundColor(const RenderStyle& style, Opt
 
     if (PAL::currentUserInterfaceIdiomIsVision()) {
         if (!isEnabled)
-            return systemColor(isEmpty ? CSSValueWebkitControlBackground : CSSValueAppleSystemOpaqueTertiaryFill, styleColorOptions);
+            return systemColor(isEmpty ? CSSValueID::WebkitControlBackground : CSSValueID::AppleSystemOpaqueTertiaryFill, styleColorOptions);
 
         if (isPressed)
             return isEmpty ? Color(DisplayP3<float> { 0.773, 0.773, 0.773 }) : Color(DisplayP3<float> { 0.067, 0.38, 0.953 });
@@ -1449,9 +1485,9 @@ Color RenderThemeIOS::checkboxRadioBackgroundColor(const RenderStyle& style, Opt
     }
 
     if (!isEnabled)
-        return systemColor(isEmpty ? CSSValueWebkitControlBackground : CSSValueAppleSystemOpaqueTertiaryFill, styleColorOptions);
+        return systemColor(isEmpty ? CSSValueID::WebkitControlBackground : CSSValueID::AppleSystemOpaqueTertiaryFill, styleColorOptions);
 
-    auto enabledBackgroundColor = isEmpty ? systemColor(CSSValueWebkitControlBackground, styleColorOptions) : controlTintColor(style, styleColorOptions);
+    auto enabledBackgroundColor = isEmpty ? systemColor(CSSValueID::WebkitControlBackground, styleColorOptions) : controlTintColor(style, styleColorOptions);
     if (isPressed)
         return enabledBackgroundColor.colorWithAlphaMultipliedBy(pressedStateOpacity);
 
@@ -1474,9 +1510,9 @@ RefPtr<Gradient> RenderThemeIOS::checkboxRadioBackgroundGradient(const FloatRect
 Color RenderThemeIOS::checkboxRadioIndicatorColor(OptionSet<ControlStyle::State> states, OptionSet<StyleColorOptions> styleColorOptions)
 {
     if (!states.contains(ControlStyle::State::Enabled))
-        return systemColor(CSSValueAppleSystemTertiaryLabel, styleColorOptions);
+        return systemColor(CSSValueID::AppleSystemTertiaryLabel, styleColorOptions);
 
-    Color enabledIndicatorColor = systemColor(CSSValueAppleSystemLabel, styleColorOptions | StyleColorOptions::UseDarkAppearance);
+    Color enabledIndicatorColor = systemColor(CSSValueID::AppleSystemLabel, styleColorOptions | StyleColorOptions::UseDarkAppearance);
     if (states.contains(ControlStyle::State::Pressed))
         return enabledIndicatorColor.colorWithAlphaMultipliedBy(pressedStateOpacity);
 
@@ -1541,7 +1577,7 @@ bool RenderThemeIOS::paintCheckbox(const RenderElement& box, const PaintInfo& pa
     FloatRoundedRect checkboxRect(rect, CornerRadii(checkboxCornerRadius * rect.height() / checkboxHeight));
 
     auto controlStates = extractControlStyleStatesForRenderer(box);
-    auto styleColorOptions = box.styleColorOptions();
+    auto styleColorOptions = box.styleColorOptions(StyleColorOptionsPurpose::Rendering);
 
     auto backgroundColor = checkboxRadioBackgroundColor(box.style(), controlStates, styleColorOptions);
 
@@ -1626,7 +1662,7 @@ bool RenderThemeIOS::paintRadio(const RenderElement& box, const PaintInfo& paint
     GraphicsContextStateSaver stateSaver(context);
 
     auto controlStates = extractControlStyleStatesForRenderer(box);
-    auto styleColorOptions = box.styleColorOptions();
+    auto styleColorOptions = box.styleColorOptions(StyleColorOptionsPurpose::Rendering);
 
     auto backgroundColor = checkboxRadioBackgroundColor(box.style(), controlStates, styleColorOptions);
 
@@ -1691,15 +1727,15 @@ bool RenderThemeIOS::paintMeter(const RenderElement& renderer, const PaintInfo& 
     auto& context = paintInfo.context();
     GraphicsContextStateSaver stateSaver(context);
 
-    auto styleColorOptions = renderer.styleColorOptions();
+    auto styleColorOptions = renderer.styleColorOptions(StyleColorOptionsPurpose::Rendering);
     auto isHorizontalWritingMode = renderer.writingMode().isHorizontal();
 
     float cornerRadius = std::min(rect.width(), rect.height()) / 2.0f;
     FloatRoundedRect roundedFillRect(rect, CornerRadii(cornerRadius));
-    context.fillRoundedRect(roundedFillRect, systemColor(CSSValueWebkitControlBackground, styleColorOptions));
+    context.fillRoundedRect(roundedFillRect, systemColor(CSSValueID::WebkitControlBackground, styleColorOptions));
 
     roundedFillRect.inflateWithRadii(-nativeControlBorderInlineSize);
-    context.fillRoundedRect(roundedFillRect, systemColor(CSSValueAppleSystemOpaqueTertiaryFill, styleColorOptions));
+    context.fillRoundedRect(roundedFillRect, systemColor(CSSValueID::AppleSystemOpaqueTertiaryFill, styleColorOptions));
 
     context.clipRoundedRect(roundedFillRect);
 
@@ -1718,14 +1754,14 @@ bool RenderThemeIOS::paintMeter(const RenderElement& renderer, const PaintInfo& 
     roundedFillRect.setRect(fillRect);
 
     switch (element->gaugeRegion()) {
-    case HTMLMeterElement::GaugeRegionOptimum:
-        context.fillRoundedRect(roundedFillRect, systemColor(CSSValueAppleSystemGreen, styleColorOptions));
+    case HTMLMeterElement::GaugeRegion::Optimum:
+        context.fillRoundedRect(roundedFillRect, systemColor(CSSValueID::AppleSystemGreen, styleColorOptions));
         break;
-    case HTMLMeterElement::GaugeRegionSuboptimal:
-        context.fillRoundedRect(roundedFillRect, systemColor(CSSValueAppleSystemYellow, styleColorOptions));
+    case HTMLMeterElement::GaugeRegion::Suboptimal:
+        context.fillRoundedRect(roundedFillRect, systemColor(CSSValueID::AppleSystemYellow, styleColorOptions));
         break;
-    case HTMLMeterElement::GaugeRegionEvenLessGood:
-        context.fillRoundedRect(roundedFillRect, systemColor(CSSValueAppleSystemRed, styleColorOptions));
+    case HTMLMeterElement::GaugeRegion::EvenLessGood:
+        context.fillRoundedRect(roundedFillRect, systemColor(CSSValueID::AppleSystemRed, styleColorOptions));
         break;
     }
 
@@ -1740,7 +1776,7 @@ bool RenderThemeIOS::paintListButton(const RenderElement& box, const PaintInfo& 
 #endif
 
     auto& style = box.style();
-    if (style.hasContent() || style.hasUsedContentNone())
+    if (style.content().isData() || style.hasUsedContentNone())
         return false;
 
     auto& context = paintInfo.context();
@@ -1779,7 +1815,7 @@ bool RenderThemeIOS::paintListButton(const RenderElement& box, const PaintInfo& 
     transform.scale(scale);
     path.transform(transform);
 
-    context.setFillColor(controlTintColor(style, box.styleColorOptions()));
+    context.setFillColor(controlTintColor(style, box.styleColorOptions(StyleColorOptionsPurpose::Rendering)));
     context.fillPath(path);
 
     return false;
@@ -1822,11 +1858,11 @@ void RenderThemeIOS::paintSliderTicks(const RenderElement& box, const PaintInfo&
     GraphicsContextStateSaver stateSaver(context);
 
     auto value = input->valueAsNumber();
-    auto deviceScaleFactor = box.document().deviceScaleFactor();
-    auto styleColorOptions = box.styleColorOptions();
+    auto deviceScaleFactor = protect(box.document())->deviceScaleFactor();
+    auto styleColorOptions = box.styleColorOptions(StyleColorOptionsPurpose::Rendering);
 
     bool isInlineFlipped = (!isHorizontal && box.writingMode().isHorizontal()) || box.writingMode().isInlineFlipped();
-    for (auto& optionElement : dataList->suggestions()) {
+    for (Ref optionElement : dataList->suggestions()) {
         if (auto optionValue = input->listOptionValueAsDouble(optionElement)) {
             auto tickFraction = (*optionValue - min) / (max - min);
             auto tickRatio = isInlineFlipped ? 1.0 - tickFraction : tickFraction;
@@ -1836,7 +1872,7 @@ void RenderThemeIOS::paintSliderTicks(const RenderElement& box, const PaintInfo&
                 tickRect.setY(rect.y() + tickRatio * (rect.height() - tickRect.height()));
 
             FloatRoundedRect roundedTickRect(snapRectToDevicePixels(LayoutRect(tickRect), deviceScaleFactor), tickCornerRadii);
-            context.fillRoundedRect(roundedTickRect, (value >= *optionValue) ? controlTintColor(box.style(), styleColorOptions) : systemColor(CSSValueAppleSystemOpaqueSeparator, styleColorOptions));
+            context.fillRoundedRect(roundedTickRect, (value >= *optionValue) ? controlTintColor(box.style(), styleColorOptions) : systemColor(CSSValueID::AppleSystemOpaqueSeparator, styleColorOptions));
         }
     }
 }
@@ -1882,7 +1918,7 @@ void RenderThemeIOS::paintColorWellDecorations(const RenderElement& renderer, co
     context.strokeEllipse(strokeRect);
 }
 
-void RenderThemeIOS::adjustSearchFieldDecorationPartStyle(RenderStyle& style, const Element* element) const
+void RenderThemeIOS::adjustSearchFieldDecorationPartStyle(Style::ComputedStyle& style, const Element* element) const
 {
 #if ENABLE(FORM_CONTROL_REFRESH)
     if (element && element->document().settings().formControlRefreshEnabled()) {
@@ -1897,10 +1933,8 @@ void RenderThemeIOS::adjustSearchFieldDecorationPartStyle(RenderStyle& style, co
     constexpr auto searchFieldDecorationEmSize = 1.0f;
     constexpr auto searchFieldDecorationMargin = 4_css_px;
 
-    CSSToLengthConversionData conversionData(style, nullptr, nullptr, nullptr);
-
-    auto emSize = CSSPrimitiveValue::create(searchFieldDecorationEmSize, CSSUnitType::CSS_EM);
-    auto size = Style::PreferredSize::Fixed { emSize->resolveAsLength<float>(conversionData) };
+    // FIXME: This should probably use the unzoomed Style::emToPx conversion. Like this, zoom is being applied twice. Once now, once at use time.
+    auto size = Style::PreferredSize::Fixed { Style::emToPxZoomed<float>(searchFieldDecorationEmSize, style) };
 
     style.setWidth(size);
     style.setHeight(size);
@@ -1945,13 +1979,13 @@ bool RenderThemeIOS::paintSearchFieldDecorationPart(const RenderElement& box, co
     transform.scale(scale);
     glyphPath.transform(transform);
 
-    context.setFillColor(systemColor(CSSValueAppleSystemSecondaryLabel, box.styleColorOptions()));
+    context.setFillColor(systemColor(CSSValueID::AppleSystemSecondaryLabel, box.styleColorOptions(StyleColorOptionsPurpose::Rendering)));
     context.fillPath(glyphPath);
 
     return false;
 }
 
-void RenderThemeIOS::adjustSearchFieldResultsDecorationPartStyle(RenderStyle& style, const Element* element) const
+void RenderThemeIOS::adjustSearchFieldResultsDecorationPartStyle(Style::ComputedStyle& style, const Element* element) const
 {
     adjustSearchFieldDecorationPartStyle(style, element);
 }
@@ -1961,7 +1995,7 @@ bool RenderThemeIOS::paintSearchFieldResultsDecorationPart(const RenderBox& box,
     return paintSearchFieldDecorationPart(box, paintInfo, rect);
 }
 
-void RenderThemeIOS::adjustSearchFieldResultsButtonStyle(RenderStyle& style, const Element* element) const
+void RenderThemeIOS::adjustSearchFieldResultsButtonStyle(Style::ComputedStyle& style, const Element* element) const
 {
     adjustSearchFieldDecorationPartStyle(style, element);
 }

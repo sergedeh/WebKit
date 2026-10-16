@@ -32,6 +32,7 @@
 #include "RemoteImageBufferSetProxy.h"
 #include <WebCore/FloatRect.h>
 #include <WebCore/ImageBuffer.h>
+#include <WebCore/PlaceholderFrameIdentifier.h>
 #include <WebCore/PlatformCALayer.h>
 #include <WebCore/Region.h>
 #include <wtf/MachSendRight.h>
@@ -94,7 +95,7 @@ public:
     struct Parameters {
         Type type { Type::Bitmap };
         WebCore::FloatSize size;
-        WebCore::DestinationColorSpace colorSpace { WebCore::DestinationColorSpace::SRGB() };
+        WebCore::ColorSpace colorSpace { WebCore::ColorSpace::SRGB() };
         WebCore::ContentsFormat contentsFormat { WebCore::ContentsFormat::RGBA8 };
         float scale { 1.0f };
         bool isOpaque { false };
@@ -125,23 +126,25 @@ public:
     bool performDelegatedLayerDisplay();
 
     void paintContents();
+    void flush();
     virtual void prepareToDisplay() = 0;
     virtual void createContextAndPaintContents() = 0;
 
     virtual std::unique_ptr<ThreadSafeImageBufferSetFlusher> createFlusher(ThreadSafeImageBufferSetFlusher::FlushType = ThreadSafeImageBufferSetFlusher::FlushType::BackendHandlesAndDrawing) = 0;
+    virtual void submitDrawingCommands() { }
 
     WebCore::FloatSize size() const { return m_parameters.size; }
     float scale() const { return m_parameters.scale; }
     WebCore::ContentsFormat contentsFormat() const { return m_parameters.contentsFormat; }
-    WebCore::DestinationColorSpace colorSpace() const { return m_parameters.colorSpace; }
-    WebCore::PixelFormat pixelFormat() const;
+    WebCore::ColorSpace colorSpace() const { return m_parameters.colorSpace; }
+    WebCore::PixelFormat LEGACY_NODELETE pixelFormat() const;
     Type type() const { return m_parameters.type; }
     bool isOpaque() const { return m_parameters.isOpaque; }
-    unsigned bytesPerPixel() const;
+    unsigned LEGACY_NODELETE bytesPerPixel() const;
     bool supportsPartialRepaint() const;
     bool drawingRequiresClearedPixels() const;
 
-    PlatformCALayerRemote& layer() const;
+    PlatformCALayerRemote& LEGACY_NODELETE layer() const;
 
     void encode(IPC::Encoder&) const;
 
@@ -158,7 +161,7 @@ public:
         SecondaryBack
     };
 
-    const WebCore::Region& dirtyRegion() { return m_dirtyRegion; }
+    const WebCore::Region& dirtyRegion() LIFETIME_BOUND { return m_dirtyRegion; }
     bool hasEmptyDirtyRegion() const { return m_dirtyRegion.isEmpty() || m_parameters.size.isEmpty(); }
 
     MonotonicTime lastDisplayTime() const { return m_lastDisplayTime; }
@@ -177,7 +180,7 @@ public:
     void markFrontBufferVolatileForTesting();
 
 protected:
-    RemoteLayerBackingStoreCollection* backingStoreCollection() const;
+    RemoteLayerBackingStoreCollection* LEGACY_NODELETE backingStoreCollection() const LIFETIME_BOUND;
 
     void drawInContext(WebCore::GraphicsContext&);
 
@@ -196,7 +199,7 @@ protected:
     // FIXME: This should be removed and m_bufferHandle should be used to ref the buffer once ShareableBitmap::Handle
     // can be encoded multiple times. http://webkit.org/b/234169
     std::optional<ImageBufferBackendHandle> m_contentsBufferHandle;
-    std::optional<WebCore::RenderingResourceIdentifier> m_contentsRenderingResourceIdentifier;
+    std::optional<WebCore::PlaceholderFrameIdentifier> m_contentsFrameIdentifier;
 
     Vector<std::unique_ptr<ThreadSafeImageBufferSetFlusher>> m_frontBufferFlushers;
 
@@ -208,6 +211,7 @@ protected:
     float m_maxPaintedEDRHeadroom { 1 };
     float m_maxRequestedEDRHeadroom { 1 };
 #endif
+    bool m_needsFlush { false };
 };
 
 // The subset of RemoteLayerBackingStore that gets serialized into the UI
@@ -218,11 +222,12 @@ class RemoteLayerBackingStoreProperties {
 public:
     RemoteLayerBackingStoreProperties() = default;
     RemoteLayerBackingStoreProperties(RemoteLayerBackingStoreProperties&&) = default;
-    RemoteLayerBackingStoreProperties(ImageBufferBackendHandle&&, WebCore::RenderingResourceIdentifier, bool opaque);
+    RemoteLayerBackingStoreProperties(ImageBufferBackendHandle&&, WebCore::PlaceholderFrameIdentifier, bool opaque);
 
-    void applyBackingStoreToNode(RemoteLayerTreeNode&, bool replayDynamicContentScalingDisplayListsIntoBackingStore, UIView* hostingView);
+    // Returns false if the layer was left without the contents, because they could not be mapped.
+    bool applyBackingStoreToNode(RemoteLayerTreeNode&, bool replayDynamicContentScalingDisplayListsIntoBackingStore, UIView* hostingView);
 
-    const std::optional<ImageBufferBackendHandle>& bufferHandle() const { return m_bufferHandle; };
+    const std::optional<ImageBufferBackendHandle>& bufferHandle() const LIFETIME_BOUND { return m_bufferHandle; };
 
     struct LayerContentsBufferInfo {
         RetainPtr<id> buffer;
@@ -236,7 +241,7 @@ public:
     std::optional<ImageBufferSetIdentifier> bufferSetIdentifier() { return m_bufferSet; }
     void setBackendHandle(BufferSetBackendHandle&);
 
-    std::optional<WebCore::RenderingResourceIdentifier> contentsRenderingResourceIdentifier() const { return m_contentsRenderingResourceIdentifier; };
+    std::optional<WebCore::PlaceholderFrameIdentifier> contentsFrameIdentifier() const { return m_contentsFrameIdentifier; };
 
 private:
     friend struct IPC::ArgumentCoder<RemoteLayerBackingStoreProperties>;
@@ -250,7 +255,7 @@ private:
     std::optional<BufferAndBackendInfo> m_frontBufferInfo;
     std::optional<BufferAndBackendInfo> m_backBufferInfo;
     std::optional<BufferAndBackendInfo> m_secondaryBackBufferInfo;
-    std::optional<WebCore::RenderingResourceIdentifier> m_contentsRenderingResourceIdentifier;
+    std::optional<WebCore::PlaceholderFrameIdentifier> m_contentsFrameIdentifier;
 
     std::optional<WebCore::IntRect> m_paintedRect;
 

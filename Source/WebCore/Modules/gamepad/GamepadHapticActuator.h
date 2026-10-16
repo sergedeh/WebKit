@@ -54,18 +54,18 @@ public:
     ~GamepadHapticActuator();
 
     Type type() const { return m_type; }
-    bool canPlayEffectType(EffectType) const;
+    bool LEGACY_NODELETE canPlayEffectType(EffectType) const;
     void playEffect(EffectType, GamepadEffectParameters&&, Ref<DeferredPromise>&&);
     void reset(Ref<DeferredPromise>&&);
 
 private:
     GamepadHapticActuator(Document*, Type, Gamepad&);
 
-    Document* document();
-    const Document* document() const;
+    Document* LEGACY_NODELETE document();
+    const Document* LEGACY_NODELETE document() const;
 
     void stopEffects(CompletionHandler<void()>&&);
-    RefPtr<DeferredPromise>& promiseForEffectType(EffectType);
+    RefPtr<DeferredPromise>& LEGACY_NODELETE promiseForEffectType(EffectType);
 
     // ActiveDOMObject.
     void suspend(ReasonForSuspension) final;

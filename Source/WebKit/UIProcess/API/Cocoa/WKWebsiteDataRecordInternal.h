@@ -84,6 +84,9 @@ static inline std::optional<WebsiteDataType> toWebsiteDataType(NSString *website
 #endif
     if ([websiteDataType isEqualToString:_WKWebsiteDataTypeEnhancedSecurityRecord])
         return WebsiteDataType::EnhancedSecurityRecord;
+
+    if ([websiteDataType isEqualToString:_WKWebsiteDataTypeIsolatedSiteRecord])
+        return WebsiteDataType::IsolatedSiteRecord;
     return std::nullopt;
 }
 
@@ -91,7 +94,8 @@ static inline OptionSet<WebKit::WebsiteDataType> toWebsiteDataTypes(NSSet *websi
 {
     OptionSet<WebKit::WebsiteDataType> result;
 
-    for (NSString *websiteDataType in websiteDataTypes) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSString *websiteDataType in websiteDataTypes) {
         if (auto dataType = toWebsiteDataType(websiteDataType))
             result.add(*dataType);
     }
@@ -147,6 +151,9 @@ static inline RetainPtr<NSSet> toWKWebsiteDataTypes(OptionSet<WebKit::WebsiteDat
 #endif
     if (websiteDataTypes.contains(WebsiteDataType::EnhancedSecurityRecord))
         [wkWebsiteDataTypes addObject:_WKWebsiteDataTypeEnhancedSecurityRecord];
+
+    if (websiteDataTypes.contains(WebsiteDataType::IsolatedSiteRecord))
+        [wkWebsiteDataTypes addObject:_WKWebsiteDataTypeIsolatedSiteRecord];
 
     return wkWebsiteDataTypes;
 }

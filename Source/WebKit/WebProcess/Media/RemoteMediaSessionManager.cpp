@@ -39,8 +39,6 @@
 #include "WebProcess.h"
 #include <WebCore/AudioSession.h>
 #include <WebCore/PlatformMediaSession.h>
-#include <algorithm>
-#include <ranges>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebKit {
@@ -49,21 +47,17 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteMediaSessionManager);
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteMediaSessionState);
 
-RefPtr<RemoteMediaSessionManager> RemoteMediaSessionManager::create(WebPage& topPage, WebPage& localPage)
+Ref<RemoteMediaSessionManager> RemoteMediaSessionManager::create(WebPage& webPage)
 {
-    return adoptRef(new RemoteMediaSessionManager(topPage, localPage));
+    return adoptRef(*new RemoteMediaSessionManager(webPage));
 }
 
-RemoteMediaSessionManager::RemoteMediaSessionManager(WebPage& topPage, WebPage& localPage)
-    : REMOTE_MEDIA_SESSION_MANAGER_BASE_CLASS(localPage.identifier())
-    , m_topPage(topPage)
-    , m_localPage(localPage)
-    , m_topPageID(topPage.identifier())
-    , m_localPageID(localPage.identifier())
+RemoteMediaSessionManager::RemoteMediaSessionManager(WebPage& webPage)
+    : REMOTE_MEDIA_SESSION_MANAGER_BASE_CLASS(webPage.identifier())
+    , m_webPage(webPage)
+    , m_webPageID(webPage.identifier())
 {
-    WebProcess::singleton().addMessageReceiver(Messages::RemoteMediaSessionManager::messageReceiverName(), m_localPageID, *this);
-
-    localPage.send(Messages::WebPageProxy::AddRemoteMediaSessionManager(m_localPageID));
+    WebProcess::singleton().addMessageReceiver(Messages::RemoteMediaSessionManager::messageReceiverName(), m_webPageID, *this);
 
 #if USE(AUDIO_SESSION)
     Ref sharedSession = WebCore::AudioSession::singleton();
@@ -76,10 +70,10 @@ RemoteMediaSessionManager::RemoteMediaSessionManager(WebPage& topPage, WebPage& 
         sharedSession->preferredBufferSize(),
         sharedSession->outputLatency(),
         sharedSession->isMuted(),
-        sharedSession->isActive(),
         sharedSession->sceneIdentifier(),
         sharedSession->soundStageSize(),
         sharedSession->categoryOverride(),
+        sharedSession->isActive(),
     };
     send(Messages::RemoteMediaSessionManagerProxy::RemoteAudioConfigurationChanged(WTF::move(configuration)));
 #endif
@@ -87,9 +81,7 @@ RemoteMediaSessionManager::RemoteMediaSessionManager(WebPage& topPage, WebPage& 
 
 RemoteMediaSessionManager::~RemoteMediaSessionManager()
 {
-    if (RefPtr page = m_localPage.get())
-        page->send(Messages::WebPageProxy::RemoveRemoteMediaSessionManager(m_localPageID));
-    WebProcess::singleton().removeMessageReceiver(Messages::RemoteMediaSessionManager::messageReceiverName(), m_localPageID);
+    WebProcess::singleton().removeMessageReceiver(Messages::RemoteMediaSessionManager::messageReceiverName(), m_webPageID);
 }
 
 void RemoteMediaSessionManager::addSession(WebCore::PlatformMediaSessionInterface& session)
@@ -118,9 +110,16 @@ void RemoteMediaSessionManager::setCurrentSession(WebCore::PlatformMediaSessionI
     send(Messages::RemoteMediaSessionManagerProxy::SetCurrentMediaSession(currentSessionState(session)));
 }
 
-void RemoteMediaSessionManager::sessionWillBeginPlayback(WebCore::PlatformMediaSessionInterface& session, CompletionHandler<void(bool)>&& completionHandler)
+void RemoteMediaSessionManager::sessionDidCompleteAdmission(WebCore::PlatformMediaSessionInterface& session)
 {
-    sendWithAsyncReply(Messages::RemoteMediaSessionManagerProxy::MediaSessionWillBeginPlayback(currentSessionState(session)), WTF::move(completionHandler));
+    REMOTE_MEDIA_SESSION_MANAGER_BASE_CLASS::sessionDidCompleteAdmission(session);
+
+    // Whether playback may begin was decided locally: the session, its state and the restrictions are
+    // all in this process. The UI process is told so that it can make this session current and enforce
+    // the concurrent playback restriction across every process's sessions. The snapshot is taken now,
+    // after commitPlaybackAdmission() has already run, so it carries State::Playing and
+    // preparingToPlay() == false.
+    send(Messages::RemoteMediaSessionManagerProxy::MediaSessionWillBeginPlayback(currentSessionState(session)));
 }
 
 void RemoteMediaSessionManager::addRestriction(WebCore::PlatformMediaSessionMediaType type, WebCore::MediaSessionRestrictions restrictions)
@@ -143,7 +142,19 @@ void RemoteMediaSessionManager::resetRestrictions()
 
 void RemoteMediaSessionManager::updateSessionState()
 {
-    send(Messages::RemoteMediaSessionManagerProxy::UpdateMediaSessionState());
+    auto liveSessions = copySessionsToVector();
+    Vector<RemoteMediaSessionState> sessions(liveSessions.size(), [&](size_t i) -> std::optional<RemoteMediaSessionState> {
+        RefPtr session = liveSessions[i].get();
+        if (!session)
+            return std::nullopt;
+        return currentSessionState(*session);
+    });
+
+    // The UI process needs the session states and the capture count for the work it still owns:
+    // playback admission and audio session activation.
+    send(Messages::RemoteMediaSessionManagerProxy::UpdateMediaSessionStates(m_webPageID, WTF::move(sessions), countActiveAudioCaptureSources()));
+
+    REMOTE_MEDIA_SESSION_MANAGER_BASE_CLASS::updateSessionState();
 }
 
 void RemoteMediaSessionManager::sessionStateChanged(WebCore::PlatformMediaSessionInterface& session)
@@ -162,31 +173,31 @@ RefPtr<WebCore::PlatformMediaSessionInterface> RemoteMediaSessionManager::sessio
 void RemoteMediaSessionManager::clientShouldResumeAutoplaying(WebCore::MediaSessionIdentifier identifier)
 {
     if (RefPtr session = sessionWithIdentifier(identifier))
-        session->checkedClient()->resumeAutoplaying();
+        protect(session->client())->resumeAutoplaying();
 }
 
 void RemoteMediaSessionManager::clientMayResumePlayback(WebCore::MediaSessionIdentifier identifier, bool shouldResume)
 {
     if (RefPtr session = sessionWithIdentifier(identifier))
-        session->checkedClient()->mayResumePlayback(shouldResume);
+        protect(session->client())->mayResumePlayback(shouldResume);
 }
 
 void RemoteMediaSessionManager::clientShouldSuspendPlayback(WebCore::MediaSessionIdentifier identifier)
 {
     if (RefPtr session = sessionWithIdentifier(identifier))
-        session->checkedClient()->suspendPlayback();
+        protect(session->client())->suspendPlayback();
 }
 
 void RemoteMediaSessionManager::clientSetShouldPlayToPlaybackTarget(WebCore::MediaSessionIdentifier identifier, bool shouldPlay)
 {
     if (RefPtr session = sessionWithIdentifier(identifier))
-        session->checkedClient()->setShouldPlayToPlaybackTarget(shouldPlay);
+        protect(session->client())->setShouldPlayToPlaybackTarget(shouldPlay);
 }
 
 void RemoteMediaSessionManager::clientDidReceiveRemoteControlCommand(WebCore::MediaSessionIdentifier identifier, WebCore::PlatformMediaSessionRemoteControlCommandType command, WebCore::PlatformMediaSessionRemoteCommandArgument argument)
 {
     if (RefPtr session = sessionWithIdentifier(identifier))
-        session->checkedClient()->didReceiveRemoteControlCommand(command, argument);
+        protect(session->client())->didReceiveRemoteControlCommand(command, argument);
 }
 
 void RemoteMediaSessionManager::setCurrentMediaSession(std::optional<WebCore::MediaSessionIdentifier> identifier)
@@ -232,19 +243,9 @@ void RemoteMediaSessionManager::audioOutputDeviceChanged()
 #endif
 
 #if USE(AUDIO_SESSION)
-void RemoteMediaSessionManager::setAudioSessionCategory(WebCore::AudioSessionCategory type, WebCore::AudioSessionMode mode, WebCore::RouteSharingPolicy policy)
-{
-    WebCore::AudioSession::singleton().setCategory(type, mode, policy);
-}
-
 void RemoteMediaSessionManager::setAudioSessionPreferredBufferSize(uint64_t preferredBufferSize)
 {
     WebCore::AudioSession::singleton().setPreferredBufferSize(preferredBufferSize);
-}
-
-void RemoteMediaSessionManager::tryToSetAudioSessionActive(bool active)
-{
-    WebCore::AudioSession::singleton().tryToSetActive(active);
 }
 #endif
 
@@ -287,7 +288,7 @@ void RemoteMediaSessionManager::updateCachedSessionState(const WebCore::Platform
 RemoteMediaSessionState RemoteMediaSessionManager::fullSessionState(const WebCore::PlatformMediaSessionInterface& session)
 {
     return {
-        .pageIdentifier = m_localPageID,
+        .pageIdentifier = m_webPageID,
         .sessionIdentifier = session.mediaSessionIdentifier(),
 #if !RELEASE_LOG_DISABLED
         .logIdentifier = session.logIdentifier(),
@@ -337,7 +338,7 @@ IPC::Connection* RemoteMediaSessionManager::messageSenderConnection() const
 
 uint64_t RemoteMediaSessionManager::messageSenderDestinationID() const
 {
-    return m_topPageID.toUInt64();
+    return m_webPageID.toUInt64();
 }
 
 std::optional<SharedPreferencesForWebProcess> RemoteMediaSessionManager::sharedPreferencesForWebProcess() const

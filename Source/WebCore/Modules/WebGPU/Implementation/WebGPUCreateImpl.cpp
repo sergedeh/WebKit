@@ -28,9 +28,7 @@
 
 #if HAVE(WEBGPU_IMPLEMENTATION)
 
-#include "ModelDowncastConvertToBackingContext.h"
 #include "ProcessIdentity.h"
-#include "WebGPUAdapterImpl.h"
 #include "WebGPUDowncastConvertToBackingContext.h"
 #include "WebGPUImpl.h"
 #include "WebGPUPtr.h"
@@ -55,15 +53,18 @@ RefPtr<GPU> create(ScheduleWorkFunction&& scheduleWorkFunction, const WebCore::P
         scheduleWorkFunction(Function<void()>(makeBlockPtr(WTF::move(workItem))));
     });
 
-    WGPUInstanceDescriptor descriptor = {
-        .cocoaDescriptor = WGPUInstanceCocoaDescriptor {
-            .scheduleWorkBlock = scheduleWorkBlock.get(),
+    WGPUInstanceCocoaDescriptor cocoaDescriptor = {
+        .chain = { nullptr, static_cast<WGPUSType>(WGPUSTypeExtended_InstanceCocoaDescriptor) },
+        .scheduleWorkBlock = scheduleWorkBlock.get(),
 #if HAVE(TASK_IDENTITY_TOKEN)
-            .webProcessResourceOwner = webProcessIdentity ? &webProcessIdentity->taskId() : nullptr,
+        .webProcessResourceOwner = webProcessIdentity ? &webProcessIdentity->taskId() : nullptr,
 #else
-            .webProcessResourceOwner = nullptr,
+        .webProcessResourceOwner = nullptr,
 #endif
-        }
+    };
+
+    WGPUInstanceDescriptor descriptor = {
+        .nextInChain = &cocoaDescriptor.chain,
     };
 
     if (!&wgpuCreateInstance)
@@ -72,8 +73,7 @@ RefPtr<GPU> create(ScheduleWorkFunction&& scheduleWorkFunction, const WebCore::P
     if (!instance)
         return nullptr;
     auto convertToBackingContext = DowncastConvertToBackingContext::create();
-    auto modelConvertToBackingContext = DDModel::DowncastConvertToBackingContext::create();
-    return GPUImpl::create(WTF::move(instance), convertToBackingContext, modelConvertToBackingContext);
+    return GPUImpl::create(WTF::move(instance), convertToBackingContext);
 }
 
 } // namespace WebCore::WebGPU

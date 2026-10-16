@@ -39,9 +39,8 @@ public:
     static Ref<XSLImportRule> create(XSLStyleSheet& parentSheet, const String& href);
     virtual ~XSLImportRule();
     
-    const String& href() const { return m_strHref; }
+    const String& href() const LIFETIME_BOUND { return m_strHref; }
     XSLStyleSheet* styleSheet() const { return m_styleSheet.get(); }
-    RefPtr<XSLStyleSheet> protectedStyleSheet() const { return styleSheet(); }
 
     XSLStyleSheet* parentStyleSheet() const { return m_parentStyleSheet.get(); }
     void setParentStyleSheet(XSLStyleSheet* styleSheet) { m_parentStyleSheet = styleSheet; }

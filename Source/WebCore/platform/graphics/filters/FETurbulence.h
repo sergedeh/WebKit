@@ -39,30 +39,30 @@ class FETurbulence final : public FilterEffect {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(FETurbulence);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(FETurbulence);
 public:
-    WEBCORE_EXPORT static Ref<FETurbulence> create(TurbulenceType, float baseFrequencyX, float baseFrequencyY, int numOctaves, float seed, bool stitchTiles, DestinationColorSpace = DestinationColorSpace::SRGB());
+    WEBCORE_EXPORT static Ref<FETurbulence> create(TurbulenceType, float baseFrequencyX, float baseFrequencyY, int numOctaves, float seed, bool stitchTiles, ColorSpace = ColorSpace::SRGB());
 
     bool operator==(const FETurbulence&) const;
 
     TurbulenceType type() const { return m_type; }
-    bool setType(TurbulenceType);
+    bool LEGACY_NODELETE setType(TurbulenceType);
 
     float baseFrequencyX() const { return m_baseFrequencyX; }
-    bool setBaseFrequencyX(float);
+    bool LEGACY_NODELETE setBaseFrequencyX(float);
 
     float baseFrequencyY() const { return m_baseFrequencyY; }
-    bool setBaseFrequencyY(float);
+    bool LEGACY_NODELETE setBaseFrequencyY(float);
 
     float seed() const { return m_seed; }
-    bool setSeed(float);
+    bool LEGACY_NODELETE setSeed(float);
 
     int numOctaves() const { return m_numOctaves; }
-    bool setNumOctaves(int);
+    bool LEGACY_NODELETE setNumOctaves(int);
 
     bool stitchTiles() const { return m_stitchTiles; }
-    bool setStitchTiles(bool);
+    bool LEGACY_NODELETE setStitchTiles(bool);
 
 private:
-    FETurbulence(TurbulenceType, float baseFrequencyX, float baseFrequencyY, int numOctaves, float seed, bool stitchTiles, DestinationColorSpace);
+    FETurbulence(TurbulenceType, float baseFrequencyX, float baseFrequencyY, int numOctaves, float seed, bool stitchTiles, ColorSpace);
 
     bool operator==(const FilterEffect& other) const override { return areEqual<FETurbulence>(*this, other); }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017-2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2018, 2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,22 +31,34 @@
 
 namespace JSC {
 
-inline void BlockDirectory::forEachBlock(const std::invocable<MarkedBlock::Handle*> auto& functor)
+inline void BlockDirectory::forEachBlock(NOESCAPE const std::invocable<MarkedBlock::Handle*> auto& functor)
 {
     assertIsMutatorOrMutatorIsStopped();
     liveBitsView().forEachSetBit(
         [&] (size_t index) {
-            functor(m_blocks[index]);
+            functor(m_blocks[index].first);
         });
 }
 
-inline void BlockDirectory::forEachNotEmptyBlock(const std::invocable<MarkedBlock::Handle*> auto& functor)
+inline void BlockDirectory::forEachNotEmptyBlock(NOESCAPE const std::invocable<MarkedBlock::Handle*> auto& functor)
 {
     assertIsMutatorOrMutatorIsStopped();
     markingNotEmptyBitsView().forEachSetBit(
         [&] (size_t index) {
-            functor(m_blocks[index]);
+            functor(m_blocks[index].first);
         });
+}
+
+inline MarkedBlock::Handle* BlockDirectory::findBlockToSweep()
+{
+    auto watched = m_unsweptCursor.watch(std::memory_order_relaxed);
+    // Order the watch before the scan, so a writer that rewinds the cursor after changing the bits either
+    // sees the watch or has its change seen by the scan; see VersionedField.
+    WTF::storeLoadFence();
+    unsigned cursor = watched.value;
+    MarkedBlock::Handle* block = findBlockToSweep(cursor);
+    m_unsweptCursor.tryUpdateWatched(watched, cursor, std::memory_order_relaxed);
+    return block;
 }
 
 } // namespace JSC

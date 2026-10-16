@@ -44,33 +44,22 @@ class BlobDataItem {
 public:
     WEBCORE_EXPORT static const long long toEndOfFile;
 
-    enum class Type : bool {
-        Data,
-        File
-    };
-
-    Type type() const
+#if PLATFORM(COCOA)
+    template<typename... F> constexpr decltype(auto) switchOn(NOESCAPE F&&... f) const
+#else
+    template<typename... F> constexpr decltype(auto) switchOn(F&&... f) const
+#endif
     {
-        static_assert(std::is_same_v<Ref<DataSegment>, WTF::variant_alternative_t<static_cast<bool>(Type::Data), decltype(m_data)>>);
-        static_assert(std::is_same_v<Ref<BlobDataFileReference>, WTF::variant_alternative_t<static_cast<bool>(Type::File), decltype(m_data)>>);
-        return static_cast<Type>(m_data.index());
+        auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
+        return WTF::switchOn(m_data,
+            [&](const Ref<DataSegment>& data) {
+                return visitor(data.get());
+            },
+            [&](const Ref<BlobDataFileReference>& file) {
+                return visitor(file.get());
+            }
+        );
     }
-
-    // For Data type.
-    DataSegment& data() const
-    {
-        ASSERT(type() == Type::Data);
-        return std::get<Ref<DataSegment>>(m_data).get();
-    }
-    Ref<DataSegment> protectedData() const { return data(); }
-
-    // For File type.
-    BlobDataFileReference& file() const
-    {
-        ASSERT(type() == Type::File);
-        return std::get<Ref<BlobDataFileReference>>(m_data).get();
-    }
-    Ref<BlobDataFileReference> protectedFile() const { return file(); }
 
     long long offset() const { return m_offset; }
     WEBCORE_EXPORT long long length() const; // Computes file length if it's not known yet.
@@ -106,19 +95,19 @@ private:
 
 typedef Vector<BlobDataItem> BlobDataItemList;
 
-class BlobData : public ThreadSafeRefCounted<BlobData> {
+class BlobData : public ThreadSafeRefCounted<BlobData, WTF::DestructionThread::Main> {
 public:
     static Ref<BlobData> create(const String& contentType)
     {
         return adoptRef(*new BlobData(contentType));
     }
 
-    const String& contentType() const { return m_contentType; }
+    const String& contentType() const LIFETIME_BOUND { return m_contentType; }
 
-    const PolicyContainer& policyContainer() const { return m_policyContainer; }
+    const PolicyContainer& policyContainer() const LIFETIME_BOUND { return m_policyContainer; }
     void setPolicyContainer(const PolicyContainer& policyContainer) { m_policyContainer = policyContainer; }
 
-    const BlobDataItemList& items() const { return m_items; }
+    const BlobDataItemList& items() const LIFETIME_BOUND { return m_items; }
 
     void replaceData(const DataSegment& oldData, Ref<DataSegment>&& newData);
     void appendData(Ref<DataSegment>&&);
@@ -128,7 +117,7 @@ public:
 
 private:
     friend class BlobRegistryImpl;
-    BlobData(const String& contentType);
+    WEBCORE_EXPORT BlobData(const String& contentType);
 
     void appendData(Ref<DataSegment>&&, long long offset, long long length);
     void appendFile(Ref<BlobDataFileReference>&&, long long offset, long long length);

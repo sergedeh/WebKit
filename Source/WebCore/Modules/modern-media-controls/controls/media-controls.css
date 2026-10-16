@@ -60,6 +60,7 @@
     position: relative;
     will-change: z-index;
     overflow: clip;
+    color-scheme: light dark;
 }
 
 .media-controls-container,
@@ -153,7 +154,8 @@
     -webkit-backdrop-filter: blur(5px);
 }
 
-.stats-container > table > tr > :is(th, td) {
+.stats-container > table > tr > th,
+.stats-container > table > tr > td {
     margin: 0;
     padding: 0;
     pointer-events: auto;

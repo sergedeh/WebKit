@@ -27,6 +27,7 @@
 #include "config.h"
 #include "YarrSyntaxChecker.h"
 
+#include "Options.h"
 #include "YarrFlags.h"
 #include "YarrParser.h"
 
@@ -34,33 +35,35 @@ namespace JSC { namespace Yarr {
 
 class SyntaxChecker {
 public:
-    void assertionBOL() { }
-    void assertionEOL() { }
-    void assertionWordBoundary(bool) { }
-    void atomPatternCharacter(char32_t, bool) { }
-    void atomBuiltInCharacterClass(BuiltInCharacterClassID, bool) { }
-    void atomCharacterClassBegin(bool = false) { }
-    void atomCharacterClassAtom(char16_t) { }
-    void atomCharacterClassRange(char16_t, char16_t) { }
-    void atomCharacterClassBuiltIn(BuiltInCharacterClassID, bool) { }
-    void atomClassStringDisjunction(Vector<Vector<char32_t>>&) { }
-    void atomCharacterClassSetOp(CharacterClassSetOp) { }
-    void atomCharacterClassPushNested(bool) { }
-    void atomCharacterClassPopNested(bool) { }
-    void atomCharacterClassEnd() { }
-    void atomParenthesesSubpatternBegin(bool = true, std::optional<String> = std::nullopt) { }
-    void atomParentheticalAssertionBegin(bool, MatchDirection) { }
-    void atomParentheticalModifierBegin(OptionSet<Flags>, OptionSet<Flags>) { }
-    void atomParenthesesEnd() { }
-    void atomBackReference(unsigned) { }
-    void atomNamedBackReference(const String&) { }
-    void atomNamedForwardReference(const String&) { }
-    void quantifyAtom(unsigned, unsigned, bool) { }
-    void disjunction(CreateDisjunctionPurpose) { }
-    void resetForReparsing() { }
+    void LEGACY_NODELETE assertionBOL() { }
+    void LEGACY_NODELETE assertionEOL() { }
+    void LEGACY_NODELETE assertionBOI() { }
+    void LEGACY_NODELETE assertionEOI(bool) { }
+    void LEGACY_NODELETE assertionWordBoundary(bool) { }
+    void LEGACY_NODELETE atomPatternCharacter(char32_t, bool) { }
+    void LEGACY_NODELETE atomBuiltInCharacterClass(BuiltInCharacterClassID, bool) { }
+    void LEGACY_NODELETE atomCharacterClassBegin(bool = false) { }
+    void LEGACY_NODELETE atomCharacterClassAtom(char16_t) { }
+    void LEGACY_NODELETE atomCharacterClassRange(char16_t, char16_t) { }
+    void LEGACY_NODELETE atomCharacterClassBuiltIn(BuiltInCharacterClassID, bool) { }
+    void LEGACY_NODELETE atomClassStringDisjunction(Vector<Vector<char32_t>>&) { }
+    void LEGACY_NODELETE atomCharacterClassSetOp(CharacterClassSetOp) { }
+    void LEGACY_NODELETE atomCharacterClassPushNested(bool) { }
+    void LEGACY_NODELETE atomCharacterClassPopNested(bool) { }
+    void LEGACY_NODELETE atomCharacterClassEnd() { }
+    void LEGACY_NODELETE atomParenthesesSubpatternBegin(bool, std::optional<String> = std::nullopt) { }
+    void LEGACY_NODELETE atomParentheticalAssertionBegin(bool, MatchDirection) { }
+    void LEGACY_NODELETE atomParentheticalModifierBegin(OptionSet<Flags>, OptionSet<Flags>) { }
+    void LEGACY_NODELETE atomParenthesesEnd() { }
+    void LEGACY_NODELETE atomBackReference(unsigned) { }
+    void LEGACY_NODELETE atomNamedBackReference(const String&) { }
+    void LEGACY_NODELETE atomNamedForwardReference(const String&) { }
+    void LEGACY_NODELETE quantifyAtom(unsigned, unsigned, bool) { }
+    void LEGACY_NODELETE disjunction(CreateDisjunctionPurpose) { }
+    void LEGACY_NODELETE resetForReparsing() { }
 
-    constexpr static bool abortedDueToError() { return false; }
-    constexpr static ErrorCode abortErrorCode() { return ErrorCode::NoError; }
+    constexpr static bool LEGACY_NODELETE abortedDueToError() { return false; }
+    constexpr static ErrorCode LEGACY_NODELETE abortErrorCode() { return ErrorCode::NoError; }
 };
 static_assert(YarrSyntaxCheckable<SyntaxChecker>);
 
@@ -72,7 +75,7 @@ ErrorCode checkSyntax(StringView pattern, StringView flags)
     if (!parsedFlags)
         return ErrorCode::InvalidRegularExpressionFlags;
 
-    return parse(syntaxChecker, pattern, compileMode(parsedFlags));
+    return parse(syntaxChecker, pattern, compileMode(parsedFlags), quantifyInfinite, true, Options::useRegExpBufferBoundaries());
 }
 
 }} // JSC::Yarr

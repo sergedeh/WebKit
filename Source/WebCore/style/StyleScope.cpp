@@ -58,6 +58,8 @@
 #include "SVGStyleElement.h"
 #include "Settings.h"
 #include "ShadowRoot.h"
+#include "StyleDocumentScope.h"
+#include "StyleableInlines.h"
 #include "StyleBuilder.h"
 #include "StyleCustomPropertyRegistry.h"
 #include "StyleInvalidator.h"
@@ -104,43 +106,15 @@ Scope::~Scope()
 Resolver& Scope::resolver()
 {
     if (!m_resolver) {
-        if (m_shadowRoot)
-            createOrFindSharedShadowTreeResolver();
+        if (auto* documentScope = dynamicDowncast<DocumentScope>(*this))
+            documentScope->createDocumentResolver();
         else
-            createDocumentResolver();
-        
-        if (m_resolver->ruleSets().features().usesHasPseudoClass())
+            createOrFindSharedShadowTreeResolver();
+
+        if (m_resolver->ruleSets().features().usesHasPseudoClass)
             m_usesHasPseudoClass = true;
     }
     return *m_resolver;
-}
-
-Ref<Resolver> Scope::protectedResolver()
-{
-    return resolver();
-}
-
-void Scope::createDocumentResolver()
-{
-    ASSERT(!m_resolver);
-    ASSERT(!m_shadowRoot);
-
-    SetForScope isUpdatingStyleResolver { m_isUpdatingStyleResolver, true };
-
-    m_resolver = Resolver::create(m_document, Resolver::ScopeType::Document);
-
-    if (!m_dynamicViewTransitionsStyle)
-        m_dynamicViewTransitionsStyle = RuleSet::create();
-
-    m_resolver->ruleSets().setDynamicViewTransitionsStyle(m_dynamicViewTransitionsStyle.get());
-
-    m_document->protectedFontSelector()->buildStarted();
-
-    m_resolver->ruleSets().initializeUserStyle();
-    m_resolver->addCurrentSVGFontFaceRules();
-    m_resolver->appendAuthorStyleSheets(m_activeStyleSheets);
-
-    m_document->protectedFontSelector()->buildCompleted();
 }
 
 void Scope::createOrFindSharedShadowTreeResolver()
@@ -158,9 +132,9 @@ void Scope::createOrFindSharedShadowTreeResolver()
         m_resolver = Resolver::create(m_document, Resolver::ScopeType::ShadowTree);
 
         m_resolver->ruleSets().setUsesSharedUserStyle(!isForUserAgentShadowTree());
-        m_resolver->appendAuthorStyleSheets(m_activeStyleSheets);
+        protect(m_resolver)->appendAuthorStyleSheets(m_activeStyleSheets);
 
-        return Ref { *m_resolver };
+        return protect(*m_resolver);
     });
 
     if (!result.isNewEntry) {
@@ -185,7 +159,7 @@ auto Scope::makeResolverSharingKey() -> ResolverSharingKey
 {
     constexpr bool isNonEmptyHashTableValue = true;
     return {
-        m_activeStyleSheets.map([&](auto& sheet) { return RefPtr { &sheet->contents() }; }),
+        m_activeStyleSheets.map([&](auto& sheet) { return protect(&sheet->contents()); }),
         isForUserAgentShadowTree(),
         isNonEmptyHashTableValue
     };
@@ -201,22 +175,20 @@ void Scope::clearResolver()
     counterStyleRegistry().clearAuthorCounterStyles();
 }
 
-void Scope::clearViewTransitionStyles()
+void Scope::registerSubstitutionAttribute(const AtomString& attributeName, AttributeAffectsShadowTree affectsShadowTree) const
 {
-    clearResolver();
-    m_dynamicViewTransitionsStyle = nullptr;
+    auto lowercaseName = attributeName.convertToASCIILowercase();
+    if (affectsShadowTree == AttributeAffectsShadowTree::Yes)
+        m_substitutionAttributes.set(lowercaseName, AttributeAffectsShadowTree::Yes);
+    else
+        m_substitutionAttributes.add(lowercaseName, AttributeAffectsShadowTree::No);
 }
 
 void Scope::releaseMemory()
 {
-    if (!m_shadowRoot) {
-        for (Ref descendantShadowRoot : m_document->inDocumentShadowRoots())
-            const_cast<ShadowRoot&>(descendantShadowRoot.get()).styleScope().releaseMemory();
-    }
-
 #if ENABLE(CSS_SELECTOR_JIT)
     for (auto& sheet : m_activeStyleSheets) {
-        sheet->contents().traverseRules([] (const StyleRuleBase& rule) {
+        protect(sheet->contents())->traverseRules([] (const StyleRuleBase& rule) {
             if (auto* styleRule = dynamicDowncast<StyleRule>(rule))
                 styleRule->releaseCompiledSelectors();
             return false;
@@ -224,15 +196,12 @@ void Scope::releaseMemory()
     }
 #endif
     clearResolver();
-
-    m_sharedShadowTreeResolvers.clear();
-    m_matchResultCache = { };
 }
 
 Scope& Scope::forNode(Node& node)
 {
     ASSERT(node.isConnected());
-    RefPtr shadowRoot = node.containingShadowRoot();
+    auto* shadowRoot = node.containingShadowRoot();
     if (shadowRoot)
         return shadowRoot->styleScope();
     return node.document().styleScope();
@@ -245,13 +214,13 @@ const Scope& Scope::forNode(const Node& node)
 
 Scope* Scope::forOrdinal(Element& element, ScopeOrdinal ordinal)
 {
-    if (CheckedPtr pseudoElement = dynamicDowncast<PseudoElement>(element))
-        return forOrdinal(*pseudoElement->hostElement(), ordinal);
+    if (auto* pseudoElement = dynamicDowncast<PseudoElement>(element))
+        return forOrdinal(*protect(pseudoElement->hostElement()), ordinal);
 
     if (ordinal == ScopeOrdinal::Element)
         return &forNode(element);
     if (ordinal == ScopeOrdinal::Shadow) {
-        RefPtr shadowRoot = element.shadowRoot();
+        auto* shadowRoot = element.shadowRoot();
         return shadowRoot ? &shadowRoot->styleScope() : nullptr;
     }
     if (ordinal <= ScopeOrdinal::ContainingHost) {
@@ -265,14 +234,6 @@ Scope* Scope::forOrdinal(Element& element, ScopeOrdinal ordinal)
 const Scope* Scope::forOrdinal(const Element& element, ScopeOrdinal ordinal)
 {
     return forOrdinal(const_cast<Element&>(element), ordinal);
-}
-
-void Scope::setPreferredStylesheetSetName(const String& name)
-{
-    if (m_preferredStylesheetSetName == name)
-        return;
-    m_preferredStylesheetSetName = name;
-    didChangeActiveStyleSheetCandidates();
 }
 
 void Scope::addPendingSheet(const Element& element)
@@ -395,6 +356,31 @@ void Scope::addStyleSheetCandidateNode(Node& node, bool createdByParser)
     m_styleSheetCandidateNodes.insertBefore(*followingNode, node);
 }
 
+void Scope::establishPreferredStylesheetSetName(const Element& element, const CSSStyleSheet& sheet)
+{
+    // Per CSSOM spec "add a CSS style sheet", the preferred CSS style sheet set
+    // name is established when a sheet is added, based on insertion order — not
+    // tree order. This is called at sheet-creation time so that a later-inserted
+    // stylesheet placed earlier in tree order does not override the name.
+    // https://drafts.csswg.org/cssom/#add-a-css-style-sheet
+    if (!documentScope().m_preferredStylesheetSetName.isEmpty())
+        return;
+
+    if (element.isInShadowTree())
+        return;
+
+    auto title = sheet.title();
+    if (title.isNull() || title.isEmpty())
+        return;
+
+    if (is<HTMLStyleElement>(element))
+        documentScope().m_preferredStylesheetSetName = title;
+    else if (auto* linkElement = dynamicDowncast<HTMLLinkElement>(element)) {
+        if (!linkElement->isEnabledViaScript() && !linkElement->attributeWithoutSynchronization(HTMLNames::relAttr).contains("alternate"_s))
+            documentScope().m_preferredStylesheetSetName = title;
+    }
+}
+
 void Scope::removeStyleSheetCandidateNode(Node& node)
 {
     if (m_styleSheetCandidateNodes.remove(node))
@@ -434,7 +420,7 @@ auto Scope::collectActiveStyleSheets() -> ActiveStyleSheetCollection
             if (sheet)
                 styleSheetsForStyleSheetsList.append(*sheet);
             LOG_WITH_STREAM(StyleSheets, stream << " adding sheet " << sheet << " from ProcessingInstruction node " << node);
-        } else if (is<HTMLLinkElement>(node) || is<HTMLStyleElement>(node) || is<SVGStyleElement>(node)) {
+        } else if (isAnyOf<HTMLLinkElement, HTMLStyleElement, SVGStyleElement>(node)) {
             Ref element = uncheckedDowncast<Element>(node);
             AtomString title = element->isInShadowTree() ? nullAtom() : element->attributeWithoutSynchronization(titleAttr);
             bool enabledViaScript = false;
@@ -445,9 +431,9 @@ auto Scope::collectActiveStyleSheets() -> ActiveStyleSheetCollection
                 enabledViaScript = linkElement->isEnabledViaScript();
                 if (linkElement->styleSheetIsLoading()) {
                     // it is loading but we should still decide which style sheet set to use
-                    if (!enabledViaScript && !title.isEmpty() && m_preferredStylesheetSetName.isEmpty()) {
+                    if (!enabledViaScript && !title.isEmpty() && documentScope().m_preferredStylesheetSetName.isEmpty()) {
                         if (!linkElement->attributeWithoutSynchronization(relAttr).contains("alternate"_s))
-                            m_preferredStylesheetSetName = title;
+                            documentScope().m_preferredStylesheetSetName = title;
                     }
                     continue;
                 }
@@ -456,9 +442,9 @@ auto Scope::collectActiveStyleSheets() -> ActiveStyleSheetCollection
             }
             // Get the current preferred styleset. This is the
             // set of sheets that will be enabled.
-            if (auto* svgStyleElement = dynamicDowncast<SVGStyleElement>(element.get()))
+            if (RefPtr svgStyleElement = dynamicDowncast<SVGStyleElement>(element.get()))
                 sheet = svgStyleElement->sheet();
-            else if (auto* htmlLinkElement = dynamicDowncast<HTMLLinkElement>(element.get()))
+            else if (RefPtr htmlLinkElement = dynamicDowncast<HTMLLinkElement>(element.get()))
                 sheet = htmlLinkElement->sheet();
             else
                 sheet = downcast<HTMLStyleElement>(element.get()).sheet();
@@ -472,15 +458,15 @@ auto Scope::collectActiveStyleSheets() -> ActiveStyleSheetCollection
             auto& rel = element->attributeWithoutSynchronization(relAttr);
             if (!enabledViaScript && sheet && !title.isEmpty()) {
                 // Yes, we have a title.
-                if (m_preferredStylesheetSetName.isEmpty()) {
+                if (documentScope().m_preferredStylesheetSetName.isEmpty()) {
                     // No preferred set has been established. If
                     // we are NOT an alternate sheet, then establish
                     // us as the preferred set. Otherwise, just ignore
                     // this sheet.
                     if (is<HTMLStyleElement>(element.get()) || !rel.contains("alternate"_s))
-                        m_preferredStylesheetSetName = title;
+                        documentScope().m_preferredStylesheetSetName = title;
                 }
-                if (title != m_preferredStylesheetSetName)
+                if (title != documentScope().m_preferredStylesheetSetName)
                     sheet = nullptr;
             }
 
@@ -497,13 +483,12 @@ auto Scope::collectActiveStyleSheets() -> ActiveStyleSheetCollection
     auto canActivateAdoptedStyleSheet = [&](auto& sheet) {
         if (sheet.disabled())
             return false;
-        return sheet.title().isEmpty() || sheet.title() == m_preferredStylesheetSetName;
+        return sheet.title().isEmpty() || sheet.title() == documentScope().m_preferredStylesheetSetName;
     };
 
     for (auto& adoptedStyleSheet : treeScope().adoptedStyleSheets()) {
         if (!canActivateAdoptedStyleSheet(adoptedStyleSheet.get()))
             continue;
-        styleSheetsForStyleSheetsList.append(adoptedStyleSheet.get());
         sheets.append(adoptedStyleSheet.get());
     }
 
@@ -533,7 +518,7 @@ Scope::StyleSheetChange Scope::analyzeStyleSheetChange(const Vector<Ref<CSSStyle
             return { ResolverUpdateType::Reconstruct };
 
         while (m_activeStyleSheets[oldIndex] != newStylesheets[newIndex]) {
-            addedSheets.append(newStylesheets[newIndex]->contents());
+            addedSheets.append(protect(newStylesheets[newIndex]->contents()));
             ++newIndex;
             if (newIndex == newStylesheetCount)
                 return { ResolverUpdateType::Reconstruct };
@@ -542,7 +527,7 @@ Scope::StyleSheetChange Scope::analyzeStyleSheetChange(const Vector<Ref<CSSStyle
     }
     bool hasInsertions = !addedSheets.isEmpty();
     while (newIndex < newStylesheetCount) {
-        addedSheets.append(newStylesheets[newIndex]->contents());
+        addedSheets.append(protect(newStylesheets[newIndex]->contents()));
         ++newIndex;
     }
 
@@ -569,9 +554,10 @@ static void filterEnabledNonemptyCSSStyleSheets(Vector<Ref<CSSStyleSheet>>& resu
 
 void Scope::updateActiveStyleSheets(UpdateType updateType)
 {
+    RELEASE_ASSERT(!m_isUpdatingStyleResolver);
     ASSERT(!m_pendingUpdate);
 
-    if (!m_document->hasLivingRenderTree())
+    if (!m_document->canEverRender())
         return;
 
     if (m_document->inStyleRecalc() || m_document->inRenderTreeUpdate()) {
@@ -613,7 +599,7 @@ void Scope::updateActiveStyleSheets(UpdateType updateType)
             m_usesStyleBasedEditability = true;
     }
 
-    if (m_resolver && m_resolver->ruleSets().features().usesHasPseudoClass())
+    if (m_resolver && m_resolver->ruleSets().features().usesHasPseudoClass)
         m_usesHasPseudoClass = true;
 
     invalidateStyleAfterStyleSheetChange(styleSheetChange);
@@ -652,7 +638,7 @@ void Scope::updateResolver(std::span<const Ref<CSSStyleSheet>> activeStyleSheets
         customPropertyRegistry().clearRegisteredFromStylesheets();
         counterStyleRegistry().clearAuthorCounterStyles();
         m_resolver->ruleSets().resetAuthorStyle();
-        m_resolver->appendAuthorStyleSheets(activeStyleSheets);
+        protect(m_resolver)->appendAuthorStyleSheets(activeStyleSheets);
         return;
     }
 
@@ -660,7 +646,7 @@ void Scope::updateResolver(std::span<const Ref<CSSStyleSheet>> activeStyleSheets
     ASSERT(activeStyleSheets.size() >= m_activeStyleSheets.size());
 
     auto firstNewIndex = m_activeStyleSheets.size();
-    m_resolver->appendAuthorStyleSheets(activeStyleSheets.subspan(firstNewIndex));
+    protect(m_resolver)->appendAuthorStyleSheets(activeStyleSheets.subspan(firstNewIndex));
 }
 
 const Vector<Ref<CSSStyleSheet>> Scope::activeStyleSheetsForInspector()
@@ -717,8 +703,10 @@ void Scope::flushPendingDescendantUpdates()
 {
     ASSERT(m_hasDescendantWithPendingUpdate);
     ASSERT(!m_shadowRoot);
-    for (Ref descendantShadowRoot : m_document->inDocumentShadowRoots())
-        const_cast<ShadowRoot&>(descendantShadowRoot.get()).styleScope().flushPendingUpdate();
+    for (auto& descendantShadowRoot : m_document->inDocumentShadowRoots()) {
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST const_cast<ShadowRoot&>(descendantShadowRoot).styleScope().flushPendingUpdate();
+    }
     m_hasDescendantWithPendingUpdate = false;
 }
 
@@ -740,13 +728,14 @@ void Scope::scheduleUpdate(UpdateType update)
     if (update == UpdateType::ContentsOrInterpretation) {
         // :host and ::slotted rules might go away.
         if (m_shadowRoot) {
-            Invalidator::invalidateHostAndSlottedStyleIfNeeded(*m_shadowRoot);
+            Invalidator::invalidateHostAndSlottedStyleIfNeeded(protect(*m_shadowRoot));
             unshareShadowTreeResolverBeforeMutation();
         }
 
         clearResolver();
 
-        m_matchResultCache = { };
+        if (auto* documentScope = dynamicDowncast<DocumentScope>(*this))
+            documentScope->m_matchResultCache = { };
     }
 
     if (!m_pendingUpdate || *m_pendingUpdate < update) {
@@ -760,88 +749,6 @@ void Scope::scheduleUpdate(UpdateType update)
     m_pendingUpdateTimer.startOneShot(0_s);
 }
 
-auto Scope::mediaQueryViewportStateForDocument(const Document& document) -> MediaQueryViewportState
-{
-    // These things affect evaluation of viewport dependent media queries.
-    return { document.view()->layoutSize(), document.frame()->pageZoomFactor(), document.printing() };
-}
-
-void Scope::evaluateMediaQueriesForViewportChange()
-{
-    auto viewportState = mediaQueryViewportStateForDocument(m_document);
-
-    if (m_viewportStateOnPreviousMediaQueryEvaluation && *m_viewportStateOnPreviousMediaQueryEvaluation == viewportState)
-        return;
-    // This doesn't need to be invalidated as any changes to the rules will compute their media queries to correct values.
-    m_viewportStateOnPreviousMediaQueryEvaluation = viewportState;
-
-    evaluateMediaQueries([] (Resolver& resolver) {
-        return resolver.evaluateDynamicMediaQueries();
-    });
-}
-
-void Scope::evaluateMediaQueriesForAccessibilitySettingsChange()
-{
-    evaluateMediaQueries([] (Resolver& resolver) {
-        return resolver.evaluateDynamicMediaQueries();
-    });
-}
-
-void Scope::evaluateMediaQueriesForAppearanceChange()
-{
-    evaluateMediaQueries([] (Resolver& resolver) {
-        return resolver.evaluateDynamicMediaQueries();
-    });
-}
-
-auto Scope::collectResolverScopes() -> ResolverScopes
-{
-    ASSERT(!m_shadowRoot);
-
-    ResolverScopes resolverScopes;
-
-    if (RefPtr resolver = resolverIfExists())
-        resolverScopes.add(*resolver, Vector<WeakPtr<Scope>> { this });
-
-    for (Ref shadowRoot : m_document->inDocumentShadowRoots()) {
-        auto& scope = const_cast<ShadowRoot&>(shadowRoot.get()).styleScope();
-
-        if (RefPtr resolver = scope.resolverIfExists())
-            resolverScopes.add(*resolver, Vector<WeakPtr<Scope>> { }).iterator->value.append(&scope);
-    }
-    return resolverScopes;
-}
-
-template <typename TestFunction>
-void Scope::evaluateMediaQueries(TestFunction&& testFunction)
-{
-    bool hadChanges = false;
-
-    auto resolverScopes = collectResolverScopes();
-    for (auto& [resolver, scopes] : resolverScopes) {
-        auto evaluationChanges = testFunction(resolver.get());
-        if (!evaluationChanges)
-            continue;
-        hadChanges = true;
-
-        for (auto& scope : scopes) {
-            switch (evaluationChanges->type) {
-            case DynamicMediaQueryEvaluationChanges::Type::InvalidateStyle: {
-                Invalidator invalidator(evaluationChanges->invalidationRuleSets);
-                invalidator.invalidateStyle(*scope);
-                break;
-            }
-            case DynamicMediaQueryEvaluationChanges::Type::ResetStyle:
-                scope->scheduleUpdate(UpdateType::ContentsOrInterpretation);
-                break;
-            }
-        }
-    }
-
-    if (hadChanges)
-        InspectorInstrumentation::mediaQueryResultChanged(m_document);
-}
-
 void Scope::didChangeActiveStyleSheetCandidates()
 {
     scheduleUpdate(UpdateType::ActiveSet);
@@ -850,36 +757,6 @@ void Scope::didChangeActiveStyleSheetCandidates()
 void Scope::didChangeStyleSheetContents()
 {
     scheduleUpdate(UpdateType::ContentsOrInterpretation);
-}
-
-void Scope::didChangeStyleSheetEnvironment()
-{
-    RELEASE_ASSERT(!m_isUpdatingStyleResolver);
-    RELEASE_ASSERT(!m_document->isResolvingTreeStyle());
-
-    if (!m_shadowRoot) {
-        m_sharedShadowTreeResolvers.clear();
-
-        for (Ref descendantShadowRoot : m_document->inDocumentShadowRoots())
-            const_cast<ShadowRoot&>(descendantShadowRoot.get()).styleScope().scheduleUpdate(UpdateType::ContentsOrInterpretation);
-
-        m_document->invalidateCachedCSSParserContext();
-    }
-
-    scheduleUpdate(UpdateType::ContentsOrInterpretation);
-}
-
-void Scope::didChangeExtensionStyleSheets()
-{
-    ASSERT(!m_shadowRoot);
-
-    // Extension stylesheets may mutate in the middle of a style update when resource loading triggers
-    // content extension processing. In this case we schedule an asyncronous full stylesheet update.
-    // FIXME: We should defer all resource loading after style resolution completes.
-    for (Ref descendantShadowRoot : m_document->inDocumentShadowRoots())
-        const_cast<ShadowRoot&>(descendantShadowRoot.get()).styleScope().scheduleUpdate(UpdateType::FullForExtensionStyleSheets);
-
-    scheduleUpdate(UpdateType::FullForExtensionStyleSheets);
 }
 
 void Scope::didChangeViewportSize()
@@ -894,7 +771,8 @@ void Scope::didChangeViewportSize()
         for (Ref descendantShadowRoot : m_document->inDocumentShadowRoots()) {
             if (descendantShadowRoot->mode() == ShadowRootMode::UserAgent)
                 continue;
-            const_cast<ShadowRoot&>(descendantShadowRoot.get()).styleScope().didChangeViewportSize();
+            // FIXME: Remove suppression once rdar://189998365 is fixed.
+            SUPPRESS_MEMORY_UNSAFE_CAST const_cast<ShadowRoot&>(descendantShadowRoot.get()).styleScope().didChangeViewportSize();
         }
     }
 
@@ -911,10 +789,23 @@ void Scope::didChangeViewportSize()
         return;
     }
 
+    // Lazily resolved pseudo-element styles are cached on the element's style and only re-resolved
+    // when the element is invalidated, so their viewport units have to be accounted for here too.
+    auto usesViewportUnits = [](const Style::ComputedStyle& style) {
+        if (style.usesViewportUnits())
+            return true;
+        for (auto& [identifier, pseudoElementStyle] : style.pseudoElementStyles()) {
+            if (pseudoElementStyle->usesViewportUnits())
+                return true;
+        }
+        return false;
+    };
+
     // FIXME: Ideally, we should save the list of elements that have viewport units and only iterate over those.
     for (RefPtr element = ElementTraversal::firstWithin(rootNode); element; element = ElementTraversal::nextIncludingPseudo(*element)) {
+        bool styleableHasViewportUnitAnimation = Styleable::fromElement(*element).viewportSizeDidChange();
         auto* renderer = element->renderer();
-        if (renderer && renderer->style().usesViewportUnits())
+        if (styleableHasViewportUnitAnimation || (renderer && usesViewportUnits(renderer->style())))
             element->invalidateStyle();
     }
 }
@@ -922,8 +813,10 @@ void Scope::didChangeViewportSize()
 void Scope::invalidateMatchedDeclarationsCache()
 {
     if (!m_shadowRoot) {
-        for (Ref descendantShadowRoot : m_document->inDocumentShadowRoots())
-            const_cast<ShadowRoot&>(descendantShadowRoot.get()).styleScope().invalidateMatchedDeclarationsCache();
+        for (auto& descendantShadowRoot : m_document->inDocumentShadowRoots()) {
+            // FIXME: Remove suppression once rdar://189998365 is fixed.
+            SUPPRESS_MEMORY_UNSAFE_CAST const_cast<ShadowRoot&>(descendantShadowRoot).styleScope().invalidateMatchedDeclarationsCache();
+        }
     }
 
     if (RefPtr resolver = resolverIfExists())
@@ -932,19 +825,24 @@ void Scope::invalidateMatchedDeclarationsCache()
 
 void Scope::pendingUpdateTimerFired()
 {
-    RefPtr protectedShadowRoot { m_shadowRoot };
-    Ref protectedDocument { m_document.get() };
     flushPendingUpdate();
 }
 
 const Vector<Ref<StyleSheet>>& Scope::styleSheetsForStyleSheetList()
 {
     // FIXME: StyleSheetList content should be updated separately from style resolver updates.
-    flushPendingUpdate();
+    if (m_document->canEverRender())
+        flushPendingUpdate();
+    else if (m_pendingUpdate) {
+        // Documents that never make renderers (e.g. created by DOMParser) can't do full
+        // style updates but should still have an accessible styleSheets collection per spec.
+        m_pendingUpdate = { };
+        m_styleSheetsForStyleSheetList = collectActiveStyleSheets().styleSheetsForStyleSheetList;
+    }
     return m_styleSheetsForStyleSheetList;
 }
 
-Scope& Scope::documentScope()
+DocumentScope& Scope::documentScope()
 {
     return m_document->styleScope();
 }
@@ -954,165 +852,10 @@ bool Scope::isForUserAgentShadowTree() const
     return m_shadowRoot && m_shadowRoot->mode() == ShadowRootMode::UserAgent;
 }
 
-bool Scope::invalidateForLayoutDependencies(LayoutDependencyUpdateContext& context)
-{
-    auto didInvalidate = false;
-    didInvalidate |= invalidateForContainerDependencies(context);
-    didInvalidate |= invalidateForAnchorDependencies(context);
-    didInvalidate |= invalidateForPositionTryFallbacks(context);
-    return didInvalidate;
-}
-
-bool Scope::invalidateForContainerDependencies(LayoutDependencyUpdateContext& context)
-{
-    ASSERT(!m_shadowRoot);
-
-    if (!m_document->renderView())
-        return false;
-
-    auto previousQueryContainerDimensions = WTF::move(m_queryContainerDimensionsOnLastUpdate);
-    m_queryContainerDimensionsOnLastUpdate.clear();
-
-    Vector<CheckedPtr<Element>> containersToInvalidate;
-
-    for (auto& containerRenderer : m_document->renderView()->containerQueryBoxes()) {
-        CheckedPtr containerElement = containerRenderer.element();
-
-        // Invalidation uses real elements, replace ::before/::after with its host.
-        if (auto* pseudoElement = dynamicDowncast<PseudoElement>(containerElement.get()))
-            containerElement = pseudoElement->hostElement();
-
-        if (!containerElement)
-            continue;
-
-        auto size = containerRenderer.logicalSize();
-
-        auto sizeChanged = [&](LayoutSize oldSize) {
-            switch (containerRenderer.style().containerType()) {
-            case ContainerType::InlineSize:
-                return size.width() != oldSize.width();
-            case ContainerType::Size:
-                return size != oldSize;
-            case ContainerType::Normal:
-                RELEASE_ASSERT_NOT_REACHED();
-            }
-            RELEASE_ASSERT_NOT_REACHED();
-        };
-
-        auto it = previousQueryContainerDimensions.find(*containerElement);
-        bool changed = it == previousQueryContainerDimensions.end() || sizeChanged(it->value);
-        // Protect against unstable layout by invalidating only once per container.
-        if (changed && context.invalidatedContainers.add(*containerElement).isNewEntry)
-            containersToInvalidate.append(containerElement);
-        m_queryContainerDimensionsOnLastUpdate.add(*containerElement, size);
-    }
-
-    for (auto& toInvalidate : containersToInvalidate)
-        toInvalidate->invalidateForQueryContainerSizeChange();
-
-    return !containersToInvalidate.isEmpty();
-}
-
-bool Scope::invalidateForAnchorDependencies(LayoutDependencyUpdateContext& context)
-{
-    ASSERT(!m_shadowRoot);
-
-    if (!m_document->renderView())
-        return false;
-
-    auto previousAnchorPositions = WTF::move(m_anchorPositionsOnLastUpdate);
-    m_anchorPositionsOnLastUpdate.clear();
-
-    Vector<CheckedRef<Element>> anchoredElementsToInvalidate;
-
-    if (m_document->renderView()->anchors().isEmptyIgnoringNullReferences())
-        return false;
-
-    auto anchorMap = AnchorPositionEvaluator::makeAnchorPositionedForAnchorMap(m_anchorPositionedToAnchorMap);
-
-    auto makeAnchorPosition = [&](const RenderBoxModelObject& anchorRenderer) {
-        AnchorPosition result;
-        result.absoluteRect = anchorRenderer.absoluteBoundingBoxRectIgnoringTransforms();
-        // Include containing block sizes as anchor function insets may be computed against any side and if they change
-        // we need to invalidate.
-        for (auto* containingBlock = anchorRenderer.containingBlock(); containingBlock; containingBlock = containingBlock->containingBlock()) {
-            if (containingBlock->canContainAbsolutelyPositionedObjects())
-                result.containingBlockSizes.append(containingBlock->contentBoxSize());
-        }
-        return result;
-    };
-
-    for (auto& anchorRenderer : m_document->renderView()->anchors()) {
-        auto anchorPosition = makeAnchorPosition(anchorRenderer);
-        m_anchorPositionsOnLastUpdate.add(anchorRenderer, anchorPosition);
-
-        auto it = previousAnchorPositions.find(anchorRenderer);
-        bool changed = it == previousAnchorPositions.end() || it->value != anchorPosition;
-        if (!changed)
-            continue;
-
-        auto anchoredElements = anchorMap.getOptional(anchorRenderer);
-        if (!anchoredElements)
-            continue;
-
-        for (auto& anchoredElement : *anchoredElements) {
-            if (!context.invalidatedAnchorPositioned.add(anchoredElement.get()).isNewEntry)
-                continue;
-            anchoredElementsToInvalidate.append(anchoredElement);
-        }
-    }
-
-    for (auto& toInvalidate : anchoredElementsToInvalidate) {
-        CheckedPtr renderer = toInvalidate->renderer();
-        if (renderer && AnchorPositionEvaluator::isLayoutTimeAnchorPositioned(renderer->style()))
-            renderer->setNeedsLayout();
-        toInvalidate->invalidateForAnchorRectChange();
-    }
-
-    return !anchoredElementsToInvalidate.isEmpty();
-}
-
-bool Scope::invalidateForPositionTryFallbacks(LayoutDependencyUpdateContext& context)
-{
-    ASSERT(!m_shadowRoot);
-
-    if (!m_document->renderView())
-        return false;
-
-    bool invalidated = false;
-
-    for (auto& box : m_document->renderView()->positionTryBoxes()) {
-        if (!AnchorPositionEvaluator::overflowsInsetModifiedContainingBlock(box))
-            continue;
-
-        CheckedPtr element = box.element();
-        if (auto* pseudoElement = dynamicDowncast<PseudoElement>(element.get()))
-            element = pseudoElement->hostElement();
-
-        if (element) {
-            if (!context.invalidatedAnchorPositioned.add(*element).isNewEntry)
-                continue;
-            element->invalidateForAnchorRectChange();
-            invalidated = true;
-        }
-    }
-
-    return invalidated;
-}
-
-MatchResultCache& Scope::matchResultCache()
-{
-    ASSERT(!m_shadowRoot);
-
-    if (!m_matchResultCache)
-        m_matchResultCache = makeUnique<MatchResultCache>();
-    return *m_matchResultCache;
-}
-
 RefPtr<HTMLSlotElement> assignedSlotForScopeOrdinal(const Element& element, ScopeOrdinal scopeOrdinal)
 {
     ASSERT(scopeOrdinal >= ScopeOrdinal::FirstSlot);
-    RefPtr slot = element.assignedSlot();
+    auto* slot = element.assignedSlot();
     for (auto scopeDepth = ScopeOrdinal::FirstSlot; slot && scopeDepth != scopeOrdinal; ++scopeDepth)
         slot = slot->assignedSlot();
     return slot;
@@ -1121,7 +864,7 @@ RefPtr<HTMLSlotElement> assignedSlotForScopeOrdinal(const Element& element, Scop
 RefPtr<Element> hostForScopeOrdinal(const Element& element, ScopeOrdinal scopeOrdinal)
 {
     ASSERT(scopeOrdinal <= ScopeOrdinal::ContainingHost);
-    RefPtr host = element.shadowHost();
+    auto* host = element.shadowHost();
     for (auto scopeDepth = ScopeOrdinal::ContainingHost; host && scopeDepth != scopeOrdinal; --scopeDepth)
         host = host->shadowHost();
     return host;
@@ -1132,33 +875,6 @@ CheckedPtr<const Scope> Scope::hostScope() const
     if (!m_shadowRoot || !m_shadowRoot->host())
         return nullptr;
     return &forNode(*m_shadowRoot->host());
-}
-
-void Scope::updateAnchorPositioningStateAfterStyleResolution()
-{
-    if (CheckedPtr renderView = m_document->renderView())
-        AnchorPositionEvaluator::updateScrollAdjustments(*renderView); // Is this necessary? Or will the combination of layout and scroll invalidation handle it sufficiently?
-
-    m_anchorPositionedToAnchorMap.removeIf([](auto& elementAndState) {
-        return elementAndState.value.anchors.isEmpty();
-    });
-}
-
-std::optional<size_t> Scope::lastSuccessfulPositionOptionIndexFor(const Styleable& styleable)
-{
-    AnchorPositionedKey key { styleable.element, styleable.pseudoElementIdentifier };
-    return m_lastSuccessfulPositionOptionIndexes.getOptional(key);
-}
-
-void Scope::setLastSuccessfulPositionOptionIndexMap(HashMap<AnchorPositionedKey, size_t>&& map)
-{
-    m_lastSuccessfulPositionOptionIndexes = WTF::move(map);
-}
-
-void Scope::forgetLastSuccessfulPositionOptionIndex(const Styleable& styleable)
-{
-    AnchorPositionedKey key { styleable.element, styleable.pseudoElementIdentifier };
-    m_lastSuccessfulPositionOptionIndexes.remove(key);
 }
 
 }

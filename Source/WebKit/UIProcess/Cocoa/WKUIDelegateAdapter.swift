@@ -21,13 +21,13 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
 // THE POSSIBILITY OF SUCH DAMAGE.
 
-#if ENABLE_SWIFTUI && compiler(>=6.0)
+#if ENABLE_SWIFTUI
 
 import Foundation
-internal import WebKit_Private
-internal import WebKit_Internal
+import WebKit_Private
+import WebKit_Internal
 
-#if os(macOS) && !targetEnvironment(macCatalyst)
+#if WTF_PLATFORM_MAC
 @_spiOnly import WebKit_Private._WKContextMenuElementInfo
 @_spiOnly import WebKit_Private._WKHitTestResult
 #endif
@@ -43,7 +43,7 @@ final class WKUIDelegateAdapter: NSObject, WKUIDelegatePrivate {
 
     weak var owner: WebPage? = nil
 
-    #if os(macOS) && !targetEnvironment(macCatalyst)
+    #if WTF_PLATFORM_MAC
     var menuBuilder: ((WKContextMenuElementInfoAdapter) -> NSMenu)? = nil
     #endif
 
@@ -124,7 +124,7 @@ final class WKUIDelegateAdapter: NSObject, WKUIDelegatePrivate {
 
     // MARK: Context menu support
 
-    #if os(macOS)
+    #if WTF_PLATFORM_MAC
     // swift-format-ignore: NoLeadingUnderscores
     @objc(_webView:getContextMenuFromProposedMenu:forElement:userInfo:completionHandler:)
     func _webView(
@@ -146,6 +146,30 @@ final class WKUIDelegateAdapter: NSObject, WKUIDelegatePrivate {
     @objc(_webView:geometryDidChange:)
     func _webView(_ webView: WKWebView!, geometryDidChange geometry: WKScrollGeometry) {
         owner?.backingWebView.geometryDidChange(WKScrollGeometryAdapter(geometry))
+    }
+
+    // swift-format-ignore: NoLeadingUnderscores
+    @objc(_webView:editorStateDidChange:)
+    func _webView(_ webView: WKWebView, editorStateDidChange editorState: [AnyHashable: Any]) {
+        owner?.addEditorStateUpdate(editorState)
+    }
+
+    // swift-format-ignore: NoLeadingUnderscores
+    @objc(_webView:didRemoveAttachment:)
+    func _webView(_ webView: WKWebView, didRemove attachment: _WKAttachment) {
+        owner?.attachmentLifecycleListeners.didRemoveAttachment?(attachment)
+    }
+
+    // swift-format-ignore: NoLeadingUnderscores
+    @objc(_webView:didInsertAttachment:withSource:)
+    func _webView(_ webView: WKWebView, didInsert attachment: _WKAttachment, withSource source: String) {
+        owner?.attachmentLifecycleListeners.didInsertAttachment?(attachment, source)
+    }
+
+    // swift-format-ignore: NoLeadingUnderscores
+    @objc(_webView:didInvalidateDataForAttachment:)
+    func _webView(_ webView: WKWebView, didInvalidateDataFor attachment: _WKAttachment) {
+        owner?.attachmentLifecycleListeners.didInvalidateDataForAttachment?(attachment)
     }
 }
 

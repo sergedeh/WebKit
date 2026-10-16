@@ -49,10 +49,6 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/spi/cocoa/IOSurfaceSPI.h>
 
-#if HAVE(REPLAYKIT)
-#include "ReplayKitCaptureSource.h"
-#endif
-
 #if HAVE(SCREEN_CAPTURE_KIT)
 #include "ScreenCaptureKitCaptureSource.h"
 #endif
@@ -69,16 +65,12 @@ CaptureSourceOrError DisplayCaptureSourceCocoa::create(const CaptureDevice& devi
 {
     switch (device.type()) {
     case CaptureDevice::DeviceType::Screen:
-#if HAVE(REPLAYKIT)
-        if (!ReplayKitCaptureSource::isAvailable())
-            return CaptureSourceOrError { CaptureSourceError { "Screen capture unavailable"_s, MediaAccessDenialReason::NoCaptureDevices } };
-
-        return create([] (auto& source) {
-            return makeUniqueRefWithoutRefCountedCheck<ReplayKitCaptureSource>(source);
-        }, device, WTF::move(hashSalts), constraints, pageIdentifier);
-#elif HAVE(SCREEN_CAPTURE_KIT)
+#if HAVE(SCREEN_CAPTURE_KIT)
         [[fallthrough]];
 #else
+        UNUSED_PARAM(hashSalts);
+        UNUSED_PARAM(constraints);
+        UNUSED_PARAM(pageIdentifier);
         ASSERT_NOT_REACHED();
         return { };
 #endif
@@ -100,6 +92,7 @@ CaptureSourceOrError DisplayCaptureSourceCocoa::create(const CaptureDevice& devi
     case CaptureDevice::DeviceType::Microphone:
     case CaptureDevice::DeviceType::Speaker:
     case CaptureDevice::DeviceType::Camera:
+    case CaptureDevice::DeviceType::Canvas:
     case CaptureDevice::DeviceType::Unknown:
         ASSERT_NOT_REACHED();
         break;
@@ -108,7 +101,7 @@ CaptureSourceOrError DisplayCaptureSourceCocoa::create(const CaptureDevice& devi
     return { };
 }
 
-CaptureSourceOrError DisplayCaptureSourceCocoa::create(const std::function<UniqueRef<Capturer>(CapturerObserver&)>& createCapturer, const CaptureDevice& device, MediaDeviceHashSalts&& hashSalts, const MediaConstraints* constraints, std::optional<PageIdentifier> pageIdentifier)
+CaptureSourceOrError DisplayCaptureSourceCocoa::create(NOESCAPE const std::function<UniqueRef<Capturer>(CapturerObserver&)>& createCapturer, const CaptureDevice& device, MediaDeviceHashSalts&& hashSalts, const MediaConstraints* constraints, std::optional<PageIdentifier> pageIdentifier)
 {
     auto source = adoptRef(*new DisplayCaptureSourceCocoa(createCapturer, device, WTF::move(hashSalts), pageIdentifier));
     if (constraints) {
@@ -119,7 +112,7 @@ CaptureSourceOrError DisplayCaptureSourceCocoa::create(const std::function<Uniqu
     return CaptureSourceOrError(WTF::move(source));
 }
 
-DisplayCaptureSourceCocoa::DisplayCaptureSourceCocoa(const std::function<UniqueRef<Capturer>(CapturerObserver&)>& createCapturer, const CaptureDevice& device, MediaDeviceHashSalts&& hashSalts, std::optional<PageIdentifier> pageIdentifier)
+DisplayCaptureSourceCocoa::DisplayCaptureSourceCocoa(NOESCAPE const std::function<UniqueRef<Capturer>(CapturerObserver&)>& createCapturer, const CaptureDevice& device, MediaDeviceHashSalts&& hashSalts, std::optional<PageIdentifier> pageIdentifier)
     : RealtimeMediaSource(device, WTF::move(hashSalts), pageIdentifier)
     , m_capturer(createCapturer(*this))
     , m_timer(RunLoop::currentSingleton(), "DisplayCaptureSourceCocoa::Timer"_s, this, &DisplayCaptureSourceCocoa::emitFrame)
@@ -127,9 +120,7 @@ DisplayCaptureSourceCocoa::DisplayCaptureSourceCocoa(const std::function<UniqueR
 {
 }
 
-DisplayCaptureSourceCocoa::~DisplayCaptureSourceCocoa()
-{
-}
+DisplayCaptureSourceCocoa::~DisplayCaptureSourceCocoa() = default;
 
 const RealtimeMediaSourceCapabilities& DisplayCaptureSourceCocoa::capabilities()
 {
@@ -137,8 +128,10 @@ const RealtimeMediaSourceCapabilities& DisplayCaptureSourceCocoa::capabilities()
         RealtimeMediaSourceCapabilities capabilities(settings().supportedConstraints());
 
         auto intrinsicSize = m_capturer->intrinsicSize();
-        capabilities.setWidth({ 1, intrinsicSize.width() });
-        capabilities.setHeight({ 1, intrinsicSize.height() });
+        if (intrinsicSize.width())
+            capabilities.setWidth({ 1, intrinsicSize.width() });
+        if (intrinsicSize.height())
+            capabilities.setHeight({ 1, intrinsicSize.height() });
         capabilities.setFrameRate({ .01, 30.0 });
         capabilities.setDeviceId(hashedId());
 
@@ -264,26 +257,26 @@ void DisplayCaptureSourceCocoa::emitFrame()
         return;
 
     if (!m_imageTransferSession)
-        m_imageTransferSession = ImageTransferSessionVT::create(preferedPixelBufferFormat());
+        lazyInitialize(m_imageTransferSession, ImageTransferSessionVT::create(preferedPixelBufferFormat()));
 
     auto elapsedTime = this->elapsedTime();
     auto sampleTime = MediaTime::createWithDouble((elapsedTime + 100_ms).seconds());
 
     auto frame = m_capturer->generateFrame();
     auto imageSize = WTF::switchOn(frame,
-        [](RetainPtr<IOSurfaceRef> surface) -> IntSize {
+        [](RetainPtr<IOSurfaceRef>& surface) -> IntSize {
             if (!surface)
                 return { };
 
             return IntSize(IOSurfaceGetWidth(surface.get()), IOSurfaceGetHeight(surface.get()));
         },
-        [](RefPtr<NativeImage> image) -> IntSize {
+        [](RefPtr<NativeImage>& image) -> IntSize {
             if (!image)
                 return { };
 
             return image->size();
         },
-        [](RetainPtr<CMSampleBufferRef> sample) -> IntSize {
+        [](RetainPtr<CMSampleBufferRef>& sample) -> IntSize {
             if (!sample)
                 return { };
 

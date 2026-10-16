@@ -25,10 +25,14 @@
 
 #pragma once
 
+#include "Exception.h"
 #include "ReadableStreamSource.h"
 #include <wtf/AbstractRefCounted.h>
+#include <wtf/Deque.h>
+#include <wtf/ThreadSafeWeakPtr.h>
 
 namespace JSC {
+class ArrayBuffer;
 class JSGlobalObject;
 class JSValue;
 }
@@ -36,7 +40,6 @@ class JSValue;
 namespace WebCore {
 
 class WebTransport;
-class Exception;
 
 class DatagramSource : public AbstractRefCounted {
 public:
@@ -44,6 +47,7 @@ public:
     virtual ~DatagramSource() = default;
     virtual void receiveDatagram(std::span<const uint8_t>, bool, std::optional<Exception>&&) = 0;
     virtual void error(JSC::JSGlobalObject&, JSC::JSValue) = 0;
+    virtual void setTransport(WebTransport&) { }
 };
 
 class DatagramDefaultSource final : public DatagramSource, public RefCountedReadableStreamSource {
@@ -59,15 +63,22 @@ private:
 
     void receiveDatagram(std::span<const uint8_t>, bool, std::optional<Exception>&&) final;
     void error(JSC::JSGlobalObject&, JSC::JSValue) final;
+    void setTransport(WebTransport&) final;
 
     void setActive() final { }
     void setInactive() final { }
-    void doStart() final { }
-    void doPull() final { }
+    void doStart() final;
+    void doPull() final;
     void doCancel(JSC::JSValue) final { doCancel(); }
 
     void doCancel();
+    bool deliverDatagram();
+    uint32_t incomingMaxBufferedDatagrams() const;
 
+    ThreadSafeWeakPtr<WebTransport> m_transport;
+    Deque<RefPtr<JSC::ArrayBuffer>> m_incomingQueue;
+    bool m_pullPending { false };
+    bool m_finReceived { false };
     bool m_isCancelled { false };
     bool m_isClosed { false };
 };
